@@ -320,19 +320,26 @@ function createMarketplaceAuth(
 }
 
 async function loadMarketplaceCredentials(): Promise<MarketplaceAuth | null> {
-  const sessions = new SessionManager();
-  const session = await sessions.load();
-  if (session) {
-    const current = sessions.isExpired(session) ? await sessions.refresh(session) : session;
-    return createMarketplaceAuth(current, (value) => sessions.refresh(value as SessionCredentials));
-  }
-  const manager = new CredentialsManager();
-  const credentials = await manager.load();
-  if (!credentials) {
-    return null;
-  }
-  const current = manager.isExpired(credentials) ? await manager.refresh(credentials) : credentials;
-  return createMarketplaceAuth(current, (value) => manager.refresh(value as GatewayCredentials));
+	try {
+		const sessions = new SessionManager();
+		const session = await sessions.load();
+		if (session) {
+			const current = sessions.isExpired(session) ? await sessions.refresh(session) : session;
+			return createMarketplaceAuth(current, (value) => sessions.refresh(value as SessionCredentials));
+		}
+		const manager = new CredentialsManager();
+		const credentials = await manager.load();
+		if (!credentials) {
+			return null;
+		}
+		const current = manager.isExpired(credentials) ? await manager.refresh(credentials) : credentials;
+		return createMarketplaceAuth(current, (value) => manager.refresh(value as GatewayCredentials));
+	} catch {
+		// Local marketplace linking is allowed without a user session. A stale
+		// credential must not turn a completed local scaffold into a failure;
+		// protected endpoints still reject the subsequent link request explicitly.
+		return null;
+	}
 }
 
 /** Register through the canonical marketplace API; the daemon owns lock format and integrity. */
