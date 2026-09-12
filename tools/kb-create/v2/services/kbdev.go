@@ -119,11 +119,14 @@ func (client KBDev) Stop(platformRoot string, serviceIDs []string) error {
 	if runner == nil {
 		runner = commandRunner{}
 	}
-	args := []string{"--config", filepath.Join(platformRoot, ".kb", "devservices.yaml"), "stop"}
-	args = append(args, serviceIDs...)
-	args = append(args, "--json")
-	if _, err := runner.Output(context.Background(), binary, args...); err != nil {
-		return fmt.Errorf("kb-dev stop: %w", err)
+	// `kb-dev stop` accepts one optional target, unlike `ensure`, which accepts
+	// a list. Stop each resolved service explicitly so uninstall can deactivate
+	// the whole graph before replacing or removing its artifacts.
+	for _, serviceID := range serviceIDs {
+		args := []string{"--config", filepath.Join(platformRoot, ".kb", "devservices.yaml"), "stop", serviceID, "--json"}
+		if _, err := runner.Output(context.Background(), binary, args...); err != nil {
+			return fmt.Errorf("kb-dev stop %s: %w", serviceID, err)
+		}
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package artifacts
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -61,6 +62,42 @@ func TestPnpmWritesWorkspaceAllowBuildsList(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("pnpm-workspace.yaml = %q, missing %q", got, want)
 		}
+	}
+}
+
+func TestPnpmDoesNotPinGeneratedProjectToOnePatchPnpmVersion(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{}
+	if err := (Pnpm{Root: root, Runner: runner}).Install([]contracts.Artifact{{ID: "a", Package: "@kb/a", Version: "1.0.0"}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := manifest["packageManager"]; exists {
+		t.Fatalf("generated package.json must not pin packageManager: %s", data)
+	}
+}
+
+func TestPnpmUninstallRemovesInstalledArtifactsByPackageName(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{}
+	items := []contracts.Artifact{
+		{ID: "platform", Package: "@kb/platform", Version: "2.0.0"},
+		{ID: "duplicate", Package: "@kb/platform", Version: "2.0.0"},
+		{ID: "binary", Kind: "binary", Version: "2.0.0"},
+	}
+	if err := (Pnpm{Root: root, Runner: runner}).Uninstall(items); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"remove", "--dir", root, "--reporter=append-only", "@kb/platform"}
+	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0].args, want) {
+		t.Fatalf("calls = %#v", runner.calls)
 	}
 }
 

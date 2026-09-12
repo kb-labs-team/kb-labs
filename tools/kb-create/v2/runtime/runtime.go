@@ -152,6 +152,19 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 		if err := deps.Deactivator.Stop(platformRoot, ids); err != nil {
 			return err
 		}
+		// The installed kb-dev binary is itself an artifact being removed. Verify
+		// that every service is stopped while that binary and its managed config
+		// still exist; a lifecycle-level verification after artifact deletion
+		// could no longer execute `kb-dev status`.
+		observed, err := deps.Status.ServiceStatuses(platformRoot)
+		if err != nil {
+			return fmt.Errorf("verify stopped service graph: %w", err)
+		}
+		for _, service := range observed {
+			if service.State != "dead" {
+				return fmt.Errorf("uninstall left service %s in state %s", service.ID, service.State)
+			}
+		}
 		if err := uninstaller.Uninstall(active.Plan.Artifacts); err != nil {
 			return err
 		}
@@ -161,16 +174,7 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 			return err
 		}
 		return receipt.Delete(platformRoot)
-	}, func() error {
-		observed, err := deps.Status.ServiceStatuses(platformRoot)
-		if err != nil {
-			return err
-		}
-		if len(observed) != 0 {
-			return fmt.Errorf("V2 uninstall left configured services")
-		}
-		return nil
-	}, func() error {
+	}, nil, func() error {
 		if err := deps.Artifacts.Restore(); err != nil {
 			return err
 		}

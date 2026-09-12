@@ -91,14 +91,18 @@ func (p Pnpm) Uninstall(items []contracts.Artifact) error {
 	if err := p.prepare(); err != nil {
 		return err
 	}
-	specs, err := p.specs(items)
+	packages, err := packageNames(items)
 	if err != nil {
 		return err
 	}
-	if len(specs) == 0 {
+	if len(packages) == 0 {
 		return nil
 	}
-	return p.run("remove", specs...)
+	// Removing a package must use its manifest key, not its immutable tarball
+	// spec. `specs` intentionally skips an already-installed artifact for the
+	// idempotent install path; reusing it here previously made uninstall a
+	// successful no-op for every installed package.
+	return p.run("remove", packages...)
 }
 
 func (p Pnpm) run(command string, specs ...string) error {
@@ -147,7 +151,11 @@ func (p Pnpm) preparePackageJSON() error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	data, _ := json.MarshalIndent(map[string]any{"name": "kb-platform", "private": true, "packageManager": "pnpm@11.4.0"}, "", "  ")
+	// The launcher preflight deliberately supports the pnpm 11.x line, not one
+	// particular patch release. Do not pin packageManager here: Corepack rejects
+	// a supported newer pnpm when a generated project claims it must be exactly
+	// 11.4.0, which made a later V2 update (and its rollback) impossible.
+	data, _ := json.MarshalIndent(map[string]any{"name": "kb-platform", "private": true}, "", "  ")
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 
@@ -202,6 +210,26 @@ func (p Pnpm) specs(items []contracts.Artifact) ([]string, error) {
 			seen[spec] = struct{}{}
 			result = append(result, spec)
 		}
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func packageNames(items []contracts.Artifact) ([]string, error) {
+	seen := make(map[string]struct{}, len(items))
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.Kind == "binary" {
+			continue
+		}
+		if item.Package == "" || item.Version == "" {
+			return nil, fmt.Errorf("artifact %q must declare package and exact version", item.ID)
+		}
+		if _, exists := seen[item.Package]; exists {
+			continue
+		}
+		seen[item.Package] = struct{}{}
+		result = append(result, item.Package)
 	}
 	sort.Strings(result)
 	return result, nil
