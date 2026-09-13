@@ -183,4 +183,30 @@ describe('publishPackagesProgrammatic — permanent-failure diagnostics', () => 
     expect(entry!.errorCode).toBeUndefined();
     expect(entry!.errorHint).toBeUndefined();
   });
+
+  it('treats a Verdaccio E409 conflict as already-published, not a permanent failure — a retry against the same commit must not fail Stage forever', async () => {
+    // Verdaccio (the local staging registry release:stage-plan publishes
+    // planned versions to) reports a version conflict with different
+    // wording than npmjs.org's "cannot publish over the previously
+    // published version" — real repro: re-running release-prepare's Stage
+    // step at the same commit, against a registry it already staged to.
+    mockCloseCode = 1;
+    mockStderr = [
+      'npm notice Publishing to http://localhost:4873/ with tag latest and public access',
+      'npm error code E409',
+      'npm error 409 Conflict - PUT http://localhost:4873/@kb-labs%2fadapters-analytics-duckdb - this package is already present',
+    ].join('\n');
+
+    const result = await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      registry: 'http://localhost:4873',
+      token: 'verdaccio-local',
+    });
+
+    const [entry] = result.results;
+    expect(entry!.success).toBe(true);
+    expect(entry!.alreadyPublished).toBe(true);
+    expect(result.alreadyPublished).toEqual(['@kb-labs/fixture@1.0.0']);
+    expect(result.failed).toEqual([]);
+  });
 });
