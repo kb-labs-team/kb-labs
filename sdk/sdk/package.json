@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/sdk",
   "description": "Core SDK - Helpers for command/route/action/webhook definitions and testing",
-  "version": "2.115.4",
+  "version": "2.117.0",
   "type": "module",
   "author": "KB Labs Team",
   "license": "MIT",

@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/platform-client",
   "description": "Unified client SDK for KB Labs platform. Zero dependencies. Access LLM, Cache, VectorStore, Analytics, and any adapter through a single client.",
-  "version": "2.115.4",
+  "version": "2.117.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
