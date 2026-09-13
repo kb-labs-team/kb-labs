@@ -239,7 +239,7 @@ jobs:
               version: entry.version,
               tarball: entry.filename,
               sha256: createHash("sha256").update(payload).digest("hex"),
-            }]) + "\\n");
+            }]) + "\n");
           ' <<< "$packed"
 
       - name: Build exact Go binary assets
