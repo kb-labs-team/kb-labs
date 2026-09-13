@@ -12,14 +12,16 @@ import (
 )
 
 type fakeRunner struct {
-	name string
-	args []string
-	data []byte
-	err  error
+	name  string
+	args  []string
+	calls [][]string
+	data  []byte
+	err   error
 }
 
 func (runner *fakeRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
 	runner.name, runner.args = name, args
+	runner.calls = append(runner.calls, args)
 	return runner.data, runner.err
 }
 
@@ -82,5 +84,19 @@ func TestKBDevStopsResolvedGraph(t *testing.T) {
 	want := []string{"--config", "/platform/.kb/devservices.yaml", "stop", "gateway", "--json"}
 	if !reflect.DeepEqual(runner.args, want) {
 		t.Fatalf("args = %#v", runner.args)
+	}
+}
+
+func TestKBDevStopsEachResolvedServiceSeparately(t *testing.T) {
+	runner := &fakeRunner{data: []byte(`{"ok":true}`)}
+	if err := (KBDev{Runner: runner}).Stop("/platform", []string{"gateway", "worker"}); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"--config", "/platform/.kb/devservices.yaml", "stop", "gateway", "--json"},
+		{"--config", "/platform/.kb/devservices.yaml", "stop", "worker", "--json"},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v", runner.calls)
 	}
 }

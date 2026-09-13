@@ -147,6 +147,30 @@ func TestUninstallUsesReceiptArtifacts(t *testing.T) {
 	}
 }
 
+func TestUninstallChecksServicesAreStoppedBeforeRemovingKBDev(t *testing.T) {
+	root := t.TempDir()
+	plan := contracts.ResolvedInstallPlan{
+		PlanHash:     "old",
+		Artifacts:    []contracts.Artifact{{ID: "kb-dev", Kind: "binary", Target: "kb-dev"}},
+		ServiceGraph: contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway"}}},
+	}
+	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	installer := &fakeInstaller{}
+	services := &fakeActivator{}
+	_, err := Uninstall(root, Dependencies{
+		Artifacts: installer, Status: fakeStatus{{ID: "gateway", State: "alive"}},
+		Activator: services, Deactivator: services, Clock: fixedClock{time.Unix(6, 0)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "uninstall left service gateway in state alive") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(installer.removed) != 0 {
+		t.Fatalf("artifacts were removed before stopped-state verification: %#v", installer.removed)
+	}
+}
+
 func TestUpdateRestoresPreviousReceiptWhenNewGraphFailsVerification(t *testing.T) {
 	root := t.TempDir()
 	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", Plan: contracts.ResolvedInstallPlan{PlanHash: "old"}}); err != nil {
