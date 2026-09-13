@@ -20,17 +20,28 @@ uplinks:
     url: https://registry.npmjs.org/
 
 packages:
-  # @kb-labs/* is entirely staged here by the release-checks flow (see
-  # header above) — it never needs freshness-checking against real npm.
-  # Without this, Verdaccio treats it like any other scoped package and
-  # syncs with the npmjs uplink on first request per package name, which
-  # measured at 15-60s EACH the first time (100+ @kb-labs packages get
-  # pulled in transitively via @kb-labs/sdk's peer deps) — that's what
-  # blew the pack-install check's 120s timeout on a cold registry.
+  # Only the CURRENT flow's own plan packages get staged here (see header
+  # above) — anything a plan package depends on OUTSIDE its own flow (e.g.
+  # sdk's peerDependency on @kb-labs/core-platform, or platform's steward
+  # plugin importing from @kb-labs/sdk) is never staged this run and must
+  # fall through to the real npmjs uplink to resolve at all. A prior version
+  # of this rule dropped `proxy: npmjs` entirely to dodge a first-request
+  # uplink sync once measured at 15-60s — but that unconditionally broke
+  # every cross-flow dependency instead: pack-install would 404/ETARGET on
+  # a real, already-published sibling package just because it wasn't part
+  # of the flow being checked (hit live: sdk's checks failing to resolve
+  # @kb-labs/core-platform@>=2.0.0 even though 2.117.0 was live on npmjs).
+  # Verdaccio checks local storage first and only proxies on a miss, so a
+  # plan's own staged packages (served locally, published moments earlier
+  # by the Stage step) are unaffected — measured live re-adding this line:
+  # a 2-package flow's full pack-install (including one real cross-flow
+  # uplink resolution) completed in ~51s, comfortably inside the 120s
+  # per-package clean-install timeout.
   '@kb-labs/*':
     access: $all
     publish: $all
     unpublish: $all
+    proxy: npmjs
 
   '@*/*':
     access: $all
