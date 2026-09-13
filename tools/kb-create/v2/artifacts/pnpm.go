@@ -113,8 +113,20 @@ func (p Pnpm) run(command string, specs ...string) error {
 	if p.Offline {
 		args = append(args, "--offline")
 	}
+	// remove works exclusively on the already-installed lockfile. Rechecking
+	// minimum release age here rejects freshly published canary entries even
+	// though no package is being fetched, which prevents an otherwise safe
+	// uninstall. Keep the policy intact for install/restore; bypass it only
+	// for this local cleanup operation.
+	if command == "remove" {
+		args = append(args, "--config.minimumReleaseAge=0")
+	}
 	args = append(args, specs...)
-	if p.Registry != "" {
+	// pnpm accepts --registry while resolving/installing packages, but rejects
+	// it for remove. Uninstall uses only installed manifest keys and performs
+	// no registry resolution, so forwarding the install option here turns a
+	// healthy cleanup into ERR_PNPM_UNKNOWN_OPTION.
+	if p.Registry != "" && command != "remove" {
 		args = append(args, "--registry", p.Registry)
 	}
 	runner := p.Runner

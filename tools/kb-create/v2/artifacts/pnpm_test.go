@@ -95,9 +95,21 @@ func TestPnpmUninstallRemovesInstalledArtifactsByPackageName(t *testing.T) {
 	if err := (Pnpm{Root: root, Runner: runner}).Uninstall(items); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"remove", "--dir", root, "--reporter=append-only", "@kb/platform"}
+	want := []string{"remove", "--dir", root, "--reporter=append-only", "--config.minimumReleaseAge=0", "@kb/platform"}
 	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0].args, want) {
 		t.Fatalf("calls = %#v", runner.calls)
+	}
+}
+
+func TestPnpmUninstallDoesNotPassRegistryOption(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{}
+	if err := (Pnpm{Root: root, Registry: "https://registry.test", Runner: runner}).Uninstall([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2.0.0"}}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"remove", "--dir", root, "--reporter=append-only", "--config.minimumReleaseAge=0", "@kb/platform"}
+	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0].args, want) {
+		t.Fatalf("calls = %#v, want %q", runner.calls, want)
 	}
 }
 
