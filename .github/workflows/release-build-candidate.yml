@@ -76,6 +76,22 @@ jobs:
         run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release-manager-cli --no-cache
 
       - name: Hydrate release plan paths for candidate workspace
+        # All release flows share one scope-derived plan.json path (see
+        # resolve-plan.ts), so the committed artifact checked out at
+        # commit_sha can legitimately belong to whichever flow last ran
+        # release-prepare's "Commit and tag" step (stable channel only —
+        # canary never commits its freshly computed plan). For a canary
+        # build that means this file is routinely for a DIFFERENT flow
+        # entirely, not just a stale version of the same one. Hard-failing
+        # on that here used to pre-empt the "Apply planned package
+        # versions" step below, whose `pnpm kb release version` call goes
+        # through resolvePlan() and already treats a foreign-flow artifact
+        # as unconditionally stale, recomputing fresh via planRelease() —
+        # so skip hydration (and let that step supply correct paths) for a
+        # canary flow mismatch instead of throwing. A stable build's plan
+        # is expected to already match exactly (it was committed by this
+        # same release-prepare run just before dispatch), so keep failing
+        # loudly there — a mismatch means something upstream is broken.
         env:
           FLOW: ${{ inputs.flow }}
           CHANNEL: ${{ inputs.channel }}
@@ -88,7 +104,14 @@ jobs:
           const root = process.cwd();
           const planPath = path.join(root, '.kb', 'release', 'plans', 'root', 'current', 'plan.json');
           const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
-          if (plan.flow !== process.env.FLOW) throw new Error(`release plan flow mismatch: ${plan.flow} != ${process.env.FLOW}`);
+          if (plan.flow !== process.env.FLOW) {
+            if (process.env.CHANNEL !== 'canary') {
+              throw new Error(`release plan flow mismatch: ${plan.flow} != ${process.env.FLOW}`);
+            }
+            console.log(`Committed plan.json is for flow "${plan.flow}", not "${process.env.FLOW}" — ` +
+              `skipping hydration; "Apply planned package versions" will recompute it fresh.`);
+            process.exit(0);
+          }
           if (process.env.CHANNEL === 'canary') {
             const short = process.env.COMMIT_SHA.slice(0, 9);
             for (const item of plan.packages ?? []) {
