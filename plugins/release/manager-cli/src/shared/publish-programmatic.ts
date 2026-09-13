@@ -101,6 +101,15 @@ const ALREADY_PUBLISHED_PATTERNS = [
   'cannot publish over the previously published version',
   'EPUBLISHCONFLICT',
   // Some registries return 403 for conflicts
+  // Verdaccio (the local staging registry `release:stage-plan` publishes
+  // to — see stage-plan.ts) returns this instead of npmjs.org's wording for
+  // the identical condition: a version this exact commit already staged in
+  // an earlier, since-failed release-prepare run (e.g. an unrelated later
+  // step failed, or the workflow daemon ran out of workers). Without this,
+  // every retry at the same commit fails Stage permanently — Verdaccio's
+  // per-version storage is immutable, so nothing short of wiping its volume
+  // would ever let a retry get past it.
+  'this package is already present',
 ];
 
 function isRetryable(message: string): boolean {
@@ -108,7 +117,8 @@ function isRetryable(message: string): boolean {
 }
 
 function isAlreadyPublished(message: string): boolean {
-  return ALREADY_PUBLISHED_PATTERNS.some(p => message.includes(p));
+  if (ALREADY_PUBLISHED_PATTERNS.some(p => message.includes(p))) { return true; }
+  return extractNpmErrorCode(message) === 'E409';
 }
 
 /**
