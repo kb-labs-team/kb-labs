@@ -43,14 +43,24 @@ The workflow pauses at `waiting_approval` with the release review, plan, changel
 pnpm kb workflow runs approve --run-id <runId>
 ```
 
-After a stable approve, the workflow finishes `prepare` itself (bump, changelog, commit, tag `<flow>-v<version>`, push) — that push is CI's trigger. Do not publish manually; inspect or rerun CI instead:
+After a stable approve, the workflow finishes `prepare` itself (bump, changelog, commit, tag `<flow>-v<version>`, push) — but that push does **not** by itself trigger a candidate build or publish (the `publish-npm-on-tag.yml` workflow this section used to point to was deleted in the release control-plane cutover; a tag push today has no CI listener at all). Dispatch the candidate build explicitly, same as canary, then check it:
 
 ```bash
-gh run list --workflow=publish-npm-on-tag.yml --limit 3
-gh run watch <run-id>
+gh workflow run release-build-candidate.yml --ref master \
+  -f candidate_id=<flow>-<version>-stable-<short_sha> \
+  -f commit_sha=<full tagged commit sha> -f flow=<flow> -f version=<version> -f channel=stable
+gh run list --workflow=release-build-candidate.yml --limit 3
 ```
 
-If checks/build/approval fail before the tag is pushed, just fix and rerun the workflow — nothing is committed yet. If the tag is already pushed and `stage`/`deliver` are red, don't touch git by hand (no deleting/forcing the tag) — read `gh run view <run-id> --log-failed` and rerun the failing job.
+Once that candidate build succeeds, publishing to npm still needs its own explicit dispatch and its own human authorization in chat — same as canary delivery, just with `target=stable` this time:
+
+```bash
+gh workflow run release-deliver-candidate.yml --ref master \
+  -f candidate_run_id=<the build run id above> -f candidate_id=<same candidate_id> \
+  -f flow=<flow> -f version=<version> -f target=stable
+```
+
+If checks/build/approval fail before the tag is pushed, just fix and rerun the workflow — nothing is committed yet. If the tag is already pushed and the candidate build/deliver are red, don't touch git by hand (no deleting/forcing the tag) — read `gh run view <run-id> --log-failed`, fix the root cause, and redispatch `release-build-candidate.yml` against the same already-tagged commit (no need to redo `release-prepare` — the commit and tag are already correct).
 
 ## Release order
 
