@@ -91,7 +91,11 @@ function verifyBundle(bundleDir, expected) {
 }
 
 function distTags(packageName, env) {
-  return JSON.parse(run('npm', ['dist-tag', 'ls', packageName, '--json', '--registry', registry], { env }) || '{}');
+  // `npm dist-tag ls --json` silently ignores --json (confirmed live on
+  // npm 11.16.0: prints the same plain "tag: version" lines either way) and
+  // JSON.parse-ing that output throws. `npm view <pkg> dist-tags --json`
+  // requests the identical data and actually honors --json.
+  return JSON.parse(run('npm', ['view', packageName, 'dist-tags', '--json', '--registry', registry], { env }) || '{}');
 }
 
 function rollbackTags(packages, previous, tag, env) {
