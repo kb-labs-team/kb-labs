@@ -228,23 +228,9 @@ No code changes needed — flows are config-only.
 
 ## Releasing Go binaries (kb-create, kb-dev, kb-devkit, kb-deploy, kb-monitor)
 
-Separate from npm packages — GitHub Actions + goreleaser, triggered by a `v<MAJOR>.<MINOR>.<PATCH>-binaries` tag (e.g. `v0.4.7-binaries`). The `-binaries` suffix is structurally disjoint from npm tags (`platform-v2.47.0` / `sdk-v3.2.0`), so neither can accidentally trigger the other's workflow.
+There is no independent binary release workflow or separate binary promotion path — the standalone `-binaries` tag + goreleaser flow, and the `promote-binaries.yml` / `promote-npm-release.yml` pointer-release dance described in older versions of this doc, were deleted in the release control-plane cutover. None of `release-binaries.yml`, `promote-binaries.yml`, or `promote-npm-release.yml` exist in `.github/workflows/` anymore.
 
-```bash
-cd tools/kb-create && go build -o kb-create .   # verify locally
-git add tools/kb-create/... && git commit -m "feat(launcher): ..." && git push origin main
-git tag v0.4.7-binaries && git push origin v0.4.7-binaries
-```
-
-The workflow (`.github/workflows/release-binaries.yml`) runs goreleaser with root `.goreleaser.yaml`, builds all 5 tools for darwin/linux/windows × amd64/arm64 (windows arm64 excluded), uploads raw binaries as an immutable GitHub Release, marked `prerelease: false`. Version: increment from the last `-binaries` tag (`gh release list --repo KirillBaranov/kb-labs --limit 3`).
-
-**Channels mirror the npm flow.** Every tag push only updates the mutable `binaries-canary` pointer release (a tiny `channel.json` asset: `{schema, channel, tag, commit}`). Nothing reaches `stable` automatically. To promote a canary tag to stable, run `promote-binaries.yml` (`workflow_dispatch`, input `release_tag`) — it verifies `binaries-canary` currently points at that exact tag, then writes the same `channel.json` shape to the `binaries-stable` pointer. This is the same canary → stable transition `promote-npm-release.yml` does for npm dist-tags.
-
-Installers resolve `latest` against a channel with `--channel <stable|canary>` (default `stable`); `--version <tag>` still pins an exact tag and skips channel resolution entirely:
-
-```bash
-curl -fsSL https://kblabs.ru/install.sh | sh -s -- --channel canary
-```
+Go binaries are built and sealed as part of the **`platform`** flow's own candidate: `release-build-candidate.yml`'s `if: inputs.flow == 'platform'` steps ("Build exact Go binary assets", "Generate binary manifest from checksums", "Seal unified release index") run goreleaser (`.goreleaser.yaml` still exists and is still used, just invoked from here, not from a standalone workflow) as one stage of the same candidate build/deliver pipeline described in `tool-release.md` — there's no separate binaries release to trigger. Preparing a `platform` release through `release-prepare` (canary or stable) is what produces new binaries; see `tool-release.md`'s normal agent path and stable-delivery steps for the actual commands.
 
 ## Source packages
 
