@@ -55,14 +55,24 @@ try {
   const moved = [];
   try {
     for (const artifact of artifacts) {
+      // `npm dist-tag add` throws (execFileSync, non-zero exit) on a genuine
+      // write failure — that's the real correctness gate, and it's what the
+      // catch block below rolls back for.
       run('npm', ['dist-tag', 'add', `${artifact.name}@${artifact.version}`, npmTag, '--registry', registry], { env: npmEnv });
-      // The registry write above can succeed while a read immediately after
-      // still returns the pre-write value — confirmed live (registry.npmjs.org):
-      // this exact check failed with "latest=2.115.3" right after a successful
-      // `npm dist-tag add`, then a manual `npm view --dist-tags` moments later
-      // already showed the new value. Retry the visibility read briefly
-      // instead of treating one stale read as a real failure (and rolling
-      // back a write that actually succeeded).
+      moved.push(artifact.name);
+      // The write above can succeed while a read immediately after still
+      // returns the pre-write value — confirmed live (registry.npmjs.org)
+      // across two separate promotions, once needing several seconds and
+      // once needing longer than that. This is ordinary replication lag, not
+      // a failure: the accepted write is real regardless of how long a
+      // specific read takes to catch up. Warn and move on rather than treat
+      // a slow read as fatal — treating it as fatal is actively harmful here:
+      // it used to throw and roll back this package's tag AND every other
+      // package already correctly moved earlier in this same loop, undoing
+      // real work over a false alarm (confirmed live: one straggling package
+      // rolled back ~166 already-correct tag moves back to the prior
+      // release). A genuine write failure is still caught above by
+      // `run()`/execFileSync throwing, independent of this check.
       let tags = {};
       let visible = false;
       for (let attempt = 0; attempt < 5 && !visible; attempt++) {
@@ -70,8 +80,11 @@ try {
         tags = distTags(artifact.name, npmEnv);
         visible = tags[npmTag] === artifact.version;
       }
-      if (!visible) throw new Error(`npm tag visibility mismatch: ${artifact.name}@${npmTag}=${tags[npmTag] ?? '<missing>'}`);
-      moved.push(artifact.name);
+      if (!visible) {
+        console.warn(`warning: ${artifact.name}@${npmTag} not yet visible as ${artifact.version} ` +
+          `(saw ${tags[npmTag] ?? '<missing>'}) — npm dist-tag add reported success; ` +
+          `this is registry replication lag, not a failed write.`);
+      }
     }
   } catch (error) {
     rollbackTags(moved, previous, npmTag, npmEnv);
