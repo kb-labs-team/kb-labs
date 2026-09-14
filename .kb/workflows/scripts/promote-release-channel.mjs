@@ -37,6 +37,10 @@ const root = mkdtempSync(join(tmpdir(), 'kb-release-promotion-'));
 const bundle = join(root, 'bundle');
 const npmrc = join(root, '.npmrc');
 const run = (command, commandArgs, options = {}) => execFileSync(command, commandArgs, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...options }).trim();
+// This script is synchronous end to end (execFileSync throughout); a blocking
+// sleep via Atomics.wait keeps the dist-tag visibility retry in that same
+// style instead of introducing async/await for one call site.
+const sleepSync = ms => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
 
 try {
   run('gh', ['run', 'download', candidateRunId, '--repo', repository, '--name', `release-candidate-${candidateId}`, '--dir', bundle]);
@@ -52,8 +56,21 @@ try {
   try {
     for (const artifact of artifacts) {
       run('npm', ['dist-tag', 'add', `${artifact.name}@${artifact.version}`, npmTag, '--registry', registry], { env: npmEnv });
-      const tags = distTags(artifact.name, npmEnv);
-      if (tags[npmTag] !== artifact.version) throw new Error(`npm tag visibility mismatch: ${artifact.name}@${npmTag}=${tags[npmTag] ?? '<missing>'}`);
+      // The registry write above can succeed while a read immediately after
+      // still returns the pre-write value — confirmed live (registry.npmjs.org):
+      // this exact check failed with "latest=2.115.3" right after a successful
+      // `npm dist-tag add`, then a manual `npm view --dist-tags` moments later
+      // already showed the new value. Retry the visibility read briefly
+      // instead of treating one stale read as a real failure (and rolling
+      // back a write that actually succeeded).
+      let tags = {};
+      let visible = false;
+      for (let attempt = 0; attempt < 5 && !visible; attempt++) {
+        if (attempt > 0) sleepSync(2000);
+        tags = distTags(artifact.name, npmEnv);
+        visible = tags[npmTag] === artifact.version;
+      }
+      if (!visible) throw new Error(`npm tag visibility mismatch: ${artifact.name}@${npmTag}=${tags[npmTag] ?? '<missing>'}`);
       moved.push(artifact.name);
     }
   } catch (error) {
