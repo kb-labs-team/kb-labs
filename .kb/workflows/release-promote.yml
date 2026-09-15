@@ -75,8 +75,16 @@ jobs:
             --repository "${GITHUB_REPOSITORY:-kb-labs-team/kb-labs}"
 
       - name: Advance verified channel
+        # 20 minutes was tight for sdk's 2 packages but too short for
+        # platform's ~167 — confirmed live: this step ran ~32 minutes moving
+        # dist-tags across all platform packages (each with its own retry
+        # loop for registry replication lag) and was killed by the timeout
+        # mid-run, which the engine then rejected as an illegal status
+        # transition once the script's own next update arrived. Match
+        # "Deliver candidate"'s budget instead of platform-flow-sizing this
+        # one differently.
         phase: promote
-        timeoutMs: 1200000
+        timeoutMs: 3600000
         run: |
           set -euo pipefail
           node .kb/workflows/scripts/promote-release-channel.mjs \
