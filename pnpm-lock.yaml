@@ -1096,6 +1096,9 @@ importers:
       '@kb-labs/core-sys':
         specifier: workspace:*
         version: link:../../core/sys
+      '@kb-labs/gateway-auth':
+        specifier: workspace:*
+        version: link:../../services/gateway/auth
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../core/plugin-contracts

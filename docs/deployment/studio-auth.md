@@ -5,63 +5,96 @@ configuration, and the production readiness checklist for Studio auth.
 
 ---
 
-## Environment Variables
+## Configuration
 
-All auth-related env vars are read by the Gateway process (`plugins/gateway/app/`).
+Auth is read by the Gateway process (`services/gateway/app`). Secrets and bootstrap
+identity come from **environment variables**; everything else is a **config key** under
+`gateway.auth` in `.kb/kb.config.json` (schema: `services/gateway/contracts/src/config.ts`).
 
-### Required
+### Environment variables
 
-| Variable | Description | Example |
+| Variable | Required | Description |
 |---|---|---|
-| `AUTH_JWT_ACCESS_SECRET` | HMAC-SHA256 secret for access tokens (min 32 chars) | `changeme-access-32chars-minimum!!` |
-| `AUTH_JWT_REFRESH_SECRET` | HMAC-SHA256 secret for refresh tokens (different from access) | `changeme-refresh-32chars-minimum!` |
-| `AUTH_BOOTSTRAP_ADMIN_EMAIL` | Email of the first admin user (created on first start) | `admin@kb-cloud.yourcompany.ru` |
-| `AUTH_BOOTSTRAP_ADMIN_PASSWORD` | Password for bootstrap admin (bcrypt cost 12) | `ChangeMe-VeryStrong123!` |
-| `AUTH_BOOTSTRAP_TENANT_ID` | Tenant slug (must match your subdomain) | `kb-cloud` |
+| `GATEWAY_JWT_SECRET` | yes (prod) | HMAC secret for access and refresh tokens (`openssl rand -hex 64`). With `NODE_ENV=production` the gateway refuses to start without it; otherwise it falls back to a **public dev secret** and logs a warning — never expose such a gateway |
+| `GATEWAY_BOOTSTRAP_ADMIN_EMAIL` | first start | Email of the first admin (or `gateway.auth.bootstrap.adminEmail`) |
+| `GATEWAY_BOOTSTRAP_ADMIN_PASSWORD` | first start | Password of the first admin (bcrypt-hashed on write). Env only, never a config key |
+| `GATEWAY_BOOTSTRAP_TENANT_ID` | no | Tenant of the admin (or `gateway.auth.bootstrap.tenantId`), default `kblabs-cloud` |
+| `AUTH_COOKIE_SECURE` | no | Overrides `gateway.auth.cookieSecure`. Disable only for local HTTP dev |
+| `AUTH_ACCESS_TTL_SEC` / `AUTH_REFRESH_TTL_SEC` | no | Override token lifetimes in seconds (E2E fast-expiry tests) |
+| `AUTH_INVITE_TTL_MS` | no | Override invite lifetime in ms (E2E) |
+| `AUTH_LOGIN_RATE_LIMIT_PER_IP` / `AUTH_LOGIN_RATE_LIMIT_PER_EMAIL` | no | Override login rate limits |
 
-### Optional (with defaults)
+### Config keys (`gateway.auth.*`)
 
-| Variable | Default | Description |
+| Key | Default | Description |
 |---|---|---|
-| `AUTH_SESSION_ACCESS_TTL` | `15m` | Access token lifetime |
-| `AUTH_SESSION_REFRESH_TTL` | `30d` | Refresh token lifetime |
-| `AUTH_INVITE_TTL` | `7d` | Invite link expiry |
-| `AUTH_REFRESH_GRACE_WINDOW_SEC` | `5` | Grace window for parallel refresh (CD-5) |
-| `AUTH_BCRYPT_COST` | `12` | bcrypt cost factor for password hashing |
-| `AUTH_COOKIE_SECURE` | `true` | Set `Secure` flag on all auth cookies (disable only for local HTTP dev) |
-| `AUTH_RATE_LIMIT_LOGIN_IP` | `10/m` | Max login attempts per IP per minute |
-| `AUTH_RATE_LIMIT_LOGIN_EMAIL` | `5/m` | Max login attempts per email per minute |
-| `AUTH_RATE_LIMIT_ACTIVATE_IP` | `20/h` | Max activation attempts per IP per hour |
-| `AUTH_HIBP_ENABLED` | `true` | Check passwords against HaveIBeenPwned API |
-| `AUTH_TENANT_PATTERN` | `{tenant}.kblabs.ru` | Subdomain pattern for tenant extraction |
+| `enabled` | `true` | `false` = solo/local mode: every request runs as a local admin, Studio opens without login. The gateway refuses to start this way on a non-loopback bind |
+| `sessionAccessTtlSec` | `900` | Access token lifetime |
+| `sessionRefreshTtlSec` | `2592000` (30d) | Refresh token lifetime |
+| `refreshGraceWindowSec` | `5` | Grace window for parallel refresh (CD-5) |
+| `bcryptCost` | `12` | bcrypt cost factor |
+| `passwordPolicy.{minLength,maxLength,hibpEnabled}` | `8` / `256` / `true` | Password policy; `hibpEnabled` needs outbound HTTPS to `api.pwnedpasswords.com` |
+| `rateLimit` | see schema | Login / activation rate limits |
+| `inviteTtlMs` | 7 days | Invite lifetime |
+| `bootstrap.{tenantId,adminEmail,provisionCliCredentials}` | — | Bootstrap admin and CLI credential seeding |
+| `providers` | built-in `email-password` | Identity providers (`oidc`, third-party) |
 
-### E2E / Testing Only
-
-| Variable | Description |
-|---|---|
-| `AUTH_ACCESS_TTL_SEC` | Override access TTL in seconds (for fast-expiry tests) |
-| `AUTH_REFRESH_TTL_SEC` | Override refresh TTL in seconds |
-| `AUTH_INVITE_TTL_MS` | Override invite TTL in milliseconds |
+Tenant routing lives in `gateway.tenants.pattern` (default `{tenant}.kblabs.ru`).
 
 ---
 
 ## Bootstrap Admin
 
-The bootstrap admin is created automatically on the **first gateway start** when the env vars
-are present. The process is **idempotent** — restarting the gateway will not create duplicate
-accounts.
+The bootstrap admin is created on the **first gateway start** when the email and password
+are present. It is **idempotent and deliberately conservative**: if a user with that email
+already exists in the tenant, bootstrap does nothing — it never re-activates the account,
+re-sets the password or repairs a missing credential. Restarting the gateway therefore
+**cannot** fix a broken admin.
 
 ```bash
-# Check if bootstrap ran correctly (gateway logs on startup)
-kb-dev logs gateway | grep "bootstrap"
-# → "bootstrap: admin user created for tenant kb-cloud"
-# → or: "bootstrap: admin user already exists — skipping"
+# Gateway startup log lines from the bootstrap step
+kb logs query --plugin-id gateway --limit 50 | grep bootstrap-admin
+# → "bootstrap-admin: provisioned tenant-admin"
+# → "bootstrap-admin: admin already exists and is active, skipping"
+# → "bootstrap-admin: a user with the bootstrap email already exists in a non-active state; not touching it"
 ```
 
-If you need to reset the admin password:
-1. Connect to the database directly (SQLite: `/workspace/.kb/data/gateway.db`)
-2. Delete the `credentials` row for the admin user's `userId`
-3. Restart the gateway — bootstrap will re-create it from env vars
+A failed bootstrap is logged as a warning (`Bootstrap admin seed failed (non-fatal)`) and the
+gateway still starts — without an admin.
+
+### Recovering the admin (forgotten password, disabled, credential lost)
+
+Use `kb auth reset-admin`. It works **offline** against the platform database, so it is the
+way back in when nobody can log in. Stop the gateway first (the command refuses to run
+while one listens on `gateway.port`, to avoid concurrent sqlite writes; `--force` overrides).
+
+```bash
+kb-dev stop gateway
+
+# 1. Dry run — shows the state of the admin and what would be repaired, changes nothing
+kb auth reset-admin --email admin@example.com --tenant kb-cloud
+
+# 2. Apply with a generated password (printed once) ...
+kb auth reset-admin --email admin@example.com --tenant kb-cloud --generate --yes
+
+# ... or with a password from stdin (never pass passwords as arguments)
+printf %s "$NEW_PASSWORD" | kb auth reset-admin --email admin@example.com --tenant kb-cloud --password-stdin --yes
+```
+
+Then start the gateway again the way you normally do.
+
+`--email` and `--tenant` default to `GATEWAY_BOOTSTRAP_ADMIN_EMAIL` / `GATEWAY_BOOTSTRAP_TENANT_ID`
+(or `gateway.auth.bootstrap.*`). The command:
+
+- creates the admin if it does not exist, or repairs the existing one:
+  sets `status=active`, writes the new `email-password` credential, restores the
+  `tenant-admin` membership;
+- validates the password against the same policy as activation (a rejected password
+  changes nothing);
+- **revokes all sessions** of the admin — treat every reset as a possible compromise.
+
+> ⚠️ Do **not** "delete the `credentials` row and restart": bootstrap skips an existing
+> active user, so the admin would be left with no credential and could never log in.
 
 ---
 
@@ -181,12 +214,12 @@ No `Domain` attribute — cookies are origin-scoped to `{tenant}.kblabs.ru` auto
 
 ### Before first deploy
 
-- [ ] `AUTH_JWT_ACCESS_SECRET` and `AUTH_JWT_REFRESH_SECRET` are unique, 32+ chars, stored in secrets manager
-- [ ] `AUTH_BOOTSTRAP_ADMIN_PASSWORD` is strong and changed after first login
+- [ ] `GATEWAY_JWT_SECRET` is set (not the built-in dev default), 32+ chars, stored in secrets manager
+- [ ] `GATEWAY_BOOTSTRAP_ADMIN_PASSWORD` is strong and changed after first login (or rotated with `kb auth reset-admin`)
 - [ ] Wildcard SSL certificate is valid: `openssl s_client -connect kb-cloud.kblabs.ru:443`
 - [ ] nginx wildcard config applied, reserved subdomains have own server blocks
 - [ ] `AUTH_COOKIE_SECURE=true` (default) — never disable in production
-- [ ] `AUTH_HIBP_ENABLED=true` (default) — outbound HTTPS to `api.pwnedpasswords.com` allowed
+- [ ] `gateway.auth.passwordPolicy.hibpEnabled=true` (default) — outbound HTTPS to `api.pwnedpasswords.com` allowed
 
 ### After first deploy (manual smoke test)
 
@@ -224,7 +257,7 @@ becomes invalid (AUTH-15). Invites expire after `AUTH_INVITE_TTL` (default 7 day
 Currently tenants are bootstrapped from env vars only. There is no tenant provisioning UI.
 
 To add a new tenant:
-1. Set `AUTH_BOOTSTRAP_TENANT_ID=new-tenant` + `AUTH_BOOTSTRAP_ADMIN_EMAIL/PASSWORD`
+1. Set `GATEWAY_BOOTSTRAP_TENANT_ID=new-tenant` + `GATEWAY_BOOTSTRAP_ADMIN_EMAIL/PASSWORD`
 2. Restart the gateway — the admin user for the new tenant is created
 3. Add a DNS A record for `new-tenant.kblabs.ru` → the VPS IP
 4. The wildcard nginx config picks it up automatically
@@ -233,10 +266,10 @@ To add a new tenant:
 
 ## What is NOT implemented in this iteration
 
-See `docs/adr/ADR-0020-identity-and-authentication.md` § "What we are NOT doing" for the
+See `docs/adr/0020-identity-and-authentication.md` § "What we are NOT doing" for the
 complete list. Key items:
 
-- No password reset via email (admin must re-invite the user)
+- No password reset via email (users are re-invited; the admin is recovered with `kb auth reset-admin`)
 - No 2FA / MFA
 - No SSO / OAuth2 / OIDC
 - No account lockout (would be a DoS vector)

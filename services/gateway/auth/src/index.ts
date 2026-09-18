@@ -95,7 +95,14 @@ export type {
   BootstrapAdminLogger,
   EnsureBootstrapAdminOptions,
 } from './bootstrap-admin.js';
-export { ensureBootstrapCliCredentials, CLI_BOOTSTRAP_HANDLE } from './bootstrap-cli-credentials.js';
+export { resetAdmin, ResetAdminError } from './reset-admin.js';
+export type {
+  ResetAdminOptions,
+  ResetAdminResult,
+  ResetAdminRepair,
+  ResetAdminLogger,
+} from './reset-admin.js';
+export { ensureBootstrapCliCredentials,CLI_BOOTSTRAP_HANDLE } from './bootstrap-cli-credentials.js';
 export type {
   BootstrapCliCredentialsLogger,
   EnsureBootstrapCliCredentialsOptions,
