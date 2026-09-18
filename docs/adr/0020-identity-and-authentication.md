@@ -256,6 +256,13 @@ refuses to run while a gateway is listening (concurrent sqlite writer). Manually
 credentials row is **not** a recovery: bootstrap will not recreate it. See
 `docs/deployment/studio-auth.md`.
 
+Because every login failure is deliberately identical (CD-8), a locked-out install cannot be
+diagnosed from the login response. The gateway therefore evaluates auth readiness from its own
+stores (`evaluateAuthReadiness`): it logs the result at startup and serves it at
+`GET /health/auth`, restricted to local, non-proxied requests (the body says whether an admin
+exists and whether the dev JWT secret is in use). `kb-dev doctor` surfaces it. State knowledge
+stays in the gateway; the Go tools duplicate no document-database format.
+
 ## References
 
 - ClickUp epic — Platform Authorization Layer (PDP + RBAC + ReBAC):

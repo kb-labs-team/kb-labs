@@ -62,6 +62,32 @@ kb logs query --plugin-id gateway --limit 50 | grep bootstrap-admin
 A failed bootstrap is logged as a warning (`Bootstrap admin seed failed (non-fatal)`) and the
 gateway still starts — without an admin.
 
+### Diagnosing "I can't log in"
+
+Every login failure returns the same `401 invalid_credentials` (CD-8), so the response never
+says *why*. Ask the gateway instead — it knows whether an admin exists:
+
+```bash
+kb-dev doctor          # auth ● enabled, 1 active admin(s)   — or the exact problem and fix
+```
+
+`kb-dev doctor` reads `GET /health/auth` from the local gateway and reports:
+
+| Code | Severity | Meaning | Fix |
+|---|---|---|---|
+| `no_active_admin` | error | Auth is enabled but the tenant has no active `tenant-admin` — **nobody can log in**. This is the state of a fresh secured install where no bootstrap admin was seeded | `kb auth reset-admin` |
+| `bootstrap_failed` | error | Seeding the bootstrap admin failed at startup (see the gateway log) | fix the cause, or `kb auth reset-admin` |
+| `bootstrap_user_inactive` | warning | The bootstrap admin exists but is not active; bootstrap never re-activates users | `kb auth reset-admin` |
+| `jwt_secret_default` | error on a reachable bind, warning on loopback | `GATEWAY_JWT_SECRET` is unset, tokens are signed with a public dev secret | set `GATEWAY_JWT_SECRET`, restart |
+
+The same findings are logged once at gateway startup as `auth-readiness: …` (error level for
+errors, with a `hint` field), so they also appear in `kb logs`.
+
+`/health/auth` is **not public**: it answers only a request that comes from this machine, was
+not proxied (no `X-Forwarded-*`/`X-Real-IP`/`Forwarded` header) and carries a loopback `Host`;
+everything else gets a plain `404`. So it is invisible behind the nginx setup above, and you
+query it on the host: `curl http://localhost:4000/health/auth`.
+
 ### Recovering the admin (forgotten password, disabled, credential lost)
 
 Use `kb auth reset-admin`. It works **offline** against the platform database, so it is the

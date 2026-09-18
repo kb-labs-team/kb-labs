@@ -129,16 +129,25 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	// 6. Adapter status (optional — skipped if gateway not running).
 	adapterStatuses, gatewaySkip := fetchAdapterStatuses(gatewayPort)
 
+	// 7. Auth readiness (optional — only when the gateway answers). Read from
+	// the gateway itself: it alone knows whether an admin exists.
+	var authSkip string
+	if gatewaySkip == "" {
+		authSkip = addAuthChecks(result, gatewayPort)
+	}
+
 	if jsonMode {
 		type jsonResult struct {
 			*manager.DoctorResult
 			Adapters     []adapterStatus `json:"adapters,omitempty"`
 			AdaptersSkip string          `json:"adaptersSkip,omitempty"`
+			AuthSkip     string          `json:"authSkip,omitempty"`
 		}
 		return JSONOut(&jsonResult{
 			DoctorResult: result,
 			Adapters:     adapterStatuses,
 			AdaptersSkip: gatewaySkip,
+			AuthSkip:     authSkip,
 		})
 	}
 
@@ -151,6 +160,8 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		icon := out.StatusIcon("alive")
 		if !check.OK {
 			icon = out.StatusIcon("failed")
+		} else if check.Warn {
+			icon = out.StatusIcon("degraded")
 		}
 		detail := check.Detail
 		if check.Path != "" {
@@ -188,6 +199,10 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 				reason,
 			)
 		}
+	}
+
+	if authSkip != "" {
+		fmt.Printf("  %s %s\n", out.StatusIcon("dead"), out.dim.Render(authSkip))
 	}
 
 	fmt.Println()

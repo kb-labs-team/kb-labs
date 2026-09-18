@@ -90,7 +90,16 @@ export type { StubPDPOptions } from './stub-pdp.js';
 // from @kb-labs/gateway-auth without also depending on @kb-labs/core-contracts.
 export type { IPolicyDecisionPoint, PolicyDecision, Identity, Resource, PolicyContext } from '@kb-labs/core-contracts';
 export { ensureBootstrapAdmin } from './bootstrap-admin.js';
+export { evaluateAuthReadiness } from './auth-readiness.js';
 export type {
+  AuthIssue,
+  AuthIssueCode,
+  AuthReadiness,
+  AuthReadinessInput,
+  BootstrapStatus,
+} from './auth-readiness.js';
+export type {
+  BootstrapOutcome,
   BootstrapConfig,
   BootstrapAdminLogger,
   EnsureBootstrapAdminOptions,

@@ -124,3 +124,24 @@ describe('conflicting state', () => {
     expect(await credentials.getCredential('pre-existing', 'email-password')).toBeNull();
   });
 });
+
+describe('returned outcome', () => {
+  const run = (bootstrap: typeof cfg | undefined) =>
+    ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, bcryptCost: 4, logger });
+
+  it("'not-configured' when there is no bootstrap config", async () => {
+    expect(await run(undefined)).toBe('not-configured');
+  });
+
+  it("'provisioned' on first run, then 'exists-active'", async () => {
+    expect(await run(cfg)).toBe('provisioned');
+    expect(await run(cfg)).toBe('exists-active');
+  });
+
+  it("'exists-non-active' when the existing admin is disabled", async () => {
+    await run(cfg);
+    const user = await users.findByEmailTenant(cfg.adminEmail, cfg.tenantId);
+    await users.setStatus(user!.userId, 'disabled');
+    expect(await run(cfg)).toBe('exists-non-active');
+  });
+});

@@ -45,16 +45,26 @@ export interface EnsureBootstrapAdminOptions {
   logger: BootstrapAdminLogger;
 }
 
+/**
+ * What `ensureBootstrapAdmin` did, so the caller can report it (auth
+ * readiness, startup diagnostics) without re-deriving it from the stores.
+ */
+export type BootstrapOutcome =
+  | 'not-configured'
+  | 'provisioned'
+  | 'exists-active'
+  | 'exists-non-active';
+
 const isNonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
 export const ensureBootstrapAdmin = async (
   opts: EnsureBootstrapAdminOptions,
-): Promise<void> => {
+): Promise<BootstrapOutcome> => {
   const { bootstrap, users, credentials, memberships, bcryptCost, logger } = opts;
 
   if (!bootstrap) {
     logger.info('bootstrap-admin: no bootstrap config provided, skipping');
-    return;
+    return 'not-configured';
   }
 
   if (
@@ -72,13 +82,13 @@ export const ensureBootstrapAdmin = async (
   if (existing) {
     if (existing.status === 'active') {
       logger.info('bootstrap-admin: admin already exists and is active, skipping');
-      return;
+      return 'exists-active';
     }
     logger.warn(
       'bootstrap-admin: a user with the bootstrap email already exists in a non-active state; not touching it',
       { userId: existing.userId, status: existing.status, tenantId: existing.tenantId },
     );
-    return;
+    return 'exists-non-active';
   }
 
   const userId = randomUUID();
@@ -106,4 +116,5 @@ export const ensureBootstrapAdmin = async (
     userId,
     tenantId: bootstrap.tenantId,
   });
+  return 'provisioned';
 };

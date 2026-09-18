@@ -22,6 +22,8 @@ export const LOCAL_ADMIN_CONTEXT: AuthContext = {
 const PUBLIC_ROUTES = new Set([
   '/health',
   '/health/adapters',
+  // Self-gated to local, non-proxied requests inside the handler (see health-route.ts).
+  '/health/auth',
   '/ready',
   // Studio SPA shell (index.html) — the login page itself. There is no
   // session yet when a browser first hits this, so it can't be gated.

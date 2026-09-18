@@ -9,6 +9,7 @@ import {
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
 import type { IHostStore, AuthConfig } from "@kb-labs/gateway-contracts";
+import type { IContextLogger } from "@kb-labs/core-platform";
 import type { IDocumentDatabase } from "@kb-labs/core-platform/adapters";
 import { HostStore } from "@kb-labs/gateway-core";
 import {
@@ -24,6 +25,9 @@ import {
   createTenantResolver,
   createRateLimiter,
   ensureBootstrapAdmin,
+  evaluateAuthReadiness,
+  type AuthReadiness,
+  type BootstrapStatus,
   ensureBootstrapCliCredentials,
   AuthService,
   OAuthStateStore,
@@ -170,7 +174,7 @@ async function startGateway({
       config.auth?.bootstrap?.adminEmail ??
       process.env.GATEWAY_BOOTSTRAP_ADMIN_EMAIL;
     const adminPassword = process.env.GATEWAY_BOOTSTRAP_ADMIN_PASSWORD;
-    await ensureBootstrapAdmin({
+    const bootstrapStatus: BootstrapStatus = await ensureBootstrapAdmin({
       bootstrap:
         adminEmail && adminPassword
           ? { adminEmail, adminPassword, tenantId: bootstrapTenantId }
@@ -180,10 +184,13 @@ async function startGateway({
       memberships,
       bcryptCost,
       logger,
-    }).catch((err) => {
-      logger.warn("Bootstrap admin seed failed (non-fatal)", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+    }).catch((err): BootstrapStatus => {
+      logger.error(
+        "Bootstrap admin seed failed (non-fatal)",
+        err instanceof Error ? err : new Error(String(err)),
+        { tenantId: bootstrapTenantId },
+      );
+      return "failed";
     });
 
     // AUTH_INVITE_TTL_MS env var overrides config (used in E2E to test short-lived invites).
@@ -232,6 +239,19 @@ async function startGateway({
       );
     }
 
+    const authEnabled = config.auth?.enabled !== false;
+    const authReadiness = () =>
+      evaluateAuthReadiness({
+        authEnabled,
+        loopbackOnly: isLoopbackHost(config.host ?? "0.0.0.0"),
+        tenantId: bootstrapTenantId,
+        jwtSecretIsDefault: !process.env.GATEWAY_JWT_SECRET,
+        bootstrap: { status: bootstrapStatus, email: adminEmail },
+        users,
+        memberships,
+      });
+    await logAuthReadiness(authReadiness, logger);
+
     userAuth = {
       userAuthService,
       users,
@@ -248,6 +268,7 @@ async function startGateway({
       rateLimiter,
       authRateLimit: { loginPerIpPerMinute, loginPerEmailPerMinute },
       oauthState,
+      authReadiness,
     };
 
     logger.info("User auth infrastructure initialised", {
@@ -491,4 +512,36 @@ export function isLoopbackHost(host: string): boolean {
     h === "[::1]" ||
     h.startsWith("127.")
   );
+}
+
+/**
+ * Log auth readiness once at startup so a locked-out install (auth on, no
+ * active admin) is visible in the logs, not just as identical 401s. Never
+ * throws: diagnostics must not be able to stop the gateway from starting.
+ */
+export async function logAuthReadiness(
+  evaluate: () => Promise<AuthReadiness>,
+  logger: IContextLogger,
+): Promise<void> {
+  try {
+    const readiness = await evaluate();
+    for (const issue of readiness.issues) {
+      const meta = { code: issue.code, hint: issue.hint };
+      if (issue.severity === "error") {
+        logger.error(`auth-readiness: ${issue.message}`, undefined, meta);
+      } else {
+        logger.warn(`auth-readiness: ${issue.message}`, meta);
+      }
+    }
+    if (readiness.ok && readiness.issues.length === 0) {
+      logger.info("auth-readiness: ok", {
+        authEnabled: readiness.authEnabled,
+        activeAdmins: readiness.activeAdmins,
+      });
+    }
+  } catch (err) {
+    logger.warn("auth-readiness: check failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
