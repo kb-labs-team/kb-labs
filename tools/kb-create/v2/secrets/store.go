@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kb-labs/create/v2/contracts"
 )
 
 type Store struct{ PlatformRoot string }
@@ -48,6 +50,60 @@ func (store Store) Exists(name string) (bool, error) {
 	}
 	return values[name] != "", nil
 }
+
+// Get returns a stored secret. The bool reports presence (an empty stored value
+// counts as absent, matching Exists).
+func (store Store) Get(name string) (string, bool, error) {
+	if err := validate(name); err != nil {
+		return "", false, err
+	}
+	values, err := store.read()
+	if err != nil {
+		return "", false, err
+	}
+	value := values[name]
+	return value, value != "", nil
+}
+
+// BindEnvironments makes each stored secret reachable under the environment
+// variable its plan patch binds it to.
+//
+// Secrets are stored under their requirement ID (what the launcher verifies and
+// doctor checks), but the generated service env is `${ENV_NAME}` and kb-dev
+// resolves that by the variable's NAME from this same private store. Without the
+// second key any secret whose ID differs from its variable
+// (`gateway.jwtSecret` vs `GATEWAY_JWT_SECRET`) is stored yet never delivered,
+// and kb-dev refuses to start the service. Only secrets that are present are
+// bound: a missing required one is reported by the runtime. Two secrets bound to
+// one variable must hold the same value. Safe to run repeatedly.
+func (store Store) BindEnvironments(patches []contracts.ConfigPatch) error {
+	delivered := map[string]string{}
+	for _, patch := range patches {
+		if patch.Environment == "" || !strings.HasPrefix(patch.Owner, "manifest:") {
+			continue
+		}
+		id := strings.TrimPrefix(patch.Owner, "manifest:")
+		if id == patch.Environment {
+			continue
+		}
+		value, present, err := store.Get(id)
+		if err != nil {
+			return err
+		}
+		if !present {
+			continue
+		}
+		if previous, seen := delivered[patch.Environment]; seen && previous != value {
+			return fmt.Errorf("secrets bound to environment variable %q hold different values", patch.Environment)
+		}
+		delivered[patch.Environment] = value
+		if err := store.Put(patch.Environment, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (store Store) path() string {
 	return filepath.Join(store.PlatformRoot, ".kb", "v2", "secrets.env")
 }

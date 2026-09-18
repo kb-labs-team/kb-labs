@@ -29,6 +29,7 @@ import {
   type OAuthStateStore,
   type AuthReadiness,
 } from "@kb-labs/gateway-auth";
+import { resolveAccess } from "./access.js";
 import { createAuthMiddleware } from "./auth/middleware.js";
 import { registerAuthHealthRoute } from "./auth/health-route.js";
 import {
@@ -228,7 +229,7 @@ export async function createServer(
   app.addHook(
     "onRequest",
     createAuthMiddleware(cache, jwtConfig, {
-      authEnabled: config.auth?.enabled !== false,
+      authEnabled: resolveAccess(config).authEnabled,
     }),
   );
 

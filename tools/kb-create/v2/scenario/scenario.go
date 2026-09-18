@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -51,18 +52,22 @@ type Section struct {
 }
 
 type Field struct {
-	ID          string          `json:"id"`
-	Requirement string          `json:"requirement,omitempty"`
-	ProviderFor string          `json:"providerFor,omitempty"`
-	Type        string          `json:"type"`
-	Label       string          `json:"label,omitempty"`
-	Description string          `json:"description,omitempty"`
-	Required    bool            `json:"required,omitempty"`
-	Secret      bool            `json:"secret,omitempty"`
-	Default     json.RawMessage `json:"default,omitempty"`
-	Options     []Option        `json:"options,omitempty"`
-	When        *Predicate      `json:"when,omitempty"`
-	Validators  []Validator     `json:"validators,omitempty"`
+	ID          string `json:"id"`
+	Requirement string `json:"requirement,omitempty"`
+	ProviderFor string `json:"providerFor,omitempty"`
+	Type        string `json:"type"`
+	Label       string `json:"label,omitempty"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	Secret      bool   `json:"secret,omitempty"`
+	// Generate lets an interactive frontend mint a random value when a secret
+	// field is left blank (for machine-owned secrets nobody needs to remember,
+	// such as a token-signing key). Only valid on secret fields.
+	Generate   bool            `json:"generate,omitempty"`
+	Default    json.RawMessage `json:"default,omitempty"`
+	Options    []Option        `json:"options,omitempty"`
+	When       *Predicate      `json:"when,omitempty"`
+	Validators []Validator     `json:"validators,omitempty"`
 }
 type Option struct {
 	Value string `json:"value"`
@@ -72,6 +77,8 @@ type Option struct {
 type Validator struct {
 	Kind string `json:"kind"`
 	Arg  string `json:"arg,omitempty"`
+	// Message replaces the generic failure text so the prompt can say what is wanted.
+	Message string `json:"message,omitempty"`
 }
 
 type Predicate struct {
@@ -137,6 +144,20 @@ func Validate(value Scenario) error {
 		}
 		if field.Secret && len(field.Default) > 0 {
 			return fmt.Errorf("scenario secret field %q cannot have default", field.ID)
+		}
+		if field.Generate && !field.Secret {
+			return fmt.Errorf("scenario field %q can only generate a value when it is secret", field.ID)
+		}
+		for _, validator := range field.Validators {
+			switch validator.Kind {
+			case "nonEmpty":
+			case "pattern":
+				if _, err := regexp.Compile(validator.Arg); err != nil {
+					return fmt.Errorf("scenario field %q has an invalid pattern: %w", field.ID, err)
+				}
+			default:
+				return fmt.Errorf("scenario field %q uses unknown validator %q", field.ID, validator.Kind)
+			}
 		}
 	}
 	pageIDs := map[string]bool{}
@@ -360,6 +381,11 @@ func Compile(value Scenario, state State, base contracts.InstallRequest) (contra
 		base.ProviderPreferences = map[string]string{}
 	}
 	for _, field := range allFields(value) {
+		// A field the journey does not show (its `when` is false) is neither
+		// required nor emitted, whatever an earlier answer left in the state.
+		if field.When != nil && !field.When.Evaluate(state.Answers) {
+			continue
+		}
 		raw, exists := state.Answers[field.ID]
 		if !exists {
 			raw = field.Default
@@ -368,9 +394,6 @@ func Compile(value Scenario, state State, base contracts.InstallRequest) (contra
 			return contracts.InstallRequest{}, fmt.Errorf("required scenario field %q is missing", field.ID)
 		}
 		if len(raw) == 0 {
-			continue
-		}
-		if field.When != nil && !field.When.Evaluate(state.Answers) {
 			continue
 		}
 		if err := validateField(field, raw); err != nil {
@@ -383,6 +406,13 @@ func Compile(value Scenario, state State, base contracts.InstallRequest) (contra
 		}
 		if err := json.Unmarshal(raw, &text); err != nil {
 			return contracts.InstallRequest{}, fmt.Errorf("scenario field %q must be a JSON string", field.ID)
+		}
+		if isBlankOptionalString(field, text) {
+			// A blank optional answer means "not provided". Emitting it would
+			// write an empty string over the component's own default and can
+			// make a strict consumer (e.g. an email-typed setting) reject the
+			// generated configuration.
+			continue
 		}
 		if field.ProviderFor != "" {
 			base.ProviderPreferences[field.ProviderFor] = text
@@ -425,16 +455,38 @@ func validateField(field Field, raw json.RawMessage) error {
 		}
 		return fmt.Errorf("field %q option %q is not declared", field.ID, value)
 	}
+	if isBlankOptionalString(field, decoded) {
+		return nil
+	}
 	for _, validator := range field.Validators {
-		if validator.Kind == "nonEmpty" {
+		switch validator.Kind {
+		case "nonEmpty":
 			if value, ok := decoded.(string); !ok || strings.TrimSpace(value) == "" {
 				return fmt.Errorf("field %q must not be empty", field.ID)
 			}
-		} else {
+		case "pattern":
+			expression, err := regexp.Compile(validator.Arg)
+			if err != nil {
+				return fmt.Errorf("field %q has an invalid pattern: %w", field.ID, err)
+			}
+			if value, ok := decoded.(string); !ok || !expression.MatchString(value) {
+				if validator.Message != "" {
+					return fmt.Errorf("field %q: %s", field.ID, validator.Message)
+				}
+				return fmt.Errorf("field %q does not match the required format", field.ID)
+			}
+		default:
 			return fmt.Errorf("field %q uses unknown validator %q", field.ID, validator.Kind)
 		}
 	}
 	return nil
+}
+
+// isBlankOptionalString reports an optional, free-text, non-secret field whose
+// answer is empty: the user chose not to provide it.
+func isBlankOptionalString(field Field, value any) bool {
+	text, ok := value.(string)
+	return ok && text == "" && field.Type == "string" && !field.Required && !field.Secret && len(field.Options) == 0
 }
 func components(ids []string) []contracts.ComponentRequest {
 	result := make([]contracts.ComponentRequest, 0, len(ids))

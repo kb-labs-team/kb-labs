@@ -264,3 +264,26 @@ describe('SUPPORTED_PROTOCOL_VERSIONS', () => {
     expect(SUPPORTED_PROTOCOL_VERSIONS).toContain('1.0');
   });
 });
+
+describe('GatewayConfigSchema.access / AuthConfigSchema.enabled', () => {
+  it('access is optional and its mode is a closed enum', () => {
+    expect(GatewayConfigSchema.parse({}).access).toBeUndefined();
+    expect(GatewayConfigSchema.parse({ access: { mode: 'local' } }).access).toEqual({ mode: 'local' });
+    expect(() => GatewayConfigSchema.parse({ access: { mode: 'nope' } })).toThrow();
+    expect(() => GatewayConfigSchema.parse({ access: {} })).toThrow();
+  });
+
+  it('auth.enabled is NOT defaulted: mentioning auth must not read as an explicit "enabled: true"', () => {
+    expect(AuthConfigSchema.parse({ bootstrap: { tenantId: 't' } }).enabled).toBeUndefined();
+    expect(AuthConfigSchema.parse({ enabled: false }).enabled).toBe(false);
+    expect(AuthConfigSchema.parse({ enabled: true }).enabled).toBe(true);
+  });
+});
+
+describe('AuthConfigSchema.bootstrap.tenantId', () => {
+  it('is optional: the gateway falls back to the env, then its default', () => {
+    expect(AuthConfigSchema.parse({ bootstrap: { adminEmail: 'admin@example.com' } }).bootstrap?.tenantId).toBeUndefined();
+    expect(AuthConfigSchema.parse({ bootstrap: { tenantId: 'acme' } }).bootstrap?.tenantId).toBe('acme');
+    expect(() => AuthConfigSchema.parse({ bootstrap: { tenantId: '' } })).toThrow();
+  });
+});

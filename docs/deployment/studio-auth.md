@@ -28,7 +28,8 @@ identity come from **environment variables**; everything else is a **config key*
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `true` | `false` = solo/local mode: every request runs as a local admin, Studio opens without login. The gateway refuses to start this way on a non-loopback bind |
+| `access.mode` | — | High-level "Studio access" choice, written by `kb-create`: `secured` (login required) or `local` (no login, binds `127.0.0.1` unless `host` is set). Absent = `secured` |
+| `enabled` | derived | Not defaulted. Explicit `true`/`false` wins over `access.mode`; when omitted it follows `access.mode` (login required unless `local`). `false` = every request runs as a local admin; the gateway refuses to start this way on a non-loopback bind |
 | `sessionAccessTtlSec` | `900` | Access token lifetime |
 | `sessionRefreshTtlSec` | `2592000` (30d) | Refresh token lifetime |
 | `refreshGraceWindowSec` | `5` | Grace window for parallel refresh (CD-5) |
@@ -61,6 +62,17 @@ kb logs query --plugin-id gateway --limit 50 | grep bootstrap-admin
 
 A failed bootstrap is logged as a warning (`Bootstrap admin seed failed (non-fatal)`) and the
 gateway still starts — without an admin.
+
+### Installing with `kb-create`
+
+`kb-create` asks for "Studio access" and writes `gateway.access.mode`; the gateway declares
+what it needs in `kb-create.requirements.json` (see `tools/kb-create/v2/README.md`). For
+`secured` the wizard also asks for the first admin's email and password (hidden input,
+confirmed) and generates the session signing secret (`GATEWAY_JWT_SECRET`) when you press Enter.
+Non-interactive installs pass the secrets with `--secret-env`. Secrets land only in the private
+`.kb/v2/secrets.env`, never in generated config. If the admin password is skipped, no admin exists
+after install: `kb-dev doctor` reports `no_active_admin`, and `kb auth reset-admin` creates one
+using the email the installer already wrote.
 
 ### Diagnosing "I can't log in"
 

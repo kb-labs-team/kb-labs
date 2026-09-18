@@ -61,7 +61,7 @@ function makeCtx(captured: Captured): PluginContextV3 {
 }
 
 const FLAGS = { email: undefined, tenant: undefined, 'password-stdin': false, generate: false, yes: false, force: false, json: true };
-const run = async (flags: Partial<typeof FLAGS>) => {
+const run = async (flags: Partial<Record<keyof typeof FLAGS, string | boolean | undefined>>) => {
   const captured: Captured = { errors: [], output: [], json: [] };
   const exitCode = await authResetAdmin.run(makeCtx(captured), [], { ...FLAGS, email: EMAIL, tenant: TENANT, ...flags } as any);
   return { exitCode, captured };
@@ -162,6 +162,26 @@ describe('kb auth reset-admin', () => {
     const { captured } = await run({ email: undefined, tenant: undefined });
 
     expect(captured.json[0]).toMatchObject({ email: 'env-admin@kblabs.ru', tenantId: 'env-tenant' });
+  });
+
+  it("resolves the tenant in the gateway's own order: config, then env (config wins)", async () => {
+    // The gateway reads config before GATEWAY_BOOTSTRAP_TENANT_ID; a reset that used the
+    // opposite order would create/repair the admin in a tenant the gateway never logs into.
+    process.env.GATEWAY_BOOTSTRAP_TENANT_ID = 'env-tenant';
+    state.gateway = { ...state.gateway, auth: { ...(state.gateway.auth as object), bootstrap: { tenantId: 'config-tenant' } } };
+
+    const { captured } = await run({ tenant: undefined });
+
+    expect(captured.json[0]).toMatchObject({ tenantId: 'config-tenant' });
+  });
+
+  it('an explicit --tenant beats both', async () => {
+    process.env.GATEWAY_BOOTSTRAP_TENANT_ID = 'env-tenant';
+    state.gateway = { ...state.gateway, auth: { ...(state.gateway.auth as object), bootstrap: { tenantId: 'config-tenant' } } };
+
+    const { captured } = await run({ tenant: 'flag-tenant' });
+
+    expect(captured.json[0]).toMatchObject({ tenantId: 'flag-tenant' });
   });
 
   it('refuses when no persistent documentDatabase is configured', async () => {

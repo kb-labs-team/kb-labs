@@ -7,7 +7,8 @@
     "gateway-app": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "kb-create.requirements.json"
   ],
   "scripts": {
     "build": "tsup",
