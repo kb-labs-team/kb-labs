@@ -28,7 +28,7 @@
     "@kb-labs/inbox-contracts": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
     "imapflow": "^1.0.0",
-    "nodemailer": "^9.0.1"
+    "nodemailer": "^9.1.1"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
