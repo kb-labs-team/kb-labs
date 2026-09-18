@@ -181,10 +181,6 @@ func run(operation, indexPath, inputPath, doctorInput, platformRoot, snapshotID,
 		write(output, failure("KB_CREATE_SECRET_INPUT_INVALID", "secret input could not be stored", "use --secret-env requirement=ENV_VAR and set the environment variable", err))
 		return 2
 	}
-	if err := bindSecretEnvironments(store, response.Plan.ConfigPatches); err != nil {
-		write(output, failure("KB_CREATE_SECRET_INPUT_INVALID", "secret could not be bound to its service environment", "give secrets that share an environment variable the same value", err))
-		return 2
-	}
 	offlineArtifacts := response.Plan.Request.Source == contracts.SourceOffline
 	artifactExecutor := artifacts.Composite{Packages: artifacts.Pnpm{Root: response.Plan.Request.PlatformRoot, Registry: registry, Offline: offlineArtifacts, Log: transcript}, Binaries: artifacts.Binaries{Root: response.Plan.Request.PlatformRoot, Offline: offlineArtifacts}}
 	deps := runtime.Dependencies{Artifacts: artifactExecutor, Activator: services.KBDev{Binary: kbdev, Log: transcript}, Status: services.KBDev{Binary: kbdev}, CorrelationID: correlationID, Secrets: &store}
@@ -244,46 +240,6 @@ func populateSecrets(store secrets.Store, mappings string) error {
 			return fmt.Errorf("environment variable %q is not set", environment)
 		}
 		if err := store.Put(name, value); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// bindSecretEnvironments makes each stored secret reachable under the
-// environment variable its plan patch binds it to.
-//
-// Secrets are stored under their requirement ID (what the launcher verifies and
-// doctor checks), but the generated service env is `${ENV_NAME}` and kb-dev
-// resolves that by the variable's NAME from this same private store. Without the
-// second key any secret whose ID differs from its variable
-// (`gateway.jwtSecret` vs `GATEWAY_JWT_SECRET`) is stored yet never delivered,
-// and kb-dev refuses to start the service. It runs on every apply/update,
-// whatever supplied the value (--secret-env or the wizard), and only for
-// secrets that are present: a missing required one is reported by the runtime.
-// Two secrets bound to one variable must hold the same value.
-func bindSecretEnvironments(store secrets.Store, patches []contracts.ConfigPatch) error {
-	delivered := map[string]string{}
-	for _, patch := range patches {
-		if patch.Environment == "" || !strings.HasPrefix(patch.Owner, "manifest:") {
-			continue
-		}
-		id := strings.TrimPrefix(patch.Owner, "manifest:")
-		if id == patch.Environment {
-			continue
-		}
-		value, present, err := store.Get(id)
-		if err != nil {
-			return err
-		}
-		if !present {
-			continue
-		}
-		if previous, seen := delivered[patch.Environment]; seen && previous != value {
-			return fmt.Errorf("secrets bound to environment variable %q hold different values", patch.Environment)
-		}
-		delivered[patch.Environment] = value
-		if err := store.Put(patch.Environment, value); err != nil {
 			return err
 		}
 	}

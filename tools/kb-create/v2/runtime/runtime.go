@@ -62,6 +62,11 @@ func Apply(plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.Ins
 	if err := verifySecrets(plan, deps.Secrets); err != nil {
 		return contracts.InstallReceipt{}, err
 	}
+	if deps.Secrets != nil {
+		if err := deps.Secrets.BindEnvironments(plan.ConfigPatches); err != nil {
+			return contracts.InstallReceipt{}, fmt.Errorf("bind secrets to service environment: %w", err)
+		}
+	}
 	if err := deps.Artifacts.Install(plan.Artifacts); err != nil {
 		return contracts.InstallReceipt{}, fmt.Errorf("apply exact artifacts: %w", err)
 	}
