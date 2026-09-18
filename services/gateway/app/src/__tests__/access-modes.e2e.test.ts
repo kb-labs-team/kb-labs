@@ -60,6 +60,8 @@ interface Choices {
   /** Secret values by requirement id; only these are wired into the service env. */
   secrets?: Record<string, string>;
   adminEmail?: string;
+  /** Literal environment for the service, as an operator would set it. */
+  env?: Record<string, string>;
 }
 
 // ── Process + HTTP plumbing ─────────────────────────────────────────────────
@@ -146,7 +148,11 @@ const startGateway = async (choices: Choices): Promise<Instance> => {
   // the variable name — the state the installer's apply step leaves behind.
   const wired = requirements.filter((r) => r.secret && choices.secrets?.[r.id] !== undefined);
   writeFileSync(join(dir, '.kb/v2/secrets.env'), wired.map((r) => `${r.env}=${choices.secrets![r.id]}`).join('\n') + (wired.length ? '\n' : ''), { mode: 0o600 });
-  const envBlock = wired.length ? `    env:\n${wired.map((r) => `      ${r.env}: "\${${r.env}}"`).join('\n')}\n` : '';
+  const envLines = [
+    ...wired.map((r) => `      ${r.env}: "\${${r.env}}"`),
+    ...Object.entries(choices.env ?? {}).map(([k, v]) => `      ${k}: "${v}"`),
+  ];
+  const envBlock = envLines.length ? `    env:\n${envLines.join('\n')}\n` : '';
   const yaml = join(dir, '.kb/devservices.yaml');
   writeFileSync(yaml, [
     'name: access-modes e2e', 'groups:', '  backend: [gateway]', 'services:', '  gateway:', '    name: Gateway',
@@ -169,8 +175,8 @@ afterEach(async () => {
   while (running.length > 0) {await running.pop()!.stop();}
 });
 
-const login = (port: number, email: string, password: string) =>
-  http(port, '/auth/login', { method: 'POST', json: { email, password, tenantId: 'kblabs-cloud' } });
+const login = (port: number, email: string, password: string, tenantId = 'kblabs-cloud') =>
+  http(port, '/auth/login', { method: 'POST', json: { email, password, tenantId } });
 
 // ── Scenarios ───────────────────────────────────────────────────────────────
 
@@ -212,6 +218,23 @@ describe.skipIf(missing.length > 0)('Studio access — real gateway process', ()
       expect(denied.status, JSON.stringify(headers)).toBe(404);
       expect(denied.body).not.toContain('activeAdmins');
     }
+  });
+
+  // Regression found by the docker auth e2e: the installer wrote a default tenant into
+  // the config, config beats GATEWAY_BOOTSTRAP_TENANT_ID, so an env-configured deployment
+  // got its admin created in the wrong tenant and nobody could log in.
+  it('secured install: the operator env decides the tenant, because the installer writes none', async () => {
+    const { port } = await startGateway({
+      mode: 'secured',
+      adminEmail: ADMIN_EMAIL,
+      env: { GATEWAY_BOOTSTRAP_TENANT_ID: 'acme' },
+      secrets: { 'gateway.bootstrap.password': ADMIN_PASSWORD, 'gateway.jwtSecret': JWT_SECRET },
+    });
+
+    const readiness = JSON.parse((await http(port, '/health/auth', { headers: { host: `localhost:${port}` } })).body);
+    expect(readiness).toMatchObject({ ok: true, tenantId: 'acme', activeAdmins: 1 });
+    expect((await login(port, ADMIN_EMAIL, ADMIN_PASSWORD, 'acme')).status).toBe(200);
+    expect((await login(port, ADMIN_EMAIL, ADMIN_PASSWORD, 'kblabs-cloud')).status).toBe(401);
   });
 
   it('secured install without an admin password: nobody can log in and readiness says exactly why', async () => {

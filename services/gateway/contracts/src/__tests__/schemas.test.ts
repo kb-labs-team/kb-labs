@@ -279,3 +279,11 @@ describe('GatewayConfigSchema.access / AuthConfigSchema.enabled', () => {
     expect(AuthConfigSchema.parse({ enabled: true }).enabled).toBe(true);
   });
 });
+
+describe('AuthConfigSchema.bootstrap.tenantId', () => {
+  it('is optional: the gateway falls back to the env, then its default', () => {
+    expect(AuthConfigSchema.parse({ bootstrap: { adminEmail: 'admin@example.com' } }).bootstrap?.tenantId).toBeUndefined();
+    expect(AuthConfigSchema.parse({ bootstrap: { tenantId: 'acme' } }).bootstrap?.tenantId).toBe('acme');
+    expect(() => AuthConfigSchema.parse({ bootstrap: { tenantId: '' } })).toThrow();
+  });
+});

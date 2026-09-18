@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { GatewayConfigSchema } from '@kb-labs/gateway-contracts';
-import { resolveAccess } from '../access.js';
+import { resolveAccess, resolveBootstrapTenantId } from '../access.js';
 
 const appRoot = resolve(import.meta.dirname, '../..');
 
@@ -92,9 +92,10 @@ describe('the gateway really reads what it declares', () => {
 
   it('materialised paths land where the gateway config schema reads them', () => {
     const config: Record<string, unknown> = {};
-    // Defaults as the installer writes them, plus a sample for the value-less requirement.
+    // Defaults as the installer writes them, plus samples for the value-less requirements.
+    const samples: Record<string, unknown> = { 'gateway.bootstrap.adminEmail': 'admin@example.com', 'gateway.bootstrap.tenantId': 'acme' };
     for (const r of file.requirements.filter((x) => !x.secret)) {
-      const value = r.default ?? (r.id === 'gateway.bootstrap.adminEmail' ? 'admin@example.com' : undefined);
+      const value = samples[r.id] ?? r.default;
       expect(value, `${r.id} needs a default or a sample`).toBeDefined();
       setPointer(config, r.path!, value);
     }
@@ -102,7 +103,7 @@ describe('the gateway really reads what it declares', () => {
 
     expect(parsed.access).toEqual({ mode: 'secured' });
     expect(parsed.auth?.bootstrap?.adminEmail).toBe('admin@example.com');
-    expect(parsed.auth?.bootstrap?.tenantId).toBe('kblabs-cloud');
+    expect(parsed.auth?.bootstrap?.tenantId).toBe('acme');
   });
 
   it('the default install (defaults only, no answers) keeps login required', () => {
@@ -114,15 +115,27 @@ describe('the gateway really reads what it declares', () => {
     expect(resolveAccess(parsed).authEnabled).toBe(true);
   });
 
-  it('the installer default tenant matches the tenant the gateway falls back to', () => {
-    expect(byId('gateway.bootstrap.tenantId').default).toBe('kblabs-cloud');
-    expect(bootstrapSource).toContain('"kblabs-cloud"');
+  // Regression found by the docker auth e2e: a default here was written into
+  // kb.config, config beats GATEWAY_BOOTSTRAP_TENANT_ID, so every env-configured
+  // deployment got its admin created in the wrong tenant and nobody could log in.
+  it('declares NO default for anything the operator can also set through the env', () => {
+    expect(byId('gateway.bootstrap.tenantId').default).toBeUndefined();
+    expect(resolveBootstrapTenantId({}, { GATEWAY_BOOTSTRAP_TENANT_ID: 'kb-cloud' })).toBe('kb-cloud');
+  });
+
+  it('a default install writes no tenant, so the operator env decides', () => {
+    const config: Record<string, unknown> = {};
+    for (const r of file.requirements.filter((x) => !x.secret && x.default !== undefined)) {
+      setPointer(config, r.path!, r.default);
+    }
+    const parsed = GatewayConfigSchema.parse((config as { gateway: unknown }).gateway);
+    expect(resolveBootstrapTenantId(parsed, { GATEWAY_BOOTSTRAP_TENANT_ID: 'kb-cloud' })).toBe('kb-cloud');
   });
 
   it('a local choice yields a config that disables login even though auth.bootstrap is present', () => {
     const config: Record<string, unknown> = {};
     setPointer(config, byId('gateway.access.mode').path!, 'local');
-    setPointer(config, byId('gateway.bootstrap.tenantId').path!, byId('gateway.bootstrap.tenantId').default);
+    setPointer(config, byId('gateway.bootstrap.tenantId').path!, 'acme'); // an auth object must not re-enable login
     const parsed = GatewayConfigSchema.parse((config as { gateway: unknown }).gateway);
     expect(resolveAccess(parsed)).toEqual({ authEnabled: false, bindHost: '127.0.0.1' });
   });

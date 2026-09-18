@@ -78,8 +78,13 @@ const AuthRateLimitSchema = z.object({
 });
 
 const AuthBootstrapSchema = z.object({
-  /** Tenant ID for the bootstrap admin account (used in subdomain routing). */
-  tenantId: z.string().min(1),
+  /**
+   * Tenant ID for the bootstrap admin account (used in subdomain routing).
+   * Optional: when omitted the gateway falls back to GATEWAY_BOOTSTRAP_TENANT_ID
+   * and then `kblabs-cloud`. Config wins over the env, so an installer must NOT
+   * write a default here — it would silently shadow the operator's env.
+   */
+  tenantId: z.string().min(1).optional(),
   /** Admin email — also readable from env GATEWAY_BOOTSTRAP_ADMIN_EMAIL. */
   adminEmail: z.string().email().optional(),
   /**

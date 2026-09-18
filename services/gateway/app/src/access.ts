@@ -38,3 +38,16 @@ export const resolveAccess = (
     bindHost: config.host ?? (local ? LOCAL_BIND_HOST : DEPLOYED_BIND_HOST),
   };
 };
+
+/**
+ * Tenant that owns the bootstrap admin: config, then GATEWAY_BOOTSTRAP_TENANT_ID,
+ * then the platform default. Config wins, which is why an installer must never
+ * write a *default* for `gateway.auth.bootstrap.tenantId`: it would silently
+ * shadow the operator's env and create the admin in the wrong tenant.
+ */
+export const DEFAULT_BOOTSTRAP_TENANT = 'kblabs-cloud';
+
+export const resolveBootstrapTenantId = (
+  config: { auth?: { bootstrap?: { tenantId?: string } } },
+  env: NodeJS.ProcessEnv,
+): string => config.auth?.bootstrap?.tenantId ?? env.GATEWAY_BOOTSTRAP_TENANT_ID ?? DEFAULT_BOOTSTRAP_TENANT;

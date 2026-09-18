@@ -174,15 +174,21 @@ func everywhereExcept(t *testing.T, root, value string) []string {
 
 func TestSecuredWizardInstallDeliversTheGatewayItsAdminAndSecrets(t *testing.T) {
 	// channel, profile, Studio access, admin email, password + confirmation, blank => generated signing secret
-	result := install(t, "\n\nsecured\nadmin@example.com\n"+adminPassword+"\n"+adminPassword+"\n\n")
+	result := install(t, "\n\nsecured\nadmin@example.com\n\n"+adminPassword+"\n"+adminPassword+"\n\n")
 
 	gateway := gatewaySection(t, result)
 	if access, _ := gateway["access"].(map[string]any); access["mode"] != "secured" {
 		t.Fatalf("gateway.access = %v", gateway["access"])
 	}
 	bootstrap := gateway["auth"].(map[string]any)["bootstrap"].(map[string]any)
-	if bootstrap["adminEmail"] != "admin@example.com" || bootstrap["tenantId"] != "kblabs-cloud" {
+	if bootstrap["adminEmail"] != "admin@example.com" {
 		t.Fatalf("gateway.auth.bootstrap = %v", bootstrap)
+	}
+	// No tenant answered: none may be written. Config beats GATEWAY_BOOTSTRAP_TENANT_ID,
+	// so a default here would put the admin in the wrong tenant for every env-configured
+	// deployment (found by the docker auth e2e).
+	if _, present := bootstrap["tenantId"]; present {
+		t.Fatalf("an unanswered tenant must not be written: %v", bootstrap)
 	}
 
 	// The service env references the secrets by variable name only.
@@ -225,7 +231,7 @@ func TestSecuredWizardInstallDeliversTheGatewayItsAdminAndSecrets(t *testing.T) 
 
 func TestSecuredInstallWithoutAnAdminPasswordStillSecuresSessions(t *testing.T) {
 	// email and password skipped; the signing secret is still generated.
-	result := install(t, "\n\nsecured\n\n\n\n")
+	result := install(t, "\n\nsecured\n\n\n\n\n")
 
 	if !strings.Contains(result.devsvcs, "GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET}") {
 		t.Fatalf("the signing secret must still reach the gateway:\n%s", result.devsvcs)
@@ -233,9 +239,9 @@ func TestSecuredInstallWithoutAnAdminPasswordStillSecuresSessions(t *testing.T) 
 	if strings.Contains(result.devsvcs, "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD") {
 		t.Fatalf("no admin password was given, none may be wired:\n%s", result.devsvcs)
 	}
-	bootstrap := gatewaySection(t, result)["auth"].(map[string]any)["bootstrap"].(map[string]any)
-	if _, present := bootstrap["adminEmail"]; present {
-		t.Fatalf("a skipped email must not be written: %v", bootstrap)
+	// Nothing answered, nothing defaulted: the gateway config carries no auth block at all.
+	if auth, present := gatewaySection(t, result)["auth"]; present {
+		t.Fatalf("a secured install with no admin identity must not write gateway.auth: %v", auth)
 	}
 }
 
@@ -341,4 +347,13 @@ func keysOf(values map[string]string) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func TestSecuredInstallWritesTheTenantOnlyWhenTheUserChoseOne(t *testing.T) {
+	result := install(t, "\n\nsecured\nadmin@example.com\nacme\n"+adminPassword+"\n"+adminPassword+"\n\n")
+
+	bootstrap := gatewaySection(t, result)["auth"].(map[string]any)["bootstrap"].(map[string]any)
+	if bootstrap["tenantId"] != "acme" || bootstrap["adminEmail"] != "admin@example.com" {
+		t.Fatalf("gateway.auth.bootstrap = %v", bootstrap)
+	}
 }

@@ -58,7 +58,7 @@ func runCustom(t *testing.T, root, input string) (contracts.InstallRequest, stri
 func TestSecuredJourneyStoresTypedAndGeneratedSecretsAndNeverEchoesThem(t *testing.T) {
 	root := t.TempDir()
 	const password = "Sup3r-secret-pw"
-	request, output, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n"+password+"\n"+password+"\n\n")
+	request, output, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\n"+password+"\n"+password+"\n\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestSecuredJourneyStoresTypedAndGeneratedSecretsAndNeverEchoesThem(t *testi
 
 func TestSecuredJourneyWithBlankPasswordSkipsItButStillSecuresSessions(t *testing.T) {
 	root := t.TempDir()
-	request, output, err := runCustom(t, root, "\n\nsecured\n\n\n\n")
+	request, output, err := runCustom(t, root, "\n\nsecured\n\n\n\n\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestLocalJourneyAsksForNoAdminAndStoresNothing(t *testing.T) {
 
 func TestSecuredChoiceOnTheSamePageOpensTheAdminQuestions(t *testing.T) {
 	// custom defaults to local; choosing secured must reveal the admin page.
-	_, output, err := runCustom(t, t.TempDir(), "\n\nsecured\n\n\n\n")
+	_, output, err := runCustom(t, t.TempDir(), "\n\nsecured\n\n\n\n\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestSecuredChoiceOnTheSamePageOpensTheAdminQuestions(t *testing.T) {
 func TestSecretsWithJSONSpecialCharactersRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	const password = `pa"ss\wörd-🔑-1234`
-	if _, _, err := runCustom(t, root, "\n\nsecured\n\n"+password+"\n"+password+"\n\n"); err != nil {
+	if _, _, err := runCustom(t, root, "\n\nsecured\n\n\n"+password+"\n"+password+"\n\n"); err != nil {
 		t.Fatal(err)
 	}
 	if got := storedSecrets(t, root)["gateway.bootstrap.password"]; got != password {
@@ -162,7 +162,7 @@ func TestSecretsWithJSONSpecialCharactersRoundTrip(t *testing.T) {
 func TestMismatchedConfirmationAndShortPasswordsAreReAskedNotFatal(t *testing.T) {
 	root := t.TempDir()
 	// 1st: entries differ; 2nd: too short (confirmation matches); 3rd: valid.
-	input := "\n\nsecured\n\n" + "Aaaaaaaa1\nBbbbbbbb2\n" + "short\nshort\n" + "Valid-pass-1\nValid-pass-1\n" + "\n"
+	input := "\n\nsecured\n\n\n" + "Aaaaaaaa1\nBbbbbbbb2\n" + "short\nshort\n" + "Valid-pass-1\nValid-pass-1\n" + "\n"
 	request, output, err := runCustom(t, root, input)
 	if err != nil {
 		t.Fatalf("recoverable mistakes must not abort the journey: %v", err)
@@ -184,7 +184,7 @@ func TestMismatchedConfirmationAndShortPasswordsAreReAskedNotFatal(t *testing.T)
 
 func TestGivesUpAfterRepeatedBadSecretsAndStoresNothing(t *testing.T) {
 	root := t.TempDir()
-	input := "\n\nsecured\n\n" + "short\nshort\n" + "short\nshort\n" + "short\nshort\n"
+	input := "\n\nsecured\n\n\n" + "short\nshort\n" + "short\nshort\n" + "short\nshort\n"
 	if _, _, err := runCustom(t, root, input); err == nil {
 		t.Fatal("three invalid entries must fail the journey")
 	}
@@ -199,7 +199,7 @@ func TestInjectedSecretReaderIsUsedForSecretsOnly(t *testing.T) {
 	var output bytes.Buffer
 	_, err := RequestScenario(gatewaySource(t), root, "custom", IO{
 		// Everything except secrets comes from In.
-		In:  bytes.NewBufferString("\n\nsecured\nadmin@example.com\n"),
+		In:  bytes.NewBufferString("\n\nsecured\nadmin@example.com\n\n"),
 		Out: &output,
 		ReadSecret: func() (string, error) {
 			asked++
@@ -273,7 +273,7 @@ func TestGeneratedSecretsAreRandomAndLongEnough(t *testing.T) {
 
 func TestSecretsAreStoredUnderRequirementIDsThatTheLauncherVerifies(t *testing.T) {
 	root := t.TempDir()
-	if _, _, err := runCustom(t, root, "\n\nsecured\n\nPassw0rd-ok\nPassw0rd-ok\n\n"); err != nil {
+	if _, _, err := runCustom(t, root, "\n\nsecured\n\n\nPassw0rd-ok\nPassw0rd-ok\n\n"); err != nil {
 		t.Fatal(err)
 	}
 	store := secrets.Store{PlatformRoot: root}

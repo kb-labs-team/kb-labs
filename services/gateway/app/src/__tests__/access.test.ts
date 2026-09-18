@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { GatewayConfigSchema } from '@kb-labs/gateway-contracts';
-import { resolveAccess } from '../access.js';
+import { resolveAccess, resolveBootstrapTenantId, DEFAULT_BOOTSTRAP_TENANT } from '../access.js';
 import { isLoopbackHost } from '../bootstrap.js';
 
 const resolve = (gateway: unknown) => resolveAccess(GatewayConfigSchema.parse(gateway));
@@ -88,5 +88,27 @@ describe('B-023 guardrail inputs (auth off must be loopback)', () => {
 
   it('secured never violates, whatever the host', () => {
     expect(violates({ access: { mode: 'secured' }, host: '0.0.0.0' })).toBe(false);
+  });
+});
+
+describe('resolveBootstrapTenantId — config, then env, then default', () => {
+  it('config wins over the env', () => {
+    expect(resolveBootstrapTenantId({ auth: { bootstrap: { tenantId: 'from-config' } } }, { GATEWAY_BOOTSTRAP_TENANT_ID: 'from-env' })).toBe('from-config');
+  });
+
+  it('the env is used when config does not name a tenant', () => {
+    expect(resolveBootstrapTenantId({ auth: { bootstrap: { adminEmail: 'a@b.co' } as never } }, { GATEWAY_BOOTSTRAP_TENANT_ID: 'from-env' })).toBe('from-env');
+    expect(resolveBootstrapTenantId({}, { GATEWAY_BOOTSTRAP_TENANT_ID: 'from-env' })).toBe('from-env');
+  });
+
+  it('falls back to the platform default', () => {
+    expect(resolveBootstrapTenantId({}, {})).toBe(DEFAULT_BOOTSTRAP_TENANT);
+    expect(DEFAULT_BOOTSTRAP_TENANT).toBe('kblabs-cloud');
+  });
+
+  it('a bootstrap block without a tenant is valid config (an installer may write only the admin email)', () => {
+    const parsed = GatewayConfigSchema.parse({ auth: { bootstrap: { adminEmail: 'admin@example.com' } } });
+    expect(parsed.auth?.bootstrap?.tenantId).toBeUndefined();
+    expect(resolveBootstrapTenantId(parsed, { GATEWAY_BOOTSTRAP_TENANT_ID: 'kb-cloud' })).toBe('kb-cloud');
   });
 });

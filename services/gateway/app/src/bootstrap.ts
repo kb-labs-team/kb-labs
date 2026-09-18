@@ -35,7 +35,7 @@ import {
 import type { IKVStore } from "@kb-labs/core-platform/adapters";
 import { createRegistry } from "@kb-labs/core-registry";
 import { loadGatewayConfig } from "./config.js";
-import { resolveAccess } from "./access.js";
+import { resolveAccess, resolveBootstrapTenantId } from "./access.js";
 import { createServer, type UserAuthServerDeps } from "./server.js";
 import { HostRegistry } from "./hosts/registry.js";
 import { registerPressureLimits } from "./pressure/index.js";
@@ -118,10 +118,7 @@ async function startGateway({
       cookieSecure,
     } = resolveAuthRuntimeConfig(config.auth, process.env);
     const tenantPattern = config.tenants?.pattern ?? "{tenant}.kblabs.ru";
-    const bootstrapTenantId =
-      config.auth?.bootstrap?.tenantId ??
-      process.env.GATEWAY_BOOTSTRAP_TENANT_ID ??
-      "kblabs-cloud";
+    const bootstrapTenantId = resolveBootstrapTenantId(config, process.env);
 
     const users = new UsersStore(docs);
     const credentials = new CredentialsStore(docs);
