@@ -89,14 +89,30 @@ const AuthBootstrapSchema = z.object({
   provisionCliCredentials: z.boolean().optional(),
 }).optional();
 
+/**
+ * High-level "Studio access" choice, written by the installer (`kb-create`).
+ * `local`  — solo machine: no login, and the gateway binds loopback by default.
+ * `secured` — login required (same as omitting it).
+ * An explicit `auth.enabled` and `host` always win over what this implies.
+ */
+export const AccessConfigSchema = z.object({
+  mode: z.enum(['local', 'secured']),
+});
+
 export const AuthConfigSchema = z.object({
   /**
-   * Whether authentication is enforced. Default true (cloud/team).
-   * When false (solo/local mode) the gateway runs every request as a local
-   * admin and Studio opens without login. The startup guardrail refuses to
-   * start with auth disabled on a non-loopback bind (B-023).
+   * Whether authentication is enforced. When false (solo/local mode) the
+   * gateway runs every request as a local admin and Studio opens without
+   * login. The startup guardrail refuses to start with auth disabled on a
+   * non-loopback bind (B-023).
+   *
+   * Deliberately NOT defaulted here: when omitted it is derived from
+   * `gateway.access.mode` (and is enabled when that is absent too — cloud/team).
+   * A schema default would make every config that merely mentions `auth`
+   * (e.g. just `auth.bootstrap`) look like an explicit `enabled: true` and
+   * silently override `access.mode: "local"`.
    */
-  enabled: z.boolean().default(true),
+  enabled: z.boolean().optional(),
   /** Whether to set Secure flag on session cookies. Set false in dev only. */
   cookieSecure: z.boolean().default(true),
   /** Access token TTL in seconds. Default 15 min. */
@@ -148,6 +164,8 @@ export const GatewayConfigSchema = z.object({
   staticTokens: z.record(z.string(), StaticTokenEntrySchema).default({}),
   /** HTTP pressure control (rate limiting via ResourceBroker). */
   pressure: PressureConfigSchema.optional(),
+  /** Installer-facing access mode; see AccessConfigSchema. */
+  access: AccessConfigSchema.optional(),
   /** User auth configuration (ADR-0020). */
   auth: AuthConfigSchema.optional(),
   /** Tenant routing configuration. */
@@ -159,6 +177,7 @@ export type PressureRouteOverride = z.infer<typeof PressureRouteOverrideSchema>;
 export type PressureTenantConfig = z.infer<typeof PressureTenantConfigSchema>;
 export type PressureConfig = z.infer<typeof PressureConfigSchema>;
 export type UpstreamConfig = z.infer<typeof UpstreamConfigSchema>;
+export type AccessConfig = z.infer<typeof AccessConfigSchema>;
 export type AuthConfig = z.infer<typeof AuthConfigSchema>;
 export type TenantsConfig = z.infer<typeof TenantsConfigSchema>;
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;

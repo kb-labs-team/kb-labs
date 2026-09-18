@@ -35,6 +35,7 @@ import {
 import type { IKVStore } from "@kb-labs/core-platform/adapters";
 import { createRegistry } from "@kb-labs/core-registry";
 import { loadGatewayConfig } from "./config.js";
+import { resolveAccess } from "./access.js";
 import { createServer, type UserAuthServerDeps } from "./server.js";
 import { HostRegistry } from "./hosts/registry.js";
 import { registerPressureLimits } from "./pressure/index.js";
@@ -75,6 +76,7 @@ async function startGateway({
   // spawned with cwd at the platform root, and we MUST not conflate
   // that with the project root.
   const config = await loadGatewayConfig(projectRoot, platformRoot);
+  const access = resolveAccess(config);
   logger.info("Gateway config loaded", {
     port: config.port,
     upstreams: Object.keys(config.upstreams),
@@ -239,11 +241,10 @@ async function startGateway({
       );
     }
 
-    const authEnabled = config.auth?.enabled !== false;
     const authReadiness = () =>
       evaluateAuthReadiness({
-        authEnabled,
-        loopbackOnly: isLoopbackHost(config.host ?? "0.0.0.0"),
+        authEnabled: access.authEnabled,
+        loopbackOnly: isLoopbackHost(access.bindHost),
         tenantId: bootstrapTenantId,
         jwtSecretIsDefault: !process.env.GATEWAY_JWT_SECRET,
         bootstrap: { status: bootstrapStatus, email: adminEmail },
@@ -415,12 +416,12 @@ async function startGateway({
   );
 
   // 11. Listen
-  const bindHost = config.host ?? "0.0.0.0";
+  const { authEnabled, bindHost } = access;
 
   // Safety guardrail (B-023): a platform with auth disabled must never be
   // reachable off the local machine. If auth is off, the bind host MUST be a
   // loopback address — otherwise refuse to start with a clear, actionable error.
-  if (config.auth?.enabled === false && !isLoopbackHost(bindHost)) {
+  if (!authEnabled && !isLoopbackHost(bindHost)) {
     throw new Error(
       `Refusing to start: auth is disabled but the gateway binds to "${bindHost}" ` +
         `(not loopback). A no-auth platform reachable on the network grants full ` +
@@ -438,7 +439,7 @@ async function startGateway({
   const address = await server.listen({ port: listenPort, host: bindHost });
   logger.info("Gateway listening", {
     address,
-    authEnabled: config.auth?.enabled !== false,
+    authEnabled,
   });
 
   return async () => {

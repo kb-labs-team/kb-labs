@@ -1,0 +1,36 @@
+{
+  "schema": "kb.create.requirements/v1",
+  "requirements": [
+    {
+      "id": "gateway.access.mode",
+      "path": "/gateway/access/mode",
+      "default": "secured",
+      "hint": "Studio access: \"secured\" requires login; \"local\" is a no-login install that binds loopback only"
+    },
+    {
+      "id": "gateway.bootstrap.adminEmail",
+      "path": "/gateway/auth/bootstrap/adminEmail",
+      "hint": "Email of the first administrator (secured access)"
+    },
+    {
+      "id": "gateway.bootstrap.tenantId",
+      "path": "/gateway/auth/bootstrap/tenantId",
+      "default": "kblabs-cloud",
+      "hint": "Tenant that owns the first administrator"
+    },
+    {
+      "id": "gateway.bootstrap.password",
+      "secret": true,
+      "env": "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD",
+      "services": ["gateway"],
+      "hint": "Password of the first administrator; without it no admin is created (recover later with `kb auth reset-admin`)"
+    },
+    {
+      "id": "gateway.jwtSecret",
+      "secret": true,
+      "env": "GATEWAY_JWT_SECRET",
+      "services": ["gateway"],
+      "hint": "HMAC secret that signs session tokens (e.g. `openssl rand -hex 64`); without it the gateway uses a public development secret"
+    }
+  ]
+}

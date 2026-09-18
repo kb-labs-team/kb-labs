@@ -264,3 +264,18 @@ describe('SUPPORTED_PROTOCOL_VERSIONS', () => {
     expect(SUPPORTED_PROTOCOL_VERSIONS).toContain('1.0');
   });
 });
+
+describe('GatewayConfigSchema.access / AuthConfigSchema.enabled', () => {
+  it('access is optional and its mode is a closed enum', () => {
+    expect(GatewayConfigSchema.parse({}).access).toBeUndefined();
+    expect(GatewayConfigSchema.parse({ access: { mode: 'local' } }).access).toEqual({ mode: 'local' });
+    expect(() => GatewayConfigSchema.parse({ access: { mode: 'nope' } })).toThrow();
+    expect(() => GatewayConfigSchema.parse({ access: {} })).toThrow();
+  });
+
+  it('auth.enabled is NOT defaulted: mentioning auth must not read as an explicit "enabled: true"', () => {
+    expect(AuthConfigSchema.parse({ bootstrap: { tenantId: 't' } }).enabled).toBeUndefined();
+    expect(AuthConfigSchema.parse({ enabled: false }).enabled).toBe(false);
+    expect(AuthConfigSchema.parse({ enabled: true }).enabled).toBe(true);
+  });
+});
