@@ -1,7 +1,7 @@
 ---
 title: "kb-dev"
 description: "Local service manager — process tracking, health probes, dependency ordering, and auto-restart for any project."
-updatedAt: "2026-07-16"
+updatedAt: "2026-09-18"
 order: 8
 ---
 
@@ -385,6 +385,15 @@ kb-dev doctor --json
 ```
 
 Failures always include a `hint` with the exact command to fix the issue.
+
+When the gateway is running, `doctor` also asks it for its auth readiness (`GET /health/auth`, answered only to local, non-proxied requests) and adds `auth` checks:
+
+```json
+{ "id": "auth",                 "ok": false, "detail": "enabled, 0 active admin(s), tenant kblabs-cloud" },
+{ "id": "auth:no_active_admin",  "ok": false, "detail": "Authentication is enabled but tenant \"kblabs-cloud\" has no active admin — nobody can log in. Fix: Stop the gateway, then run: kb auth reset-admin --email admin@example.com --tenant kblabs-cloud --generate --yes" }
+```
+
+Errors fail the doctor; warnings (for example `auth:jwt_secret_default` on a loopback bind) are reported with `"warn": true` and leave it passing. If the gateway is not running, or is an older version without the endpoint, the auth check is skipped and reported as `authSkip`.
 
 ### watch — JSONL event stream
 

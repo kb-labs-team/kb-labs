@@ -1,7 +1,7 @@
 ---
 title: "Troubleshooting"
 description: "Common issues and their fixes — the FAQ for KB Labs developers."
-updatedAt: "2026-07-16"
+updatedAt: "2026-09-18"
 order: 7
 ---
 
@@ -308,6 +308,26 @@ Or switch workflows to `isolation: 'relaxed'` if you don't need workspace isolat
 2. If using static tokens: verify the token is in `gateway.staticTokens` in `kb.config.json`.
 3. If using runtime JWTs: check `GATEWAY_JWT_SECRET` didn't rotate. All tokens minted with the old secret are now invalid.
 4. If the token is expired: re-authenticate via `/auth/token`.
+
+### Can't log in to Studio: 401 with the correct password
+
+**Symptom.** `POST /auth/login` returns `401 invalid_credentials` even though the password is right.
+
+**Cause.** Every login failure looks the same by design, so the response cannot say why. The usual reason on a fresh secured install is that authentication is enabled but no admin exists (or the admin was disabled, or lost its credential).
+
+**Fix.**
+
+1. Run `kb-dev doctor`. The `auth` checks say which case it is and print the exact command.
+2. Stop the gateway and recover the admin offline:
+
+   ```bash
+   kb auth reset-admin --email admin@example.com --tenant kblabs-cloud             # dry run
+   kb auth reset-admin --email admin@example.com --tenant kblabs-cloud --generate --yes
+   ```
+
+3. Start the gateway again and log in with the printed password.
+
+Do not delete rows from the database by hand — bootstrap never recreates a missing credential for an existing user. See [Studio auth deployment guide](https://github.com/kb-labs-team/kb-labs/blob/master/docs/deployment/studio-auth.md) for details.
 
 ### 404 on `/plugins/<name>/<route>`
 
