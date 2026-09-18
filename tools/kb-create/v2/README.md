@@ -76,6 +76,22 @@ receipt, scenario state, logs, diagnostics and telemetry retain only the
 manifest requirement or `${ENV_VAR}` placeholder. `kb-dev` reads this private
 store when it expands the rendered service environment.
 
+`kb-dev` resolves `${ENV_VAR}` by the *variable name*, so when the plan binds a
+requirement to an environment variable the value is stored under both the
+requirement ID (what the launcher verifies and doctor checks) and that variable
+name. Two secrets bound to one variable must carry the same value or the run
+fails instead of letting the last write win.
+
+Scenario field rules that matter to authors:
+
+- A field whose `when` is false is neither required nor emitted, whatever an
+  earlier answer left in the state.
+- An optional free-text field left blank means "not provided": it is not
+  validated and is not emitted, so it never overwrites a component's own
+  default with an empty string.
+- Validators are `nonEmpty` and `pattern` (Go RE2 in `arg`); an unknown
+  validator or an invalid pattern fails when the scenario is loaded.
+
 The platform bundle can also declare an OS/architecture-specific `kb-dev`
 binary asset. V2 verifies its SHA-256 and installs it in `.kb/v2/bin`; a CLI
 `--kb-dev` is an explicit development override, not a release dependency.
@@ -240,6 +256,54 @@ providers. It may render safe manifest defaults, restore a receipt/snapshot,
 rebuild derived config and ask a human/agent for required input through the
 same `InstallRequest` schema. The subsequent engine run verifies the repaired
 configuration, service graph and readiness before updating the receipt.
+
+### Packages declare their own configuration requirements
+
+A selected package states the configuration it needs in a
+`kb-create.requirements.json` shipped in its tarball (package root or `dist/`):
+
+```json
+{
+  "schema": "kb.create.requirements/v1",
+  "requirements": [
+    { "id": "gateway.access.mode", "path": "/gateway/access/mode", "default": "secured" },
+    { "id": "gateway.jwtSecret", "secret": true, "env": "GATEWAY_JWT_SECRET", "services": ["gateway"] }
+  ]
+}
+```
+
+`prepare-release-index.mjs` merges these into the package's staged
+`kb-create.manifest.json`, and `kb-create-release-index` seals them into the
+index; the sealed shape is unchanged (`id`, `path`, `default`, `secret`, `env`,
+`services`), so launchers that predate this file keep verifying the digest.
+
+- The file is deliberately **not** named `kb-create.manifest.json`: that name is
+  treated as a package's *primary* manifest and would hide a service's
+  `kb.service/1` graph, dropping the service from the index.
+- `default` is a plain JSON value here (`"secured"`, not `"\"secured\""`).
+- A malformed file, a missing/duplicate `id`, or a secret without `env` and
+  `services` fails the release rather than shipping the package without its
+  requirements.
+- Requirements are unconditional. "Only when secured" is expressed by the
+  scenario (`when` + a field bound to the requirement); the index carries no
+  conditional-requirement syntax.
+
+The gateway declares `gateway.access.mode` (`local` | `secured`), the optional
+first-admin identity (`gateway.bootstrap.adminEmail`, `gateway.bootstrap.tenantId`) and the
+secrets `gateway.bootstrap.password` and `gateway.jwtSecret`. Non-interactive
+secured install:
+
+```bash
+export ADMIN_PASSWORD=... JWT_SECRET="$(openssl rand -hex 64)"
+kb-create --operation apply --index release-index.json --input request.json \
+  --secret-env gateway.bootstrap.password=ADMIN_PASSWORD,gateway.jwtSecret=JWT_SECRET
+# request.json: values {"gateway.access.mode":"\"secured\"","gateway.bootstrap.adminEmail":"\"admin@example.com\""}
+#               secretInputs ["gateway.bootstrap.password","gateway.jwtSecret"]
+```
+
+The interactive wizard asks for the admin email but not for secrets (it does not
+yet persist secret input). A secured install made that way has no admin until
+`kb auth reset-admin` is run; `kb-dev doctor` reports exactly that.
 
 ## Engine, receipt and snapshots
 

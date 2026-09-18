@@ -36,3 +36,16 @@ The release-index boundary is defined by
 manager. `kb-create` only consumes the resulting contract. Package identity,
 version, manifest digest and source artifact are retained by the sealed release
 index for deterministic planning and diagnostics.
+
+## Addendum: package-declared configuration requirements (2026-09)
+
+A package that needs configuration (a JSON Pointer path with an optional default, or a
+secret bound to an environment variable and target services) declares it in a
+`kb-create.requirements.json` (`schema: kb.create.requirements/v1`) shipped in its tarball.
+The release-index preparation merges it into the staged `kb-create.manifest.json`; the sealed
+requirement shape is unchanged, so already-shipped launchers keep verifying the index digest.
+It is a separate file because a `kb-create.manifest.json` in the tarball is read as the
+package's primary manifest and would hide a service's `kb.service/1` graph. Requirements are
+unconditional; conditionality ("only when secured") belongs to the scenario, not the index.
+The gateway is the first user: `gateway.access.mode`, the first-admin identity and the
+`GATEWAY_BOOTSTRAP_ADMIN_PASSWORD` / `GATEWAY_JWT_SECRET` secrets.
