@@ -48,6 +48,20 @@ func (store Store) Exists(name string) (bool, error) {
 	}
 	return values[name] != "", nil
 }
+
+// Get returns a stored secret. The bool reports presence (an empty stored value
+// counts as absent, matching Exists).
+func (store Store) Get(name string) (string, bool, error) {
+	if err := validate(name); err != nil {
+		return "", false, err
+	}
+	values, err := store.read()
+	if err != nil {
+		return "", false, err
+	}
+	value := values[name]
+	return value, value != "", nil
+}
 func (store Store) path() string {
 	return filepath.Join(store.PlatformRoot, ".kb", "v2", "secrets.env")
 }

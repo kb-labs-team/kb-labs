@@ -288,3 +288,25 @@ func TestBlankOptionalStringIsUnsetNotAnEmptyValue(t *testing.T) {
 		t.Fatal("a missing required field must still fail the compile")
 	}
 }
+
+func TestGenerateIsOnlyValidOnSecretFields(t *testing.T) {
+	ok := Scenario{Schema: Schema, ID: "gen", Fields: []Field{{ID: "k", Requirement: "r", Type: "string", Secret: true, Generate: true}}}
+	if err := Validate(ok); err != nil {
+		t.Fatalf("a generated secret must be valid: %v", err)
+	}
+	bad := Scenario{Schema: Schema, ID: "gen", Fields: []Field{{ID: "k", Requirement: "r", Type: "string", Generate: true}}}
+	if err := Validate(bad); err == nil {
+		t.Fatal("generating a non-secret value must be rejected")
+	}
+}
+
+func TestValidatorMessageReplacesTheGenericFailureText(t *testing.T) {
+	definition := Scenario{Schema: Schema, ID: "msg", Fields: []Field{{ID: "pw", Requirement: "r", Type: "string", Secret: true, Validators: []Validator{{Kind: "pattern", Arg: `^.{8,}$`, Message: "must be at least 8 characters"}}}}}
+	state, _ := New(definition)
+	if _, err := Answer(definition, state, "pw", []byte(`"short"`)); err == nil || !strings.Contains(err.Error(), "must be at least 8 characters") {
+		t.Fatalf("error = %v", err)
+	}
+	if _, err := Answer(definition, state, "pw", []byte(`"long-enough"`)); err != nil {
+		t.Fatalf("valid value rejected: %v", err)
+	}
+}

@@ -67,12 +67,12 @@ gateway still starts — without an admin.
 
 `kb-create` asks for "Studio access" and writes `gateway.access.mode`; the gateway declares
 what it needs in `kb-create.requirements.json` (see `tools/kb-create/v2/README.md`). For
-`secured` the installer also records the first admin's email, and the secrets
-`gateway.bootstrap.password` / `gateway.jwtSecret` are supplied with `--secret-env` (they land
-in the private `.kb/v2/secrets.env`, never in generated config). If the password is not
-supplied — the interactive wizard does not ask for secrets — no admin exists after install:
-`kb-dev doctor` reports `no_active_admin`, and `kb auth reset-admin` creates one using the
-email the installer already wrote.
+`secured` the wizard also asks for the first admin's email and password (hidden input,
+confirmed) and generates the session signing secret (`GATEWAY_JWT_SECRET`) when you press Enter.
+Non-interactive installs pass the secrets with `--secret-env`. Secrets land only in the private
+`.kb/v2/secrets.env`, never in generated config. If the admin password is skipped, no admin exists
+after install: `kb-dev doctor` reports `no_active_admin`, and `kb auth reset-admin` creates one
+using the email the installer already wrote.
 
 ### Diagnosing "I can't log in"
 

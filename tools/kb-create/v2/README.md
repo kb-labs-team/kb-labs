@@ -76,10 +76,11 @@ receipt, scenario state, logs, diagnostics and telemetry retain only the
 manifest requirement or `${ENV_VAR}` placeholder. `kb-dev` reads this private
 store when it expands the rendered service environment.
 
-`kb-dev` resolves `${ENV_VAR}` by the *variable name*, so when the plan binds a
-requirement to an environment variable the value is stored under both the
-requirement ID (what the launcher verifies and doctor checks) and that variable
-name. Two secrets bound to one variable must carry the same value or the run
+`kb-dev` resolves `${ENV_VAR}` by the *variable name*, so on every apply/update
+the launcher also stores each present secret under the environment variable its
+plan patch binds it to, next to the requirement ID (what the launcher verifies
+and doctor checks). This holds whatever supplied the value (`--secret-env` or the
+wizard). Two secrets bound to one variable must hold the same value or the run
 fails instead of letting the last write win.
 
 Scenario field rules that matter to authors:
@@ -89,8 +90,12 @@ Scenario field rules that matter to authors:
 - An optional free-text field left blank means "not provided": it is not
   validated and is not emitted, so it never overwrites a component's own
   default with an empty string.
-- Validators are `nonEmpty` and `pattern` (Go RE2 in `arg`); an unknown
-  validator or an invalid pattern fails when the scenario is loaded.
+- Validators are `nonEmpty` and `pattern` (Go RE2 in `arg`, optional `message`
+  shown instead of the generic failure); an unknown validator or an invalid
+  pattern fails when the scenario is loaded.
+- A secret field may set `generate`: the interactive wizard mints a random
+  256-bit value when it is left blank (for machine-owned secrets such as a
+  token-signing key). `generate` is only valid on secret fields.
 
 The platform bundle can also declare an OS/architecture-specific `kb-dev`
 binary asset. V2 verifies its SHA-256 and installs it in `.kb/v2/bin`; a CLI
@@ -301,9 +306,15 @@ kb-create --operation apply --index release-index.json --input request.json \
 #               secretInputs ["gateway.bootstrap.password","gateway.jwtSecret"]
 ```
 
-The interactive wizard asks for the admin email but not for secrets (it does not
-yet persist secret input). A secured install made that way has no admin until
-`kb auth reset-admin` is run; `kb-dev doctor` reports exactly that.
+The interactive wizard collects the same values. Secret input is read with echo
+disabled on a real terminal, a human-chosen value is asked twice, and format
+errors or a mismatch re-ask (three tries) instead of aborting. Blank means:
+generate it (fields with `generate`, e.g. the session signing secret), fail
+(required fields), or skip. After the request compiled, only the secrets the
+request names are written to the private store (`.kb/v2/secrets.env`, 0600); a
+secret never reaches the answers, the request, the terminal output or the resume
+state. Skipping the admin password leaves a secured install without an admin
+until `kb auth reset-admin` is run; `kb-dev doctor` reports exactly that.
 
 ## Engine, receipt and snapshots
 

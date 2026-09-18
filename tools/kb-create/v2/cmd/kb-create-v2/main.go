@@ -177,8 +177,12 @@ func run(operation, indexPath, inputPath, doctorInput, platformRoot, snapshotID,
 	}
 	defer transcript.Close()
 	store := secrets.Store{PlatformRoot: response.Plan.Request.PlatformRoot}
-	if err := populateSecrets(store, secretEnv, response.Plan.ConfigPatches); err != nil {
+	if err := populateSecrets(store, secretEnv); err != nil {
 		write(output, failure("KB_CREATE_SECRET_INPUT_INVALID", "secret input could not be stored", "use --secret-env requirement=ENV_VAR and set the environment variable", err))
+		return 2
+	}
+	if err := bindSecretEnvironments(store, response.Plan.ConfigPatches); err != nil {
+		write(output, failure("KB_CREATE_SECRET_INPUT_INVALID", "secret could not be bound to its service environment", "give secrets that share an environment variable the same value", err))
 		return 2
 	}
 	offlineArtifacts := response.Plan.Request.Source == contracts.SourceOffline
@@ -226,22 +230,10 @@ func runStatus(platformRoot, kbdev string, output *os.File) int {
 	return 0
 }
 
-// populateSecrets stores each --secret-env value under its requirement ID (what
-// the launcher verifies and doctor checks) and, when the plan binds that
-// requirement to an environment variable, ALSO under that variable's name.
-//
-// The second key is what makes the value reach the service: the generated
-// service env is `${ENV_NAME}`, and kb-dev resolves that reference against
-// this same private store by name. Without it any secret whose requirement ID
-// differs from its environment variable (`gateway.jwtSecret` vs
-// `GATEWAY_JWT_SECRET`) is stored but never delivered, and kb-dev refuses to
-// start the service with "environment variable ... is not set".
-func populateSecrets(store secrets.Store, mappings string, patches []contracts.ConfigPatch) error {
+func populateSecrets(store secrets.Store, mappings string) error {
 	if strings.TrimSpace(mappings) == "" {
 		return nil
 	}
-	environments := secretEnvironments(patches)
-	delivered := map[string]string{} // env name -> value written this run
 	for _, pair := range strings.Split(mappings, ",") {
 		name, environment, ok := strings.Cut(strings.TrimSpace(pair), "=")
 		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(environment) == "" {
@@ -254,32 +246,48 @@ func populateSecrets(store secrets.Store, mappings string, patches []contracts.C
 		if err := store.Put(name, value); err != nil {
 			return err
 		}
-		target := environments[name]
-		if target == "" || target == name {
-			continue
-		}
-		if previous, seen := delivered[target]; seen && previous != value {
-			return fmt.Errorf("secrets bound to environment variable %q were given different values", target)
-		}
-		delivered[target] = value
-		if err := store.Put(target, value); err != nil {
-			return err
-		}
 	}
 	return nil
 }
 
-// secretEnvironments maps a secret requirement ID to the environment variable
-// its plan patch binds it to.
-func secretEnvironments(patches []contracts.ConfigPatch) map[string]string {
-	result := map[string]string{}
+// bindSecretEnvironments makes each stored secret reachable under the
+// environment variable its plan patch binds it to.
+//
+// Secrets are stored under their requirement ID (what the launcher verifies and
+// doctor checks), but the generated service env is `${ENV_NAME}` and kb-dev
+// resolves that by the variable's NAME from this same private store. Without the
+// second key any secret whose ID differs from its variable
+// (`gateway.jwtSecret` vs `GATEWAY_JWT_SECRET`) is stored yet never delivered,
+// and kb-dev refuses to start the service. It runs on every apply/update,
+// whatever supplied the value (--secret-env or the wizard), and only for
+// secrets that are present: a missing required one is reported by the runtime.
+// Two secrets bound to one variable must hold the same value.
+func bindSecretEnvironments(store secrets.Store, patches []contracts.ConfigPatch) error {
+	delivered := map[string]string{}
 	for _, patch := range patches {
 		if patch.Environment == "" || !strings.HasPrefix(patch.Owner, "manifest:") {
 			continue
 		}
-		result[strings.TrimPrefix(patch.Owner, "manifest:")] = patch.Environment
+		id := strings.TrimPrefix(patch.Owner, "manifest:")
+		if id == patch.Environment {
+			continue
+		}
+		value, present, err := store.Get(id)
+		if err != nil {
+			return err
+		}
+		if !present {
+			continue
+		}
+		if previous, seen := delivered[patch.Environment]; seen && previous != value {
+			return fmt.Errorf("secrets bound to environment variable %q hold different values", patch.Environment)
+		}
+		delivered[patch.Environment] = value
+		if err := store.Put(patch.Environment, value); err != nil {
+			return err
+		}
 	}
-	return result
+	return nil
 }
 
 func compileScenario(id, answers string, resume bool, base contracts.InstallRequest) (contracts.InstallRequest, error) {

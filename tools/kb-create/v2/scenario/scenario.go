@@ -52,18 +52,22 @@ type Section struct {
 }
 
 type Field struct {
-	ID          string          `json:"id"`
-	Requirement string          `json:"requirement,omitempty"`
-	ProviderFor string          `json:"providerFor,omitempty"`
-	Type        string          `json:"type"`
-	Label       string          `json:"label,omitempty"`
-	Description string          `json:"description,omitempty"`
-	Required    bool            `json:"required,omitempty"`
-	Secret      bool            `json:"secret,omitempty"`
-	Default     json.RawMessage `json:"default,omitempty"`
-	Options     []Option        `json:"options,omitempty"`
-	When        *Predicate      `json:"when,omitempty"`
-	Validators  []Validator     `json:"validators,omitempty"`
+	ID          string `json:"id"`
+	Requirement string `json:"requirement,omitempty"`
+	ProviderFor string `json:"providerFor,omitempty"`
+	Type        string `json:"type"`
+	Label       string `json:"label,omitempty"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	Secret      bool   `json:"secret,omitempty"`
+	// Generate lets an interactive frontend mint a random value when a secret
+	// field is left blank (for machine-owned secrets nobody needs to remember,
+	// such as a token-signing key). Only valid on secret fields.
+	Generate   bool            `json:"generate,omitempty"`
+	Default    json.RawMessage `json:"default,omitempty"`
+	Options    []Option        `json:"options,omitempty"`
+	When       *Predicate      `json:"when,omitempty"`
+	Validators []Validator     `json:"validators,omitempty"`
 }
 type Option struct {
 	Value string `json:"value"`
@@ -73,6 +77,8 @@ type Option struct {
 type Validator struct {
 	Kind string `json:"kind"`
 	Arg  string `json:"arg,omitempty"`
+	// Message replaces the generic failure text so the prompt can say what is wanted.
+	Message string `json:"message,omitempty"`
 }
 
 type Predicate struct {
@@ -138,6 +144,9 @@ func Validate(value Scenario) error {
 		}
 		if field.Secret && len(field.Default) > 0 {
 			return fmt.Errorf("scenario secret field %q cannot have default", field.ID)
+		}
+		if field.Generate && !field.Secret {
+			return fmt.Errorf("scenario field %q can only generate a value when it is secret", field.ID)
 		}
 		for _, validator := range field.Validators {
 			switch validator.Kind {
@@ -461,6 +470,9 @@ func validateField(field Field, raw json.RawMessage) error {
 				return fmt.Errorf("field %q has an invalid pattern: %w", field.ID, err)
 			}
 			if value, ok := decoded.(string); !ok || !expression.MatchString(value) {
+				if validator.Message != "" {
+					return fmt.Errorf("field %q: %s", field.ID, validator.Message)
+				}
 				return fmt.Errorf("field %q does not match the required format", field.ID)
 			}
 		default:

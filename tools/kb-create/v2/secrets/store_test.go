@@ -32,3 +32,20 @@ func TestStoreRejectsInjectionName(t *testing.T) {
 		t.Fatal("accepted injection name")
 	}
 }
+
+func TestGetReturnsStoredValueAndReportsAbsence(t *testing.T) {
+	store := Store{PlatformRoot: t.TempDir()}
+	if _, present, err := store.Get("missing"); err != nil || present {
+		t.Fatalf("absent secret: present=%v err=%v", present, err)
+	}
+	if err := store.Put("gateway.jwtSecret", "value=with=equals"); err != nil {
+		t.Fatal(err)
+	}
+	value, present, err := store.Get("gateway.jwtSecret")
+	if err != nil || !present || value != "value=with=equals" {
+		t.Fatalf("value/present/err = %q / %v / %v", value, present, err)
+	}
+	if _, _, err := store.Get("bad=name"); err == nil {
+		t.Fatal("an invalid name must be rejected")
+	}
+}

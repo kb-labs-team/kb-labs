@@ -72,7 +72,7 @@ func TestPopulateSecretsReadsEnvironmentWithoutSerialization(t *testing.T) {
 	t.Setenv("KB_CREATE_TEST_SECRET", "private-value")
 	root := t.TempDir()
 	store := secrets.Store{PlatformRoot: root}
-	if err := populateSecrets(store, "openai.key=KB_CREATE_TEST_SECRET", nil); err != nil {
+	if err := populateSecrets(store, "openai.key=KB_CREATE_TEST_SECRET"); err != nil {
 		t.Fatal(err)
 	}
 	exists, err := store.Exists("openai.key")
@@ -265,15 +265,20 @@ func gatewaySecretPatches() []contracts.ConfigPatch {
 	}
 }
 
-// A secret must be stored under the environment variable name the generated
+// A secret must be reachable under the environment variable name the generated
 // service env references (kb-dev resolves ${GATEWAY_JWT_SECRET} by that name),
-// not only under its requirement ID.
-func TestPopulateSecretsAlsoStoresUnderTheBoundEnvironmentName(t *testing.T) {
-	t.Setenv("KB_TEST_JWT_SOURCE", "jwt-value")
-	t.Setenv("KB_TEST_ADMIN_SOURCE", "admin-value")
+// not only under its requirement ID — whatever put it in the store.
+func TestBindSecretEnvironmentsAddsTheBoundEnvironmentKey(t *testing.T) {
 	root := t.TempDir()
 	store := secrets.Store{PlatformRoot: root}
-	if err := populateSecrets(store, "gateway.jwtSecret=KB_TEST_JWT_SOURCE,gateway.bootstrap.password=KB_TEST_ADMIN_SOURCE", gatewaySecretPatches()); err != nil {
+	// As the wizard (or --secret-env) leaves them: keyed by requirement ID only.
+	if err := store.Put("gateway.jwtSecret", "jwt-value"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("gateway.bootstrap.password", "admin-value"); err != nil {
+		t.Fatal(err)
+	}
+	if err := bindSecretEnvironments(store, gatewaySecretPatches()); err != nil {
 		t.Fatal(err)
 	}
 	got := secretsFile(t, root)
@@ -291,39 +296,48 @@ func TestPopulateSecretsAlsoStoresUnderTheBoundEnvironmentName(t *testing.T) {
 			t.Fatalf("%s = %q, want %q (all: %v)", key, got[key], value, got)
 		}
 	}
-	// The requirement ID is still what the launcher verifies.
 	if exists, err := store.Exists("gateway.jwtSecret"); err != nil || !exists {
 		t.Fatalf("requirement ID must stay verifiable: %v / %v", exists, err)
 	}
 }
 
-func TestPopulateSecretsLeavesUnboundAndSelfNamedSecretsAlone(t *testing.T) {
-	t.Setenv("KB_TEST_SOURCE", "value")
+func TestBindSecretEnvironmentsIsIdempotentAndSkipsWhatIsNotThere(t *testing.T) {
 	root := t.TempDir()
 	store := secrets.Store{PlatformRoot: root}
-	patches := append(gatewaySecretPatches(), contracts.ConfigPatch{Owner: "manifest:OPENAI_API_KEY", Environment: "OPENAI_API_KEY", Services: []string{"gateway"}})
-	// Not bound by the plan, and bound to an env equal to its own ID: one key each.
-	if err := populateSecrets(store, "custom.secret=KB_TEST_SOURCE,OPENAI_API_KEY=KB_TEST_SOURCE", patches); err != nil {
+	if err := store.Put("gateway.jwtSecret", "jwt-value"); err != nil {
 		t.Fatal(err)
 	}
+	patches := append(gatewaySecretPatches(),
+		// bound to an env equal to its own ID: nothing to add
+		contracts.ConfigPatch{Owner: "manifest:OPENAI_API_KEY", Environment: "OPENAI_API_KEY", Services: []string{"gateway"}},
+		// a non-secret patch that happens to carry no environment
+		contracts.ConfigPatch{Path: "/x", JSON: `1`, Owner: "platform"},
+	)
+	for i := 0; i < 2; i++ {
+		if err := bindSecretEnvironments(store, patches); err != nil {
+			t.Fatal(err)
+		}
+	}
 	got := secretsFile(t, root)
-	if len(got) != 2 || got["custom.secret"] != "value" || got["OPENAI_API_KEY"] != "value" {
+	// gateway.bootstrap.password was never provided: no alias is invented for it.
+	if len(got) != 2 || got["gateway.jwtSecret"] != "jwt-value" || got["GATEWAY_JWT_SECRET"] != "jwt-value" {
 		t.Fatalf("stored keys = %v", got)
 	}
 }
 
-func TestPopulateSecretsRejectsConflictingValuesForOneEnvironmentVariable(t *testing.T) {
-	t.Setenv("KB_TEST_A", "one")
-	t.Setenv("KB_TEST_B", "two")
+func TestBindSecretEnvironmentsRejectsConflictingValuesForOneVariable(t *testing.T) {
+	store := secrets.Store{PlatformRoot: t.TempDir()}
+	_ = store.Put("a.secret", "one")
+	_ = store.Put("b.secret", "two")
 	patches := []contracts.ConfigPatch{
 		{Owner: "manifest:a.secret", Environment: "SHARED_ENV", Services: []string{"gateway"}},
 		{Owner: "manifest:b.secret", Environment: "SHARED_ENV", Services: []string{"gateway"}},
 	}
-	if err := populateSecrets(secrets.Store{PlatformRoot: t.TempDir()}, "a.secret=KB_TEST_A,b.secret=KB_TEST_B", patches); err == nil {
+	if err := bindSecretEnvironments(store, patches); err == nil {
 		t.Fatal("two different values for one environment variable must be rejected, not silently last-write-wins")
 	}
-	t.Setenv("KB_TEST_B", "one")
-	if err := populateSecrets(secrets.Store{PlatformRoot: t.TempDir()}, "a.secret=KB_TEST_A,b.secret=KB_TEST_B", patches); err != nil {
+	_ = store.Put("b.secret", "one")
+	if err := bindSecretEnvironments(store, patches); err != nil {
 		t.Fatalf("identical values are not a conflict: %v", err)
 	}
 }
