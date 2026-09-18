@@ -42,6 +42,7 @@
     "@kb-labs/core-runtime": "workspace:*",
     "@kb-labs/core-state-broker": "workspace:*",
     "@kb-labs/core-sys": "workspace:*",
+    "@kb-labs/gateway-auth": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/plugin-execution": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",

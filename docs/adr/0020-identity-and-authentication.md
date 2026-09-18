@@ -243,6 +243,26 @@ This decision will be revisited when (a) a real customer needs an
 external IdP, (b) we add machine-token constrained delegation, or (c)
 ABAC becomes concrete.
 
+## Addendum: operator recovery of the admin (2026-09)
+
+Bootstrap (`ensureBootstrapAdmin`) never modifies an existing user, so it cannot repair an
+admin whose credential was lost, whose status was set to `disabled`, or whose membership
+disappeared. Since there is no email reset, the sanctioned recovery path is the offline CLI
+command `kb auth reset-admin` (`resetAdmin` in `services/gateway/auth`): it upserts the
+`email-password` credential, sets `status=active`, restores the `tenant-admin` membership and
+revokes all of the admin's sessions. It validates the password against the normal policy, runs
+as a dry run unless `--yes` is given, takes the password only from stdin or generates one, and
+refuses to run while a gateway is listening (concurrent sqlite writer). Manually deleting the
+credentials row is **not** a recovery: bootstrap will not recreate it. See
+`docs/deployment/studio-auth.md`.
+
+Because every login failure is deliberately identical (CD-8), a locked-out install cannot be
+diagnosed from the login response. The gateway therefore evaluates auth readiness from its own
+stores (`evaluateAuthReadiness`): it logs the result at startup and serves it at
+`GET /health/auth`, restricted to local, non-proxied requests (the body says whether an admin
+exists and whether the dev JWT secret is in use). `kb-dev doctor` surfaces it. State knowledge
+stays in the gateway; the Go tools duplicate no document-database format.
+
 ## References
 
 - ClickUp epic — Platform Authorization Layer (PDP + RBAC + ReBAC):

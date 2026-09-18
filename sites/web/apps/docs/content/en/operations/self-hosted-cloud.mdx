@@ -134,7 +134,19 @@ After it completes, `https://my-company.yourdomain.com` is live with a valid SSL
 
 Open `https://my-company.yourdomain.com` and sign in with the email and password from `GATEWAY_BOOTSTRAP_ADMIN_EMAIL` / `GATEWAY_BOOTSTRAP_ADMIN_PASSWORD`.
 
-The bootstrap admin is created once on first gateway startup for the tenant specified in those env vars. It is idempotent — restarting the gateway does not create a duplicate.
+The bootstrap admin is created once on first gateway startup for the tenant specified in those env vars. It is idempotent — restarting the gateway does not create a duplicate, and it also does **not** repair or re-password an existing admin.
+
+### Lost the admin password?
+
+Stop the gateway and run `kb auth reset-admin` on the VPS. It works offline against the platform database, sets a new password, reactivates the account, restores the admin role and revokes all its sessions:
+
+```bash
+kb-dev stop gateway
+kb auth reset-admin --email admin@example.com --tenant my-company            # dry run
+kb auth reset-admin --email admin@example.com --tenant my-company --generate --yes
+```
+
+Then start the gateway again. Do not delete rows from the database by hand — bootstrap will not recreate a missing credential for an existing user.
 
 ## Updating the platform
 

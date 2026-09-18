@@ -122,6 +122,8 @@ type DoctorCheck struct {
 	OK     bool   `json:"ok"`
 	Detail string `json:"detail"`
 	Path   string `json:"path,omitempty"`
+	// Warn marks a passing check that still deserves attention (OK stays true).
+	Warn bool `json:"warn,omitempty"`
 }
 
 // DoctorResult is the environment diagnostics response.

@@ -27,8 +27,10 @@ import {
   type TenantResolver,
   type RateLimiter,
   type OAuthStateStore,
+  type AuthReadiness,
 } from "@kb-labs/gateway-auth";
 import { createAuthMiddleware } from "./auth/middleware.js";
+import { registerAuthHealthRoute } from "./auth/health-route.js";
 import {
   registerAuthRoutes,
   type MachineAuthRoutesUserExt,
@@ -91,6 +93,8 @@ export interface UserAuthServerDeps {
   oauthState?: OAuthStateStore;
   /** Per-IP callback rate-limit for the OAuth callback. */
   oauthCallbackPerIpPerMinute?: number;
+  /** Evaluates auth readiness (admin present, secret sane). Enables `GET /health/auth`. */
+  authReadiness?: () => Promise<AuthReadiness>;
 }
 
 /** Strip bearer tokens from query params before logging (prevents JWT leakage in access logs). */
@@ -492,6 +496,10 @@ export async function createServer(
         return getAdapterStatus();
       },
     );
+
+    if (userAuth?.authReadiness) {
+      registerAuthHealthRoute(scope, userAuth.authReadiness);
+    }
 
     scope.get(
       "/ready",
