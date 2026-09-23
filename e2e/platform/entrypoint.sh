@@ -25,27 +25,6 @@ mkdir -p /workspace && cd /workspace
 # controls the E2E composition, while the index carries the platform wiring.
 PLATFORM_ROOT=/workspace/kb-e2e
 
-# ── Local observability adapters (consumer overlay) ────────────────────────────
-# The sealed release index is a portable baseline on purpose: it binds only
-# the transport needed to reach the installed service graph, and leaves every
-# other adapter — installed, but unbound — for a consumer overlay to opt into
-# (tools/kb-create/scripts/prepare-release-index.mjs, "portablePlatformAdapterConfig").
-# This suite is such a consumer: workflow run logs (GET /runs/:id/logs and the
-# logs WS channel) are served by platform.logs, which throws "No log storage
-# backend available" without a logRingBuffer or logPersistence adapter bound.
-# The ring buffer is in-process and needs no credentials or endpoints.
-# Written before `kb-create apply` for the same reason as the OIDC overlay below.
-mkdir -p "$PLATFORM_ROOT/.kb/overlays"
-cat > "$PLATFORM_ROOT/.kb/overlays/adapters.jsonc" << 'ADAPTERS_OVERLAY'
-{
-  "platform": {
-    "adapters": {
-      "logRingBuffer": "@kb-labs/adapters-log-ringbuffer"
-    }
-  }
-}
-ADAPTERS_OVERLAY
-
 # ── OIDC redirect-provider overlay (OAuth E2E stack only) ──────────────────────
 # When OIDC_E2E_ENABLED=true (set by docker-compose.oauth-ci.yml), register a
 # generic `oidc` redirect provider pointing at the in-network stub IdP, plus the
