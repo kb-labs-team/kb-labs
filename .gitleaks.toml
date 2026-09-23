@@ -26,6 +26,10 @@ paths = [
   '''core/platform/src/wrappers/pii-detector\.test\.ts''',
   '''plugins/agents/core/tests/tracer/incremental-trace-writer\.test\.ts''',
   '''plugins/agents/mcp/src/__tests__/mcp-tool-pack\.test\.ts''',
+  # gateway access-mode e2e — fake JWT signing secret/admin password fixtures
+  '''services/gateway/app/src/__tests__/access-modes\.e2e\.test\.ts''',
+  # QA scenario docs — example curl commands with placeholder bearer tokens
+  '''docs/qa/scenarios/GW-006-auth\.md''',
   # committed build artifacts / generated data — not secrets
   '''sites/.*/\.next/.*''',
   '''\.kb/lock\.json''',
