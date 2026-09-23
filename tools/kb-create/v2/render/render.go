@@ -107,8 +107,16 @@ type gatewayUpstreamRoute struct {
 }
 
 var conventionalGatewayUpstreams = map[string]gatewayUpstreamRoute{
-	"rest":                 {ServiceID: "rest", Prefix: "/api/v1", Websocket: true, Description: "REST API — main platform BFF"},
-	"workflow":             {ServiceID: "workflow", Prefix: "/api/exec", RewritePrefix: "", Description: "Workflow Daemon — direct access"},
+	"rest":     {ServiceID: "rest", Prefix: "/api/v1", Websocket: true, Description: "REST API — main platform BFF"},
+	"workflow": {ServiceID: "workflow", Prefix: "/api/exec", RewritePrefix: "", Description: "Workflow Daemon — direct access"},
+	// The workflow plugin's manifest (plugins/workflow/entry/src/manifest.ts)
+	// declares its WS channels under basePath "/v1/ws/plugins/workflow"
+	// (logs/:runId, progress/:jobId). That's a distinct upstream from
+	// "workflow" above (different prefix, needs websocket:true) — without
+	// it, GET /api/v1/ws/plugins/workflow/... falls through to the broader
+	// "rest" prefix ("/api/v1") and the workflow daemon never sees the
+	// upgrade. RewritePrefix drops "/api" to match the daemon's own path.
+	"workflow-ws":          {ServiceID: "workflow", Prefix: "/api/v1/ws/plugins/workflow", RewritePrefix: "/v1/ws/plugins/workflow", Websocket: true, Description: "Workflow Daemon — WebSocket channels (logs/progress)"},
 	"marketplace":          {ServiceID: "marketplace", Prefix: "/api/v1/marketplace", Description: "Marketplace Service — unified entity management"},
 	"widgets":              {ServiceID: "rest", Prefix: "/plugins", Description: "Plugin widget bundles — served by REST API"},
 	"marketplace-registry": {ServiceID: "marketplace-registry", Prefix: "/api/v1/registry", RewritePrefix: "/api/v1", Description: "Marketplace Registry — publish, share, install kb:handle/name packages"},

@@ -38,6 +38,34 @@ describe('pickSocketWsUpstream', () => {
   it('returns undefined for an empty upstream list', () => {
     expect(pickSocketWsUpstream('/api/v1/ws', [])).toBeUndefined();
   });
+
+  it('prefers the more specific (longer) prefix over a broader one earlier in the array', () => {
+    // Regression: config.upstreams is rendered from a Go map, so
+    // Object.entries order is alphabetical by upstream name — "rest" sorts
+    // before "workflow-ws" — not by path specificity. A first-match scan
+    // would let the broad "/api/v1" catch-all steal a request meant for the
+    // more specific nested prefix.
+    const WORKFLOW_WS: SocketWsUpstream = {
+      prefix: '/api/v1/ws/plugins/workflow',
+      rewritePrefix: '/v1/ws/plugins/workflow',
+      socketPath: '/tmp/kb-abc12345/workflow.sock',
+    };
+    const picked = pickSocketWsUpstream(
+      '/api/v1/ws/plugins/workflow/logs/run-1',
+      [REST, WORKFLOW_WS],
+    );
+    expect(picked).toBe(WORKFLOW_WS);
+  });
+
+  it('still matches the broad prefix for a path the specific upstream does not own', () => {
+    const WORKFLOW_WS: SocketWsUpstream = {
+      prefix: '/api/v1/ws/plugins/workflow',
+      rewritePrefix: '/v1/ws/plugins/workflow',
+      socketPath: '/tmp/kb-abc12345/workflow.sock',
+    };
+    const picked = pickSocketWsUpstream('/api/v1/clients/connect', [REST, WORKFLOW_WS]);
+    expect(picked).toBe(REST);
+  });
 });
 
 describe('buildUpstreamWsUrl', () => {

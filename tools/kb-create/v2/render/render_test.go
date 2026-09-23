@@ -111,6 +111,45 @@ func TestBuildRendersGatewayUpstreamsForInstalledServicesOnly(t *testing.T) {
 	}
 }
 
+// The workflow plugin's WS channels (logs/progress) live under a distinct
+// prefix from the "workflow" upstream's own "/api/exec", and need
+// websocket:true — without this entry the gateway never dials them and the
+// broader "rest" (/api/v1) upstream silently swallows the upgrade instead.
+func TestBuildRendersWorkflowWebsocketUpstreamWithWebsocketFlag(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.ServiceGraph.Services = append(plan.ServiceGraph.Services,
+		contracts.Service{ID: "rest", Command: "serve", Port: 5050},
+		contracts.Service{ID: "workflow", Command: "serve", Port: 7778},
+	)
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Gateway struct {
+			Upstreams map[string]struct {
+				ServiceID     string `json:"serviceId"`
+				Prefix        string `json:"prefix"`
+				RewritePrefix string `json:"rewritePrefix"`
+				Websocket     bool   `json:"websocket"`
+			} `json:"upstreams"`
+		} `json:"gateway"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	ws, ok := config.Gateway.Upstreams["workflow-ws"]
+	if !ok {
+		t.Fatal("expected workflow-ws upstream to render (workflow service is installed)")
+	}
+	if ws.ServiceID != "workflow" || !ws.Websocket {
+		t.Fatalf("workflow-ws upstream = %+v — want serviceId=workflow, websocket=true", ws)
+	}
+	if ws.Prefix != "/api/v1/ws/plugins/workflow" || ws.RewritePrefix != "/v1/ws/plugins/workflow" {
+		t.Fatalf("workflow-ws prefix/rewritePrefix = %q/%q — must match the manifest's ws.basePath (plugins/workflow/entry/src/manifest.ts)", ws.Prefix, ws.RewritePrefix)
+	}
+}
+
 func TestWriteProducesCompleteV2Projections(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Write(testPlan(root)); err != nil {

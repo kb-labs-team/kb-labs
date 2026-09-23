@@ -49,14 +49,27 @@ const FORWARDED_WS_HEADERS = [
 /**
  * Pick the socket upstream that owns this pathname. Matches on a path boundary
  * (exact prefix or prefix followed by "/"), so "/api/v1x" does not match "/api/v1".
+ *
+ * Picks the LONGEST matching prefix, not the first one in `upstreams` order.
+ * Upstream registration order comes from `Object.entries(config.upstreams)`,
+ * which for a config rendered from a Go map is alphabetical by upstream name
+ * (encoding/json sorts map keys) — unrelated to path specificity. A broad
+ * catch-all like "rest" at "/api/v1" would otherwise silently steal every
+ * request under a more specific nested prefix, e.g. a plugin's own WS
+ * channels at "/api/v1/ws/plugins/<id>", registered under a different name
+ * that happens to sort after "rest".
  */
 export function pickSocketWsUpstream(
   pathname: string,
   upstreams: SocketWsUpstream[],
 ): SocketWsUpstream | undefined {
-  return upstreams.find(
-    (u) => pathname === u.prefix || pathname.startsWith(`${u.prefix}/`),
-  );
+  let best: SocketWsUpstream | undefined;
+  for (const u of upstreams) {
+    if (pathname === u.prefix || pathname.startsWith(`${u.prefix}/`)) {
+      if (!best || u.prefix.length > best.prefix.length) {best = u;}
+    }
+  }
+  return best;
 }
 
 /**
