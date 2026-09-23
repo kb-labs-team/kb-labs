@@ -5,14 +5,25 @@ import { MARKETPLACE } from '@kb-labs/e2e-shared/urls.js'
 // All mutating operations use the body-based API (not URL-encoded package IDs)
 // because plugin IDs contain `@` and `/` that break URL-path routing.
 
-// @kb-labs/commit-entry is the commit plugin — published to Verdaccio from the
-// monorepo build and NOT part of the default kb-create bootstrap, so it is safe
-// to install / disable / enable / uninstall in tests.
-const TEST_SPEC = '@kb-labs/commit-entry'
+// @kb-labs/qa-entry is published to Verdaccio from the monorepo build and not
+// requested by any default kb-create plugin/adapter, so it is safe to
+// install / disable / enable / uninstall in tests.
+//
+// @kb-labs/commit-entry (the commit plugin) looked equally "extra" by the
+// same reasoning below, but it IS in the default --plugins list
+// (e2e/platform/entrypoint.sh); kb-create's own artifact ships it under the
+// short id "commit", while this suite's npm-source installs it keyed by its
+// full package name — two different lock keys pointing at the same
+// node_modules/@kb-labs/commit-entry directory. Uninstalling it here deleted
+// that directory out from under the platform's own "commit" entry, which
+// then failed marketplace diagnostics (package directory not found) for the
+// rest of the run. Don't reuse a default-bootstrap package as a lifecycle
+// test subject, however unrelated its id looks.
+const TEST_SPEC = '@kb-labs/qa-entry'
 
 // Helper: find exact match for TEST_SPEC in marketplace listing.
 // Using exact ID match to avoid false positives from pre-installed packages
-// that happen to share a substring (e.g. '@kb-labs/commit' != '@kb-labs/commit-entry').
+// that happen to share a substring (e.g. '@kb-labs/qa' != '@kb-labs/qa-entry').
 type PkgEntry = { name?: string; id?: string; spec?: string; enabled?: boolean }
 const findExact = (packages: PkgEntry[]) =>
   packages.find(p => p.id === TEST_SPEC || p.spec === TEST_SPEC || p.name === TEST_SPEC)

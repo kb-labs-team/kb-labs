@@ -12,6 +12,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/lifecycle"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/render"
 	"github.com/kb-labs/create/v2/secrets"
@@ -69,6 +70,13 @@ func Apply(plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.Ins
 	}
 	if err := deps.Artifacts.Install(plan.Artifacts); err != nil {
 		return contracts.InstallReceipt{}, fmt.Errorf("apply exact artifacts: %w", err)
+	}
+	// core-discovery's plugin registry reads .kb/marketplace.lock, not the
+	// resolved plan — without this, every installed plugin/adapter is on
+	// disk but invisible to the running platform (empty registry at /ready).
+	if err := marketplace.WriteLock(plan.Request.PlatformRoot, plan.Artifacts, now(deps.Clock)); err != nil {
+		_ = removeProjections(plan.Request.PlatformRoot)
+		return contracts.InstallReceipt{}, fmt.Errorf("write marketplace lock: %w", err)
 	}
 	if _, err := render.Write(plan); err != nil {
 		return contracts.InstallReceipt{}, fmt.Errorf("render resolved projections: %w", err)
@@ -240,7 +248,7 @@ func DoctorFix(platformRoot string, repair doctor.RepairPlan, deps Dependencies)
 }
 
 func removeProjections(platformRoot string) error {
-	for _, relative := range []string{".kb/kb.config.jsonc", ".kb/devservices.yaml"} {
+	for _, relative := range []string{".kb/kb.config.jsonc", ".kb/devservices.yaml", ".kb/marketplace.lock"} {
 		if err := os.Remove(filepath.Join(platformRoot, relative)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove managed projection %s: %w", relative, err)
 		}
