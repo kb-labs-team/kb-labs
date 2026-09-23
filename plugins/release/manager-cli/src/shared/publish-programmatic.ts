@@ -216,8 +216,13 @@ function spawnPublish(options: {
 
     if (token) {
       const existing = npmrcExisted ? readFileSync(npmrcPath, 'utf-8') : '';
-      if (!existing.includes('_authToken')) {
-        writeFileSync(npmrcPath, existing + authLine);
+      // Only an auth line for THIS registry host counts as "already has
+      // auth". A package .npmrc left over from a real npmjs publish carries
+      // `//registry.npmjs.org/:_authToken=…`; treating that as sufficient
+      // skipped the line for the staging registry, and npm then failed with
+      // ENEEDAUTH for exactly the packages that had such a file.
+      if (!existing.includes(`//${registryHost}/:_authToken`)) {
+        writeFileSync(npmrcPath, existing + (existing === '' || existing.endsWith('\n') ? '' : '\n') + authLine);
       }
     }
 

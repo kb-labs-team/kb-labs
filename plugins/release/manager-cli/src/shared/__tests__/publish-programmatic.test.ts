@@ -71,6 +71,38 @@ describe('publishPackagesProgrammatic — .npmrc registry auth', () => {
     expect(capturedNpmrc[0]).not.toContain('registry.npmjs.org');
   });
 
+  it('still adds the staging registry auth line when the package .npmrc only has a token for another registry', async () => {
+    // Regression: a leftover package .npmrc from a real npmjs publish carries
+    // `//registry.npmjs.org/:_authToken=...`. Treating any _authToken as
+    // "already authenticated" skipped the line for the staging registry and
+    // npm failed with ENEEDAUTH for exactly those packages.
+    writeFileSync(join(pkgDir, '.npmrc'), '//registry.npmjs.org/:_authToken=real-npm-token\n');
+
+    await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      registry: 'http://localhost:4973',
+      token: 'verdaccio-local',
+    });
+
+    expect(capturedNpmrc).toHaveLength(1);
+    expect(capturedNpmrc[0]).toContain('//registry.npmjs.org/:_authToken=real-npm-token');
+    expect(capturedNpmrc[0]).toContain('//localhost:4973/:_authToken=${NODE_AUTH_TOKEN}');
+    // The pre-existing file is restored untouched afterwards.
+    expect(readFileSync(join(pkgDir, '.npmrc'), 'utf-8')).toBe('//registry.npmjs.org/:_authToken=real-npm-token\n');
+  });
+
+  it('keeps an existing auth line for the SAME registry instead of adding a second one', async () => {
+    writeFileSync(join(pkgDir, '.npmrc'), '//localhost:4973/:_authToken=user-chosen\n');
+
+    await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      registry: 'http://localhost:4973',
+      token: 'verdaccio-local',
+    });
+
+    expect(capturedNpmrc[0]).toBe('//localhost:4973/:_authToken=user-chosen\n');
+  });
+
   it('defaults to registry.npmjs.org when no registry is passed', async () => {
     await publishPackagesProgrammatic({
       packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
