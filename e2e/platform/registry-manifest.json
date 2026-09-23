@@ -86,6 +86,12 @@
   },
   "plugins": [
     {
+      "id": "workflow",
+      "pkg": "@kb-labs/workflow-entry",
+      "description": "Workflow engine plugin — CLI, REST routes and WS channels for the workflow daemon",
+      "default": true
+    },
+    {
       "id": "marketplace",
       "pkg": "@kb-labs/marketplace-entry",
       "description": "Install, list, enable plugins",
