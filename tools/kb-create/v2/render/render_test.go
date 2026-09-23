@@ -111,6 +111,11 @@ func TestBuildRendersGatewayUpstreamsForInstalledServicesOnly(t *testing.T) {
 	}
 }
 
+// Resolved bindings carry exact "pkg@version" specs (plan/receipt
+// reproducibility) but the runtime adapter loader resolves the configured
+// value as a module name from node_modules; a version suffix made every
+// service fail at boot with "Failed to load adapter module pkg@version".
+//
 // Regression: the platform bundle ships a manifest default for
 // /platform/adapters (a JSON patch, only serviceTransport), while the resolver
 // separately binds capabilities that plugins require (cache, storage). The
@@ -140,10 +145,10 @@ func TestBuildKeepsResolvedAdapterBindingsAlongsideManifestDefault(t *testing.T)
 	if got["serviceTransport"] != "@kb-labs/adapters-service-transport-http" {
 		t.Fatalf("manifest default lost: %v", got)
 	}
-	if got["storage"] != "@kb-labs/data-store@2.0.0" {
-		t.Fatalf("resolved storage binding lost: %v", got)
+	if got["storage"] != "@kb-labs/data-store" {
+		t.Fatalf("resolved storage binding lost or not a bare module name: %v", got)
 	}
-	if got["cache"] != "@kb-labs/adapters-state-broker@2.0.0" {
+	if got["cache"] != "@kb-labs/adapters-state-broker" {
 		t.Fatalf("resolved cache binding must win over a manifest default on the same key, got %q (all: %v)", got["cache"], got)
 	}
 }

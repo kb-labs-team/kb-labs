@@ -161,7 +161,7 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 			}
 		}
 		if len(patch.Path) > len("/platform/adapters/") && patch.Path[:len("/platform/adapters/")] == "/platform/adapters/" {
-			adapters[patch.Path[len("/platform/adapters/"):]] = patch.Value
+			adapters[patch.Path[len("/platform/adapters/"):]] = moduleName(patch.Value)
 		}
 		if len(patch.Path) > len("/plugins/") && patch.Path[:len("/plugins/")] == "/plugins/" {
 			plugins[patch.Path[len("/plugins/"):]] = patch.Value
@@ -252,6 +252,20 @@ func setConfigValue(root map[string]any, pointer, raw string) error {
 	key := strings.ReplaceAll(strings.ReplaceAll(parts[len(parts)-1], "~1", "/"), "~0", "~")
 	current[key] = value
 	return nil
+}
+
+// moduleName turns an exact package spec ("@scope/pkg@1.2.3", what the plan and
+// receipt record so the install is reproducible) into the bare module name the
+// runtime adapter loader resolves from node_modules ("@scope/pkg"). The loader
+// derives the package root from the first two path segments of the configured
+// value, so a version suffix makes it look for a package literally named
+// "@scope/pkg@1.2.3" and every service dies at boot. The installed package set
+// already pins the version.
+func moduleName(spec string) string {
+	if at := strings.LastIndex(spec, "@"); at > 0 {
+		return spec[:at]
+	}
+	return spec
 }
 
 func stringMapAsAny(values map[string]string) map[string]any {
