@@ -111,6 +111,48 @@ func TestBuildRendersGatewayUpstreamsForInstalledServicesOnly(t *testing.T) {
 	}
 }
 
+// Resolved bindings carry exact "pkg@version" specs (plan/receipt
+// reproducibility) but the runtime adapter loader resolves the configured
+// value as a module name from node_modules; a version suffix made every
+// service fail at boot with "Failed to load adapter module pkg@version".
+//
+// Regression: the platform bundle ships a manifest default for
+// /platform/adapters (a JSON patch, only serviceTransport), while the resolver
+// separately binds capabilities that plugins require (cache, storage). The
+// render used a typed map[string]string for the resolved side, so merging the
+// map[string]any default degraded from a deep merge to a replacement and the
+// resolved cache/storage bindings vanished from the rendered config.
+func TestBuildKeepsResolvedAdapterBindingsAlongsideManifestDefault(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.ConfigPatches = []contracts.ConfigPatch{
+		{Path: "/platform/adapters/cache", Value: "@kb-labs/adapters-state-broker@2.0.0", Owner: "adapter:state-broker"},
+		{Path: "/platform/adapters/storage", Value: "@kb-labs/data-store@2.0.0", Owner: "adapter:disk-io-storage"},
+		{Path: "/platform/adapters", JSON: `{"serviceTransport":"@kb-labs/adapters-service-transport-http","cache":"@kb-labs/adapters-redis"}`, Owner: "manifest:platform.adapters"},
+	}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Platform struct {
+			Adapters map[string]string `json:"adapters"`
+		} `json:"platform"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	got := config.Platform.Adapters
+	if got["serviceTransport"] != "@kb-labs/adapters-service-transport-http" {
+		t.Fatalf("manifest default lost: %v", got)
+	}
+	if got["storage"] != "@kb-labs/data-store" {
+		t.Fatalf("resolved storage binding lost or not a bare module name: %v", got)
+	}
+	if got["cache"] != "@kb-labs/adapters-state-broker" {
+		t.Fatalf("resolved cache binding must win over a manifest default on the same key, got %q (all: %v)", got["cache"], got)
+	}
+}
+
 func TestWriteProducesCompleteV2Projections(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Write(testPlan(root)); err != nil {
