@@ -89,10 +89,13 @@ const result = spawnSync(process.execPath, [
   // The platform composition under test needs a log store: workflow run logs
   // (GET /runs/:id/logs, the logs WS channel) are served by platform.logs,
   // which has no backend unless logRingBuffer or logPersistence is bound.
-  // Declaring it as a platform requirement is how the V2 resolver binds a
-  // capability (installed-but-unrequired adapters are deliberately left
-  // unbound); .kb/overlays cannot rebind platform adapters.
-  '--platform-requires', 'serviceTransport,logRingBuffer',
+  // logRingBuffer is an extension adapter that taps the `logger` adapter
+  // ("Extension logRingBuffer cannot connect: target adapter logger not
+  // found" otherwise), so both must be required. Declaring requirements is
+  // how the V2 resolver binds a capability (installed-but-unrequired
+  // adapters are deliberately left unbound); .kb/overlays cannot rebind
+  // platform adapters.
+  '--platform-requires', 'serviceTransport,logger,logRingBuffer',
   '--platform-adapter-config', adapterConfig,
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
