@@ -172,11 +172,20 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 			}
 		}
 	}
-	config := map[string]any{"platform": map[string]any{"version": plan.ServiceGraph.PlatformVersion, "adapters": adapters}, "plugins": plugins}
+	// adapters/plugins are map[string]string while manifest-declared defaults
+	// arrive as map[string]any: merge() only descends into map[string]any, so
+	// a typed map on the target side silently degrades the deep merge into a
+	// wholesale replacement and every resolved binding (cache, storage, ...)
+	// was dropped whenever a manifest declared a /platform/adapters default.
+	config := map[string]any{"platform": map[string]any{"version": plan.ServiceGraph.PlatformVersion, "adapters": stringMapAsAny(adapters)}, "plugins": stringMapAsAny(plugins)}
 	if upstreams := gatewayUpstreams(services); len(upstreams) > 0 {
 		config["gateway"] = map[string]any{"upstreams": upstreams}
 	}
 	merge(config, extra)
+	// A manifest default is only a baseline; a binding the resolver actually
+	// chose for this plan must win over it on the same key.
+	reapplyResolved(config, "platform", "adapters", adapters)
+	reapplyResolved(config, "", "plugins", plugins)
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return Output{}, fmt.Errorf("marshal runtime config: %w", err)
@@ -243,6 +252,34 @@ func setConfigValue(root map[string]any, pointer, raw string) error {
 	key := strings.ReplaceAll(strings.ReplaceAll(parts[len(parts)-1], "~1", "/"), "~0", "~")
 	current[key] = value
 	return nil
+}
+
+func stringMapAsAny(values map[string]string) map[string]any {
+	result := make(map[string]any, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
+}
+
+// reapplyResolved writes resolved string bindings back over whatever a
+// manifest default left at config[parent][key] (parent "" means top level).
+func reapplyResolved(config map[string]any, parent, key string, resolved map[string]string) {
+	container := config
+	if parent != "" {
+		next, ok := config[parent].(map[string]any)
+		if !ok {
+			return
+		}
+		container = next
+	}
+	target, ok := container[key].(map[string]any)
+	if !ok {
+		return
+	}
+	for name, value := range resolved {
+		target[name] = value
+	}
 }
 
 func merge(target, source map[string]any) {
