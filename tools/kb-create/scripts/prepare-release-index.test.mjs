@@ -148,13 +148,17 @@ test('reads a minified scientific-notation port literal from a compiled service 
   assert.equal(index.platforms[0].profiles.default.services[0].port, 4000);
 });
 
-function packageArtifact(root, packageRoot, stage, name, version, manifest, extra = {}) {
+function packageArtifact(root, packageRoot, stage, name, version, manifest, extra = {}, files = {}) {
   const packageDir = join(packageRoot, 'package');
   rmSync(packageDir, { recursive: true, force: true });
   mkdirSync(join(packageDir, 'dist'), { recursive: true });
   writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name, version, ...extra }));
   if (manifest) {
     writeFileSync(join(packageDir, /^(?:const|var) /.test(manifest) ? 'dist/manifest.js' : 'dist/manifest.json'), manifest);
+  }
+  for (const [relative, content] of Object.entries(files)) {
+    mkdirSync(join(packageDir, relative, '..'), { recursive: true });
+    writeFileSync(join(packageDir, relative), content);
   }
   const filename = `${name.split('/').pop()}-${version}.tgz`;
   const tarball = join(stage, filename);
@@ -163,3 +167,91 @@ function packageArtifact(root, packageRoot, stage, name, version, manifest, extr
   const sha256 = execFileSync('shasum', ['-a', '256', tarball], { encoding: 'utf8' }).split(' ')[0];
   return { name, version, tarball: filename, sha256 };
 }
+
+// --- package-declared configuration requirements (kb-create.requirements.json) ---
+
+const GATEWAY_MANIFEST = 'var manifest = { schema: "kb.service/1", id: "gateway", runtime: { port: 4e3, healthCheck: "/health" } }; export { manifest };';
+
+// Runs the release-index preparation for a platform whose only service is a
+// gateway-like package shipping the given extra files.
+function prepareWithGateway(files) {
+  const root = mkdtempSync(join(tmpdir(), 'kb-release-index-requirements-'));
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/gateway-app', '2.0.0', GATEWAY_MANIFEST, { bin: { 'gateway-app': './dist/index.js' } }, files),
+  ];
+  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
+  const binaryManifest = join(root, 'binary-manifest.json');
+  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  const output = join(root, 'release-index.json');
+  const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, '--binary-manifest', binaryManifest, '--output', output], { encoding: 'utf8' });
+  return { result, output, text: `${result.stdout}\n${result.stderr}` };
+}
+
+const requirementsFile = requirements => JSON.stringify({ schema: 'kb.create.requirements/v1', requirements });
+
+const GATEWAY_REQUIREMENTS = [
+  // `default` is a plain JSON value here; the sealed index carries it as a JSON literal string.
+  { id: 'gateway.access.mode', path: '/gateway/access/mode', default: 'secured' },
+  { id: 'gateway.bootstrap.adminEmail', path: '/gateway/auth/bootstrap/adminEmail' },
+  { id: 'gateway.bootstrap.password', secret: true, env: 'GATEWAY_BOOTSTRAP_ADMIN_PASSWORD', services: ['gateway'], hint: 'admin password' },
+];
+
+test('a service package can declare configuration requirements without losing its service graph', () => {
+  const { result, output } = prepareWithGateway({ 'kb-create.requirements.json': requirementsFile(GATEWAY_REQUIREMENTS) });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const index = JSON.parse(readFileSync(output, 'utf8'));
+  // The regression this guards: naming the file kb-create.manifest.json would
+  // make it the primary manifest and drop the service below.
+  const service = index.platforms[0].profiles.default.services[0];
+  assert.equal(service.id, 'gateway');
+  assert.equal(service.port, 4000);
+  const member = index.platforms[0].members.find(item => item.package === '@kb-labs/gateway-app');
+  assert.deepEqual(member.config.map(item => item.id), ['gateway.access.mode', 'gateway.bootstrap.adminEmail', 'gateway.bootstrap.password']);
+  const mode = member.config.find(item => item.id === 'gateway.access.mode');
+  assert.equal(mode.path, '/gateway/access/mode');
+  assert.equal(mode.default, '"secured"');
+  const password = member.config.find(item => item.id === 'gateway.bootstrap.password');
+  assert.equal(password.secret, true);
+  assert.equal(password.env, 'GATEWAY_BOOTSTRAP_ADMIN_PASSWORD');
+  assert.deepEqual(password.services, ['gateway']);
+  assert.equal(password.default, undefined, 'a secret never carries a default');
+});
+
+test('the requirements file is also honoured when shipped under dist/', () => {
+  const { result, output } = prepareWithGateway({ 'dist/kb-create.requirements.json': requirementsFile(GATEWAY_REQUIREMENTS.slice(0, 1)) });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const member = JSON.parse(readFileSync(output, 'utf8')).platforms[0].members.find(item => item.package === '@kb-labs/gateway-app');
+  assert.deepEqual(member.config.map(item => item.id), ['gateway.access.mode']);
+});
+
+test('a package without a requirements file still gets an empty config (unchanged behaviour)', () => {
+  const { result, output } = prepareWithGateway({});
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const member = JSON.parse(readFileSync(output, 'utf8')).platforms[0].members.find(item => item.package === '@kb-labs/gateway-app');
+  assert.equal((member.config ?? []).length, 0);
+});
+
+test('fails closed on a malformed requirements file rather than shipping the package without them', () => {
+  for (const [label, content, message] of [
+    ['not JSON', '{oops', /unreadable kb-create\.requirements\.json/],
+    ['wrong schema', JSON.stringify({ schema: 'something/else', requirements: [] }), /invalid kb-create\.requirements\.json/],
+    ['requirements not an array', JSON.stringify({ schema: 'kb.create.requirements/v1', requirements: {} }), /invalid kb-create\.requirements\.json/],
+    ['missing id', requirementsFile([{ path: '/x' }]), /requirement without an id/],
+    ['duplicate id', requirementsFile([{ id: 'a', path: '/a' }, { id: 'a', path: '/b' }]), /more than once/],
+  ]) {
+    const { result, text } = prepareWithGateway({ 'kb-create.requirements.json': content });
+    assert.notEqual(result.status, 0, `${label} must fail`);
+    assert.match(text, message, label);
+  }
+});
+
+test('the sealer rejects a secret requirement that cannot reach a service', () => {
+  const { result, text } = prepareWithGateway({ 'kb-create.requirements.json': requirementsFile([{ id: 'gateway.jwt', secret: true }]) });
+  assert.notEqual(result.status, 0);
+  assert.match(text, /secret manifest requirement gateway\.jwt must declare env and services/);
+});

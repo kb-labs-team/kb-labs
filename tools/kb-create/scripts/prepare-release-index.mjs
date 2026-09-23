@@ -165,6 +165,48 @@ const manifestFor = item => {
   return undefined;
 };
 
+// A package declares the configuration it needs (non-secret paths, secrets and
+// the environment variables/services they feed) in a `kb-create.requirements.json`
+// shipped in its tarball. It is a SEPARATE file from `kb-create.manifest.json` on
+// purpose: manifestFor() above treats a `kb-create.manifest.json` as the
+// package's *primary* manifest, which would hide a service's `kb.service/1`
+// graph (dist/manifest.js) and drop the service from the index. This file only
+// adds requirements and never replaces the primary manifest. The sealer
+// validates each requirement's shape; here we only fail closed on a malformed
+// file, so a typo cannot silently ship a package without its requirements.
+const REQUIREMENTS_FILE = 'kb-create.requirements.json';
+const REQUIREMENTS_SCHEMA = 'kb.create.requirements/v1';
+const requirementsFor = item => {
+  const packageDir = join(staging, 'node_modules', item.name);
+  for (const candidate of [join(packageDir, REQUIREMENTS_FILE), join(packageDir, 'dist', REQUIREMENTS_FILE)]) {
+    if (!existsSync(candidate)) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(readFileSync(candidate, 'utf8'));
+    } catch (error) {
+      throw new Error(`${item.name} ships an unreadable ${REQUIREMENTS_FILE}: ${error.message}`);
+    }
+    if (parsed?.schema !== REQUIREMENTS_SCHEMA || !Array.isArray(parsed.requirements)) {
+      throw new Error(`${item.name} ships an invalid ${REQUIREMENTS_FILE}: expected schema ${REQUIREMENTS_SCHEMA} and a requirements array`);
+    }
+    return parsed.requirements;
+  }
+  return [];
+};
+const uniqueRequirements = (packageName, list) => {
+  const seen = new Set();
+  for (const requirement of list) {
+    if (typeof requirement?.id !== 'string' || requirement.id === '') {
+      throw new Error(`${packageName} declares a configuration requirement without an id`);
+    }
+    if (seen.has(requirement.id)) {
+      throw new Error(`${packageName} declares configuration requirement ${requirement.id} more than once`);
+    }
+    seen.add(requirement.id);
+  }
+  return list;
+};
+
 const packageJSONFor = item => {
   const path = join(staging, 'node_modules', item.name, 'package.json');
   if (!existsSync(path)) throw new Error(`${item.name} tarball has no package.json`);
@@ -224,10 +266,11 @@ for (const item of stage) {
     id: normalizedID,
     package: item.name,
     version: item.version,
-    requirements: [
+    requirements: uniqueRequirements(item.name, [
       ...(manifest?.schema === 'kb.create.artifact-manifest/v2' ? manifest.requirements ?? [] : []),
+      ...requirementsFor(item),
       ...generatedRequirements,
-    ],
+    ]),
   })}\n`);
   if (!manifest) continue;
   if (manifest.schema === 'kb.service/1') {

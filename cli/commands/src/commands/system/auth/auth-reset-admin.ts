@@ -148,7 +148,7 @@ export const authResetAdmin = defineSystemCommand<ResetAdminFlags, ResetAdminCom
   ],
   flags: {
     email: { type: 'string', description: 'Admin email (default: GATEWAY_BOOTSTRAP_ADMIN_EMAIL or gateway.auth.bootstrap.adminEmail)' },
-    tenant: { type: 'string', description: `Tenant id (default: GATEWAY_BOOTSTRAP_TENANT_ID or gateway.auth.bootstrap.tenantId, else ${DEFAULT_TENANT})` },
+    tenant: { type: 'string', description: `Tenant id (default: gateway.auth.bootstrap.tenantId, then GATEWAY_BOOTSTRAP_TENANT_ID, else ${DEFAULT_TENANT} — the gateway's own order)` },
     'password-stdin': { type: 'boolean', description: 'Read the new password from stdin' },
     generate: { type: 'boolean', description: 'Generate a random password and print it once' },
     yes: { type: 'boolean', description: 'Apply the changes (without it this is a dry run)' },
@@ -182,7 +182,7 @@ export const authResetAdmin = defineSystemCommand<ResetAdminFlags, ResetAdminCom
       return fail('Admin email is unknown: pass --email, or set GATEWAY_BOOTSTRAP_ADMIN_EMAIL / gateway.auth.bootstrap.adminEmail.');
     }
     const tenantId =
-      flags.tenant ?? process.env.GATEWAY_BOOTSTRAP_TENANT_ID ?? gw.auth?.bootstrap?.tenantId ?? DEFAULT_TENANT;
+      flags.tenant ?? gw.auth?.bootstrap?.tenantId ?? process.env.GATEWAY_BOOTSTRAP_TENANT_ID ?? DEFAULT_TENANT;
 
     if (!platform.isReal('documentDatabase')) {
       return fail(
