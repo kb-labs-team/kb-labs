@@ -30,7 +30,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "better-sqlite3": "^11.8.0"
+    "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
