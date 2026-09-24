@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/release-manager-core",
   "description": "KB Labs Release Manager - core orchestration, planning, versioning, and publishing",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "author": {
     "name": "Kirill Baranov",

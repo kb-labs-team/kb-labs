@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/clickup-contracts",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "description": "Public types for clickup",
   "main": "./dist/index.js",

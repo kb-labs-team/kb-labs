@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/agent-runtime",
   "description": "Shared runtime engine and mode routing for KB Labs Agents.",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

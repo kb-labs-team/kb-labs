@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/agent-entry",
   "description": "CLI commands for KB Labs Agents V2. Provides agent:run-v2 command.",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

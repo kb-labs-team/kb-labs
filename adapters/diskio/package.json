@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/data-store",
   "description": "Independent local-directory IStorage adapter with streams, metadata and permission wrapping",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/studio-app",
   "description": "KB Labs Studio application",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./server.js",
   "bin": {

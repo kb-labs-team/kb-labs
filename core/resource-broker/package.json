@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/core-resource-broker",
   "description": "Centralized resource broker for queue management, rate limiting, and retry logic",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/core-workspace",
   "description": "Core workspace utilities for KB Labs, including root directory resolution and workspace detection",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

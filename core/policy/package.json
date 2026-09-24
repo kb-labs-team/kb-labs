@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/core-policy",
   "description": "Policy management system for KB Labs, handling rule validation and policy bundles",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

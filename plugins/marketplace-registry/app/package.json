@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/marketplace-registry-app",
   "description": "KB Labs Marketplace Registry daemon",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/bootstrap.js",
   "bin": {

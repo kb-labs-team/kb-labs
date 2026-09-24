@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/release-manager-changelog",
   "description": "KB Labs Release Manager - conventional commits parser and changelog generator",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "author": {
     "name": "Kirill Baranov",

@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/rest-api-contracts",
   "description": "Shared API contracts for KB Labs REST/CLI/Studio surfaces",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

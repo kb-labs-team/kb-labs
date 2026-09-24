@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/agent-mcp",
   "description": "MCP (Model Context Protocol) integration for KB Labs Agents. Client → MCPToolPack + Server → agent as MCP endpoint.",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

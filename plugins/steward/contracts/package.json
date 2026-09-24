@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/steward-contracts",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "description": "Domain types and input schemas for the steward personal PM/CRM plugin",
   "main": "./dist/index.js",

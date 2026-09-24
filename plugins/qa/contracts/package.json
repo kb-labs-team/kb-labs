@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/qa-contracts",
   "description": "Contracts for KB Labs QA Plugin — types, interfaces, and constants for QA checks, baselines, and history tracking.",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

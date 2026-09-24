@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/inbox-core",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "description": "Business logic for inbox plugin (IMAP/SMTP, pure, testable in isolation)",
   "main": "./dist/index.js",

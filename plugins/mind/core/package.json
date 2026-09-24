@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/mind-core",
   "description": "Core RAG engine for KB Labs Mind: ingest, retrieval, answer. Dry business logic over platform adapters.",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

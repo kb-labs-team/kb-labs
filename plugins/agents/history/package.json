@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/agent-history",
   "description": "File change history, snapshots and conflict resolution for KB Labs Agents",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "author": "KB Labs",
   "license": "MIT",

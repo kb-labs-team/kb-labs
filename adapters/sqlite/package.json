@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/adapters-sqlite",
   "description": "SQLite adapters for IDocumentDatabase and IKVStore (one driver, two roles, one file).",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

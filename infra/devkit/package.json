@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/devkit",
   "description": "Shared developer toolkit for KB Labs projects: TS/ESLint/Prettier/Vitest/Tsup presets and reusable GitHub Actions.",
-  "version": "2.119.0",
+  "version": "2.120.0",
   "type": "module",
   "license": "MIT",
   "exports": {
