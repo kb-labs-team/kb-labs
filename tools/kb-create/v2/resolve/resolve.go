@@ -49,7 +49,9 @@ func Plan(request contracts.InstallRequest, source catalog.Catalog) (contracts.R
 	graph.PlatformVersion, graph.Profile = platform.Version, profileName(request.ServiceProfile)
 	artifacts := []contracts.Artifact{{ID: platform.ID, Kind: "platform", Package: platform.Package, Version: platform.Version, SHA256: platform.SHA256, Tarball: platform.Tarball}}
 	for _, member := range platform.Members {
-		artifacts = append(artifacts, artifact(member, "platform-member"))
+		item := artifact(member, "platform-member")
+		item.Registry = registryKind(source, member.Package)
+		artifacts = append(artifacts, item)
 	}
 	for _, binary := range platform.Binaries {
 		if binary.OS == runtime.GOOS && binary.Arch == runtime.GOARCH {
@@ -134,6 +136,24 @@ func profileName(value string) string {
 	}
 	return value
 }
+
+// registryKind reports whether a package the platform bundles is also a
+// catalog plugin or adapter; those must be registered for discovery even
+// though they are installed as platform members.
+func registryKind(source catalog.Catalog, pkg string) string {
+	for _, p := range source.Plugins {
+		if p.Package == pkg {
+			return "plugin"
+		}
+	}
+	for _, a := range source.Adapters {
+		if a.Package == pkg {
+			return "adapter"
+		}
+	}
+	return ""
+}
+
 func artifact(c catalog.Component, kind string) contracts.Artifact {
 	return contracts.Artifact{ID: c.ID, Kind: kind, Package: c.Package, Version: c.Version, SHA256: c.SHA256, Tarball: c.Tarball}
 }

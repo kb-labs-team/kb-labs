@@ -17,6 +17,10 @@ type Artifact struct {
 	URL     string `json:"url,omitempty"`
 	Tarball string `json:"tarball,omitempty"`
 	Target  string `json:"target,omitempty"`
+	// Registry names the discovery kind ("plugin" or "adapter") of an artifact
+	// that is installed under another Kind, e.g. a platform member that is also
+	// a catalog plugin/adapter. Empty for artifacts that are not registry entities.
+	Registry string `json:"registry,omitempty"`
 }
 
 type Service struct {

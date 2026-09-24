@@ -109,3 +109,18 @@ func writeRaw(t *testing.T, root string, lock Lock) {
 		t.Fatalf("write lock: %v", err)
 	}
 }
+
+func TestWriteLockRegistersPlatformMembersThatArePlugins(t *testing.T) {
+	root := t.TempDir()
+	err := WriteLock(root, []contracts.Artifact{
+		{ID: "workflow", Kind: "platform-member", Registry: "plugin", Package: "@kb/workflow-entry", Version: "2.0.0"},
+		{ID: "gateway", Kind: "platform-member", Package: "@kb/gateway", Version: "2.0.0"},
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := readLock(root)
+	if err != nil || len(lock.Installed) != 1 || lock.Installed["workflow"].PrimaryKind != "plugin" {
+		t.Fatalf("lock = %+v / %v", lock, err)
+	}
+}
