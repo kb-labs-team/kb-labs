@@ -63,7 +63,11 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 	lock := Lock{Schema: Schema, Installed: make(map[string]Item)}
 	installedAt := now.UTC().Format(time.RFC3339)
 	for _, a := range artifacts {
-		if a.Kind != "plugin" && a.Kind != "adapter" {
+		kind := a.Kind
+		if a.Registry != "" {
+			kind = a.Registry
+		}
+		if kind != "plugin" && kind != "adapter" {
 			continue
 		}
 		enabled := true
@@ -77,8 +81,8 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 			ResolvedPath: "node_modules/" + a.Package,
 			InstalledAt:  installedAt,
 			Source:       "marketplace",
-			PrimaryKind:  a.Kind,
-			Provides:     []string{a.Kind},
+			PrimaryKind:  kind,
+			Provides:     []string{kind},
 			Enabled:      enabled,
 		}
 	}

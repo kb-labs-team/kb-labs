@@ -139,3 +139,31 @@ func TestPlanIncludesSDKAndResolvedAdapterArtifacts(t *testing.T) {
 		t.Fatalf("missing selected artifacts: %#v", plan.Artifacts)
 	}
 }
+
+func TestPlanMarksPlatformMembersThatAreCatalogPluginsOrAdapters(t *testing.T) {
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{
+		ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
+		Members: []catalog.Component{
+			{ID: "workflow", Version: "2.0.0", Package: "@kb/workflow-entry", Tarball: "t", SHA256: "a"},
+			{ID: "logger", Version: "2.0.0", Package: "@kb/adapter-logger", Tarball: "t", SHA256: "b"},
+			{ID: "gateway", Version: "2.0.0", Package: "@kb/gateway", Tarball: "t", SHA256: "c"},
+		},
+		Profiles: map[string]contracts.ServiceGraph{"default": {}},
+	}},
+		Plugins:  []catalog.Component{{ID: "workflow", Version: "2.0.0", Package: "@kb/workflow-entry", Tarball: "t", SHA256: "a"}},
+		Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "logger", Version: "2.0.0", Package: "@kb/adapter-logger", Tarball: "t", SHA256: "b"}}},
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, a := range plan.Artifacts {
+		if a.Kind == "platform-member" {
+			got[a.Package] = a.Registry
+		}
+	}
+	if got["@kb/workflow-entry"] != "plugin" || got["@kb/adapter-logger"] != "adapter" || got["@kb/gateway"] != "" {
+		t.Fatalf("registry kinds = %v", got)
+	}
+}
