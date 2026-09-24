@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/workflow-runtime",
   "description": "Runtime adapters and step executors for the KB Labs workflow engine.",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/adapters-state-broker",
   "description": "State Broker adapter implementing ICache",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

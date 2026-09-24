@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/cli-commands",
   "description": "Command implementations for KB Labs CLI",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/commit-core",
   "description": "Core business logic for KB Labs Commit plugin - git analysis, plan generation, and commit application.",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

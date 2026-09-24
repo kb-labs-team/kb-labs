@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/steward-entry",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "description": "V3 manifest + CLI handlers for steward",
   "main": "./dist/index.js",

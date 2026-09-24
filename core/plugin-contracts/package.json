@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/plugin-contracts",
   "description": "Plugin System Contracts - Pure types with 0 runtime dependencies",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "license": "MIT",
   "main": "./dist/index.cjs",

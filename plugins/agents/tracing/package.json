@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/agent-tracing",
   "description": "Tracing infrastructure for KB Labs Agents — NDJSON writer, privacy redaction, trace loading and analysis",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "author": "KB Labs",
   "license": "MIT",

@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/shared-testing-platform",
   "description": "Platform setup utilities for testing KB Labs plugins — createTestContext, setupTestPlatform, testCommand",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/inbox-entry",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "description": "V3 manifest + CLI commands + REST handlers for inbox plugin",
   "main": "./dist/index.js",

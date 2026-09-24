@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/telemetry-client",
   "description": "Lightweight telemetry client for KB Labs platform. Zero dependencies. Use in any Node.js/browser product to send events to the platform.",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

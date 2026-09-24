@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/core-retry",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "description": "Canonical failure classification and retry policy primitives",
   "type": "module",
   "main": "dist/index.js",

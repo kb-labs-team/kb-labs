@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/steward-core",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "description": "Business logic for steward (pure, testable in isolation).",
   "main": "./dist/index.js",

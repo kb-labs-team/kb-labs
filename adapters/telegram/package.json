@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/adapters-telegram",
   "description": "Telegram adapter implementing INotifierChannel",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

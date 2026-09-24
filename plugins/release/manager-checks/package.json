@@ -1,7 +1,7 @@
 {
   "name": "@kb-labs/release-manager-checks",
   "description": "KB Labs Release Manager - check adapters for audit, devlink, mind, tests, and build",
-  "version": "2.120.0",
+  "version": "2.120.1",
   "type": "module",
   "author": {
     "name": "Kirill Baranov",
