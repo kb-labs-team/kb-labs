@@ -90,12 +90,25 @@ const configuredPlatformAdapterPackages = platformAdapterConfig
 // A release index is a portable installation baseline, not a copy of the
 // maintainer's local development environment.  Keep every configured adapter
 // package in the sealed member set so a consumer can opt into it later, but
-// enable only the transport needed to reach the installed service graph by
-// default.  Remote providers (and their credentials/endpoints) belong in a
-// consumer overlay; otherwise an installed CLI can fail before it can even
-// configure that overlay.
+// enable by default only what works on any machine with no credentials,
+// endpoints or external services:
+//   - serviceTransport: the transport needed to reach the installed service
+//     graph;
+//   - logger + logRingBuffer: in-process logging.  platform.logs (workflow
+//     run logs, the logs WS channel, Studio log views) has no backend unless
+//     a log adapter is bound, so without them a default install silently
+//     shows no logs.  logRingBuffer is an extension adapter that taps the
+//     logger, so the two are enabled together.
+// Remote providers (and their credentials/endpoints) belong in a consumer
+// overlay; otherwise an installed CLI can fail before it can even configure
+// that overlay.
+const PORTABLE_ADAPTER_SLOTS = ['serviceTransport', 'logger', 'logRingBuffer'];
 const portablePlatformAdapterConfig = platformAdapterConfig?.serviceTransport
-  ? { serviceTransport: platformAdapterConfig.serviceTransport }
+  ? Object.fromEntries(
+      PORTABLE_ADAPTER_SLOTS
+        .filter(slot => typeof platformAdapterConfig[slot] === 'string')
+        .map(slot => [slot, platformAdapterConfig[slot]]),
+    )
   : undefined;
 const portablePlatformAdapterOptions = platformAdapterOptions?.serviceTransport
   ? { serviceTransport: platformAdapterOptions.serviceTransport }
