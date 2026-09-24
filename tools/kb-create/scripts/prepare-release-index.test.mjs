@@ -168,6 +168,39 @@ function packageArtifact(root, packageRoot, stage, name, version, manifest, extr
   return { name, version, tarball: filename, sha256 };
 }
 
+test('the default platform.adapters baseline keeps the credential-free logger and ring buffer, but not other configured adapters', () => {
+  // A default install must show logs (platform.logs needs a bound log adapter)
+  // yet stay portable: kvStore/llm-style adapters need paths, credentials or
+  // external services, so they stay packaged-but-unbound.
+  const root = mkdtempSync(join(tmpdir(), 'kb-release-index-logs-'));
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/workflow-daemon', '2.0.0', 'var manifest = { schema: "kb.service/1", id: "workflow", runtime: { port: 7778, healthCheck: "/health" } }; export { manifest };', { bin: { 'kb-workflow': './dist/index.js' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-pino', '2.0.0', 'const manifest={id:"pino-logger",implements:["ILogger"]}; export {manifest};'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-log-ringbuffer', '2.0.0', 'const manifest={id:"log-ringbuffer",implements:["ILogRingBuffer"]}; export {manifest};'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-service-transport-http', '2.0.0', 'const manifest={id:"service-transport-http",implements:["IServiceTransport"]}; export {manifest};'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-openai', '2.0.0', 'const manifest={id:"openai",implements:["ILLM"]}; export {manifest};'),
+  ];
+  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
+  const binaryManifest = join(root, 'binary-manifest.json');
+  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  const output = join(root, 'release-index.json');
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","logger":"@kb-labs/adapters-pino","logRingBuffer":"@kb-labs/adapters-log-ringbuffer","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}}}', '--platform-member-packages', '@kb-labs/workflow-daemon', '--output', output], { stdio: 'pipe' });
+  const index = JSON.parse(readFileSync(output, 'utf8'));
+  const adaptersDefault = JSON.parse(index.platforms[0].config.find(entry => entry.id === 'platform.adapters').default);
+  assert.deepEqual(adaptersDefault, {
+    serviceTransport: '@kb-labs/adapters-service-transport-http',
+    logger: '@kb-labs/adapters-pino',
+    logRingBuffer: '@kb-labs/adapters-log-ringbuffer',
+  });
+  // The excluded adapter is still shipped as a platform member for opt-in.
+  assert.ok(index.platforms[0].members.some(member => member.package === '@kb-labs/adapters-openai'));
+});
+
 // --- package-declared configuration requirements (kb-create.requirements.json) ---
 
 const GATEWAY_MANIFEST = 'var manifest = { schema: "kb.service/1", id: "gateway", runtime: { port: 4e3, healthCheck: "/health" } }; export { manifest };';
