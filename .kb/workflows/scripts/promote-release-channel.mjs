@@ -71,8 +71,16 @@ try {
       } catch (error) {
         // Same E409, raced inside this run: the write landed on an earlier
         // try (lost response / retry) and the retry hit the already-set tag.
-        // Only accept it when the registry now really reports the target.
-        if (distTags(artifact.name, npmEnv)[npmTag] !== artifact.version) throw error;
+        // Only accept it when the registry now really reports the target —
+        // read it back with the same replication-lag patience as below: the
+        // registry can answer E409 for a write it has already accepted while
+        // a read right after still returns the old tag.
+        let landed = false;
+        for (let attempt = 0; attempt < 5 && !landed; attempt++) {
+          if (attempt > 0) sleepSync(2000);
+          landed = distTags(artifact.name, npmEnv)[npmTag] === artifact.version;
+        }
+        if (!landed) throw error;
       }
       moved.push(artifact.name);
       // The write above can succeed while a read immediately after still
