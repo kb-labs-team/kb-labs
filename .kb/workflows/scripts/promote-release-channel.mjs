@@ -55,10 +55,25 @@ try {
   const moved = [];
   try {
     for (const artifact of artifacts) {
+      // Resume support: a previous attempt that died part-way (worker loss,
+      // timeout, a straggling package) leaves some tags already at the target.
+      // npm answers a repeated `dist-tag add` for an already-set tag with
+      // E409 Conflict, so re-running the promotion used to fail on the first
+      // package it had already moved and could never complete. A tag already
+      // at the target is the desired end state, not something to move (or
+      // roll back) again.
+      if (previous.get(artifact.name)?.[npmTag] === artifact.version) continue;
       // `npm dist-tag add` throws (execFileSync, non-zero exit) on a genuine
       // write failure — that's the real correctness gate, and it's what the
       // catch block below rolls back for.
-      run('npm', ['dist-tag', 'add', `${artifact.name}@${artifact.version}`, npmTag, '--registry', registry], { env: npmEnv });
+      try {
+        run('npm', ['dist-tag', 'add', `${artifact.name}@${artifact.version}`, npmTag, '--registry', registry], { env: npmEnv });
+      } catch (error) {
+        // Same E409, raced inside this run: the write landed on an earlier
+        // try (lost response / retry) and the retry hit the already-set tag.
+        // Only accept it when the registry now really reports the target.
+        if (distTags(artifact.name, npmEnv)[npmTag] !== artifact.version) throw error;
+      }
       moved.push(artifact.name);
       // The write above can succeed while a read immediately after still
       // returns the pre-write value — confirmed live (registry.npmjs.org)
