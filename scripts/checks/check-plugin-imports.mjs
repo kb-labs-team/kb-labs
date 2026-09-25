@@ -7,7 +7,8 @@
  *            docs/architecture/target/05-executables.md section 3.
  *
  * Scans production sources (tests, fixtures, templates, build output excluded) of every
- * package under plugins/ for import / re-export / dynamic import / require of a
+ * plugin entry package (ships a `kb.plugin/3` manifest; daemons/engines/core are platform
+ * parts and out of scope) and templates/plugin-template for import / re-export / dynamic import / require of a
  * `@kb-labs/core-*` specifier. Pre-existing violations live in
  * scripts/checks/boundary-exceptions.json (with date + reason); anything else fails.
  *
@@ -17,7 +18,7 @@
 
 import { pathToFileURL } from 'node:url';
 
-import { findPackages, listSourceFiles, readText, rel, runLint, stripComments } from './lib/boundary-common.mjs';
+import { findPackages, findPluginEntryPackages, listSourceFiles, readText, rel, runLint, stripComments } from './lib/boundary-common.mjs';
 
 export const CHECK_NAME = 'plugin-imports';
 export const RULE = 'plugin-core-import';
@@ -45,7 +46,8 @@ export function findCoreImports(source) {
 
 export function collect(root) {
   const violations = [];
-  for (const pkg of findPackages(root, 'plugins')) {
+  const packages = [...findPluginEntryPackages(root), ...findPackages(root, 'templates/plugin-template', 2)];
+  for (const pkg of packages) {
     /** @type {Map<string, string>} target -> first file */
     const hits = new Map();
     for (const file of listSourceFiles(pkg.dir)) {

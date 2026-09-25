@@ -15,7 +15,8 @@
  * (`@kb-labs/commit-core`, ...) are not platform packages and stay ordinary dependencies.
  * `devDependencies` are fine (build/test only) and are not inspected.
  *
- * Scope: every package under plugins/ (fixtures excluded) plus templates/plugin-template.
+ * Scope: plugin entry packages (ship a `kb.plugin/3` manifest; daemons/engines/core under
+ * plugins/ are platform parts and out of scope) plus templates/plugin-template.
  * Pre-existing offenders live in scripts/checks/boundary-exceptions.json.
  *
  * Devkit custom check (runs once, anchored to @kb-labs/devkit).
@@ -24,7 +25,7 @@
 
 import { pathToFileURL } from 'node:url';
 
-import { findPackages, runLint } from './lib/boundary-common.mjs';
+import { findPackages, findPluginEntryPackages, runLint } from './lib/boundary-common.mjs';
 
 export const CHECK_NAME = 'plugin-peer-deps';
 export const RULE = 'plugin-platform-dependency';
@@ -48,7 +49,7 @@ export function findPlatformRuntimeDeps(pkgJson) {
 
 export function collect(root) {
   const packages = [
-    ...findPackages(root, 'plugins'),
+    ...findPluginEntryPackages(root),
     ...findPackages(root, 'templates/plugin-template', 2),
   ];
   const violations = [];

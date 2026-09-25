@@ -31,6 +31,14 @@ function fixtureRepo(files) {
   return root;
 }
 
+/** package.json + manifest source that make a package a real plugin entry package. */
+function pluginEntry(dir, name, pkgExtra = {}) {
+  return {
+    [`${dir}/package.json`]: { name, kb: { manifest: './dist/manifest.js' }, ...pkgExtra },
+    [`${dir}/src/manifest.ts`]: `export const manifest = { schema: 'kb.plugin/3', id: '${name}' };\n`,
+  };
+}
+
 after(() => {
   for (const r of tmpRoots) rmSync(r, { recursive: true, force: true });
 });
@@ -67,29 +75,35 @@ describe('plugin-imports (0.2a)', () => {
 
   test('failing fixture: plugin source importing core-* is reported; tests and sdk imports are not', () => {
     const root = fixtureRepo({
-      'plugins/bad/core/package.json': { name: '@kb-labs/bad-core' },
-      'plugins/bad/core/src/index.ts': `import { platform } from '@kb-labs/core-platform';\nexport const x = platform;\n`,
-      'plugins/bad/core/src/index.test.ts': `import { platform } from '@kb-labs/core-platform';\n`,
-      'plugins/good/core/package.json': { name: '@kb-labs/good-core' },
-      'plugins/good/core/src/index.ts': `import { platform } from '@kb-labs/sdk';\n`,
+      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry'),
+      'plugins/bad/entry/src/index.ts': `import { platform } from '@kb-labs/core-platform';\nexport const x = platform;\n`,
+      'plugins/bad/entry/src/index.test.ts': `import { platform } from '@kb-labs/core-platform';\n`,
+      ...pluginEntry('plugins/good/entry', '@kb-labs/good-entry'),
+      'plugins/good/entry/src/index.ts': `import { platform } from '@kb-labs/sdk';\n`,
+      // platform parts under plugins/ (no kb.plugin/3 manifest) are out of scope
+      'plugins/bad/daemon/package.json': { name: '@kb-labs/bad-daemon', kb: { manifest: './dist/manifest.js' } },
+      'plugins/bad/daemon/src/manifest.ts': `export const manifest = { schema: 'kb.plugin/2' };\n`,
+      'plugins/bad/daemon/src/index.ts': `import { platform } from '@kb-labs/core-platform';\n`,
+      'plugins/bad/engine/package.json': { name: '@kb-labs/bad-engine' },
+      'plugins/bad/engine/src/index.ts': `import { platform } from '@kb-labs/core-platform';\n`,
     });
     const v = collectImports(root);
     assert.equal(v.length, 1);
-    assert.equal(v[0].package, 'plugins/bad/core');
+    assert.equal(v[0].package, 'plugins/bad/entry');
     assert.equal(v[0].target, '@kb-labs/core-platform');
     assert.equal(v[0].rule, 'plugin-core-import');
-    assert.equal(v[0].file, 'plugins/bad/core/src/index.ts');
+    assert.equal(v[0].file, 'plugins/bad/entry/src/index.ts');
   });
 
   test('CLI exits 1 on a new violation and 0 once it is in the exceptions file', () => {
     const root = fixtureRepo({
-      'plugins/bad/core/package.json': { name: '@kb-labs/bad-core' },
-      'plugins/bad/core/src/index.ts': `import x from '@kb-labs/core-contracts';\n`,
+      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry'),
+      'plugins/bad/entry/src/index.ts': `import x from '@kb-labs/core-contracts';\n`,
       'ex-empty.json': { version: 1, exceptions: [] },
       'ex-full.json': {
         version: 1,
         exceptions: [
-          { rule: 'plugin-core-import', package: 'plugins/bad/core', target: '@kb-labs/core-contracts', since: '2026-09-26', reason: 'fixture' },
+          { rule: 'plugin-core-import', package: 'plugins/bad/entry', target: '@kb-labs/core-contracts', since: '2026-09-26', reason: 'fixture' },
         ],
       },
     });
@@ -196,8 +210,10 @@ describe('plugin-peer-deps (0.3)', () => {
 
   test('scans plugins/* and templates/plugin-template packages', () => {
     const root = fixtureRepo({
-      'plugins/bad/entry/package.json': { name: '@kb-labs/bad-entry', dependencies: { '@kb-labs/sdk': 'workspace:*' } },
-      'plugins/good/entry/package.json': { name: '@kb-labs/good-entry', peerDependencies: { '@kb-labs/sdk': '*' }, devDependencies: { '@kb-labs/sdk': 'workspace:*' } },
+      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
+      ...pluginEntry('plugins/good/entry', '@kb-labs/good-entry', { peerDependencies: { '@kb-labs/sdk': '*' }, devDependencies: { '@kb-labs/sdk': 'workspace:*' } }),
+      // platform parts under plugins/ (daemon, engine) are out of scope
+      'plugins/bad/daemon/package.json': { name: '@kb-labs/bad-daemon', dependencies: { '@kb-labs/core-platform': 'workspace:*' } },
       'templates/plugin-template/packages/core/package.json': { name: 'tpl-core', dependencies: { '@kb-labs/plugin-contracts': 'workspace:*' } },
       'templates/other/package.json': { name: 'other', dependencies: { '@kb-labs/sdk': 'workspace:*' } },
     });
@@ -210,7 +226,7 @@ describe('plugin-peer-deps (0.3)', () => {
 
   test('CLI exits 1 on a new offender', () => {
     const root = fixtureRepo({
-      'plugins/bad/entry/package.json': { name: '@kb-labs/bad-entry', dependencies: { '@kb-labs/sdk': 'workspace:*' } },
+      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
       'ex.json': { version: 1, exceptions: [] },
     });
     const r = runScript('check-plugin-peer-deps.mjs', ['--root', root, '--exceptions', join(root, 'ex.json')]);
@@ -276,6 +292,14 @@ describe('manifest-command-naming (0.5)', () => {
     );
   });
 
+  test("operationType accepts read/mutate/analyze/execute, rejects anything else", () => {
+    for (const t of ['read', 'analyze', 'execute']) {
+      assert.deepEqual(validateManifest(manifest([{ path: 'foo run', operationType: t }])), [], t);
+    }
+    const bad = validateManifest(manifest([{ path: 'foo run', operationType: 'write' }]));
+    assert.deepEqual(bad.map((x) => x.rule), ['command-operation-type']);
+  });
+
   test('ignores non kb.plugin/3 manifests', () => {
     assert.deepEqual(validateManifest({ schema: 'kb.plugin/2', cli: { commands: [{ path: 'Foo Bad' }] } }), []);
   });
@@ -284,7 +308,7 @@ describe('manifest-command-naming (0.5)', () => {
     const root = fixtureRepo({
       'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
       'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
-      'plugins/q/entry/package.json': { name: '@kb-labs/q-entry', kb: { manifest: './dist/manifest.js' } },
+      ...pluginEntry('plugins/q/entry', '@kb-labs/q-entry'),
       'plugins/r/core/package.json': { name: '@kb-labs/r-core' }, // no kb.manifest: ignored
     });
     const v = collectManifests(root);
@@ -302,7 +326,7 @@ describe('manifest-command-naming (0.5)', () => {
     const root = fixtureRepo({
       'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
       'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p list' }]),
-      'plugins/q/entry/package.json': { name: '@kb-labs/q-entry', kb: { manifest: './dist/manifest.js' } },
+      ...pluginEntry('plugins/q/entry', '@kb-labs/q-entry'),
     });
     const { stale } = applyExceptions(collectManifests(root), [exFor('plugins/p/entry'), exFor('plugins/q/entry')], RULES);
     assert.deepEqual(stale.map((e) => e.package), ['plugins/p/entry']);
@@ -360,7 +384,7 @@ describe('exceptions file', () => {
 
   test('devkit mode: non-anchor package gets an empty issue list; anchor gets findings', () => {
     const root = fixtureRepo({
-      'plugins/bad/entry/package.json': { name: '@kb-labs/bad-entry', dependencies: { '@kb-labs/sdk': 'workspace:*' } },
+      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
       'ex.json': { version: 1, exceptions: [] },
     });
     const run = (pkg) =>

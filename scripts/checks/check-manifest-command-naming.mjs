@@ -10,6 +10,7 @@
  *                            uninstall enable disable get set update run status doctor start stop).
  *                            Single-segment paths (`kb <namespace>` default command) are not checked.
  *   command-path-case        every path segment is lowercase kebab-case ([a-z][a-z0-9]*(-[a-z0-9]+)*).
+ *   command-operation-type   operationType, when set, is read | mutate | analyze | execute.
  *   mutate-json-flag         a command with operationType 'mutate' declares a `--json` flag.
  *
  * `--dry-run` for mutate commands is intentionally NOT checked: the registry injects it for
@@ -33,15 +34,18 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { findPackages, runLint } from './lib/boundary-common.mjs';
+import { findPluginEntryPackages, runLint } from './lib/boundary-common.mjs';
 
 export const CHECK_NAME = 'manifest-command-naming';
-export const RULES = ['command-verb-vocabulary', 'command-path-case', 'mutate-json-flag'];
+export const RULES = ['command-verb-vocabulary', 'command-path-case', 'mutate-json-flag', 'command-operation-type'];
 
 export const VERBS = new Set([
   'list', 'show', 'add', 'remove', 'create', 'delete', 'install', 'uninstall',
   'enable', 'disable', 'get', 'set', 'update', 'run', 'status', 'doctor', 'start', 'stop',
 ]);
+
+// read/mutate/analyze per 06 section 3; 'execute' is a valid fourth type (author decision).
+export const OPERATION_TYPES = new Set(['read', 'mutate', 'analyze', 'execute']);
 
 const KEBAB_SEGMENT = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
@@ -85,6 +89,14 @@ export function validateManifest(manifest) {
       }
     }
 
+    if (cmd.operationType !== undefined && !OPERATION_TYPES.has(cmd.operationType)) {
+      report(
+        'command-operation-type',
+        `operationType "${cmd.operationType}" is not one of ${[...OPERATION_TYPES].join(', ')}`,
+        'Use read, mutate, analyze or execute.',
+      );
+    }
+
     if (cmd.operationType === 'mutate') {
       const flags = Array.isArray(cmd.flags) ? cmd.flags : Object.entries(cmd.flags ?? {}).map(([name, f]) => ({ ...f, name }));
       if (!flags.some((f) => f?.name === 'json')) {
@@ -103,7 +115,7 @@ export function collect(root) {
   const violations = [];
   /** packages whose manifest could not be read (their exceptions cannot be judged stale) */
   const unscanned = [];
-  for (const pkg of findPackages(root, 'plugins')) {
+  for (const pkg of findPluginEntryPackages(root)) {
     const manifestRel = pkg.json?.kb?.manifest;
     if (typeof manifestRel !== 'string') continue;
     // dist/manifest.json sits next to the compiled manifest module

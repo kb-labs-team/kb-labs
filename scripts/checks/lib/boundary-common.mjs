@@ -55,6 +55,27 @@ export function findPackages(root, base, maxDepth = 3) {
   return out;
 }
 
+/**
+ * Real plugin packages: those that ship a `kb.plugin/3` manifest (package.json `kb.manifest`,
+ * and the manifest source — or the built dist JSON — declares schema `kb.plugin/3`).
+ * Daemons, engines, registries, runtimes and plain core/contracts packages under plugins/
+ * are platform parts, not plugins, and are not returned.
+ */
+export function findPluginEntryPackages(root) {
+  const out = [];
+  for (const pkg of findPackages(root, 'plugins')) {
+    const manifestRel = pkg.json?.kb?.manifest;
+    if (typeof manifestRel !== 'string') continue;
+    const candidates = [
+      join(pkg.dir, 'src', 'manifest.ts'),
+      join(pkg.dir, 'src', 'manifest.v3.ts'),
+      join(pkg.dir, manifestRel.replace(/\.[cm]?js$/, '.json')),
+    ];
+    if (candidates.some((f) => /kb\.plugin\/3/.test(readText(f)))) out.push(pkg);
+  }
+  return out;
+}
+
 const SOURCE_EXT = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 const TEST_FILE = /\.(?:test|spec|e2e)\.[cm]?[jt]sx?$|\.d\.ts$/;
 const TEST_DIRS = new Set(['__tests__', '__mocks__', 'tests', 'test', 'e2e', 'fixtures', 'templates']);
