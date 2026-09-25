@@ -95,6 +95,18 @@ export function resolveStagingRegistry(opts: Pick<PreflightOptions, 'stagingRegi
   return `http://localhost:${DEFAULT_VERDACCIO_PORT + (opts.netOffset ?? 0)}`;
 }
 
+/**
+ * Paths that never count as a dirty tree: candidate bundles are workflow
+ * output (also listed in .gitignore; this covers a checkout where they show
+ * up anyway, e.g. an older .gitignore).
+ */
+const IGNORED_DIRTY_PREFIXES = ['.kb/release/candidates/'];
+
+function isIgnoredPath(path: string): boolean {
+  const p = path.trim().replace(/^"|"$/g, '');
+  return IGNORED_DIRTY_PREFIXES.some(prefix => p === prefix.slice(0, -1) || p.startsWith(prefix));
+}
+
 export function preflightCommand(flow?: string): string {
   return flow ? `pnpm kb release preflight --flow ${flow}` : 'pnpm kb release preflight';
 }
@@ -143,7 +155,7 @@ export async function runReleasePreflight(opts: PreflightOptions): Promise<Prefl
       if (!res.ok) {
         return { ok: false, message: 'Could not read git status', code: 'KB_RELEASE_TREE_DIRTY', cause: 'git status failed.', hint: `Run from inside the repository, then \`${rerun}\`.` };
       }
-      const lines = res.stdout.split('\n').filter(l => l.trim());
+      const lines = res.stdout.split('\n').filter(l => l.trim() && !isIgnoredPath(l.slice(3)));
       if (lines.length > 0) {
         return {
           ok: false, message: `${lines.length} uncommitted change(s)`, code: 'KB_RELEASE_TREE_DIRTY',

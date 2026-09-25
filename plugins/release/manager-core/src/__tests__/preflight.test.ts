@@ -88,6 +88,15 @@ describe('runReleasePreflight', () => {
     expect(f?.message).toContain('2 uncommitted');
   });
 
+  it('untracked release candidate bundles do not make the tree dirty', async () => {
+    const shell = fakeShell({ ...GREEN_SHELL, 'git status': { stdout: '?? .kb/release/candidates/\n?? .kb/release/candidates/abc/bundle.tgz\n' } });
+    const r = await runReleasePreflight(opts({ shell }));
+    expect(r.checks.find(c => c.id === 'clean-tree')?.status).toBe('passed');
+    const mixed = fakeShell({ ...GREEN_SHELL, 'git status': { stdout: '?? .kb/release/candidates/\n M a.ts\n' } });
+    const [f] = failed(await runReleasePreflight(opts({ shell: mixed })));
+    expect(f?.message).toContain('1 uncommitted');
+  });
+
   it('docker down -> KB_RELEASE_DOCKER_UNAVAILABLE', async () => {
     const shell = fakeShell({ ...GREEN_SHELL, 'docker info': { code: 1, stderr: 'Cannot connect' } });
     const [f] = failed(await runReleasePreflight(opts({ shell })));
