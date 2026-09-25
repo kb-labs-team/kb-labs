@@ -835,6 +835,39 @@ custom_checks:
     run: node scripts/checks/check-marketplace-lock.mjs
     on: [check]
 
+  # Architecture boundary + command-naming lints (tasks 0.2, 0.3, 0.5).
+  # Pre-existing violations are listed with a date and reason in
+  # scripts/checks/boundary-exceptions.json; anything not listed is an error, and an
+  # exception whose violation is gone is a warning (delete it). Do not add exceptions
+  # to silence new code. All four self-filter: run once, anchored to @kb-labs/devkit.
+  # Standalone: node scripts/checks/check-<name>.mjs [--json] [--no-exceptions]
+  # Tests:      pnpm test:checks
+
+  # Plugins must not import @kb-labs/core-* bypassing @kb-labs/sdk (0.2a).
+  - name: plugin-imports
+    run: node scripts/checks/check-plugin-imports.mjs
+    on: [check]
+
+  # services/*, studio/*, plugins/*/daemon must not spawn kb / kb-create / kb-dev / kb-devkit
+  # via child_process (0.2b, docs/architecture/target/05-executables.md section 3).
+  - name: platform-spawn
+    run: node scripts/checks/check-platform-spawn.mjs
+    on: [check]
+
+  # Platform packages (@kb-labs/sdk, core-*, cli-*, shared-*, adapters-*, plugin-contracts/runtime/
+  # execution*) must be peerDependencies, not dependencies, in plugins/* and the plugin template (0.3).
+  - name: plugin-peer-deps
+    run: node scripts/checks/check-plugin-peer-deps.mjs
+    on: [check]
+
+  # kb.plugin/3 cli.commands: verb from the closed vocabulary, lowercase kebab-case segments,
+  # 'mutate' commands declare --json (0.5, docs/architecture/target/06-command-naming.md 1-3).
+  # Reads the build-emitted dist/manifest.json — unbuilt packages only produce a warning,
+  # so run it after `kb-devkit run build`.
+  - name: manifest-command-naming
+    run: node scripts/checks/check-manifest-command-naming.mjs
+    on: [check]
+
 # ──────────────────────────────────────────────────────────────────────────────
 # COVERAGE THRESHOLDS
 # Enforced by: node scripts/merge-coverage.mjs --check
