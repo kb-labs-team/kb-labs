@@ -17,3 +17,17 @@ export type { SystemContext } from "./system-context";
 
 // Presenter contracts
 export type { Presenter } from "./presenter/index";
+
+// Reserved command namespaces (single source of truth, see 06-command-naming.md §8)
+export {
+  RESERVED_NAMESPACES,
+  SYSTEM_NAMESPACES,
+  VERB_NAMESPACES,
+  FIRST_PARTY_NAMESPACES,
+  FUTURE_NAMESPACES,
+  FIRST_PARTY_SCOPE,
+  checkReservedNamespace,
+  suggestNamespace,
+  listReservedNamespaces,
+} from "./reserved-namespaces";
+export type { ReservedTier, ReservedNamespaceViolation } from "./reserved-namespaces";

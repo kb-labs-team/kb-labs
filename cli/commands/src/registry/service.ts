@@ -16,11 +16,11 @@ import {
 } from './trie-router';
 import type { Command as SystemCommand, CommandGroup as SystemGroup } from '@kb-labs/shared-command-kit';
 import { getArchetypeFlags, schemaFlag } from './archetype-flags.js';
+import { checkReservedNamespace } from '@kb-labs/cli-contracts';
 
 // ─── Validation ───────────────────────────────────────────────────────────────
-
-/** Top-level path segments reserved by the platform runtime. */
-const RESERVED_NAMESPACES = new Set(['__complete', '__internal']);
+// Reserved namespaces (incl. `_`-prefixed platform names) live in
+// @kb-labs/cli-contracts `reserved-namespaces`; see checkReservedNamespace.
 
 /** Maximum allowed path depth for plugin commands. */
 const MAX_PATH_DEPTH = 6;
@@ -28,7 +28,6 @@ const MAX_PATH_DEPTH = 6;
 function validateSegments(segs: readonly string[]): string | null {
   if (segs.length === 0) { return 'empty path — segments must not be empty'; }
   if (segs.length > MAX_PATH_DEPTH) { return `path too deep: ${segs.length} segments (max ${MAX_PATH_DEPTH})`; }
-  if (RESERVED_NAMESPACES.has(segs[0]!)) { return `"${segs[0]}" is a reserved namespace`; }
   return null;
 }
 
@@ -86,6 +85,16 @@ export class TrieBackedRegistry {
       return;
     }
 
+    // ── Reserved namespaces (tiers S/V/F/R/P, 06-command-naming §8) ───────────
+    const reserved = checkReservedNamespace(segs[0]!, cmd.packageName);
+    if (reserved) {
+      this.logger.warn(
+        `[registry] Plugin "${pkg}" rejected: command "${segs.join(' ')}" — ${reserved.message}.`
+      );
+      cmd.shadowed = true;
+      return;
+    }
+
     // ── System collision — system always wins ─────────────────────────────────
     const sysResult = this.systemRouter.resolve([...segs]);
     if (sysResult.type === 'system-cmd' || sysResult.type === 'system-group') {
@@ -127,6 +136,12 @@ export class TrieBackedRegistry {
       const aliasValidationError = validateSegments(aliasSegs);
       if (aliasValidationError) {
         this.logger.warn(`[registry] Plugin "${pkg}" alias "${alias}" skipped: ${aliasValidationError}`);
+        continue;
+      }
+
+      const aliasReserved = checkReservedNamespace(aliasSegs[0]!, cmd.packageName);
+      if (aliasReserved) {
+        this.logger.warn(`[registry] Plugin "${pkg}" alias "${alias}" skipped: ${aliasReserved.message}.`);
         continue;
       }
 

@@ -68,6 +68,8 @@ function makePlugin(
       describe: `Plugin: ${id}`,
       loader: async () => ({ run: async () => 0 }),
     },
+    // First-party package so tier-F reserved names (marketplace, commit, ...) are allowed
+    packageName: '@kb-labs/test-plugin',
     available: true,
     source: 'workspace',
     shadowed: false,
@@ -227,10 +229,10 @@ describe('Collision: System Always Wins', () => {
     const logger = makeCapturingLogger();
     reg.setLogger(logger);
 
-    const group = makeSystemGroup('test', ['protected']);
+    const group = makeSystemGroup('sample', ['protected']);
     reg.registerGroup(group);
 
-    const plugin = makePlugin('protected', 'test');
+    const plugin = makePlugin('protected', 'sample');
     reg.registerManifest(plugin);
 
     expect(logger.warns.some(w => w.includes('collides with a system command') || w.includes('system'))).toBe(true);
@@ -261,7 +263,7 @@ describe('Collision: System Always Wins', () => {
     const sys = makeSystemCmd('sys-cmd', ['sc']);
     reg.register(sys);
 
-    const plugin = makePlugin('plugin-cmd', 'test', undefined, ['sc']);
+    const plugin = makePlugin('plugin-cmd', 'sample', undefined, ['sc']);
     reg.registerManifest(plugin);
 
     expect(logger.warns.some(w => w.includes('"sc"') || w.includes('sc'))).toBe(true);
