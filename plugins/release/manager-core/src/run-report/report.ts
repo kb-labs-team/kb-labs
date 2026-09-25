@@ -21,9 +21,20 @@ export interface StageRow {
 
 export interface CheckRow {
   id: string;
-  status: 'passed' | 'failed' | 'failed-optional';
+  status: 'passed' | 'failed' | 'failed-optional' | 'skipped' | 'partially-skipped';
   durationMs?: number;
   failedPackages: number;
+  /** Packages not checked because a blocking dependency failed (or 1 for a wholly skipped repo-level check). */
+  skippedPackages?: number;
+  /** Why the check (or part of it) was skipped. */
+  skipReason?: string;
+}
+
+export interface SkippedCheck {
+  checkId: string;
+  /** Package path, absent when the whole check was skipped without a package breakdown. */
+  packagePath?: string;
+  reason: string;
 }
 
 export interface CheckFailure {
@@ -67,10 +78,14 @@ export interface ReleaseRunReport {
     /** Failures that fail the run (non-optional). */
     blockingFailures: number;
     optionalFailures: number;
+    /** (check, package) pairs skipped because a blocking dependency failed. */
+    skipped: number;
     byClassification: Partial<Record<FailureClassification, number>>;
   };
   /** Every failing (check, package) pair, not just the first. */
   failures: CheckFailure[];
+  /** Explicitly skipped checks/packages, with the reason. Not failures themselves. */
+  skipped: SkippedCheck[];
   byPackage: PackageFailureGroup[];
 }
 
@@ -126,6 +141,7 @@ export function buildReleaseRunReport(input: BuildRunReportInput): ReleaseRunRep
   const resumeCommand = resumeCommandFor(input.flow, input.scope);
   const failures: CheckFailure[] = [];
   const checks: CheckRow[] = [];
+  const skipped: SkippedCheck[] = [];
 
   // Preflight failures are environment problems by construction.
   for (const p of input.preflight?.checks ?? []) {
@@ -146,14 +162,23 @@ export function buildReleaseRunReport(input: BuildRunReportInput): ReleaseRunRep
 
   for (const result of input.results) {
     const failing: Array<{ path?: string; details: CheckResultDetails }> = [];
+    let skippedCount = 0;
     if (!result.ok) {
       if (result.packages && result.packages.length > 0) {
         for (const p of result.packages) {
-          if (!p.ok) { failing.push({ path: p.path, details: p.details ?? {} }); }
+          if (p.skipped) {
+            skippedCount++;
+            skipped.push({ checkId: result.id, packagePath: p.path, reason: p.skipReason ?? result.skipReason ?? 'blocking dependency failed' });
+          } else if (!p.ok) {
+            failing.push({ path: p.path, details: p.details ?? {} });
+          }
         }
       }
       // Single-path checks (or results without a per-package breakdown).
-      if (failing.length === 0) {
+      if (failing.length === 0 && skippedCount === 0 && result.skipped) {
+        skippedCount = 1;
+        skipped.push({ checkId: result.id, reason: result.skipReason ?? 'blocking dependency failed' });
+      } else if (failing.length === 0 && skippedCount === 0) {
         failing.push({ path: result.details?.packagePath, details: result.details ?? {} });
       }
     }
@@ -200,9 +225,14 @@ export function buildReleaseRunReport(input: BuildRunReportInput): ReleaseRunRep
 
     checks.push({
       id: result.id,
-      status: result.ok ? 'passed' : result.optional ? 'failed-optional' : 'failed',
+      status: result.ok
+        ? 'passed'
+        : failing.length === 0 && skippedCount > 0
+          ? (result.packages?.some(p => !p.skipped) ? 'partially-skipped' : 'skipped')
+          : result.optional ? 'failed-optional' : 'failed',
       durationMs: result.timingMs,
       failedPackages: failing.length,
+      ...(skippedCount > 0 ? { skippedPackages: skippedCount, skipReason: result.skipReason } : {}),
     });
   }
 
@@ -250,9 +280,11 @@ export function buildReleaseRunReport(input: BuildRunReportInput): ReleaseRunRep
     summary: {
       blockingFailures: blocking.length,
       optionalFailures: failures.length - blocking.length,
+      skipped: skipped.length,
       byClassification,
     },
     failures,
+    skipped,
     byPackage: [...groups.values()],
   };
 }

@@ -44,6 +44,15 @@ export function renderRunReportMarkdown(report: ReleaseRunReport): string {
   }
   lines.push('');
 
+  if (report.skipped.length > 0) {
+    lines.push('## Skipped');
+    lines.push('');
+    for (const s of report.skipped) {
+      lines.push(`- ${cell(s.checkId)}${s.packagePath ? ` @ ${cell(s.packagePath)}` : ''}: ${cell(s.reason)}`);
+    }
+    lines.push('');
+  }
+
   if (report.failures.length === 0) {
     lines.push('No failures.');
     lines.push('');
