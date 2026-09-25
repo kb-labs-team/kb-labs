@@ -88,13 +88,34 @@ describe('runReleasePreflight', () => {
     expect(f?.message).toContain('2 uncommitted');
   });
 
-  it('untracked release candidate bundles do not make the tree dirty', async () => {
-    const shell = fakeShell({ ...GREEN_SHELL, 'git status': { stdout: '?? .kb/release/candidates/\n?? .kb/release/candidates/abc/bundle.tgz\n' } });
-    const r = await runReleasePreflight(opts({ shell }));
-    expect(r.checks.find(c => c.id === 'clean-tree')?.status).toBe('passed');
-    const mixed = fakeShell({ ...GREEN_SHELL, 'git status': { stdout: '?? .kb/release/candidates/\n M a.ts\n' } });
-    const [f] = failed(await runReleasePreflight(opts({ shell: mixed })));
-    expect(f?.message).toContain('1 uncommitted');
+  it('only tool-generated .kb dirt -> passes with a warning and the count', async () => {
+    const stdout = [
+      ' M .kb/lock.json', ' M .kb/release/CHANGELOG.md', ' M core/bundle/.kb/lock.json',
+      ' M plugins/review/entry/.kb/cache/cli-manifests.json', '?? sdk/platform-client/.kb/', '?? .kb/release/candidates/',
+    ].join('\n') + '\n';
+    const r = await runReleasePreflight(opts({ shell: fakeShell({ ...GREEN_SHELL, 'git status': { stdout } }) }));
+    const c = r.checks.find(x => x.id === 'clean-tree');
+    expect(r.ok).toBe(true);
+    expect(c?.status).toBe('passed');
+    expect(c?.warnings).toEqual(['6 tool-generated .kb file(s) modified or untracked (ignored)']);
+  });
+
+  it('a source file change fails and names it', async () => {
+    const shell = fakeShell({ ...GREEN_SHELL, 'git status': { stdout: ' M plugins/release/manager-core/src/x.ts\n' } });
+    const [f] = failed(await runReleasePreflight(opts({ shell })));
+    expect(f?.error?.code).toBe('KB_RELEASE_TREE_DIRTY');
+    expect(f?.error?.cause).toContain('plugins/release/manager-core/src/x.ts');
+  });
+
+  it('mixed dirt fails listing only blocking paths, capped at 10', async () => {
+    const src = Array.from({ length: 12 }, (_, i) => `?? src/f${i}.ts`);
+    const stdout = [' M .kb/lock.json', ...src, 'R  old.ts -> .kb/moved.ts'].join('\n') + '\n';
+    const [f] = failed(await runReleasePreflight(opts({ shell: fakeShell({ ...GREEN_SHELL, 'git status': { stdout } }) })));
+    expect(f?.message).toBe('12 uncommitted change(s)');
+    expect(f?.error?.cause).not.toContain('.kb/lock.json');
+    expect(f?.error?.cause).toContain('src/f9.ts');
+    expect(f?.error?.cause).not.toContain('src/f10.ts');
+    expect(f?.error?.cause).toContain('and 2 more');
   });
 
   it('docker down -> KB_RELEASE_DOCKER_UNAVAILABLE', async () => {

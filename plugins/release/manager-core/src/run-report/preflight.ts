@@ -30,6 +30,8 @@ export interface PreflightCheckResult {
   durationMs: number;
   /** One-line human summary (what was observed). */
   message: string;
+  /** Non-blocking observations on a passed check. */
+  warnings?: string[];
   /** Present when status is `failed`. */
   error?: ReleaseErrorEnvelope;
 }
@@ -96,23 +98,31 @@ export function resolveStagingRegistry(opts: Pick<PreflightOptions, 'stagingRegi
 }
 
 /**
- * Paths that never count as a dirty tree: candidate bundles are workflow
- * output (also listed in .gitignore; this covers a checkout where they show
- * up anyway, e.g. an older .gitignore).
+ * Tool-generated state lives under `.kb/` directories (locks, plans, caches,
+ * candidate bundles) and is routinely modified on a working checkout. It is
+ * reported as a warning but never blocks. Any other dirty or untracked path
+ * still blocks: `release git` would commit unrelated source edits.
  */
-const IGNORED_DIRTY_PREFIXES = ['.kb/release/candidates/'];
-
-function isIgnoredPath(path: string): boolean {
+function isToolGeneratedPath(path: string): boolean {
   const p = path.trim().replace(/^"|"$/g, '');
-  return IGNORED_DIRTY_PREFIXES.some(prefix => p === prefix.slice(0, -1) || p.startsWith(prefix));
+  return p === '.kb' || p.startsWith('.kb/') || p.includes('/.kb/') || p.endsWith('/.kb');
 }
+
+/** Path part of a `git status --porcelain` line (handles `old -> new` renames). */
+function porcelainPath(line: string): string {
+  const raw = line.slice(3);
+  const arrow = raw.indexOf(' -> ');
+  return arrow >= 0 ? raw.slice(arrow + 4) : raw;
+}
+
+const MAX_LISTED_PATHS = 10;
 
 export function preflightCommand(flow?: string): string {
   return flow ? `pnpm kb release preflight --flow ${flow}` : 'pnpm kb release preflight';
 }
 
 type Outcome =
-  | { ok: true; message: string }
+  | { ok: true; message: string; warnings?: string[] }
   | { ok: false; message: string; code: ReleaseErrorCode; cause: string; hint: string; details?: Record<string, string> }
   | { skipped: true; message: string };
 
@@ -155,14 +165,22 @@ export async function runReleasePreflight(opts: PreflightOptions): Promise<Prefl
       if (!res.ok) {
         return { ok: false, message: 'Could not read git status', code: 'KB_RELEASE_TREE_DIRTY', cause: 'git status failed.', hint: `Run from inside the repository, then \`${rerun}\`.` };
       }
-      const lines = res.stdout.split('\n').filter(l => l.trim() && !isIgnoredPath(l.slice(3)));
-      if (lines.length > 0) {
+      const all = res.stdout.split('\n').filter(l => l.trim()).map(porcelainPath);
+      const generated = all.filter(isToolGeneratedPath);
+      const blocking = all.filter(p => !isToolGeneratedPath(p));
+      if (blocking.length > 0) {
+        const listed = blocking.slice(0, MAX_LISTED_PATHS).join(', ');
+        const more = blocking.length > MAX_LISTED_PATHS ? ` and ${blocking.length - MAX_LISTED_PATHS} more` : '';
         return {
-          ok: false, message: `${lines.length} uncommitted change(s)`, code: 'KB_RELEASE_TREE_DIRTY',
-          cause: `Working tree has ${lines.length} modified or untracked path(s), e.g. ${lines.slice(0, 3).map(l => l.slice(3)).join(', ')}.`,
+          ok: false, message: `${blocking.length} uncommitted change(s)`, code: 'KB_RELEASE_TREE_DIRTY',
+          cause: `Working tree has ${blocking.length} modified or untracked path(s) outside .kb/: ${listed}${more}.`,
           hint: `Commit, stash or discard them (\`git status\` lists them), then \`${rerun}\`.`,
-          details: { changes: String(lines.length) },
+          details: { changes: String(blocking.length), toolGenerated: String(generated.length) },
         };
+      }
+      if (generated.length > 0) {
+        const warning = `${generated.length} tool-generated .kb file(s) modified or untracked (ignored)`;
+        return { ok: true, message: `Working tree clean apart from ${warning}`, warnings: [warning] };
       }
       return { ok: true, message: 'Working tree clean' };
     }],
@@ -251,7 +269,7 @@ export async function runReleasePreflight(opts: PreflightOptions): Promise<Prefl
       const out = await run();
       const durationMs = Date.now() - t;
       if ('skipped' in out) { return { id, status: 'skipped', durationMs, message: out.message }; }
-      if (out.ok) { return { id, status: 'passed', durationMs, message: out.message }; }
+      if (out.ok) { return { id, status: 'passed', durationMs, message: out.message, ...(out.warnings ? { warnings: out.warnings } : {}) }; }
       return {
         id, status: 'failed', durationMs, message: out.message,
         error: createReleaseError({
