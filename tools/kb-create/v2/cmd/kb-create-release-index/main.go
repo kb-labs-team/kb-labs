@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/kb-labs/create/v2/catalog"
+	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/release"
 )
 
@@ -20,7 +21,7 @@ func main() {
 	manifestRoot := flag.String("manifest-root", "", "staging root containing exact V2 package manifests")
 	flag.Parse()
 	if err := run(*input, *output, *manifestRoot); err != nil {
-		_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "KB_CREATE_RELEASE_INDEX_INVALID", "message": "could not seal V2 release index", "cause": err.Error(), "hint": "fix the normalized manifest export before publishing the release"}})
+		_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"ok": false, "error": contracts.NewLauncherError(contracts.CodeReleaseIndexInvalid, "could not seal V2 release index", "fix the normalized manifest export before publishing the release", err)})
 		os.Exit(2)
 	}
 }

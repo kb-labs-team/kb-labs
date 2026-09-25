@@ -267,7 +267,7 @@ func TestLocalInstallNeedsNoSecretsAndConfiguresNoLoginAccess(t *testing.T) {
 }
 
 // The regression this whole change exists for: against a real index the default
-// scenario used to fail with KB_CREATE_CONFIG_REQUIRED ("gateway.access.mode is
+// scenario used to fail with KB_INSTALL_CONFIG_REQUIRED ("gateway.access.mode is
 // not declared by selected manifests").
 func TestDefaultScenarioPlansAgainstTheRealGatewayRequirements(t *testing.T) {
 	source := sealedGatewayCatalog(t)

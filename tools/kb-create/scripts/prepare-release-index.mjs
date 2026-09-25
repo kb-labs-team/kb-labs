@@ -396,7 +396,7 @@ function pluginIdFor(manifest, packageName) {
 // (the previous approach) collapses "IServiceTransport" to
 // "servicetransport", which never matches the "serviceTransport" capability
 // the platform declares — so no adapter is ever found and bootstrap fails
-// with KB_CREATE_PROVIDER_UNRESOLVED. Only the leading run of capitals needs
+// with KB_INSTALL_PROVIDER_UNRESOLVED. Only the leading run of capitals needs
 // lowercasing, and only up to (not including) the capital that starts the
 // next word — "KVStore" -> "kvStore", not "kVStore" or "kvstore".
 function interfaceToCapability(name) {

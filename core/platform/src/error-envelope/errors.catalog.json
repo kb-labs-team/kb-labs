@@ -1,0 +1,744 @@
+{
+  "$schema": "./errors.catalog.schema.json",
+  "version": 1,
+  "codes": [
+    {
+      "code": "KB_INSTALL_UNSUPPORTED_PLATFORM",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "{os}/{arch} is not a supported platform.",
+      "hint": "Use a supported platform (macOS, Linux or Windows on x64/arm64) or install from source."
+    },
+    {
+      "code": "KB_INSTALL_NO_WRITE_ACCESS",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "Cannot write to the platform directory {path}.",
+      "hint": "Choose another directory with --platform-root or fix its permissions."
+    },
+    {
+      "code": "KB_INSTALL_NO_DISK_SPACE",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "Not enough disk space in {path}: {needed} needed, {available} available.",
+      "hint": "Free up disk space or choose another directory with --platform-root."
+    },
+    {
+      "code": "KB_INSTALL_NETWORK_UNREACHABLE",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": true,
+      "message": "Cannot reach the release index or registry at {url}.",
+      "hint": "Check your network or proxy settings and retry."
+    },
+    {
+      "code": "KB_INSTALL_RELEASE_INDEX_INVALID",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": true,
+      "message": "The release index is corrupted or its signature does not match.",
+      "hint": "Retry the command; if it persists report the correlationId (this is a KB Labs problem)."
+    },
+    {
+      "code": "KB_INSTALL_NODE_MISSING",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "Required Node.js or package manager version is missing: {requirement}.",
+      "hint": "Install the required version or use the bundled runtime."
+    },
+    {
+      "code": "KB_INSTALL_TOOLCHAIN_UNSUPPORTED",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "Runtime preflight failed: the installed toolchain is not supported.",
+      "hint": "Use Node.js 24.x and pnpm 11.x, or update the runtime and retry."
+    },
+    {
+      "code": "KB_INSTALL_OPERATION_INVALID",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "The requested operation is not supported.",
+      "hint": "Use plan, apply, update, uninstall, rollback, doctor, wizard or status."
+    },
+    {
+      "code": "KB_INSTALL_INCOMPATIBLE_COMPONENTS",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "Selected components are incompatible: {reason}.",
+      "hint": "Choose compatible versions or a different release channel."
+    },
+    {
+      "code": "KB_INSTALL_PROVIDER_UNRESOLVED",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "No adapter provides the required capability {capability}.",
+      "hint": "Select a provider explicitly with --provider."
+    },
+    {
+      "code": "KB_INSTALL_PROVIDER_AMBIGUOUS",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "Capability {capability} has more than one compatible provider.",
+      "hint": "Specify which provider to use with --provider."
+    },
+    {
+      "code": "KB_INSTALL_INPUT_REQUIRED",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "Required input is missing: {field}.",
+      "hint": "Supply the missing input as a flag, in the request JSON, or through the wizard."
+    },
+    {
+      "code": "KB_INSTALL_CONFIG_REQUIRED",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "Required configuration is missing or conflicting: {field}.",
+      "hint": "Provide the configuration value or run the wizard to complete it."
+    },
+    {
+      "code": "KB_INSTALL_SCENARIO_INVALID",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The scenario could not be compiled.",
+      "hint": "Inspect the scenario answers and the manifest requirements."
+    },
+    {
+      "code": "KB_INSTALL_WIZARD_INPUT_INVALID",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "A wizard answer is invalid.",
+      "hint": "Choose one of the displayed compatible options."
+    },
+    {
+      "code": "KB_INSTALL_SECRET_INPUT_INVALID",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "A secret input could not be stored.",
+      "hint": "Pass --secret-env requirement=ENV_VAR and set the environment variable."
+    },
+    {
+      "code": "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH",
+      "area": "install",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": true,
+      "message": "The artifact manifest does not match the installed artifact {artifact}.",
+      "hint": "Retry the installation; if it persists report the correlationId."
+    },
+    {
+      "code": "KB_INSTALL_SERVICE_GRAPH_MISMATCH",
+      "area": "install",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "message": "The rendered service graph does not match the resolved plan or the running services.",
+      "hint": "Run \"kb-create doctor --fix\" to rebuild generated files from the install receipt."
+    },
+    {
+      "code": "KB_INSTALL_APPLY_FAILED",
+      "area": "install",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": true,
+      "message": "The operation did not reach a verified installation.",
+      "hint": "Inspect the local log and the diagnostic dossier, fix the reported prerequisite, or run \"kb-create doctor --fix\"."
+    },
+    {
+      "code": "KB_INSTALL_OPERATION_FAILED",
+      "area": "install",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": true,
+      "message": "The operation failed.",
+      "hint": "Inspect the local log and include the correlationId in a report."
+    },
+    {
+      "code": "KB_INSTALL_RECOVERY_FAILED",
+      "area": "install",
+      "stage": "recover",
+      "severity": "error",
+      "retryable": false,
+      "message": "The recovery operation did not reach a verified state.",
+      "hint": "Inspect the local log and the diagnostic dossier, then retry with the named receipt or snapshot."
+    },
+    {
+      "code": "KB_INSTALL_RECEIPT_UNAVAILABLE",
+      "area": "install",
+      "stage": "recover",
+      "severity": "error",
+      "retryable": false,
+      "message": "The active install receipt could not be read.",
+      "hint": "Run apply first or restore a named snapshot."
+    },
+    {
+      "code": "KB_INSTALL_STATUS_UNHEALTHY",
+      "area": "install",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": true,
+      "message": "The installed service graph is not ready.",
+      "hint": "Inspect \"kb-dev status\" or run \"kb-create doctor --fix\"."
+    },
+    {
+      "code": "KB_INSTALL_DOCTOR_INPUT_INVALID",
+      "area": "install",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "message": "Installed manifest diagnostics could not be prepared.",
+      "hint": "Install exact artifacts that ship matching manifests."
+    },
+    {
+      "code": "KB_INSTALL_LOG_UNAVAILABLE",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "The local operation log could not be created.",
+      "hint": "Check that the platform root is writable."
+    },
+    {
+      "code": "KB_INSTALL_DIAGNOSTIC_UNAVAILABLE",
+      "area": "install",
+      "stage": "recover",
+      "severity": "error",
+      "retryable": false,
+      "message": "The operation failed and the diagnostic dossier could not be written.",
+      "hint": "Inspect the local operation log."
+    },
+    {
+      "code": "KB_INSTALL_INTERRUPTED",
+      "area": "install",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": true,
+      "message": "The installation was interrupted.",
+      "hint": "Run \"kb-create apply\" again; it resumes from where it stopped."
+    },
+    {
+      "code": "KB_INSTALL_ROLLBACK_FAILED",
+      "area": "install",
+      "stage": "recover",
+      "severity": "error",
+      "retryable": false,
+      "message": "The rollback did not succeed; the snapshot is at {snapshot}.",
+      "hint": "Restore the snapshot manually and report the correlationId."
+    },
+    {
+      "code": "KB_HOST_UNREACHABLE",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The KB Labs host is not running: cannot connect to {address}.",
+      "hint": "Run \"kb-create start\", or \"kb-create doctor\" if the host should already be running."
+    },
+    {
+      "code": "KB_HOST_ALREADY_RUNNING",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "The KB Labs host is already running.",
+      "hint": "Use \"kb-create status\" or \"kb-create restart\"."
+    },
+    {
+      "code": "KB_HOST_PORT_IN_USE",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "Port {port} is used by another application.",
+      "hint": "Free the port or choose another one with \"kb-create start --port <port>\"."
+    },
+    {
+      "code": "KB_HOST_START_FAILED",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": true,
+      "message": "The host process failed while starting.",
+      "hint": "Read the reason in the log and report the correlationId if it is unclear."
+    },
+    {
+      "code": "KB_HOST_UNHEALTHY",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The host responds but module {module} is unhealthy.",
+      "hint": "Run \"kb-create restart\" or \"kb-create doctor\"."
+    },
+    {
+      "code": "KB_HOST_EXPOSURE_REFUSED",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "Refusing to expose the host without authentication on a non-loopback address.",
+      "hint": "Enable authentication or bind to a loopback address."
+    },
+    {
+      "code": "KB_HOST_VERSION_SKEW",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The launcher or CLI version {client} does not match the host version {host}.",
+      "hint": "Run \"kb-create update\"."
+    },
+    {
+      "code": "KB_HOST_CONTROL_UNAVAILABLE",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The launcher control channel is unavailable.",
+      "hint": "Start the launcher or the desktop shell."
+    },
+    {
+      "code": "KB_HOST_STATE_DIR_UNWRITABLE",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "Cannot write to the state directory {path}.",
+      "hint": "Fix the directory permissions or free disk space."
+    },
+    {
+      "code": "KB_HOST_ADAPTER_UNAVAILABLE",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "Adapter {slot} is unavailable: {reason}.",
+      "hint": "Start or configure the adapter under adapters.{slot} in kb.config.json."
+    },
+    {
+      "code": "KB_AUTH_REQUIRED",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Authentication is required.",
+      "hint": "Run \"kb auth login\"."
+    },
+    {
+      "code": "KB_AUTH_INVALID_CREDENTIALS",
+      "area": "auth",
+      "stage": "login",
+      "severity": "error",
+      "retryable": true,
+      "message": "The credentials are invalid.",
+      "hint": "Retry, or reset your credentials."
+    },
+    {
+      "code": "KB_AUTH_TOKEN_EXPIRED",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Your session token has expired and could not be refreshed.",
+      "hint": "Run \"kb auth login\"."
+    },
+    {
+      "code": "KB_AUTH_FORBIDDEN",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "You do not have permission to perform this operation (required role: {role}).",
+      "hint": "Ask your administrator to grant the required role."
+    },
+    {
+      "code": "KB_AUTH_LOCKED_OUT",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "No administrator access is available.",
+      "hint": "Run \"kb-create doctor --recover\"."
+    },
+    {
+      "code": "KB_AUTH_GATEWAY_UNREACHABLE",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The gateway is unreachable.",
+      "hint": "Check that the host is running, see KB_HOST_UNREACHABLE."
+    },
+    {
+      "code": "KB_AUTH_CLOCK_SKEW",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The token time does not match the system clock.",
+      "hint": "Check the system time and time zone."
+    },
+    {
+      "code": "KB_AUTH_MODE_MISMATCH",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The client expects authentication mode {expected} but the host runs in {actual}.",
+      "hint": "Align the client with the installed access mode."
+    },
+    {
+      "code": "KB_PROJECT_PATH_NOT_FOUND",
+      "area": "project",
+      "stage": "add-project",
+      "severity": "error",
+      "retryable": false,
+      "message": "The project path {path} does not exist.",
+      "hint": "Check the path and run \"kb project add <path>\" again."
+    },
+    {
+      "code": "KB_PROJECT_NOT_A_DIRECTORY",
+      "area": "project",
+      "stage": "add-project",
+      "severity": "error",
+      "retryable": false,
+      "message": "The project path {path} is not a directory.",
+      "hint": "Pass the project folder, not a file."
+    },
+    {
+      "code": "KB_PROJECT_NO_ACCESS",
+      "area": "project",
+      "stage": "add-project",
+      "severity": "error",
+      "retryable": false,
+      "message": "No permission to read the project path {path}.",
+      "hint": "Fix the folder permissions or pick another folder."
+    },
+    {
+      "code": "KB_PROJECT_ALREADY_REGISTERED",
+      "area": "project",
+      "stage": "add-project",
+      "severity": "error",
+      "retryable": false,
+      "message": "The project {path} is already registered.",
+      "hint": "Use \"kb project show\" to inspect it."
+    },
+    {
+      "code": "KB_PROJECT_UNKNOWN",
+      "area": "project",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The project {path} is not in the registry (the folder may have moved).",
+      "hint": "Register it with \"kb project add {path}\"."
+    },
+    {
+      "code": "KB_PROJECT_DECLARATION_INVALID",
+      "area": "project",
+      "stage": "add-project",
+      "severity": "error",
+      "retryable": false,
+      "message": "The .kb configuration of the project is invalid at {field}: {expected}.",
+      "hint": "Fix {field} in the project .kb configuration."
+    },
+    {
+      "code": "KB_PROJECT_RUNTIME_START_FAILED",
+      "area": "project",
+      "stage": "start",
+      "severity": "error",
+      "retryable": true,
+      "message": "The runtime of project {project} did not start.",
+      "hint": "Read the reason in the log and include the correlationId if you report it."
+    },
+    {
+      "code": "KB_PROJECT_RUNTIME_LIMIT",
+      "area": "project",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "The limit of {limit} active project runtimes is reached.",
+      "hint": "Close an inactive project and try again."
+    },
+    {
+      "code": "KB_CONFIG_UNKNOWN_KEY",
+      "area": "config",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Unknown configuration key {path}.",
+      "hint": "Did you mean {suggestion}? Fix the key in kb.config.json."
+    },
+    {
+      "code": "KB_CONFIG_SECRET_MISSING",
+      "area": "config",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The configuration references {variable}, which has no value.",
+      "hint": "Set the environment variable or store the secret, then retry."
+    },
+    {
+      "code": "KB_CONFIG_CONFLICT",
+      "area": "config",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The configuration file {path} was changed by another writer.",
+      "hint": "Reload the file and repeat the change."
+    },
+    {
+      "code": "KB_CONFIG_LLM_KEY_INVALID",
+      "area": "config",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The LLM provider {provider} rejected the API key.",
+      "hint": "Replace the key under the LLM settings in kb.config.json."
+    },
+    {
+      "code": "KB_CONFIG_LLM_QUOTA",
+      "area": "config",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The quota or budget for LLM provider {provider} is exhausted.",
+      "hint": "Top up the quota or switch to another model."
+    },
+    {
+      "code": "KB_PLUGIN_SDK_INCOMPATIBLE",
+      "area": "plugin",
+      "stage": "extend",
+      "severity": "error",
+      "retryable": false,
+      "message": "Plugin {plugin} needs SDK {required} but {installed} is installed.",
+      "hint": "Update the plugin or the platform to compatible versions."
+    },
+    {
+      "code": "KB_PLUGIN_NAMESPACE_RESERVED",
+      "area": "plugin",
+      "stage": "extend",
+      "severity": "error",
+      "retryable": false,
+      "message": "The namespace {namespace} is reserved.",
+      "hint": "Choose another namespace, for example acme-{namespace}."
+    },
+    {
+      "code": "KB_PLUGIN_NAMESPACE_TAKEN",
+      "area": "plugin",
+      "stage": "extend",
+      "severity": "error",
+      "retryable": false,
+      "message": "The namespace {namespace} is taken by package {owner}.",
+      "hint": "Choose another namespace or use the owning package."
+    },
+    {
+      "code": "KB_PLUGIN_COMMAND_SHADOWED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Command {command} is hidden: plugin {plugin} is shadowed by a built-in command.",
+      "hint": "Run \"kb plugin doctor\" for details."
+    },
+    {
+      "code": "KB_PLUGIN_INSTALL_FAILED",
+      "area": "plugin",
+      "stage": "extend",
+      "severity": "error",
+      "retryable": true,
+      "message": "Installing plugin {plugin} failed.",
+      "hint": "Check the network and registry, then retry."
+    },
+    {
+      "code": "KB_PLUGIN_LOAD_FAILED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Plugin {plugin} could not be loaded.",
+      "hint": "Run \"kb plugin doctor\" to see the manifest or dependency problem."
+    },
+    {
+      "code": "KB_PLUGIN_CRASHED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "Plugin {plugin} crashed while running.",
+      "hint": "Retry; if it repeats, include the correlationId in a report."
+    },
+    {
+      "code": "KB_PLUGIN_TIMEOUT",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "Plugin {plugin} did not finish in time.",
+      "hint": "Retry or increase the timeout."
+    },
+    {
+      "code": "KB_PLUGIN_PERMISSION_DENIED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Plugin {plugin} was denied the {permission} permission.",
+      "hint": "Grant the permission in the plugin settings if you trust it."
+    },
+    {
+      "code": "KB_UPDATE_DOWNLOAD_FAILED",
+      "area": "update",
+      "stage": "update",
+      "severity": "error",
+      "retryable": true,
+      "message": "Downloading the update failed.",
+      "hint": "Check the network and run the update again."
+    },
+    {
+      "code": "KB_UPDATE_INCOMPATIBLE",
+      "area": "update",
+      "stage": "update",
+      "severity": "error",
+      "retryable": false,
+      "message": "The update is incompatible with the installed components: {reason}.",
+      "hint": "Resolve the blocking component first, then update."
+    },
+    {
+      "code": "KB_UPDATE_VERIFY_FAILED",
+      "area": "update",
+      "stage": "update",
+      "severity": "error",
+      "retryable": false,
+      "message": "Verification after the update failed; rolled back to {version}.",
+      "hint": "Inspect the diagnostic dossier and report the correlationId."
+    },
+    {
+      "code": "KB_UPDATE_HOST_NOT_HEALTHY",
+      "area": "update",
+      "stage": "update",
+      "severity": "error",
+      "retryable": false,
+      "message": "The host did not become healthy after the update.",
+      "hint": "Wait for the automatic rollback or run \"kb-create rollback\"."
+    },
+    {
+      "code": "KB_UPDATE_NO_SNAPSHOT",
+      "area": "update",
+      "stage": "rollback",
+      "severity": "error",
+      "retryable": false,
+      "message": "There is no snapshot to roll back to.",
+      "hint": "Reinstall the previous version with \"kb-create apply\"."
+    },
+    {
+      "code": "KB_RUNTIME_TIMEOUT",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The operation did not finish in time.",
+      "hint": "Retry or increase the timeout."
+    },
+    {
+      "code": "KB_RUNTIME_DISK_FULL",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "There is no free disk space in {path}.",
+      "hint": "Free some space or clear the cache and logs there."
+    },
+    {
+      "code": "KB_RUNTIME_LOGS_UNAVAILABLE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The log storage is unavailable.",
+      "hint": "Try \"kb logs query\" first, then the raw log files under .kb/logs."
+    },
+    {
+      "code": "KB_RUNTIME_RATE_LIMITED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The request limit was reached; retry after {retryAfter}.",
+      "hint": "Wait and retry, or reduce the request rate."
+    },
+    {
+      "code": "KB_CONFIG_INVALID",
+      "area": "config",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Configuration value {path} is invalid.",
+      "hint": "Fix {path} in kb.config.json; see the documentation for allowed values."
+    },
+    {
+      "code": "KB_PLUGIN_NOT_FOUND",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Plugin {plugin} was not found in the registry.",
+      "hint": "Check the exact name with \"kb marketplace search\"."
+    },
+    {
+      "code": "KB_ADAPTER_NOT_CONFIGURED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Service {service} is not configured.",
+      "hint": "Add {adapter} under adapters in kb.config.json."
+    },
+    {
+      "code": "KB_RUNTIME_INPUT_INVALID",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The provided input is invalid.",
+      "hint": "Correct the reported fields and retry; run the command with --help for the expected input."
+    },
+    {
+      "code": "KB_RUNTIME_UNEXPECTED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "An unexpected error occurred.",
+      "hint": "Re-run with --debug and include the correlationId in a report."
+    }
+  ]
+}
