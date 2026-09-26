@@ -144,10 +144,12 @@ jobs:
       - name: Checks
         id: checks
         phase: checks
-        # pack-install runs a real `npm pack` + clean-consumer `npm install` per package
-        # (~140 packages). At the process-broker's safe concurrency (CHECKS_CONCURRENCY=2,
-        # see plugins/release/manager-core/src/checks.ts) a full run is install-heavy and
-        # can grow with the monorepo; keep a two-hour budget for future package growth.
+        # pack-static verifies the tarballs `release stage plan` already produced in one
+        # process; pack-install does ONE aggregated clean install from the staging registry
+        # plus isolated installs only for public standalone/changed packages (see
+        # plugins/release/manager-core/src/pack-verify.ts). Expected 5-10 minutes instead of
+        # ~40-80; the two-hour budget is kept as a ceiling. Debug the old per-package gate with
+        # `pnpm kb release checks --flow <flow> --only pack-install-per-package`.
         timeoutMs: 7200000
         if: ${{ !inputs.skipChecks }}
         env:
