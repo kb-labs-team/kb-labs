@@ -7550,15 +7550,9 @@ importers:
 
   templates/plugin-template/packages/plugin-template-core:
     dependencies:
-      '@kb-labs/plugin-contracts':
-        specifier: workspace:*
-        version: link:../../../../core/plugin-contracts
       '@kb-labs/plugin-template-contracts':
         specifier: workspace:*
         version: link:../plugin-template-contracts
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../../sdk/sdk
       react:
         specifier: ^19.0.0
         version: 19.2.5
@@ -7572,6 +7566,9 @@ importers:
       '@kb-labs/plugin-runtime':
         specifier: workspace:*
         version: link:../../../../core/plugin-runtime
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../../sdk/sdk
       '@types/node':
         specifier: ^24.3.3
         version: 24.12.2
