@@ -34,14 +34,15 @@ function writeCache(file: string): void {
 }
 
 describe('clearDiscoveryCache', () => {
-  it('removes the cache from the project state directory and the legacy in-repo location', async () => {
-    const { path, legacyPath } = resolveRuntimeStatePath(project, SEGMENTS);
+  it('removes the cache from the project state directory only', async () => {
+    const path = resolveRuntimeStatePath(project, SEGMENTS);
+    const inRepo = join(project, '.kb', ...SEGMENTS);
     writeCache(path);
-    writeCache(legacyPath);
+    writeCache(inRepo);
 
     expect(await clearDiscoveryCache(project)).toBe(true);
     expect(existsSync(path)).toBe(false);
-    expect(existsSync(legacyPath)).toBe(false);
+    expect(existsSync(inRepo)).toBe(true);
   });
 
   it('reports false when there is nothing to clear', async () => {

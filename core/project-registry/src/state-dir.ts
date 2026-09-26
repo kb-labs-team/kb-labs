@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { deriveProjectId } from './project-id.js';
 import { projectStateDir, resolveKbHome } from './registry.js';
@@ -49,45 +49,15 @@ export function resolveProjectStateDir(projectRoot: string, options: ProjectStat
   return projectStateDir(root, deriveProjectId(canonicalProjectRootSync(projectRoot)));
 }
 
-/** A runtime-state entry location together with the pre-migration in-repo one. */
-export interface RuntimeStatePath {
-  /** `<state dir>/<segments>` — where new data is written. */
-  path: string;
-  /** `<projectRoot>/.kb/<segments>` — the legacy location, read-only fallback. */
-  legacyPath: string;
-}
-
 /**
- * Locations of a runtime-state entry, e.g. `['cache', 'cli-manifests.json']`.
- * Writers use `path`; readers use {@link resolveRuntimeReadPath}.
+ * Location of a runtime-state entry inside the project state directory, e.g.
+ * `['cache', 'cli-manifests.json']`. Nothing is created and the repository is
+ * never consulted: files an older version left in `<project>/.kb/` are ignored.
  */
 export function resolveRuntimeStatePath(
   projectRoot: string,
   segments: readonly string[],
   options: ProjectStateOptions = {},
-): RuntimeStatePath {
-  return {
-    path: join(resolveProjectStateDir(projectRoot, options), ...segments),
-    legacyPath: join(resolve(projectRoot), '.kb', ...segments),
-  };
-}
-
-/**
- * Path a reader should open: the new location when it exists, otherwise the
- * legacy in-repo one when that exists, otherwise the new location (so the
- * caller sees an ordinary "not found").
- *
- * The legacy fallback exists for one release so existing checkouts keep
- * working; after it is removed, old in-repo files are simply ignored.
- */
-export function resolveRuntimeReadPath(
-  projectRoot: string,
-  segments: readonly string[],
-  options: ProjectStateOptions = {},
 ): string {
-  const { path, legacyPath } = resolveRuntimeStatePath(projectRoot, segments, options);
-  if (existsSync(path)) {
-    return path;
-  }
-  return existsSync(legacyPath) ? legacyPath : path;
+  return join(resolveProjectStateDir(projectRoot, options), ...segments);
 }

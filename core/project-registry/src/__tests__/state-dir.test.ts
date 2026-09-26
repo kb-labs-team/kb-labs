@@ -1,10 +1,10 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { deriveProjectId } from '../project-id.js';
 import { createProjectRegistry } from '../registry.js';
-import { resolveProjectStateDir, resolveRuntimeReadPath, resolveRuntimeStatePath } from '../state-dir.js';
+import { resolveProjectStateDir, resolveRuntimeStatePath } from '../state-dir.js';
 
 let sandbox: string;
 let kbHome: string;
@@ -75,37 +75,21 @@ describe('resolveProjectStateDir', () => {
   });
 });
 
-describe('runtime state paths and legacy read fallback', () => {
+describe('resolveRuntimeStatePath', () => {
   const segments = ['cache', 'cli-manifests.json'] as const;
 
-  it('returns the state path for writing and the in-repo path as legacy', () => {
-    const { path, legacyPath } = resolveRuntimeStatePath(project, segments, { root: kbHome });
-    expect(path).toBe(join(resolveProjectStateDir(project, { root: kbHome }), ...segments));
-    expect(legacyPath).toBe(join(project, '.kb', ...segments));
+  it('joins the segments under the project state directory', () => {
+    expect(resolveRuntimeStatePath(project, segments, { root: kbHome })).toBe(
+      join(resolveProjectStateDir(project, { root: kbHome }), ...segments),
+    );
   });
 
-  it('reads the new location when nothing exists yet', () => {
-    const fresh = join(sandbox, 'fresh');
-    mkdirSync(join(fresh, '.kb'), { recursive: true });
-    const { path } = resolveRuntimeStatePath(fresh, segments, { root: kbHome });
-    expect(resolveRuntimeReadPath(fresh, segments, { root: kbHome })).toBe(path);
-  });
-
-  it('falls back to the legacy in-repo file when only it exists', () => {
+  it('ignores files an older version left in the repository', () => {
     const legacyOnly = join(sandbox, 'legacy-only');
     mkdirSync(join(legacyOnly, '.kb', 'cache'), { recursive: true });
-    const { legacyPath } = resolveRuntimeStatePath(legacyOnly, segments, { root: kbHome });
-    writeFileSync(legacyPath, '{}');
-    expect(resolveRuntimeReadPath(legacyOnly, segments, { root: kbHome })).toBe(legacyPath);
-  });
-
-  it('prefers the new location once it exists', () => {
-    const both = join(sandbox, 'both');
-    mkdirSync(join(both, '.kb', 'cache'), { recursive: true });
-    const { path, legacyPath } = resolveRuntimeStatePath(both, segments, { root: kbHome });
-    writeFileSync(legacyPath, '{"legacy":true}');
-    mkdirSync(join(path, '..'), { recursive: true });
-    writeFileSync(path, '{"legacy":false}');
-    expect(resolveRuntimeReadPath(both, segments, { root: kbHome })).toBe(path);
+    writeFileSync(join(legacyOnly, '.kb', 'cache', 'cli-manifests.json'), '{}');
+    const resolved = resolveRuntimeStatePath(legacyOnly, segments, { root: kbHome });
+    expect(resolved.startsWith(legacyOnly)).toBe(false);
+    expect(existsSync(resolved)).toBe(false);
   });
 });

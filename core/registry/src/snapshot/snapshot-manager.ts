@@ -37,9 +37,6 @@ export class SnapshotManager {
   private readonly snapshotDir: string;
   private readonly snapshotPath: string;
   private readonly backupPath: string;
-  /** Pre-migration in-repo locations, read-only fallback for one release. */
-  private readonly legacySnapshotPath: string;
-  private readonly legacyBackupPath: string;
   private readonly ttlMs: number;
   private readonly platformVersion: string;
   private readonly cache?: ICache;
@@ -51,13 +48,9 @@ export class SnapshotManager {
   constructor(opts: SnapshotManagerOptions) {
     this.root = resolve(opts.root);
     const stateOptions = { root: opts.kbHome };
-    const snapshot = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_FILE], stateOptions);
-    const backup = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_BACKUP], stateOptions);
-    this.snapshotDir = dirname(snapshot.path);
-    this.snapshotPath = snapshot.path;
-    this.backupPath = backup.path;
-    this.legacySnapshotPath = snapshot.legacyPath;
-    this.legacyBackupPath = backup.legacyPath;
+    this.snapshotPath = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_FILE], stateOptions);
+    this.backupPath = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_BACKUP], stateOptions);
+    this.snapshotDir = dirname(this.snapshotPath);
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
     this.platformVersion = opts.platformVersion;
     this.cache = opts.cache;
@@ -81,14 +74,14 @@ export class SnapshotManager {
     }
 
     // Disk primary
-    const primary = this.readDisk(this.snapshotPath) ?? this.readDisk(this.legacySnapshotPath);
+    const primary = this.readDisk(this.snapshotPath);
     if (primary && !primary.corrupted) {
       this.lastChecksum = primary.checksum ?? null;
       return this.markStaleness(primary);
     }
 
     // Disk backup
-    const backup = this.readDisk(this.backupPath) ?? this.readDisk(this.legacyBackupPath);
+    const backup = this.readDisk(this.backupPath);
     if (backup && !backup.corrupted) {
       this.lastChecksum = backup.checksum ?? null;
       return this.markStaleness(backup);

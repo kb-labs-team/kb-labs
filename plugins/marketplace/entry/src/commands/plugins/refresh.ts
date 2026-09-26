@@ -45,20 +45,12 @@ export default defineCommand<unknown, CLIInput<RefreshFlags>, unknown>({
   },
 });
 
-/**
- * Removes the discovery cache from the project runtime-state directory and
- * from the legacy in-repo location (still read for one release).
- */
+/** Removes the discovery cache from the project runtime-state directory. */
 export async function clearDiscoveryCache(cwd: string): Promise<boolean> {
-  const { path: stateFile, legacyPath } = resolveRuntimeStatePath(cwd, ['cache', 'cli-manifests.json']);
-  let cleared = false;
-  for (const cacheFile of [stateFile, legacyPath]) {
-    try {
-      await fs.unlink(cacheFile);
-      cleared = true;
-    } catch {
-      // not present at this location
-    }
+  try {
+    await fs.unlink(resolveRuntimeStatePath(cwd, ['cache', 'cli-manifests.json']));
+    return true;
+  } catch {
+    return false;
   }
-  return cleared;
 }

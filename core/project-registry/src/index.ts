@@ -19,8 +19,6 @@ export {
 } from './registry.js';
 export {
   resolveProjectStateDir,
-  resolveRuntimeReadPath,
   resolveRuntimeStatePath,
   type ProjectStateOptions,
-  type RuntimeStatePath,
 } from './state-dir.js';

@@ -157,13 +157,12 @@ describe('SnapshotManager — runtime state location', () => {
     expect(existsSync(join(kbHome, 'state', projectDir!, 'cache', 'registry.json'))).toBe(true);
   });
 
-  it('still reads a legacy in-repo snapshot when no new one exists', async () => {
+  it('ignores a snapshot an older version left in the repository', async () => {
     mkdirSync(join(root, '.kb', 'cache'), { recursive: true });
     const legacy = new SnapshotManager({ root, kbHome, platformVersion: 'test' }).createEmpty();
     writeFileSync(join(root, '.kb', 'cache', 'registry.json'), JSON.stringify(legacy));
 
     const loaded = await new SnapshotManager({ root, kbHome, platformVersion: 'test' }).load();
-    expect(loaded).not.toBeNull();
-    expect(loaded!.checksum).toBe(legacy.checksum);
+    expect(loaded).toBeNull();
   });
 });

@@ -12,7 +12,7 @@ import { generateExamples } from '../../utils/generate-examples';
 import { registry } from '../../registry/service';
 import { discoverManifests, resetInProcCache, loadConfig } from '../../registry/discover';
 import { preflightManifests } from '../../registry/register';
-import { manifestCacheReadPath } from '../../registry/manifest-cache-path';
+import { manifestCachePath } from '../../registry/manifest-cache-path';
 import { validateManifests } from '../../registry/schema';
 import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
 import type { MarketplaceEntry } from '@kb-labs/core-discovery';
@@ -600,7 +600,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
 
     // 3. Cache
     try {
-      const cachePath = manifestCacheReadPath(cwd);
+      const cachePath = manifestCachePath(cwd);
       const cacheExists = await fsAccess(cachePath).then(() => true).catch(() => false);
       if (cacheExists) {
         const cache = JSON.parse(await fsReadFile(cachePath, 'utf8')) as { timestamp?: number; packages?: Record<string, unknown> };
