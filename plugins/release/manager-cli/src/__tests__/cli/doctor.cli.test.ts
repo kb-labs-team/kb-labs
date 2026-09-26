@@ -9,20 +9,20 @@ vi.mock('@kb-labs/sdk', async (importOriginal) => {
 
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import { runPreflightFor } from '../../shared/run-preflight.js';
-import preflightCommand from '../../cli/commands/preflight.js';
+import doctorCommand from '../../cli/commands/doctor.js';
 
 beforeEach(() => {
   vi.mocked(runPreflightFor).mockReset();
 });
 
-describe('release:preflight', () => {
+describe('release:doctor', () => {
   it('PF-01: green preflight -> ok, --json carries preflight + report with a preflight stage row', async () => {
     vi.mocked(runPreflightFor).mockResolvedValue({
       ok: true, durationMs: 3,
       checks: [{ id: 'branch', status: 'passed', durationMs: 1, message: 'On master' }],
     } as never);
     const { ui, captured } = createCapturedUI();
-    const result = await preflightCommand.execute(createMockContext({ ui, cwd: '/project' }) as never, mockCLIInput({ flags: { json: true, flow: 'platform' } }));
+    const result = await doctorCommand.execute(createMockContext({ ui, cwd: '/project' }) as never, mockCLIInput({ flags: { json: true, flow: 'platform' } }));
     expect(result.ok).toBe(true);
     const out = captured.json[0] as { ok: boolean; report: { stages: Array<{ stage: string; status: string }> } };
     expect(out.ok).toBe(true);
@@ -37,7 +37,7 @@ describe('release:preflight', () => {
       checks: [{ id: 'clean-tree', status: 'failed', durationMs: 1, message: '2 uncommitted change(s)', error }],
     } as never);
     const { ui, captured } = createCapturedUI();
-    const result = await preflightCommand.execute(createMockContext({ ui, cwd: '/project' }) as never, mockCLIInput({ flags: { json: true } }));
+    const result = await doctorCommand.execute(createMockContext({ ui, cwd: '/project' }) as never, mockCLIInput({ flags: { json: true } }));
     expect(result.ok).toBe(false);
     const out = captured.json[0] as { report: { failures: Array<{ checkId: string; classification: string }> } };
     expect(out.report.failures[0]).toMatchObject({ checkId: 'preflight:clean-tree', classification: 'environment' });

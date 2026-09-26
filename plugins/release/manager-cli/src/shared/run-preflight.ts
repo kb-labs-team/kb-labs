@@ -1,5 +1,5 @@
 /**
- * Shared wiring of runReleasePreflight for `release preflight` and the
+ * Shared wiring of runReleasePreflight for `release doctor` and the
  * opt-in `release checks --preflight` step.
  */
 import {
