@@ -164,7 +164,7 @@ tools/kb-env/kb-env
 
 # Release candidate bundles are build output produced by the release workflow
 # (.kb/workflows/scripts/dispatch-release-candidate.mjs); keep them out of
-# `git status` so the release preflight clean-tree probe is not tripped.
+# `git status` so the release doctor clean-tree probe is not tripped.
 .kb/release/candidates/
 
 # Tarballs `release stage plan` publishes to the staging registry; the pack-static /
