@@ -10,7 +10,7 @@
 #
 # The Preflight step runs first (even with skipChecks) and fails fast on a broken
 # environment. To re-run it by hand:
-#   pnpm kb release preflight --flow <flow> --net-offset "${KB_NET_OFFSET:-0}"
+#   pnpm kb release doctor --flow <flow> --net-offset "${KB_NET_OFFSET:-0}"
 #
 # Emergency escape hatch: add "skipChecks":true to the input to skip the
 # Stage and Checks steps entirely (e.g. when Checks itself is broken, Verdaccio/
@@ -107,7 +107,7 @@ jobs:
         # CI candidate dispatch. Exits non-zero with the run report (root cause,
         # hint, next command per failure) when the environment is broken.
         timeoutMs: 120000
-        run: pnpm kb release preflight --flow ${{ inputs.flow }} --net-offset "${KB_NET_OFFSET:-0}" --json
+        run: pnpm kb release doctor --flow ${{ inputs.flow }} --net-offset "${KB_NET_OFFSET:-0}" --json
 
       - name: Preview
         id: plan
