@@ -1,6 +1,7 @@
 /**
  * @module @kb-labs/core-discovery/discovery-manager
- * Marketplace-based discovery: reads .kb/marketplace.lock, loads & validates manifests.
+ * The single discovery pipeline: marketplace locks (platform + project scope)
+ * plus workspace development sources, loaded and validated the same way.
  */
 
 import * as path from 'node:path';
@@ -9,13 +10,18 @@ import { type ManifestV3 } from '@kb-labs/plugin-contracts';
 import type {
   DiscoveryResult,
   DiscoveredPlugin,
+  DiscoveryFailure,
+  DiscoveryOrigin,
+  DiscoveryScope,
+  DiagnosticEvent,
   MarketplaceEntry,
   EntityKind,
 } from './types.js';
 import { DiagnosticCollector } from './diagnostics.js';
 import { readMarketplaceLock } from './marketplace-lock.js';
-import { loadManifest } from './manifest-loader.js';
+import { loadManifestFile } from './manifest-loader.js';
 import { computePackageIntegrity } from './integrity.js';
+import { findWorkspaceCandidates } from './workspace-source.js';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -26,14 +32,62 @@ export interface DiscoveryOptions {
   root?: string;
   /**
    * Platform installation root (e.g. ~/kb-platform).
-   * When set and different from root, both lock files are read:
-   * project lock wins, platform lock fills gaps.
+   * When set and different from root, both scopes are discovered:
+   * the platform scope lives at platformRoot, the project scope at root.
+   * When unset (or equal to root) there is a single root, reported as platform scope.
    */
   platformRoot?: string;
   /** Timeout for each manifest import in milliseconds (default: 5000) */
   importTimeoutMs?: number;
   /** Whether to verify integrity hashes (default: true) */
   verifyIntegrity?: boolean;
+  /**
+   * Also treat pnpm workspace packages under each scope root that declare a
+   * plugin manifest as discovered plugins (monorepo development). Default: true.
+   * A root without `pnpm-workspace.yaml` contributes only its own package.
+   */
+  workspace?: boolean;
+}
+
+/** Shadowing priority within one scope: workspace > linked > node_modules. */
+const ORIGIN_PRIORITY: Record<DiscoveryOrigin, number> = {
+  workspace: 3,
+  linked: 2,
+  node_modules: 1,
+};
+
+/** Any project-scope plugin outranks any platform-scope one (project overrides platform). */
+const PROJECT_SCOPE_BONUS = 10;
+
+interface ScopeRoot {
+  scope: DiscoveryScope;
+  root: string;
+}
+
+/** A place a plugin may live, before its manifest has been loaded. */
+interface Candidate {
+  /** Lock key, or package name for workspace packages */
+  id: string;
+  scope: DiscoveryScope;
+  origin: DiscoveryOrigin;
+  packageRoot: string;
+  /** Root the lock entry's resolvedPath is relative to, or the workspace root */
+  root: string;
+  /** Present for lock-backed candidates */
+  entry?: MarketplaceEntry;
+  /** package.json name, known up front for workspace packages */
+  packageName?: string;
+}
+
+interface LoadedPlugin {
+  plugin: DiscoveredPlugin;
+  manifest: ManifestV3;
+}
+
+interface CandidateOutcome {
+  events: DiagnosticEvent[];
+  loaded?: LoadedPlugin;
+  failure?: DiscoveryFailure;
 }
 
 // ---------------------------------------------------------------------------
@@ -41,181 +95,252 @@ export interface DiscoveryOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * Discovers installed entities by reading the marketplace lock file
- * and loading manifests from the resolved paths.
+ * The one discovery pipeline. Finds plugins from:
  *
- * There is no filesystem scanning — every entity must be registered
- * in .kb/marketplace.lock via `kb marketplace install` or `kb marketplace link`.
+ *   1. `.kb/marketplace.lock` of each scope (platform and project, ADR-0012);
+ *      project wins over platform for the same lock key. Entries installed from
+ *      the marketplace are `node_modules` origin, linked ones `linked`.
+ *   2. pnpm workspace packages under each scope root (`workspace` origin),
+ *      the monorepo development source.
+ *
+ * Every candidate is loaded the same way (static `dist/manifest.json` when
+ * built, compiled module otherwise), validated, integrity-checked when locked,
+ * and then shadowed by plugin id: project scope beats platform scope, and inside
+ * one scope workspace > linked > node_modules.
+ *
+ * Nothing else is scanned: a package in `node_modules` that is not in a lock is
+ * not a plugin.
  */
 export class DiscoveryManager {
-  private readonly root: string;
-  private readonly platformRoot: string | undefined;
+  private readonly scopes: ScopeRoot[];
   private readonly importTimeoutMs: number;
   private readonly verifyIntegrity: boolean;
+  private readonly workspace: boolean;
 
   constructor(opts: DiscoveryOptions = {}) {
-    this.root = opts.root ?? process.cwd();
-    this.platformRoot = opts.platformRoot !== this.root ? opts.platformRoot : undefined;
+    const root = opts.root ?? process.cwd();
+    this.scopes = opts.platformRoot && opts.platformRoot !== root
+      ? [{ scope: 'platform', root: opts.platformRoot }, { scope: 'project', root }]
+      : [{ scope: 'platform', root }];
     this.importTimeoutMs = opts.importTimeoutMs ?? 5_000;
     this.verifyIntegrity = opts.verifyIntegrity ?? true;
+    this.workspace = opts.workspace ?? true;
   }
 
   /**
-   * Run full discovery pipeline.
+   * Run the discovery pipeline:
    *
-   * When platformRoot is set, both lock files are merged:
-   * project lock (this.root) is read first and wins on conflicts.
-   * Platform lock fills in any entries not present in the project.
-   *
-   *   1. Read .kb/marketplace.lock (project first, then platform)
-   *   2. For each entry → resolve path → load manifest → validate → verify integrity
-   *   3. Return aggregated result with diagnostics
+   *   1. Collect candidates (lock entries of each scope, workspace packages)
+   *   2. For each candidate → load manifest → validate → verify integrity
+   *   3. Shadow duplicates by plugin id
+   *   4. Return aggregated result with diagnostics
    */
   async discover(): Promise<DiscoveryResult> {
     const diag = new DiagnosticCollector();
+    const candidates = await this.collectCandidates(diag);
+
+    const outcomes = await Promise.all(candidates.map(c => this.processCandidate(c)));
+
+    const winners = new Map<string, LoadedPlugin>();
+    const failures: DiscoveryFailure[] = [];
+    for (const outcome of outcomes) {
+      diag.addAll(outcome.events);
+      if (outcome.failure) {failures.push(outcome.failure);}
+      if (outcome.loaded) {this.shadow(winners, outcome.loaded, diag);}
+    }
+
     const plugins: DiscoveredPlugin[] = [];
     const manifests = new Map<string, ManifestV3>();
-
-    // 1. Build merged entry map: project wins, platform fills gaps
-    const mergedEntries = await this.readMergedLock(diag);
-    if (!mergedEntries) {
-      return { plugins, manifests, diagnostics: diag.getEvents() };
+    for (const [id, { plugin, manifest }] of winners) {
+      plugins.push(plugin);
+      manifests.set(id, manifest);
     }
-
-    // 2. Process each entry
-    for (const [packageId, { entry, root }] of mergedEntries) {
-      await this.processEntry(packageId, entry, root, plugins, manifests, diag);
-    }
-
-    return { plugins, manifests, diagnostics: diag.getEvents() };
+    return { plugins, manifests, failures, diagnostics: diag.getEvents() };
   }
 
-  /**
-   * Read and merge marketplace.lock from project root and (optionally) platform root.
-   * Returns a map of packageId → { entry, root } where root is the directory
-   * the entry's resolvedPath should be resolved against.
-   * Project entries win over platform entries on conflict.
-   */
-  private async readMergedLock(
-    diag: DiagnosticCollector,
-  ): Promise<Map<string, { entry: MarketplaceEntry; root: string }> | null> {
-    const merged = new Map<string, { entry: MarketplaceEntry; root: string }>();
+  // -------------------------------------------------------------------------
+  // Candidates
+  // -------------------------------------------------------------------------
 
-    // Platform lock first (lower priority — fills gaps)
-    if (this.platformRoot) {
-      const platformLock = await readMarketplaceLock(this.platformRoot, diag);
-      if (platformLock) {
-        for (const [packageId, entry] of Object.entries(platformLock.installed)) {
-          merged.set(packageId, { entry, root: this.platformRoot });
+  private async collectCandidates(diag: DiagnosticCollector): Promise<Candidate[]> {
+    // Lock entries. Project scope is read last so it overwrites a platform entry
+    // with the same lock key (project overrides platform).
+    const locked = new Map<string, Candidate>();
+    for (const { scope, root } of this.scopes) {
+      const lock = await readMarketplaceLock(root, diag);
+      if (!lock) {continue;}
+      for (const [id, entry] of Object.entries(lock.installed)) {
+        locked.set(id, {
+          id,
+          scope,
+          origin: entry.source === 'local' ? 'linked' : 'node_modules',
+          packageRoot: path.resolve(root, entry.resolvedPath),
+          root,
+          entry,
+        });
+      }
+    }
+
+    const candidates = [...locked.values()];
+
+    if (this.workspace) {
+      for (const { scope, root } of this.scopes) {
+        for (const found of await findWorkspaceCandidates(root)) {
+          candidates.push({
+            id: found.packageName,
+            scope,
+            origin: 'workspace',
+            packageRoot: found.packageRoot,
+            root,
+            packageName: found.packageName,
+          });
         }
       }
     }
-
-    // Project lock second (higher priority — overwrites platform entries)
-    const projectLock = await readMarketplaceLock(this.root, diag);
-    if (projectLock) {
-      for (const [packageId, entry] of Object.entries(projectLock.installed)) {
-        merged.set(packageId, { entry, root: this.root });
-      }
-    } else if (!this.platformRoot) {
-      // No project lock and no platform lock — nothing to discover
-      return null;
-    }
-
-    return merged.size > 0 ? merged : null;
+    return candidates;
   }
 
   // -------------------------------------------------------------------------
-  // Private
+  // Per-candidate processing
   // -------------------------------------------------------------------------
 
-  private async processEntry(
-    packageId: string,
-    entry: MarketplaceEntry,
-    root: string,
-    plugins: DiscoveredPlugin[],
-    manifests: Map<string, ManifestV3>,
-    diag: DiagnosticCollector,
-  ): Promise<void> {
-    // Skip disabled entries
-    if (entry.enabled === false) {
-      diag.info('PLUGIN_DISABLED', `Plugin "${packageId}" is disabled — skipping`, {
-        pluginId: packageId,
-      });
-      return;
-    }
+  private async processCandidate(candidate: Candidate): Promise<CandidateOutcome> {
+    const diag = new DiagnosticCollector();
+    const { id, entry, packageRoot } = candidate;
 
-    // Resolve the package root relative to the lock file's root directory
-    const packageRoot = path.resolve(root, entry.resolvedPath);
+    const fail = (reason: DiscoveryFailure['reason'], message: string, manifestPath?: string): CandidateOutcome => ({
+      events: diag.getEvents(),
+      failure: {
+        id,
+        packageName: candidate.packageName ?? id,
+        packageRoot,
+        scope: candidate.scope,
+        origin: candidate.origin,
+        manifestPath,
+        reason,
+        message,
+      },
+    });
+
+    // Skip disabled entries
+    if (entry?.enabled === false) {
+      diag.info('PLUGIN_DISABLED', `Plugin "${id}" is disabled — skipping`, { pluginId: id });
+      return { events: diag.getEvents() };
+    }
 
     // Check the package directory exists
     try {
       await fs.access(packageRoot);
     } catch {
-      diag.error('PACKAGE_NOT_FOUND', `Package directory not found: ${packageRoot}`, {
-        pluginId: packageId,
+      const message = `Package directory not found: ${packageRoot}`;
+      diag.error('PACKAGE_NOT_FOUND', message, {
+        pluginId: id,
         filePath: packageRoot,
-        remediation: `Run "pnpm install" or "kb marketplace install ${packageId}" to restore`,
+        remediation: `Run "pnpm install" or "kb marketplace install ${id}" to restore`,
       });
-      return;
+      return fail('package-missing', message);
     }
 
     // Verify integrity for non-local packages. Local packages change frequently
     // (rebuilds, version bumps) — integrity is updated at install/sync time, not here.
-    if (this.verifyIntegrity && entry.integrity && entry.source !== 'local') {
-      const ok = await this.checkIntegrity(packageRoot, entry.integrity, packageId, diag);
-      if (!ok) {return;}
+    if (this.verifyIntegrity && entry?.integrity && entry.source !== 'local') {
+      const ok = await this.checkIntegrity(packageRoot, entry.integrity, id, diag);
+      if (!ok) {
+        return fail('integrity', `Integrity mismatch for "${id}"`);
+      }
     }
 
     // Load manifest
-    const manifest = await loadManifest(packageRoot, diag, this.importTimeoutMs);
-    if (!manifest) {return;}
+    const loaded = await loadManifestFile(packageRoot, diag, this.importTimeoutMs);
+    if (!loaded) {
+      const events = diag.getEvents();
+      if (events.some(e => e.code === 'MANIFEST_NOT_PLUGIN')) {
+        return { events }; // another kind of package, not a failure
+      }
+      const problems = events.filter(e => e.severity !== 'info');
+      const cause = problems.map(e => e.message).join('; ');
+      // The file that failed to load, as opposed to "no manifest found in the package".
+      const failedFile = problems.find(e => e.context?.filePath && e.context.filePath !== packageRoot)?.context?.filePath;
+      return fail('manifest', cause || `No manifest could be loaded from ${packageRoot}`, failedFile);
+    }
+    const { manifest } = loaded;
 
     // Validate manifest ID matches expected package ID
-    if (manifest.id !== packageId) {
+    if (entry && manifest.id !== id) {
       diag.warning('MANIFEST_VALIDATION_ERROR',
-        `Manifest ID "${manifest.id}" does not match lock entry "${packageId}"`, {
-        pluginId: packageId,
+        `Manifest ID "${manifest.id}" does not match lock entry "${id}"`, {
+        pluginId: id,
         filePath: packageRoot,
       });
       // Continue anyway — use the manifest's own ID
     }
 
-    const pluginId = manifest.id;
-
-    // Check for duplicate
-    if (manifests.has(pluginId)) {
-      diag.warning('ENTITY_CONFLICT', `Duplicate plugin ID "${pluginId}" — skipping later entry`, {
-        pluginId,
-        filePath: packageRoot,
-      });
-      return;
-    }
-
-    // Extract entity kinds this plugin provides
-    const provides = extractEntityKinds(manifest);
-
     // Signature check (info-level, not blocking)
-    if (!entry.signature) {
-      diag.info('SIGNATURE_MISSING', `Plugin "${pluginId}" is not signed`, {
-        pluginId,
+    if (entry && !entry.signature) {
+      diag.info('SIGNATURE_MISSING', `Plugin "${manifest.id}" is not signed`, {
+        pluginId: manifest.id,
         remediation: 'Publish through the official marketplace to get a platform signature',
       });
     }
 
-    manifests.set(pluginId, manifest);
-    plugins.push({
-      id: pluginId,
+    const plugin: DiscoveredPlugin = {
+      id: manifest.id,
       version: manifest.version,
       packageRoot,
-      source: { kind: entry.source, path: entry.resolvedPath },
+      packageName: loaded.packageName ?? candidate.packageName ?? manifest.id,
+      scope: candidate.scope,
+      origin: candidate.origin,
+      manifestPath: loaded.manifestPath,
+      manifestKind: loaded.kind,
+      source: entry
+        ? { kind: entry.source, path: entry.resolvedPath }
+        : { kind: 'local', path: relativeTo(candidate.root, packageRoot) },
       display: manifest.display
         ? { name: manifest.display.name, description: manifest.display.description }
         : undefined,
-      integrity: entry.integrity,
-      signature: entry.signature,
-      provides,
-    });
+      integrity: entry?.integrity,
+      signature: entry?.signature,
+      provides: extractEntityKinds(manifest),
+    };
+    return { events: diag.getEvents(), loaded: { plugin, manifest } };
+  }
+
+  /**
+   * Keep one plugin per manifest id. Project scope beats platform scope; inside
+   * one scope the higher-priority origin wins. A tie keeps the first one found.
+   */
+  private shadow(
+    winners: Map<string, LoadedPlugin>,
+    incoming: LoadedPlugin,
+    diag: DiagnosticCollector,
+  ): void {
+    const id = incoming.plugin.id;
+    const current = winners.get(id);
+    if (!current) {
+      winners.set(id, incoming);
+      return;
+    }
+
+    const rank = (p: DiscoveredPlugin): number =>
+      (p.scope === 'project' ? PROJECT_SCOPE_BONUS : 0) + ORIGIN_PRIORITY[p.origin];
+    const incomingWins = rank(incoming.plugin) > rank(current.plugin);
+    const winner = incomingWins ? incoming.plugin : current.plugin;
+    const loser = incomingWins ? current.plugin : incoming.plugin;
+
+    if (winner.scope === loser.scope && winner.origin === loser.origin) {
+      diag.warning('ENTITY_CONFLICT', `Duplicate plugin ID "${id}" — skipping later entry`, {
+        pluginId: id,
+        filePath: loser.packageRoot,
+      });
+    } else {
+      diag.info('ENTITY_CONFLICT',
+        `Plugin "${id}" found in ${loser.scope}/${loser.origin} is shadowed by ${winner.scope}/${winner.origin}`, {
+        pluginId: id,
+        filePath: loser.packageRoot,
+      });
+    }
+
+    if (incomingWins) {winners.set(id, incoming);}
   }
 
   /**
@@ -255,6 +380,11 @@ export class DiscoveryManager {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function relativeTo(root: string, target: string): string {
+  const rel = path.relative(root, target).split(path.sep).join('/');
+  return rel.startsWith('.') ? rel : `./${rel}`;
+}
 
 /**
  * Extract which entity kinds a manifest provides by inspecting its sections.

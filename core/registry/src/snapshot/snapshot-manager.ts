@@ -245,6 +245,11 @@ export class SnapshotManager {
           manifest: cloneValue(e.manifest),
           pluginRoot: e.pluginRoot,
           source: { ...e.source },
+          packageName: e.packageName,
+          scope: e.scope,
+          origin: e.origin,
+          manifestPath: e.manifestPath,
+          manifestKind: e.manifestKind,
         }))
       : [];
 

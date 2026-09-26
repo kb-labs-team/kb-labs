@@ -1407,6 +1407,12 @@ importers:
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../plugin-contracts
+      glob:
+        specifier: ^11.0.0
+        version: 11.1.0
+      yaml:
+        specifier: ^2.8.0
+        version: 2.8.3
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*

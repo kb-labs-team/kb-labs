@@ -30,7 +30,9 @@
   },
   "dependencies": {
     "@kb-labs/core-sys": "workspace:*",
-    "@kb-labs/plugin-contracts": "workspace:*"
+    "@kb-labs/plugin-contracts": "workspace:*",
+    "glob": "^11.0.0",
+    "yaml": "^2.8.0"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

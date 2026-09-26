@@ -87,6 +87,20 @@ export interface MarketplaceEntry {
 // Discovery Result
 // ---------------------------------------------------------------------------
 
+/** Where an entity lives (ADR-0012): the shared platform install or the user's project. */
+export type DiscoveryScope = 'platform' | 'project';
+
+/**
+ * Where a discovered plugin came from. Also its shadowing priority when the
+ * same plugin id is found more than once in one scope:
+ * `workspace` > `linked` > `node_modules`.
+ *
+ * - `workspace`: a pnpm workspace package under the scope root (monorepo development).
+ * - `linked`: a marketplace lock entry with `source: 'local'` (`kb marketplace plugins link`).
+ * - `node_modules`: a marketplace lock entry with `source: 'marketplace'` (installed package).
+ */
+export type DiscoveryOrigin = 'workspace' | 'linked' | 'node_modules';
+
 export interface DiscoveredPlugin {
   /** Plugin identifier (@scope/name) */
   id: string;
@@ -94,6 +108,16 @@ export interface DiscoveredPlugin {
   version: string;
   /** Path to the package root */
   packageRoot: string;
+  /** `name` from package.json (falls back to the plugin id) */
+  packageName: string;
+  /** Scope the plugin was discovered in */
+  scope: DiscoveryScope;
+  /** Origin of the plugin, drives shadowing priority */
+  origin: DiscoveryOrigin;
+  /** File the manifest was read from (static JSON or compiled module) */
+  manifestPath: string;
+  /** `static`: read from JSON, no plugin code executed. `module`: imported. */
+  manifestKind: 'static' | 'module';
   /** How this plugin was installed */
   source: { kind: 'marketplace' | 'local'; path: string };
   /** Display metadata */
@@ -106,11 +130,28 @@ export interface DiscoveredPlugin {
   provides: EntityKind[];
 }
 
+/** A candidate that was found but could not be turned into a plugin. */
+export interface DiscoveryFailure {
+  /** Lock key or package name of the candidate */
+  id: string;
+  packageName: string;
+  packageRoot: string;
+  scope: DiscoveryScope;
+  origin: DiscoveryOrigin;
+  /** File that failed to load, when known */
+  manifestPath?: string;
+  /** `manifest`: the manifest exists but could not be loaded. */
+  reason: 'manifest' | 'integrity' | 'package-missing';
+  message: string;
+}
+
 export interface DiscoveryResult {
   /** Successfully discovered plugins */
   plugins: DiscoveredPlugin[];
   /** Loaded manifests keyed by plugin ID */
   manifests: Map<string, ManifestV3>;
+  /** Candidates that were found but failed to load */
+  failures: DiscoveryFailure[];
   /** Diagnostic events from the discovery process */
   diagnostics: DiagnosticEvent[];
 }
@@ -151,6 +192,7 @@ export type DiagnosticCode =
   | 'MANIFEST_PARSE_ERROR'
   | 'MANIFEST_VALIDATION_ERROR'
   | 'MANIFEST_LOAD_TIMEOUT'
+  | 'MANIFEST_NOT_PLUGIN'
   | 'INTEGRITY_MISMATCH'
   | 'SIGNATURE_INVALID'
   | 'SIGNATURE_MISSING'
