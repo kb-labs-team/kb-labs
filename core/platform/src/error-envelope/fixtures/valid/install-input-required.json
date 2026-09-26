@@ -1,0 +1,9 @@
+{
+  "code": "KB_INSTALL_INPUT_REQUIRED",
+  "area": "install",
+  "stage": "resolve",
+  "severity": "error",
+  "retryable": false,
+  "message": "Required input is missing: openai.key.",
+  "hint": "Supply the missing input as a flag, in the request JSON, or through the wizard."
+}

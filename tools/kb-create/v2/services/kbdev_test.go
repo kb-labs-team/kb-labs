@@ -64,7 +64,7 @@ func TestKBDevEnsuresResolvedGraphWithoutOverridingNetworkOffset(t *testing.T) {
 // whenever the call succeeded — the error-wrapping path only captured
 // output on failure. That's the one place able to show what kb-dev itself
 // believed it did when a later, separate `kb-dev status` snapshot disagrees
-// (KB_CREATE_SERVICE_GRAPH_MISMATCH), so it must survive success too.
+// (KB_INSTALL_SERVICE_GRAPH_MISMATCH), so it must survive success too.
 func TestKBDevLogsEnsureOutputEvenOnSuccess(t *testing.T) {
 	var log bytes.Buffer
 	runner := &fakeRunner{data: []byte(`{"ok":true,"actions":[{"service":"gateway","action":"started"}]}`)}

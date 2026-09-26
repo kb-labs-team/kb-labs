@@ -27,7 +27,7 @@ func TestSendDoesNotIncludeSensitiveFields(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	Send(server.URL, true, New("apply", "failure", "KB_CREATE_INPUT_REQUIRED", "stable", "offline", 2, time.Millisecond))
+	Send(server.URL, true, New("apply", "failure", "KB_INSTALL_INPUT_REQUIRED", "stable", "offline", 2, time.Millisecond))
 	if !strings.Contains(body, `"operation":"apply"`) || strings.Contains(body, "token") || strings.Contains(body, "path") {
 		t.Fatalf("body = %s", body)
 	}

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kblabs.ru/schemas/error-envelope.schema.json",
+  "title": "KB Labs error envelope",
+  "description": "One error contract shared by the Go launcher (LauncherError), the TS platform and Studio. See docs/architecture/target/08-errors.md section 2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "area", "stage", "severity", "retryable", "message", "hint"],
+  "properties": {
+    "code": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$",
+      "description": "Stable, never reused. Platform codes are KB_<AREA>_<CONDITION>; product plugins use <PLUGIN>_<CONDITION>."
+    },
+    "area": {
+      "type": "string",
+      "enum": ["install", "host", "auth", "project", "config", "plugin", "update", "runtime", "product"]
+    },
+    "stage": {
+      "type": "string",
+      "enum": ["preflight", "resolve", "apply", "verify", "recover", "start", "login", "add-project", "run", "extend", "update", "rollback"],
+      "description": "Journey moment (02-ux-journey). Moment 2 install: preflight, resolve, apply, verify, recover. Moment 3 onboarding and sessions: start, login. Moment 4: add-project. Moments 5-6 daily work: run. Moment 7: extend. Moment 8: update, rollback. Moment 9 (failure) is not a stage; any error can occur in any stage."
+    },
+    "severity": { "type": "string", "enum": ["error", "warning"] },
+    "retryable": { "type": "boolean" },
+    "message": { "type": "string", "minLength": 1, "description": "What happened, in plain language." },
+    "cause": { "type": "string", "description": "Why it happened. Never contains secrets." },
+    "hint": { "type": "string", "minLength": 1, "description": "What to do now: a command or an action." },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "label": { "type": "string", "minLength": 1 },
+          "command": { "type": "string", "description": "Copy-ready command." }
+        }
+      }
+    },
+    "docs": { "type": "string", "format": "uri" },
+    "correlationId": { "type": "string", "description": "Finds the record in the logs." },
+    "details": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Structured, secret-free values."
+    }
+  }
+}

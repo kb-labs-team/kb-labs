@@ -1,0 +1,10 @@
+{
+  "code": "COMMIT_LLM_UNAVAILABLE",
+  "area": "product",
+  "stage": "run",
+  "severity": "warning",
+  "retryable": true,
+  "message": "The LLM provider did not answer; falling back to a template message.",
+  "hint": "Retry in a moment or run \"kb commit generate --no-llm\".",
+  "details": { "statusCode": "503" }
+}

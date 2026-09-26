@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kblabs.ru/schemas/errors.catalog.schema.json",
+  "title": "KB Labs error catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "codes"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "codes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "area", "stage", "severity", "retryable", "message", "hint"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^KB_[A-Z]+(_[A-Z0-9]+)+$" },
+          "area": { "$ref": "error-envelope.schema.json#/properties/area" },
+          "stage": { "$ref": "error-envelope.schema.json#/properties/stage" },
+          "severity": { "$ref": "error-envelope.schema.json#/properties/severity" },
+          "retryable": { "type": "boolean" },
+          "message": { "type": "string", "minLength": 1, "description": "Template; {name} placeholders are filled from details." },
+          "hint": { "type": "string", "minLength": 1, "description": "Template; {name} placeholders are filled from details." },
+          "deprecated": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

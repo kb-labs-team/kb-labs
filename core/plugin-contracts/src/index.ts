@@ -95,6 +95,7 @@ export {
   wrapError,
 } from "./errors.js";
 export type { SerializedError, ErrorCodeType } from "./errors.js";
+export { pluginErrorToEnvelope, toPluginErrorEnvelope } from "./error-envelope.js";
 
 // Runtime
 export type {

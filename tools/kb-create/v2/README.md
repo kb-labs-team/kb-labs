@@ -211,10 +211,10 @@ adapter version, but it never silently changes an explicit pin:
 | `compatible` (wizard default) | Resolver may choose only unpinned compatible versions and displays the resolved set before apply. |
 | `upgrade-safe` (explicit update only) | Resolver may advance unpinned artifacts within the defined compatibility policy; a snapshot is mandatory. |
 
-No intersecting range produces `KB_CREATE_INCOMPATIBLE_COMPONENTS` before
+No intersecting range produces `KB_INSTALL_INCOMPATIBLE_COMPONENTS` before
 download or config writes. A missing capability produces
-`KB_CREATE_PROVIDER_UNRESOLVED`; a competing explicit binding produces
-`KB_CREATE_PROVIDER_AMBIGUOUS`. Each error names the selected versions or
+`KB_INSTALL_PROVIDER_UNRESOLVED`; a competing explicit binding produces
+`KB_INSTALL_PROVIDER_AMBIGUOUS`. Each error names the selected versions or
 providers, the manifest constraint that rejected them and safe alternatives.
 A plugin or adapter without a range is `unknown compatibility`, never silently
 universal: it needs explicit user policy during migration and becomes a
@@ -230,7 +230,7 @@ remains the manifests shipped by platform components, plugins and adapters.
 V2 does not turn the wizard into a universal manifest-variable form. The
 wizard chooses product-level axes and profiles; after verified artifacts are
 available, manifest-derived required input either receives a safe default or
-returns structured `KB_CREATE_INPUT_REQUIRED` with a human hint and machine
+returns structured `KB_INSTALL_INPUT_REQUIRED` with a human hint and machine
 schema. CI/agents supply those values in `InstallRequest` and resume the same
 receipt/journal without recomputing a different flow.
 
@@ -249,7 +249,7 @@ recovery action. Secret values are never printed, bundled or sent through
 telemetry; the only permitted state is `set`, `missing` or `invalid`.
 
 ```text
-KB_CREATE_CONFIG_REQUIRED
+KB_INSTALL_CONFIG_REQUIRED
 Owner: @kb-labs/plugin-x@4.1.0
 Requirement: adapters.llm.apiKey (secret)
 Current state: missing

@@ -68,7 +68,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   // turned "IServiceTransport" into "servicetransport" and "IKVStore" into
   // "kvstore", neither of which matched the "serviceTransport"/"kvStore"
   // capabilities the platform actually requires — so no adapter was ever
-  // found for them and bootstrap failed with KB_CREATE_PROVIDER_UNRESOLVED.
+  // found for them and bootstrap failed with KB_INSTALL_PROVIDER_UNRESOLVED.
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'service-transport-http')?.provides, ['serviceTransport']);
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'sqlite')?.provides, ['kvStore']);
 });
