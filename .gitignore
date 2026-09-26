@@ -147,6 +147,7 @@ tools/**/.kb/
 core/**/.kb/
 adapters/**/.kb/
 shared/**/.kb/
+sdk/**/.kb/
 services/**/.kb/
 studio/**/.kb/
 cli/**/.kb/
