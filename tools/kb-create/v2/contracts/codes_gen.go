@@ -17,6 +17,7 @@ var launcherCodes = map[string]CodeInfo{
 	"KB_CONFIG_LLM_KEY_INVALID":              {Area: ErrorArea("config"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_CONFIG_LLM_QUOTA":                    {Area: ErrorArea("config"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_CONFIG_SECRET_MISSING":               {Area: ErrorArea("config"), Stage: ErrorStage("run"), Retryable: false},
+	"KB_CONFIG_SECRET_PLAINTEXT":             {Area: ErrorArea("config"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_CONFIG_UNKNOWN_KEY":                  {Area: ErrorArea("config"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_HOST_ADAPTER_UNAVAILABLE":            {Area: ErrorArea("host"), Stage: ErrorStage("run"), Retryable: true},
 	"KB_HOST_ALREADY_RUNNING":                {Area: ErrorArea("host"), Stage: ErrorStage("start"), Retryable: false},

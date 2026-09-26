@@ -74,6 +74,23 @@ export type {
   LoadPlatformConfigResult,
 } from "./config-loader.js";
 
+// Zod schemas for platform config sections (used by `kb config set`, ADR-0047).
+export {
+  AdapterValueSchema,
+  KNOWN_ADAPTER_SLOTS,
+  PlatformAdaptersSchema,
+  PlatformAdapterOptionsSchema,
+  CoreFeaturesConfigSchema,
+  PlatformSectionSchema,
+  PlatformUserConfigSchema,
+  ExecutionConfigSchema,
+  validatePlatformUserConfig,
+} from "./config-schemas.js";
+export type {
+  PlatformUserConfig,
+  PlatformConfigIssue,
+} from "./config-schemas.js";
+
 // Adapter discovery (for testing/debugging)
 export { discoverAdapters, resolveAdapter } from "./discover-adapters.js";
 export type { DiscoveredAdapter } from "./discover-adapters.js";
