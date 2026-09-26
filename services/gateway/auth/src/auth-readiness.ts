@@ -87,7 +87,7 @@ export const evaluateAuthReadiness = async (input: AuthReadinessInput): Promise<
       code: 'no_active_admin',
       severity: 'error',
       message: `Authentication is enabled but tenant "${tenantId}" has no active admin — nobody can log in.`,
-      hint: `Stop the gateway, then run: kb auth reset-admin --email ${emailArg} --tenant ${tenantId} --generate --yes`,
+      hint: `Stop the host (kb-create stop), then run: kb-create doctor --recover --email ${emailArg} --tenant ${tenantId} --generate --yes`,
     });
   }
 
@@ -96,14 +96,14 @@ export const evaluateAuthReadiness = async (input: AuthReadinessInput): Promise<
       code: 'bootstrap_failed',
       severity: 'error',
       message: 'Seeding the bootstrap admin failed at startup.',
-      hint: 'Check the gateway startup logs for "Bootstrap admin seed failed", fix the cause, or run: kb auth reset-admin',
+      hint: 'Check the gateway startup logs for "Bootstrap admin seed failed", fix the cause, or run: kb-create doctor --recover',
     });
   } else if (bootstrap.status === 'exists-non-active') {
     issues.push({
       code: 'bootstrap_user_inactive',
       severity: 'warning',
       message: 'The bootstrap admin exists but is not active; bootstrap never re-activates existing users.',
-      hint: `Reactivate it with: kb auth reset-admin --email ${emailArg} --tenant ${tenantId}`,
+      hint: `Reactivate it with: kb-create doctor --recover --email ${emailArg} --tenant ${tenantId} --generate --yes`,
     });
   }
 

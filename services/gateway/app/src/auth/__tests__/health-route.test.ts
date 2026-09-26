@@ -22,7 +22,7 @@ const READINESS: AuthReadiness = {
   tenantId: 'kblabs-cloud',
   activeAdmins: 0,
   bootstrap: 'not-configured',
-  issues: [{ code: 'no_active_admin', severity: 'error', message: 'no admin', hint: 'kb auth reset-admin' }],
+  issues: [{ code: 'no_active_admin', severity: 'error', message: 'no admin', hint: 'kb-create doctor --recover' }],
 };
 
 const fakeCache = { get: async () => null, set: async () => {}, delete: async () => {}, clear: async () => {} } as unknown as ICache;
@@ -126,7 +126,7 @@ describe('logAuthReadiness (startup)', () => {
     const { logger, lines } = makeLogger();
     await logAuthReadiness(async () => READINESS, logger);
     expect(lines).toEqual([
-      { level: 'error', msg: 'auth-readiness: no admin', err: undefined, meta: { code: 'no_active_admin', hint: 'kb auth reset-admin' } },
+      { level: 'error', msg: 'auth-readiness: no admin', err: undefined, meta: { code: 'no_active_admin', hint: 'kb-create doctor --recover' } },
     ]);
   });
 

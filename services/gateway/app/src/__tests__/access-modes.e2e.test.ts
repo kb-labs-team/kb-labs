@@ -247,7 +247,7 @@ describe.skipIf(missing.length > 0)('Studio access — real gateway process', ()
     expect(readiness.ok).toBe(false);
     expect(readiness.activeAdmins).toBe(0);
     const issue = readiness.issues.find((i) => i.code === 'no_active_admin');
-    expect(issue?.hint).toContain(`kb auth reset-admin --email ${ADMIN_EMAIL}`);
+    expect(issue?.hint).toContain(`kb-create doctor --recover --email ${ADMIN_EMAIL}`);
   });
 
   it('secured install without a signing secret is flagged as forgeable', async () => {

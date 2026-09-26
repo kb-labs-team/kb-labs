@@ -13,7 +13,7 @@ import { diag } from './diag';
 import { registryDiagnostics } from './registry-diagnostics';
 import { docsGenerateCliReference } from './docs-generate-cli-reference';
 import { logsDiagnose, logsContext, logsSummarize, logsQuery, logsSearch, logsGet, logsStats } from './logs';
-import { authLogin, authLogout, authStatus, authRegister, authResetAdmin } from './auth';
+import { authLogin, authLogout, authStatus, authRegister } from './auth';
 import { platformSyncCommand } from './platform/sync';
 import { webhookProvision, webhookList, webhookRevoke } from './webhook';
 import { configShow, configGet, configSet } from './config';
@@ -64,7 +64,6 @@ export const authGroup = defineSystemCommandGroup('auth', 'Gateway authenticatio
   authLogout,
   authStatus,
   authRegister,
-  authResetAdmin,
 ]);
 
 /**

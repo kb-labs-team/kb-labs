@@ -1,12 +1,13 @@
 {
   "name": "@kb-labs/host-app",
-  "description": "Machine-level host: one process running gateway, marketplace and state daemon",
+  "description": "Machine-level host: one process running gateway, marketplace and state daemon; plus the kb-recover account recovery tool",
   "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "kb-host": "./dist/bin.js"
+    "kb-host": "./dist/bin.js",
+    "kb-recover": "./dist/recover-bin.js"
   },
   "files": [
     "dist"
@@ -29,6 +30,7 @@
     "@kb-labs/core-runtime": "workspace:*",
     "@kb-labs/core-state-daemon": "workspace:*",
     "@kb-labs/gateway-app": "workspace:*",
+    "@kb-labs/gateway-auth": "workspace:*",
     "@kb-labs/gateway-contracts": "workspace:*",
     "@kb-labs/marketplace-app": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",
