@@ -1,0 +1,3 @@
+{
+  "extends": "@kb-labs/devkit/tsconfig/base.json"
+}
