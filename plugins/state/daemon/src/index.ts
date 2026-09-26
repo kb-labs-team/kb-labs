@@ -5,4 +5,4 @@
 
 export { StateDaemonServer } from './server';
 export type { StateDaemonConfig } from './server';
-export { bootstrap } from './bootstrap.js';
+export { bootstrap, setup } from './bootstrap.js';

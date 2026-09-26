@@ -103,6 +103,14 @@ function redactQueryToken(url: string): string {
   return url.replace(/([?&]access_token=)[^&]*/gi, "$1[REDACTED]");
 }
 
+/**
+ * Public base URL of the gateway: GATEWAY_PUBLIC_URL when set, otherwise the
+ * loopback URL of the resolved listen port.
+ */
+export function resolvePublicUrl(listenPort: number): string {
+  return process.env.GATEWAY_PUBLIC_URL ?? `http://localhost:${listenPort}`;
+}
+
 export async function createServer(
   config: GatewayConfig,
   cache: ICache,
@@ -136,7 +144,7 @@ export async function createServer(
     description:
       "Central API gateway — auth, LLM, telemetry, platform dispatch",
     version: "1.0.0",
-    servers: [{ url: "http://localhost:4000", description: "Local dev" }],
+    servers: [{ url: resolvePublicUrl(config.port), description: "Local dev" }],
     ui: !isProduction,
   });
 
@@ -738,8 +746,7 @@ export async function createServer(
     // even in environments where no webhook-enabled plugins are currently installed.
     if (platform.hasResourceBroker) {
       const webhookBaseUrl =
-        process.env.GATEWAY_PUBLIC_URL ??
-        `http://localhost:${config.port + (Number(process.env.KB_NET_OFFSET) || 0)}`;
+        resolvePublicUrl(config.port);
       // Thin adapter: globalDispatcher.call() requires namespaceId — threaded via optional field
       const provisionBackend = {
         async execute({
@@ -792,8 +799,7 @@ export async function createServer(
   // Delivery auth is handled by the webhook router itself (secret / hmac / custom).
   if (webhookManifests?.length && platform.hasResourceBroker) {
     const webhookBaseUrl =
-      process.env.GATEWAY_PUBLIC_URL ??
-      `http://localhost:${config.port + (Number(process.env.KB_NET_OFFSET) || 0)}`;
+      resolvePublicUrl(config.port);
     await app.register(async (webhookScope) => {
       await registerWebhookRoutes(webhookScope, {
         cache,

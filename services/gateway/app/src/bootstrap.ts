@@ -54,14 +54,22 @@ export async function bootstrap(
     platform: {
       assemblyHook: makeAssemblyHook(),
     },
-    setup: startGateway,
+    setup,
   });
 }
 
-async function startGateway({
+/**
+ * Gateway service body. Importable and side-effect-free: it only starts work
+ * when called with a resolved {@link ServiceContext}. The gateway is the
+ * network's edge (not a target in the transport map), so it listens on
+ * `config.port + ctx.netOffset`; the offset is resolved once by the launcher
+ * and the gateway never reads KB_NET_OFFSET itself.
+ */
+export async function setup({
   platform,
   projectRoot,
   platformRoot,
+  netOffset,
   logger: serviceLogger,
 }: ServiceContext): Promise<() => Promise<void>> {
   const logger = serviceLogger
@@ -77,8 +85,9 @@ async function startGateway({
   // that with the project root.
   const config = await loadGatewayConfig(projectRoot, platformRoot);
   const access = resolveAccess(config);
+  const listenPort = config.port + netOffset;
   logger.info("Gateway config loaded", {
-    port: config.port,
+    port: listenPort,
     upstreams: Object.keys(config.upstreams),
     projectRoot,
     platformRoot,
@@ -364,7 +373,7 @@ async function startGateway({
     await ensureBootstrapCliCredentials({
       enabled: true,
       authService: bootstrapAuthService,
-      gatewayUrl: `http://127.0.0.1:${config.port}`,
+      gatewayUrl: `http://127.0.0.1:${listenPort}`,
       logger,
     }).catch((err: unknown) => {
       logger.warn("Bootstrap CLI credentials provisioning failed (non-fatal)", {
@@ -402,7 +411,7 @@ async function startGateway({
 
   // 10. Create server with injected registry, transport and optional user auth deps
   const server = await createServer(
-    config,
+    { ...config, port: listenPort },
     cache,
     platform.logger,
     jwtConfig,
@@ -427,12 +436,6 @@ async function startGateway({
     );
   }
 
-  // The gateway is the network's entry point — not a target in the transport
-  // map — so it reads the offset directly (edge service). Internal routing to
-  // upstreams already shifts via the transport. KB_NET_OFFSET is a LOCAL
-  // mechanism (parallel environments on one host); 0 in cloud/k8s.
-  const netOffset = Number(process.env.KB_NET_OFFSET) || 0;
-  const listenPort = config.port + netOffset;
   const address = await server.listen({ port: listenPort, host: bindHost });
   logger.info("Gateway listening", {
     address,

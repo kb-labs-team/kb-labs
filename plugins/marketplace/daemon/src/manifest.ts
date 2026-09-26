@@ -7,7 +7,7 @@ export const manifest: ServiceManifest = {
   version: '1.0.0',
   description: 'Unified entity marketplace — install, manage, discover',
   runtime: {
-    entry: 'dist/index.js',
+    entry: 'dist/bin.js',
     port: 5070,
     healthCheck: '/health',
     socket: '/tmp/kb-${KB_SOCKET_HASH}/marketplace.sock',
