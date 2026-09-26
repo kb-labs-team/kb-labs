@@ -44,7 +44,7 @@ function makeCtx(cwd: string): { ctx: PluginContextV3; out: Captured } {
       write: (text: string) => {
         out.written.push(text);
       },
-      success: (title: string, options?: { sections?: Array<{ items?: string[] }> }) => {
+      success: (title, options) => {
         out.success.push({ title, items: options?.sections?.flatMap((s) => s.items ?? []) ?? [] });
       },
     },
