@@ -25,6 +25,7 @@ var launcherCodes = map[string]CodeInfo{
 	"KB_HOST_PORT_IN_USE":                    {Area: ErrorArea("host"), Stage: ErrorStage("start"), Retryable: false},
 	"KB_HOST_START_FAILED":                   {Area: ErrorArea("host"), Stage: ErrorStage("start"), Retryable: true},
 	"KB_HOST_STATE_DIR_UNWRITABLE":           {Area: ErrorArea("host"), Stage: ErrorStage("start"), Retryable: false},
+	"KB_HOST_STUDIO_ASSETS_MISSING":          {Area: ErrorArea("host"), Stage: ErrorStage("start"), Retryable: false},
 	"KB_HOST_UNHEALTHY":                      {Area: ErrorArea("host"), Stage: ErrorStage("run"), Retryable: true},
 	"KB_HOST_UNREACHABLE":                    {Area: ErrorArea("host"), Stage: ErrorStage("run"), Retryable: true},
 	"KB_HOST_VERSION_SKEW":                   {Area: ErrorArea("host"), Stage: ErrorStage("run"), Retryable: false},
