@@ -47,7 +47,7 @@ function sections(
 }
 
 export default defineCommand({
-  id: 'release:preflight',
+  id: 'release:doctor',
   description: 'Check the release environment (branch, tree, Docker, registries, GitHub auth, baseline drift) before running checks',
 
   handler: {

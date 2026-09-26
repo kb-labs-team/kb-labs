@@ -118,7 +118,7 @@ function porcelainPath(line: string): string {
 const MAX_LISTED_PATHS = 10;
 
 export function preflightCommand(flow?: string): string {
-  return flow ? `pnpm kb release preflight --flow ${flow}` : 'pnpm kb release preflight';
+  return flow ? `pnpm kb release doctor --flow ${flow}` : 'pnpm kb release doctor';
 }
 
 type Outcome =
