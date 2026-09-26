@@ -158,13 +158,130 @@ describe('runReleaseChecks — optional', () => {
     expect(results[1]?.ok).toBe(true);
   });
 
-  it('stops after required failure', async () => {
+  it('runs every later check after a required failure (fail-late)', async () => {
     const checks: CustomCheckConfig[] = [
       { id: 'required-fail', command: 'false', runIn: 'repoRoot' },
-      { id: 'never-runs', command: 'true', runIn: 'repoRoot' },
+      { id: 'still-runs', command: 'true', runIn: 'repoRoot' },
     ];
     const results = await runReleaseChecks(checks, { repoRoot: '/tmp', packagePaths: [] });
-    expect(results).toHaveLength(1);
+    expect(results.map(r => r.id)).toEqual(['required-fail', 'still-runs']);
+    expect(results[0]?.ok).toBe(false);
+    expect(results[1]?.ok).toBe(true);
+  });
+});
+
+// ─── fail-late: blocking / dependsOn ─────────────────────────────────────────
+
+/** Shell whose result depends on (command args, cwd): fails when cwd is in `failIn[arg]`. */
+function scriptedShell(failIn: Record<string, string[]>) {
+  const calls: Array<{ arg: string; cwd?: string }> = [];
+  return {
+    calls,
+    shell: {
+      async exec(_command: string, args: string[] = [], options: { cwd?: string } = {}) {
+        const arg = args[0] ?? '';
+        calls.push({ arg, cwd: options.cwd });
+        const fail = (failIn[arg] ?? []).includes(options.cwd ?? '');
+        return { code: fail ? 1 : 0, stdout: '', stderr: fail ? `${arg} broke in ${options.cwd}` : '', ok: !fail };
+      },
+    },
+  };
+}
+
+const PKGS = ['/pkg/a', '/pkg/b', '/pkg/c'];
+
+describe('runReleaseChecks — fail-late with blocking/dependsOn', () => {
+  it('runs all checks even when an earlier non-blocking check failed', async () => {
+    const { shell, calls } = scriptedShell({ one: ['/repo'] });
+    const results = await runReleaseChecksCore([
+      { id: 'one', command: 'x', args: ['one'], runIn: 'repoRoot' },
+      { id: 'two', command: 'x', args: ['two'], runIn: 'repoRoot' },
+      { id: 'three', command: 'x', args: ['three'], runIn: 'repoRoot' },
+    ], { repoRoot: '/repo', packagePaths: [], shell });
+    expect(results.map(r => [r.id, r.ok])).toEqual([['one', false], ['two', true], ['three', true]]);
+    expect(calls.map(c => c.arg)).toEqual(['one', 'two', 'three']);
+  });
+
+  it('skips a dependent of a failed blocking check with an explicit reason', async () => {
+    const { shell, calls } = scriptedShell({ gate: ['/repo'] });
+    const results = await runReleaseChecksCore([
+      { id: 'gate', command: 'x', args: ['gate'], runIn: 'repoRoot', blocking: true },
+      { id: 'dependent', command: 'x', args: ['dependent'], runIn: 'repoRoot', dependsOn: ['gate'] },
+      { id: 'independent', command: 'x', args: ['independent'], runIn: 'repoRoot' },
+    ], { repoRoot: '/repo', packagePaths: [], shell });
+
+    expect(results).toHaveLength(3);
+    expect(results[1]).toMatchObject({ id: 'dependent', ok: false, skipped: true });
+    expect(results[1]?.skipReason).toContain('gate');
+    expect(calls.map(c => c.arg)).toEqual(['gate', 'independent']);
+    expect(results[2]?.ok).toBe(true);
+  });
+
+  it('does not skip dependents when the dependency is not blocking', async () => {
+    const { shell, calls } = scriptedShell({ gate: ['/repo'] });
+    const results = await runReleaseChecksCore([
+      { id: 'gate', command: 'x', args: ['gate'], runIn: 'repoRoot' },
+      { id: 'dependent', command: 'x', args: ['dependent'], runIn: 'repoRoot', dependsOn: ['gate'] },
+    ], { repoRoot: '/repo', packagePaths: [], shell });
+    expect(results[1]?.skipped).toBeUndefined();
+    expect(calls.map(c => c.arg)).toEqual(['gate', 'dependent']);
+  });
+
+  it('does not skip dependents when the dependency passed', async () => {
+    const { shell } = scriptedShell({});
+    const results = await runReleaseChecksCore([
+      { id: 'gate', command: 'x', args: ['gate'], runIn: 'repoRoot', blocking: true },
+      { id: 'dependent', command: 'x', args: ['dependent'], runIn: 'repoRoot', dependsOn: ['gate'] },
+    ], { repoRoot: '/repo', packagePaths: [], shell });
+    expect(results.every(r => r.ok)).toBe(true);
+  });
+
+  it('an optional failing check never blocks, even if marked blocking', async () => {
+    const { shell } = scriptedShell({ gate: ['/repo'] });
+    const results = await runReleaseChecksCore([
+      { id: 'gate', command: 'x', args: ['gate'], runIn: 'repoRoot', blocking: true, optional: true },
+      { id: 'dependent', command: 'x', args: ['dependent'], runIn: 'repoRoot', dependsOn: ['gate'] },
+    ], { repoRoot: '/repo', packagePaths: [], shell });
+    expect(results[0]).toMatchObject({ ok: false, optional: true });
+    expect(results[1]?.ok).toBe(true);
+    expect(results.every(r => r.ok || r.optional)).toBe(true);
+  });
+
+  it('skips a perPackage dependent only for packages whose blocking dependency failed', async () => {
+    const { shell, calls } = scriptedShell({ dist: ['/pkg/b'] });
+    const results = await runReleaseChecksCore([
+      { id: 'dist', command: 'x', args: ['dist'], runIn: 'perPackage', blocking: true },
+      { id: 'pack', command: 'x', args: ['pack'], runIn: 'perPackage', dependsOn: ['dist'] },
+    ], { repoRoot: '/repo', packagePaths: PKGS, shell });
+
+    const packCalls = calls.filter(c => c.arg === 'pack').map(c => c.cwd).sort();
+    expect(packCalls).toEqual(['/pkg/a', '/pkg/c']);
+    const pack = results[1]!;
+    expect(pack.ok).toBe(false);
+    expect(pack.skipped).toBe(true);
+    const skipped = pack.packages!.filter(p => p.skipped);
+    expect(skipped.map(p => p.path)).toEqual(['/pkg/b']);
+    expect(skipped[0]?.skipReason).toContain('dist');
+    expect(pack.packages!.filter(p => p.ok).map(p => p.path).sort()).toEqual(['/pkg/a', '/pkg/c']);
+  });
+
+  it('skips the whole perPackage dependent when every package failed the dependency', async () => {
+    const { shell, calls } = scriptedShell({ dist: PKGS });
+    const results = await runReleaseChecksCore([
+      { id: 'dist', command: 'x', args: ['dist'], runIn: 'perPackage', blocking: true },
+      { id: 'pack', command: 'x', args: ['pack'], runIn: 'perPackage', dependsOn: ['dist'] },
+    ], { repoRoot: '/repo', packagePaths: PKGS, shell });
+    expect(calls.some(c => c.arg === 'pack')).toBe(false);
+    expect(results[1]).toMatchObject({ skipped: true, ok: false });
+  });
+
+  it('overall exit semantics: fails if any non-optional check failed or was skipped', async () => {
+    const { shell } = scriptedShell({ gate: ['/repo'] });
+    const results = await runReleaseChecksCore([
+      { id: 'gate', command: 'x', args: ['gate'], runIn: 'repoRoot', blocking: true },
+      { id: 'dependent', command: 'x', args: ['dependent'], runIn: 'repoRoot', dependsOn: ['gate'] },
+    ], { repoRoot: '/repo', packagePaths: [], shell });
+    expect(results.every(r => r.ok || r.optional)).toBe(false);
   });
 });
 

@@ -42,25 +42,108 @@ export async function runReleaseChecks(
   options: CheckRunnerOptions,
 ): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
+  // Failure state of every finished check, used to resolve `dependsOn`.
+  const outcomes = new Map<string, CheckOutcome>();
 
   for (const check of checks) {
-    const result = await runSingleCheck(check, options);
+    const skip = resolveSkip(check, outcomes, options);
+    const result = skip?.whole
+      ? skippedResult(check, skip.reason, options.packagePaths)
+      : await runSingleCheck(check, options, skip);
     results.push(result);
+    outcomes.set(check.id, outcomeOf(check, result));
 
-    options.logger?.info?.(`Check ${check.id}: ${result.ok ? 'passed' : 'failed'} (${result.timingMs}ms)`);
-
-    // Stop on first non-optional failure
-    if (!result.ok && !check.optional) {
-      break;
-    }
+    const label = result.skipped && !result.packages?.some(p => !p.skipped) ? 'skipped' : result.ok ? 'passed' : 'failed';
+    options.logger?.info?.(`Check ${check.id}: ${label} (${result.timingMs}ms)`);
+    // Fail-late: never stop here. Every check runs (or is explicitly skipped).
   }
 
   return results;
 }
 
+interface CheckOutcome {
+  blocking: boolean;
+  runIn: NonNullable<CustomCheckConfig['runIn']>;
+  failed: boolean;
+  /** Package paths that failed or were skipped (only meaningful when perPackage). */
+  failedPaths: Set<string>;
+  hasPackageBreakdown: boolean;
+}
+
+interface SkipDecision {
+  whole: boolean;
+  paths: Set<string>;
+  reason: string;
+}
+
+function outcomeOf(check: CustomCheckConfig, result: CheckResult): CheckOutcome {
+  const failedPaths = new Set<string>();
+  for (const p of result.packages ?? []) {
+    if (!p.ok) { failedPaths.add(p.path); }
+  }
+  const single = result.details?.packagePath;
+  if (!result.ok && failedPaths.size === 0 && single) { failedPaths.add(single); }
+  return {
+    // An optional failure never blocks: optional semantics are unchanged.
+    blocking: Boolean(check.blocking) && !check.optional,
+    runIn: check.runIn ?? 'perPackage',
+    failed: !result.ok,
+    failedPaths,
+    hasPackageBreakdown: (result.packages?.length ?? 0) > 0,
+  };
+}
+
+function resolveSkip(
+  check: CustomCheckConfig,
+  outcomes: Map<string, CheckOutcome>,
+  options: CheckRunnerOptions,
+): SkipDecision | undefined {
+  const paths = new Set<string>();
+  const reasons: string[] = [];
+  let whole = false;
+  const runIn = check.runIn ?? 'perPackage';
+
+  for (const depId of check.dependsOn ?? []) {
+    const dep = outcomes.get(depId);
+    if (!dep) {
+      options.logger?.warn?.(`Check ${check.id}: dependsOn "${depId}" did not run earlier in this run; ignoring`);
+      continue;
+    }
+    if (!dep.blocking || !dep.failed) { continue; }
+    const perPackage = runIn === 'perPackage' && dep.runIn === 'perPackage' && dep.hasPackageBreakdown && dep.failedPaths.size > 0;
+    if (perPackage) {
+      for (const p of dep.failedPaths) { paths.add(p); }
+      reasons.push(`blocking check ${depId} failed for this package`);
+    } else {
+      whole = true;
+      reasons.push(`blocking check ${depId} failed`);
+    }
+  }
+
+  if (!whole && paths.size === 0) { return undefined; }
+  return { whole, paths, reason: [...new Set(reasons)].join('; ') };
+}
+
+function skippedResult(check: CustomCheckConfig, reason: string, packagePaths: string[]): CheckResult {
+  const runIn = check.runIn ?? 'perPackage';
+  return {
+    id: check.id,
+    ok: false,
+    optional: check.optional,
+    skipped: true,
+    skipReason: reason,
+    hint: 'skipped',
+    timingMs: 0,
+    packages: runIn === 'perPackage' && packagePaths.length > 1
+      ? packagePaths.map(path => ({ path, ok: false, skipped: true, skipReason: reason }))
+      : undefined,
+  };
+}
+
 async function runSingleCheck(
   check: CustomCheckConfig,
   options: CheckRunnerOptions,
+  skip?: SkipDecision,
 ): Promise<CheckResult> {
   const runIn = check.runIn ?? 'perPackage';
   let pathsToRun: string[];
@@ -83,6 +166,15 @@ async function runSingleCheck(
       }
       return !skip;
     });
+  }
+
+  // Per-package skip: packages whose blocking dependency failed are not run.
+  const skippedPaths = skip && !skip.whole ? pathsToRun.filter(p => skip.paths.has(p)) : [];
+  if (skip && skippedPaths.length > 0) {
+    pathsToRun = pathsToRun.filter(p => !skip.paths.has(p));
+    if (pathsToRun.length === 0) {
+      return skippedResult(check, skip.reason, skippedPaths);
+    }
   }
 
   // Run perPackage checks in parallel, bounded by the plugin's granted shell concurrency;
@@ -174,16 +266,22 @@ async function runSingleCheck(
 
   const firstFailure = pkgResults.find(r => !r.ok)?.details;
   const totalDurationMs = pkgResults.reduce((sum, r) => sum + r.durationMs, 0);
-  const perPackage: NonNullable<CheckResult['packages']> | undefined = pathsToRun.length > 1
+  const ran = pathsToRun.length + skippedPaths.length > 1
     ? pkgResults.map(r => ({ path: r.path, ok: r.ok, details: r.ok ? undefined : r.details }))
     : undefined;
+  const perPackage: NonNullable<CheckResult['packages']> | undefined = ran && skip && skippedPaths.length > 0
+    ? [...ran, ...skippedPaths.map(path => ({ path, ok: false, skipped: true, skipReason: skip.reason }))]
+    : ran;
 
-  const allOk = !firstFailure;
+  // Skipped packages keep the run failing: their blocking dependency failed.
+  const allOk = !firstFailure && skippedPaths.length === 0;
 
   return {
     id: check.id,
     ok: allOk,
     optional: check.optional,
+    skipped: skip && skippedPaths.length > 0 ? true : undefined,
+    skipReason: skip && skippedPaths.length > 0 ? skip.reason : undefined,
     details: firstFailure,
     hint: check.optional ? 'optional' : undefined,
     timingMs: totalDurationMs,

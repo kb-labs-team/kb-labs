@@ -255,3 +255,53 @@ describe('KB_RELEASE codes', () => {
     }
   });
 });
+
+describe('buildReleaseRunReport — fail-late and skipped checks', () => {
+  const results: CheckResult[] = [
+    {
+      id: 'dist-exports',
+      ok: false,
+      packages: [
+        { path: '/repo/a', ok: true },
+        { path: '/repo/b', ok: false, details: { packagePath: '/repo/b', exitCode: 1, error: 'exit code 1' } },
+        { path: '/repo/c', ok: false, details: { packagePath: '/repo/c', exitCode: 1, error: 'exit code 1' } },
+      ],
+    },
+    {
+      id: 'pack-install',
+      ok: false,
+      skipped: true,
+      skipReason: 'blocking check dist-exports failed for this package',
+      packages: [
+        { path: '/repo/a', ok: true },
+        { path: '/repo/b', ok: false, skipped: true, skipReason: 'blocking check dist-exports failed for this package' },
+        { path: '/repo/c', ok: false, skipped: true, skipReason: 'blocking check dist-exports failed for this package' },
+      ],
+    },
+    { id: 'lint', ok: false, details: { packagePath: '/repo', exitCode: 1, error: 'exit code 1' } },
+  ];
+
+  it('lists every failure and lists skips separately, not as failures', () => {
+    const report = buildReleaseRunReport({ results });
+    expect(report.ok).toBe(false);
+    expect(report.failures.map(f => `${f.checkId}@${f.packagePath}`)).toEqual([
+      'dist-exports@/repo/b',
+      'dist-exports@/repo/c',
+      'lint@/repo',
+    ]);
+    expect(report.skipped.map(s => `${s.checkId}@${s.packagePath}`)).toEqual([
+      'pack-install@/repo/b',
+      'pack-install@/repo/c',
+    ]);
+    expect(report.summary.skipped).toBe(2);
+    expect(report.summary.blockingFailures).toBe(3);
+    const pack = report.checks.find(c => c.id === 'pack-install');
+    expect(pack).toMatchObject({ status: 'partially-skipped', skippedPackages: 2, failedPackages: 0 });
+  });
+
+  it('renders a Skipped section with reasons', () => {
+    const md = renderRunReportMarkdown(buildReleaseRunReport({ results }));
+    expect(md).toContain('## Skipped');
+    expect(md).toContain('blocking check dist-exports failed');
+  });
+});
