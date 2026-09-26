@@ -13,8 +13,9 @@
  * Standalone: CHANGED_FILES="plugins/workflow/core/executor.ts" node docs-staleness.mjs
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { sourceFileForCommand } from './docs-source-sync.mjs';
 
 const cwd = process.cwd();
 const sitemapPath = join(cwd, 'sitemap.config.json');
@@ -55,6 +56,40 @@ function slugToDocPath(slug) {
   return `/docs/${withoutIndex}`;
 }
 
+function collectSourceReferences(pages) {
+  const pageBySlug = new Map(pages.map((page) => [page.slug, page]));
+  const refs = [];
+  const contentRoot = join(cwd, 'content');
+
+  function walk(dir) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const filePath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(filePath);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.mdx')) continue;
+
+      const content = readFileSync(filePath, 'utf8');
+      const localeRelative = filePath.slice(contentRoot.length + 1).replaceAll('\\', '/');
+      const localeSeparator = localeRelative.indexOf('/');
+      const docRelative = localeRelative.slice(localeSeparator + 1);
+      const slug = docRelative.replace(/\.mdx$/, '').replace(/\/index$/, '');
+      const page = pageBySlug.get(slug);
+      if (!page) continue;
+
+      const directive = /<CommandExamples\s+command="([^"]+)"\s*\/>/g;
+      for (const match of content.matchAll(directive)) {
+        const sourceFile = sourceFileForCommand(match[1]);
+        if (sourceFile) refs.push({ page, sourceFile, command: match[1] });
+      }
+    }
+  }
+
+  if (existsSync(contentRoot)) walk(contentRoot);
+  return refs;
+}
+
 function main() {
   const changedFilesRaw = process.env.CHANGED_FILES ?? '';
   const changedFiles = changedFilesRaw
@@ -74,6 +109,7 @@ function main() {
 
   const sitemap = JSON.parse(readFileSync(sitemapPath, 'utf-8'));
   const pages = collectPages(sitemap);
+  const sourceRefs = collectSourceReferences(pages);
 
   // For each changed file, find the most-specific owner match per doc page.
   // "Most specific" = longest owner prefix (e.g. plugins/workflow/core/** beats plugins/workflow/**).
@@ -122,6 +158,29 @@ function main() {
         entry.matchedOwner = owner;
         entry.specificity = specificity;
       }
+    }
+  }
+
+  // Exact generated-source references complement broad sitemap ownership.
+  for (const file of changedFiles) {
+    for (const ref of sourceRefs.filter((item) => item.sourceFile === file)) {
+      const page = ref.page;
+      if (!affectedMap.has(page.slug)) {
+        affectedMap.set(page.slug, {
+          slug: page.slug,
+          type: page.type,
+          docPath: slugToDocPath(page.slug),
+          stalenessRisk: page.stalenessRisk,
+          matchedFiles: [],
+          matchedOwner: `source:${ref.command}`,
+          specificity: Number.MAX_SAFE_INTEGER,
+          sourceReferences: [],
+        });
+      }
+      const entry = affectedMap.get(page.slug);
+      if (!entry.matchedFiles.includes(file)) entry.matchedFiles.push(file);
+      entry.sourceReferences ??= [];
+      if (!entry.sourceReferences.includes(ref.command)) entry.sourceReferences.push(ref.command);
     }
   }
 

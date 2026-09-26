@@ -153,6 +153,18 @@ Defined in `sitemap.config.json`. Each page has one of:
 
 Auto-generated pages live in `reference/` and `adapters/interfaces/`. They are overwritten on every CI run.
 
+### Source-backed fragments in manual and hybrid pages
+
+Use source-backed MDX fragments when the same fact or command already has a canonical representation in code. For example:
+
+```mdx
+<CommandExamples command="workflow runs status" />
+```
+
+The command identifier must be explicitly allowlisted in `lib/doc-source-map.mjs`. CI extracts only static string examples from the named CLI manifest and checks the committed `generated/doc-source-snippets.json` snapshot. To refresh snapshots after changing a source, run `pnpm --filter @kb-labs/docs-site docs:source-sync` and commit the generated JSON with the change. MDX authors cannot provide file paths or expressions to evaluate.
+
+Use this for facts the source can prove. Keep scenario-specific explanation and workflow narrative in MDX; CI reports changed owner pages for agent review rather than trying to infer prose from implementation.
+
 ---
 
 ## Component Naming
@@ -233,6 +245,8 @@ a review thread is posted on the PR for each affected doc page.
 The thread must be resolved before merging. Resolution options:
 - Updated the doc page
 - Verified no update needed (leave a comment why)
+
+The summary comment also includes an **Agent review queue** with each affected page and its changed source files. Agents should reconcile the page against those changes, update stale narrative or examples, and explain any no-change decision in the thread. Source-backed fragments are regenerated from their committed snapshot and checked separately.
 
 ---
 

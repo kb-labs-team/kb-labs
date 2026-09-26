@@ -269,7 +269,7 @@ See [Artifacts](/workflows/artifacts) for the full details including merge strat
 Trigger with:
 
 ```bash
-pnpm kb workflow:run --workflow-id=hello --inputs='{"name":"Alice"}'
+pnpm kb workflow:run --workflow-id=hello --input='{"name":"Alice"}'
 ```
 
 This creates a run, schedules the `greet` job, executes the shell step, prints `Hello, Alice!`, and finishes in `success` status.

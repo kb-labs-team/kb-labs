@@ -53,6 +53,10 @@ jobs:
             console.log('All doc conventions pass.');
           "
 
+      - name: Check generated docs sources and deprecated CLI examples
+        working-directory: sites/web/apps/docs
+        run: node scripts/docs-source-check.mjs
+
   # ── Staleness check — posts reminder threads, never blocks merge ───────────
   # Inline threads on changed files tell the author which doc pages to verify.
   # Threads are resolved manually after updating or confirming no change needed.
@@ -122,13 +126,20 @@ jobs:
 
               body = [
                 BOT_MARKER,
+                '<!-- docs-agent-review-queue:v1 -->',
                 '## 📚 Docs Bot',
                 '',
-                `**${affected.length} doc page(s) may need updating.** Verify each one and resolve the inline thread.`,
+                `**${affected.length} doc page(s) need source-backed review.** Resolve each inline thread after updating the page or confirming it remains accurate.`,
                 '',
                 '| Risk | Doc page | Link | Changed files |',
                 '|------|----------|------|---------------|',
                 rows,
+                '',
+                '### Agent review queue',
+                '',
+                'For each entry, compare the changed source with the guide, update stale prose or examples, and leave an explicit no-change reason when the page remains accurate.',
+                '',
+                ...affected.map(a => `- **${a.slug}** — review source files: ${a.matchedFiles.map(f => `\`${f}\``).join(', ')}`),
                 '',
                 `_[CONVENTIONS.md](https://github.com/${owner}/${repo}/blob/master/sites/web/apps/docs/CONVENTIONS.md)_`,
               ].join('\n');

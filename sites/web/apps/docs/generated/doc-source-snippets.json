@@ -1,0 +1,10 @@
+{
+  "workflow runs status": {
+    "source": "plugins/workflow/entry/src/manifest.ts",
+    "examples": [
+      "kb workflow runs status <runId>",
+      "kb workflow runs status --run-id=<runId>",
+      "kb workflow runs status <runId> --json"
+    ]
+  }
+}
