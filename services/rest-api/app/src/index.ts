@@ -1,14 +1,7 @@
-#!/usr/bin/env node
 /**
  * @module @kb-labs/rest-api-app
- * REST API application entry point
+ * REST API library entry. Importing this module has no side effects; the
+ * `rest-api-app` executable lives in `bin.ts`.
  */
 
-import { bootstrap } from "./bootstrap";
-
-// process.cwd() = workspace root when launched via `node ./platform/kb-labs-rest-api/.../dist/index.js`
-bootstrap(process.cwd()).catch(() => {
-  // runService() already emitted the canonical platform/service failure event.
-  // Setting exitCode lets its logger flush without duplicating an unstructured stack.
-  process.exitCode = 1;
-});
+export { bootstrap, setup } from "./bootstrap";

@@ -33,4 +33,4 @@ USER kb
 EXPOSE 7778
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/bin.js"]

@@ -44,7 +44,7 @@ Working directory: ${cwd}
 
 Check if required services are running (curl their /health endpoints).
 If not running, start them:
-  node ${cwd}/plugins/workflow/daemon/dist/index.js &
+  node ${cwd}/plugins/workflow/daemon/dist/bin.js &
   (wait 3s, then verify /health returns ok)
 
 Or use kb-dev if available:
