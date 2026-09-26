@@ -7,7 +7,7 @@ const pkg = JSON.parse(readFileSync('./package.json', 'utf8'));
 
 export default defineConfig({
   ...nodePreset,
-  entry: ['src/index.ts', 'src/manifest.ts'],
+  entry: ['src/index.ts', 'src/bin.ts', 'src/manifest.ts'],
   outDir: 'dist',
   // Inject version at build time
   define: {

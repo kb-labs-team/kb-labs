@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { computeManifestIntegrity } from '@kb-labs/core-discovery';
+import { manifestCachePath } from './manifest-cache-path';
 
 /** Very small repo root detector: looks for .git upwards. */
 function _detectRepoRoot(start = process.cwd()): string {
@@ -1063,7 +1064,8 @@ async function loadCache(
   cwd: string,
   roots: { platformRoot: string; projectRoot: string },
 ): Promise<CacheFile | null> {
-  const cachePath = path.join(cwd, '.kb', 'cache', 'cli-manifests.json');
+  // Runtime state lives outside the repository (ADR-0044).
+  const cachePath = manifestCachePath(cwd);
   
   try {
     const content = await fs.readFile(cachePath, 'utf8');
@@ -1246,7 +1248,7 @@ async function saveCache(
   results: DiscoveryResult[],
   roots: { platformRoot: string; projectRoot: string },
 ): Promise<void> {
-  const cachePath = path.join(cwd, '.kb', 'cache', 'cli-manifests.json');
+  const cachePath = manifestCachePath(cwd);
   await fs.mkdir(path.dirname(cachePath), { recursive: true });
   
   const packages: Record<string, PackageCacheEntry> = {};

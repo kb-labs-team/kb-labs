@@ -13,7 +13,9 @@ const fsPromisesMock = vi.hoisted(() => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("node:fs", () => ({
+// Keep the real sync fs helpers (state-dir resolution uses realpath/existsSync); only `promises` is mocked.
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
   promises: fsPromisesMock,
 }));
 

@@ -216,6 +216,21 @@ Each step needs regression tests: `runHost` start/teardown order, second
 launch rejection, single signal path, gateway static + SPA fallback + auth
 alias.
 
+### Stage 3 implementation notes (project runtimes)
+
+B6 is implemented as a resolver hook instead of a per-request transport lookup:
+the gateway takes `projectRouting` (`GatewayEmbedOptions`) and serves
+`/api/v1/projects/{projectId}/*` by asking it for an upstream on every request;
+static upstreams stay for marketplace and state. The host supplies the hook
+(`ProjectRuntimeManager` + project registry, ADR-0044). Runtimes are
+`kb-project-runtime` processes (`services/project-runtime/app`) that run rest
+and workflow through `runHost`, each on its own loopback port behind a single
+guard address that demands a per-process secret header. `/ready` no longer
+requires a `rest` upstream when the gateway serves project runtimes. Not done:
+mcp in the runtime, WebSocket proxying to runtimes, per-module secret
+enforcement (modules keep unauthenticated loopback ports), per-project plugin
+sets (stage 7).
+
 ### Not verified by the spike
 
 - Production bundles (`tsup`) and the installed layout: setups were run from

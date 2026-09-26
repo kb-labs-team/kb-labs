@@ -84,19 +84,29 @@ describe("parseHostSettings", () => {
     expect(parseHostSettings(undefined)).toEqual({
       modules: ["gateway", "marketplace", "state"],
       auth: "off",
+      maxActiveProjects: 4,
+      projectIdleTimeoutSec: 900,
+      projectStartTimeoutSec: 60,
     });
   });
 
   it("keeps the selected modules and removes duplicates", () => {
     expect(
       parseHostSettings({ modules: ["state", "state", "gateway"], auth: "on" }),
-    ).toEqual({ modules: ["state", "gateway"], auth: "on" });
+    ).toMatchObject({ modules: ["state", "gateway"], auth: "on" });
+  });
+
+  it("reads the project runtime limits", () => {
+    expect(
+      parseHostSettings({ maxActiveProjects: 2, projectIdleTimeoutSec: 0 }),
+    ).toMatchObject({ maxActiveProjects: 2, projectIdleTimeoutSec: 0 });
   });
 
   it.each([
     [{ modules: [] }, /host\.modules/],
     [{ modules: ["rest"] }, /host\.modules/],
     [{ auth: "maybe" }, /host\.auth/],
+    [{ maxActiveProjects: 0 }, /host\.maxActiveProjects/],
   ])("rejects invalid settings %j", (raw, message) => {
     expect(() => parseHostSettings(raw)).toThrow(message);
   });

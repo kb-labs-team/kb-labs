@@ -1,5 +1,5 @@
-import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk';
 import { defineCommand, handleError, type CLIInput, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
 
 interface RefreshFlags {
@@ -16,7 +16,7 @@ export default defineCommand<unknown, CLIInput<RefreshFlags>, unknown>({
       return {
         summary: 'Clear CLI discovery cache',
         operations: [
-          { type: 'delete' as const, resource: 'file', details: { path: '.kb/cache/cli-manifests.json' } },
+          { type: 'delete' as const, resource: 'file', details: { path: 'state/<projectId>/cache/cli-manifests.json' } },
         ],
       };
     },
@@ -45,10 +45,10 @@ export default defineCommand<unknown, CLIInput<RefreshFlags>, unknown>({
   },
 });
 
+/** Removes the discovery cache from the project runtime-state directory. */
 export async function clearDiscoveryCache(cwd: string): Promise<boolean> {
-  const cacheFile = path.join(cwd, '.kb', 'cache', 'cli-manifests.json');
   try {
-    await fs.unlink(cacheFile);
+    await fs.unlink(resolveRuntimeStatePath(cwd, ['cache', 'cli-manifests.json']));
     return true;
   } catch {
     return false;

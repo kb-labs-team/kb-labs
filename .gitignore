@@ -71,6 +71,9 @@ _private/
 .kb/cache/
 .kb/logs/
 .kb/tmp/
+# Old in-repo runtime locations (no longer written; see docs/architecture/target/13-runtime-state-inventory.md)
+.kb/runtime/
+.kb/traces/
 .kb/mind/
 /mind/
 .kb/devkit/
@@ -144,6 +147,7 @@ tools/**/.kb/
 core/**/.kb/
 adapters/**/.kb/
 shared/**/.kb/
+sdk/**/.kb/
 services/**/.kb/
 studio/**/.kb/
 cli/**/.kb/

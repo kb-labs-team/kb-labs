@@ -7,15 +7,17 @@
  */
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import { promises as fsPromises } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import type { ICache } from '@kb-labs/core-platform/adapters';
 import type { RegistrySnapshot, RegistrySnapshotManifestEntry, SnapshotWithoutIntegrity } from '../types.js';
 import { cloneValue, computeSnapshotChecksum, safeParseInt, SNAPSHOT_CHECKSUM_ALGORITHM } from './snapshot-utils.js';
 
-const SNAPSHOT_DIR = ['.kb', 'cache'] as const;
+/** Runtime state (ADR-0044): lives under `<KB_HOME>/state/<projectId>/cache/`, not in the repository. */
+const SNAPSHOT_DIR = ['cache'] as const;
 const SNAPSHOT_FILE = 'registry.json';
 const SNAPSHOT_BACKUP = 'registry.prev.json';
 const DEFAULT_TTL_MS = 60_000;
@@ -27,6 +29,8 @@ export interface SnapshotManagerOptions {
   platformVersion: string;
   cache?: ICache;
   cacheSnapshotKey?: string;
+  /** Machine-level root for runtime state. Defaults to `$KB_HOME` or `~/.kb`. */
+  kbHome?: string;
 }
 
 export class SnapshotManager {
@@ -43,9 +47,10 @@ export class SnapshotManager {
 
   constructor(opts: SnapshotManagerOptions) {
     this.root = resolve(opts.root);
-    this.snapshotDir = join(this.root, ...SNAPSHOT_DIR);
-    this.snapshotPath = join(this.snapshotDir, SNAPSHOT_FILE);
-    this.backupPath = join(this.snapshotDir, SNAPSHOT_BACKUP);
+    const stateOptions = { root: opts.kbHome };
+    this.snapshotPath = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_FILE], stateOptions);
+    this.backupPath = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_BACKUP], stateOptions);
+    this.snapshotDir = dirname(this.snapshotPath);
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
     this.platformVersion = opts.platformVersion;
     this.cache = opts.cache;

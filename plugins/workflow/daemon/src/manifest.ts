@@ -7,7 +7,7 @@ export const manifest: ServiceManifest = {
   version: '1.2.0',
   description: 'Workflow orchestration daemon — runs, schedules, cron',
   runtime: {
-    entry: 'dist/index.js',
+    entry: 'dist/bin.js',
     port: 7778,
     healthCheck: '/health',
     socket: '/tmp/kb-${KB_SOCKET_HASH}/workflow.sock',

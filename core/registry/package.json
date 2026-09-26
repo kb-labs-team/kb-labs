@@ -31,6 +31,7 @@
   "dependencies": {
     "@kb-labs/core-discovery": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/core-sys": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*"
   },

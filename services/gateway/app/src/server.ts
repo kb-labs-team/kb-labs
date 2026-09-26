@@ -67,6 +67,10 @@ import {
   registerWebhookRoutes,
   type WebhookManifestEntry,
 } from "./webhook/router.js";
+import {
+  registerProjectRoutes,
+  type ProjectRouting,
+} from "./project-routing.js";
 
 /**
  * User-auth dependencies injected from bootstrap. All fields optional so
@@ -124,6 +128,7 @@ export async function createServer(
   serviceTransport: IServiceTransport,
   userAuth?: UserAuthServerDeps,
   webhookManifests?: WebhookManifestEntry[],
+  projectRouting?: ProjectRouting,
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -314,6 +319,17 @@ export async function createServer(
       : "";
     gatewayLogger.info(
       `Upstream registered: ${name} → ${connDesc} (${upstream.prefix}${wsDesc})`,
+    );
+  }
+
+  // ── Project runtimes (dynamic upstreams) ────────────────────────────
+  // `/api/v1/projects/{projectId}/*` is resolved per request by the embedding
+  // host, unlike the static upstreams above. Registered after the global auth
+  // hooks, so it is covered by the same authentication.
+  if (projectRouting) {
+    await registerProjectRoutes(app, projectRouting);
+    gatewayLogger.info(
+      "Project routing enabled: /api/v1/projects/{projectId}/*",
     );
   }
 
@@ -511,7 +527,11 @@ export async function createServer(
       "/health",
       { schema: { tags: ["System"], summary: "Gateway health check" } },
       async () => {
-        return collectHealthSnapshot();
+        const snapshot = await collectHealthSnapshot();
+        // Runtime state changes faster than the cached snapshot lives: read it live.
+        return projectRouting
+          ? { ...snapshot, projectRuntimes: projectRouting.status() }
+          : snapshot;
       },
     );
 
@@ -542,10 +562,17 @@ export async function createServer(
           (health.upstreams as
             | Record<string, { status?: string }>
             | undefined) ?? {};
-        const missingRequiredUpstreams = ["rest"].filter(
+        // A gateway that serves project runtimes has no project-scoped
+        // upstream to wait for: runtimes start lazily on first request. The
+        // machine-level upstreams it does route to are all required.
+        const requiredUpstreams = projectRouting
+          ? Object.keys(config.upstreams)
+          : ["rest"];
+        const missingRequiredUpstreams = requiredUpstreams.filter(
           (id) => (upstreams[id]?.status ?? "down") !== "up",
         );
         const ready = missingRequiredUpstreams.length === 0;
+        const projectStatus = projectRouting?.status();
 
         return reply.code(ready ? 200 : 503).send(
           createServiceReadyResponse({
@@ -570,6 +597,16 @@ export async function createServer(
                 ready: (upstreams.marketplace?.status ?? "down") === "up",
                 status: upstreams.marketplace?.status ?? "down",
               },
+              ...(projectStatus
+                ? {
+                    // Lazy: a project runtime is ready once started on demand,
+                    // so none being active is a normal, ready state.
+                    projectRuntimes: {
+                      ready: true,
+                      status: `${projectStatus.active}/${projectStatus.limit} active`,
+                    },
+                  }
+                : {}),
             },
           }),
         );

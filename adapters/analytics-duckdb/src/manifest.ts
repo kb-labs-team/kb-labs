@@ -29,8 +29,7 @@ export const manifest: AdapterManifest = {
   configSchema: {
     dbPath: {
       type: 'string',
-      default: '.kb/analytics/analytics.duckdb',
-      description: 'Path to the DuckDB database file',
+      description: 'Path to the DuckDB database file (default: <KB_HOME>/state/<projectId>/analytics/analytics.duckdb)',
     },
   },
 };
