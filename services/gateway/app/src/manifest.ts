@@ -7,7 +7,7 @@ export const manifest: ServiceManifest = {
   version: '1.0.0',
   description: 'Central router — aggregates REST API, Workflow, Marketplace',
   runtime: {
-    entry: 'dist/index.js',
+    entry: 'dist/bin.js',
     port: 4000,
     healthCheck: '/health',
   },
