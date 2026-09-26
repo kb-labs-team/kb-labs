@@ -87,6 +87,9 @@ const config: KnipConfig = {
     'services/gateway/runtime-server': {
       entry: ['src/index.ts', 'src/cli.ts'],
     },
+    'services/host/app': {
+      entry: ['src/index.ts', 'src/bin.ts'],
+    },
     'services/rest-api/app': {
       // bootstrap.ts is the real entry; routes/*, middleware/*, events/* are
       // registered via fastify plugin pattern (server.register), not static imports

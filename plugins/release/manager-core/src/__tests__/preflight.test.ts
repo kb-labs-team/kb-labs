@@ -206,7 +206,7 @@ describe('runReleasePreflight', () => {
     for (const c of failed(r)) {
       expect(c.error).toMatchObject({ area: 'release', stage: expect.any(String), severity: 'error', details: { classification: 'environment' } });
       expect(c.error?.hint).toBeTruthy();
-      expect(c.error?.actions?.[0]?.command).toBe('pnpm kb release preflight');
+      expect(c.error?.actions?.[0]?.command).toBe('pnpm kb release doctor');
     }
   });
 });
@@ -228,7 +228,7 @@ describe('preflight in ReleaseRunReport', () => {
     expect(report.ok).toBe(false);
     expect(report.stages.map(s => `${s.stage}:${s.status}`)).toEqual(['preflight:failed', 'checks:not-run']);
     expect(report.failures[0]).toMatchObject({ classification: 'environment', checkId: 'preflight:docker' });
-    expect(report.failures[0]?.resumeCommand).toBe('pnpm kb release preflight --flow platform');
+    expect(report.failures[0]?.resumeCommand).toBe('pnpm kb release doctor --flow platform');
     expect(renderRunReportMarkdown(report)).toContain('| preflight | failed |');
   });
 
