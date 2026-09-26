@@ -54,6 +54,12 @@ const platformMemberPackages = (value('--platform-member-packages') ?? '')
   .split(',')
   .map(item => item.trim())
   .filter(Boolean);
+// The platform runs as ONE supervised host process (ADR-0043/0045); the sealed
+// index declares it, and the launcher has no other way to start a platform. The
+// host package is a platform member, its executable comes from its own bin, and
+// a recovery tool (kb-create doctor --recover) is declared only when it ships.
+const hostPackage = value('--host-package') ?? '@kb-labs/host-app';
+const hostHealthURL = value('--host-health-url') ?? 'http://127.0.0.1:4000/health';
 const adapterOverrides = value('--adapter-overrides') ? JSON.parse(value('--adapter-overrides')) : {};
 
 const readStage = directory => {
@@ -329,6 +335,16 @@ if (!satisfies(resolvedPlatformVersion, sdkPlatformRange)) {
   throw new Error(`${sdkPackage}@${sdk.version} rejects ${platformPackage}@${resolvedPlatformVersion}: ${sdkPlatformRange}`);
 }
 
+const hostItem = byName.get(hostPackage);
+if (!hostItem) throw new Error(`host package ${hostPackage} is absent from stage manifest; a platform release must ship the host`);
+const hostBins = packageJSONFor(hostItem).bin ?? {};
+if (typeof hostBins['kb-host'] !== 'string') throw new Error(`${hostPackage} must declare a kb-host executable in its package.json bin`);
+const host = {
+  command: 'node_modules/.bin/kb-host',
+  healthUrl: hostHealthURL,
+  ...(typeof hostBins['kb-recover'] === 'string' ? { recover: { command: 'node_modules/.bin/kb-recover' } } : {}),
+};
+
 const exportValue = {
   channels: { [channel]: resolvedPlatformVersion },
   compatibility: {
@@ -359,10 +375,12 @@ const exportValue = {
         default: JSON.stringify(portablePlatformAdapterOptions),
       }] : []),
     ],
+    host,
     profiles: { default: { platformVersion: resolvedPlatformVersion, services: services.map(({ packageName, ...service }) => service) } },
     binaries,
     members: [...new Set([
       ...services.map(service => service.packageName),
+      hostPackage,
       ...platformMemberPackages,
       ...configuredPlatformAdapterPackages,
     ])].map(packageName => {

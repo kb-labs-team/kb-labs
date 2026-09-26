@@ -224,8 +224,8 @@
       "stage": "verify",
       "severity": "error",
       "retryable": true,
-      "message": "The installed service graph is not ready.",
-      "hint": "Inspect \"kb-dev status\" or run \"kb-create doctor --fix\"."
+      "message": "The installed host is not ready.",
+      "hint": "Inspect \"kb-create status\" or run \"kb-create doctor\"."
     },
     {
       "code": "KB_INSTALL_DOCTOR_INPUT_INVALID",
@@ -271,6 +271,33 @@
       "retryable": false,
       "message": "The rollback did not succeed; the snapshot is at {snapshot}.",
       "hint": "Restore the snapshot manually and report the correlationId."
+    },
+    {
+      "code": "KB_INSTALL_OPERATION_IN_PROGRESS",
+      "area": "install",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": true,
+      "message": "Another launcher operation is already running (process {pid}).",
+      "hint": "Wait for it to finish; if no launcher is running, remove the stale lock file {path}."
+    },
+    {
+      "code": "KB_INSTALL_RECOVERY_HOST_RUNNING",
+      "area": "install",
+      "stage": "recover",
+      "severity": "error",
+      "retryable": false,
+      "message": "Recovery needs the host to be stopped, but it is running.",
+      "hint": "Run \"kb-create stop\", recover, then \"kb-create start\"."
+    },
+    {
+      "code": "KB_INSTALL_RECOVERY_UNAVAILABLE",
+      "area": "install",
+      "stage": "recover",
+      "severity": "error",
+      "retryable": false,
+      "message": "The installed platform does not ship a recovery tool.",
+      "hint": "Update the platform with \"kb-create update\", then retry."
     },
     {
       "code": "KB_HOST_UNREACHABLE",
@@ -746,8 +773,17 @@
       "stage": "update",
       "severity": "error",
       "retryable": false,
-      "message": "The host did not become healthy after the update.",
-      "hint": "Wait for the automatic rollback or run \"kb-create rollback\"."
+      "message": "The host did not become healthy after the update; the previous version {version} was restored.",
+      "hint": "Read the host log in the launcher state directory and report the correlationId."
+    },
+    {
+      "code": "KB_UPDATE_APPLY_FAILED",
+      "area": "update",
+      "stage": "update",
+      "severity": "error",
+      "retryable": true,
+      "message": "The update could not be applied; the previous version {version} was restored.",
+      "hint": "Inspect the local log and the diagnostic dossier, fix the reported cause and run \"kb-create update\" again."
     },
     {
       "code": "KB_UPDATE_NO_SNAPSHOT",

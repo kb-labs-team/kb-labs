@@ -1,6 +1,7 @@
 package journey_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -23,9 +24,12 @@ import (
 	"github.com/kb-labs/create/v2/wizard"
 )
 
-type status []verify.ObservedService
-
-func (s status) ServiceStatuses(string) ([]verify.ObservedService, error) { return s, nil }
+// testHost is the host every fixture platform declares: the journey never runs
+// it (its start is proven in the host and launcher packages), it only has to be
+// a valid declaration that travels index -> plan -> receipt.
+func testHost() *contracts.HostSpec {
+	return &contracts.HostSpec{Command: "node_modules/.bin/kb-host", HealthURL: "http://127.0.0.1:4000/health"}
+}
 
 type offlineArtifacts struct {
 	installed, removed []contracts.Artifact
@@ -46,20 +50,12 @@ func (a *offlineArtifacts) Uninstall(items []contracts.Artifact) error {
 	return nil
 }
 
-type lifecycleServices struct{ status }
-
-func (services *lifecycleServices) Ensure(_ string, _ []string) error { return nil }
-func (services *lifecycleServices) Stop(_ string, _ []string) error {
-	services.status = nil
-	return nil
-}
-
 type journeyClock struct{ time.Time }
 
 func (c journeyClock) Now() time.Time { return c.Time }
 func TestOfflineJourneyUsesResolvedGraphAsSingleTruth(t *testing.T) {
 	root := t.TempDir()
-	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "kb-gateway", Port: 4000, Required: true}}}}, Requires: []catalog.Requirement{{Capability: "logging", RequiredBy: "platform"}}}}, Plugins: []catalog.Component{{ID: "review", Version: "1.0.0", Package: "@kb/review", SHA256: "review", PlatformRange: "^2.0.0"}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "pino", Version: "1.0.0", Package: "@kb/pino", SHA256: "pino", PlatformRange: "^2.0.0"}, Provides: []string{"logging"}}}}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "kb-gateway", Port: 4000, Required: true}}}}, Requires: []catalog.Requirement{{Capability: "logging", RequiredBy: "platform"}}}}, Plugins: []catalog.Component{{ID: "review", Version: "1.0.0", Package: "@kb/review", SHA256: "review", PlatformRange: "^2.0.0"}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "pino", Version: "1.0.0", Package: "@kb/pino", SHA256: "pino", PlatformRange: "^2.0.0"}, Provides: []string{"logging"}}}}
 	plan, err := resolve.Plan(contracts.InstallRequest{PlatformRoot: root, Source: contracts.SourceOffline, Plugins: []contracts.ComponentRequest{{ID: "review"}}}, source)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +63,10 @@ func TestOfflineJourneyUsesResolvedGraphAsSingleTruth(t *testing.T) {
 	if _, err := render.Write(plan); err != nil {
 		t.Fatal(err)
 	}
-	check, err := verify.Run(plan, status{{ID: "gateway", State: "alive"}}, time.Unix(0, 0))
+	if plan.Host == nil || plan.Host.Command != testHost().Command {
+		t.Fatalf("the plan must carry the platform's host: %#v", plan.Host)
+	}
+	check, err := verify.Run(plan, time.Unix(0, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,18 +93,17 @@ func TestOfflineJourneyUsesResolvedGraphAsSingleTruth(t *testing.T) {
 
 func TestOfflineLifecycleUsesReceiptSnapshotsForUpdateRollbackAndUninstall(t *testing.T) {
 	root := t.TempDir()
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, PlanHash: "first-plan", Request: contracts.InstallRequest{PlatformRoot: root}, Artifacts: []contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "1.0.0"}}, ServiceGraph: contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway", Command: "gateway", Required: true}}}}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: testHost(), PlanHash: "first-plan", Request: contracts.InstallRequest{PlatformRoot: root}, Artifacts: []contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "1.0.0"}}, ServiceGraph: contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway", Command: "gateway", Required: true}}}}
 	artifacts := &offlineArtifacts{}
-	managed := &lifecycleServices{status: status{{ID: "gateway", State: "alive"}}}
-	deps := runtime.Dependencies{Artifacts: artifacts, Status: managed, Activator: managed, Deactivator: managed, Clock: journeyClock{time.Unix(10, 0)}}
-	first, err := runtime.Apply(plan, deps)
+	deps := runtime.Dependencies{Artifacts: artifacts, Clock: journeyClock{time.Unix(10, 0)}}
+	first, err := runtime.Apply(context.Background(), plan, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	updated := plan
 	updated.PlanHash, updated.Artifacts[0].Version = "second-plan", "1.1.0"
 	deps.Clock = journeyClock{time.Unix(11, 0)}
-	second, snapshot, err := runtime.Update(updated, deps)
+	second, snapshot, err := runtime.Update(context.Background(), updated, deps)
 	if err != nil || second.SnapshotID != snapshot.ID {
 		t.Fatalf("update = %#v / %#v / %v", second, snapshot, err)
 	}
@@ -131,15 +129,14 @@ func TestOfflineLifecycleUsesReceiptSnapshotsForUpdateRollbackAndUninstall(t *te
 func TestOfflineUpdateFailureRestoresPreviousReceiptAndPackageState(t *testing.T) {
 	root := t.TempDir()
 	plan := contracts.ResolvedInstallPlan{
-		Schema: contracts.ResolvedPlanSchema, PlanHash: "first-plan",
+		Schema: contracts.ResolvedPlanSchema, Host: testHost(), PlanHash: "first-plan",
 		Request:      contracts.InstallRequest{PlatformRoot: root},
 		Artifacts:    []contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "1.0.0"}},
 		ServiceGraph: contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway", Command: "gateway", Required: true}}},
 	}
 	artifacts := &offlineArtifacts{}
-	managed := &lifecycleServices{status: status{{ID: "gateway", State: "alive"}}}
-	deps := runtime.Dependencies{Artifacts: artifacts, Status: managed, Activator: managed, Clock: journeyClock{time.Unix(10, 0)}}
-	first, err := runtime.Apply(plan, deps)
+	deps := runtime.Dependencies{Artifacts: artifacts, Clock: journeyClock{time.Unix(10, 0)}}
+	first, err := runtime.Apply(context.Background(), plan, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +144,7 @@ func TestOfflineUpdateFailureRestoresPreviousReceiptAndPackageState(t *testing.T
 	updated.PlanHash, updated.Artifacts[0].Version = "second-plan", "1.1.0"
 	artifacts.installErr = errors.New("registry timeout")
 	deps.Clock = journeyClock{time.Unix(11, 0)}
-	if _, snapshot, updateErr := runtime.Update(updated, deps); updateErr == nil || snapshot.ID == "" {
+	if _, snapshot, updateErr := runtime.Update(context.Background(), updated, deps); updateErr == nil || snapshot.ID == "" {
 		t.Fatalf("update error/snapshot = %v / %q", updateErr, snapshot.ID)
 	}
 	active, err := receipt.Read(root)
@@ -164,7 +161,7 @@ func TestOfflineApplyCompletesPluginAndWorkflowReadyPath(t *testing.T) {
 	source := catalog.Catalog{
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Platforms: []catalog.PlatformBundle{{
-			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: testHost(),
 			Profiles: map[string]contracts.ServiceGraph{"default": {
 				Services: []contracts.Service{{ID: "workflow", Command: "kb-workflow", Port: 7778, Required: true}},
 			}},
@@ -179,8 +176,7 @@ func TestOfflineApplyCompletesPluginAndWorkflowReadyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifacts := &offlineArtifacts{}
-	services := &lifecycleServices{status: status{{ID: "workflow", State: "alive"}}}
-	receipt, err := runtime.Apply(plan, runtime.Dependencies{Artifacts: artifacts, Status: services, Activator: services})
+	receipt, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,8 +211,8 @@ func TestTransportMatrixUsesOneResolvedPluginWorkflowPath(t *testing.T) {
 	source := catalog.Catalog{
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0", contracts.ChannelCanary: "2.1.0"},
 		Platforms: []catalog.PlatformBundle{
-			{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform-2.0.0.tgz", SHA256: "platform-stable", Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Profile: "default", Services: []contracts.Service{{ID: "workflow", Command: "kb-workflow", Port: 7778, Required: true}}}}},
-			{ID: "platform", Version: "2.1.0", Package: "@kb/platform", Tarball: "https://example.test/platform-2.1.0.tgz", SHA256: "platform-canary", Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.1.0", Profile: "default", Services: []contracts.Service{{ID: "workflow", Command: "kb-workflow", Port: 7778, Required: true}}}}},
+			{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform-2.0.0.tgz", SHA256: "platform-stable", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Profile: "default", Services: []contracts.Service{{ID: "workflow", Command: "kb-workflow", Port: 7778, Required: true}}}}},
+			{ID: "platform", Version: "2.1.0", Package: "@kb/platform", Tarball: "https://example.test/platform-2.1.0.tgz", SHA256: "platform-canary", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.1.0", Profile: "default", Services: []contracts.Service{{ID: "workflow", Command: "kb-workflow", Port: 7778, Required: true}}}}},
 		},
 		Plugins: []catalog.Component{{ID: "user-plugin", Version: "1.0.0", Package: "@kb/user-plugin", Tarball: "https://example.test/user-plugin.tgz", SHA256: "user-plugin", PlatformRange: "^2.0.0"}},
 	}
@@ -259,8 +255,7 @@ func TestTransportMatrixUsesOneResolvedPluginWorkflowPath(t *testing.T) {
 	}
 	for _, plan := range []contracts.ResolvedInstallPlan{humanPlan, *agentResponse.Plan, ciPlan} {
 		artifacts := &offlineArtifacts{}
-		services := &lifecycleServices{status: status{{ID: "workflow", State: "alive"}}}
-		if _, err := runtime.Apply(plan, runtime.Dependencies{Artifacts: artifacts, Status: services, Activator: services}); err != nil {
+		if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts}); err != nil {
 			t.Fatalf("%s apply: %v", plan.Request.PlatformRoot, err)
 		}
 		if !containsArtifact(artifacts.installed, "user-plugin") {

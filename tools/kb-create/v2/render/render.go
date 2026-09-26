@@ -7,81 +7,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
-	"gopkg.in/yaml.v3"
 )
 
 const ConfigFilename = "kb.config.jsonc"
 
+// Output is the platform's generated runtime configuration. There is no
+// service-manager projection: the host process is the one runtime, and it is
+// described by the plan's HostSpec, not by a rendered file.
 type Output struct {
-	Config      []byte
-	Devservices DevservicesFile
-}
-
-// DevservicesFile is V2's complete, intentionally small projection format.
-// It lives here rather than in the old launcher's helper package so V2 owns
-// both its schema validation and its on-disk writes at cutover.
-type DevservicesFile struct {
-	Name     string             `yaml:"name,omitempty"`
-	Services map[string]Service `yaml:"services,omitempty"`
-}
-
-type Service struct {
-	Name        string            `yaml:"name,omitempty"`
-	Group       string            `yaml:"group,omitempty"`
-	Command     string            `yaml:"command"`
-	Port        int               `yaml:"port,omitempty"`
-	HealthCheck string            `yaml:"health_check,omitempty"`
-	DependsOn   []string          `yaml:"depends_on,omitempty"`
-	Env         map[string]string `yaml:"env,omitempty"`
-}
-
-func (file DevservicesFile) Validate() error {
-	ids := make([]string, 0, len(file.Services))
-	for id := range file.Services {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	ports := make(map[int]string, len(ids))
-	for _, id := range ids {
-		service := file.Services[id]
-		if strings.TrimSpace(id) == "" {
-			return fmt.Errorf("service ID is required")
-		}
-		if strings.TrimSpace(service.Command) == "" {
-			return fmt.Errorf("service %q: command is required", id)
-		}
-		if service.Port == 0 {
-			continue
-		}
-		if owner, exists := ports[service.Port]; exists {
-			return fmt.Errorf("services %q and %q both claim port %d", owner, id, service.Port)
-		}
-		ports[service.Port] = id
-	}
-	return nil
-}
-
-// conventionalServiceGroups mirrors .kb/devservices.dev.yaml's hand-authored
-// `groups:` block — kb-dev's config loader (tools/kb-dev/internal/config/yaml.go)
-// derives its Groups map from each service's own `group` field, so a
-// generated devservices.yaml with no `group` field anywhere silently drops
-// every group (including "backend", one of kb-dev's own "conventional"
-// group names — see config.go's GroupOrder), breaking any caller (like the
-// E2E platform entrypoint) that starts services by group name instead of
-// listing every service individually. Not every generated service has a
-// known group yet (e.g. marketplace-registry, mcp-daemon) — that mirrors
-// the same gap in the hand-authored config, not an oversight here.
-var conventionalServiceGroups = map[string]string{
-	"state-daemon": "infra",
-	"gateway":      "backend",
-	"marketplace":  "backend",
-	"rest":         "backend",
-	"studio":       "backend",
-	"workflow":     "backend",
+	Config []byte
 }
 
 // gatewayUpstreamRoute is a single entry of the gateway's proxy routing
@@ -119,7 +56,7 @@ var conventionalGatewayUpstreams = map[string]gatewayUpstreamRoute{
 // is actually present in this install's resolved service graph — a route
 // pointing at a service this particular profile never installed would be
 // silently dead weight at best.
-func gatewayUpstreams(services map[string]Service) map[string]gatewayUpstreamRoute {
+func gatewayUpstreams(services map[string]struct{}) map[string]gatewayUpstreamRoute {
 	result := map[string]gatewayUpstreamRoute{}
 	for name, route := range conventionalGatewayUpstreams {
 		if _, ok := services[route.ServiceID]; ok {
@@ -133,31 +70,24 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 	if plan.Schema != contracts.ResolvedPlanSchema {
 		return Output{}, fmt.Errorf("unsupported resolved plan schema %q", plan.Schema)
 	}
-	services := make(map[string]Service, len(plan.ServiceGraph.Services))
+	services := make(map[string]struct{}, len(plan.ServiceGraph.Services))
 	for _, service := range plan.ServiceGraph.Services {
 		if service.ID == "" {
 			return Output{}, fmt.Errorf("service ID is required")
 		}
-		services[service.ID] = Service{Name: service.ID, Group: conventionalServiceGroups[service.ID], Command: RuntimeCommand(service.Command), Port: service.Port, HealthCheck: healthCheckURL(service.HealthCheck, service.Port), DependsOn: service.DependsOn, Env: map[string]string{}}
-	}
-	file := DevservicesFile{Name: "kb-labs", Services: services}
-	if err := file.Validate(); err != nil {
-		return Output{}, err
+		services[service.ID] = struct{}{}
 	}
 	adapters, plugins := map[string]string{}, map[string]string{}
 	extra := map[string]any{}
 	for _, patch := range plan.ConfigPatches {
 		if patch.Environment != "" {
+			// The value itself travels through the private secret store into
+			// the host's environment; the plan only names the variable and the
+			// services that consume it, which must exist in the graph.
 			for _, serviceID := range patch.Services {
-				service, exists := services[serviceID]
-				if !exists {
+				if _, exists := services[serviceID]; !exists {
 					return Output{}, fmt.Errorf("secret patch %s targets unknown service %q", patch.Owner, serviceID)
 				}
-				if existing, exists := service.Env[patch.Environment]; exists && existing != "${"+patch.Environment+"}" {
-					return Output{}, fmt.Errorf("service %q has conflicting value for secret environment %q", serviceID, patch.Environment)
-				}
-				service.Env[patch.Environment] = "${" + patch.Environment + "}"
-				services[serviceID] = service
 			}
 		}
 		if len(patch.Path) > len("/platform/adapters/") && patch.Path[:len("/platform/adapters/")] == "/platform/adapters/" {
@@ -182,6 +112,7 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 		config["gateway"] = map[string]any{"upstreams": upstreams}
 	}
 	merge(config, extra)
+	applyHostSection(config)
 	// A manifest default is only a baseline; a binding the resolver actually
 	// chose for this plan must win over it on the same key.
 	reapplyResolved(config, "platform", "adapters", adapters)
@@ -190,38 +121,30 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 	if err != nil {
 		return Output{}, fmt.Errorf("marshal runtime config: %w", err)
 	}
-	return Output{Config: append(data, '\n'), Devservices: file}, nil
+	return Output{Config: append(data, '\n')}, nil
 }
 
-// runtimeCommand makes package-provided service binaries resolvable from an
-// installed platform. kb-dev launches services outside pnpm's shell, so a
-// bare manifest command such as "rest-api-app" would otherwise be absent from
-// PATH even though the package's .bin entry is installed in node_modules.
-func RuntimeCommand(command string) string {
-	trimmed := strings.TrimSpace(command)
-	if trimmed == "" || strings.ContainsAny(trimmed, " \t\n") || strings.Contains(trimmed, "/") {
-		return command
+// applyHostSection writes the host's own settings (services/host/app,
+// settings.ts): the installer, not the user, decides them. The host's policy
+// overrides gateway access with host.auth, so the section must agree with the
+// selected access mode: "local" is a no-login loopback install (auth off);
+// anything else, including no answer, is the gateway's secured default (auth
+// on). An explicit host.auth from a manifest default is left alone.
+func applyHostSection(config map[string]any) {
+	section, _ := config["host"].(map[string]any)
+	if section == nil {
+		section = map[string]any{}
 	}
-	switch trimmed {
-	case "node", "pnpm", "npm", "yarn", "bun", "deno", "python", "python3", "go", "docker":
-		return command
-	default:
-		return "pnpm exec " + command
+	if _, explicit := section["auth"]; !explicit {
+		auth := "on"
+		if gateway, ok := config["gateway"].(map[string]any); ok {
+			if access, ok := gateway["access"].(map[string]any); ok && access["mode"] == "local" {
+				auth = "off"
+			}
+		}
+		section["auth"] = auth
 	}
-}
-
-// healthCheckURL turns a manifest's relative health-check path (e.g. "/" or
-// "/api/v1/health") into the absolute localhost URL kb-dev's health checker
-// expects. An already-absolute value (a full URL, or a bare host:port for a
-// TCP check) passes through unchanged.
-func healthCheckURL(path string, port int) string {
-	if path == "" || port == 0 {
-		return ""
-	}
-	if strings.Contains(path, "://") || !strings.HasPrefix(path, "/") {
-		return path
-	}
-	return fmt.Sprintf("http://localhost:%d%s", port, path)
+	config["host"] = section
 }
 
 func setConfigValue(root map[string]any, pointer, raw string) error {
@@ -318,13 +241,6 @@ func Write(plan contracts.ResolvedInstallPlan) (Output, error) {
 	root := plan.Request.PlatformRoot
 	if err := os.MkdirAll(filepath.Join(root, ".kb"), 0o750); err != nil {
 		return Output{}, fmt.Errorf("create config root: %w", err)
-	}
-	devservices, err := yaml.Marshal(output.Devservices)
-	if err != nil {
-		return Output{}, fmt.Errorf("marshal devservices: %w", err)
-	}
-	if err := writeAtomic(filepath.Join(root, ".kb", "devservices.yaml"), devservices, 0o644); err != nil {
-		return Output{}, fmt.Errorf("write devservices: %w", err)
 	}
 	// The platform owns the generated full configuration. Projects retain their
 	// own minimal platform pointer through the existing scaffold contract.

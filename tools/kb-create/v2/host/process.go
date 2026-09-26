@@ -3,7 +3,9 @@ package host
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -32,6 +34,9 @@ type ProcessRunner struct {
 	// HTTP and PollInterval exist for tests; zero values use sane defaults.
 	HTTP         *http.Client
 	PollInterval time.Duration
+	// SecretEnv supplies the secret environment variables of the host process
+	// (the platform's private store). It is read on every Start.
+	SecretEnv func() (map[string]string, error)
 
 	mu      sync.Mutex
 	pid     int
@@ -78,10 +83,12 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	}
 	cmd := exec.Command(r.Spec.Command, r.Spec.Args...)
 	cmd.Dir = r.Spec.WorkingDir
-	cmd.Env = os.Environ()
-	for key, value := range r.Spec.Env {
-		cmd.Env = append(cmd.Env, key+"="+value)
+	env, err := r.environment()
+	if err != nil {
+		_ = logFile.Close()
+		return Info{}, r.startFailed(err)
 	}
+	cmd.Env = env
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	configureHostProcess(cmd)
 	if err := cmd.Start(); err != nil {
@@ -109,6 +116,50 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		return Info{}, err
 	}
 	return Info{Runner: r.Name(), PID: record.PID, HealthURL: r.Spec.HealthURL}, nil
+}
+
+// RunTool runs the platform's recovery tool to completion, in the host's
+// working directory and environment, with the caller's terminal attached. It
+// returns the tool's exit status; an error means the tool could not be run.
+func (r *ProcessRunner) RunTool(ctx context.Context, tool Tool, extra []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	env, err := r.environment()
+	if err != nil {
+		return 0, err
+	}
+	cmd := exec.CommandContext(ctx, tool.Command, append(append([]string(nil), tool.Args...), extra...)...)
+	cmd.Dir, cmd.Env = r.Spec.WorkingDir, env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return exit.ExitCode(), nil
+		}
+		return 0, err
+	}
+	return 0, nil
+}
+
+// environment layers the host's environment: the launcher's own, then the
+// platform's secrets, then the spec's explicit values (the release wins).
+func (r *ProcessRunner) environment() ([]string, error) {
+	values := map[string]string{}
+	if r.SecretEnv != nil {
+		secretValues, err := r.SecretEnv()
+		if err != nil {
+			return nil, fmt.Errorf("read the platform secrets: %w", err)
+		}
+		for key, value := range secretValues {
+			values[key] = value
+		}
+	}
+	for key, value := range r.Spec.Env {
+		values[key] = value
+	}
+	env := os.Environ()
+	for key, value := range values {
+		env = append(env, key+"="+value)
+	}
+	return env, nil
 }
 
 func (r *ProcessRunner) startFailed(cause error) *contracts.LauncherError {

@@ -2,12 +2,12 @@ package host
 
 import (
 	"context"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
-	"github.com/kb-labs/create/v2/receipt"
-	"github.com/kb-labs/create/v2/services"
+	"github.com/kb-labs/create/v2/secrets"
 )
 
 // Host states reported by Runner.Status.
@@ -55,33 +55,46 @@ type Runner interface {
 	Status(ctx context.Context) (Status, error)
 }
 
-// Select picks the runner for an installation. Behaviour-preserving default:
-// without a host spec in the receipt the existing kb-dev startup is used.
-func Select(platformRoot, kbdevBinary string) (Runner, error) {
+// NewRunner builds the runner for an installation: the host process its
+// receipt declares, supervised under the per-user state home. Its secret
+// environment is read from the platform's private store at every start, so a
+// value stored after the launcher began still reaches the next host process.
+func NewRunner(platformRoot string, state State) (*ProcessRunner, error) {
 	spec, err := LoadSpec(platformRoot)
 	if err != nil {
-		if _, readErr := receipt.Read(platformRoot); readErr != nil {
-			return nil, contracts.NewLauncherError(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", readErr)
-		}
-		return nil, specInvalid(err)
+		return nil, err
 	}
-	if spec != nil {
-		return &ProcessRunner{Spec: *spec, State: StateFor(platformRoot)}, nil
-	}
-	active, err := receipt.Read(platformRoot)
+	store := secrets.Store{PlatformRoot: platformRoot}
+	return &ProcessRunner{Spec: spec, State: state, SecretEnv: store.Environment}, nil
+}
+
+// Prober is the trial run used to validate a plan's host before its receipt is
+// committed: the host starts under a scratch state directory (so it never
+// touches the pid file of a real, supervised host), must become healthy, and is
+// stopped again. A host that is already running on the same port fails the
+// probe with KB_HOST_PORT_IN_USE, which is the right answer.
+type Prober struct {
+	PlatformRoot string
+	State        State
+}
+
+// Probe starts and stops the declared host once.
+func (p Prober) Probe(ctx context.Context, declared contracts.HostSpec) error {
+	spec, err := NewSpec(p.PlatformRoot, declared)
 	if err != nil {
-		return nil, contracts.NewLauncherError(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
+		return specInvalid(err)
 	}
-	ids := make([]string, 0, len(active.Plan.ServiceGraph.Services))
-	for _, service := range active.Plan.ServiceGraph.Services {
-		ids = append(ids, service.ID)
+	store := secrets.Store{PlatformRoot: p.PlatformRoot}
+	runner := &ProcessRunner{Spec: spec, State: State{Dir: filepath.Join(p.State.Dir, "probe")}, SecretEnv: store.Environment}
+	if _, err := runner.Start(ctx); err != nil {
+		return err
 	}
-	return &KBDevRunner{PlatformRoot: platformRoot, ServiceIDs: ids, Client: services.KBDev{Binary: kbdevBinary}}, nil
+	_, err = runner.Stop(context.Background())
+	return err
 }
 
 func specInvalid(cause error) *contracts.LauncherError {
-	e := contracts.NewLauncherError("KB_HOST_SPEC_INVALID", "The host specification in the installation receipt is invalid: "+cause.Error()+".", "Run \"kb-create doctor --fix\" or reinstall with \"kb-create apply\".", cause)
-	return e
+	return contracts.NewLauncherError(contracts.CodeHostSpecInvalid, "The host specification in the installation receipt is invalid: "+cause.Error()+".", "Reinstall the platform with \"kb-create apply\".", cause)
 }
 
 func hostError(code, message, hint string, cause error, details map[string]string) *contracts.LauncherError {

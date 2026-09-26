@@ -7,7 +7,7 @@ import (
 )
 
 func TestSealAndVerifyImmutableReleaseIndex(t *testing.T) {
-	source, err := Seal(Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact", Profiles: map[string]contracts.ServiceGraph{"default": {}}}}})
+	source, err := Seal(Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}})
 	if err != nil || source.Digest == "" || Verify(source) != nil {
 		t.Fatalf("source/error = %#v / %v", source, err)
 	}
@@ -18,7 +18,7 @@ func TestSealAndVerifyImmutableReleaseIndex(t *testing.T) {
 }
 
 func TestValidateRejectsChannelOutsideIndex(t *testing.T) {
-	_, err := Seal(Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "missing"}, Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact", Profiles: map[string]contracts.ServiceGraph{"default": {}}}}})
+	_, err := Seal(Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "missing"}, Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}})
 	if err == nil {
 		t.Fatal("expected absent channel target")
 	}
@@ -31,7 +31,7 @@ func TestValidateRejectsCompatibilityLabelOutsideIndex(t *testing.T) {
 			Schema: CompatibilitySchema,
 			Labels: []CompatibilityLabel{{ID: "platform@2.0.0", Kind: "platform", ArtifactID: "platform", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"stage"}}, {ID: "sdk@2.1.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.1.0", Status: "prepared", ValidatedBy: []string{"stage"}}},
 		},
-		Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact", Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
+		Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
 	})
 	if err == nil {
 		t.Fatal("expected compatibility label to reference an indexed SDK")

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
@@ -69,11 +70,10 @@ func (store Store) Get(name string) (string, bool, error) {
 // variable its plan patch binds it to.
 //
 // Secrets are stored under their requirement ID (what the launcher verifies and
-// doctor checks), but the generated service env is `${ENV_NAME}` and kb-dev
-// resolves that by the variable's NAME from this same private store. Without the
-// second key any secret whose ID differs from its variable
-// (`gateway.jwtSecret` vs `GATEWAY_JWT_SECRET`) is stored yet never delivered,
-// and kb-dev refuses to start the service. Only secrets that are present are
+// doctor checks), but the host process receives them as environment variables
+// named by the plan (Environment). Without the second key any secret whose ID
+// differs from its variable (`gateway.jwtSecret` vs `GATEWAY_JWT_SECRET`) is
+// stored yet never delivered to the host. Only secrets that are present are
 // bound: a missing required one is reported by the runtime. Two secrets bound to
 // one variable must hold the same value. Safe to run repeatedly.
 func (store Store) BindEnvironments(patches []contracts.ConfigPatch) error {
@@ -102,6 +102,26 @@ func (store Store) BindEnvironments(patches []contracts.ConfigPatch) error {
 		}
 	}
 	return nil
+}
+
+var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// Environment returns the stored values that are valid environment variable
+// names, for the host process. Requirement IDs such as "gateway.jwtSecret" are
+// not variable names; each secret reaches the host under the variable its plan
+// patch binds it to (see BindEnvironments).
+func (store Store) Environment() (map[string]string, error) {
+	values, err := store.read()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(values))
+	for name, value := range values {
+		if environmentName.MatchString(name) {
+			result[name] = value
+		}
+	}
+	return result, nil
 }
 
 func (store Store) path() string {

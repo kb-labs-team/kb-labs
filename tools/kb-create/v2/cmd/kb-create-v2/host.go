@@ -17,11 +17,12 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/supervisor"
 )
 
 // hostOperations are the host lifecycle commands. `status` is shared with the
-// pre-existing receipt verification and is routed by runStatus.
+// receipt-owned installation report and is routed by runStatus.
 func isHostOperation(operation string) bool {
 	switch operation {
 	case "start", "stop", "restart", "supervise":
@@ -34,7 +35,6 @@ func isHostOperation(operation string) bool {
 // read from package state.
 type hostCommand struct {
 	PlatformRoot string
-	KBDev        string
 	Foreground   bool
 	JSON         bool
 	Executable   string // launcher binary re-executed by `start` to run `supervise`
@@ -43,15 +43,27 @@ type hostCommand struct {
 	Err          io.Writer
 }
 
-func (c hostCommand) run(operation string) int {
+// setup resolves the per-user state home and the runner of the installation.
+func (c hostCommand) setup() (*host.ProcessRunner, host.State, *contracts.LauncherError) {
 	if c.PlatformRoot == "" {
-		return c.fail(2, contracts.NewLauncherError(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil))
+		return nil, host.State{}, contracts.NewLauncherError(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil)
 	}
-	runner, err := host.Select(c.PlatformRoot, c.KBDev)
+	state, err := host.StateHome()
 	if err != nil {
-		return c.fail(2, asLauncherError(err))
+		return nil, host.State{}, asLauncherError(err)
 	}
-	state := host.StateFor(c.PlatformRoot)
+	runner, err := host.NewRunner(c.PlatformRoot, state)
+	if err != nil {
+		return nil, host.State{}, asLauncherError(err)
+	}
+	return runner, state, nil
+}
+
+func (c hostCommand) run(operation string) int {
+	runner, state, failure := c.setup()
+	if failure != nil {
+		return c.fail(2, failure)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	switch operation {
@@ -67,15 +79,17 @@ func (c hostCommand) run(operation string) int {
 	return c.fail(2, contracts.NewLauncherError(contracts.CodeOperationInvalid, "operation is not supported", "use start, stop, status, restart or supervise", nil))
 }
 
-// hostStatus implements `status` for installations that declare a host spec.
-// It reports whether it handled the request so kb-dev installations keep the
-// original receipt verification output.
+// hostStatus implements `status`: the host, its supervisor and the installed
+// platform version.
 func (c hostCommand) hostStatus(ctx context.Context, runner host.Runner, state host.State) int {
 	status, err := runner.Status(ctx)
 	if err != nil {
 		return c.fail(1, asLauncherError(err))
 	}
 	payload := map[string]any{"ok": true, "operation": "status", "host": status}
+	if active, readErr := receipt.Read(c.PlatformRoot); readErr == nil {
+		payload["installation"] = map[string]any{"receiptId": active.ID, "platformVersion": active.Plan.ServiceGraph.PlatformVersion}
+	}
 	if pid, ok := supervisor.LivePID(state); ok {
 		info := map[string]any{"pid": pid}
 		if client, connectErr := control.Connect(state); connectErr == nil {
@@ -87,19 +101,10 @@ func (c hostCommand) hostStatus(ctx context.Context, runner host.Runner, state h
 	if status.State == host.StateUnhealthy {
 		return c.failWith(1, contracts.NewLauncherError("KB_HOST_UNHEALTHY", "The host responds but is unhealthy.", "Run \"kb-create restart\" or \"kb-create doctor\".", nil), payload)
 	}
-	return c.succeed(payload, fmt.Sprintf("host %s (pid %d, %s)", status.State, status.PID, status.Runner))
+	return c.succeed(payload, fmt.Sprintf("host %s (pid %d)", status.State, status.PID))
 }
 
-func (c hostCommand) start(ctx context.Context, runner host.Runner, state host.State) int {
-	process, isProcess := runner.(*host.ProcessRunner)
-	if !isProcess {
-		// kb-dev owns its own daemons; there is nothing to supervise.
-		info, err := runner.Start(ctx)
-		if err != nil {
-			return c.fail(1, asLauncherError(err))
-		}
-		return c.succeed(map[string]any{"ok": true, "operation": "start", "host": info}, "host started ("+info.Runner+")")
-	}
+func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, state host.State) int {
 	if c.Foreground {
 		// Direct host: no control channel, the host is a child of this process
 		// and stops when the launcher is interrupted.
@@ -108,7 +113,7 @@ func (c hostCommand) start(ctx context.Context, runner host.Runner, state host.S
 		}
 		return 0
 	}
-	status, _ := runner.Status(ctx)
+	status, _ := process.Status(ctx)
 	if status.State != host.StateStopped {
 		return c.fail(1, contracts.NewLauncherError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil))
 	}
@@ -143,11 +148,7 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 		return host.Info{}, contracts.NewLauncherError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+state.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	defer logFile.Close()
-	args := []string{"supervise", "--json", "--platform-root", c.PlatformRoot}
-	if c.KBDev != "" {
-		args = append(args, "--kb-dev", c.KBDev)
-	}
-	cmd := exec.Command(executable, args...)
+	cmd := exec.Command(executable, "supervise", "--json", "--platform-root", c.PlatformRoot)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	host.ConfigureDetached(cmd)
 	if err := cmd.Start(); err != nil {
@@ -210,6 +211,20 @@ func (c hostCommand) supervise(ctx context.Context, runner host.Runner, state ho
 }
 
 func (c hostCommand) stop(ctx context.Context, runner host.Runner, state host.State) int {
+	result, err := halt(ctx, runner, state)
+	if err != nil {
+		return c.fail(1, asLauncherError(err))
+	}
+	message := "host stopped"
+	if !result.WasRunning {
+		message = "host was not running"
+	}
+	return c.succeed(map[string]any{"ok": true, "operation": "stop", "stopped": result}, message)
+}
+
+// halt stops the supervisor (which stops the host gracefully and removes the
+// control channel) and then whatever it left behind, or a foreground host.
+func halt(ctx context.Context, runner host.Runner, state host.State) (host.StopResult, error) {
 	before, _ := runner.Status(ctx)
 	if pid, alive := supervisor.LivePID(state); alive {
 		host.TerminateProcess(pid)
@@ -218,20 +233,15 @@ func (c hostCommand) stop(ctx context.Context, runner host.Runner, state host.St
 			waitExit(pid, 5*time.Second)
 		}
 	}
-	// Whatever the supervisor left behind (or a foreground host) goes now.
 	result, err := runner.Stop(ctx)
 	if err != nil {
-		return c.fail(1, asLauncherError(err))
+		return result, err
 	}
 	result.WasRunning = result.WasRunning || before.State != host.StateStopped
 	if result.WasRunning && !result.Forced {
 		result.Graceful = true
 	}
-	message := "host stopped"
-	if !result.WasRunning {
-		message = "host was not running"
-	}
-	return c.succeed(map[string]any{"ok": true, "operation": "stop", "stopped": result}, message)
+	return result, nil
 }
 
 func stopBudget(runner host.Runner) time.Duration {
@@ -252,7 +262,7 @@ func waitExit(pid int, timeout time.Duration) bool {
 	return !host.ProcessAlive(pid)
 }
 
-func (c hostCommand) restart(ctx context.Context, runner host.Runner, state host.State) int {
+func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, state host.State) int {
 	// A live supervisor owns the host: restart through its channel so its view
 	// of the child stays consistent.
 	if client, err := control.Connect(state); err == nil {
@@ -266,18 +276,37 @@ func (c hostCommand) restart(ctx context.Context, runner host.Runner, state host
 	if err != nil {
 		return c.fail(1, asLauncherError(err))
 	}
-	if process, ok := runner.(*host.ProcessRunner); ok {
-		info, startErr := c.spawnSupervisor(ctx, process, state)
-		if startErr != nil {
-			return c.fail(1, asLauncherError(startErr))
-		}
-		return c.succeed(map[string]any{"ok": true, "operation": "restart", "stopped": stopped, "host": info}, "host restarted")
-	}
-	info, err := runner.Start(ctx)
-	if err != nil {
-		return c.fail(1, asLauncherError(err))
+	info, startErr := c.spawnSupervisor(ctx, runner, state)
+	if startErr != nil {
+		return c.fail(1, asLauncherError(startErr))
 	}
 	return c.succeed(map[string]any{"ok": true, "operation": "restart", "stopped": stopped, "host": info}, "host restarted")
+}
+
+// lifecycleHost is the supervised host as the swap operations see it. Both
+// calls build their runner from the receipt as it is at that moment, so a
+// Resume after an update starts the new version and after a restore the old.
+type lifecycleHost struct {
+	command hostCommand
+	state   host.State
+}
+
+func (h lifecycleHost) Halt(ctx context.Context) (bool, error) {
+	runner, err := host.NewRunner(h.command.PlatformRoot, h.state)
+	if err != nil {
+		return false, err
+	}
+	result, err := halt(ctx, runner, h.state)
+	return result.WasRunning, err
+}
+
+func (h lifecycleHost) Resume(ctx context.Context) error {
+	runner, err := host.NewRunner(h.command.PlatformRoot, h.state)
+	if err != nil {
+		return err
+	}
+	_, err = h.command.spawnSupervisor(ctx, runner, h.state)
+	return err
 }
 
 func asLauncherError(err error) *contracts.LauncherError {

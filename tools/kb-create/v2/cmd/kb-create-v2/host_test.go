@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 )
 
@@ -55,8 +56,8 @@ func TestMain(m *testing.M) {
 }
 
 type installation struct {
-	launcher, root, state string
-	port                  int
+	launcher, root, kbHome, state string
+	port                          int
 }
 
 func newInstallation(t *testing.T, hostArgs ...string) installation {
@@ -74,14 +75,16 @@ func newInstallation(t *testing.T, hostArgs ...string) installation {
 	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", Plan: plan}); err != nil {
 		t.Fatal(err)
 	}
-	inst := installation{launcher: launcher, root: root, state: filepath.Join(t.TempDir(), "state"), port: port}
+	kbHome := t.TempDir()
+	t.Setenv(host.KBHomeEnv, kbHome)
+	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: filepath.Join(kbHome, "launcher"), port: port}
 	t.Cleanup(func() { _, _, _ = inst.run("stop", "--json") })
 	return inst
 }
 
 func (i installation) run(args ...string) (map[string]any, int, string) {
 	command := exec.Command(i.launcher, append(args, "--platform-root", i.root)...)
-	command.Env = append(os.Environ(), "KB_CREATE_STATE_HOME="+i.state)
+	command.Env = append(os.Environ(), "KB_HOME="+i.kbHome)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
@@ -186,7 +189,7 @@ func TestStartPrintsHumanTextWithoutJSONFlag(t *testing.T) {
 func TestForegroundStartRunsTheHostDirectly(t *testing.T) {
 	inst := newInstallation(t)
 	command := exec.Command(inst.launcher, "start", "--foreground", "--json", "--platform-root", inst.root)
-	command.Env = append(os.Environ(), "KB_CREATE_STATE_HOME="+inst.state)
+	command.Env = append(os.Environ(), "KB_HOME="+inst.kbHome)
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}

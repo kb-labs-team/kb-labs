@@ -266,7 +266,7 @@ jobs:
           # rejection is fixed above, not by retrying.
           for attempt in 1 2 3 4 5; do
             KB_CREATE_BINARY="$binary" go test -v -race -count=1 -timeout 12m \
-              -run '^TestPublishedV2JourneyReachesPluginWorkflow$' ./v2/e2e/...
+              -run '^TestPublishedV2JourneyInstallsUpdatesAndRunsTheHost$' ./v2/e2e/...
             status=$?
             if [ "$status" -eq 0 ]; then exit 0; fi
             if [ "$attempt" -lt 5 ]; then sleep 20; fi

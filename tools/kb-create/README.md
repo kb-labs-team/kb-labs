@@ -14,10 +14,13 @@ The V2 boundary is executable and covered by an offline journey test:
   capability providers without scanning an installation.
 - `resolve/` emits the immutable `ResolvedInstallPlan` and fails on missing or
   ambiguous providers instead of selecting one by iteration order.
-- `render/` projects that plan into `kb.config.jsonc` and `devservices.yaml`,
-  with V2-owned validation and atomic writes.
-- `verify/` enforces `resolved graph == devservices == kb-dev status` through
-  a status adapter, equally usable in a real run and an offline journey.
+- `render/` projects that plan into the generated runtime config
+  `kb.config.jsonc` (including the host's own `host` section), with atomic
+  writes. There is no service-manager file: the platform runs as one host
+  process.
+- `verify/` checks the generated config and the plan's host declaration before
+  a receipt is committed; a trial run of the host (`host.Prober`) proves that it
+  really starts.
 - `v2/artifacts/`, `v2/runtime/`, `v2/receipt/`, `v2/doctor/` and
   `v2/diagnostics/` establish
   exact artifact application, recovery, manifest-gap
@@ -78,40 +81,95 @@ Secret input uses `--secret-env requirement.id=ENV_VAR`, so CI/agents pass a
 reference to process environment rather than secret text through argv/JSON.
 V2 stores the value only in `.kb/v2/secrets.env` (0600); generated config,
 receipt, scenario state, logs, diagnostics and telemetry retain only the
-manifest requirement or `${ENV_VAR}` placeholder. `kb-dev` reads this private
-store when it expands the rendered service environment.
+manifest requirement or environment variable name. The launcher hands the
+private store to the host process as its environment (see Host supervision).
 
-The platform bundle can also declare an OS/architecture-specific `kb-dev`
-binary asset. V2 verifies its SHA-256 and installs it in `.kb/v2/bin`; a CLI
-`--kb-dev` is an explicit development override, not a release dependency.
+The platform bundle can declare OS/architecture-specific launcher binaries;
+V2 verifies their SHA-256 and installs them in `.kb/v2/bin`. Author and ops tools
+(`kb-dev`, `kb-devkit`, `kb-env`, `kb-deploy`, `kb-monitor`) are not part of a
+user installation: the release index never lists them and no launcher command
+takes a `kb-dev` path.
 
-## Host supervision (stage 4)
+## Host supervision and lifecycle (stage 4)
 
-`kb-create start | stop | status | restart` supervise the platform host. Add
-`--json` for the single JSON envelope (errors use the unified contract, codes
-`KB_HOST_*`); without it the commands print short text. All take
-`--platform-root`.
+The platform runs as **one host process** (`kb-host`, ADR-0043) that the
+launcher supervises. `kb-dev` is an author tool and is not used in the user
+path: there is no `--kb-dev`, no `--net-offset` and no `devservices.yaml`.
 
-- The runner is chosen from the active receipt. If `plan.host` (a `HostSpec`:
-  `command`, `args`, `env`, `workingDir`, `healthUrl`, `readyTimeoutSeconds`,
-  `stopGraceSeconds`) is declared, the launcher runs that command directly
-  (`ProcessRunner`: own process group, pid file and log in the state home,
-  health polling, SIGTERM then kill after the grace period). Without it the
-  existing kb-dev startup is used unchanged.
+`kb-create start | stop | status | restart` operate the host. Add `--json` for
+the single JSON envelope (errors use the unified contract, codes `KB_HOST_*`);
+without it the commands print short text. All take `--platform-root`.
+
+- The host is declared by the release: every platform bundle in the sealed
+  release index carries a `host` (`command`, `args`, `env`, `workingDir`,
+  `healthUrl`, `readyTimeoutSeconds`, `stopGraceSeconds`, optional `recover`
+  tool). The resolver copies it into the plan and the receipt; an index or a
+  receipt without one is rejected (`KB_HOST_SPEC_INVALID`, reinstall). The
+  launcher runs that command directly (`ProcessRunner`: own process group, pid
+  file and log in the state home, health polling, SIGTERM then kill after the
+  grace period). The host process gets the launcher's environment, then the
+  platform's secrets (`.kb/v2/secrets.env`, variable names only), then the
+  spec's `env`.
 - `start` spawns `kb-create supervise` detached. `supervise` (foreground; the
   future autostart entry) keeps the host and serves the control channel.
   `start --foreground` runs only the host in the current process.
-- State home: `$KB_CREATE_STATE_HOME`, else `<platform-root>/.kb/v2/state`
-  (`host.pid`, `host.log`, `supervisor.pid`, `supervisor.log`, `control.json`,
-  `update-requests.json`).
+- State home: per user, `<KB_HOME>/launcher` (`KB_HOME`, default `~/.kb`, the
+  same variable the TS side uses): `host.pid`, `host.log`, `supervisor.pid`,
+  `supervisor.log`, `control.json`, `update-requests.json`, `operation.lock`.
+  Tests point `KB_HOME` at a temporary directory.
 - Control channel: loopback, random port, bearer token in `control.json`
   (0600). Endpoints `GET /v1/status`, `POST /v1/host/restart`,
-  `POST /v1/update-request` (only records the request; the update flow is later
-  work). The protocol and its shared fixtures are documented in
+  `POST /v1/update-request` (only records the request; consuming Studio's queue
+  is later work). The protocol and its shared fixtures are documented in
   `core/platform/src/launcher-control/README.md`.
 
-Not yet: autostart installation, automatic restart of a crashed host, the update
-flow, removal of kb-dev from the user runtime.
+### Update, rollback, repair and uninstall run around the host
+
+`update`, `rollback`, `doctor --fix` and `uninstall` take the per-user
+`operation.lock`, stop the host (through its supervisor), swap the
+installation and start the host again from the new receipt, with no manual
+steps (`swap` package):
+
+1. The host is stopped; whether it was running is remembered.
+2. The operation runs under a snapshot. A failing swap restores the previous
+   receipt, config and packages (`lifecycle.Mutate`), the previous host is
+   restarted and the error is `KB_UPDATE_APPLY_FAILED`.
+3. A host that was running is started from the new receipt. If it does not
+   become healthy, the snapshot is restored, the previous version is started
+   again and the error is `KB_UPDATE_HOST_NOT_HEALTHY` (the previous version is
+   named in the message). If even the restore fails the error is
+   `KB_INSTALL_ROLLBACK_FAILED` with the snapshot path.
+4. A host that was stopped stays stopped, but the new host gets a trial run
+   before the receipt is committed. `uninstall` leaves the host stopped.
+
+`rollback` without `--snapshot` undoes the last update: the receipt records the
+snapshot taken before it (`KB_UPDATE_NO_SNAPSHOT` when there is none). Failures
+write a diagnostic dossier under `.kb/diagnostics/`.
+
+### Doctor: installation and platform, and recovery
+
+`doctor --platform-root <root>` answers two different questions and reports them
+in separate sections of one envelope:
+
+- `installation`: is what the launcher installed complete and runnable (receipt,
+  generated config, host command, launcher state)? Fixed by `apply`, `rollback`
+  or `doctor --fix`. The manifest requirement gaps stay in `findings`/`repair`.
+- `platform`: is the running host healthy (process, health document with
+  upstreams and adapters, sign-in readiness from `/health/auth`)? Fixed by
+  `restart`, config, or `doctor --recover`.
+
+`doctor --fix` applies only manifest-declared safe defaults and restarts the
+host. `doctor --recover [--email --tenant --generate|--password-stdin --yes]`
+recovers the administrator account (it replaces `kb auth reset-admin`): with the
+host stopped (`KB_INSTALL_RECOVERY_HOST_RUNNING` otherwise) the launcher runs the
+platform's own recovery tool, declared by the release as `host.recover`
+(`kb-recover` of `@kb-labs/host-app`), in the host's environment and working
+directory. The launcher validates none of the flags; a platform that ships no
+recovery tool answers `KB_INSTALL_RECOVERY_UNAVAILABLE`.
+
+Not yet: autostart installation, automatic restart of a crashed host, executing
+Studio's queued update requests, project runtimes (rest, workflow) served by the
+host (stage 3).
 
 ## Why this launcher
 
@@ -142,26 +200,23 @@ flowchart TD
   D --> E["V2 runtime: apply, journal, rollback"]
   E --> F["InstallReceipt + immutable snapshot"]
   F --> G["Render config + service graph"]
-  G --> H["Verify artifacts, kb-dev status, readiness"]
+  G --> H["Verify config + host declaration, trial-run the host"]
   H --> I["Success or LauncherError + diagnostic bundle"]
-  F --> J["doctor --fix / update / uninstall / rollback"]
+  F --> J["doctor --fix / update / uninstall / rollback (around the host)"]
 ```
 
 ### One ownership rule
 
 `ResolvedInstallPlan` owns requested platform/SDK/plugins/adapters, exact
-artifact versions, config patches, provider bindings, binaries and the
-expected service graph.
-`devservices.yaml` and generated runtime configuration are rendered outputs.
-A package scan validates declared artifacts; it must never decide which
-services the user received merely because a transitive dependency exposes a
-manifest.
+artifact versions, config patches, provider bindings, binaries, the platform's
+service graph and the host that runs it.
+The generated runtime configuration is a rendered output. A package scan
+validates declared artifacts; it must never decide which services the user
+received merely because a transitive dependency exposes a manifest.
 
-The required post-condition is:
-
-```text
-resolved expected services == rendered devservices services == kb-dev status services
-```
+The required post-condition is that the receipt's host starts and answers its
+health check; the launcher proves it with a trial run before committing a
+receipt and with the real restart after an update.
 
 For the current product horizon, core and official services are one platform
 bundle. A selected platform version owns their exact packages, default
@@ -301,7 +356,7 @@ protocol, persisted in the journal/receipt, and consumed by `doctor --fix`.
 Each invocation writes a full local log. A failure additionally writes a
 redacted dossier under `.kb/diagnostics/<correlation-id>/` with resolved plan,
 receipt/snapshot metadata, engine journal, package-manager output, toolchain,
-config hashes, service graph and `kb-dev status`. The CLI prints one recovery
+config hashes and the service graph. The CLI prints one recovery
 command and the bundle path so users can attach it to an issue without manual
 terminal reconstruction.
 
@@ -323,7 +378,7 @@ failure never changes the installation result.
 | `engine-recovery` | fake package/binary adapters | journal, partial failure, retry, rollback and doctor recovery | none |
 | `doctor-manifest-contract` | manifests + effective-config fixtures | required/default/secret fields, provider bindings and repair-plan generation | none |
 | `launcher-journey` | offline tarball/binary fixtures | fresh, explicit, rerun, update, uninstall and rollback | none |
-| `service-profile` | isolated fixture per profile | `kb-dev status` equals receipt graph; required services meet readiness | fixture/local |
+| `service-profile` | isolated fixture per profile | the receipt's host starts and answers its health check | fixture/local |
 | `release-smoke` | exact npm canary + released binaries | default fresh install and required runtime contract | real npm only |
 
 Each shard owns a distinct HOME, platform/project roots, port allocation and

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -21,10 +22,17 @@ func main() {
 	unhealthy := flag.Bool("unhealthy", false, "answer /health with 500")
 	exitCode := flag.Int("exit", -1, "exit immediately with this status (start failure)")
 	delay := flag.Duration("delay", 0, "wait before listening")
+	dumpEnv := flag.String("dump-env", "", "write the process environment to this file at start")
 	flag.Parse()
 	if *exitCode >= 0 {
 		fmt.Fprintln(os.Stderr, "fakehost: exiting early")
 		os.Exit(*exitCode)
+	}
+	if *dumpEnv != "" {
+		if err := os.WriteFile(*dumpEnv, []byte(strings.Join(os.Environ(), "\n")+"\n"), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, "fakehost:", err)
+			os.Exit(4)
+		}
 	}
 	signals := make(chan os.Signal, 1)
 	if *ignoreTerm {

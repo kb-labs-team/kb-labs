@@ -20,6 +20,10 @@ const checksumsPath = required('--checksums');
 const repository = required('--repository');
 const releaseTag = required('--release-tag');
 const output = required('--output');
+// Author and ops tools are not part of a user installation (ADR-0045): the
+// index lists only what the launcher may install. kb-dev in particular is how
+// platform authors run services from the monorepo, never how a user runs one.
+const AUTHOR_AND_OPS_TOOLS = new Set(['kb-dev', 'kb-devkit', 'kb-env', 'kb-deploy', 'kb-monitor']);
 const entries = readFileSync(checksumsPath, 'utf8').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
 const binaries = [];
 const seen = new Set();
@@ -32,6 +36,7 @@ for (const line of entries) {
   const target = filename.match(/^(kb-[a-z0-9-]+)-(darwin|linux|windows)-(amd64|arm64)(\.exe)?$/);
   if (!target) continue;
   const [, id, os, arch] = target;
+  if (AUTHOR_AND_OPS_TOOLS.has(id)) continue;
   const key = `${id}:${os}/${arch}`;
   if (seen.has(key)) throw new Error(`duplicate binary asset ${key}`);
   seen.add(key);

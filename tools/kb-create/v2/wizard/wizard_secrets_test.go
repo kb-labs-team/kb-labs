@@ -21,7 +21,7 @@ func gatewaySource(t *testing.T) catalog.Catalog {
 	t.Helper()
 	source, err := catalog.Seal(catalog.Catalog{
 		Channels:  map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
-		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
 	})
 	if err != nil {
 		t.Fatal(err)

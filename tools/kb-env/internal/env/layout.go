@@ -1,5 +1,5 @@
 // Package env owns the on-disk layout of a sandbox environment and the
-// isolation guarantees (external dir, clean PATH, KB_CREATE_STATE_HOME).
+// isolation guarantees (external dir, clean PATH, KB_HOME).
 package env
 
 import (
@@ -16,7 +16,7 @@ import (
 //	<Home>/current/
 //	  platform/   kb-create --platform target (node_modules, bin, .kb)
 //	  project/    kb-create project cwd (.kb/plugins, .env, user code)
-//	  state/      KB_CREATE_STATE_HOME — isolates global kb-create state
+//	  state/      KB_HOME — isolates per-user KB Labs state (launcher, project registry)
 //	  logs/       orchestration logs
 type Layout struct {
 	Home     string
@@ -101,20 +101,20 @@ func (l Layout) CleanPath() string {
 }
 
 // ExecEnv builds the environment for commands run inside the sandbox: clean
-// PATH, isolated KB_CREATE_STATE_HOME, KB_PROJECT_ROOT, plus any extras. Any
-// inherited KB_CREATE_STATE_HOME is stripped so it can never leak in.
+// PATH, isolated KB_HOME, KB_PROJECT_ROOT, plus any extras. Any
+// inherited KB_HOME is stripped so it can never leak in.
 func (l Layout) ExecEnv(extra map[string]string) []string {
 	base := os.Environ()
 	out := make([]string, 0, len(base)+4)
 	for _, kv := range base {
-		if strings.HasPrefix(kv, "KB_CREATE_STATE_HOME=") || strings.HasPrefix(kv, "PATH=") {
+		if strings.HasPrefix(kv, "KB_HOME=") || strings.HasPrefix(kv, "PATH=") {
 			continue
 		}
 		out = append(out, kv)
 	}
 	out = append(out,
 		"PATH="+l.CleanPath(),
-		"KB_CREATE_STATE_HOME="+l.State,
+		"KB_HOME="+l.State,
 		"KB_PROJECT_ROOT="+l.Project,
 	)
 	for k, v := range extra {

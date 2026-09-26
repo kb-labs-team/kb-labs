@@ -10,62 +10,59 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 )
 
-func TestBuildRejectsDuplicatePorts(t *testing.T) {
-	plan := testPlan(t.TempDir())
-	plan.ServiceGraph.Services = append(plan.ServiceGraph.Services, contracts.Service{ID: "duplicate", Command: "serve", Port: 4000})
-	if _, err := Build(plan); err == nil {
-		t.Fatal("expected duplicate-port validation error")
-	}
-}
-
-func TestBuildProjectsSecretAsPlaceholderOnly(t *testing.T) {
+func TestBuildKeepsSecretValuesOutOfConfigAndChecksTheirServices(t *testing.T) {
 	plan := testPlan(t.TempDir())
 	plan.ConfigPatches = []contracts.ConfigPatch{{Owner: "manifest:token", Environment: "TOKEN", Services: []string{"gateway"}}}
 	output, err := Build(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	value := output.Devservices.Services["gateway"].Env["TOKEN"]
-	if value != "${TOKEN}" || strings.Contains(string(output.Config), "TOKEN") {
-		t.Fatalf("secret projection = %q / %s", value, output.Config)
+	if strings.Contains(string(output.Config), "TOKEN") {
+		t.Fatalf("the config must not mention a secret variable: %s", output.Config)
+	}
+	plan.ConfigPatches[0].Services = []string{"missing"}
+	if _, err := Build(plan); err == nil {
+		t.Fatal("a secret bound to a service that is not in the plan must be rejected")
 	}
 }
 
-func TestBuildRendersHealthCheckAsAbsoluteLocalhostURL(t *testing.T) {
-	plan := testPlan(t.TempDir())
-	plan.ServiceGraph.Services[0].HealthCheck = "/health"
-	output, err := Build(plan)
-	if err != nil {
+func hostSection(t *testing.T, config []byte) map[string]any {
+	t.Helper()
+	var parsed struct {
+		Host map[string]any `json:"host"`
+	}
+	if err := json.Unmarshal(config, &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if got := output.Devservices.Services["gateway"].HealthCheck; got != "http://localhost:4000/health" {
-		t.Fatalf("health check = %q", got)
-	}
+	return parsed.Host
 }
 
-// Regression coverage: kb-dev's config loader derives its Groups map (used to
-// resolve `kb-dev start backend`) from each service's own `group` field in
-// devservices.yaml — a rendered file with no `group` anywhere silently drops
-// every group, including "backend", breaking any caller that starts services
-// by group name. gateway is a known "backend" member (mirroring
-// .kb/devservices.dev.yaml's hand-authored groups); an unrecognized service
-// ID must render with no group at all, not a guessed one.
-func TestBuildAssignsConventionalServiceGroups(t *testing.T) {
-	plan := testPlan(t.TempDir())
-	plan.ServiceGraph.Services = append(plan.ServiceGraph.Services, contracts.Service{ID: "state-daemon", Command: "serve", Port: 7777})
-	plan.ServiceGraph.Services = append(plan.ServiceGraph.Services, contracts.Service{ID: "mcp-daemon", Command: "serve", Port: 7779})
-	output, err := Build(plan)
-	if err != nil {
-		t.Fatal(err)
+// The host's policy overrides gateway access with host.auth, so the installer
+// must write the value that matches the selected access mode: a "local" install
+// is no-login (off); everything else, including no answer, is the gateway's
+// secured default (on).
+func TestBuildDerivesHostAuthFromTheAccessMode(t *testing.T) {
+	cases := map[string]struct {
+		patches []contracts.ConfigPatch
+		want    string
+	}{
+		"local install has no login":       {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"local"`, Owner: "manifest:gateway.access.mode"}}, "off"},
+		"secured install requires login":   {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"secured"`, Owner: "manifest:gateway.access.mode"}}, "on"},
+		"no answer is the secured default": {nil, "on"},
+		"an explicit host.auth is kept":    {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"local"`, Owner: "manifest:a"}, {Path: "/host/auth", JSON: `"on"`, Owner: "manifest:b"}}, "on"},
 	}
-	if got := output.Devservices.Services["gateway"].Group; got != "backend" {
-		t.Fatalf("gateway group = %q, want backend", got)
-	}
-	if got := output.Devservices.Services["state-daemon"].Group; got != "infra" {
-		t.Fatalf("state-daemon group = %q, want infra", got)
-	}
-	if got := output.Devservices.Services["mcp-daemon"].Group; got != "" {
-		t.Fatalf("mcp-daemon group = %q, want unset (no known conventional group yet)", got)
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			plan := testPlan(t.TempDir())
+			plan.ConfigPatches = testCase.patches
+			output, err := Build(plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := hostSection(t, output.Config)["auth"]; got != testCase.want {
+				t.Fatalf("host.auth = %v, want %s\n%s", got, testCase.want, output.Config)
+			}
+		})
 	}
 }
 
@@ -153,19 +150,21 @@ func TestBuildKeepsResolvedAdapterBindingsAlongsideManifestDefault(t *testing.T)
 	}
 }
 
-func TestWriteProducesCompleteV2Projections(t *testing.T) {
+func TestWriteProducesTheRuntimeConfigAndNoServiceManagerFile(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Write(testPlan(root)); err != nil {
 		t.Fatal(err)
 	}
-	for _, relative := range []string{".kb/kb.config.jsonc", ".kb/devservices.yaml"} {
-		data, err := os.ReadFile(filepath.Join(root, relative))
-		if err != nil || len(data) == 0 {
-			t.Fatalf("%s = %q, %v", relative, data, err)
-		}
-		if _, err := os.Stat(filepath.Join(root, relative+".tmp")); !os.IsNotExist(err) {
-			t.Fatalf("temporary projection remains for %s", relative)
-		}
+	relative := ".kb/kb.config.jsonc"
+	data, err := os.ReadFile(filepath.Join(root, relative))
+	if err != nil || len(data) == 0 {
+		t.Fatalf("%s = %q, %v", relative, data, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, relative+".tmp")); !os.IsNotExist(err) {
+		t.Fatalf("temporary projection remains for %s", relative)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".kb", "devservices.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("the user path must not render devservices.yaml: %v", err)
 	}
 }
 

@@ -54,8 +54,8 @@ type ResolvedInstallPlan struct {
 	Artifacts        []Artifact        `json:"artifacts"`
 	ServiceGraph     ServiceGraph      `json:"serviceGraph"`
 	ProviderBindings []ProviderBinding `json:"providerBindings,omitempty"`
-	// Host, when declared, makes the launcher supervise the host process
-	// directly instead of driving the service graph through kb-dev.
+	// Host is how the launcher runs this platform: one supervised process. The
+	// resolver copies it from the platform bundle; a plan without it is invalid.
 	Host                *HostSpec     `json:"host,omitempty"`
 	ConfigPatches       []ConfigPatch `json:"configPatches,omitempty"`
 	PlanHash            string        `json:"planHash"`
@@ -72,10 +72,11 @@ type ConfigPatch struct {
 	Services    []string `json:"services,omitempty"`
 }
 
+// Verification is what the installer checked before committing a receipt: the
+// generated config on disk and the host spec the launcher will run.
 type Verification struct {
 	ConfigSHA256       string    `json:"configSha256"`
-	DevservicesSHA256  string    `json:"devservicesSha256"`
-	ServiceStatus      []string  `json:"serviceStatus"`
+	HostHealthURL      string    `json:"hostHealthUrl"`
 	ReadinessCheckedAt time.Time `json:"readinessCheckedAt"`
 }
 

@@ -13,10 +13,15 @@ type Input struct {
 	Configured map[string]bool `json:"configured"`
 }
 
+// Response is the doctor report. Installation and Platform answer different
+// questions (see sections.go) and are present when a platform root was given;
+// Findings and Repair are the manifest-requirement gaps of the installation.
 type Response struct {
-	OK       bool       `json:"ok"`
-	Findings []Finding  `json:"findings"`
-	Repair   RepairPlan `json:"repair"`
+	OK           bool       `json:"ok"`
+	Installation *Section   `json:"installation,omitempty"`
+	Platform     *Section   `json:"platform,omitempty"`
+	Findings     []Finding  `json:"findings"`
+	Repair       RepairPlan `json:"repair"`
 }
 
 func Decode(data []byte) (Input, error) {

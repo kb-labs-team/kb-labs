@@ -298,44 +298,41 @@ func TestSpecValidationAndResolution(t *testing.T) {
 
 func writeReceipt(t *testing.T, root string, host *contracts.HostSpec) {
 	t.Helper()
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, ServiceGraph: contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway", Required: true}}}, Host: host}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: host}
 	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", Plan: plan}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestSelectDefaultsToKBDevWithoutHostSpec(t *testing.T) {
-	root := t.TempDir()
-	writeReceipt(t, root, nil)
-	runner, err := Select(root, "kb-dev-binary")
-	if err != nil {
-		t.Fatal(err)
-	}
-	kbdev, ok := runner.(*KBDevRunner)
-	if !ok || len(kbdev.ServiceIDs) != 1 || kbdev.ServiceIDs[0] != "gateway" || kbdev.Client.Binary != "kb-dev-binary" {
-		t.Fatalf("expected the kb-dev runner, got %#v", runner)
-	}
-}
-
-func TestSelectUsesProcessRunnerWhenReceiptDeclaresHost(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv(StateHomeEnv, filepath.Join(t.TempDir(), "state"))
+func TestNewRunnerRunsTheHostTheReceiptDeclares(t *testing.T) {
+	root, state := t.TempDir(), State{Dir: filepath.Join(t.TempDir(), "launcher")}
 	writeReceipt(t, root, &contracts.HostSpec{Command: "bin/host", HealthURL: "http://127.0.0.1:9/health"})
-	runner, err := Select(root, "")
+	runner, err := NewRunner(root, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	process, ok := runner.(*ProcessRunner)
-	if !ok || process.Spec.Command != filepath.Join(root, "bin/host") || process.State.Dir != os.Getenv(StateHomeEnv) {
-		t.Fatalf("expected the process runner, got %#v", runner)
+	if runner.Spec.Command != filepath.Join(root, "bin/host") || runner.State != state || runner.SecretEnv == nil {
+		t.Fatalf("runner: %#v", runner)
 	}
 }
 
-func TestSelectRejectsInvalidHostSpec(t *testing.T) {
-	root := t.TempDir()
-	writeReceipt(t, root, &contracts.HostSpec{Command: "host", HealthURL: "http://10.0.0.1:1/health"})
-	_, err := Select(root, "")
-	if code := launcherCode(t, err); code != "KB_HOST_SPEC_INVALID" {
-		t.Fatalf("code %s", code)
+func TestNewRunnerRejectsAnInstallationWithoutAValidHost(t *testing.T) {
+	state := State{Dir: t.TempDir()}
+	cases := map[string]*contracts.HostSpec{
+		"no host (a receipt from before the host-only launcher)": nil,
+		"non-loopback health URL":                                {Command: "host", HealthURL: "http://10.0.0.1:1/health"},
+	}
+	for name, spec := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeReceipt(t, root, spec)
+			_, err := NewRunner(root, state)
+			if code := launcherCode(t, err); code != "KB_HOST_SPEC_INVALID" {
+				t.Fatalf("code %s", code)
+			}
+		})
+	}
+	if _, err := NewRunner(t.TempDir(), state); launcherCode(t, err) != "KB_INSTALL_RECEIPT_UNAVAILABLE" {
+		t.Fatalf("a missing receipt must be reported as such: %v", err)
 	}
 }

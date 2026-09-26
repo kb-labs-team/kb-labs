@@ -4,6 +4,7 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,11 +27,13 @@ type ArtifactInstaller interface {
 type ArtifactUninstaller interface {
 	Uninstall([]contracts.Artifact) error
 }
-type ServiceActivator interface {
-	Ensure(platformRoot string, serviceIDs []string) error
-}
-type ServiceDeactivator interface {
-	Stop(platformRoot string, serviceIDs []string) error
+
+// HostProbe proves that the host a plan declares really starts: it runs the
+// host once, waits until it is healthy and stops it again. It is optional
+// because a caller that restarts the real host right after the operation (the
+// update flow of a running installation) proves the same thing with that start.
+type HostProbe interface {
+	Probe(ctx context.Context, host contracts.HostSpec) error
 }
 
 type Clock interface{ Now() time.Time }
@@ -40,11 +43,9 @@ type systemClock struct{}
 func (systemClock) Now() time.Time { return time.Now().UTC() }
 
 type Dependencies struct {
-	Artifacts   ArtifactInstaller
-	Status      verify.StatusProvider
-	Activator   ServiceActivator
-	Deactivator ServiceDeactivator
-	Clock       Clock
+	Artifacts ArtifactInstaller
+	Host      HostProbe
+	Clock     Clock
 	// CorrelationID is supplied by a frontend; it is persisted verbatim in the
 	// receipt and must be safe to disclose in a diagnostic bundle.
 	CorrelationID string
@@ -53,12 +54,12 @@ type Dependencies struct {
 
 // Apply is the one V2 fresh-install operation. It deliberately has no
 // dependency on legacy manifests, state or package scanning.
-func Apply(plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.InstallReceipt, error) {
+func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.InstallReceipt, error) {
 	if plan.Schema != contracts.ResolvedPlanSchema {
 		return contracts.InstallReceipt{}, fmt.Errorf("apply resolved plan: unsupported schema %q", plan.Schema)
 	}
-	if deps.Artifacts == nil || deps.Status == nil {
-		return contracts.InstallReceipt{}, fmt.Errorf("apply resolved plan: artifact installer and status provider are required")
+	if deps.Artifacts == nil {
+		return contracts.InstallReceipt{}, fmt.Errorf("apply resolved plan: artifact installer is required")
 	}
 	if err := verifySecrets(plan, deps.Secrets); err != nil {
 		return contracts.InstallReceipt{}, err
@@ -81,19 +82,19 @@ func Apply(plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.Ins
 	if _, err := render.Write(plan); err != nil {
 		return contracts.InstallReceipt{}, fmt.Errorf("render resolved projections: %w", err)
 	}
-	if deps.Activator != nil {
-		if err := deps.Activator.Ensure(plan.Request.PlatformRoot, serviceIDs(plan.ServiceGraph)); err != nil {
-			_ = removeProjections(plan.Request.PlatformRoot)
-			return contracts.InstallReceipt{}, fmt.Errorf("ensure resolved service graph: %w", err)
-		}
-	}
 	now := now(deps.Clock)
-	check, err := verify.Run(plan, deps.Status, now)
+	check, err := verify.Run(plan, now)
 	if err != nil {
 		// A fresh run has no prior receipt to restore. Remove only V2-owned
-		// projections so an incomplete graph cannot masquerade as installed.
+		// projections so an incomplete installation cannot masquerade as installed.
 		_ = removeProjections(plan.Request.PlatformRoot)
-		return contracts.InstallReceipt{}, fmt.Errorf("verify resolved service graph: %w", err)
+		return contracts.InstallReceipt{}, fmt.Errorf("verify installation: %w", err)
+	}
+	if deps.Host != nil {
+		if err := deps.Host.Probe(ctx, *plan.Host); err != nil {
+			_ = removeProjections(plan.Request.PlatformRoot)
+			return contracts.InstallReceipt{}, fmt.Errorf("start the resolved host: %w", err)
+		}
 	}
 	result := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: receiptID(plan.PlanHash, now), CreatedAt: now, CorrelationID: deps.CorrelationID, Plan: plan, Verification: check}
 	if err := receipt.Write(plan.Request.PlatformRoot, result); err != nil {
@@ -124,14 +125,14 @@ func verifySecrets(plan contracts.ResolvedInstallPlan, store *secrets.Store) err
 // Update creates a recovery snapshot before replacing the resolved artifact
 // set. Any apply or graph-verification failure restores managed files, receipt
 // and the package-manager lock state through ArtifactInstaller.Restore.
-func Update(plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.InstallReceipt, contracts.Snapshot, error) {
-	if deps.Artifacts == nil || deps.Status == nil {
-		return contracts.InstallReceipt{}, contracts.Snapshot{}, fmt.Errorf("update resolved plan: artifact installer and status provider are required")
+func Update(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.InstallReceipt, contracts.Snapshot, error) {
+	if deps.Artifacts == nil {
+		return contracts.InstallReceipt{}, contracts.Snapshot{}, fmt.Errorf("update resolved plan: artifact installer is required")
 	}
 	var result contracts.InstallReceipt
 	snapshot, err := lifecycle.Mutate(plan.Request.PlatformRoot, now(deps.Clock), func() error {
 		var applyErr error
-		result, applyErr = Apply(plan, deps)
+		result, applyErr = Apply(ctx, plan, deps)
 		return applyErr
 	}, nil, deps.Artifacts.Restore)
 	if err != nil {
@@ -145,12 +146,14 @@ func Update(plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.In
 }
 
 // Uninstall is intentionally narrow: it removes exactly the artifacts in the
-// verified receipt. The snapshot remains in .kb/v2/snapshots so a failed
-// operation can recover; a successful deletion leaves explicit recovery data
-// rather than claiming user-authored project files are disposable.
+// verified receipt. The host must already be stopped (the caller halts it): the
+// installed host binary is one of the artifacts being removed. The snapshot
+// remains in .kb/v2/snapshots so a failed operation can recover; a successful
+// deletion leaves explicit recovery data rather than claiming user-authored
+// project files are disposable.
 func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, error) {
-	if deps.Artifacts == nil || deps.Status == nil || deps.Activator == nil || deps.Deactivator == nil {
-		return contracts.Snapshot{}, fmt.Errorf("uninstall: artifact installer, status provider, service activator and service deactivator are required")
+	if deps.Artifacts == nil {
+		return contracts.Snapshot{}, fmt.Errorf("uninstall: artifact installer is required")
 	}
 	uninstaller, ok := deps.Artifacts.(ArtifactUninstaller)
 	if !ok {
@@ -160,24 +163,7 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 	if err != nil {
 		return contracts.Snapshot{}, fmt.Errorf("uninstall: read active receipt: %w", err)
 	}
-	ids := serviceIDs(active.Plan.ServiceGraph)
 	return lifecycle.Mutate(platformRoot, now(deps.Clock), func() error {
-		if err := deps.Deactivator.Stop(platformRoot, ids); err != nil {
-			return err
-		}
-		// The installed kb-dev binary is itself an artifact being removed. Verify
-		// that every service is stopped while that binary and its managed config
-		// still exist; a lifecycle-level verification after artifact deletion
-		// could no longer execute `kb-dev status`.
-		observed, err := deps.Status.ServiceStatuses(platformRoot)
-		if err != nil {
-			return fmt.Errorf("verify stopped service graph: %w", err)
-		}
-		for _, service := range observed {
-			if service.State != "dead" {
-				return fmt.Errorf("uninstall left service %s in state %s", service.ID, service.State)
-			}
-		}
 		if err := uninstaller.Uninstall(active.Plan.Artifacts); err != nil {
 			return err
 		}
@@ -187,23 +173,18 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 			return err
 		}
 		return receipt.Delete(platformRoot)
-	}, nil, func() error {
-		if err := deps.Artifacts.Restore(); err != nil {
-			return err
-		}
-		return deps.Activator.Ensure(platformRoot, ids)
-	})
+	}, nil, deps.Artifacts.Restore)
 }
 
-// Rollback restores an explicit V2 snapshot, reinstalls its exact lock state,
-// and brings the receipt's recorded graph back to readiness before reporting
-// success. It never infers a target from package tags or legacy state.
+// Rollback restores an explicit V2 snapshot and reinstalls its exact lock
+// state. It never infers a target from package tags or legacy state, and it
+// leaves the host to the caller (which restarts it from the restored receipt).
 func Rollback(platformRoot, snapshotID string, deps Dependencies) (contracts.Snapshot, error) {
 	if snapshotID == "" {
 		return contracts.Snapshot{}, fmt.Errorf("rollback: snapshot ID is required")
 	}
-	if deps.Artifacts == nil || deps.Status == nil || deps.Activator == nil {
-		return contracts.Snapshot{}, fmt.Errorf("rollback: artifact installer, status provider and service activator are required")
+	if deps.Artifacts == nil {
+		return contracts.Snapshot{}, fmt.Errorf("rollback: artifact installer is required")
 	}
 	snapshot, err := lifecycle.Rollback(platformRoot, snapshotID, deps.Artifacts.Restore)
 	if err != nil {
@@ -213,42 +194,34 @@ func Rollback(platformRoot, snapshotID string, deps Dependencies) (contracts.Sna
 	if err != nil {
 		return snapshot, fmt.Errorf("rollback: read restored receipt: %w", err)
 	}
-	if err := deps.Activator.Ensure(platformRoot, serviceIDs(active.Plan.ServiceGraph)); err != nil {
-		return snapshot, fmt.Errorf("rollback: ensure restored service graph: %w", err)
-	}
-	if _, err := verify.Run(active.Plan, deps.Status, now(deps.Clock)); err != nil {
-		return snapshot, fmt.Errorf("rollback: verify restored service graph: %w", err)
+	if _, err := verify.Run(active.Plan, now(deps.Clock)); err != nil {
+		return snapshot, fmt.Errorf("rollback: verify restored installation: %w", err)
 	}
 	return snapshot, nil
 }
 
 // DoctorFix applies only manifest-declared safe defaults under a snapshot, then
-// re-ensures and verifies the receipt graph. Required user input is never
-// guessed: callers receive an error before any write occurs.
+// verifies the receipt's installation. Required user input is never guessed:
+// callers receive an error before any write occurs. The host reads its config
+// at start, so the caller restarts it afterwards.
 func DoctorFix(platformRoot string, repair doctor.RepairPlan, deps Dependencies) (contracts.Snapshot, error) {
 	if len(repair.RequiredInput) != 0 {
 		return contracts.Snapshot{}, fmt.Errorf("doctor fix requires %d explicit input value(s)", len(repair.RequiredInput))
-	}
-	if deps.Status == nil || deps.Activator == nil {
-		return contracts.Snapshot{}, fmt.Errorf("doctor fix: status provider and service activator are required")
 	}
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		return contracts.Snapshot{}, fmt.Errorf("doctor fix: read active receipt: %w", err)
 	}
 	return lifecycle.Mutate(platformRoot, now(deps.Clock), func() error {
-		if err := doctor.ApplyDefaults(platformRoot, repair); err != nil {
-			return err
-		}
-		return deps.Activator.Ensure(platformRoot, serviceIDs(active.Plan.ServiceGraph))
+		return doctor.ApplyDefaults(platformRoot, repair)
 	}, func() error {
-		_, err := verify.Run(active.Plan, deps.Status, now(deps.Clock))
+		_, err := verify.Run(active.Plan, now(deps.Clock))
 		return err
 	}, nil)
 }
 
 func removeProjections(platformRoot string) error {
-	for _, relative := range []string{".kb/kb.config.jsonc", ".kb/devservices.yaml", ".kb/marketplace.lock"} {
+	for _, relative := range []string{".kb/kb.config.jsonc", ".kb/marketplace.lock"} {
 		if err := os.Remove(filepath.Join(platformRoot, relative)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove managed projection %s: %w", relative, err)
 		}
@@ -268,12 +241,4 @@ func receiptID(planHash string, createdAt time.Time) string {
 		planHash = planHash[:12]
 	}
 	return createdAt.Format("20060102T150405Z") + "-" + planHash
-}
-
-func serviceIDs(graph contracts.ServiceGraph) []string {
-	result := make([]string, 0, len(graph.Services))
-	for _, service := range graph.Services {
-		result = append(result, service.ID)
-	}
-	return result
 }

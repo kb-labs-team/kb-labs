@@ -5,7 +5,6 @@ package host
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"path/filepath"
 	"time"
@@ -28,42 +27,38 @@ type Spec struct {
 	HealthURL    string
 	ReadyTimeout time.Duration
 	StopGrace    time.Duration
+	// Recover is the platform's account recovery tool, when it ships one.
+	Recover *Tool
 }
 
-// LoadSpec returns the host spec declared by the active receipt, or nil when
-// the installation does not declare one (kb-dev remains the runner).
-func LoadSpec(platformRoot string) (*Spec, error) {
+// Tool is a validated ToolSpec: a command the launcher runs once, in the
+// host's working directory and environment, instead of the long-running host.
+type Tool struct {
+	Command string
+	Args    []string
+}
+
+// LoadSpec returns the host spec declared by the active receipt. A receipt
+// without one predates the host-only launcher and cannot be run.
+func LoadSpec(platformRoot string) (Spec, error) {
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
-		return nil, fmt.Errorf("read active receipt: %w", err)
+		return Spec{}, contracts.NewLauncherError(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
 	}
 	if active.Plan.Host == nil {
-		return nil, nil
+		return Spec{}, specInvalid(fmt.Errorf("the receipt declares no host"))
 	}
 	spec, err := NewSpec(platformRoot, *active.Plan.Host)
 	if err != nil {
-		return nil, err
+		return Spec{}, specInvalid(err)
 	}
-	return &spec, nil
+	return spec, nil
 }
 
 // NewSpec validates a declared spec and resolves it against the platform root.
 func NewSpec(platformRoot string, declared contracts.HostSpec) (Spec, error) {
-	if declared.Command == "" {
-		return Spec{}, fmt.Errorf("command is required")
-	}
-	parsed, err := url.Parse(declared.HealthURL)
-	if err != nil || parsed.Scheme != "http" || parsed.Hostname() == "" {
-		return Spec{}, fmt.Errorf("healthUrl must be an http URL")
-	}
-	if !isLoopbackHost(parsed.Hostname()) {
-		return Spec{}, fmt.Errorf("healthUrl must point at a loopback address")
-	}
-	if parsed.Port() == "" {
-		return Spec{}, fmt.Errorf("healthUrl must include an explicit port")
-	}
-	if declared.ReadyTimeoutSeconds < 0 || declared.StopGraceSeconds < 0 {
-		return Spec{}, fmt.Errorf("timeouts must not be negative")
+	if err := declared.Validate(); err != nil {
+		return Spec{}, err
 	}
 	spec := Spec{
 		Command: declared.Command, Args: append([]string(nil), declared.Args...), Env: declared.Env,
@@ -76,12 +71,20 @@ func NewSpec(platformRoot string, declared contracts.HostSpec) (Spec, error) {
 	} else if !filepath.IsAbs(spec.WorkingDir) {
 		spec.WorkingDir = filepath.Join(platformRoot, spec.WorkingDir)
 	}
-	// A bare command name is looked up on PATH; anything with a separator is
-	// a path and is anchored at the platform root when relative.
-	if !filepath.IsAbs(spec.Command) && filepath.Base(spec.Command) != spec.Command {
-		spec.Command = filepath.Join(platformRoot, spec.Command)
+	spec.Command = resolveCommand(platformRoot, spec.Command)
+	if declared.Recover != nil {
+		spec.Recover = &Tool{Command: resolveCommand(platformRoot, declared.Recover.Command), Args: append([]string(nil), declared.Recover.Args...)}
 	}
 	return spec, nil
+}
+
+// resolveCommand looks a bare command name up on PATH; anything with a
+// separator is a path and is anchored at the platform root when relative.
+func resolveCommand(platformRoot, command string) string {
+	if !filepath.IsAbs(command) && filepath.Base(command) != command {
+		return filepath.Join(platformRoot, command)
+	}
+	return command
 }
 
 func seconds(value int, fallback time.Duration) time.Duration {
@@ -89,14 +92,6 @@ func seconds(value int, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return time.Duration(value) * time.Second
-}
-
-func isLoopbackHost(name string) bool {
-	if name == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(name)
-	return ip != nil && ip.IsLoopback()
 }
 
 // HealthAddress is the host:port that must be free before the host starts.

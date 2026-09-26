@@ -16,6 +16,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-contracts', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/commit-entry', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0', platform: { requires: ['cache'] } })),
     // The package name doesn't follow the "-entry" convention, so the catalog
     // ID must come from the manifest's own id, not a package-name heuristic.
@@ -43,6 +44,13 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   assert.equal(index.channels.canary, '2.0.0');
   assert.equal(index.plugins[0].id, 'commit');
   assert.equal(index.plugins.find(p => p.package === '@kb-labs/release-manager-cli')?.id, 'release');
+  // The launcher runs the platform as one host process; the index must say how.
+  assert.deepEqual(index.platforms[0].host, {
+    command: 'node_modules/.bin/kb-host',
+    healthUrl: 'http://127.0.0.1:4000/health',
+    recover: { command: 'node_modules/.bin/kb-recover' },
+  });
+  assert.ok(index.platforms[0].members.some(member => member.package === '@kb-labs/host-app'), 'the host package must be installed with the platform');
   assert.equal(index.platforms[0].profiles.default.services[0].id, 'workflow');
   assert.equal(index.platforms[0].profiles.default.services[0].command, 'kb-workflow');
   assert.equal(index.platforms[0].profiles.default.services[0].port, 7778);
@@ -52,7 +60,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
     { id: 'platform.adapters', path: '/platform/adapters', default: '{"serviceTransport":"@kb-labs/adapters-service-transport-http"}' },
     { id: 'platform.adapterOptions', path: '/platform/adapterOptions', default: '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}}}' },
   ]);
-  assert.deepEqual(index.platforms[0].members.map(({ package: packageName }) => packageName), ['@kb-labs/workflow-daemon', '@kb-labs/core-contracts', '@kb-labs/release-manager-cli', '@kb-labs/adapters-service-transport-http', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-openai']);
+  assert.deepEqual(index.platforms[0].members.map(({ package: packageName }) => packageName), ['@kb-labs/workflow-daemon', '@kb-labs/host-app', '@kb-labs/core-contracts', '@kb-labs/release-manager-cli', '@kb-labs/adapters-service-transport-http', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-openai']);
   // Regression coverage for the members[]-id divergence bug: this array used
   // to re-derive each member's catalog id from its package name (falling
   // back to idFor() whenever the package wasn't a staged service or adapter),
@@ -81,6 +89,7 @@ test('fails closed when a configured platform adapter is not staged', () => {
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
   ];
   writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
   const binaryManifest = join(root, 'binary-manifest.json');
@@ -98,6 +107,7 @@ test('fails closed when the SDK rejects the staged platform even in the same maj
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.155.2', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.155.2', '', { peerDependencies: { '@kb-labs/core-runtime': '<2.150.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.155.2', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
   ];
   writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
   const binaryManifest = join(root, 'binary-manifest.json');
@@ -116,6 +126,7 @@ test('fails closed when a required platform member was not staged', () => {
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
   ];
   writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
   const binaryManifest = join(root, 'binary-manifest.json');
@@ -133,6 +144,7 @@ test('reads a minified scientific-notation port literal from a compiled service 
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
     // esbuild rewrites round numeric literals into scientific notation
     // (4000 -> 4e3) when minifying published dist bundles; the release index
     // must still recover the real port instead of the truncated leading digit.
@@ -179,6 +191,7 @@ test('the default platform.adapters baseline keeps the credential-free logger an
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/workflow-daemon', '2.0.0', 'var manifest = { schema: "kb.service/1", id: "workflow", runtime: { port: 7778, healthCheck: "/health" } }; export { manifest };', { bin: { 'kb-workflow': './dist/index.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-pino', '2.0.0', 'const manifest={id:"pino-logger",implements:["ILogger"]}; export {manifest};'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-log-ringbuffer', '2.0.0', 'const manifest={id:"log-ringbuffer",implements:["ILogRingBuffer"]}; export {manifest};'),
@@ -215,6 +228,7 @@ function prepareWithGateway(files) {
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/gateway-app', '2.0.0', GATEWAY_MANIFEST, { bin: { 'gateway-app': './dist/index.js' } }, files),
   ];
   writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
@@ -297,6 +311,7 @@ function skewFixture(prefix, sdkVersion) {
   writeFileSync(join(stage, 'manifest.json'), JSON.stringify([
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', sdkVersion, '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
   ]));
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
@@ -327,3 +342,44 @@ test('writes minLauncherVersion on the platform entry only when requested, and r
   assert.notEqual(bad.status, 0);
   assert.match(bad.stderr, /must be a semver version/);
 });
+
+test('declares no recovery tool when the host package does not ship one', () => {
+  const { root, stage } = hostFixture({ bin: { 'kb-host': './dist/bin.js' } });
+  const output = join(root, 'release-index.json');
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, '--binary-manifest', join(root, 'binary-manifest.json'), '--output', output], { stdio: 'pipe' });
+  const { host } = JSON.parse(readFileSync(output, 'utf8')).platforms[0];
+  assert.deepEqual(host, { command: 'node_modules/.bin/kb-host', healthUrl: 'http://127.0.0.1:4000/health' });
+});
+
+test('takes the host health endpoint from the release, not from the launcher', () => {
+  const { root, stage } = hostFixture({ bin: { 'kb-host': './dist/bin.js' } });
+  const output = join(root, 'release-index.json');
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, '--binary-manifest', join(root, 'binary-manifest.json'), '--host-health-url', 'http://127.0.0.1:4100/health', '--output', output], { stdio: 'pipe' });
+  assert.equal(JSON.parse(readFileSync(output, 'utf8')).platforms[0].host.healthUrl, 'http://127.0.0.1:4100/health');
+});
+
+test('fails closed when the host package is not staged or has no kb-host executable', () => {
+  for (const [hostExtra, expected] of [[undefined, /host package @kb-labs\/host-app is absent/], [{ bin: { other: './x.js' } }, /must declare a kb-host executable/]]) {
+    const { root, stage } = hostFixture(hostExtra);
+    const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, '--binary-manifest', join(root, 'binary-manifest.json'), '--output', join(root, 'release-index.json')], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}
+${result.stderr}`, expected);
+  }
+});
+
+// A minimal platform stage; the host package is added only when hostExtra is given.
+function hostFixture(hostExtra) {
+  const root = mkdtempSync(join(tmpdir(), 'kb-release-index-host-'));
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    ...(hostExtra ? [packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', hostExtra)] : []),
+  ];
+  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
+  writeFileSync(join(root, 'binary-manifest.json'), JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  return { root, stage };
+}

@@ -10,27 +10,23 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
-	"github.com/kb-labs/create/v2/diagnostics"
-	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/host"
-	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/logs"
 	"github.com/kb-labs/create/v2/preflight"
-	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/scenario"
 	"github.com/kb-labs/create/v2/secrets"
-	"github.com/kb-labs/create/v2/services"
 	"github.com/kb-labs/create/v2/telemetry"
 	"github.com/kb-labs/create/v2/transport"
-	"github.com/kb-labs/create/v2/verify"
 	"github.com/kb-labs/create/v2/wizard"
 )
 
@@ -72,24 +68,34 @@ func Execute() int {
 	scenarioID := flag.String("scenario", "", "built-in V2 scenario ID")
 	scenarioAnswers := flag.String("scenario-answers", "", "JSON object of V2 scenario field answers")
 	scenarioResume := flag.Bool("resume", false, "resume persisted non-secret V2 scenario answers")
-	doctorFix := flag.Bool("fix", false, "apply only manifest-declared safe doctor defaults")
-	operation := flag.String("operation", "plan", "V2 operation: plan, apply, update, status")
-	platformRoot := flag.String("platform-root", "", "platform root for uninstall or rollback")
-	snapshotID := flag.String("snapshot", "", "V2 snapshot ID for rollback")
+	doctorFix := flag.Bool("fix", false, "doctor: apply only manifest-declared safe defaults and restart the host")
+	doctorRecover := flag.Bool("recover", false, "doctor: recover the administrator account with the platform's recovery tool (the host must be stopped)")
+	recoverEmail := flag.String("email", "", "doctor --recover: administrator email")
+	recoverTenant := flag.String("tenant", "", "doctor --recover: tenant ID")
+	recoverPasswordStdin := flag.Bool("password-stdin", false, "doctor --recover: read the new password from stdin")
+	recoverGenerate := flag.Bool("generate", false, "doctor --recover: generate a password and print it once")
+	recoverYes := flag.Bool("yes", false, "doctor --recover: apply the changes (without it the recovery is a dry run)")
+	operation := flag.String("operation", "plan", "V2 operation: plan, apply, update, uninstall, rollback, doctor, wizard, status, start, stop, restart")
+	platformRoot := flag.String("platform-root", "", "platform root for lifecycle operations")
+	snapshotID := flag.String("snapshot", "", "V2 snapshot ID for rollback (default: the snapshot taken by the last update)")
 	registry := flag.String("registry", "", "npm registry for exact artifact installation")
-	kbdev := flag.String("kb-dev", "", "optional override for release-managed kb-dev binary")
 	telemetryURL := flag.String("telemetry-endpoint", "", "opt-in anonymous telemetry endpoint")
 	foreground := flag.Bool("foreground", false, "start: run the host directly in this process, without the control channel")
-	jsonOutput := flag.Bool("json", false, "start/stop/restart: emit the JSON envelope instead of text")
+	jsonOutput := flag.Bool("json", false, "emit the JSON envelope instead of text (host commands, doctor --recover)")
 	telemetryAllowed := flag.Bool("telemetry-consent", false, "allow anonymous operational telemetry")
 	flag.Parse()
 	telemetryEndpoint, telemetryConsent = *telemetryURL, *telemetryAllowed
+	executable, _ := os.Executable()
 	if isHostOperation(*operation) {
-		executable, _ := os.Executable()
-		return hostCommand{PlatformRoot: *platformRoot, KBDev: *kbdev, Foreground: *foreground, JSON: *jsonOutput || *operation == "supervise", Executable: executable, Version: buildVersion, Out: os.Stdout, Err: os.Stderr}.run(*operation)
+		return hostCommand{PlatformRoot: *platformRoot, Foreground: *foreground, JSON: *jsonOutput || *operation == "supervise", Executable: executable, Version: buildVersion, Out: os.Stdout, Err: os.Stderr}.run(*operation)
 	}
 	direct := directRequest{PlatformRoot: *requestRoot, ProjectRoot: *projectRoot, PlatformVersion: *platformVersion, PlatformChannel: *platformChannel, SDKVersion: *sdkVersion, ServiceProfile: *serviceProfile, Plugins: *plugins, Adapters: *adapters, Policy: *policy, Offline: *offline}
-	return run(*operation, *index, *input, *doctorInput, *platformRoot, *snapshotID, *registry, *kbdev, *secretEnv, *doctorFix, *scenarioID, *scenarioAnswers, *scenarioResume, direct, os.Stdout)
+	return invocation{
+		Operation: *operation, Index: *index, Input: *input, DoctorInput: *doctorInput, PlatformRoot: *platformRoot, Snapshot: *snapshotID,
+		Registry: *registry, SecretEnv: *secretEnv, DoctorFix: *doctorFix,
+		Recover:    recoverRequest{Enabled: *doctorRecover, Email: *recoverEmail, Tenant: *recoverTenant, PasswordStdin: *recoverPasswordStdin, Generate: *recoverGenerate, Yes: *recoverYes, JSON: *jsonOutput},
+		ScenarioID: *scenarioID, ScenarioAnswers: *scenarioAnswers, ScenarioResume: *scenarioResume, Direct: direct, Executable: executable,
+	}.run(os.Stdout)
 }
 
 func normalizeOperationArgument() {
@@ -108,19 +114,39 @@ type directRequest struct {
 	Offline                                                                                                            bool
 }
 
-func run(operation, indexPath, inputPath, doctorInput, platformRoot, snapshotID, registry, kbdev, secretEnv string, doctorFix bool, scenarioID, scenarioAnswers string, scenarioResume bool, direct directRequest, output *os.File) int {
-	if operation != "plan" && operation != "apply" && operation != "update" && operation != "uninstall" && operation != "rollback" && operation != "doctor" && operation != "wizard" && operation != "status" {
-		write(output, failure("KB_INSTALL_OPERATION_INVALID", "operation is not supported", "use plan, apply, update, uninstall, rollback, doctor, wizard, or status", nil))
+// invocation is one parsed non-host command line. Every field is an input; the
+// run method reads nothing from package state except the build version.
+type invocation struct {
+	Operation, Index, Input, DoctorInput, PlatformRoot, Snapshot, Registry, SecretEnv string
+	DoctorFix                                                                         bool
+	Recover                                                                           recoverRequest
+	ScenarioID, ScenarioAnswers                                                       string
+	ScenarioResume                                                                    bool
+	Direct                                                                            directRequest
+	// Executable is the launcher binary re-executed to supervise the host.
+	Executable string
+}
+
+func (i invocation) hostCommand(output *os.File) hostCommand {
+	return hostCommand{PlatformRoot: i.PlatformRoot, Executable: i.Executable, Version: buildVersion, JSON: true, Out: output, Err: os.Stderr}
+}
+
+func (i invocation) run(output *os.File) int {
+	operation := i.Operation
+	switch operation {
+	case "plan", "apply", "update", "uninstall", "rollback", "doctor", "wizard", "status":
+	default:
+		write(output, failure("KB_INSTALL_OPERATION_INVALID", "operation is not supported", "use plan, apply, update, uninstall, rollback, doctor, wizard, status, start, stop or restart", nil))
 		return 2
 	}
 	if operation == "doctor" {
-		return runDoctor(doctorInput, platformRoot, kbdev, doctorFix, output)
+		return i.runDoctor(output)
 	}
 	if operation == "status" {
-		return runStatus(platformRoot, kbdev, output)
+		return i.runStatus(output)
 	}
 	if operation == "wizard" {
-		return runWizard(indexPath, direct.PlatformRoot, scenarioID, output)
+		return runWizard(i.Index, i.Direct.PlatformRoot, i.ScenarioID, output)
 	}
 	if operation == "apply" || operation == "update" {
 		if err := preflight.Ensure(nil); err != nil {
@@ -129,33 +155,33 @@ func run(operation, indexPath, inputPath, doctorInput, platformRoot, snapshotID,
 		}
 	}
 	if operation == "uninstall" || operation == "rollback" {
-		return runRecovery(operation, platformRoot, snapshotID, registry, kbdev, output)
+		return i.runRecovery(output)
 	}
-	if indexPath == "" || (inputPath == "" && direct.PlatformRoot == "") {
+	if i.Index == "" || (i.Input == "" && i.Direct.PlatformRoot == "") {
 		write(output, failure("KB_INSTALL_INPUT_REQUIRED", "--index and either --input or --request-platform-root are required", "pass immutable release index plus V2 request JSON or direct CI flags", nil))
 		return 2
 	}
-	source, err := catalog.LoadFile(indexPath)
+	source, err := catalog.LoadFile(i.Index)
 	if err != nil {
 		writeIndexFailure(output, err, "supply a valid immutable V2 release index")
 		return 2
 	}
 	var response transport.PlanResponse
-	if inputPath != "" {
-		data, err := os.ReadFile(inputPath)
+	if i.Input != "" {
+		data, err := os.ReadFile(i.Input)
 		if err != nil {
 			write(output, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a readable V2 request JSON file", err))
 			return 2
 		}
 		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
 	} else {
-		request, requestErr := direct.normalize()
+		request, requestErr := i.Direct.normalize()
 		if requestErr != nil {
 			write(output, failure("KB_INSTALL_INPUT_REQUIRED", "direct request is invalid", "correct direct CI flags or provide --input", requestErr))
 			return 2
 		}
-		if scenarioID != "" {
-			compiled, scenarioErr := compileScenario(scenarioID, scenarioAnswers, scenarioResume, request)
+		if i.ScenarioID != "" {
+			compiled, scenarioErr := compileScenario(i.ScenarioID, i.ScenarioAnswers, i.ScenarioResume, request)
 			if scenarioErr != nil {
 				write(output, failure("KB_INSTALL_SCENARIO_INVALID", "scenario could not be compiled", "inspect scenario answers and manifest requirements", scenarioErr))
 				return 2
@@ -179,23 +205,45 @@ func run(operation, indexPath, inputPath, doctorInput, platformRoot, snapshotID,
 		outcome, errorCode = "success", ""
 		return 0
 	}
+	root := response.Plan.Request.PlatformRoot
 	correlationID := fmt.Sprintf("%s-%d", operation, time.Now().UTC().UnixNano())
-	transcript, err := logs.New(response.Plan.Request.PlatformRoot, correlationID, nil)
+	transcript, err := logs.New(root, correlationID, nil)
 	if err != nil {
 		write(output, failure("KB_INSTALL_LOG_UNAVAILABLE", "could not create local operation log", "check that the platform root is writable", err))
 		return 2
 	}
 	defer transcript.Close()
-	store := secrets.Store{PlatformRoot: response.Plan.Request.PlatformRoot}
-	if err := populateSecrets(store, secretEnv); err != nil {
+	store := secrets.Store{PlatformRoot: root}
+	if err := populateSecrets(store, i.SecretEnv); err != nil {
 		write(output, failure("KB_INSTALL_SECRET_INPUT_INVALID", "secret input could not be stored", "use --secret-env requirement=ENV_VAR and set the environment variable", err))
 		return 2
 	}
-	offlineArtifacts := response.Plan.Request.Source == contracts.SourceOffline
-	artifactExecutor := artifacts.Composite{Packages: artifacts.Pnpm{Root: response.Plan.Request.PlatformRoot, Registry: registry, Offline: offlineArtifacts, Log: transcript}, Binaries: artifacts.Binaries{Root: response.Plan.Request.PlatformRoot, Offline: offlineArtifacts}}
-	deps := runtime.Dependencies{Artifacts: artifactExecutor, Activator: services.KBDev{Binary: kbdev, Log: transcript}, Status: services.KBDev{Binary: kbdev}, CorrelationID: correlationID, Secrets: &store}
+	state, stateErr := host.StateHome()
+	if stateErr != nil {
+		write(output, map[string]any{"ok": false, "error": asLauncherError(stateErr)})
+		return 2
+	}
 	if operation == "apply" {
-		receipt, applyErr := runtime.Apply(*response.Plan, deps)
+		if running := refuseRunningHost(state); running != nil {
+			write(output, map[string]any{"ok": false, "error": running})
+			return 2
+		}
+	}
+	release, lockErr := state.AcquireOperation(operation)
+	if lockErr != nil {
+		write(output, map[string]any{"ok": false, "error": asLauncherError(lockErr)})
+		return 2
+	}
+	defer release()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	offlineArtifacts := response.Plan.Request.Source == contracts.SourceOffline
+	artifactExecutor := artifacts.Composite{Packages: artifacts.Pnpm{Root: root, Registry: i.Registry, Offline: offlineArtifacts, Log: transcript}, Binaries: artifacts.Binaries{Root: root, Offline: offlineArtifacts}}
+	prober := host.Prober{PlatformRoot: root, State: state}
+	deps := runtime.Dependencies{Artifacts: artifactExecutor, CorrelationID: correlationID, Secrets: &store}
+	if operation == "apply" {
+		deps.Host = prober
+		receipt, applyErr := runtime.Apply(ctx, *response.Plan, deps)
 		if applyErr == nil {
 			write(output, map[string]any{"ok": true, "operation": operation, "receipt": receipt, "logPath": transcript.Path()})
 			outcome, errorCode = "success", ""
@@ -204,46 +252,19 @@ func run(operation, indexPath, inputPath, doctorInput, platformRoot, snapshotID,
 		writeFailureDossier(output, *response.Plan, correlationID, transcript.Path(), applyErr)
 		return 1
 	}
-	receipt, snapshot, updateErr := runtime.Update(*response.Plan, deps)
-	if updateErr == nil {
-		write(output, map[string]any{"ok": true, "operation": operation, "receipt": receipt, "snapshot": snapshot, "logPath": transcript.Path()})
-		outcome, errorCode = "success", ""
-		return 0
-	}
-	writeFailureDossier(output, *response.Plan, correlationID, transcript.Path(), updateErr)
-	return 1
+	return i.runUpdate(ctx, output, *response.Plan, deps, prober, state, correlationID, transcript.Path(), &outcome, &errorCode)
 }
 
-// runStatus verifies the receipt-owned graph without resolving a new release.
-// That makes status safe for stable, canary and exact-version installations:
-// it reports the immutable decision that was actually applied.
-func runStatus(platformRoot, kbdev string, output *os.File) int {
-	if platformRoot == "" {
-		write(output, failure("KB_INSTALL_INPUT_REQUIRED", "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil))
-		return 2
+// runStatus reports the host of the receipt-owned installation without
+// resolving a new release, so it is safe for stable, canary and exact-version
+// installations: it describes the immutable decision that was actually applied.
+func (i invocation) runStatus(output *os.File) int {
+	command := i.hostCommand(output)
+	runner, state, setupErr := command.setup()
+	if setupErr != nil {
+		return command.fail(2, setupErr)
 	}
-	active, err := receipt.Read(platformRoot)
-	if err != nil {
-		write(output, failure("KB_INSTALL_RECEIPT_UNAVAILABLE", "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err))
-		return 2
-	}
-	// An installation that declares a host spec is supervised directly; its
-	// service graph is not a kb-dev graph, so report the host instead.
-	if active.Plan.Host != nil {
-		runner, selectErr := host.Select(platformRoot, kbdev)
-		if selectErr != nil {
-			write(output, map[string]any{"ok": false, "error": asLauncherError(selectErr)})
-			return 2
-		}
-		return hostCommand{PlatformRoot: platformRoot, JSON: true, Out: output, Err: os.Stderr}.hostStatus(context.Background(), runner, host.StateFor(platformRoot))
-	}
-	check, err := verify.Run(active.Plan, services.KBDev{Binary: kbdev}, time.Now().UTC())
-	if err != nil {
-		write(output, failure("KB_INSTALL_STATUS_UNHEALTHY", "installed V2 service graph is not ready", "inspect kb-dev status or run doctor --fix", err))
-		return 1
-	}
-	write(output, map[string]any{"ok": true, "operation": "status", "receipt": active, "verification": check})
-	return 0
+	return command.hostStatus(context.Background(), runner, state)
 }
 
 func populateSecrets(store secrets.Store, mappings string) error {
@@ -369,106 +390,6 @@ func parseComponents(value string) ([]contracts.ComponentRequest, error) {
 	return result, nil
 }
 
-func runDoctor(path, platformRoot, kbdev string, fix bool, output *os.File) int {
-	var input doctor.Input
-	var err error
-	if path != "" {
-		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			write(output, failure("KB_INSTALL_INPUT_REQUIRED", "doctor input could not be read", "supply a readable V2 doctor input JSON file", readErr))
-			return 2
-		}
-		input, err = doctor.Decode(data)
-	} else {
-		if platformRoot == "" {
-			write(output, failure("KB_INSTALL_INPUT_REQUIRED", "--platform-root is required for automatic doctor", "pass the V2 platform root or a manifest-derived --doctor-input", nil))
-			return 2
-		}
-		input, err = automaticDoctorInput(platformRoot)
-	}
-	if err != nil {
-		write(output, failure("KB_INSTALL_DOCTOR_INPUT_INVALID", "installed manifest diagnostics could not be prepared", "install exact V2 artifacts that ship matching V2 manifests", err))
-		return 2
-	}
-	findings := doctor.Diagnose(input.Manifests, input.Configured)
-	response := doctor.Response{OK: len(findings) == 0, Findings: findings, Repair: doctor.PlanRepair(findings)}
-	if fix {
-		if platformRoot == "" {
-			write(output, failure("KB_INSTALL_INPUT_REQUIRED", "--platform-root is required with --fix", "pass the V2 platform root that owns the active receipt", nil))
-			return 2
-		}
-		service := services.KBDev{Binary: kbdev}
-		snapshot, fixErr := runtime.DoctorFix(platformRoot, response.Repair, runtime.Dependencies{Activator: service, Status: service})
-		if fixErr != nil {
-			writeRecoveryFailure(output, platformRoot, fmt.Sprintf("doctor-fix-%d", time.Now().UTC().UnixNano()), "", fixErr)
-			return 1
-		}
-		write(output, map[string]any{"ok": true, "operation": "doctor-fix", "findings": response.Findings, "snapshot": snapshot})
-		return 0
-	}
-	write(output, response)
-	if !response.OK {
-		return 1
-	}
-	return 0
-}
-
-func automaticDoctorInput(platformRoot string) (doctor.Input, error) {
-	active, err := receipt.Read(platformRoot)
-	if err != nil {
-		return doctor.Input{}, fmt.Errorf("read active V2 receipt: %w", err)
-	}
-	manifests, err := installed.LoadAll(platformRoot, active.Plan.Artifacts)
-	if err != nil {
-		return doctor.Input{}, err
-	}
-	paths := make([]string, 0)
-	for _, manifest := range manifests {
-		for _, requirement := range manifest.Requirements {
-			if !requirement.Secret {
-				paths = append(paths, requirement.Path)
-			}
-		}
-	}
-	configured, err := installed.ConfiguredPaths(platformRoot, paths)
-	if err != nil {
-		return doctor.Input{}, err
-	}
-	return installed.DoctorInput(platformRoot, active.Plan.Artifacts, configured)
-}
-
-func runRecovery(operation, platformRoot, snapshotID, registry, kbdev string, output *os.File) int {
-	if platformRoot == "" {
-		write(output, failure("KB_INSTALL_INPUT_REQUIRED", "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil))
-		return 2
-	}
-	correlationID := fmt.Sprintf("%s-%d", operation, time.Now().UTC().UnixNano())
-	transcript, err := logs.New(platformRoot, correlationID, nil)
-	if err != nil {
-		write(output, failure("KB_INSTALL_LOG_UNAVAILABLE", "could not create local operation log", "check that the platform root is writable", err))
-		return 2
-	}
-	defer transcript.Close()
-	service := services.KBDev{Binary: kbdev, Log: transcript}
-	deps := runtime.Dependencies{Artifacts: artifacts.Composite{Packages: artifacts.Pnpm{Root: platformRoot, Registry: registry, Log: transcript}, Binaries: artifacts.Binaries{Root: platformRoot}}, Activator: service, Deactivator: service, Status: service, CorrelationID: correlationID}
-	if operation == "uninstall" {
-		snapshot, uninstallErr := runtime.Uninstall(platformRoot, deps)
-		if uninstallErr == nil {
-			write(output, map[string]any{"ok": true, "operation": operation, "snapshot": snapshot, "logPath": transcript.Path()})
-			return 0
-		}
-		writeRecoveryFailure(output, platformRoot, correlationID, transcript.Path(), uninstallErr)
-		return 1
-	}
-	snapshot, rollbackErr := runtime.Rollback(platformRoot, snapshotID, deps)
-	if rollbackErr == nil {
-		write(output, map[string]any{"ok": true, "operation": operation, "snapshot": snapshot, "logPath": transcript.Path()})
-		return 0
-	}
-	writeRecoveryFailure(output, platformRoot, correlationID, transcript.Path(), rollbackErr)
-	return 1
-}
-
 func write(output *os.File, value any) { _ = json.NewEncoder(output).Encode(value) }
 
 // writeIndexFailure emits a typed launcher error from the index gate as is
@@ -488,22 +409,5 @@ func failure(code, message, hint string, cause error) map[string]any {
 
 func writeFailureDossier(output *os.File, plan contracts.ResolvedInstallPlan, correlationID, logPath string, cause error) {
 	launcherError := contracts.NewLauncherError(contracts.CodeApplyFailed, "V2 operation did not reach a verified installation", "Inspect the local log and diagnostic dossier, then fix the reported prerequisite or run doctor --fix.", cause)
-	launcherError.CorrelationID = correlationID
-	path, dossierErr := diagnostics.Write(plan.Request.PlatformRoot, diagnostics.Dossier{CorrelationID: correlationID, Error: launcherError, PlanHash: plan.PlanHash, ReleaseDigest: plan.ReleaseDigest, ScenarioStateDigest: plan.ScenarioStateDigest, Stage: launcherError.Stage, LogPath: logPath}, nil)
-	if dossierErr != nil {
-		write(output, failure("KB_INSTALL_DIAGNOSTIC_UNAVAILABLE", "V2 operation failed and diagnostic dossier could not be written", "inspect the local operation log", dossierErr))
-		return
-	}
-	write(output, map[string]any{"ok": false, "error": launcherError, "logPath": logPath, "diagnosticPath": path})
-}
-
-func writeRecoveryFailure(output *os.File, platformRoot, correlationID, logPath string, cause error) {
-	launcherError := contracts.NewLauncherError(contracts.CodeRecoveryFailed, "V2 recovery operation did not reach a verified state", "Inspect the local log and diagnostic dossier, then retry with the named receipt or snapshot.", cause)
-	launcherError.CorrelationID = correlationID
-	path, dossierErr := diagnostics.Write(platformRoot, diagnostics.Dossier{CorrelationID: correlationID, Error: launcherError, Stage: launcherError.Stage, LogPath: logPath}, nil)
-	if dossierErr != nil {
-		write(output, failure("KB_INSTALL_DIAGNOSTIC_UNAVAILABLE", "V2 recovery failed and diagnostic dossier could not be written", "inspect the local operation log", dossierErr))
-		return
-	}
-	write(output, map[string]any{"ok": false, "error": launcherError, "logPath": logPath, "diagnosticPath": path})
+	writeLauncherFailure(output, plan.Request.PlatformRoot, correlationID, logPath, launcherError, &plan)
 }

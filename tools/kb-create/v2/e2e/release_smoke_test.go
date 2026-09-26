@@ -6,12 +6,10 @@ package e2e
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"testing"
 	"time"
 )
@@ -71,9 +69,9 @@ func TestChannelFromPackageTagMatchesDeliveredCandidateFormat(t *testing.T) {
 	}
 }
 
-func TestPublishedV2JourneyReachesPluginWorkflow(t *testing.T) {
+func TestPublishedV2JourneyInstallsUpdatesAndRunsTheHost(t *testing.T) {
 	if testing.Short() {
-		t.Skip("published-artifact V2 journey requires registry and running services")
+		t.Skip("published-artifact V2 journey requires a registry and starts the installed host")
 	}
 	index := os.Getenv("KB_CREATE_RELEASE_INDEX")
 	if index == "" {
@@ -102,6 +100,8 @@ func TestPublishedV2JourneyReachesPluginWorkflow(t *testing.T) {
 	} else if info, err := os.Stat(launcher); err != nil || info.Mode()&0o111 == 0 {
 		t.Fatalf("published kb-create binary is not executable: %s (%v)", launcher, err)
 	}
+	// The launcher keeps its per-user state under KB_HOME; never the real one.
+	t.Setenv("KB_HOME", t.TempDir())
 	platform, project := filepath.Join(t.TempDir(), "platform"), filepath.Join(t.TempDir(), "project")
 	if err := os.MkdirAll(project, 0o750); err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestPublishedV2JourneyReachesPluginWorkflow(t *testing.T) {
 	if output, code := run(t, launcher, args...); code != 0 {
 		t.Fatalf("V2 apply exited %d:\n%s", code, output)
 	}
-	for _, path := range []string{filepath.Join(platform, ".kb", "v2", "receipt.json"), filepath.Join(platform, ".kb", "kb.config.jsonc"), filepath.Join(platform, ".kb", "devservices.yaml"), filepath.Join(project, ".kb", "kb.config.jsonc")} {
+	for _, path := range []string{filepath.Join(platform, ".kb", "v2", "receipt.json"), filepath.Join(platform, ".kb", "kb.config.jsonc"), filepath.Join(project, ".kb", "kb.config.jsonc")} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("V2 install artifact %s is missing: %v", path, err)
 		}
@@ -145,129 +145,49 @@ func TestPublishedV2JourneyReachesPluginWorkflow(t *testing.T) {
 	if err := json.Unmarshal([]byte(updateOutput), &updateResponse); err != nil || !updateResponse.OK || updateResponse.Receipt.SnapshotID == "" {
 		t.Fatalf("V2 update did not commit a recovery snapshot: %s", updateOutput)
 	}
-	// The published journey exercises commands that talk to the installed
-	// marketplace/workflow services.  Bring up the installed graph explicitly;
-	// apply/update intentionally only materialise the platform and must not
-	// implicitly mutate the host's service state.
-	kbDev := filepath.Join(platform, ".kb", "v2", "bin", "kb-dev")
-	if info, err := os.Stat(kbDev); err != nil || info.Mode()&0o111 == 0 {
-		t.Fatalf("installed kb-dev binary is missing or not executable: %s (%v)", kbDev, err)
+	// The installed platform runs as one supervised host. Start it through the
+	// launcher, require it to be healthy and reported as running, and stop it:
+	// this is the user path (there is no kb-dev in it), against the published
+	// artifacts.
+	if output, code := run(t, launcher, "start", "--json", "--platform-root", platform); code != 0 {
+		t.Fatalf("V2 start exited %d:\n%s", code, output)
 	}
-	config := filepath.Join(platform, ".kb", "devservices.yaml")
-	// kb-dev must be invoked with the project directory as its cwd, not an
-	// arbitrary one. --config points at the platform's own devservices.yaml
-	// (a separate directory from the project in this V2 topology), and
-	// kb-dev's FindConfig only recovers the real project directory — for
-	// KB_PROJECT_ROOT and everything keyed off it, including the workflow
-	// daemon's per-project .kb/workflows discovery — by checking whether cwd
-	// itself is a project whose kb.config.jsonc "platform.dir" points back at
-	// this same platform (see tools/kb-dev/cmd/root.go FindConfig). Running
-	// from an unrelated cwd, as this test previously did, defeats that check
-	// and silently points KB_PROJECT_ROOT at the platform directory instead.
-	if output, code := runIn(t, project, kbDev, "--config", config, "ensure", "marketplace", "workflow"); code != 0 {
-		t.Fatalf("installed service graph did not start: %s", output)
+	t.Cleanup(func() { _, _ = run(t, launcher, "stop", "--json", "--platform-root", platform) })
+	statusOutput, statusCode := run(t, launcher, "status", "--platform-root", platform)
+	if statusCode != 0 {
+		t.Fatalf("V2 status of a started host exited %d:\n%s", statusCode, statusOutput)
 	}
-	marketplaceURL := installedServiceURL(t, project, kbDev, config, "marketplace")
-	t.Setenv("KB_MARKETPLACE_URL", marketplaceURL)
-	t.Cleanup(func() {
-		_, _ = runIn(t, project, kbDev, "--config", config, "stop", "marketplace", "workflow")
-	})
-
-	cli := filepath.Join(platform, "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
-	if _, err := os.Stat(cli); err != nil {
-		t.Fatalf("installed kb CLI is missing: %v", err)
+	var running struct {
+		OK   bool `json:"ok"`
+		Host struct {
+			State   string `json:"state"`
+			Healthy bool   `json:"healthy"`
+		} `json:"host"`
 	}
-	t.Setenv("KB_PLATFORM", platform)
-	t.Setenv("KB_PROJECT", project)
-	if output, code := runIn(t, project, "node", cli, "scaffold", "run", "plugin", "e2e-user", "--yes"); code != 0 {
-		t.Fatalf("scaffold own plugin exited %d:\n%s", code, output)
-	}
-	pluginRoot := filepath.Join(project, ".kb", "plugins", "e2e-user")
-	if _, err := os.Stat(filepath.Join(pluginRoot, "package.json")); err != nil {
-		t.Fatalf("scaffolded plugin package is missing: %v", err)
+	if err := json.Unmarshal([]byte(statusOutput), &running); err != nil || !running.OK || running.Host.State != "running" || !running.Host.Healthy {
+		t.Fatalf("the started host is not running and healthy: %s", statusOutput)
 	}
 
-	// Workflow definitions are discovered per-project from the project's own
-	// .kb/workflows/**/*.{yml,yaml} (see WorkspaceWorkflowRegistry in
-	// plugins/workflow/runtime/src/registry/workspace-registry.ts) — the
-	// platform ships no builtin, unprefixed "healthcheck" workflow for a
-	// fresh install to discover on its own. A real user who wants to run
-	// `kb workflow run --workflow-id healthcheck` must author that workflow
-	// file themselves, exactly like this repo's own dev convenience workflow
-	// at .kb/workflows/healthcheck.yaml. Seed the scratch project with an
-	// equivalent minimal fixture so this smoke test exercises the same path
-	// a real user's project would.
-	if err := seedHealthcheckWorkflow(project); err != nil {
-		t.Fatalf("seed healthcheck workflow fixture: %v", err)
+	// doctor separates the installation from the platform; the installation
+	// the launcher just wrote must be complete whatever the platform reports.
+	doctorOutput, _ := run(t, launcher, "doctor", "--platform-root", platform)
+	var diagnosis struct {
+		Installation struct {
+			OK bool `json:"ok"`
+		} `json:"installation"`
+		Platform struct {
+			Checks []struct {
+				ID string `json:"id"`
+			} `json:"checks"`
+		} `json:"platform"`
 	}
-	workflowOutput, code, workflowStderr := runInJSON(t, project, "node", cli, "workflow", "run", "--workflow-id", "healthcheck", "--json")
-	if code != 0 {
-		t.Fatalf("workflow run exited %d:\nstdout:\n%s\nstderr:\n%s", code, workflowOutput, workflowStderr)
+	if err := json.Unmarshal([]byte(doctorOutput), &diagnosis); err != nil || !diagnosis.Installation.OK || len(diagnosis.Platform.Checks) == 0 {
+		t.Fatalf("doctor must report a complete installation and inspect the running platform: %s", doctorOutput)
 	}
-	var response map[string]any
-	if err := json.Unmarshal([]byte(workflowOutput), &response); err != nil {
-		t.Fatalf("workflow response is not JSON: %v\nstdout:\n%s\nstderr:\n%s", err, workflowOutput, workflowStderr)
-	}
-	// The CLI's --json envelope is {"ok":true,"data":{"runId":...,"status":...}}
-	// (see cli/bin/src/bin.ts's success-response shape) — the run ID lives
-	// under "data", not at the envelope's top level.
-	data, _ := response["data"].(map[string]any)
-	if strings.TrimSpace(stringValue(response["runId"])) == "" &&
-		strings.TrimSpace(stringValue(response["id"])) == "" &&
-		strings.TrimSpace(stringValue(data["runId"])) == "" &&
-		strings.TrimSpace(stringValue(data["id"])) == "" {
-		t.Fatalf("workflow response has no run ID: %s", workflowOutput)
-	}
-}
 
-// installedServiceURL obtains the actual kb-dev-resolved address instead of
-// reconstructing it from a base port. That keeps this published-artifact test
-// valid for an automatically derived KB_NET_OFFSET and avoids a hidden gateway
-// dependency: scaffold talks directly to the marketplace service it installed.
-func installedServiceURL(t *testing.T, project, kbDev, config, serviceID string) string {
-	t.Helper()
-	output, code, stderr := runInJSON(t, project, kbDev, "--config", config, "status", "--json")
-	if code != 0 {
-		t.Fatalf("read installed service status: %s\nstderr:\n%s", output, stderr)
+	if output, code := run(t, launcher, "stop", "--json", "--platform-root", platform); code != 0 {
+		t.Fatalf("V2 stop exited %d:\n%s", code, output)
 	}
-	var status struct {
-		Services map[string]struct {
-			URL   string `json:"url"`
-			State string `json:"state"`
-		} `json:"services"`
-	}
-	if err := json.Unmarshal([]byte(output), &status); err != nil {
-		t.Fatalf("decode installed service status: %v\nstdout:\n%s\nstderr:\n%s", err, output, stderr)
-	}
-	service, ok := status.Services[serviceID]
-	if !ok || strings.TrimSpace(service.URL) == "" {
-		t.Fatalf("installed service %q has no resolved URL: %s", serviceID, output)
-	}
-	if service.State != "alive" {
-		t.Fatalf(
-			"installed service %q is not ready (%s): %s\nmanaged service log:\n%s",
-			serviceID,
-			service.State,
-			output,
-			installedServiceLog(project, kbDev, config, serviceID),
-		)
-	}
-	return service.URL
-}
-
-// installedServiceLog preserves the child-process stderr that can be lost
-// from kb-dev status after a startup crash. Published smoke must report the
-// concrete service failure, not just its reconciled "dead" state.
-func installedServiceLog(project, kbDev, config, serviceID string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, kbDev, "--config", config, "logs", serviceID, "--lines", "200")
-	cmd.Dir = project
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Sprintf("unable to read managed log: %v\n%s", err, output)
-	}
-	return string(output)
 }
 
 func run(t *testing.T, binary string, args ...string) (string, int) {
@@ -292,86 +212,4 @@ func runIn(t *testing.T, dir, command string, args ...string) (string, int) {
 	}
 	t.Fatalf("command %s failed: %v\n%s", command, err, output)
 	return string(output), 1
-}
-
-// runInJSON runs command in dir and returns ONLY its stdout, for call sites
-// that parse the result as JSON (e.g. `--json` invocations). It must not use
-// CombinedOutput: the CLI's own documented contract (see cli/bin/src/bin.ts)
-// is that diagnostics — including structured [INFO]/[WARN] logs, which can be
-// un-silenced by an inherited LOG_LEVEL/KB_LOG_LEVEL env var — belong on
-// stderr, while stdout carries only the machine-readable result. Merging the
-// two streams (as CombinedOutput does) corrupts JSON parsing whenever any
-// diagnostic output reaches stderr, which is expected/valid CLI behavior, not
-// a bug in the command being invoked. Stderr is still captured and included
-// in failure messages so debugging information isn't lost.
-func runInJSON(t *testing.T, dir, command string, args ...string) (string, int, string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, command, args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	cmd.Env = os.Environ()
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err == nil {
-		return stdout.String(), 0, stderr.String()
-	}
-	if exit, ok := err.(*exec.ExitError); ok {
-		return stdout.String(), exit.ExitCode(), stderr.String()
-	}
-	t.Fatalf("command %s failed: %v\nstdout:\n%s\nstderr:\n%s", command, err, stdout.String(), stderr.String())
-	return stdout.String(), 1, stderr.String()
-}
-
-// seedHealthcheckWorkflow writes a minimal, generic "healthcheck" workflow
-// definition into the project's .kb/workflows directory, mirroring this
-// monorepo's own .kb/workflows/healthcheck.yaml. Workflow definitions are a
-// per-project concern (discovered from the project's own workspace, not
-// shipped by the platform), so a fresh install has none until the project
-// author adds one — this fixture stands in for that authored file.
-func seedHealthcheckWorkflow(projectRoot string) error {
-	dir := filepath.Join(projectRoot, ".kb", "workflows")
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return err
-	}
-	const healthcheckWorkflow = `name: healthcheck
-version: 1.0.0
-description: "Build, lint, and test your project"
-on:
-  manual: true
-
-jobs:
-  check:
-    runsOn: local
-    steps:
-      - name: Install dependencies
-        run: |
-          if [ -f package.json ]; then
-            if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
-          else
-            echo "No package.json — dependency installation skipped"
-          fi
-      - name: Build
-        run: |
-          if [ -f package.json ]; then pnpm run --if-present build; else echo "No package.json — build skipped"; fi
-      - name: Lint
-        run: |
-          if [ -f package.json ]; then pnpm run --if-present lint; else echo "No package.json — lint skipped"; fi
-        continueOnError: true
-      - name: Test
-        run: |
-          if [ -f package.json ]; then pnpm run --if-present test; else echo "No package.json — tests skipped"; fi
-`
-	return os.WriteFile(filepath.Join(dir, "healthcheck.yaml"), []byte(healthcheckWorkflow), 0o640)
-}
-
-func stringValue(value any) string {
-	if text, ok := value.(string); ok {
-		return text
-	}
-	return ""
 }
