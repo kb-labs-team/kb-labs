@@ -9,6 +9,7 @@
  */
 
 import { defineCommand, type PluginContextV3 } from '@kb-labs/sdk';
+import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import type { CommandResult } from '@kb-labs/sdk';
 import { promises as fs } from 'fs';
 import path from 'path';
