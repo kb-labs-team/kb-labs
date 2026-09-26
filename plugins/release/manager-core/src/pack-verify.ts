@@ -34,6 +34,7 @@ import { pipeline } from 'node:stream/promises';
 import type { BuiltinCheckKind, CheckPhaseTiming, CheckResultDetails, CustomCheckConfig, PackInstallConfig } from './types';
 import { matchesPackagePattern } from './planner';
 import { describeArboristError } from './clean-install-verify';
+import { findUndeclaredImports } from './undeclared-imports';
 
 /** Where `release stage plan` persists the tarballs it publishes to the staging registry (repo-relative). */
 export const STAGED_TARBALLS_REL_DIR = '.kb/release/staging/tarballs';
@@ -348,7 +349,7 @@ export interface StaticPackageResult {
 }
 
 /** Static checks for ONE extracted package; returns messages in classifier-friendly wording. */
-async function checkExtracted(dir: string, deps: PackVerifyDeps): Promise<{ issues: string[]; manifest?: PackedManifest }> {
+async function checkExtracted(dir: string, deps: PackVerifyDeps, opts: StaticCheckOptions): Promise<{ issues: string[]; manifest?: PackedManifest }> {
   const manifestPath = join(dir, 'package.json');
   if (!existsSync(manifestPath)) {
     return { issues: ["ERROR: declared entry 'package.json' missing from packed tarball"] };
@@ -378,13 +379,20 @@ async function checkExtracted(dir: string, deps: PackVerifyDeps): Promise<{ issu
     const err = await deps.syntaxCheck(mainFull);
     if (err) { issues.push(`ERROR: ${main} failed syntax check\n${err}`); }
   }
+  issues.push(...findUndeclaredImports(dir, manifest, opts.undeclaredImportAllowlist));
   return { issues, manifest };
+}
+
+export interface StaticCheckOptions {
+  /** Import names (or `<package>:<import>` pairs) exempt from the undeclared-import check. */
+  undeclaredImportAllowlist?: string[];
 }
 
 export async function verifyPackedArtifactsStatic(
   packages: PackVerifyPackage[],
   artifacts: StagedTarball[],
   deps: PackVerifyDeps,
+  opts: StaticCheckOptions = {},
   concurrency = 8,
 ): Promise<StaticPackageResult[]> {
   const byName = new Map(artifacts.map(a => [a.name, a]));
@@ -396,7 +404,7 @@ export async function verifyPackedArtifactsStatic(
     let extracted: Awaited<ReturnType<PackVerifyDeps['extract']>> | undefined;
     try {
       extracted = await deps.extract(artifact.tarball);
-      const { issues, manifest } = await checkExtracted(extracted.dir, deps);
+      const { issues, manifest } = await checkExtracted(extracted.dir, deps, opts);
       return { name: pkg.name, path: pkg.path, ok: issues.length === 0, issues, manifest };
     } catch (err) {
       return { name: pkg.name, path: pkg.path, ok: false, issues: [`ERROR: ${err instanceof Error ? err.message : String(err)}`] };
@@ -410,9 +418,10 @@ export async function runPackStaticCheck(
   packages: PackVerifyPackage[],
   artifacts: StagedTarball[],
   deps: PackVerifyDeps,
+  opts: StaticCheckOptions = {},
 ): Promise<PackVerifyOutput> {
   const start = deps.now();
-  const results = await verifyPackedArtifactsStatic(packages, artifacts, deps);
+  const results = await verifyPackedArtifactsStatic(packages, artifacts, deps, opts);
   const durationMs = deps.now() - start;
   return {
     packages: results.map(r => r.ok
@@ -725,7 +734,7 @@ async function runBuiltin(kind: BuiltinCheckKind, ctx: BuiltinCheckContext): Pro
   const resolveMs = deps.now() - t0;
   const resolvePhase: CheckPhaseTiming = { name: 'resolve-artifacts', durationMs: resolveMs, detail: `${resolved.artifacts.length} tarball(s) from ${resolved.source}` };
   const out = kind === 'pack-static'
-    ? await runPackStaticCheck(ctx.packages, resolved.artifacts, deps)
+    ? await runPackStaticCheck(ctx.packages, resolved.artifacts, deps, { undeclaredImportAllowlist: ctx.check.undeclaredImportAllowlist })
     : await runPackInstallCheck({
         packages: ctx.packages,
         artifacts: resolved.artifacts,

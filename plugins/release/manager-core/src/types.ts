@@ -215,6 +215,12 @@ export interface CustomCheckConfig {
   /** Options for `builtin: 'pack-install'`. */
   packInstall?: PackInstallConfig;
   /**
+   * `pack-static` only: import names (`foo`) or `<package>:<import>` pairs
+   * (`@kb-labs/x:foo`) exempt from the undeclared-import check, for genuine
+   * false positives (the scanner is regex-based).
+   */
+  undeclaredImportAllowlist?: string[];
+  /**
    * Keep the check in config but do not run it, unless it is requested
    * explicitly with `kb release checks --only <id>`. Used for the legacy
    * per-package `pack-install-per-package` debugging check.

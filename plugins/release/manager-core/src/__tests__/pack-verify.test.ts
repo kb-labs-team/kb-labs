@@ -424,6 +424,87 @@ describe('runReleaseChecks with builtin pack checks', () => {
   });
 });
 
+describe('pack-static: undeclared imports', () => {
+  const run = async (a: StagedTarball, allow?: string[]) =>
+    (await runPackStaticCheck([{ name: a.name, path: `/r/${a.name}` }], [a], defaultPackVerifyDeps, { undeclaredImportAllowlist: allow })).packages[0]!;
+
+  it('fails an import of a package that is not declared, naming package, file and specifier', async () => {
+    const t = makeTarball('@u/missing', '1.0.0', { ...okManifest, dependencies: { other: '1.0.0' } }, { ...okFiles, 'dist/index.js': "import { x } from 'foo';\nexport const a = x;\n" });
+    const r = await run(t);
+    expect(r.ok).toBe(false);
+    const msg = r.details?.stderr ?? '';
+    expect(msg).toContain("@u/missing imports 'foo' in dist/index.js but does not declare 'foo'");
+    expect(msg).toContain('declare it in dependencies (or peerDependencies)');
+    expect(classifyFailure({ stderr: msg }).rule).toBe('undeclared-import');
+  });
+
+  it('treats devDependencies-only as undeclared', async () => {
+    const t = makeTarball('@u/dev', '1.0.0', { ...okManifest, devDependencies: { foo: '1.0.0' } }, { ...okFiles, 'dist/index.js': "import 'foo';\n" });
+    const r = await run(t);
+    expect(r.ok).toBe(false);
+    expect(r.details?.stderr).toContain('only in devDependencies');
+  });
+
+  it('accepts builtins, node: URLs, self and relative imports, declared deps/peers/optional and subpaths', async () => {
+    const t = makeTarball('@u/ok', '1.0.0', {
+      ...okManifest,
+      dependencies: { '@s/scoped': '1.0.0', plain: '1.0.0' },
+      peerDependencies: { peer: '1.0.0' },
+      optionalDependencies: { opt: '1.0.0' },
+    }, {
+      ...okFiles,
+      'dist/index.js': [
+        "import fs from 'fs';", "import { join } from 'node:path';", "import fsp from 'fs/promises';",
+        "import self from '@u/ok';", "import selfSub from '@u/ok/sub';", "import rel from './rel.js';",
+        "import s from '@s/scoped/deep/file.js';", "import p from 'plain/sub';", "import q from 'peer';", "import o from 'opt';",
+        "// import nope from 'commented-out';", "/* require('block-commented') */",
+        "const url = 'http://example.com/a//b';",
+        'export const a = 1;', '',
+      ].join('\n'),
+      'dist/rel.js': 'export default 1;\n',
+    });
+    expect((await run(t)).ok).toBe(true);
+  });
+
+  it('detects dynamic import() and require() in ESM and CJS files, and export ... from', async () => {
+    const t = makeTarball('@u/dyn', '1.0.0', okManifest, {
+      ...okFiles,
+      'dist/index.js': "export * from 'reexported';\nexport const l = () => import('lazy');\n",
+      'dist/legacy.cjs': "const x = require('cjs-dep/sub');\nmodule.exports = x;\n",
+    });
+    const msg = (await run(t)).details?.stderr ?? '';
+    expect(msg).toContain("imports 'reexported' in dist/index.js");
+    expect(msg).toContain("imports 'lazy' in dist/index.js");
+    expect(msg).toContain("imports 'cjs-dep/sub' in dist/legacy.cjs but does not declare 'cjs-dep'");
+  });
+
+  it('honours undeclaredImportAllowlist (plain name and package:name)', async () => {
+    const t = makeTarball('@u/allow', '1.0.0', okManifest, { ...okFiles, 'dist/index.js': "import 'foo';\nimport 'bar/x';\n" });
+    expect((await run(t)).ok).toBe(false);
+    expect((await run(t, ['foo'])).ok).toBe(false);
+    expect((await run(t, ['foo', '@u/allow:bar'])).ok).toBe(true);
+  });
+
+  it('is invisible to the aggregated install but caught by pack-static (hoisting hides the missing dependency)', async () => {
+    // `foo` is installed elsewhere in the same consumer (as a declared dependency of another
+    // package would be after hoisting), so the undeclared import resolves there.
+    const foo = makeTarball('foo', '1.0.0', { main: './index.js' }, { 'index.js': 'export const foo = 1;\n' });
+    const x = makeTarball('@u/hoisted', '1.0.0', okManifest, { ...okFiles, 'dist/index.js': "import { foo } from 'foo';\nexport const a = foo;\n" });
+
+    const install = await runPackInstallCheck({
+      packages: [foo, x].map(t => ({ name: t.name, path: `/r/${t.name}` })),
+      artifacts: [foo, x],
+      config: { isolateChanged: false },
+      timeoutMs: 120_000,
+    }, defaultPackVerifyDeps);
+    expect(install.packages.map(p => p.ok)).toEqual([true, true]);
+
+    const r = await run(x);
+    expect(r.ok).toBe(false);
+    expect(r.details?.stderr).toContain("imports 'foo'");
+  }, 150_000);
+});
+
 describe('real Arborist in-process install (offline, dependency-free tarballs)', () => {
   it('installs two tarballs into one consumer and imports them in one pass', async () => {
     const a = makeTarball('@t/real-a', '1.0.0', okManifest, okFiles);
