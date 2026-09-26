@@ -36,8 +36,11 @@ describe("gateway entrypoints", () => {
 describe("resolvePublicUrl", () => {
   const original = process.env.GATEWAY_PUBLIC_URL;
   afterEach(() => {
-    if (original === undefined) delete process.env.GATEWAY_PUBLIC_URL;
-    else process.env.GATEWAY_PUBLIC_URL = original;
+    if (original === undefined) {
+      delete process.env.GATEWAY_PUBLIC_URL;
+    } else {
+      process.env.GATEWAY_PUBLIC_URL = original;
+    }
   });
 
   it("derives a loopback URL from the resolved listen port", () => {
