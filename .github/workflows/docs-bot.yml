@@ -57,6 +57,10 @@ jobs:
         working-directory: sites/web/apps/docs
         run: node scripts/docs-source-check.mjs
 
+      - name: Test docs source sync
+        working-directory: sites/web/apps/docs
+        run: node --test scripts/docs-source-sync.test.mjs
+
   # ── Staleness check — posts reminder threads, never blocks merge ───────────
   # Inline threads on changed files tell the author which doc pages to verify.
   # Threads are resolved manually after updating or confirming no change needed.
