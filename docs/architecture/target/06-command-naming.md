@@ -53,13 +53,13 @@ kb-create <verb> [flags]
 | `kb-create plan / apply / update / rollback / uninstall / doctor / start / stop / status / wizard` | лаунчер (установка, хост) |
 | `kb project *`, `kb config *`, `kb auth *`, `kb logs *`, `kb plugin *`, `kb adapter *`, `kb health *` | клиент хоста |
 | `kb <продукт> *` | плагин |
-| `reset-admin` | лаунчер, режим восстановления (`kb-create doctor --recover`) ? |
+| `reset-admin` | лаунчер, режим восстановления (`kb-create doctor --recover`) |
 
 ## 5. Что придётся привести в порядок (по текущему коду)
 
 - `marketplace plugins list` → `kb plugin list` (множественное число и лишний namespace `marketplace` убираем).
 - Добавить `kb project *` и `kb config get/set` (сейчас только `config show`).
-- `auth-reset-admin` уйти из TS-системных команд в лаунчер.
+- ~~`auth-reset-admin` уйти из TS-системных команд в лаунчер.~~ Сделано (этап 4.3): `kb-create doctor --recover`.
 - Псевдоним `kb start/stop/status` → вызов лаунчера (единственный разрешённый алиас, см. `05-executables`).
 - Старые имена **не поддерживаем** (решение автора): переименовываем и удаляем без алиасов.
 

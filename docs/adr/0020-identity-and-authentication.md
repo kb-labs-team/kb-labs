@@ -247,12 +247,13 @@ ABAC becomes concrete.
 
 Bootstrap (`ensureBootstrapAdmin`) never modifies an existing user, so it cannot repair an
 admin whose credential was lost, whose status was set to `disabled`, or whose membership
-disappeared. Since there is no email reset, the sanctioned recovery path is the offline CLI
-command `kb auth reset-admin` (`resetAdmin` in `services/gateway/auth`): it upserts the
+disappeared. Since there is no email reset, the sanctioned recovery path is the offline launcher
+command `kb-create doctor --recover` (ADR-0045; it runs `kb-recover` of `@kb-labs/host-app`, which
+calls `resetAdmin` in `services/gateway/auth`): it upserts the
 `email-password` credential, sets `status=active`, restores the `tenant-admin` membership and
 revokes all of the admin's sessions. It validates the password against the normal policy, runs
 as a dry run unless `--yes` is given, takes the password only from stdin or generates one, and
-refuses to run while a gateway is listening (concurrent sqlite writer). Manually deleting the
+refuses to run while the host is running or a gateway is listening (concurrent sqlite writer). Manually deleting the
 credentials row is **not** a recovery: bootstrap will not recreate it. See
 `docs/deployment/studio-auth.md`.
 

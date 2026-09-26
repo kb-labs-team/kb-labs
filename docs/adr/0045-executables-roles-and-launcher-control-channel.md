@@ -84,11 +84,31 @@ gains `start | stop | status`, autostart and the control channel; `update` and
 imports) are stage 0 work, PR #480. Release-side changes are tracked by #478
 and are not part of this ADR.
 
+### Status of stage 4 (2026-09)
+
+Implemented in the launcher (`tools/kb-create`, see its README):
+
+- `update`, `rollback`, `doctor --fix` and `uninstall` stop the host through its
+  supervisor, swap the installation and start the host from the new receipt; a host
+  that does not come back is rolled back and the previous version restarted
+  (`KB_UPDATE_HOST_NOT_HEALTHY`, `KB_UPDATE_APPLY_FAILED`, `KB_INSTALL_ROLLBACK_FAILED`).
+- The user path no longer uses `kb-dev`, `--net-offset` or `devservices.yaml`: every platform
+  bundle in the release index declares its `host` (and optionally a `recover` tool), the
+  resolver copies it into the plan, and the launcher runs it. `kb-dev` stays an author tool.
+- `doctor` reports the installation (launcher-owned) and the platform (running host) in
+  separate sections; `reset-admin` left the TS system commands and is reached as
+  `kb-create doctor --recover`, which runs the platform's `kb-recover` (`@kb-labs/host-app`) with
+  the host stopped.
+- The launcher state is per user (`<KB_HOME>/launcher`), not per platform root.
+
+Not done: autostart, executing Studio's queued update requests, and the project runtimes
+(rest, workflow) that a host-only install still lacks (stage 3).
+
 ### Open questions
 
-- Exact `reset-admin` placement (`kb-create doctor --recover` is marked tentative in the notes).
-- Whether `kb-dev` keeps rendering `devservices.yaml` for users during the transition.
 - Control protocol schema and versioning policy (to be defined with stage 4).
+- How a Windows host command is declared (`node_modules/.bin/kb-host` has no `.cmd` shim
+  resolution in the launcher yet).
 
 ## References
 

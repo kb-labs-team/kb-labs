@@ -99,7 +99,10 @@
 | `KB_INSTALL_SCENARIO_INVALID` / `_WIZARD_INPUT_INVALID` / `_SECRET_INPUT_INVALID` / `_DOCTOR_INPUT_INVALID` | (есть) ответы сценария/мастера, секрет или вход doctor не приняты | что поправить | L |
 | `KB_INSTALL_RECOVERY_FAILED` / `_RECEIPT_UNAVAILABLE` / `_STATUS_UNHEALTHY` | (есть) восстановление не дошло до проверенного состояния / нет активного receipt / граф сервисов не готов | `doctor --fix`, снимок | L |
 | `KB_INSTALL_LOG_UNAVAILABLE` / `_DIAGNOSTIC_UNAVAILABLE` | (есть) нельзя записать лог/досье | права на каталог | L |
-| `KB_INSTALL_ROLLBACK_FAILED` | откат не удался | восстановление вручную, путь к снимку | L |
+| `KB_INSTALL_ROLLBACK_FAILED` | откат не удался (в т.ч. после неудачного обновления не поднялась и прежняя версия) | восстановление вручную, путь к снимку | L |
+| `KB_INSTALL_OPERATION_IN_PROGRESS` | другая операция лаунчера уже идёт (блокировка `operation.lock`) | дождаться; если лаунчера нет — удалить устаревший lock | L |
+| `KB_INSTALL_RECOVERY_HOST_RUNNING` | `doctor --recover` при запущенном хосте | `kb-create stop`, восстановить, `kb-create start` | L |
+| `KB_INSTALL_RECOVERY_UNAVAILABLE` | платформа не поставляет инструмент восстановления | `kb-create update` | L |
 
 ### B. Запуск и здоровье хоста
 
@@ -180,7 +183,8 @@
 | `KB_UPDATE_DOWNLOAD_FAILED` | не скачалось | сеть, `retry` | L |
 | `KB_UPDATE_INCOMPATIBLE` | обновление несовместимо с установленным | что мешает | L |
 | `KB_UPDATE_VERIFY_FAILED` | после обновления проверка не прошла (автооткат) | что сломалось, куда откатились | L |
-| `KB_UPDATE_HOST_NOT_HEALTHY` | хост не поднялся после обновления | автооткат/`rollback` | L |
+| `KB_UPDATE_APPLY_FAILED` | обновление (или откат/ремонт) не применилось; прежняя версия восстановлена и запущена | лог и досье, повторить | L |
+| `KB_UPDATE_HOST_NOT_HEALTHY` | хост не поднялся после обновления; выполнен автооткат, прежняя версия запущена | лог хоста, `correlationId` | L |
 | `KB_UPDATE_NO_SNAPSHOT` | откатываться некуда | | L |
 
 ### H. Повседневная работа

@@ -71,8 +71,8 @@ what it needs in `kb-create.requirements.json` (see `tools/kb-create/v2/README.m
 confirmed) and generates the session signing secret (`GATEWAY_JWT_SECRET`) when you press Enter.
 Non-interactive installs pass the secrets with `--secret-env`. Secrets land only in the private
 `.kb/v2/secrets.env`, never in generated config. If the admin password is skipped, no admin exists
-after install: `kb-dev doctor` reports `no_active_admin`, and `kb auth reset-admin` creates one
-using the email the installer already wrote.
+after install: `kb-create doctor` reports `auth:no_active_admin` in its `platform` section, and
+`kb-create doctor --recover` creates one using the email the installer already wrote.
 
 ### Diagnosing "I can't log in"
 
@@ -87,9 +87,9 @@ kb-dev doctor          # auth ● enabled, 1 active admin(s)   — or the exact 
 
 | Code | Severity | Meaning | Fix |
 |---|---|---|---|
-| `no_active_admin` | error | Auth is enabled but the tenant has no active `tenant-admin` — **nobody can log in**. This is the state of a fresh secured install where no bootstrap admin was seeded | `kb auth reset-admin` |
-| `bootstrap_failed` | error | Seeding the bootstrap admin failed at startup (see the gateway log) | fix the cause, or `kb auth reset-admin` |
-| `bootstrap_user_inactive` | warning | The bootstrap admin exists but is not active; bootstrap never re-activates users | `kb auth reset-admin` |
+| `no_active_admin` | error | Auth is enabled but the tenant has no active `tenant-admin` — **nobody can log in**. This is the state of a fresh secured install where no bootstrap admin was seeded | `kb-create doctor --recover` |
+| `bootstrap_failed` | error | Seeding the bootstrap admin failed at startup (see the gateway log) | fix the cause, or `kb-create doctor --recover` |
+| `bootstrap_user_inactive` | warning | The bootstrap admin exists but is not active; bootstrap never re-activates users | `kb-create doctor --recover` |
 | `jwt_secret_default` | error on a reachable bind, warning on loopback | `GATEWAY_JWT_SECRET` is unset, tokens are signed with a public dev secret | set `GATEWAY_JWT_SECRET`, restart |
 
 The same findings are logged once at gateway startup as `auth-readiness: …` (error level for
@@ -102,24 +102,26 @@ query it on the host: `curl http://localhost:4000/health/auth`.
 
 ### Recovering the admin (forgotten password, disabled, credential lost)
 
-Use `kb auth reset-admin`. It works **offline** against the platform database, so it is the
-way back in when nobody can log in. Stop the gateway first (the command refuses to run
-while one listens on `gateway.port`, to avoid concurrent sqlite writes; `--force` overrides).
+Use `kb-create doctor --recover`. The launcher runs the platform's own recovery tool
+(`kb-recover`), which works **offline** against the platform database, so it is the way back in
+when nobody can log in. The host must be stopped first (the launcher refuses with
+`KB_INSTALL_RECOVERY_HOST_RUNNING` otherwise, and the tool refuses while something listens on
+`gateway.port`, to avoid concurrent sqlite writes).
 
 ```bash
-kb-dev stop gateway
+kb-create stop
 
 # 1. Dry run — shows the state of the admin and what would be repaired, changes nothing
-kb auth reset-admin --email admin@example.com --tenant kb-cloud
+kb-create doctor --recover --email admin@example.com --tenant kb-cloud
 
 # 2. Apply with a generated password (printed once) ...
-kb auth reset-admin --email admin@example.com --tenant kb-cloud --generate --yes
+kb-create doctor --recover --email admin@example.com --tenant kb-cloud --generate --yes
 
 # ... or with a password from stdin (never pass passwords as arguments)
-printf %s "$NEW_PASSWORD" | kb auth reset-admin --email admin@example.com --tenant kb-cloud --password-stdin --yes
-```
+printf %s "$NEW_PASSWORD" | kb-create doctor --recover --email admin@example.com --tenant kb-cloud --password-stdin --yes
 
-Then start the gateway again the way you normally do.
+kb-create start
+```
 
 `--email` and `--tenant` default to `GATEWAY_BOOTSTRAP_ADMIN_EMAIL` / `GATEWAY_BOOTSTRAP_TENANT_ID`
 (or `gateway.auth.bootstrap.*`). The command:
@@ -253,7 +255,7 @@ No `Domain` attribute — cookies are origin-scoped to `{tenant}.kblabs.ru` auto
 ### Before first deploy
 
 - [ ] `GATEWAY_JWT_SECRET` is set (not the built-in dev default), 32+ chars, stored in secrets manager
-- [ ] `GATEWAY_BOOTSTRAP_ADMIN_PASSWORD` is strong and changed after first login (or rotated with `kb auth reset-admin`)
+- [ ] `GATEWAY_BOOTSTRAP_ADMIN_PASSWORD` is strong and changed after first login (or rotated with `kb-create doctor --recover`)
 - [ ] Wildcard SSL certificate is valid: `openssl s_client -connect kb-cloud.kblabs.ru:443`
 - [ ] nginx wildcard config applied, reserved subdomains have own server blocks
 - [ ] `AUTH_COOKIE_SECURE=true` (default) — never disable in production
@@ -307,7 +309,7 @@ To add a new tenant:
 See `docs/adr/0020-identity-and-authentication.md` § "What we are NOT doing" for the
 complete list. Key items:
 
-- No password reset via email (users are re-invited; the admin is recovered with `kb auth reset-admin`)
+- No password reset via email (users are re-invited; the admin is recovered with `kb-create doctor --recover`)
 - No 2FA / MFA
 - No SSO / OAuth2 / OIDC
 - No account lockout (would be a DoS vector)

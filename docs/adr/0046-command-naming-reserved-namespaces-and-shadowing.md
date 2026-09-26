@@ -109,7 +109,6 @@ covers the boundary lints, not naming).
 
 - Are `kb plugin *` and `kb adapter *` system commands (host clients) or commands of the marketplace plugin? A system group wins, and `marketplace` is a plugin today, so its CLI would have to become system. Not decided in the notes.
 - `hello` and `groups` in tier S, and the whole starting list, still need to be checked against the code.
-- Whether `reset-admin` is reachable as `kb-create doctor --recover` (tentative).
 
 ## References
 

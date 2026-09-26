@@ -317,15 +317,16 @@ Or switch workflows to `isolation: 'relaxed'` if you don't need workspace isolat
 
 **Fix.**
 
-1. Run `kb-dev doctor`. The `auth` checks say which case it is and print the exact command.
-2. Stop the gateway and recover the admin offline:
+1. Run `kb-create doctor`. The `auth` checks in its `platform` section say which case it is and print the exact command.
+2. Stop the host and recover the admin offline:
 
    ```bash
-   kb auth reset-admin --email admin@example.com --tenant kblabs-cloud             # dry run
-   kb auth reset-admin --email admin@example.com --tenant kblabs-cloud --generate --yes
+   kb-create stop
+   kb-create doctor --recover --email admin@example.com --tenant kblabs-cloud             # dry run
+   kb-create doctor --recover --email admin@example.com --tenant kblabs-cloud --generate --yes
    ```
 
-3. Start the gateway again and log in with the printed password.
+3. Start the host again (`kb-create start`) and log in with the printed password.
 
 Do not delete rows from the database by hand — bootstrap never recreates a missing credential for an existing user. See [Studio auth deployment guide](https://github.com/kb-labs-team/kb-labs/blob/master/docs/deployment/studio-auth.md) for details.
 

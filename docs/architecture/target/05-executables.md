@@ -9,7 +9,7 @@
 |---|---|---|---|
 | `kb` | TS (Node) | CLI: системные команды (`cli/commands/.../system`), команды плагинов | пользователь |
 | `kb-create` | Go | детерминированный лаунчер: `plan/apply/update/uninstall/rollback/doctor/wizard` | пользователь |
-| `kb-dev` | Go | локальный менеджер сервисов (процессы, health, порядок старта, watchdog) | сегодня и разработчик, и пользователь (runtime рендерит `devservices.yaml`) |
+| `kb-dev` | Go | локальный менеджер сервисов (процессы, health, порядок старта, watchdog) | автор платформы: пользовательский путь его не использует (этап 4.4), хост запускает лаунчер |
 | `kb-devkit` | Go | сборка/проверки/sync монорепо | автор платформы |
 | `kb-deploy` | Go | деплой: build → push → SSH → `docker compose up` | ops |
 | `kb-monitor` | Go | read-only статус/логи/health удалённых хостов (после `kb-deploy`) | ops |
