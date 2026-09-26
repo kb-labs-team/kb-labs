@@ -27,6 +27,7 @@
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
+import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import { randomUUID } from 'node:crypto';
 import type {
   IWorkspaceProvider,
@@ -48,7 +49,7 @@ export interface AgentWorkspaceAdapterConfig {
   internalSecret?: string;
   /** Gateway namespace to find the host agent in. Default: 'default' */
   namespaceId?: string;
-  /** Local directory where fetched workspaces are cached. Default: '.kb/runtime/workspaces' */
+  /** Local directory where fetched workspaces are cached. Default: `<KB_HOME>/state/<projectId>/runtime/workspaces` */
   cacheDir?: string;
   /** Specific hostId to use. If omitted, Gateway picks first connected host in namespace. */
   hostId?: string;
@@ -73,7 +74,8 @@ export class AgentWorkspaceAdapter implements IWorkspaceProvider {
     this.gatewayUrl = (config.gatewayUrl ?? 'http://localhost:4000').replace(/\/$/, '');
     this.internalSecret = config.internalSecret ?? process.env['GATEWAY_INTERNAL_SECRET'] ?? '';
     this.namespaceId = config.namespaceId ?? 'default';
-    this.cacheDir = config.cacheDir ?? '.kb/runtime/workspaces';
+    // No explicit dir: per-project runtime state lives outside the repository (ADR-0044).
+    this.cacheDir = config.cacheDir ?? resolveRuntimeStatePath(process.cwd(), ['runtime', 'workspaces']);
     this.hostId = config.hostId;
   }
 

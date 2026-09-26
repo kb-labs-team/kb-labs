@@ -11,8 +11,17 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import type { DetailedTraceEntry } from '@kb-labs/agent-contracts';
+import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 
-export const TRACE_DIR_RELATIVE = path.join('.kb', 'traces', 'incremental');
+const TRACE_DIR_SEGMENTS = ['traces', 'incremental'] as const;
+
+/**
+ * Directory of incremental agent traces for a project. Traces are per-project
+ * runtime state (ADR-0044): `<KB_HOME>/state/<projectId>/traces/incremental/`.
+ */
+export function resolveTraceDir(workingDir: string): string {
+  return resolveRuntimeStatePath(workingDir, TRACE_DIR_SEGMENTS);
+}
 const TASK_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
 
@@ -31,7 +40,7 @@ export type TraceLoadResult =
  * Load and parse a trace file by taskId.
  *
  * @param taskId - The task ID (validated against alphanumeric + hyphens/underscores)
- * @param workingDir - Base directory to resolve `.kb/traces/incremental/` from (default: process.cwd())
+ * @param workingDir - Project directory whose trace state directory is read (default: process.cwd())
  */
 export async function loadTrace(
   taskId: string | undefined,
@@ -53,7 +62,7 @@ export async function loadTrace(
     };
   }
 
-  const traceDir = path.join(workingDir, TRACE_DIR_RELATIVE);
+  const traceDir = resolveTraceDir(workingDir);
   const filePath = path.join(traceDir, `${taskId}.ndjson`);
 
   // 3. Redundant path traversal check (defence-in-depth)

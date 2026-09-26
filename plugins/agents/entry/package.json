@@ -46,6 +46,7 @@
     "@kb-labs/agent-store": "workspace:*",
     "@kb-labs/agent-tools": "workspace:*",
     "@kb-labs/agent-tracing": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
     "zod": "^3.25.76"
   },

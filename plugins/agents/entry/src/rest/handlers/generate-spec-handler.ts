@@ -67,7 +67,7 @@ export default defineHandler({
       // Run spec generation asynchronously via RunManager
       const runId = `run-spec-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
       const startedAt = new Date().toISOString();
-      const traceDir = path.join(workingDir, '.kb', 'traces', 'incremental');
+      const traceDir = resolveTraceDir(workingDir);
       const traceWriter = new IncrementalTraceWriter(runId, {}, traceDir);
       await RunManager.register(
         runId,

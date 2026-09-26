@@ -12,6 +12,7 @@
 
 import Database from 'better-sqlite3';
 import { join, isAbsolute, dirname } from 'node:path';
+import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import { mkdirSync } from 'node:fs';
 import type {
   IAnalytics,
@@ -127,7 +128,7 @@ function getDefaultMetrics(typeFilter?: string | string[]): string[] {
 // ─── Options ──────────────────────────────────────────────────────────────────
 
 export interface SQLiteAnalyticsOptions {
-  /** Path to the SQLite database file. Default: .kb/analytics/analytics.sqlite */
+  /** Path to the SQLite database file. Default: `<KB_HOME>/state/<projectId>/analytics/analytics.sqlite` */
   dbPath?: string;
   /** Alias for dbPath — accepted for config compatibility with kb.config.json */
   filename?: string;
@@ -153,8 +154,11 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
 
   constructor(options: SQLiteAnalyticsOptions = {}) {
     const cwd = options.workspace?.cwd ?? process.cwd();
-    const rawPath = options.dbPath ?? options.filename ?? '.kb/analytics/analytics.sqlite';
-    this.dbPath = isAbsolute(rawPath) ? rawPath : join(cwd, rawPath);
+    const rawPath = options.dbPath ?? options.filename;
+    // No explicit path: per-project runtime state lives outside the repository (ADR-0044).
+    this.dbPath = rawPath === undefined
+      ? resolveRuntimeStatePath(cwd, ['analytics', 'analytics.sqlite'])
+      : isAbsolute(rawPath) ? rawPath : join(cwd, rawPath);
 
     this.context = options.context ?? options.analytics ?? {
       source: { product: 'unknown', version: '0.0.0' },

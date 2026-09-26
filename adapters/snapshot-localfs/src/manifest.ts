@@ -20,13 +20,11 @@ export const manifest: AdapterManifest = {
   configSchema: {
     storageDir: {
       type: 'string',
-      default: '.kb/runtime/snapshots',
-      description: 'Root directory where snapshots are stored',
+      description: 'Root directory where snapshots are stored (default: <KB_HOME>/state/<projectId>/runtime/snapshots)',
     },
     workspaceRegistryDir: {
       type: 'string',
-      default: '.kb/runtime/workspace-registry',
-      description: 'Directory with workspace metadata for source path resolution',
+      description: 'Directory with workspace metadata for source path resolution (default: <KB_HOME>/state/<projectId>/runtime/workspace-registry)',
     },
   },
 };

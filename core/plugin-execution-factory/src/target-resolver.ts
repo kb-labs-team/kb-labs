@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { ExecutionRequest, WorkspaceConfig } from './types.js';
 
@@ -28,7 +29,7 @@ function getWorkspaceManager(platform: PlatformServices): WorkspaceManagerLike |
 }
 
 async function tryResolveWorkspaceRootPath(workspaceId: string): Promise<string | undefined> {
-  const registryFile = path.resolve(process.cwd(), '.kb/runtime/workspace-registry', `${workspaceId}.json`);
+  const registryFile = path.join(resolveRuntimeStatePath(process.cwd(), ['runtime', 'workspace-registry']), `${workspaceId}.json`);
   try {
     const raw = await readFile(registryFile, 'utf8');
     const parsed = JSON.parse(raw) as { rootPath?: string };

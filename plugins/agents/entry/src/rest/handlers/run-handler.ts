@@ -215,7 +215,7 @@ export default defineHandler({
     const agentsConfig = await useConfig<AgentsPluginConfig>();
 
     const finalSessionId = sessionId; // Capture for closure
-    const traceDir = path.join(workingDir, '.kb', 'traces', 'incremental');
+    const traceDir = resolveTraceDir(workingDir);
     const traceWriter = new IncrementalTraceWriter(runId, {}, traceDir);
 
     // Create agent with event broadcasting and session persistence

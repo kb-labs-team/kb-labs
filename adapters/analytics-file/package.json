@@ -27,6 +27,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-project-registry": "workspace:*",
     "date-fns": "^3.6.0",
     "fs-extra": "^11.0.0"
   },
