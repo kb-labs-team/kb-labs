@@ -1,0 +1,19 @@
+{
+  "description": "An authenticated request to an unknown path answers 404 with the envelope.",
+  "request": { "method": "GET", "path": "/v1/nope", "auth": "valid" },
+  "response": {
+    "status": 404,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "KB_RUNTIME_INPUT_INVALID",
+        "area": "runtime",
+        "stage": "run",
+        "severity": "error",
+        "retryable": false,
+        "message": "Unknown control endpoint.",
+        "hint": "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request."
+      }
+    }
+  }
+}

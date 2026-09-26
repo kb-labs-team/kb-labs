@@ -156,6 +156,26 @@ export const TenantsConfigSchema = z.object({
   pattern: z.string().default('{tenant}.kblabs.ru'),
 });
 
+/**
+ * Studio static hosting (task 2.3 / ADR-0043 B5). When enabled the gateway
+ * serves the built Studio SPA at `/` on the same port as the API, so a single
+ * external port exposes both. Off by default: existing deployments that run
+ * Studio as its own process (`studio/app/server.js`) are unchanged.
+ */
+export const StudioHostingConfigSchema = z.object({
+  /** Serve the Studio SPA from the gateway. Default false. */
+  enabled: z.boolean().default(false),
+  /**
+   * Directory with the built SPA (contains `index.html`). When omitted the
+   * gateway resolves the `dist` of the installed `@kb-labs/studio-app` package.
+   */
+  dir: z.string().min(1).optional(),
+  /** Injected as `KB_API_BASE_URL`. Default: same-origin `/api/v1`. */
+  apiBaseUrl: z.string().min(1).optional(),
+  /** Injected as `KB_EVENTS_BASE_URL` (SSE/events base). Omitted when unset. */
+  eventsBaseUrl: z.string().min(1).optional(),
+});
+
 export const GatewayConfigSchema = z.object({
   port: z.number().default(4000),
   /**
@@ -175,6 +195,8 @@ export const GatewayConfigSchema = z.object({
   auth: AuthConfigSchema.optional(),
   /** Tenant routing configuration. */
   tenants: TenantsConfigSchema.optional(),
+  /** Serve the built Studio SPA from the gateway (default off). */
+  studio: StudioHostingConfigSchema.optional(),
 });
 
 export type RateLimitConfig = z.infer<typeof RateLimitConfigSchema>;
@@ -184,5 +206,6 @@ export type PressureConfig = z.infer<typeof PressureConfigSchema>;
 export type UpstreamConfig = z.infer<typeof UpstreamConfigSchema>;
 export type AccessConfig = z.infer<typeof AccessConfigSchema>;
 export type AuthConfig = z.infer<typeof AuthConfigSchema>;
+export type StudioHostingConfig = z.infer<typeof StudioHostingConfigSchema>;
 export type TenantsConfig = z.infer<typeof TenantsConfigSchema>;
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;

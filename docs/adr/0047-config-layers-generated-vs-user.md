@@ -68,9 +68,20 @@ Migration stage 5 (config layers and commands), building on stage 1 (state
 directory per project; ADR-0044 owns the registry). Config errors use the envelope
 of ADR-0049.
 
+### Precedence and provenance (implemented)
+
+Lowest to highest; a higher layer wins per key (objects deep-merge, arrays concatenate across generated/platform/project, overlays replace arrays):
+
+1. **generated**: `<root>/.kb/generated/*.json|jsonc` (platform root first, then project root, files in lexicographic order). Written only by the installer/host.
+2. **platform** user config: `<platformRoot>/.kb/kb.config.jsonc`.
+3. **project** user config: `<projectRoot>/.kb/kb.config.jsonc` (project wins over platform, ADR-0012).
+4. **overlay**: `<projectRoot>/.kb/overlays/*.jsonc` (scenario overlays).
+
+`loadEffectiveConfig` (`@kb-labs/core-config`) returns `provenance`: for every leaf, the layer and file that supplied it. `kb config get` and `kb config show` print it. `kb config set --scope platform|project` (default `project`) is the only writer of the user files; it never touches `.kb/generated/`. The generated layer is optional: an install without it loads exactly as before.
+
 ### Open questions
 
-- Precedence between generated, user and project-override layers is not specified in the notes.
+- ~~Precedence between generated, user and project-override layers is not specified in the notes.~~ Resolved by the stage 5 loader, see "Precedence and provenance" below.
 - Location and format of the secret store referenced by config values.
 - Whether the file names `.kb/generated/` and `kb.config.jsonc` are final.
 

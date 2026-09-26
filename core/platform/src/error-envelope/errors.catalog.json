@@ -297,7 +297,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Port {port} is used by another application.",
-      "hint": "Free the port or choose another one with \"kb-create start --port <port>\"."
+      "hint": "Stop the application that uses the port, or change the host port in the installation config, then run \"kb-create start\" again."
     },
     {
       "code": "KB_HOST_START_FAILED",
@@ -327,6 +327,15 @@
       "hint": "Enable authentication or bind to a loopback address."
     },
     {
+      "code": "KB_HOST_STUDIO_ASSETS_MISSING",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "Studio is enabled but its built files were not found: {dir}.",
+      "hint": "Reinstall or update KB Labs so the Studio bundle is present, or point gateway.studio.dir at a built Studio directory, or disable gateway.studio."
+    },
+    {
       "code": "KB_HOST_VERSION_SKEW",
       "area": "host",
       "stage": "run",
@@ -352,6 +361,33 @@
       "retryable": false,
       "message": "Cannot write to the state directory {path}.",
       "hint": "Fix the directory permissions or free disk space."
+    },
+    {
+      "code": "KB_HOST_STOP_FAILED",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The host process {pid} did not stop.",
+      "hint": "Run \"kb-create stop\" again, or end the process manually and remove the stale pid file."
+    },
+    {
+      "code": "KB_HOST_SPEC_INVALID",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "The host specification in the installation receipt is invalid: {reason}.",
+      "hint": "Run \"kb-create doctor --fix\" or reinstall with \"kb-create apply\"."
+    },
+    {
+      "code": "KB_HOST_CONTROL_UNAUTHORIZED",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The launcher control channel rejected the request token.",
+      "hint": "Read the current token from control.json in the launcher state directory."
     },
     {
       "code": "KB_HOST_ADAPTER_UNAVAILABLE",
@@ -549,7 +585,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Unknown configuration key {path}.",
-      "hint": "Did you mean {suggestion}? Fix the key in kb.config.json."
+      "hint": "{suggestion} Run \"kb config show\" to list the keys that are set."
     },
     {
       "code": "KB_CONFIG_SECRET_MISSING",
@@ -559,6 +595,15 @@
       "retryable": false,
       "message": "The configuration references {variable}, which has no value.",
       "hint": "Set the environment variable or store the secret, then retry."
+    },
+    {
+      "code": "KB_CONFIG_SECRET_PLAINTEXT",
+      "area": "config",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Refusing to store a plain secret at {path}.",
+      "hint": "Put the secret in an environment variable and store a reference: {example}. Use --allow-plain-secret only for throwaway local values."
     },
     {
       "code": "KB_CONFIG_CONFLICT",
@@ -756,7 +801,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Configuration value {path} is invalid.",
-      "hint": "Fix {path} in kb.config.json; see the documentation for allowed values."
+      "hint": "Provide a valid value for {path} (see the cause) and retry; \"kb config get {path}\" shows the current one."
     },
     {
       "code": "KB_PLUGIN_NOT_FOUND",

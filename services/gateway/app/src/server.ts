@@ -58,6 +58,10 @@ import {
   createPressureOnResponse,
 } from "./pressure/index.js";
 import { globalDispatcher } from "./hosts/dispatcher.js";
+import {
+  createStudioStatic,
+  createStudioUrlRewriter,
+} from "./studio/static.js";
 import { registerWebhookAdminRoutes } from "./webhook/admin-routes.js";
 import {
   registerWebhookRoutes,
@@ -132,10 +136,23 @@ export async function createServer(
     component: "gateway-server",
     operation: "gateway.http",
   });
+  // Studio hosting (task 2.3): validated first so a missing bundle fails startup
+  // with KB_HOST_STUDIO_ASSETS_MISSING before anything is bound.
+  const studioEnabled = config.studio?.enabled === true;
+  const studioStatic = studioEnabled
+    ? await createStudioStatic(config)
+    : undefined;
   const app = Fastify({
     logger: false,
     // CD-10: gateway sits behind nginx; parse X-Forwarded-For for real client IPs.
     trustProxy: true,
+    // Studio calls auth under /api/auth/*; route it to the gateway's /auth/*.
+    ...(studioEnabled
+      ? {
+          rewriteUrl: ((rewrite) => (req: { url?: string }) =>
+            rewrite(req.url ?? "/"))(createStudioUrlRewriter(config)),
+        }
+      : {}),
   });
 
   // Cookie parsing — required by user-auth middleware and cookie-based sessions.
@@ -159,6 +176,12 @@ export async function createServer(
   await app.register(fastifyCors, { origin: false });
   const observability = new GatewayObservabilityCollector(config);
   observability.register(app);
+
+  // Studio SPA at `/` — before auth/pressure so the shell loads pre-login.
+  if (studioStatic) {
+    app.addHook("onRequest", studioStatic.onRequest);
+    gatewayLogger.info(`Studio served from ${studioStatic.dir}`);
+  }
 
   // ── Pressure control (ADR-0056) ────────────────────────────────────
   // Registered BEFORE upstream proxies so 429 is returned before the request
