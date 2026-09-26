@@ -83,3 +83,20 @@ test('workflow engine ownership zones point at real, relevant source areas', () 
   );
   assert.ok(affected.every((page) => page.matchKind === 'zone'));
 });
+
+test('documentation edits do not self-trigger the docs landing page', () => {
+  const output = execFileSync(process.execPath, ['scripts/docs-staleness.mjs'], {
+    cwd: getDocsDir(),
+    env: {
+      ...process.env,
+      CHANGED_FILES: [
+        'sites/web/apps/docs/CONVENTIONS.md',
+        'sites/web/apps/docs/sitemap.config.json',
+      ].join('\n'),
+    },
+    encoding: 'utf8',
+  });
+  const { affected } = JSON.parse(output);
+
+  assert.equal(affected.some((page) => page.slug === 'index'), false);
+});

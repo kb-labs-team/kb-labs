@@ -22,7 +22,7 @@
       "label": "Getting Started",
       "stalenessRisk": "low",
       "pages": [
-        { "slug": "index",       "type": "manual", "owners": ["sites/web/apps/docs/**"] },
+        { "slug": "index",       "type": "manual", "static": true },
         { "slug": "quick-start", "type": "hybrid", "owners": ["cli/**", "plugins/marketplace/**"] },
         { "slug": "installation","type": "hybrid", "owners": ["tools/kb-create/**", "cli/**"] },
         { "slug": "privacy",     "type": "manual", "static": true }
