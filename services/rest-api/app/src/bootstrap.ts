@@ -39,12 +39,18 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
     platform: {
       assemblyHook: makeAssemblyHook(),
     },
-    setup: startRestApi,
+    setup,
   });
 }
 
-async function startRestApi({
+/**
+ * REST API service body. Importable and side-effect-free: it only starts work
+ * when called with a resolved {@link ServiceContext} (by `runService` here, or
+ * by `runHost` in a project runtime).
+ */
+export async function setup({
   platform,
+  host,
   projectRoot: repoRoot,
   platformRoot,
   logger: serviceLogger,
@@ -145,14 +151,12 @@ async function startRestApi({
   const netOffset = Number(process.env.KB_NET_OFFSET) || 0;
   const listenPort =
     restAddr && "port" in restAddr ? restAddr.port : config.port + netOffset;
-  const restAddrHost =
-    restAddr && "host" in restAddr ? restAddr.host : undefined;
-
-  // Start server. Host precedence: REST_API_HOST env > transport's advisory host
-  // > 0.0.0.0 (0.0.0.0 keeps Docker port-forwarding working; set
-  // REST_API_HOST=127.0.0.1 to restrict to loopback when all traffic is routed
-  // through the gateway).
-  const restHost = process.env.REST_API_HOST ?? restAddrHost ?? "0.0.0.0";
+  // Bind host: the launcher already resolved it with the precedence
+  // REST_API_HOST env > transport's advisory host > 0.0.0.0 (0.0.0.0 keeps
+  // Docker port-forwarding working; set REST_API_HOST=127.0.0.1 to restrict to
+  // loopback when all traffic is routed through the gateway). An embedding
+  // process (project runtime) can pass its own loopback default.
+  const restHost = host;
   const address = await server.listen(getListenOptions(listenPort, restHost));
 
   bootstrapLogger.info("REST API server listening", { address });

@@ -5,9 +5,10 @@ It runs the gateway, the marketplace service and the state daemon as modules of
 `runHost` (`@kb-labs/shared-daemon`). Design: ADR-0043, `docs/architecture/target/04-topology.md`.
 
 Role / not responsible for: the host serves the platform APIs. It does not
-install, update or supervise itself (the launcher, `kb-create`, does), and it
-does not run project services (rest, workflow, mcp): those stay separate
-processes until stage 3.
+install, update or supervise itself (the launcher, `kb-create`, does). Project
+services (rest, workflow) run in one **project runtime** process per active
+project (`@kb-labs/project-runtime-app`), supervised by the host; mcp is not
+composable yet and still runs standalone.
 
 ## What it does
 
@@ -22,8 +23,10 @@ processes until stage 3.
   ids they name (an explicit entry for a host-run module also decides where it
   binds; TCP only), and `gateway.upstreams` entries win by name.
 - **Health.** `GET /health` on the gateway reports each running module as an
-  upstream (`upstreams.marketplace`, `upstreams.state`). `/ready` still requires
-  the `rest` upstream, which the host does not run.
+  upstream (`upstreams.marketplace`, `upstreams.state`) and adds
+  `projectRuntimes` (limit, active, per-project state; no addresses or causes).
+  `/ready` requires the machine-level upstreams only; a project runtime is ready
+  when it has been started lazily, so none running is a ready host.
 - **Logs.** One stream; modules log under their own component
   (`gateway`, `marketplace`, `state`). One signal owner (`runHost`): SIGTERM or
   SIGINT tears modules down in reverse start order (gateway first), then the
@@ -37,7 +40,10 @@ Top-level `host` section of the KB config (all optional):
 {
   "host": {
     "modules": ["gateway", "marketplace", "state"], // default: all three
-    "auth": "off" // "off" (default) | "on"
+    "auth": "off", // "off" (default) | "on"
+    "maxActiveProjects": 4,        // project runtimes running at once
+    "projectIdleTimeoutSec": 900,  // stop a runtime idle this long; 0 = never
+    "projectStartTimeoutSec": 60   // how long a runtime may take to become healthy
   }
 }
 ```
@@ -51,6 +57,28 @@ Top-level `host` section of the KB config (all optional):
 - `auth: "on"`: the gateway runs in its secured mode (login required) and may
   bind a non-loopback address.
 - A contradicting `gateway.auth.enabled` is an error, not overridden.
+
+## Project runtimes (model B)
+
+`GET|POST|... /api/v1/projects/{projectId}/<module>/<path>` is answered by the
+runtime of that project (`<module>` is `rest` or `workflow`; the rest of the
+path reaches the module unchanged). The gateway authenticates first, then asks
+the host's `ProjectRuntimeManager`, which:
+
+- checks the id against the project registry (exact `prj_...` id only; unknown
+  -> `404 KB_PROJECT_UNKNOWN`),
+- starts the runtime lazily on a loopback ephemeral port with a fresh secret
+  (no fixed ports, no `--net-offset`); a failed start -> `502
+  KB_PROJECT_RUNTIME_START_FAILED`,
+- reuses it, health-checks it, restarts it with backoff after a crash,
+- stops it after the idle timeout, evicts the least recently used idle runtime
+  when `maxActiveProjects` is reached, and answers `503
+  KB_PROJECT_RUNTIME_LIMIT` when all are busy,
+- stops all runtimes (process groups) on host shutdown. A runtime also exits by
+  itself when the host pid disappears.
+
+A runtime only serves requests carrying the host's secret header. WebSocket
+upgrades to project runtimes are not proxied yet.
 
 `KB_SOCKET_PATH` must be unset: it would make every module bind the same socket.
 

@@ -5,7 +5,7 @@
  * The installer writes it; nothing here reads the environment.
  *
  * ```jsonc
- * { "host": { "modules": ["gateway", "marketplace", "state"], "auth": "off" } }
+ * { "host": { "modules": ["gateway", "marketplace", "state"], "auth": "off", "maxActiveProjects": 4 } }
  * ```
  */
 
@@ -23,6 +23,10 @@ export type HostModuleId = (typeof HOST_MODULE_IDS)[number];
  */
 export type HostAuthMode = "off" | "on";
 
+export const DEFAULT_MAX_ACTIVE_PROJECTS = 4;
+export const DEFAULT_PROJECT_IDLE_TIMEOUT_SEC = 15 * 60;
+export const DEFAULT_PROJECT_START_TIMEOUT_SEC = 60;
+
 export const HostSettingsSchema = z.object({
   modules: z
     .array(z.enum(HOST_MODULE_IDS))
@@ -30,11 +34,20 @@ export const HostSettingsSchema = z.object({
     .default([...HOST_MODULE_IDS]),
   // The safe default: no login, and therefore loopback only.
   auth: z.enum(["off", "on"]).default("off"),
+  // Project runtimes (ADR-0043, model B): one process per active project.
+  maxActiveProjects: z.number().int().min(1).default(DEFAULT_MAX_ACTIVE_PROJECTS),
+  // A runtime with no request in flight this long is stopped; 0 keeps it forever.
+  projectIdleTimeoutSec: z.number().int().min(0).default(DEFAULT_PROJECT_IDLE_TIMEOUT_SEC),
+  // How long a starting runtime may take to become healthy.
+  projectStartTimeoutSec: z.number().int().min(1).default(DEFAULT_PROJECT_START_TIMEOUT_SEC),
 });
 
 export interface HostSettings {
   modules: readonly HostModuleId[];
   auth: HostAuthMode;
+  maxActiveProjects: number;
+  projectIdleTimeoutSec: number;
+  projectStartTimeoutSec: number;
 }
 
 /** Validates the raw `host` config section; an absent section yields the defaults. */
@@ -46,5 +59,8 @@ export function parseHostSettings(raw: unknown): HostSettings {
       .join("; ");
     throw new Error(`Invalid host configuration: ${issues}`);
   }
-  return { modules: [...new Set(parsed.data.modules)], auth: parsed.data.auth };
+  return {
+    ...parsed.data,
+    modules: [...new Set(parsed.data.modules)],
+  };
 }

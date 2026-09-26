@@ -7,7 +7,7 @@ export const manifest: ServiceManifest = {
   version: '1.2.0',
   description: 'Platform REST API daemon — routes, plugin execution, OpenAPI',
   runtime: {
-    entry: 'dist/index.js',
+    entry: 'dist/bin.js',
     port: 5050,
     // REST health aggregates registry and adapter state and can remain
     // unavailable while the process is already serving its socket. kb-dev's
