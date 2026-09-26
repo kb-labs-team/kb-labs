@@ -41,7 +41,7 @@ export function envReferenceNames(value: string): string[] {
 }
 
 /** True when the whole string is exactly one `${ENV_VAR}` reference. */
-export function isEnvReference(value: unknown): value is string {
+export function isEnvReference(value: unknown): boolean {
   return typeof value === 'string' && /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value.trim());
 }
 
