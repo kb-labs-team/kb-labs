@@ -1,0 +1,55 @@
+{
+  "name": "@kb-labs/host-app",
+  "description": "Machine-level host: one process running gateway, marketplace and state daemon",
+  "version": "2.120.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "kb-host": "./dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "clean": "rimraf dist",
+    "dev": "tsx watch src/bin.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "start": "node dist/bin.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kb-labs/adapters-service-transport-http": "workspace:*",
+    "@kb-labs/core-config": "workspace:*",
+    "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/core-runtime": "workspace:*",
+    "@kb-labs/core-state-daemon": "workspace:*",
+    "@kb-labs/gateway-app": "workspace:*",
+    "@kb-labs/gateway-contracts": "workspace:*",
+    "@kb-labs/marketplace-app": "workspace:*",
+    "@kb-labs/plugin-runtime": "workspace:*",
+    "@kb-labs/shared-daemon": "workspace:*",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
+    "@types/node": "^24.3.3",
+    "eslint": "^9",
+    "rimraf": "^6.0.1",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.6"
+  },
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
