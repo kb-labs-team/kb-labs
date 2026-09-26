@@ -20,7 +20,6 @@ For operational incidents (service outages, data loss, security leaks), see [Ope
 **Fix.**
 
 ```bash
-pnpm kb marketplace plugins refresh
 ```
 
 Then re-run your command. This is the single most common issue — if a command should work and doesn't, clear the cache first.
@@ -209,7 +208,7 @@ Then `pnpm install && pnpm build:studio`. `createStudioRemoteConfig` validates t
 ```bash
 # Kill every host-agent and workflow process:
 pkill -9 -f "host-agent-app/dist/index.js"
-pkill -9 -f "workflow-daemon/dist/index.js"
+pkill -9 -f "workflow-daemon/dist/bin.js"
 
 # Verify:
 ps aux | grep -E "(host-agent|workflow)" | grep -v grep

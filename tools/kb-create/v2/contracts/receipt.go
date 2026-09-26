@@ -49,15 +49,18 @@ type ProviderBinding struct {
 // The runtime converts its artifacts/config/variables to actions; it must not
 // re-resolve versions or discover unplanned services.
 type ResolvedInstallPlan struct {
-	Schema              string            `json:"schema"`
-	Request             InstallRequest    `json:"request"`
-	Artifacts           []Artifact        `json:"artifacts"`
-	ServiceGraph        ServiceGraph      `json:"serviceGraph"`
-	ProviderBindings    []ProviderBinding `json:"providerBindings,omitempty"`
-	ConfigPatches       []ConfigPatch     `json:"configPatches,omitempty"`
-	PlanHash            string            `json:"planHash"`
-	ReleaseDigest       string            `json:"releaseDigest,omitempty"`
-	ScenarioStateDigest string            `json:"scenarioStateDigest,omitempty"`
+	Schema           string            `json:"schema"`
+	Request          InstallRequest    `json:"request"`
+	Artifacts        []Artifact        `json:"artifacts"`
+	ServiceGraph     ServiceGraph      `json:"serviceGraph"`
+	ProviderBindings []ProviderBinding `json:"providerBindings,omitempty"`
+	// Host, when declared, makes the launcher supervise the host process
+	// directly instead of driving the service graph through kb-dev.
+	Host                *HostSpec     `json:"host,omitempty"`
+	ConfigPatches       []ConfigPatch `json:"configPatches,omitempty"`
+	PlanHash            string        `json:"planHash"`
+	ReleaseDigest       string        `json:"releaseDigest,omitempty"`
+	ScenarioStateDigest string        `json:"scenarioStateDigest,omitempty"`
 }
 
 type ConfigPatch struct {

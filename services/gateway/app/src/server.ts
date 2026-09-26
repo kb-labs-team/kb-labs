@@ -58,11 +58,19 @@ import {
   createPressureOnResponse,
 } from "./pressure/index.js";
 import { globalDispatcher } from "./hosts/dispatcher.js";
+import {
+  createStudioStatic,
+  createStudioUrlRewriter,
+} from "./studio/static.js";
 import { registerWebhookAdminRoutes } from "./webhook/admin-routes.js";
 import {
   registerWebhookRoutes,
   type WebhookManifestEntry,
 } from "./webhook/router.js";
+import {
+  registerProjectRoutes,
+  type ProjectRouting,
+} from "./project-routing.js";
 
 /**
  * User-auth dependencies injected from bootstrap. All fields optional so
@@ -120,6 +128,7 @@ export async function createServer(
   serviceTransport: IServiceTransport,
   userAuth?: UserAuthServerDeps,
   webhookManifests?: WebhookManifestEntry[],
+  projectRouting?: ProjectRouting,
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -127,10 +136,23 @@ export async function createServer(
     component: "gateway-server",
     operation: "gateway.http",
   });
+  // Studio hosting (task 2.3): validated first so a missing bundle fails startup
+  // with KB_HOST_STUDIO_ASSETS_MISSING before anything is bound.
+  const studioEnabled = config.studio?.enabled === true;
+  const studioStatic = studioEnabled
+    ? await createStudioStatic(config)
+    : undefined;
   const app = Fastify({
     logger: false,
     // CD-10: gateway sits behind nginx; parse X-Forwarded-For for real client IPs.
     trustProxy: true,
+    // Studio calls auth under /api/auth/*; route it to the gateway's /auth/*.
+    ...(studioEnabled
+      ? {
+          rewriteUrl: ((rewrite) => (req: { url?: string }) =>
+            rewrite(req.url ?? "/"))(createStudioUrlRewriter(config)),
+        }
+      : {}),
   });
 
   // Cookie parsing — required by user-auth middleware and cookie-based sessions.
@@ -154,6 +176,12 @@ export async function createServer(
   await app.register(fastifyCors, { origin: false });
   const observability = new GatewayObservabilityCollector(config);
   observability.register(app);
+
+  // Studio SPA at `/` — before auth/pressure so the shell loads pre-login.
+  if (studioStatic) {
+    app.addHook("onRequest", studioStatic.onRequest);
+    gatewayLogger.info(`Studio served from ${studioStatic.dir}`);
+  }
 
   // ── Pressure control (ADR-0056) ────────────────────────────────────
   // Registered BEFORE upstream proxies so 429 is returned before the request
@@ -291,6 +319,17 @@ export async function createServer(
       : "";
     gatewayLogger.info(
       `Upstream registered: ${name} → ${connDesc} (${upstream.prefix}${wsDesc})`,
+    );
+  }
+
+  // ── Project runtimes (dynamic upstreams) ────────────────────────────
+  // `/api/v1/projects/{projectId}/*` is resolved per request by the embedding
+  // host, unlike the static upstreams above. Registered after the global auth
+  // hooks, so it is covered by the same authentication.
+  if (projectRouting) {
+    await registerProjectRoutes(app, projectRouting);
+    gatewayLogger.info(
+      "Project routing enabled: /api/v1/projects/{projectId}/*",
     );
   }
 
@@ -488,7 +527,11 @@ export async function createServer(
       "/health",
       { schema: { tags: ["System"], summary: "Gateway health check" } },
       async () => {
-        return collectHealthSnapshot();
+        const snapshot = await collectHealthSnapshot();
+        // Runtime state changes faster than the cached snapshot lives: read it live.
+        return projectRouting
+          ? { ...snapshot, projectRuntimes: projectRouting.status() }
+          : snapshot;
       },
     );
 
@@ -519,10 +562,17 @@ export async function createServer(
           (health.upstreams as
             | Record<string, { status?: string }>
             | undefined) ?? {};
-        const missingRequiredUpstreams = ["rest"].filter(
+        // A gateway that serves project runtimes has no project-scoped
+        // upstream to wait for: runtimes start lazily on first request. The
+        // machine-level upstreams it does route to are all required.
+        const requiredUpstreams = projectRouting
+          ? Object.keys(config.upstreams)
+          : ["rest"];
+        const missingRequiredUpstreams = requiredUpstreams.filter(
           (id) => (upstreams[id]?.status ?? "down") !== "up",
         );
         const ready = missingRequiredUpstreams.length === 0;
+        const projectStatus = projectRouting?.status();
 
         return reply.code(ready ? 200 : 503).send(
           createServiceReadyResponse({
@@ -547,6 +597,16 @@ export async function createServer(
                 ready: (upstreams.marketplace?.status ?? "down") === "up",
                 status: upstreams.marketplace?.status ?? "down",
               },
+              ...(projectStatus
+                ? {
+                    // Lazy: a project runtime is ready once started on demand,
+                    // so none being active is a normal, ready state.
+                    projectRuntimes: {
+                      ready: true,
+                      status: `${projectStatus.active}/${projectStatus.limit} active`,
+                    },
+                  }
+                : {}),
             },
           }),
         );

@@ -44,6 +44,7 @@ import { createServer, type UserAuthServerDeps } from "./server.js";
 import { HostRegistry } from "./hosts/registry.js";
 import { registerPressureLimits } from "./pressure/index.js";
 import type { WebhookManifestEntry } from "./webhook/router.js";
+import type { ProjectRouting } from "./project-routing.js";
 
 export async function bootstrap(
   repoRoot: string = process.cwd(),
@@ -85,6 +86,12 @@ export interface GatewayEmbedOptions {
    * it (bind host, access mode, upstreams). May throw to refuse startup.
    */
   configure?: (config: GatewayConfig) => GatewayConfig;
+  /**
+   * Serves `/api/v1/projects/{projectId}/*` from the runtime of that project
+   * (dynamic upstreams). Without it the gateway only routes to the static
+   * `upstreams` of its config.
+   */
+  projectRouting?: ProjectRouting;
 }
 
 /** Gateway service body with embedding hooks; {@link setup} is the no-hook case. */
@@ -448,6 +455,7 @@ export async function startGateway(
     serviceTransport,
     userAuth,
     webhookManifests,
+    options.projectRouting,
   );
 
   // 11. Listen

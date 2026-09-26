@@ -85,6 +85,34 @@ The platform bundle can also declare an OS/architecture-specific `kb-dev`
 binary asset. V2 verifies its SHA-256 and installs it in `.kb/v2/bin`; a CLI
 `--kb-dev` is an explicit development override, not a release dependency.
 
+## Host supervision (stage 4)
+
+`kb-create start | stop | status | restart` supervise the platform host. Add
+`--json` for the single JSON envelope (errors use the unified contract, codes
+`KB_HOST_*`); without it the commands print short text. All take
+`--platform-root`.
+
+- The runner is chosen from the active receipt. If `plan.host` (a `HostSpec`:
+  `command`, `args`, `env`, `workingDir`, `healthUrl`, `readyTimeoutSeconds`,
+  `stopGraceSeconds`) is declared, the launcher runs that command directly
+  (`ProcessRunner`: own process group, pid file and log in the state home,
+  health polling, SIGTERM then kill after the grace period). Without it the
+  existing kb-dev startup is used unchanged.
+- `start` spawns `kb-create supervise` detached. `supervise` (foreground; the
+  future autostart entry) keeps the host and serves the control channel.
+  `start --foreground` runs only the host in the current process.
+- State home: `$KB_CREATE_STATE_HOME`, else `<platform-root>/.kb/v2/state`
+  (`host.pid`, `host.log`, `supervisor.pid`, `supervisor.log`, `control.json`,
+  `update-requests.json`).
+- Control channel: loopback, random port, bearer token in `control.json`
+  (0600). Endpoints `GET /v1/status`, `POST /v1/host/restart`,
+  `POST /v1/update-request` (only records the request; the update flow is later
+  work). The protocol and its shared fixtures are documented in
+  `core/platform/src/launcher-control/README.md`.
+
+Not yet: autostart installation, automatic restart of a crashed host, the update
+flow, removal of kb-dev from the user runtime.
+
 ## Why this launcher
 
 The previous launcher split installation ownership between separate command

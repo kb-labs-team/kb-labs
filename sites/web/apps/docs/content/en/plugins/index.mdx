@@ -30,7 +30,6 @@ Fastest path — **[Guides → First Plugin](/guides/first-plugin)**. Scaffolds 
 kb scaffold run plugin my-plugin --yes
 cd .kb/plugins/my-plugin
 pnpm install && pnpm build
-kb marketplace plugins refresh
 kb my-plugin hello
 ```
 
@@ -300,7 +299,6 @@ When a handler is triggered, the runner creates a context, enforces permissions 
 - [ ] Implement the handler with `defineCommand({ id, handler: { async execute(ctx, input) { ... } } })`.
 - [ ] Build: `pnpm --filter your-plugin run build`.
 - [ ] Link: `kb marketplace link ./path/to/your-plugin`.
-- [ ] Clear cache: `pnpm kb marketplace plugins refresh`.
 - [ ] Run: `pnpm kb your-plugin:your-command`.
 
 If step 6 or 8 fail, check [Troubleshooting](/guides/troubleshooting) — the top three entries cover 90% of first-plugin friction.

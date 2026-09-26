@@ -91,7 +91,6 @@ For the zero-downtime version, you'd need two workflow daemons pointing at a sha
 
 ```bash
 pnpm kb marketplace update @scope/plugin-entry
-pnpm kb marketplace plugins refresh
 # Restart whichever service hosts the plugin's handlers:
 kb-dev restart rest     # if the plugin has REST routes
 # Or no restart needed for CLI-only plugins
@@ -103,7 +102,6 @@ kb-dev restart rest     # if the plugin has REST routes
 
 ```bash
 pnpm kb marketplace install @scope/plugin-entry
-pnpm kb marketplace plugins refresh
 ```
 
 After install, the plugin is immediately available from the CLI. For REST routes and Studio pages, restart the hosting service:
@@ -128,7 +126,6 @@ pnpm kb marketplace plugins enable @scope/plugin-entry
 
 ```bash
 pnpm kb marketplace uninstall @scope/plugin-entry
-pnpm kb marketplace plugins refresh
 ```
 
 Removes from `marketplace.lock` and runs `pnpm remove` to drop the package from `node_modules`.
@@ -136,7 +133,6 @@ Removes from `marketplace.lock` and runs `pnpm remove` to drop the package from 
 ### Clear the plugin registry cache
 
 ```bash
-pnpm kb marketplace plugins refresh
 ```
 
 Every long-running service caches the plugin registry in memory. If a plugin was installed, updated, or linked and isn't showing up, clear the cache and restart. This is the single most common fix for "my plugin doesn't appear".
@@ -364,12 +360,10 @@ curl -f http://localhost:7777/health       # state daemon
 
 | Symptom | Likely fix |
 |---|---|
-| Plugin doesn't appear after install | `pnpm kb marketplace plugins refresh` |
 | REST API returns 401 | Check `Authorization` header; check `GATEWAY_JWT_SECRET` didn't rotate |
 | Workflow runs stuck in `queued` | Check workflow daemon logs; verify broker isn't backed up |
 | Studio pages show "Failed to load" | Hard-reload browser; plugin Studio remotes are cached aggressively |
 | LLM calls fail with "not configured" | Check `platform.adapters.llm` in `kb.config.json`; verify `OPENAI_API_KEY` is set |
-| "Module not found" in a plugin | Plugin was rebuilt but cache wasn't cleared; `pnpm kb marketplace plugins refresh` |
 | Port already in use | Another service is on that port; `lsof -i :5050` to find it |
 | High memory usage | Reindex Mind RAG; check for plugins without quota limits |
 | Slow CLI startup | Clear registry cache; check for slow adapter init (network timeouts) |

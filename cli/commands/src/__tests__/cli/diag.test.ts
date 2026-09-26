@@ -171,7 +171,7 @@ describe('diag — base (no --command)', () => {
         severity: 'error' as const,
         code: 'INTEGRITY_MISMATCH' as never,
         message: 'Hash mismatch for @kb-labs/workflow-entry',
-        remediation: 'kb marketplace plugins refresh',
+        remediation: 'kb marketplace plugins doctor',
         context: { pluginId: '@kb-labs/workflow-entry' },
         ts: Date.now(),
       } as never,

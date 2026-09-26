@@ -66,7 +66,6 @@ Or for development (link local source):
 
 ```bash
 pnpm kb marketplace plugins link .
-pnpm kb marketplace plugins refresh
 ```
 
 ---

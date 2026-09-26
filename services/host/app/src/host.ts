@@ -11,8 +11,11 @@
  * config. See ADR-0043 and docs/architecture/target/04-topology.md.
  */
 
+import { createRequire } from "node:module";
 import { loadEffectiveConfig } from "@kb-labs/core-config";
+import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import type { IServiceTransport } from "@kb-labs/core-platform";
+import { createProjectRegistry } from "@kb-labs/core-project-registry";
 import type { PlatformAssemblyHook } from "@kb-labs/core-runtime";
 import {
   isLoopbackHost,
@@ -24,12 +27,20 @@ import { setup as setupState } from "@kb-labs/core-state-daemon";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import {
   defineHostModule,
+  reserveLoopbackPorts,
   runHost,
   type HostConfig,
   type HostModule,
   type ServiceContext,
 } from "@kb-labs/shared-daemon";
 import { applyHostGatewayPolicy, type GatewayUpstreams } from "./policy.js";
+import { createChildProcessLauncher } from "./project-runtime/launcher.js";
+import {
+  ProjectRuntimeManager,
+  type ProjectRuntimeManagerOptions,
+  type RuntimeLauncher,
+} from "./project-runtime/manager.js";
+import { createProjectRouting } from "./project-runtime/routing.js";
 import {
   parseHostSettings,
   type HostModuleId,
@@ -39,7 +50,6 @@ import {
   createGeneratedTransport,
   HostServiceTransport,
   INTERNAL_BIND_HOST,
-  reserveLoopbackPorts,
 } from "./transport.js";
 
 export const HOST_APP_ID = "kb-host";
@@ -129,11 +139,46 @@ function generatedUpstreams(settings: HostSettings): GatewayUpstreams {
   return upstreams;
 }
 
+/**
+ * Overrides for the project runtime supervisor. Everything has a default taken
+ * from the `host` settings; this exists for embedding and tests.
+ */
+export interface ProjectRuntimeOverrides
+  extends Partial<
+    Pick<
+      ProjectRuntimeManagerOptions,
+      | "idleTimeoutMs"
+      | "startTimeoutMs"
+      | "startPollMs"
+      | "healthIntervalMs"
+      | "healthFailureThreshold"
+      | "sweepIntervalMs"
+      | "restart"
+    >
+  > {
+  /** Replaces the child-process launcher. */
+  launcher?: RuntimeLauncher;
+  /** Script started with node for each runtime; defaults to the `kb-project-runtime` bin. */
+  entry?: string;
+  /** SIGTERM grace period of the default launcher before SIGKILL. */
+  stopTimeoutMs?: number;
+}
+
 export interface HostOptions {
   /** Starting directory for project/platform root resolution. */
   startDir?: string;
   /** Entrypoint import.meta.url for installed-mode platform discovery. */
   moduleUrl?: string;
+  /** Machine-level project registry; defaults to the one under `KB_HOME` (`~/.kb`). */
+  projectRegistry?: IProjectRegistry;
+  projectRuntime?: ProjectRuntimeOverrides;
+}
+
+/** The `kb-project-runtime` executable that ships with this install. */
+function defaultRuntimeEntry(): string {
+  return createRequire(import.meta.url).resolve(
+    "@kb-labs/project-runtime-app/bin",
+  );
 }
 
 /**
@@ -230,13 +275,66 @@ export async function createHostConfig(
         });
         return skipped();
       }
-      return startGateway(
+      const logger = ctx.logger.forComponent("project-runtime");
+      const registry = options.projectRegistry ?? createProjectRegistry();
+      const overrides = options.projectRuntime ?? {};
+      const launcher =
+        overrides.launcher ??
+        createChildProcessLauncher({
+          entry: overrides.entry ?? defaultRuntimeEntry(),
+          // One platform per machine: every project runtime runs on the host's.
+          env: { KB_PLATFORM_ROOT: ctx.platformRoot },
+          ...(overrides.stopTimeoutMs !== undefined
+            ? { stopTimeoutMs: overrides.stopTimeoutMs }
+            : {}),
+        });
+      const manager = new ProjectRuntimeManager({
+        launcher,
+        logger,
+        maxActiveProjects: settings.maxActiveProjects,
+        idleTimeoutMs:
+          overrides.idleTimeoutMs ?? settings.projectIdleTimeoutSec * 1000,
+        startTimeoutMs:
+          overrides.startTimeoutMs ?? settings.projectStartTimeoutSec * 1000,
+        ...(overrides.startPollMs !== undefined
+          ? { startPollMs: overrides.startPollMs }
+          : {}),
+        ...(overrides.healthIntervalMs !== undefined
+          ? { healthIntervalMs: overrides.healthIntervalMs }
+          : {}),
+        ...(overrides.healthFailureThreshold !== undefined
+          ? { healthFailureThreshold: overrides.healthFailureThreshold }
+          : {}),
+        ...(overrides.sweepIntervalMs !== undefined
+          ? { sweepIntervalMs: overrides.sweepIntervalMs }
+          : {}),
+        ...(overrides.restart ? { restart: overrides.restart } : {}),
+        onStarted: (project) => {
+          registry.touch(project.id).catch((error: unknown) => {
+            logger.warn("Could not record project use", {
+              projectId: project.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        },
+      });
+
+      const stopGateway = await startGateway(
         { ...ctx, logger: ctx.logger.forComponent("gateway") },
         {
           configure: (config) =>
             applyHostGatewayPolicy(config, { auth: settings.auth, upstreams }),
+          projectRouting: createProjectRouting({ registry, manager, logger }),
         },
       );
+      return async () => {
+        // Stop taking requests first, then stop the runtimes they were for.
+        try {
+          await stopGateway();
+        } finally {
+          await manager.stopAll();
+        }
+      };
     },
   });
 

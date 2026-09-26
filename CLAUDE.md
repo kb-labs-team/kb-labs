@@ -37,7 +37,7 @@ These flat skills are auto-loaded by their `globs`; consult only the one matchin
 - `dev-plugin.md`, `dev-core.md`, `dev-monorepo.md`
 - `new-route.md`, `deps-hygiene.md`, `docker-build-hygiene.md`, `worktree-isolated-stack.md`
 - `tool-kb-dev.md`, `tool-kb-devkit.md`, `tool-kb-deploy.md`, `tool-kb-monitor.md`, `tool-release.md`, `tool-generate.md`
-- `commit.md`, `marketplace-rehash.md`, `aeza-proxy.md`, `kb-labs-site-voice.md`, `clickup.md`
+- `commit.md`, `aeza-proxy.md`, `kb-labs-site-voice.md`, `clickup.md`
 
 The `kb-labs-*` folders are managed by KB Labs and are intentionally not maintained here.
 

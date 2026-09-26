@@ -214,7 +214,6 @@ pnpm --filter @kb-labs/steward-entry run test:cli  # CLI handler tests
 
 ```bash
 pnpm kb marketplace plugins link .
-pnpm kb marketplace plugins refresh
 ```
 
 **Health check**

@@ -4,6 +4,7 @@
 package v2cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,6 +18,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/diagnostics"
 	"github.com/kb-labs/create/v2/doctor"
+	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/logs"
 	"github.com/kb-labs/create/v2/preflight"
@@ -77,9 +79,15 @@ func Execute() int {
 	registry := flag.String("registry", "", "npm registry for exact artifact installation")
 	kbdev := flag.String("kb-dev", "", "optional override for release-managed kb-dev binary")
 	telemetryURL := flag.String("telemetry-endpoint", "", "opt-in anonymous telemetry endpoint")
+	foreground := flag.Bool("foreground", false, "start: run the host directly in this process, without the control channel")
+	jsonOutput := flag.Bool("json", false, "start/stop/restart: emit the JSON envelope instead of text")
 	telemetryAllowed := flag.Bool("telemetry-consent", false, "allow anonymous operational telemetry")
 	flag.Parse()
 	telemetryEndpoint, telemetryConsent = *telemetryURL, *telemetryAllowed
+	if isHostOperation(*operation) {
+		executable, _ := os.Executable()
+		return hostCommand{PlatformRoot: *platformRoot, KBDev: *kbdev, Foreground: *foreground, JSON: *jsonOutput || *operation == "supervise", Executable: executable, Version: buildVersion, Out: os.Stdout, Err: os.Stderr}.run(*operation)
+	}
 	direct := directRequest{PlatformRoot: *requestRoot, ProjectRoot: *projectRoot, PlatformVersion: *platformVersion, PlatformChannel: *platformChannel, SDKVersion: *sdkVersion, ServiceProfile: *serviceProfile, Plugins: *plugins, Adapters: *adapters, Policy: *policy, Offline: *offline}
 	return run(*operation, *index, *input, *doctorInput, *platformRoot, *snapshotID, *registry, *kbdev, *secretEnv, *doctorFix, *scenarioID, *scenarioAnswers, *scenarioResume, direct, os.Stdout)
 }
@@ -90,7 +98,7 @@ func normalizeOperationArgument() {
 	}
 	operation := os.Args[1]
 	switch operation {
-	case "plan", "apply", "update", "uninstall", "rollback", "doctor", "wizard", "status":
+	case "plan", "apply", "update", "uninstall", "rollback", "doctor", "wizard", "status", "start", "stop", "restart", "supervise":
 		os.Args = append([]string{os.Args[0], "--operation", operation}, os.Args[2:]...)
 	}
 }
@@ -218,6 +226,16 @@ func runStatus(platformRoot, kbdev string, output *os.File) int {
 	if err != nil {
 		write(output, failure("KB_INSTALL_RECEIPT_UNAVAILABLE", "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err))
 		return 2
+	}
+	// An installation that declares a host spec is supervised directly; its
+	// service graph is not a kb-dev graph, so report the host instead.
+	if active.Plan.Host != nil {
+		runner, selectErr := host.Select(platformRoot, kbdev)
+		if selectErr != nil {
+			write(output, map[string]any{"ok": false, "error": asLauncherError(selectErr)})
+			return 2
+		}
+		return hostCommand{PlatformRoot: platformRoot, JSON: true, Out: output, Err: os.Stderr}.hostStatus(context.Background(), runner, host.StateFor(platformRoot))
 	}
 	check, err := verify.Run(active.Plan, services.KBDev{Binary: kbdev}, time.Now().UTC())
 	if err != nil {

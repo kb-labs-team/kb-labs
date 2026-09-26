@@ -13,3 +13,12 @@ export {
 } from "./bootstrap.js";
 export { loadGatewayConfig } from "./config.js";
 export { resolvePublicUrl } from "./server.js";
+export {
+  PROJECT_ROUTE_PREFIX,
+  ProjectRoutingError,
+  registerProjectRoutes,
+  type ProjectRouting,
+  type ProjectRoutingStatus,
+  type ProjectRuntimeSummary,
+  type ProjectUpstream,
+} from "./project-routing.js";

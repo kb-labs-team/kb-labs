@@ -6,7 +6,6 @@ import type {
 import {
   createGeneratedTransport,
   HostServiceTransport,
-  reserveLoopbackPorts,
 } from "../transport.js";
 
 const ok: ServiceTransportResponse = { ok: true, statusCode: 200 };
@@ -23,16 +22,6 @@ function configuredTransport(
     close: vi.fn(),
   };
 }
-
-describe("reserveLoopbackPorts", () => {
-  it("returns distinct free ports", async () => {
-    const ports = await reserveLoopbackPorts(4);
-    expect(new Set(ports).size).toBe(4);
-    for (const port of ports) {
-      expect(port).toBeGreaterThan(1023);
-    }
-  });
-});
 
 describe("HostServiceTransport", () => {
   it("generates loopback routes and bind addresses from the same map", () => {

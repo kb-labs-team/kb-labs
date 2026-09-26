@@ -41,7 +41,6 @@ Extends S-001 Phase 5 — isolated scenario for the plugin authoring loop.
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 8 | `kb marketplace plugins refresh` | Cache cleared | | ⬜ |
 | 9 | `kb my-plugin hello --who=World` | `Hello, World from my-plugin` | | ⬜ |
 | 10 | `kb my-plugin hello --json` | Valid JSON output | | ⬜ |
 | 11 | `kb my-plugin ping` | Health ping response | | ⬜ |
@@ -51,7 +50,6 @@ Extends S-001 Phase 5 — isolated scenario for the plugin authoring loop.
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
 | 12 | Edit handler, change response text, `pnpm build` | Rebuilds fast (incremental) | | ⬜ |
-| 13 | `kb marketplace plugins refresh && kb my-plugin hello` | Shows updated response, no stale cache | | ⬜ |
 
 ### Phase 5 — Type safety
 

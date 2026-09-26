@@ -61,6 +61,6 @@ Status: implemented in `feat/unified-discovery`. Context: ADR-0048 finding F1, A
 ## 5. Notes and open points
 
 - The task brief assumed the manifest cache had moved to the project state directory (`resolveRuntimeStatePath`). Master has no such function and the cache was still `<cwd>/.kb/cache/cli-manifests.json`; instead of moving it, the cache is deleted because static reading replaces it. If a state-dir cache is still wanted for plugins without a static manifest, it is a follow-up on top of this API.
-- `kb marketplace plugins refresh` and `rehash` still delete the (now never written) legacy cache file; the command and its documentation references should be removed in a follow-up.
+- After #494 moved the manifest cache to the project state directory, the cache was still deleted: only a plugin without a build-emitted `dist/manifest.json` (third-party, not built by devkit tsup) takes the slower `import()` path, and none exists in this repo, so no cache is kept for it. `kb marketplace plugins refresh` and `rehash` (which only cleared that cache) were removed with it; a handful of prose references in site docs remain to be reworded.
 - `discoverAdapters` (core/runtime) still reads locks itself and lets the project lock override platform adapters (ADR-0048 F7). Adapters are a different entity kind; not touched here.
 - In a monorepo checkout a lock is optional: workspace packages are found without one, so a stale machine-local lock cannot hide them.

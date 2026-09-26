@@ -9,6 +9,7 @@
  */
 
 import { defineCommand, type PluginContextV3 } from '@kb-labs/sdk';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { promises as fs } from 'fs';
 import path from 'path';
@@ -132,7 +133,7 @@ export default defineCommand({
         return { ok: false, error: 'Command failed', result: err };
       }
 
-      const analyticsDir = path.join(process.cwd(), '.kb', 'analytics', 'buffer');
+      const analyticsDir = resolveRuntimeStatePath(process.cwd(), ['analytics', 'buffer']);
       const files = await listEventFiles(analyticsDir, days);
       if (files.length === 0) {
         const out = { success: true, message: 'No analytics files found for selected period', runs: 0 };
@@ -143,7 +144,7 @@ export default defineCommand({
       const since = Date.now() - days * 24 * 60 * 60 * 1000;
       let { runs, regressions } = await readEvents(files, since, sessionIdFilter, limit);
       if (runs.length === 0) {
-        const sqlitePath = path.join(process.cwd(), '.kb', 'analytics', 'analytics.sqlite');
+        const sqlitePath = resolveRuntimeStatePath(process.cwd(), ['analytics', 'analytics.sqlite']);
         const sqliteEvents = await readEventsFromSqlite(sqlitePath, since, sessionIdFilter, limit);
         runs = sqliteEvents.runs;
         regressions = sqliteEvents.regressions;

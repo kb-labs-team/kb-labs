@@ -1,0 +1,19 @@
+{
+  "description": "Every endpoint, known or not, answers 401 without a bearer token.",
+  "request": { "method": "GET", "path": "/v1/status", "auth": "none" },
+  "response": {
+    "status": 401,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "KB_HOST_CONTROL_UNAUTHORIZED",
+        "area": "host",
+        "stage": "run",
+        "severity": "error",
+        "retryable": false,
+        "message": "The launcher control channel rejected the request token.",
+        "hint": "Read the current token from control.json in the launcher state directory."
+      }
+    }
+  }
+}

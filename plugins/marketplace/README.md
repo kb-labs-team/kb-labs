@@ -72,7 +72,6 @@ kb marketplace plugins disable @kb-labs/commit-entry
 kb marketplace plugins link    .        # link local plugin for development
 kb marketplace plugins unlink  @kb-labs/my-plugin
 kb marketplace plugins doctor           # diagnose plugin issues
-kb marketplace plugins refresh          # clear CLI discovery cache
 ```
 
 **Full command reference**
@@ -89,7 +88,6 @@ kb marketplace plugins refresh          # clear CLI discovery cache
 | `kb marketplace plugins link` | Link a local plugin |
 | `kb marketplace plugins unlink` | Unlink a plugin |
 | `kb marketplace plugins doctor` | Diagnose issues |
-| `kb marketplace plugins refresh` | Clear CLI discovery cache |
 
 ---
 

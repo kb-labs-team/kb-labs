@@ -25,13 +25,16 @@
   "dependencies": {
     "@kb-labs/adapters-service-transport-http": "workspace:*",
     "@kb-labs/core-config": "workspace:*",
+    "@kb-labs/core-contracts": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/core-runtime": "workspace:*",
     "@kb-labs/core-state-daemon": "workspace:*",
     "@kb-labs/gateway-app": "workspace:*",
     "@kb-labs/gateway-contracts": "workspace:*",
     "@kb-labs/marketplace-app": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",
+    "@kb-labs/project-runtime-app": "workspace:*",
     "@kb-labs/shared-daemon": "workspace:*",
     "zod": "^3.25.76"
   },

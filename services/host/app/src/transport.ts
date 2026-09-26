@@ -10,7 +10,6 @@
  * authoritative for the service ids it knows.
  */
 
-import { createServer } from "node:net";
 import { HttpServiceTransport } from "@kb-labs/adapters-service-transport-http";
 import type {
   IServiceTransport,
@@ -20,44 +19,9 @@ import type {
   ServiceTransportResponse,
   ServiceTransportStream,
 } from "@kb-labs/core-platform";
+import { LOOPBACK_HOST } from "@kb-labs/shared-daemon";
 
-export const INTERNAL_BIND_HOST = "127.0.0.1";
-
-/**
- * Reserves `count` distinct free loopback TCP ports. All probe sockets are held
- * open until every port is known, so the same port is never handed out twice.
- * There is an unavoidable window between release and the module's own bind;
- * callers bind immediately after.
- */
-export async function reserveLoopbackPorts(count: number): Promise<number[]> {
-  const probes = await Promise.all(
-    Array.from(
-      { length: count },
-      () =>
-        new Promise<ReturnType<typeof createServer>>((resolve, reject) => {
-          const probe = createServer();
-          probe.once("error", reject);
-          probe.listen(0, INTERNAL_BIND_HOST, () => resolve(probe));
-        }),
-    ),
-  );
-  const ports = probes.map((probe) => {
-    const address = probe.address();
-    if (address === null || typeof address === "string") {
-      throw new Error("Could not reserve a loopback port");
-    }
-    return address.port;
-  });
-  await Promise.all(
-    probes.map(
-      (probe) =>
-        new Promise<void>((resolve) => {
-          probe.close(() => resolve());
-        }),
-    ),
-  );
-  return ports;
-}
+export const INTERNAL_BIND_HOST = LOOPBACK_HOST;
 
 /** Builds the transport for the host-owned services: `serviceId -> loopback port`. */
 export function createGeneratedTransport(
