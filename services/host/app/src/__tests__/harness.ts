@@ -11,9 +11,8 @@ import { join } from "node:path";
 import { vi } from "vitest";
 import { platform, resetPlatformRuntime } from "@kb-labs/core-runtime";
 import type { IServiceTransport } from "@kb-labs/core-platform";
-import { runHost } from "@kb-labs/shared-daemon";
-import { createHostConfig } from "../host.js";
-import { reserveLoopbackPorts } from "../transport.js";
+import { reserveLoopbackPorts, runHost } from "@kb-labs/shared-daemon";
+import { createHostConfig, type HostOptions } from "../host.js";
 
 export interface HostFixtureConfig {
   /** `host` section of the KB config. */
@@ -112,6 +111,7 @@ function isolateEnvironment(home: string): () => void {
 
 export async function startTestHost(
   config: HostFixtureConfig = {},
+  hostOptions: HostOptions = {},
 ): Promise<RunningHost> {
   const gatewayPort = await reservePort();
   const projectRoot = await writeProject(config, gatewayPort);
@@ -137,7 +137,9 @@ export async function startTestHost(
   };
 
   try {
-    await runHost(await createHostConfig({ startDir: projectRoot }));
+    await runHost(
+      await createHostConfig({ ...hostOptions, startDir: projectRoot }),
+    );
   } catch (error) {
     await cleanup();
     throw error;
