@@ -1,0 +1,10 @@
+{
+  "description": "Shape of control.json in the launcher state directory (file mode 0600). Not an HTTP exchange.",
+  "file": {
+    "protocol": 1,
+    "address": "$string",
+    "token": "$string",
+    "pid": "$number",
+    "version": "$string"
+  }
+}

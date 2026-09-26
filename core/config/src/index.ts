@@ -36,6 +36,9 @@ export { validateProductConfig, registerProductSchema } from './validation/valid
 // loader below and by services that need raw access.
 export * from './overlay/index.js';
 
-// Canonical layered config loader: platform → project → project overlays.
+// Config layers (generated vs user, provenance) and the one user-config writer (ADR-0047).
+export * from './user-config/index.js';
+
+// Canonical layered config loader: generated → platform → project → project overlays.
 // Use this when reading the raw effective config (e.g. plugin sections).
 export * from './api/effective-config.js';

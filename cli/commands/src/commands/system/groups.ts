@@ -16,7 +16,7 @@ import { logsDiagnose, logsContext, logsSummarize, logsQuery, logsSearch, logsGe
 import { authLogin, authLogout, authStatus, authRegister, authResetAdmin } from './auth';
 import { platformSyncCommand } from './platform/sync';
 import { webhookProvision, webhookList, webhookRevoke } from './webhook';
-import { configShow } from './config';
+import { configShow, configGet, configSet } from './config';
 import { projectAdd, projectList, projectShow, projectRemove } from './project';
 
 /**
@@ -93,11 +93,15 @@ export const webhookGroup = defineSystemCommandGroup('webhook', 'Webhook managem
 /**
  * Config Commands Group
  *
- * Inspect the effective (merged) platform config with per-field provenance.
- * See ADR-0012 (field scope policy) and ADR-0013 (installer-config-placement).
+ * Read and change configuration: `show` prints the effective config with
+ * per-value provenance, `get` reads one key, `set` is the single writer of the
+ * user config file. See ADR-0047 (config layers), ADR-0012 (field scope policy)
+ * and ADR-0013 (installer-config-placement).
  */
-export const configGroup = defineSystemCommandGroup('config', 'Config inspection commands', [
+export const configGroup = defineSystemCommandGroup('config', 'Config commands', [
   configShow,
+  configGet,
+  configSet,
 ]);
 
 /**

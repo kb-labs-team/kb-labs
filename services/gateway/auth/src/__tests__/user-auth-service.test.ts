@@ -17,7 +17,7 @@
  * changePassword keeps the caller's family alive.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import bcrypt from 'bcryptjs';
 import { createInMemoryDocumentDatabase } from '@kb-labs/sdk/testing';
 import type { IDocumentDatabase } from '@kb-labs/core-platform/adapters';
@@ -30,6 +30,7 @@ import { ProviderRegistry } from '../provider-registry.js';
 import { createEmailPasswordProvider } from '../providers/email-password.js';
 import { createPasswordPolicy } from '../password-policy.js';
 import { createUserAuthService, AuthError } from '../user-auth-service.js';
+import { verifyUserRefreshToken } from '../jwt.js';
 
 const HOUR = 60 * 60 * 1000;
 const tenant = 'kblabs-cloud';
@@ -205,9 +206,44 @@ describe('refresh', () => {
     const first = await svc.refresh(loggedIn.refresh.token);
     nowMs += 2_000; // still in 5s grace
     const second = await svc.refresh(loggedIn.refresh.token);
-    // Same replacement on both calls — single new refresh issued.
-    expect(second.refresh.token).toBe(first.refresh.token);
+    // Same replacement on both calls — single new refresh issued. Identity is
+    // the jti, NOT the JWT string: the token is re-signed on every call with
+    // the wall-clock `iat` (jose reads Date.now, not the injected `now`), so
+    // the strings differ whenever a real second boundary falls in between.
+    const a = await verifyUserRefreshToken(first.refresh.token, jwtConfig);
+    const b = await verifyUserRefreshToken(second.refresh.token, jwtConfig);
+    expect(a).not.toBeNull();
+    expect(b?.jti).toBe(a?.jti);
+    expect(b?.familyId).toBe(a?.familyId);
     expect(await sessions.listFamiliesByUser(userId)).toHaveLength(1);
+  });
+
+  describe('grace retry across a wall-clock second boundary', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('re-signs the same replacement jti with a different JWT string (iat moved), family stays alive', async () => {
+      const userId = await seedActiveUser();
+      const loggedIn = await svc.login(
+        { providerId: 'email-password', input: { email: 'alice@x.com', password: 'correct-pw-12' } },
+        tenant, {},
+      );
+      // Pin the real clock 1ms before a second boundary (this is the timing
+      // that made the string-equality assertion flaky in CI).
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(1_700_000_000_999);
+      const first = await svc.refresh(loggedIn.refresh.token);
+      vi.setSystemTime(1_700_000_001_001);
+      nowMs += 2_000; // still in 5s grace by the injected clock
+      const second = await svc.refresh(loggedIn.refresh.token);
+
+      expect(second.refresh.token).not.toBe(first.refresh.token); // iat differs
+      const a = await verifyUserRefreshToken(first.refresh.token, jwtConfig);
+      const b = await verifyUserRefreshToken(second.refresh.token, jwtConfig);
+      expect(b?.jti).toBe(a?.jti);
+      expect(await sessions.listFamiliesByUser(userId)).toHaveLength(1);
+    });
   });
 });
 

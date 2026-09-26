@@ -1,0 +1,12 @@
+{
+  "description": "An exact version is accepted instead of a channel.",
+  "request": { "method": "POST", "path": "/v1/update-request", "auth": "valid", "body": { "version": "1.4.0-canary.2" } },
+  "response": {
+    "status": 202,
+    "body": {
+      "ok": true,
+      "protocol": 1,
+      "request": { "id": "$string", "status": "pending", "version": "1.4.0-canary.2", "createdAt": "$iso8601" }
+    }
+  }
+}
