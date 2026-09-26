@@ -11,7 +11,9 @@
 
 import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBValue } from '@duckdb/node-api';
-import { join, isAbsolute } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { dirname, join, isAbsolute } from 'node:path';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import type {
   IAnalytics,
   AnalyticsContext,
@@ -35,7 +37,7 @@ import {
 } from './schema.js';
 
 export interface DuckDBAnalyticsOptions {
-  /** Path to the DuckDB database file. Default: .kb/analytics/analytics.duckdb */
+  /** Path to the DuckDB database file. Default: `<KB_HOME>/state/<projectId>/analytics/analytics.duckdb` */
   dbPath?: string;
   /** Analytics context for event enrichment */
   context?: AnalyticsContext;
@@ -57,8 +59,11 @@ export class DuckDBAnalytics implements IAnalytics {
 
   constructor(options: DuckDBAnalyticsOptions = {}) {
     const cwd = options.workspace?.cwd ?? process.cwd();
-    const rawPath = options.dbPath ?? '.kb/analytics/analytics.duckdb';
-    this.dbPath = isAbsolute(rawPath) ? rawPath : join(cwd, rawPath);
+    const rawPath = options.dbPath;
+    // No explicit path: per-project runtime state lives outside the repository (ADR-0044).
+    this.dbPath = rawPath === undefined
+      ? resolveRuntimeStatePath(cwd, ['analytics', 'analytics.duckdb'])
+      : isAbsolute(rawPath) ? rawPath : join(cwd, rawPath);
     this.context = options.context ?? options.analytics ?? {
       source: { product: 'unknown', version: '0.0.0' },
       runId: `run-${Date.now()}`,
@@ -76,6 +81,8 @@ export class DuckDBAnalytics implements IAnalytics {
   }
 
   private async _setup(): Promise<void> {
+    // The state directory does not exist before the first write.
+    await mkdir(dirname(this.dbPath), { recursive: true });
     this.instance = await DuckDBInstance.fromCache(this.dbPath);
     const conn = await this.instance.connect();
     try {

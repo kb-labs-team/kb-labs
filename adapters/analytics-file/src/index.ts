@@ -1,5 +1,6 @@
 import fs from "fs-extra";
 import { join } from "node:path";
+import { resolveRuntimeStatePath } from "@kb-labs/sdk/adapters";
 import { format, parseISO } from "date-fns";
 import type {
   IAnalytics,
@@ -22,7 +23,7 @@ import { randomUUID } from "node:crypto";
 export interface FileAnalyticsOptions {
   /**
    * Base directory for analytics logs.
-   * Defaults to ".kb/analytics/buffer" relative to process.cwd().
+   * Defaults to `<KB_HOME>/state/<projectId>/analytics/buffer`.
    */
   baseDir?: string;
   /**
@@ -66,13 +67,14 @@ class FileAnalytics implements IAnalytics {
     // Get cwd from workspace context (injected by loader) or fallback
     const cwd = options.workspace?.cwd ?? process.cwd();
 
-    const defaultBaseDir = join(cwd, ".kb/analytics/buffer");
-    const configuredBaseDir = options.baseDir ?? defaultBaseDir;
-
-    // If baseDir is relative, resolve from cwd; otherwise use as-is
-    this.baseDir = configuredBaseDir.startsWith("/")
-      ? configuredBaseDir
-      : join(cwd, configuredBaseDir);
+    // No explicit baseDir: per-project runtime state lives outside the repository (ADR-0044).
+    // An explicit relative baseDir resolves from cwd; an absolute one is used as-is.
+    const configuredBaseDir = options.baseDir;
+    this.baseDir = configuredBaseDir === undefined
+      ? resolveRuntimeStatePath(cwd, ["analytics", "buffer"])
+      : configuredBaseDir.startsWith("/")
+        ? configuredBaseDir
+        : join(cwd, configuredBaseDir);
 
     this.filenamePattern = options.filenamePattern ?? "events-YYYYMMDD";
 

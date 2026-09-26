@@ -1,5 +1,6 @@
 import { mkdir, access, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { randomUUID } from 'node:crypto';
 import type {
   IWorkspaceProvider,
@@ -52,8 +53,13 @@ export class LocalFsWorkspaceAdapter implements IWorkspaceProvider {
 
   constructor(private readonly config: LocalFsWorkspaceAdapterConfig = {}) {
     this.workspaceCwd = path.resolve(config.workspace?.cwd ?? process.cwd());
-    this.workspaceRoot = path.resolve(this.workspaceCwd, config.rootDir ?? '.kb/runtime/workspaces');
-    this.registryDir = path.resolve(this.workspaceCwd, config.registryDir ?? '.kb/runtime/workspace-registry');
+    // No explicit dir: per-project runtime state lives outside the repository (ADR-0044).
+    this.workspaceRoot = config.rootDir === undefined
+      ? resolveRuntimeStatePath(this.workspaceCwd, ['runtime', 'workspaces'])
+      : path.resolve(this.workspaceCwd, config.rootDir);
+    this.registryDir = config.registryDir === undefined
+      ? resolveRuntimeStatePath(this.workspaceCwd, ['runtime', 'workspace-registry'])
+      : path.resolve(this.workspaceCwd, config.registryDir);
   }
 
   async materialize(request: MaterializeWorkspaceRequest): Promise<WorkspaceDescriptor> {

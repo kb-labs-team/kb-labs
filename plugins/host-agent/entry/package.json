@@ -21,7 +21,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --config tsup.config.ts && node -e \"const fs=require('fs'),p=require('path');const f=p.join(process.cwd(),'../../../.kb/cache/cli-manifests.json');try{fs.unlinkSync(f);console.log('[host-agent-cli] plugin cache cleared')}catch{}\"",
+    "build": "tsup --config tsup.config.ts",
     "clean": "rimraf dist",
     "dev": "tsup --config tsup.config.ts --watch",
     "lint": "eslint .",

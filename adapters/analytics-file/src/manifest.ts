@@ -33,8 +33,7 @@ export const manifest: AdapterManifest = {
   configSchema: {
     baseDir: {
       type: "string",
-      default: ".kb/analytics/buffer",
-      description: "Base directory for analytics logs",
+      description: "Base directory for analytics logs (default: <KB_HOME>/state/<projectId>/analytics/buffer)",
     },
     filenamePattern: {
       type: "string",

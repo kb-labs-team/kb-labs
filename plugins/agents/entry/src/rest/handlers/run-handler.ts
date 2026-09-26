@@ -7,7 +7,7 @@
 import { defineHandler, rethrowForRest, useAnalytics, useCache, useConfig, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import { SessionManager, createCoreToolPack, bootstrapAgentSDK, createSessionMemoryBridge } from '@kb-labs/agent-core';
 import { createDefaultResponseRequirementsSelector } from '@kb-labs/agent-runtime';
-import { IncrementalTraceWriter } from '@kb-labs/agent-tracing';
+import { IncrementalTraceWriter, resolveTraceDir } from '@kb-labs/agent-tracing';
 
 // Register SDKAgentRunner as the RunnerFactory (idempotent — runs once per process)
 bootstrapAgentSDK();
@@ -215,7 +215,7 @@ export default defineHandler({
     const agentsConfig = await useConfig<AgentsPluginConfig>();
 
     const finalSessionId = sessionId; // Capture for closure
-    const traceDir = path.join(workingDir, '.kb', 'traces', 'incremental');
+    const traceDir = resolveTraceDir(workingDir);
     const traceWriter = new IncrementalTraceWriter(runId, {}, traceDir);
 
     // Create agent with event broadcasting and session persistence

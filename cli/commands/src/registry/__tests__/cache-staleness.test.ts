@@ -27,7 +27,11 @@ const fsMock = vi.hoisted(() => ({
   access: vi.fn().mockRejectedValue(new Error('ENOENT')),
 }));
 
-vi.mock('node:fs', () => ({ promises: fsMock, existsSync: () => false }));
+// Keep the real sync fs helpers (state-dir resolution uses realpath/existsSync); only `promises` is mocked.
+vi.mock('node:fs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs')>()),
+  promises: fsMock,
+}));
 vi.mock('node:fs/promises', () => fsMock);
 vi.mock('yaml', () => ({ parse: vi.fn().mockReturnValue({ packages: [] }) }));
 vi.mock('glob', () => ({ glob: vi.fn().mockResolvedValue([]) }));

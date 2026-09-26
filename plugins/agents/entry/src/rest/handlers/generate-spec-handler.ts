@@ -6,7 +6,7 @@
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import { SessionManager, SpecModeHandler, createSessionMemoryBridge } from '@kb-labs/agent-core';
 import { createDefaultResponseRequirementsSelector } from '@kb-labs/agent-runtime';
-import { IncrementalTraceWriter } from '@kb-labs/agent-tracing';
+import { IncrementalTraceWriter, resolveTraceDir } from '@kb-labs/agent-tracing';
 import { createToolRegistry } from '@kb-labs/agent-tools';
 import type {
   AgentEvent,
@@ -17,7 +17,6 @@ import type {
   TaskPlan,
 } from '@kb-labs/agent-contracts';
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import { RunManager } from '../run-manager.js';
 
 interface SpecRouteParams {
@@ -67,7 +66,7 @@ export default defineHandler({
       // Run spec generation asynchronously via RunManager
       const runId = `run-spec-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
       const startedAt = new Date().toISOString();
-      const traceDir = path.join(workingDir, '.kb', 'traces', 'incremental');
+      const traceDir = resolveTraceDir(workingDir);
       const traceWriter = new IncrementalTraceWriter(runId, {}, traceDir);
       await RunManager.register(
         runId,

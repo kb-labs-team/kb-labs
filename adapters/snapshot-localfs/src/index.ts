@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, writeFile, access, cp, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { randomUUID } from 'node:crypto';
 import type {
   ISnapshotProvider,
@@ -51,11 +52,13 @@ export class LocalFsSnapshotAdapter implements ISnapshotProvider {
 
   constructor(private readonly config: LocalFsSnapshotAdapterConfig = {}) {
     this.cwd = path.resolve(config.workspace?.cwd ?? process.cwd());
-    this.storageDir = path.resolve(this.cwd, config.storageDir ?? '.kb/runtime/snapshots');
-    this.workspaceRegistryDir = path.resolve(
-      this.cwd,
-      config.workspaceRegistryDir ?? '.kb/runtime/workspace-registry'
-    );
+    // No explicit dir: per-project runtime state lives outside the repository (ADR-0044).
+    this.storageDir = config.storageDir === undefined
+      ? resolveRuntimeStatePath(this.cwd, ['runtime', 'snapshots'])
+      : path.resolve(this.cwd, config.storageDir);
+    this.workspaceRegistryDir = config.workspaceRegistryDir === undefined
+      ? resolveRuntimeStatePath(this.cwd, ['runtime', 'workspace-registry'])
+      : path.resolve(this.cwd, config.workspaceRegistryDir);
   }
 
   async capture(request: CaptureSnapshotRequest): Promise<SnapshotDescriptor> {

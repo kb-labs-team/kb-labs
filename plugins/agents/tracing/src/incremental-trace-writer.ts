@@ -18,6 +18,7 @@ import path from 'path';
 import type { Tracer, TraceEntry } from '@kb-labs/agent-contracts';
 import type { DetailedTraceEntry } from '@kb-labs/agent-contracts';
 import { redactTraceEvent } from './privacy-redactor.js';
+import { resolveTraceDir } from './trace-loader.js';
 
 /**
  * Trace configuration interface
@@ -54,11 +55,6 @@ export interface TraceConfig {
     redactPaths: boolean; // Default: true
     secretPatterns: string[]; // Regex patterns
     pathReplacements: Record<string, string>;
-  };
-
-  storage: {
-    path: string; // Default: ".kb/traces/incremental"
-    indexPath: string; // Default: ".kb/traces/incremental"
   };
 }
 
@@ -157,11 +153,6 @@ export const DEFAULT_TRACE_CONFIG: TraceConfig = {
       '\\Users\\': '~\\',
     },
   },
-
-  storage: {
-    path: '.kb/traces/incremental',
-    indexPath: '.kb/traces/incremental',
-  },
 };
 
 /**
@@ -184,7 +175,7 @@ export class IncrementalTraceWriter implements Tracer {
     this.config = { ...DEFAULT_TRACE_CONFIG, ...config };
     this.startTime = new Date().toISOString();
 
-    const dir = outputDir || this.config.storage.path;
+    const dir = outputDir || resolveTraceDir(process.cwd());
     this.filepath = path.join(dir, `${taskId}.ndjson`);
     this.indexPath = path.join(dir, `${taskId}-index.json`);
 

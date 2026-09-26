@@ -21,6 +21,10 @@ export {
   DEFAULT_TRANSIENT_RETRY_POLICY,
 } from '@kb-labs/core-retry';
 
+// Per-project runtime state location (ADR-0044): adapter default paths for
+// caches, databases and buffers resolve here, not into the project's `.kb/`.
+export { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
+
 // Adapter manifest metadata
 export type {
   AdapterManifest,

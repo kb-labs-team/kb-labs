@@ -17,3 +17,8 @@ export {
   resolveKbHome,
   type ProjectRegistryOptions,
 } from './registry.js';
+export {
+  resolveProjectStateDir,
+  resolveRuntimeStatePath,
+  type ProjectStateOptions,
+} from './state-dir.js';

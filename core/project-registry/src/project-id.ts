@@ -5,8 +5,11 @@ import { isAbsolute, parse, resolve } from 'node:path';
 import type { ProjectId } from '@kb-labs/core-contracts';
 import { ProjectRegistryError } from './errors.js';
 
-/** `realpath(3)` variant: symlinks resolved and the on-disk spelling (case) reported. */
-const realpathNative = promisify(realpath.native);
+/**
+ * `realpath(3)` variant: symlinks resolved and the on-disk spelling (case) reported.
+ * Resolved at call time so importing this module never touches `node:fs` exports.
+ */
+const realpathNative = (path: string): Promise<string> => promisify(realpath.native)(path);
 
 export const PROJECT_ID_PREFIX = 'prj_';
 const ID_HEX_LENGTH = 16;

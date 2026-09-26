@@ -1596,6 +1596,9 @@ importers:
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../platform
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../project-registry
       '@kb-labs/core-resource-broker':
         specifier: workspace:*
         version: link:../resource-broker
@@ -1759,6 +1762,9 @@ importers:
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../platform
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../project-registry
       '@kb-labs/core-sys':
         specifier: workspace:*
         version: link:../sys
@@ -5720,6 +5726,9 @@ importers:
 
   sdk/sdk:
     dependencies:
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../core/project-registry
       '@kb-labs/core-retry':
         specifier: workspace:*
         version: link:../../core/retry
