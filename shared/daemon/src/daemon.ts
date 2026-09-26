@@ -13,10 +13,19 @@ export interface ServiceContext {
   logger: IContextLogger;
   port: number;
   host: string;
+  /**
+   * Local port shift (KB_NET_OFFSET), resolved once by the launcher. 0 in
+   * cloud/k8s. Edge services that own their port config add it themselves.
+   */
+  netOffset: number;
   runtime: PlatformRuntime;
   platformRoot: string;
   projectRoot: string;
 }
+
+type ServiceSetup = (
+  ctx: ServiceContext,
+) => Promise<() => Promise<void>>;
 
 interface NetworkServiceConfig {
   appId: string;
@@ -31,102 +40,191 @@ interface NetworkServiceConfig {
   hostEnvVar?: string;
 }
 
+interface PlatformLaunchOptions {
+  assemblyHook: PlatformAssemblyHook;
+  failurePolicy?: PlatformFailurePolicy;
+  loadEnv?: boolean;
+  storeRawConfig?: boolean;
+  uiProvider?: PlatformUiProvider;
+}
+
 export interface ServiceConfig extends NetworkServiceConfig {
   /** Starting directory for project/platform root resolution. */
   startDir?: string;
   /** Entrypoint import.meta.url for installed-mode platform discovery. */
   moduleUrl?: string;
-  platform: {
-    assemblyHook: PlatformAssemblyHook;
-    failurePolicy?: PlatformFailurePolicy;
-    loadEnv?: boolean;
-    storeRawConfig?: boolean;
-    uiProvider?: PlatformUiProvider;
-  };
+  platform: PlatformLaunchOptions;
   /**
    * Runs after the platform is ready. The returned teardown is always called
    * before PlatformRuntime.shutdown().
    */
-  setup(ctx: ServiceContext): Promise<() => Promise<void>>;
+  setup: ServiceSetup;
 }
 
-interface ManagedRuntime {
-  platform: PlatformContainer;
-  logger: IContextLogger;
-  projectRoot: string;
-  platformRoot: string;
-  shutdown(reason?: string): Promise<void>;
-  runtime: PlatformRuntime;
+/**
+ * One service body that can run inside a host process.
+ *
+ * A module carries what it needs to resolve its own address and to start its
+ * work. It never launches the platform and never owns process signals or
+ * `process.exit`: those belong to {@link runHost}.
+ */
+export interface HostModule extends Omit<NetworkServiceConfig, "appId"> {
+  /** Stable module id used in diagnostics; also the serviceId when `serviceId` is omitted. */
+  id: string;
+  /**
+   * Runs after the platform is ready. The returned teardown is called in
+   * reverse start order, before platform shutdown.
+   */
+  setup: ServiceSetup;
+}
+
+/** Identity helper that gives a module literal its type. */
+export function defineHostModule(module: HostModule): HostModule {
+  return module;
+}
+
+export interface HostConfig {
+  appId: string;
+  /** serviceId used for the single platform launch. Defaults to appId. */
+  serviceId?: string;
+  /** Starting directory for project/platform root resolution. */
+  startDir?: string;
+  /** Entrypoint import.meta.url for installed-mode platform discovery. */
+  moduleUrl?: string;
+  platform: PlatformLaunchOptions;
+  /** Started in array order, torn down in reverse order. */
+  modules: readonly HostModule[];
 }
 
 function resolveNetwork(
-  config: NetworkServiceConfig,
+  module: Omit<HostModule, "setup">,
   platform: PlatformContainer,
+  netOffset: number,
 ): { port: number; host: string } {
-  const serviceId = config.serviceId ?? config.appId;
+  const serviceId = module.serviceId ?? module.id;
   const transport = platform.getAdapter<IServiceTransport>("serviceTransport");
   const address = transport?.listenAddress?.(serviceId);
-  const netOffset = Number(process.env.KB_NET_OFFSET) || 0;
-
   const port =
     address && "port" in address
       ? address.port
-      : (process.env[config.portEnvVar]
-          ? parseInt(process.env[config.portEnvVar]!, 10)
-          : config.defaultPort) + netOffset;
+      : (process.env[module.portEnvVar]
+          ? parseInt(process.env[module.portEnvVar]!, 10)
+          : module.defaultPort) + netOffset;
 
   const transportHost = address && "host" in address ? address.host : undefined;
   const host =
-    config.hostEnvVar && process.env[config.hostEnvVar]
-      ? process.env[config.hostEnvVar]!
-      : (transportHost ?? config.defaultHost ?? "0.0.0.0");
+    module.hostEnvVar && process.env[module.hostEnvVar]
+      ? process.env[module.hostEnvVar]!
+      : (transportHost ?? module.defaultHost ?? "0.0.0.0");
 
   return { port, host };
 }
 
-async function runManagedService(
-  config: NetworkServiceConfig,
-  managed: ManagedRuntime,
-  setup: (context: ServiceContext) => Promise<() => Promise<void>>,
-): Promise<void> {
-  const { port, host } = resolveNetwork(config, managed.platform);
-  const logger = managed.logger.forComponent("service-bootstrap");
+interface StartedModule {
+  id: string;
+  teardown: () => Promise<void>;
+}
 
-  logger.event("info", {
-    event: "service.starting",
-    message: "Service starting",
-    fields: { port, host },
-  });
-
-  let teardown: (() => Promise<void>) | undefined;
-  try {
-    teardown = await setup({
-      runtime: managed.runtime as PlatformRuntime,
-      platform: managed.platform,
-      logger,
-      port,
-      host,
-      projectRoot: managed.projectRoot,
-      platformRoot: managed.platformRoot,
-    });
-  } catch (error) {
-    logger.error(
-      "Service setup failed",
-      error instanceof Error ? error : undefined,
-      {
-        event: "service.failed",
-        error: error instanceof Error ? error.message : String(error),
-      },
-    );
-    await managed.shutdown("service.setup-failed");
-    throw error;
+/**
+ * Runs the teardowns in reverse start order. Every teardown is attempted even
+ * when an earlier one fails; the first error is returned.
+ */
+async function teardownModules(
+  started: readonly StartedModule[],
+  logger: IContextLogger,
+  multi: boolean,
+): Promise<unknown> {
+  let firstError: unknown;
+  for (const module of [...started].reverse()) {
+    try {
+      await module.teardown();
+    } catch (error) {
+      firstError ??= error;
+      logger.error(
+        "Service teardown failed",
+        error instanceof Error ? error : undefined,
+        {
+          event: "service.failed",
+          phase: "teardown",
+          ...(multi ? { moduleId: module.id } : {}),
+        },
+      );
+    }
   }
+  return firstError;
+}
 
-  logger.event("info", {
-    event: "service.ready",
-    message: "Service ready",
-    fields: { port, host, outcome: "success" },
+/**
+ * Composable process launcher.
+ *
+ * Launches the platform exactly once, starts every module's setup() in array
+ * order, and owns the single set of SIGTERM/SIGINT handlers and the single
+ * `process.exit`. On a signal, modules are torn down in reverse order and then
+ * the platform is shut down. If a setup fails, the modules already started are
+ * torn down, the platform is shut down, and the error is rethrown.
+ */
+export async function runHost(config: HostConfig): Promise<void> {
+  const runtime = await launchPlatform({
+    applicationId: config.appId,
+    serviceId: config.serviceId ?? config.appId,
+    kind: "service",
+    startDir: config.startDir,
+    moduleUrl: config.moduleUrl,
+    assemblyHook: config.platform.assemblyHook,
+    failurePolicy: config.platform.failurePolicy,
+    loadEnv: config.platform.loadEnv,
+    storeRawConfig: config.platform.storeRawConfig,
+    uiProvider: config.platform.uiProvider,
   });
+
+  const logger = runtime.logger.forComponent("service-bootstrap");
+  const netOffset = Number(process.env.KB_NET_OFFSET) || 0;
+  const multi = config.modules.length > 1;
+  const started: StartedModule[] = [];
+
+  for (const module of config.modules) {
+    const { port, host } = resolveNetwork(module, runtime.platform, netOffset);
+    const moduleField = multi ? { moduleId: module.id } : {};
+
+    logger.event("info", {
+      event: "service.starting",
+      message: "Service starting",
+      fields: { port, host, ...moduleField },
+    });
+
+    try {
+      const teardown = await module.setup({
+        runtime,
+        platform: runtime.platform,
+        logger,
+        port,
+        host,
+        netOffset,
+        projectRoot: runtime.roots.projectRoot,
+        platformRoot: runtime.roots.platformRoot,
+      });
+      started.push({ id: module.id, teardown });
+    } catch (error) {
+      logger.error(
+        "Service setup failed",
+        error instanceof Error ? error : undefined,
+        {
+          event: "service.failed",
+          error: error instanceof Error ? error.message : String(error),
+          ...moduleField,
+        },
+      );
+      await teardownModules(started, logger, multi);
+      await runtime.shutdown("service.setup-failed");
+      throw error;
+    }
+
+    logger.event("info", {
+      event: "service.ready",
+      message: "Service ready",
+      fields: { port, host, outcome: "success", ...moduleField },
+    });
+  }
 
   let shutdownPromise: Promise<void> | undefined;
   const shutdown = (signal: string): Promise<void> => {
@@ -136,24 +234,11 @@ async function runManagedService(
         message: "Service stopping",
         fields: { signal },
       });
-      let shutdownError: unknown;
+
+      let shutdownError = await teardownModules(started, logger, multi);
 
       try {
-        await teardown?.();
-      } catch (error) {
-        shutdownError = error;
-        logger.error(
-          "Service teardown failed",
-          error instanceof Error ? error : undefined,
-          {
-            event: "service.failed",
-            phase: "teardown",
-          },
-        );
-      }
-
-      try {
-        await managed.shutdown(`signal:${signal}`);
+        await runtime.shutdown(`signal:${signal}`);
       } catch (error) {
         shutdownError ??= error;
         logger.error(
@@ -191,32 +276,17 @@ async function runManagedService(
  * Canonical service process launcher.
  *
  * Every service gets the same roots/env/config/platform lifecycle. Service code
- * starts only inside setup(), after PlatformRuntime is ready.
+ * starts only inside setup(), after PlatformRuntime is ready. This is the
+ * one-module case of {@link runHost}.
  */
 export async function runService(config: ServiceConfig): Promise<void> {
-  const runtime = await launchPlatform({
-    applicationId: config.appId,
-    serviceId: config.serviceId ?? config.appId,
-    kind: "service",
-    startDir: config.startDir,
-    moduleUrl: config.moduleUrl,
-    assemblyHook: config.platform.assemblyHook,
-    failurePolicy: config.platform.failurePolicy,
-    loadEnv: config.platform.loadEnv,
-    storeRawConfig: config.platform.storeRawConfig,
-    uiProvider: config.platform.uiProvider,
+  const { appId, startDir, moduleUrl, platform, setup, ...network } = config;
+  await runHost({
+    appId,
+    serviceId: network.serviceId ?? appId,
+    startDir,
+    moduleUrl,
+    platform,
+    modules: [{ ...network, id: appId, setup }],
   });
-
-  await runManagedService(
-    config,
-    {
-      runtime,
-      platform: runtime.platform,
-      logger: runtime.logger,
-      projectRoot: runtime.roots.projectRoot,
-      platformRoot: runtime.roots.platformRoot,
-      shutdown: (reason) => runtime.shutdown(reason),
-    },
-    config.setup,
-  );
 }

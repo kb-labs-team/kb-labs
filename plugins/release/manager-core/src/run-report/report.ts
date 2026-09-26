@@ -4,7 +4,7 @@
  */
 
 import { basename } from 'node:path';
-import type { CheckResult, CheckResultDetails } from '../types';
+import type { CheckPhaseTiming, CheckResult, CheckResultDetails } from '../types';
 import { classifyFailure, type FailureClassification } from './classify';
 import { createReleaseError, type ReleaseErrorEnvelope } from './error-codes';
 import { preflightCommand, type PreflightResult } from './preflight';
@@ -24,6 +24,8 @@ export interface CheckRow {
   status: 'passed' | 'failed' | 'failed-optional' | 'skipped' | 'partially-skipped';
   durationMs?: number;
   failedPackages: number;
+  /** Per-phase wall-clock timing for phased checks (pack-static, pack-install), so regressions are visible. */
+  phases?: CheckPhaseTiming[];
   /** Packages not checked because a blocking dependency failed (or 1 for a wholly skipped repo-level check). */
   skippedPackages?: number;
   /** Why the check (or part of it) was skipped. */
@@ -232,6 +234,7 @@ export function buildReleaseRunReport(input: BuildRunReportInput): ReleaseRunRep
           : result.optional ? 'failed-optional' : 'failed',
       durationMs: result.timingMs,
       failedPackages: failing.length,
+      ...(result.phases && result.phases.length > 0 ? { phases: result.phases } : {}),
       ...(skippedCount > 0 ? { skippedPackages: skippedCount, skipReason: result.skipReason } : {}),
     });
   }
@@ -275,6 +278,12 @@ export function buildReleaseRunReport(input: BuildRunReportInput): ReleaseRunRep
             durationMs: checksDuration,
             log: input.checksLog,
           }]),
+      // One row per phase of phased checks, e.g. `pack-install:aggregated-install+import`.
+      ...input.results.flatMap(r => (r.phases ?? []).map(ph => ({
+        stage: `${r.id}:${ph.name}`,
+        status: (r.skipped ? 'skipped' : r.ok || r.optional ? 'passed' : 'failed') as StageStatus,
+        durationMs: ph.durationMs,
+      }))),
     ],
     checks,
     summary: {

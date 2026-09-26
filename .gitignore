@@ -166,3 +166,7 @@ tools/kb-env/kb-env
 # (.kb/workflows/scripts/dispatch-release-candidate.mjs); keep them out of
 # `git status` so the release preflight clean-tree probe is not tripped.
 .kb/release/candidates/
+
+# Tarballs `release stage plan` publishes to the staging registry; the pack-static /
+# pack-install checks verify these instead of re-packing.
+.kb/release/staging/

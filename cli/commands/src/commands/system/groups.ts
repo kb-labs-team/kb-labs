@@ -17,6 +17,7 @@ import { authLogin, authLogout, authStatus, authRegister, authResetAdmin } from 
 import { platformSyncCommand } from './platform/sync';
 import { webhookProvision, webhookList, webhookRevoke } from './webhook';
 import { configShow } from './config';
+import { projectAdd, projectList, projectShow, projectRemove } from './project';
 
 /**
  * Info Commands Group
@@ -97,4 +98,17 @@ export const webhookGroup = defineSystemCommandGroup('webhook', 'Webhook managem
  */
 export const configGroup = defineSystemCommandGroup('config', 'Config inspection commands', [
   configShow,
+]);
+
+/**
+ * Project Commands Group
+ *
+ * Machine-level project registry (ADR-0044). Works directly against
+ * `<KB_HOME>/projects.json`; no host is required.
+ */
+export const projectGroup = defineSystemCommandGroup('project', 'Project registry commands', [
+  projectAdd,
+  projectList,
+  projectShow,
+  projectRemove,
 ]);

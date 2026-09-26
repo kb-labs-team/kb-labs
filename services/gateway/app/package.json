@@ -4,7 +4,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "gateway-app": "./dist/index.js"
+    "gateway-app": "./dist/bin.js"
   },
   "files": [
     "dist",
@@ -13,10 +13,10 @@
   "scripts": {
     "build": "tsup",
     "clean": "rimraf dist",
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/bin.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "start": "node dist/index.js",
+    "start": "node dist/bin.js",
     "test": "vitest run",
     "test:e2e": "vitest run src/__tests__/*.e2e.test.ts",
     "test:watch": "vitest",

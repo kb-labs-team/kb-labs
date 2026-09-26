@@ -273,20 +273,39 @@
                   "runIn": "perPackage"
                 },
                 {
-                  "id": "pack-install",
-                  "name": "clean consumer install of packed artifact",
-                  "command": "bash",
-                  "args": [
-                    "scripts/gates/check-pack-install.sh"
-                  ],
+                  "id": "pack-static",
+                  "name": "packed artifacts — static checks (one process)",
+                  "builtin": "pack-static",
                   "timeoutMs": 120000,
+                  "blocking": true,
                   "dependsOn": ["dist-exports"],
                   "runIn": "perPackage",
-                  "skipPackages": [
-                    "@kb-labs/devkit",
-                    "@kb-labs/shared-testing-platform",
-                    "@kb-labs/shared-testing"
-                  ]
+                  "skipPackages": [ "@kb-labs/devkit", "@kb-labs/shared-testing-platform", "@kb-labs/shared-testing" ]
+                },
+                {
+                  "id": "pack-install",
+                  "name": "aggregated clean install of staged tarballs + one import pass",
+                  "builtin": "pack-install",
+                  "timeoutMs": 900000,
+                  "dependsOn": ["dist-exports", "pack-static"],
+                  "runIn": "perPackage",
+                  "skipPackages": [ "@kb-labs/devkit", "@kb-labs/shared-testing-platform", "@kb-labs/shared-testing" ],
+                  "packInstall": {
+                    "isolatedPackages": ["@kb-labs/sdk", "@kb-labs/platform-client"],
+                    "isolateChanged": true,
+                    "maxIsolatedChanged": 15,
+                    "detectApps": true,
+                    "appPackages": ["@kb-labs/mcp-app", "@kb-labs/rest-api-app", "@kb-labs/gateway-app", "@kb-labs/studio-app", "@kb-labs/marketplace-app", "@kb-labs/marketplace-registry-app", "@kb-labs/workflow-daemon", "@kb-labs/core-state-daemon"]
+                  }
+                },
+                {
+                  "id": "pack-install-per-package",
+                  "name": "LEGACY per-package pack + clean install (debug: kb release checks --only pack-install-per-package)",
+                  "command": "bash",
+                  "args": ["scripts/gates/check-pack-install.sh"],
+                  "timeoutMs": 120000,
+                  "disabled": true,
+                  "runIn": "perPackage"
                 }
               ]
             }
@@ -376,14 +395,36 @@
               "runIn": "perPackage"
             },
             {
-              "id": "pack-install",
-              "name": "npm pack + import verification",
-              "command": "bash",
-              "args": [
-                "scripts/gates/check-pack-install.sh"
-              ],
+              "id": "pack-static",
+              "name": "packed artifacts — static checks (one process)",
+              "builtin": "pack-static",
               "timeoutMs": 120000,
+              "blocking": true,
               "dependsOn": ["dist-exports"],
+              "runIn": "perPackage"
+            },
+            {
+              "id": "pack-install",
+              "name": "aggregated clean install of staged tarballs + one import pass",
+              "builtin": "pack-install",
+              "timeoutMs": 900000,
+              "dependsOn": ["dist-exports", "pack-static"],
+              "runIn": "perPackage",
+              "packInstall": {
+                "isolatedPackages": ["@kb-labs/sdk", "@kb-labs/platform-client"],
+                "isolateChanged": true,
+                "maxIsolatedChanged": 15,
+                "detectApps": true,
+                "appPackages": ["@kb-labs/mcp-app", "@kb-labs/rest-api-app", "@kb-labs/gateway-app", "@kb-labs/studio-app", "@kb-labs/marketplace-app", "@kb-labs/marketplace-registry-app", "@kb-labs/workflow-daemon", "@kb-labs/core-state-daemon"]
+              }
+            },
+            {
+              "id": "pack-install-per-package",
+              "name": "LEGACY per-package pack + clean install (debug: kb release checks --only pack-install-per-package)",
+              "command": "bash",
+              "args": ["scripts/gates/check-pack-install.sh"],
+              "timeoutMs": 120000,
+              "disabled": true,
               "runIn": "perPackage"
             },
             {

@@ -18,5 +18,6 @@ export { buildPackages, runSafeBuild, isBuildCommand } from './build';
 export { runReleaseChecks, CHECKS_CONCURRENCY } from './checks';
 export { verifyPackage, verifyPackages, verifyExtractedTarball, findForbiddenDependencyProtocols } from './verifier';
 export { verifyAgainstRegistry } from './verdaccio-verify';
+export * from './pack-verify';
 export { verifyCleanInstall, type CleanInstallResult } from './clean-install-verify';
 export { resolveScopePath } from './scope';
