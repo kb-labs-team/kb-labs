@@ -59,6 +59,8 @@
     "coverage:json": "./tools/kb-devkit/kb-devkit run test:coverage && node scripts/merge-coverage.mjs --json",
     "ports:generate": "node scripts/generate-ports-doc.mjs",
     "ports:check": "node scripts/checks/check-ports.mjs",
+    "boundaries:check": "node scripts/checks/check-plugin-imports.mjs && node scripts/checks/check-platform-spawn.mjs && node scripts/checks/check-plugin-peer-deps.mjs && node scripts/checks/check-manifest-command-naming.mjs",
+    "test:checks": "node --test scripts/checks/boundary-lints.test.mjs",
     "test": "./tools/kb-devkit/kb-devkit run test",
     "test:catalog": "node scripts/test-catalog.mjs",
     "test:catalog:check": "node scripts/test-catalog.mjs --check",

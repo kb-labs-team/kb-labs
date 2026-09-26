@@ -23,4 +23,4 @@ USER kb
 
 EXPOSE 5070
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/bin.js"]

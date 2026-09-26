@@ -105,6 +105,18 @@ export function classifyFailure(signals: FailureSignals): FailureVerdict {
     };
   }
 
+  const undeclared = /undeclared dependency: (\S+) imports '([^']+)' in (\S+)/i.exec(text);
+  if (undeclared) {
+    return {
+      classification: 'package-content',
+      code: 'KB_RELEASE_CHECK_FAILED',
+      rule: 'undeclared-import',
+      rootCause: `${undeclared[1]} imports '${undeclared[2]}' in ${undeclared[3]} without declaring it; a real consumer would not have it installed.`,
+      hint: 'Declare it in dependencies (or peerDependencies) of the package, or add a justified `undeclaredImportAllowlist` entry for a false positive.',
+      timedOut,
+    };
+  }
+
   if (/failed syntax check/i.test(text) || /SyntaxError:/.test(text)) {
     return {
       classification: 'package-content',

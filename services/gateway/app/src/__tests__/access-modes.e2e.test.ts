@@ -22,7 +22,7 @@ import { join, resolve } from 'node:path';
 
 const repoRoot = resolve(import.meta.dirname, '../../../../..');
 const kbDev = process.env.KB_DEV_BIN ?? join(repoRoot, 'tools/kb-dev/kb-dev');
-const gatewayEntry = join(repoRoot, 'services/gateway/app/dist/index.js');
+const gatewayEntry = join(repoRoot, 'services/gateway/app/dist/bin.js');
 const adapters = ['sqlite', 'service-transport-http'].map((name) => ({
   pkg: `@kb-labs/adapters-${name}`,
   dir: join(repoRoot, 'adapters', name),

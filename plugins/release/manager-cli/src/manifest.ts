@@ -554,6 +554,7 @@ export const manifest = {
         flags: defineCommandFlags({
           scope: { type: 'string', description: 'Package scope (glob pattern)' },
           flow: { type: 'string', description: 'Named release flow from release.flows' },
+          only: { type: 'string', description: 'Comma-separated check ids to run exclusively (also runs checks marked disabled, e.g. pack-install-per-package for debugging)' },
           preflight: { type: 'boolean', description: 'Run the release preflight first and stop before checks if the environment is broken' },
           'net-offset': { type: 'number', description: 'kb-dev network offset for the staging registry (used with --preflight)' },
           json: { type: 'boolean', description: 'Output in JSON format' },

@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "marketplace-app": "./dist/index.js"
+    "marketplace-app": "./dist/bin.js"
   },
   "files": [
     "dist"
@@ -13,10 +13,10 @@
   "scripts": {
     "build": "tsup",
     "clean": "rimraf dist",
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/bin.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "start": "node dist/index.js",
+    "start": "node dist/bin.js",
     "test": "vitest run --passWithNoTests -c ../../vitest.config.ts",
     "type-check": "tsc --noEmit"
   },

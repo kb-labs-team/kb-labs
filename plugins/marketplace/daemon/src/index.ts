@@ -1,13 +1,7 @@
-#!/usr/bin/env node
 /**
  * @module @kb-labs/marketplace-app
- * Marketplace service entry point.
+ * Marketplace service library entry. Importing this module has no side
+ * effects; the `marketplace-app` executable lives in `bin.ts`.
  */
 
-import { bootstrap } from "./bootstrap.js";
-
-bootstrap(process.cwd()).catch(() => {
-  // runService() already emitted the canonical platform/service failure event.
-  // Setting exitCode lets its logger flush without duplicating an unstructured stack.
-  process.exitCode = 1;
-});
+export { bootstrap, setup } from "./bootstrap.js";
