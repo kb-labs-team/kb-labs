@@ -321,6 +321,47 @@ describe('manifest-command-naming (0.5)', () => {
     assert.deepEqual(notBuilt.unscanned, ['plugins/q/entry']);
   });
 
+  describe('affected-aware (KB_DEVKIT_BASE_REF)', () => {
+    const run = (cwd, ...a) => {
+      const r = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd, encoding: 'utf-8' });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    function affectedRepo() {
+      const root = fixtureRepo({
+        'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
+        'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
+        ...pluginEntry('plugins/q/entry', '@kb-labs/q-entry'),
+        ...pluginEntry('plugins/r/entry', '@kb-labs/r-entry'),
+      });
+      run(root, 'init', '-q', '-b', 'main');
+      run(root, 'add', '-A', '-f');
+      run(root, 'commit', '-q', '-m', 'base');
+      run(root, 'checkout', '-q', '-b', 'pr');
+      writeFileSync(join(root, 'plugins/q/entry/src.ts'), 'export {};\n');
+      writeFileSync(join(root, 'plugins/p/entry/src.ts'), 'export {};\n');
+      run(root, 'add', '-A', '-f');
+      run(root, 'commit', '-q', '-m', 'change');
+      return root;
+    }
+
+    test('changed+unbuilt warns, unchanged+unbuilt skipped silently, changed+built linted', () => {
+      const v = collectManifests(affectedRepo(), { KB_DEVKIT_BASE_REF: 'main...HEAD' });
+      const warn = v.filter((x) => x.rule === 'manifest-not-built' && !x.silent);
+      assert.equal(warn.length, 1);
+      assert.equal(warn[0].severity, 'warning');
+      assert.deepEqual(warn[0].unscanned, ['plugins/q/entry']);
+      assert.deepEqual(v.find((x) => x.silent).unscanned, ['plugins/r/entry']);
+      assert.ok(v.some((x) => x.package === 'plugins/p/entry' && x.rule === 'command-verb-vocabulary'));
+    });
+
+    test('missing ref falls back to reporting all unbuilt with an explicit warning', () => {
+      const v = collectManifests(affectedRepo(), { KB_DEVKIT_BASE_REF: 'nope...HEAD' });
+      assert.ok(v.some((x) => x.rule === 'manifest-diff-unavailable' && x.severity === 'warning'));
+      const nb = v.find((x) => x.rule === 'manifest-not-built');
+      assert.deepEqual([...nb.unscanned].sort(), ['plugins/q/entry', 'plugins/r/entry']);
+    });
+  });
+
   test('an unbuilt package does not make its exceptions stale, a built one does', () => {
     const exFor = (pkg) => ({ rule: 'command-verb-vocabulary', package: pkg, target: 'q gone', since: '2026-09-26', reason: 'fixture' });
     const root = fixtureRepo({

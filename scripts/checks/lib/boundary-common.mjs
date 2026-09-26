@@ -214,7 +214,7 @@ export async function runLint({ name, rules, collect, argv = process.argv.slice(
   const { blocking, allowed, stale } = applyExceptions(raw, exceptions, rules);
 
   const issues = [
-    ...blocking.map((v) => ({
+    ...blocking.filter((v) => !v.silent).map((v) => ({
       check: name,
       severity: v.severity ?? 'error',
       message: v.message,
