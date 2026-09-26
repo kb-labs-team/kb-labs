@@ -58,6 +58,8 @@ function makePlugin(
       aliases,
       loader: async () => ({ run: async () => 1 }),
     },
+    // First-party package so tier-F reserved names are allowed
+    packageName: '@kb-labs/test-plugin',
     available: true,
     source: 'workspace',
     shadowed: false,
@@ -95,12 +97,12 @@ describe('Collision Detection', () => {
   it('should prevent plugin from overriding system command with same canonical ID', () => {
     const reg = makeRegistry();
 
-    // Register system group 'test' with command 'test-cmd' at path ['test', 'test-cmd']
-    const group: SystemGroup = { name: 'test', describe: 'Test', commands: [makeSystemCmd('test-cmd')] };
+    // Register system group 'sample' with command 'test-cmd' at path ['sample', 'test-cmd']
+    const group: SystemGroup = { name: 'sample', describe: 'Sample', commands: [makeSystemCmd('test-cmd')] };
     reg.registerGroup(group);
 
     // Try to register plugin with same canonical path
-    const pluginCmd = makePlugin('test', 'test-cmd');
+    const pluginCmd = makePlugin('sample', 'test-cmd');
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     reg.registerManifest(pluginCmd);
     warnSpy.mockRestore();
@@ -109,7 +111,7 @@ describe('Collision Detection', () => {
     expect(pluginCmd.shadowed).toBe(true);
 
     // Routing returns system command
-    const result = reg.resolve(['test', 'test-cmd']);
+    const result = reg.resolve(['sample', 'test-cmd']);
     expect(result.type).toBe('system-cmd');
   });
 
@@ -120,8 +122,8 @@ describe('Collision Detection', () => {
     const systemCmd = makeSystemCmd('test-cmd');
     reg.register(systemCmd);
 
-    // Plugin canonical path is ['test', 'test-cmd'] — different from ['test-cmd']
-    const pluginCmd = makePlugin('test', 'test-cmd');
+    // Plugin canonical path is ['sample', 'test-cmd'] — different from ['test-cmd']
+    const pluginCmd = makePlugin('sample', 'test-cmd');
     reg.registerManifest(pluginCmd);
 
     // Plugin should NOT be shadowed — different path
@@ -132,7 +134,7 @@ describe('Collision Detection', () => {
     expect(sysResult.type).toBe('system-cmd');
 
     // Plugin also resolves
-    const pluginResult = reg.resolve(['test', 'test-cmd']);
+    const pluginResult = reg.resolve(['sample', 'test-cmd']);
     expect(pluginResult.type).toBe('command');
   });
 

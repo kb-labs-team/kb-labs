@@ -15,7 +15,35 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 )
 
+// Options describe the launcher doing the resolving. Zero values mean the
+// running process: its OS/arch, and no launcher-version constraint check.
+type Options struct {
+	LauncherVersion string
+	OS, Arch        string
+}
+
+// Plan resolves for the running host without a launcher-version check.
 func Plan(request contracts.InstallRequest, source catalog.Catalog) (contracts.ResolvedInstallPlan, error) {
+	return PlanWith(request, source, Options{})
+}
+
+// PlanWith resolves a request; the schema gate and launcher-version gate run
+// before any resolution work.
+func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options Options) (contracts.ResolvedInstallPlan, error) {
+	// Loaded indexes are already gated by catalog.Decode; this guards a catalog
+	// handed in directly. An in-memory catalog with no schema is the current one.
+	if source.Schema != "" {
+		if err := catalog.CheckSchema(source.Schema); err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
+	}
+	goos, goarch := options.OS, options.Arch
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
 	request, err := request.Normalize()
 	if err != nil {
 		return contracts.ResolvedInstallPlan{}, err
@@ -37,6 +65,9 @@ func Plan(request contracts.InstallRequest, source catalog.Catalog) (contracts.R
 			return contracts.ResolvedInstallPlan{}, incompatible("release set", platform.Version, err.Error())
 		}
 	}
+	if err := catalog.CheckLauncher(platform, options.LauncherVersion); err != nil {
+		return contracts.ResolvedInstallPlan{}, err
+	}
 	graph, ok := platform.Profiles[request.ServiceProfile]
 	if !ok {
 		if request.ServiceProfile == "" {
@@ -53,8 +84,10 @@ func Plan(request contracts.InstallRequest, source catalog.Catalog) (contracts.R
 		item.Registry = registryKind(source, member.Package)
 		artifacts = append(artifacts, item)
 	}
+	binaryForTarget := false
 	for _, binary := range platform.Binaries {
-		if binary.OS == runtime.GOOS && binary.Arch == runtime.GOARCH {
+		if binary.OS == goos && binary.Arch == goarch {
+			binaryForTarget = true
 			if source.Compatibility != nil {
 				if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, binary.ID, binary.OS, binary.Arch); err != nil {
 					return contracts.ResolvedInstallPlan{}, incompatible("binary", binary.ID, err.Error())
@@ -62,6 +95,9 @@ func Plan(request contracts.InstallRequest, source catalog.Catalog) (contracts.R
 			}
 			artifacts = append(artifacts, contracts.Artifact{ID: binary.ID, Kind: "binary", Version: platform.Version, SHA256: binary.SHA256, URL: binary.URL, Target: binary.ID})
 		}
+	}
+	if len(platform.Binaries) > 0 && !binaryForTarget {
+		return contracts.ResolvedInstallPlan{}, incompatible("binary", goos+"/"+goarch, "platform "+platform.Version+" ships no binary for this OS/arch")
 	}
 	if request.SDK.Version != "" || request.SDK.Channel != "" {
 		sdk, found := findComponentVersion(source.SDKs, sdkVersion)

@@ -161,3 +161,8 @@ tools/kb-env/kb-env
 
 # Module Federation dev-mode type cache (Rspack)
 **/.__mf__temp/
+
+# Release candidate bundles are build output produced by the release workflow
+# (.kb/workflows/scripts/dispatch-release-candidate.mjs); keep them out of
+# `git status` so the release preflight clean-tree probe is not tripped.
+.kb/release/candidates/

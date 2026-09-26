@@ -554,6 +554,8 @@ export const manifest = {
         flags: defineCommandFlags({
           scope: { type: 'string', description: 'Package scope (glob pattern)' },
           flow: { type: 'string', description: 'Named release flow from release.flows' },
+          preflight: { type: 'boolean', description: 'Run the release preflight first and stop before checks if the environment is broken' },
+          'net-offset': { type: 'number', description: 'kb-dev network offset for the staging registry (used with --preflight)' },
           json: { type: 'boolean', description: 'Output in JSON format' },
         }),
 
@@ -561,6 +563,32 @@ export const manifest = {
           'kb release checks',
           'kb release checks --scope @my-org/core',
           'kb release checks --json',
+        ],
+      },
+
+      // release:preflight - Seconds-fast environment gate before checks
+      {
+        path: 'release preflight',
+        category: 'Validation',
+        describe: 'Check the release environment before running the long checks stage',
+        operationType: 'analyze' as const,
+        longDescription:
+          'Read-only: verifies the release branch, clean working tree, Docker, local staging registry, npm registry, ' +
+          'GitHub auth and stable-tag/npm baseline drift. Never starts anything; prints the exact command to fix a broken environment.',
+
+        handler: './cli/commands/preflight.js#default',
+
+        flags: defineCommandFlags({
+          flow: { type: 'string', description: 'Named release flow; enables the baseline drift check' },
+          branch: { type: 'string', description: 'Branch releases must start from (default: master)' },
+          'net-offset': { type: 'number', description: 'kb-dev network offset used to derive the staging registry port (default: $KB_NET_OFFSET or 0)' },
+          'staging-registry': { type: 'string', description: 'Staging registry URL override (default: $KB_RELEASE_STAGING_REGISTRY or http://localhost:<4873+offset>)' },
+          json: { type: 'boolean', description: 'Output in JSON format' },
+        }),
+
+        examples: [
+          'kb release preflight --flow platform',
+          'kb release preflight --flow platform --net-offset 100 --json',
         ],
       },
 

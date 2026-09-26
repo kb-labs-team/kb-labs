@@ -33,6 +33,11 @@ const platformVersion = value('--platform-version');
 const sdkVersion = value('--sdk-version');
 const binaryManifestPath = value('--binary-manifest') ? resolve(value('--binary-manifest')) : undefined;
 if (flow === 'platform' && !binaryManifestPath) throw new Error('--binary-manifest is required for the unified platform release-index');
+// SDK, platform and binaries share one version for now (release decision 4a).
+// A differing version is a release mistake unless it is declared on purpose.
+const allowVersionSkew = args.includes('--allow-version-skew');
+const minLauncherVersion = value('--min-launcher-version');
+if (minLauncherVersion && !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(minLauncherVersion)) throw new Error(`--min-launcher-version must be a semver version, got ${minLauncherVersion}`);
 const sealerBin = value('--sealer-bin') ? resolve(value('--sealer-bin')) : undefined;
 const platformRequires = (value('--platform-requires') ?? '')
   .split(',')
@@ -128,7 +133,15 @@ const binaries = binaryManifestPath ? JSON.parse(readFileSync(binaryManifestPath
 if (!Array.isArray(binaries)) throw new Error('binary manifest must contain a binaries array');
 for (const binary of binaries) {
   for (const field of ['id', 'os', 'arch', 'url', 'filename', 'sha256']) if (!binary[field]) throw new Error(`binary manifest entry is missing ${field}`);
-  if (binary.version && binary.version !== resolvedPlatformVersion) throw new Error(`binary ${binary.id} version ${binary.version} does not match platform ${resolvedPlatformVersion}`);
+}
+const versionSkew = [
+  ...(sdk.version !== resolvedPlatformVersion ? [`sdk ${sdk.version} != platform ${resolvedPlatformVersion}`] : []),
+  ...binaries.filter(binary => binary.version && binary.version !== resolvedPlatformVersion).map(binary => `binary ${binary.id} ${binary.version} != platform ${resolvedPlatformVersion}`),
+];
+if (versionSkew.length > 0) {
+  const detail = versionSkew.join('; ');
+  if (!allowVersionSkew) throw new Error(`version skew: ${detail}. SDK, platform and binaries must share one version; pass --allow-version-skew to release them on purpose`);
+  console.warn(`WARNING: version skew allowed explicitly: ${detail}`);
 }
 
 const staging = resolve(`${artifactsDir}/v2-manifest-root`);
@@ -332,6 +345,7 @@ const exportValue = {
     package: platform.name,
     tarball: tarballURL(platform),
     sha256: platform.sha256,
+    ...(minLauncherVersion ? { minLauncherVersion } : {}),
     requires: platformRequires,
     config: [
       ...(portablePlatformAdapterConfig ? [{
@@ -396,7 +410,7 @@ function pluginIdFor(manifest, packageName) {
 // (the previous approach) collapses "IServiceTransport" to
 // "servicetransport", which never matches the "serviceTransport" capability
 // the platform declares — so no adapter is ever found and bootstrap fails
-// with KB_CREATE_PROVIDER_UNRESOLVED. Only the leading run of capitals needs
+// with KB_INSTALL_PROVIDER_UNRESOLVED. Only the leading run of capitals needs
 // lowercasing, and only up to (not including) the capital that starts the
 // next word — "KVStore" -> "kvStore", not "kVStore" or "kvstore".
 function interfaceToCapability(name) {

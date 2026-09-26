@@ -100,10 +100,21 @@ export interface CheckResult {
   details?: CheckResultDetails;
   hint?: string;
   timingMs?: number;
+  /**
+   * True when the check did not run (or did not run for some packages) because a
+   * blocking check it depends on failed. A skipped check always has ok=false so the
+   * overall run still fails, but it is not itself a root-cause failure.
+   */
+  skipped?: boolean;
+  /** Why the check was skipped, e.g. "blocking check dist-exports failed". */
+  skipReason?: string;
   /** Per-package breakdown for perPackage checks. */
   packages?: Array<{
     path: string;
     ok: boolean;
+    /** True when this package was not checked because a blocking dependency failed for it. */
+    skipped?: boolean;
+    skipReason?: string;
     details?: CheckResultDetails;
   }>;
 }
@@ -124,6 +135,19 @@ export interface CustomCheckConfig {
   parser?: 'json' | 'exitcode' | ((stdout: string, stderr: string, exitCode: number) => boolean);
   timeoutMs?: number;
   optional?: boolean;
+  /**
+   * When true and this check fails (non-optional), checks that list it in
+   * `dependsOn` are skipped with an explicit reason. All other checks still run
+   * (fail-late). Default false: the failure fails the run but blocks nothing.
+   * Ignored for optional checks (an optional failure never blocks).
+   */
+  blocking?: boolean;
+  /**
+   * Ids of earlier checks this check depends on. If a blocking dependency failed,
+   * this check is skipped; for perPackage checks that depend on a perPackage
+   * dependency only the packages that failed the dependency are skipped.
+   */
+  dependsOn?: string[];
   /**
    * Run this check once in a single directory instead of once per package.
    * "repoRoot" — run in the git repo root (default for monorepo builds)

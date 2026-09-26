@@ -8,6 +8,10 @@
 #
 # Run: kb workflow:run --workflow-id workspace:release-prepare --input '{"flow":"platform"}'
 #
+# The Preflight step runs first (even with skipChecks) and fails fast on a broken
+# environment. To re-run it by hand:
+#   pnpm kb release preflight --flow <flow> --net-offset "${KB_NET_OFFSET:-0}"
+#
 # Emergency escape hatch: add "skipChecks":true to the input to skip the
 # Stage and Checks steps entirely (e.g. when Checks itself is broken, Verdaccio/
 # Docker aren't available, or the pre-release gate is what's blocking, not the
@@ -20,7 +24,8 @@
 #   pnpm kb release stage plan --flow <flow> --plan-path <planPath> --registry http://localhost:4873
 #   RELEASE_PLAN_PATH=<planPath> KB_RELEASE_STAGING_REGISTRY=http://localhost:4873 \
 #     pnpm kb release checks --flow <flow> --json
-# and don't treat the release as verified until that's green.
+# and don't treat the release as verified until that's green. (Add --preflight to
+# `release checks` to run the preflight first from the same command.)
 
 name: release-prepare
 version: 1.0.0
@@ -92,6 +97,17 @@ jobs:
             echo "Release preparation is allowed only from master (current branch: ${branch:-detached})" >&2
             exit 1
           fi
+
+      - name: Preflight
+        id: preflight
+        phase: preview
+        # Seconds-fast, read-only environment gate (branch, clean tree, Docker,
+        # staging and npm registries, GitHub auth, stable-tag/npm baseline drift).
+        # Deliberately NOT gated by skipChecks: it is cheap and also guards the
+        # CI candidate dispatch. Exits non-zero with the run report (root cause,
+        # hint, next command per failure) when the environment is broken.
+        timeoutMs: 120000
+        run: pnpm kb release preflight --flow ${{ inputs.flow }} --net-offset "${KB_NET_OFFSET:-0}" --json
 
       - name: Preview
         id: plan

@@ -25,6 +25,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 export { AdapterUnavailableError } from "./errors.js";
+export * from "./error-envelope/index.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ADAPTER DEFAULTS — per-slot fallback policy (consulted by the loader)

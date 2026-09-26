@@ -38,8 +38,8 @@
     "dev": "tsup --config tsup.config.ts --watch",
     "lint": "eslint . --ignore-pattern 'dist/**'",
     "lint:fix": "eslint . --fix --ignore-pattern 'dist/**'",
-    "test": "vitest run --passWithNoTests -c ../../vitest.config.ts",
-    "test:watch": "vitest -c ../../vitest.config.ts",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

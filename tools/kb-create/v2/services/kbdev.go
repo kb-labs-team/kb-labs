@@ -41,7 +41,7 @@ type KBDev struct {
 	// started/skipped/failed action list), successful or not. Without this,
 	// a successful `kb-dev ensure` call's own view of what it did is
 	// discarded — the only place V2 could later show it disagreed with a
-	// subsequent `kb-dev status` snapshot (KB_CREATE_SERVICE_GRAPH_MISMATCH)
+	// subsequent `kb-dev status` snapshot (KB_INSTALL_SERVICE_GRAPH_MISMATCH)
 	// is this log, so it needs to survive that case, not just failures.
 	Log io.Writer
 }

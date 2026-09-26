@@ -1,0 +1,9 @@
+{
+  "code": "KB_HOST_UNREACHABLE",
+  "area": "host",
+  "stage": "somewhere",
+  "severity": "error",
+  "retryable": true,
+  "message": "The KB Labs host is not running.",
+  "hint": "Run \"kb-create start\"."
+}

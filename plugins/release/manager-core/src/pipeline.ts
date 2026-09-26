@@ -206,13 +206,18 @@ async function _runPipeline(ctx: {
 
       // Build rich per-check error messages for both human and agent consumption
       const errorLines = failed.flatMap(f => {
+        if (f.skipped && !f.packages?.some(p => !p.ok && !p.skipped) && !f.details) {
+          return [`check "${f.id}" skipped: ${f.skipReason ?? 'blocking dependency failed'}`];
+        }
         const lines: string[] = [`check "${f.id}" failed`];
         if (f.details?.packagePath) { lines.push(`  package: ${f.details.packagePath}`); }
         if (f.details?.error) { lines.push(`  reason: ${f.details.error}`); }
         if (f.details?.stderr?.trim()) { lines.push(`  stderr: ${f.details.stderr.trim().split('\n').slice(0, 5).join('\n          ')}`); }
         if (f.details?.stdout?.trim() && !f.details?.stderr?.trim()) { lines.push(`  output: ${f.details.stdout.trim().split('\n').slice(0, 5).join('\n          ')}`); }
         if (f.packages?.filter(p => !p.ok).length) {
-          const failedPkgs = f.packages.filter(p => !p.ok);
+          const failedPkgs = f.packages.filter(p => !p.ok && !p.skipped);
+          const skippedCount = f.packages.filter(p => p.skipped).length;
+          if (skippedCount > 0) { lines.push(`  skipped in ${skippedCount} package(s): ${f.skipReason ?? 'blocking dependency failed'}`); }
           lines.push(`  failed in ${failedPkgs.length}/${f.packages.length} package(s):`);
           for (const pkg of failedPkgs.slice(0, 10)) {
             lines.push(`    - ${pkg.path}${pkg.details?.error ? `: ${pkg.details.error}` : ''}`);

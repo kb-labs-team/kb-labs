@@ -25,7 +25,7 @@ import (
 // release index actually declares (see prepare-release-index.mjs, which
 // writes `channels: { [buildChannel]: version }`). The smoke test must
 // resolve against that same channel; requesting a different one always fails
-// resolve with KB_CREATE_INCOMPATIBLE_COMPONENTS because the release index
+// resolve with KB_INSTALL_INCOMPATIBLE_COMPONENTS because the release index
 // simply has no entry for it.
 var packageTagPattern = regexp.MustCompile(`^candidate-(?:platform|sdk)-\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?-(canary|stable)-[0-9a-f]+$`)
 
@@ -47,7 +47,7 @@ func channelFromPackageTag(tag string) string {
 // under test, so a real build delivered under a "stable" candidate tag (e.g.
 // v2.119.0-binaries / candidate-platform-2.119.0-stable-30310c8f10a2, whose
 // published release-index.json declares only "stable" in its channels map)
-// made resolve.Plan fail closed with KB_CREATE_INCOMPATIBLE_COMPONENTS and an
+// made resolve.Plan fail closed with KB_INSTALL_INCOMPATIBLE_COMPONENTS and an
 // empty subject value, because "canary" was never a key in that index at all.
 func TestChannelFromPackageTagMatchesDeliveredCandidateFormat(t *testing.T) {
 	cases := []struct {

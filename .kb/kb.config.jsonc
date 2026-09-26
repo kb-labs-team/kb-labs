@@ -254,6 +254,7 @@
                     "scripts/gates/check-dist-exports.sh"
                   ],
                   "timeoutMs": 30000,
+                  "blocking": true,
                   "runIn": "perPackage"
                 },
                 {
@@ -264,6 +265,7 @@
                     "scripts/gates/check-pack-install.sh"
                   ],
                   "timeoutMs": 120000,
+                  "dependsOn": ["dist-exports"],
                   "runIn": "perPackage"
                 }
               ]
@@ -302,6 +304,7 @@
                     "scripts/gates/check-dist-exports.sh"
                   ],
                   "timeoutMs": 30000,
+                  "blocking": true,
                   "runIn": "perPackage"
                 },
                 {
@@ -312,6 +315,7 @@
                     "scripts/gates/check-pack-install.sh"
                   ],
                   "timeoutMs": 120000,
+                  "dependsOn": ["dist-exports"],
                   "runIn": "perPackage",
                   "skipPackages": [
                     "@kb-labs/devkit",
@@ -403,6 +407,7 @@
                 "scripts/gates/check-dist-exports.sh"
               ],
               "timeoutMs": 30000,
+              "blocking": true,
               "runIn": "perPackage"
             },
             {
@@ -413,6 +418,7 @@
                 "scripts/gates/check-pack-install.sh"
               ],
               "timeoutMs": 120000,
+              "dependsOn": ["dist-exports"],
               "runIn": "perPackage"
             },
             {
