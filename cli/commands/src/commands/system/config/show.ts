@@ -10,6 +10,11 @@
 
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { loadPlatformConfig } from '@kb-labs/core-runtime';
+import {
+  loadEffectiveConfig,
+  type ConfigLayerName,
+  type ValueProvenance,
+} from '@kb-labs/core-config';
 import { generateExamples } from '../../../utils/generate-examples';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 
@@ -32,7 +37,37 @@ type ConfigRow = {
   source: ConfigFieldSource;
   field: string;
   value: unknown;
+  /**
+   * Config layer that supplied the value (ADR-0047): generated (installer),
+   * platform (user, platform scope), project (user, project scope) or overlay.
+   * Absent when the layered read could not attribute the field.
+   */
+  layer?: ConfigLayerName;
+  /** File the value was read from. */
+  file?: string;
 };
+
+/**
+ * Attach per-value provenance from the layered loader. Rows are keyed by the
+ * merged `PlatformConfig` view (`adapters.llm`), while files spell the same
+ * value `platform.adapters.llm` (or, for options, a top-level `adapterOptions`
+ * that replaces the nested one), so try those spellings.
+ */
+function attachProvenance(rows: ConfigRow[], provenance: Record<string, ValueProvenance> | undefined): void {
+  if (!provenance) {
+    return;
+  }
+  for (const row of rows) {
+    const candidates = row.field.startsWith('adapterOptions.')
+      ? [row.field, `platform.${row.field}`]
+      : [`platform.${row.field}`, row.field];
+    const origin = candidates.map((candidate) => provenance[candidate]).find((entry) => entry !== undefined);
+    if (origin) {
+      row.layer = origin.layer;
+      row.file = origin.source;
+    }
+  }
+}
 
 /** Recursively flattens an object into dotted-path leaves. Arrays are kept as leaves. */
 function flatten(prefix: string, value: unknown, out: Array<{ field: string; value: unknown }>): void {
@@ -189,6 +224,8 @@ type ConfigShowResult = CommandResult & {
   sameLocation?: boolean;
   platformRoot?: string;
   projectRoot?: string;
+  /** Installer-generated files that supplied the lowest layer, when any. */
+  generated?: string[];
 };
 
 export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>({
@@ -218,6 +255,12 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
     const result = await loadPlatformConfig({ startDir: cwd, loadEnvFile: false });
     const rows = buildRows(result);
 
+    // Provenance is additive: a failure to read the layers must not hide the config itself.
+    const effective = await loadEffectiveConfig(result.projectRoot, {
+      platformRoot: result.sameLocation ? undefined : result.platformRoot,
+    }).catch(() => null);
+    attachProvenance(rows, effective?.provenance);
+
     return {
       ok: true,
       status: 'success' as const,
@@ -225,6 +268,7 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
       sameLocation: result.sameLocation,
       platformRoot: result.platformRoot,
       projectRoot: result.projectRoot,
+      generated: result.sources.generated,
     };
   },
   formatter(result, ctx, flags) {
@@ -235,6 +279,7 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
         sameLocation: result.sameLocation,
         platformRoot: result.platformRoot,
         projectRoot: result.projectRoot,
+        generated: result.generated,
         fields: rows,
       });
       return;
@@ -249,11 +294,13 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
 
     const fieldWidth = Math.max(...rows.map((r) => r.field.length), 'FIELD'.length);
     const sourceWidth = Math.max(...rows.map((r) => r.source.length), 'SOURCE'.length);
+    const layerWidth = Math.max(...rows.map((r) => (r.layer ?? '-').length), 'LAYER'.length);
 
     const lines = [
-      `${'SOURCE'.padEnd(sourceWidth)}  ${'FIELD'.padEnd(fieldWidth)}  VALUE`,
+      `${'SOURCE'.padEnd(sourceWidth)}  ${'LAYER'.padEnd(layerWidth)}  ${'FIELD'.padEnd(fieldWidth)}  VALUE`,
       ...rows.map(
-        (r) => `${r.source.padEnd(sourceWidth)}  ${r.field.padEnd(fieldWidth)}  ${formatValue(r.value)}`,
+        (r) =>
+          `${r.source.padEnd(sourceWidth)}  ${(r.layer ?? '-').padEnd(layerWidth)}  ${r.field.padEnd(fieldWidth)}  ${formatValue(r.value)}`,
       ),
     ];
 

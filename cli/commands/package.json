@@ -34,6 +34,7 @@
   "dependencies": {
     "@kb-labs/cli-contracts": "workspace:*",
     "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/core-config": "workspace:*",
     "@kb-labs/core-discovery": "workspace:*",
     "@kb-labs/core-ipc": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",

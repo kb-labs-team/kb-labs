@@ -1072,6 +1072,9 @@ importers:
       '@kb-labs/cli-runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@kb-labs/core-config':
+        specifier: workspace:*
+        version: link:../../core/config
       '@kb-labs/core-discovery':
         specifier: workspace:*
         version: link:../../core/discovery
