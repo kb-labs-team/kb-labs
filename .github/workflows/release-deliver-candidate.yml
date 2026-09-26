@@ -21,7 +21,7 @@ on:
         description: Release flow in the bundle
         required: true
         type: choice
-        options: [platform, sdk]
+        options: [platform]
       version:
         description: Exact release version in the bundle
         required: true

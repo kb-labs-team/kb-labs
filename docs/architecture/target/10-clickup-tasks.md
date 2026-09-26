@@ -204,23 +204,43 @@ Docs: 06 §5, §7.
 ### 7.1 Спайк и ADR-0048
 Docs: 03-domain-model.md (вариант C), ADR-0012, ADR-0030.
 Сделать: исследовать discovery, marketplace lock, резолв модулей; письменный план и ADR.
-Готово: ADR принят автором.
+Готово: ADR принят автором (спайк выполнен: решения D1–D10 в ADR-0048, порядок 7.6 → 7.2 → 7.7 → 7.3 → 7.4 → 7.5).
 
-### 7.2 Общее хранилище версий
-Сделать: одна копия версии плагина/адаптера на машину.
+### 7.6 Единый discovery по lock (новая, L)
+Docs: ADR-0048 (F1, D4), ADR-0012 §6.
+Сделать: CLI-discovery (`cli/commands/src/registry/discover.ts`) перестаёт сканировать node_modules/workspace и берёт плагины из lock через общий резолвер в `core-discovery`; workspace-плагины входят как `link`-записи; единый переключатель enable (убрать `plugins.allow` и enabled/disabled из `.kb/plugins.json`).
+Не делаем: хранилище и пины (7.2/7.3).
+Готово: CLI, REST и адаптеры видят один и тот же набор плагинов; e2e roots-спеки зелёные.
 После: 7.1.
 
-### 7.3 Пин версии в проекте (lock проекта)
-Сделать: проект пинует версию и включает; два проекта на разных версиях одного плагина.
+### 7.2 Общее хранилище версий (M)
+Docs: ADR-0048 D2.
+Сделать: `$KB_HOME/store/entries/<name>@<version>/` с `entry.json`, `store.lock`, отдельный pnpm CAS, атомарная установка через staging, integrity, `kb plugin gc`, установка по статическому манифесту без импорта JS; коды `KB_PLUGIN_INTEGRITY_MISMATCH`.
+Не делаем: платформенные плагины и адаптеры остаются как есть.
+Готово: одна копия версии на машину; замер дедупликации на плагине из registry и прогон на Windows.
+После: 7.6.
+
+### 7.7 Единственная копия платформы (новая, M)
+Docs: ADR-0048 D5.
+Сделать: resolve-хук (`module.registerHooks`) для платформенных пакетов в worker-script, subprocess-бутстрапе, `cli/bin` и демонах; `KB_PLUGIN_PLATFORM_DUPLICATE`; тесты с двумя версиями контракта SDK в одном процессе.
+Готово: реальный плагин (например `commit-entry`) работает в worker-pool через хук; это гейт перед 7.3.
 После: 7.2.
 
+### 7.3 Пин версии в проекте (lock проекта) (L)
+Docs: ADR-0048 D3, D4, D8.
+Сделать: схема `kb.marketplace/3` (читатель/писатель в `core-discovery`, Go-писатель `tools/kb-create/v2/marketplace/lock.go`, `check-marketplace-lock.mjs`, helm/docker); установка в проект больше не делает `pnpm add` в репозитории; `kb plugin install/update`; adapters только в platform lock; коды `KB_PLUGIN_LOCK_INVALID`, `KB_PLUGIN_STORE_MISSING`, `KB_ADAPTER_PROJECT_SCOPE`.
+Готово: проект пинует версию и включает; два проекта на разных версиях одного плагина.
+После: 7.7.
+
 ### 7.4 Проверка версии SDK-контракта
-Сделать: плагин объявляет `sdkApiVersion`; проверка при установке и загрузке; `KB_PLUGIN_SDK_INCOMPATIBLE`.
+Сделать: `SDK_API_VERSION` в `plugin-contracts` (независим от npm-версии), поле `sdkApiVersion` (semver-диапазон) в `ManifestV3` и в `dist/manifest.json`; проверка при установке (по статическому манифесту) и при загрузке; `KB_PLUGIN_SDK_INCOMPATIBLE`, `KB_PLUGIN_MANIFEST_INVALID`; гейт `check-api-removals`; метаданные версий в registry. Отдельно (S–M): убрать 34 исключения `plugin-platform-dependency`.
+Размер: M.
 После: 7.1, 0.3.
 
 ### 7.5 Владелец namespace по скоупу; затенение — ошибка при установке
 Docs: 06 §7.
-Сделать: правило владельца (проект > платформа), ошибка при install/enable, видимость затенения в `kb health`/`kb plugin doctor`.
+Сделать: чистая функция владельца (проект > платформа, ничья — ошибка) для установщика и реестра; проверки в `marketplace-core` до записи lock (`KB_PLUGIN_NAMESPACE_RESERVED`/`TAKEN`); реестр перестаёт сортировать по `SOURCE_PRIORITY`; видимость затенения в `kb health`/`kb plugin doctor`.
+Размер: M.
 После: 7.3.
 
 ---
@@ -265,7 +285,7 @@ Docs: 09 §3.1, 08-errors.md.
 Сделать: коды `KB_RELEASE_*` для всех стадий; каждая ошибка релиза в едином конверте.
 После: 0.4 (конверт), R0.1.
 
-### R1.1 Предполётная проверка (`kb release preflight`)
+### R1.1 Предполётная проверка (`kb release doctor`)
 Docs: 09 §3.1.
 Сделать: за секунды проверяет ветку, чистое дерево, Docker/Verdaccio, доступ к реестру и GitHub-токену, расхождение stable-тега и npm (baseline drift); подключён первой стадией `release-prepare`.
 Готово: сломанное окружение ловится до часа проверок, с понятной причиной и подсказкой.

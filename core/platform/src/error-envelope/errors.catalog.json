@@ -297,7 +297,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Port {port} is used by another application.",
-      "hint": "Free the port or choose another one with \"kb-create start --port <port>\"."
+      "hint": "Stop the application that uses the port, or change the host port in the installation config, then run \"kb-create start\" again."
     },
     {
       "code": "KB_HOST_START_FAILED",
@@ -352,6 +352,33 @@
       "retryable": false,
       "message": "Cannot write to the state directory {path}.",
       "hint": "Fix the directory permissions or free disk space."
+    },
+    {
+      "code": "KB_HOST_STOP_FAILED",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The host process {pid} did not stop.",
+      "hint": "Run \"kb-create stop\" again, or end the process manually and remove the stale pid file."
+    },
+    {
+      "code": "KB_HOST_SPEC_INVALID",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "The host specification in the installation receipt is invalid: {reason}.",
+      "hint": "Run \"kb-create doctor --fix\" or reinstall with \"kb-create apply\"."
+    },
+    {
+      "code": "KB_HOST_CONTROL_UNAUTHORIZED",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The launcher control channel rejected the request token.",
+      "hint": "Read the current token from control.json in the launcher state directory."
     },
     {
       "code": "KB_HOST_ADAPTER_UNAVAILABLE",
