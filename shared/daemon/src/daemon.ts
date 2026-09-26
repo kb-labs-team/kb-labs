@@ -13,6 +13,11 @@ export interface ServiceContext {
   logger: IContextLogger;
   port: number;
   host: string;
+  /**
+   * Local port shift (KB_NET_OFFSET), resolved once by the launcher. 0 in
+   * cloud/k8s. Edge services that own their port config add it themselves.
+   */
+  netOffset: number;
   runtime: PlatformRuntime;
   platformRoot: string;
   projectRoot: string;
@@ -94,12 +99,11 @@ export interface HostConfig {
 function resolveNetwork(
   module: Omit<HostModule, "setup">,
   platform: PlatformContainer,
+  netOffset: number,
 ): { port: number; host: string } {
   const serviceId = module.serviceId ?? module.id;
   const transport = platform.getAdapter<IServiceTransport>("serviceTransport");
   const address = transport?.listenAddress?.(serviceId);
-  const netOffset = Number(process.env.KB_NET_OFFSET) || 0;
-
   const port =
     address && "port" in address
       ? address.port
@@ -174,11 +178,12 @@ export async function runHost(config: HostConfig): Promise<void> {
   });
 
   const logger = runtime.logger.forComponent("service-bootstrap");
+  const netOffset = Number(process.env.KB_NET_OFFSET) || 0;
   const multi = config.modules.length > 1;
   const started: StartedModule[] = [];
 
   for (const module of config.modules) {
-    const { port, host } = resolveNetwork(module, runtime.platform);
+    const { port, host } = resolveNetwork(module, runtime.platform, netOffset);
     const moduleField = multi ? { moduleId: module.id } : {};
 
     logger.event("info", {
@@ -194,6 +199,7 @@ export async function runHost(config: HostConfig): Promise<void> {
         logger,
         port,
         host,
+        netOffset,
         projectRoot: runtime.roots.projectRoot,
         platformRoot: runtime.roots.platformRoot,
       });

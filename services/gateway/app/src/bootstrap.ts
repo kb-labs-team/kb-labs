@@ -60,15 +60,16 @@ export async function bootstrap(
 
 /**
  * Gateway service body. Importable and side-effect-free: it only starts work
- * when called with a resolved {@link ServiceContext}. The listen port comes
- * from `ctx.port` (transport address or env + KB_NET_OFFSET, resolved once by
- * the launcher); the gateway never reads KB_NET_OFFSET itself.
+ * when called with a resolved {@link ServiceContext}. The gateway is the
+ * network's edge (not a target in the transport map), so it listens on
+ * `config.port + ctx.netOffset`; the offset is resolved once by the launcher
+ * and the gateway never reads KB_NET_OFFSET itself.
  */
 export async function setup({
   platform,
   projectRoot,
   platformRoot,
-  port: listenPort,
+  netOffset,
   logger: serviceLogger,
 }: ServiceContext): Promise<() => Promise<void>> {
   const logger = serviceLogger
@@ -84,6 +85,7 @@ export async function setup({
   // that with the project root.
   const config = await loadGatewayConfig(projectRoot, platformRoot);
   const access = resolveAccess(config);
+  const listenPort = config.port + netOffset;
   logger.info("Gateway config loaded", {
     port: listenPort,
     upstreams: Object.keys(config.upstreams),
