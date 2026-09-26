@@ -297,7 +297,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Port {port} is used by another application.",
-      "hint": "Free the port or choose another one with \"kb-create start --port <port>\"."
+      "hint": "Stop the application that uses the port, or change the host port in the installation config, then run \"kb-create start\" again."
     },
     {
       "code": "KB_HOST_START_FAILED",

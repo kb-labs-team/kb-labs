@@ -70,7 +70,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	if conn, err := net.DialTimeout("tcp", address, 300*time.Millisecond); err == nil {
 		_ = conn.Close()
 		_, port, _ := net.SplitHostPort(address)
-		return Info{}, hostError("KB_HOST_PORT_IN_USE", "Port "+port+" is used by another application.", "Free the port or choose another one with \"kb-create start --port <port>\".", nil, map[string]string{"port": port, "address": address})
+		return Info{}, hostError("KB_HOST_PORT_IN_USE", "Port "+port+" is used by another application.", "Stop the application that uses the port, or change the host port in the installation config, then run \"kb-create start\" again.", nil, map[string]string{"port": port, "address": address})
 	}
 	logFile, err := os.OpenFile(r.State.HostLog(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
