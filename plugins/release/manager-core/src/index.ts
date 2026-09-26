@@ -9,6 +9,9 @@ export * from './channel';
 export * from './tag';
 export * from './status';
 
+// Release run report + KB_RELEASE_* error codes
+export * from './run-report';
+
 // Pipeline v2 — unified core
 export { runReleasePipeline } from './pipeline';
 export { buildPackages, runSafeBuild, isBuildCommand } from './build';
