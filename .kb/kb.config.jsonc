@@ -278,7 +278,7 @@
                     "isolateChanged": true,
                     "maxIsolatedChanged": 15,
                     "detectApps": true,
-                    "appPackages": ["@kb-labs/mcp-app"]
+                    "appPackages": ["@kb-labs/mcp-app", "@kb-labs/rest-api-app", "@kb-labs/gateway-app", "@kb-labs/studio-app", "@kb-labs/marketplace-app", "@kb-labs/marketplace-registry-app", "@kb-labs/workflow-daemon", "@kb-labs/core-state-daemon"]
                   }
                 },
                 {
@@ -352,7 +352,7 @@
                     "isolateChanged": true,
                     "maxIsolatedChanged": 15,
                     "detectApps": true,
-                    "appPackages": ["@kb-labs/mcp-app"]
+                    "appPackages": ["@kb-labs/mcp-app", "@kb-labs/rest-api-app", "@kb-labs/gateway-app", "@kb-labs/studio-app", "@kb-labs/marketplace-app", "@kb-labs/marketplace-registry-app", "@kb-labs/workflow-daemon", "@kb-labs/core-state-daemon"]
                   }
                 },
                 {
@@ -472,7 +472,7 @@
                 "isolateChanged": true,
                 "maxIsolatedChanged": 15,
                 "detectApps": true,
-                "appPackages": ["@kb-labs/mcp-app"]
+                "appPackages": ["@kb-labs/mcp-app", "@kb-labs/rest-api-app", "@kb-labs/gateway-app", "@kb-labs/studio-app", "@kb-labs/marketplace-app", "@kb-labs/marketplace-registry-app", "@kb-labs/workflow-daemon", "@kb-labs/core-state-daemon"]
               }
             },
             {
