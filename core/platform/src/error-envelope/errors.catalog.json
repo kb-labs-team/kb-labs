@@ -507,6 +507,42 @@
       "hint": "Close an inactive project and try again."
     },
     {
+      "code": "KB_PROJECT_NAME_TAKEN",
+      "area": "project",
+      "stage": "add-project",
+      "severity": "error",
+      "retryable": false,
+      "message": "The project name {name} is already used by another registered project.",
+      "hint": "Pick another name with --name, or run \"kb project list\" to see the registered names."
+    },
+    {
+      "code": "KB_PROJECT_REGISTRY_CORRUPT",
+      "area": "project",
+      "stage": "add-project",
+      "severity": "error",
+      "retryable": false,
+      "message": "The project registry {file} is unreadable: {reason}.",
+      "hint": "Inspect or move {file} aside, then register your projects again with \"kb project add <path>\"; the file is never overwritten automatically."
+    },
+    {
+      "code": "KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED",
+      "area": "project",
+      "stage": "add-project",
+      "severity": "error",
+      "retryable": false,
+      "message": "The project registry {file} uses schema version {found}, but this KB Labs build supports version {supported}.",
+      "hint": "Update KB Labs to a build that supports the registry schema; the file is left untouched."
+    },
+    {
+      "code": "KB_PROJECT_REGISTRY_LOCKED",
+      "area": "project",
+      "stage": "add-project",
+      "severity": "error",
+      "retryable": true,
+      "message": "The project registry is locked by another KB Labs process (waited {timeoutMs} ms).",
+      "hint": "Retry in a moment; if no other kb command is running, remove the stale projects.json.lock file next to the registry."
+    },
+    {
       "code": "KB_CONFIG_UNKNOWN_KEY",
       "area": "config",
       "stage": "run",
