@@ -143,7 +143,12 @@ jobs:
                 '',
                 'For each entry, compare the changed source with the guide, update stale prose or examples, and leave an explicit no-change reason when the page remains accurate.',
                 '',
-                ...affected.map(a => `- **${a.slug}** — review source files: ${a.matchedFiles.map(f => `\`${f}\``).join(', ')}`),
+                ...affected.map(a => {
+                  const sourceRefs = a.sourceReferences?.length
+                    ? `; generated references: ${a.sourceReferences.map(ref => `\`${ref}\``).join(', ')}`
+                    : '';
+                  return `- **${a.slug}** — review source files: ${a.matchedFiles.map(f => `\`${f}\``).join(', ')}${sourceRefs}`;
+                }),
                 '',
                 `_[CONVENTIONS.md](https://github.com/${owner}/${repo}/blob/master/sites/web/apps/docs/CONVENTIONS.md)_`,
               ].join('\n');
