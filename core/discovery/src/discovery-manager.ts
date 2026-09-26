@@ -22,6 +22,7 @@ import { readMarketplaceLock } from './marketplace-lock.js';
 import { loadManifestFile } from './manifest-loader.js';
 import { computePackageIntegrity } from './integrity.js';
 import { findWorkspaceCandidates } from './workspace-source.js';
+import { readPluginPolicy, checkPluginPolicy, type PluginPolicy } from './plugin-policy.js';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -116,6 +117,8 @@ export class DiscoveryManager {
   private readonly importTimeoutMs: number;
   private readonly verifyIntegrity: boolean;
   private readonly workspace: boolean;
+  /** plugins.allow/block/linked per scope root, read at the start of discover() */
+  private policies = new Map<string, PluginPolicy>();
 
   constructor(opts: DiscoveryOptions = {}) {
     const root = opts.root ?? process.cwd();
@@ -137,6 +140,9 @@ export class DiscoveryManager {
    */
   async discover(): Promise<DiscoveryResult> {
     const diag = new DiagnosticCollector();
+    this.policies = new Map(
+      await Promise.all(this.scopes.map(async ({ root }) => [root, await readPluginPolicy(root)] as const)),
+    );
     const candidates = await this.collectCandidates(diag);
 
     const outcomes = await Promise.all(candidates.map(c => this.processCandidate(c)));
@@ -204,6 +210,7 @@ export class DiscoveryManager {
   // Per-candidate processing
   // -------------------------------------------------------------------------
 
+  // eslint-disable-next-line sonarjs/cognitive-complexity
   private async processCandidate(candidate: Candidate): Promise<CandidateOutcome> {
     const diag = new DiagnosticCollector();
     const { id, entry, packageRoot } = candidate;
@@ -257,10 +264,7 @@ export class DiscoveryManager {
       if (events.some(e => e.code === 'MANIFEST_NOT_PLUGIN')) {
         return { events }; // another kind of package, not a failure
       }
-      const problems = events.filter(e => e.severity !== 'info');
-      const cause = problems.map(e => e.message).join('; ');
-      // The file that failed to load, as opposed to "no manifest found in the package".
-      const failedFile = problems.find(e => e.context?.filePath && e.context.filePath !== packageRoot)?.context?.filePath;
+      const { cause, failedFile } = describeLoadFailure(events, packageRoot);
       return fail('manifest', cause || `No manifest could be loaded from ${packageRoot}`, failedFile);
     }
     const { manifest } = loaded;
@@ -273,6 +277,11 @@ export class DiscoveryManager {
         filePath: packageRoot,
       });
       // Continue anyway — use the manifest's own ID
+    }
+
+    // Governance gate (plugins.allow / plugins.block / plugins.linked) for installed third-party packages
+    if (candidate.origin === 'node_modules' && !this.passesPolicy(candidate, loaded.packageName, manifest.id, diag)) {
+      return { events: diag.getEvents() };
     }
 
     // Signature check (info-level, not blocking)
@@ -303,6 +312,28 @@ export class DiscoveryManager {
       provides: extractEntityKinds(manifest),
     };
     return { events: diag.getEvents(), loaded: { plugin, manifest } };
+  }
+
+  /** Apply plugins.allow/block/linked; records a diagnostic and returns false when the package is gated out. */
+  private passesPolicy(
+    candidate: Candidate,
+    loadedName: string | undefined,
+    manifestId: string,
+    diag: DiagnosticCollector,
+  ): boolean {
+    const packageName = loadedName ?? candidate.packageName ?? manifestId;
+    const verdict = checkPluginPolicy(this.policies.get(candidate.root) ?? {}, [candidate.id, manifestId, packageName]);
+    if (verdict === 'ok') {return true;}
+
+    const config = `${candidate.root}/.kb/kb.config.json`;
+    const blocked = verdict === 'blocked';
+    diag.info(blocked ? 'PLUGIN_BLOCKED' : 'PLUGIN_NOT_ALLOWED',
+      `Plugin "${packageName}" is ${blocked ? 'blocked by plugins.block' : 'not in plugins.allow'} in ${config}`, {
+      pluginId: manifestId,
+      entityId: packageName,
+      remediation: `${blocked ? 'Remove it from plugins.block' : 'Add it to plugins.allow'} in .kb/kb.config.json`,
+    });
+    return false;
   }
 
   /**
@@ -380,6 +411,17 @@ export class DiscoveryManager {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Summarise why a manifest could not be loaded: the messages and the file that failed, if any. */
+function describeLoadFailure(
+  events: DiagnosticEvent[],
+  packageRoot: string,
+): { cause: string; failedFile: string | undefined } {
+  const problems = events.filter(e => e.severity !== 'info');
+  // The file that failed to load, as opposed to "no manifest found in the package".
+  const failedFile = problems.find(e => e.context?.filePath && e.context.filePath !== packageRoot)?.context?.filePath;
+  return { cause: problems.map(e => e.message).join('; '), failedFile };
+}
 
 function relativeTo(root: string, target: string): string {
   const rel = path.relative(root, target).split(path.sep).join('/');

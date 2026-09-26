@@ -10,7 +10,7 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../utils/generate-examples';
 import { registry } from '../../registry/service';
-import { discoverManifests } from '../../registry/discover';
+import { discoverManifests, discoverManifestsDetailed } from '../../registry/discover';
 import { preflightManifests } from '../../registry/register';
 import { validateManifests } from '../../registry/schema';
 import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
@@ -281,12 +281,24 @@ async function runDiscoveryStage(
   ctx: TraceCtx,
 ): Promise<TraceStage & { enrich?: Partial<TraceCtx> }> {
   const opts = { platformRoot: ctx.platformRoot, projectRoot: ctx.projectRoot };
-  const discovered = await discoverManifests(ctx.cwd, opts);
+  const { results: discovered, diagnostics } = await discoverManifestsDetailed(ctx.cwd, opts);
 
   const [topSegment] = ctx.segments;
   const result = discovered.find(r => matchesTopSegment(r, topSegment ?? ''));
 
   if (!result) {
+    const gate = diagnostics.find(d =>
+      (d.code === 'PLUGIN_BLOCKED' || d.code === 'PLUGIN_NOT_ALLOWED') &&
+      [d.context?.entityId, d.context?.pluginId].some(n => n === topSegment || n?.endsWith(`/${topSegment ?? ''}`)),
+    );
+    if (gate) {
+      return {
+        stage: 'discovery', status: 'error',
+        code: gate.code === 'PLUGIN_BLOCKED' ? 'PLUGIN_BLOCKLISTED' : 'PLUGIN_NOT_ALLOWLISTED',
+        message: gate.message,
+        remediation: gate.remediation,
+      };
+    }
     return {
       stage: 'discovery', status: 'info', code: 'NOT_IN_DISCOVERY',
       message: `No plugin found for group "${topSegment}" in a marketplace.lock or the workspace`,

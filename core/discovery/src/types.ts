@@ -199,5 +199,7 @@ export type DiagnosticCode =
   | 'DEPENDENCY_MISSING'
   | 'ENTITY_CONFLICT'
   | 'PLUGIN_DISABLED'
+  | 'PLUGIN_BLOCKED'
+  | 'PLUGIN_NOT_ALLOWED'
   | 'PACKAGE_NOT_FOUND'
   | (string & {});

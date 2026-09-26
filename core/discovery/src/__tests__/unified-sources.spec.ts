@@ -224,6 +224,57 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
   });
 });
 
+describe('plugins.allow / plugins.block / plugins.linked gate', () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-policy-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  async function install(ids: string[], plugins: Record<string, unknown>): Promise<void> {
+    const entries: Record<string, ReturnType<typeof createMarketplaceEntry>> = {};
+    for (const id of ids) {
+      const dir = await makePlugin({ dir: path.join(root, 'node_modules', id.replace('/', '__')), id });
+      entries[id] = await lockEntry(root, dir, 'marketplace');
+    }
+    await writeLock(root, entries);
+    await fs.writeFile(path.join(root, '.kb', 'kb.config.json'), JSON.stringify({ plugins }));
+  }
+
+  async function ids(): Promise<{ found: string[]; codes: string[] }> {
+    const result = await new DiscoveryManager({ root }).discover();
+    return { found: result.plugins.map(p => p.id).sort(), codes: result.diagnostics.map(d => d.code) };
+  }
+
+  it('block hides a third-party package but never a @kb-labs one', async () => {
+    await install(['@x/bad', '@kb-labs/core'], { block: ['@x/bad', '@kb-labs/core'] });
+
+    const { found, codes } = await ids();
+
+    expect(found).toEqual(['@kb-labs/core']);
+    expect(codes).toContain('PLUGIN_BLOCKED');
+  });
+
+  it('a configured allow list admits only listed and linked third-party packages', async () => {
+    await install(['@x/ok', '@x/lnk', '@x/other'], { allow: ['@x/ok'], linked: ['@x/lnk'] });
+
+    const { found, codes } = await ids();
+
+    expect(found).toEqual(['@x/lnk', '@x/ok']);
+    expect(codes).toContain('PLUGIN_NOT_ALLOWED');
+  });
+
+  it('without an allow list every installed package is admitted', async () => {
+    await install(['@x/a', '@x/b'], {});
+
+    expect((await ids()).found).toEqual(['@x/a', '@x/b']);
+  });
+});
+
 describe('findWorkspaceCandidates', () => {
   let root: string;
 

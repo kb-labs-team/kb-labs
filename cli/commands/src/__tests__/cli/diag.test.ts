@@ -11,9 +11,19 @@ import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
-vi.mock('../../registry/discover.js', () => ({
-  discoverManifests: vi.fn(async () => []),
-}));
+const discoverState = vi.hoisted(() => ({ diagnostics: [] as unknown[] }));
+
+vi.mock('../../registry/discover.js', () => {
+  const discoverManifests = vi.fn(async (..._args: unknown[]): Promise<unknown[]> => []);
+  return {
+    discoverManifests,
+    // The trace uses the detailed variant; it shares the mocked results.
+    discoverManifestsDetailed: vi.fn(async (...args: unknown[]) => ({
+      results: await discoverManifests(...args),
+      diagnostics: discoverState.diagnostics,
+    })),
+  };
+});
 
 vi.mock('../../registry/service.js', () => ({
   registry: {
@@ -506,6 +516,36 @@ describe('diag --command', () => {
     const stage = result.stages.find(s => s.code === 'MANIFEST_STRUCT_INVALID');
     expect(stage).toBeDefined();
     expect(stage?.details?.failures?.[0]?.reason).toContain('Missing describe');
+  });
+
+  it('reports PLUGIN_BLOCKLISTED when discovery blocked the plugin by plugins.block', async () => {
+    const reg = await getRegistryMock();
+    reg.resolve.mockReturnValue({ type: 'not-found', input: ['blocked', 'cmd'], suggestions: [] });
+
+    const discover = await getDiscoverMock();
+    discover.discoverManifests.mockResolvedValue([]);
+    discoverState.diagnostics = [{
+      severity: 'info',
+      code: 'PLUGIN_BLOCKED',
+      message: 'Plugin "@x/blocked" is blocked by plugins.block',
+      context: { pluginId: '@x/blocked', entityId: '@x/blocked' },
+      remediation: 'Remove it from plugins.block in .kb/kb.config.json',
+      ts: 0,
+    }];
+
+    const lockMock = await getLockMock();
+    lockMock.mockResolvedValue({ installed: {} });
+
+    const jsonSpy = vi.fn();
+    const diag = await getDiag();
+    try {
+      await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'blocked cmd' });
+    } finally {
+      discoverState.diagnostics = [];
+    }
+
+    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string }> };
+    expect(result.stages.find(s => s.code === 'PLUGIN_BLOCKLISTED')).toBeDefined();
   });
 
   it('reports PATH_MISSING when resolvedPath does not exist on filesystem', async () => {

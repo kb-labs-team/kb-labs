@@ -50,12 +50,15 @@ Status: implemented in `feat/unified-discovery`. Context: ADR-0048 finding F1, A
 ## 3. Deliberate removals
 
 - Directory scanning of `node_modules`, `.kb/plugins`, `exports["./kb/commands"]` (unused in the repo).
-- `plugins.allow/block/linked` gating for discovery: installation into a lock, and its `enabled` flag, is the gate. The `PLUGIN_BLOCKLISTED` step of `kb diag --command` is gone with it.
 - The disk cache `.kb/cache/cli-manifests.json`, the in-process cache, `--no-cache`/`KB_PLUGIN_NO_CACHE` for discovery, `discoverManifestsByNamespace`, `resetInProcCache`, `loadConfig`. Static JSON is read directly.
 - Manifest lifecycle hooks (`init/register/dispose` exported from the manifest module) and `shutdown.ts`: they were the second `import()` of plugin JS at registration. No in-repo plugin used them.
 - Old tests of the removed scanner and cache; replaced by `core/discovery/src/__tests__/unified-sources.spec.ts` and `cli/commands/src/registry/__tests__/unified-discovery.test.ts` (CLI versus `EntityRegistry` parity on a fixture with platform, project, linked and workspace plugins).
 
-## 4. Notes and open points
+## 4. Governance gate (kept)
+
+`plugins.allow` / `plugins.block` / `plugins.linked` from `<scopeRoot>/.kb/kb.config.json` are enforced inside `core-discovery` (`plugin-policy.ts`) for third-party (not `@kb-labs/*`) packages of `node_modules` origin. `block` always wins; `allow` only restricts when it is configured (the old scanner denied every third-party package by default, which would hide every marketplace install now that the lock is the install record); names in `linked` count as allowed. Gated-out packages produce `PLUGIN_BLOCKED` / `PLUGIN_NOT_ALLOWED` diagnostics, surfaced by `kb diag --command` as `PLUGIN_BLOCKLISTED` / `PLUGIN_NOT_ALLOWLISTED`.
+
+## 5. Notes and open points
 
 - The task brief assumed the manifest cache had moved to the project state directory (`resolveRuntimeStatePath`). Master has no such function and the cache was still `<cwd>/.kb/cache/cli-manifests.json`; instead of moving it, the cache is deleted because static reading replaces it. If a state-dir cache is still wanted for plugins without a static manifest, it is a follow-up on top of this API.
 - `kb marketplace plugins refresh` and `rehash` still delete the (now never written) legacy cache file; the command and its documentation references should be removed in a follow-up.

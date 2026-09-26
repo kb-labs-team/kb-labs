@@ -31,6 +31,10 @@ export type { LoadedManifest } from './manifest-loader.js';
 // Integrity (SRI computation for marketplace entries and manifest files)
 export { computeFileIntegrity, computePackageIntegrity, computeManifestIntegrity, parseIntegrity } from './integrity.js';
 
+// Governance gate
+export { readPluginPolicy, checkPluginPolicy } from './plugin-policy.js';
+export type { PluginPolicy, PolicyVerdict } from './plugin-policy.js';
+
 // Diagnostics
 export { DiagnosticCollector } from './diagnostics.js';
 

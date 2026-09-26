@@ -11,6 +11,7 @@ import {
   DiscoveryManager,
   type DiscoveryResult as CoreDiscoveryResult,
   type DiscoveredPlugin,
+  type DiagnosticEvent,
 } from '@kb-labs/core-discovery';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { CommandManifest, DiscoveryResult } from './types';
@@ -84,16 +85,22 @@ export function toDiscoveryResults(discovered: CoreDiscoveryResult): DiscoveryRe
   return results;
 }
 
+/** Discovery results plus the pipeline's diagnostics (blocked, disabled, integrity, ...). */
+export interface DetailedDiscovery {
+  results: DiscoveryResult[];
+  diagnostics: DiagnosticEvent[];
+}
+
 /**
- * Discover CLI command manifests.
+ * Discover CLI command manifests, keeping the pipeline diagnostics.
  *
  * @param cwd      Fallback for both roots.
  * @param options  `platformRoot` (KB_PLATFORM_ROOT) and `projectRoot` (KB_PROJECT_ROOT).
  */
-export async function discoverManifests(
+export async function discoverManifestsDetailed(
   cwd: string,
   options: DiscoverManifestsOptions = {},
-): Promise<DiscoveryResult[]> {
+): Promise<DetailedDiscovery> {
   const platformRoot = options.platformRoot ?? cwd;
   const projectRoot = options.projectRoot ?? cwd;
 
@@ -106,5 +113,13 @@ export async function discoverManifests(
     }
   }
 
-  return toDiscoveryResults(discovered);
+  return { results: toDiscoveryResults(discovered), diagnostics: discovered.diagnostics };
+}
+
+/** Discover CLI command manifests. See {@link discoverManifestsDetailed}. */
+export async function discoverManifests(
+  cwd: string,
+  options: DiscoverManifestsOptions = {},
+): Promise<DiscoveryResult[]> {
+  return (await discoverManifestsDetailed(cwd, options)).results;
 }
