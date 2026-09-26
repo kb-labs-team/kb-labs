@@ -288,3 +288,42 @@ test('the sealer rejects a secret requirement that cannot reach a service', () =
   assert.notEqual(result.status, 0);
   assert.match(text, /secret manifest requirement gateway\.jwt must declare env and services/);
 });
+
+function skewFixture(prefix, sdkVersion) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  writeFileSync(join(stage, 'manifest.json'), JSON.stringify([
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', sdkVersion, '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+  ]));
+  const binaryManifest = join(root, 'binary-manifest.json');
+  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  const output = join(root, 'release-index.json');
+  const base = [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, '--binary-manifest', binaryManifest, '--output', output];
+  return { base, output };
+}
+
+test('fails when the SDK version differs from the platform version unless version skew is allowed explicitly', () => {
+  const { base, output } = skewFixture('kb-release-index-skew-', '2.1.0');
+  const refused = spawnSync(process.execPath, base, { encoding: 'utf8' });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /version skew: sdk 2\.1\.0 != platform 2\.0\.0/);
+  const allowed = spawnSync(process.execPath, [...base, '--allow-version-skew'], { encoding: 'utf8' });
+  assert.equal(allowed.status, 0, allowed.stderr);
+  assert.match(allowed.stderr, /WARNING: version skew allowed explicitly/);
+  const index = JSON.parse(readFileSync(output, 'utf8'));
+  assert.equal(index.compatibility.labels[0].requires[0].label, 'sdk@2.1.0');
+});
+
+test('writes minLauncherVersion on the platform entry only when requested, and rejects a non-semver value', () => {
+  const { base, output } = skewFixture('kb-release-index-minlauncher-', '2.0.0');
+  execFileSync(process.execPath, base, { stdio: 'pipe' });
+  assert.equal('minLauncherVersion' in JSON.parse(readFileSync(output, 'utf8')).platforms[0], false);
+  execFileSync(process.execPath, [...base, '--min-launcher-version', '2.0.0'], { stdio: 'pipe' });
+  assert.equal(JSON.parse(readFileSync(output, 'utf8')).platforms[0].minLauncherVersion, '2.0.0');
+  const bad = spawnSync(process.execPath, [...base, '--min-launcher-version', 'latest'], { encoding: 'utf8' });
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /must be a semver version/);
+});
