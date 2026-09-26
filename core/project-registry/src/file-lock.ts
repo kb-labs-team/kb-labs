@@ -20,7 +20,9 @@ interface LockPayload {
 const DEFAULTS = { timeoutMs: 10_000, staleMs: 30_000, retryMs: 15 } as const;
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((done) => setTimeout(done, ms));
+  return new Promise((done) => {
+    setTimeout(done, ms);
+  });
 }
 
 function parsePayload(raw: string): LockPayload | null {
