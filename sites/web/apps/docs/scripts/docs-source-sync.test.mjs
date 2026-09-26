@@ -20,10 +20,23 @@ test('renders allowlisted command examples as a fenced shell block', () => {
   assert.match(rendered, /kb workflow runs status <runId>/);
 });
 
+test('keeps JSON CLI examples intact when extracting escaped manifest strings', () => {
+  const rendered = renderCommandExamples('workflow run', generatedSources, '--input');
+  assert.ok(rendered.includes(`--input='{"key":"value"}'`));
+  assert.equal(rendered.includes('release-manager/create-release'), false);
+});
+
 test('expands the MDX directive from the generated snapshot', () => {
   const rendered = syncDocSources('<CommandExamples command="workflow runs status" />', 'test.mdx', generatedSources);
   assert.match(rendered, /kb workflow runs status --run-id=<runId>/);
   assert.doesNotMatch(rendered, /<CommandExamples/);
+});
+
+test('rejects an example filter that no longer matches the source', () => {
+  assert.throws(
+    () => syncDocSources('<CommandExamples command="workflow run" match="--missing" />', 'test.mdx', generatedSources),
+    /No examples.*match/,
+  );
 });
 
 test('rejects commands outside the explicit source allowlist', () => {

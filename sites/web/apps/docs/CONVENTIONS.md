@@ -161,6 +161,8 @@ Use source-backed MDX fragments when the same fact or command already has a cano
 <CommandExamples command="workflow runs status" />
 ```
 
+Use the optional `match` value to include only examples containing that literal, such as `<CommandExamples command="workflow run" match="--input" />`.
+
 The command identifier must be explicitly allowlisted in `lib/doc-source-map.mjs`. CI extracts only static string examples from the named CLI manifest and checks the committed `generated/doc-source-snippets.json` snapshot. To refresh snapshots after changing a source, run `pnpm --filter @kb-labs/docs-site docs:source-sync` and commit the generated JSON with the change. MDX authors cannot provide file paths or expressions to evaluate.
 
 Use this for facts the source can prove. Keep scenario-specific explanation and workflow narrative in MDX; CI reports changed owner pages for agent review rather than trying to infer prose from implementation.

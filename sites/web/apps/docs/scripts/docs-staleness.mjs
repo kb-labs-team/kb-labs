@@ -78,7 +78,7 @@ function collectSourceReferences(pages) {
       const page = pageBySlug.get(slug);
       if (!page) continue;
 
-      const directive = /<CommandExamples\s+command="([^"]+)"\s*\/>/g;
+      const directive = /<CommandExamples\s+command="([^"]+)"(?:\s+match="([^"]+)")?\s*\/>/g;
       for (const match of content.matchAll(directive)) {
         const sourceFile = sourceFileForCommand(match[1]);
         if (sourceFile) refs.push({ page, sourceFile, command: match[1] });

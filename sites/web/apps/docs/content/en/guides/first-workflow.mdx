@@ -100,10 +100,9 @@ See [Workflows → Spec Reference](/workflows/spec-reference) for every field.
 
 ## Step 2 — Trigger the workflow
 
-```bash
-kb workflow run --workflow-id=hello-workflow \
-  --input='{"url":"https://raw.githubusercontent.com/github/explore/main/topics/nodejs/index.md"}'
-```
+The workflow CLI documents its JSON-input form; replace the workflow ID and sample JSON with the values from your spec.
+
+<CommandExamples command="workflow run" match="--input" />
 
 This POSTs to the workflow daemon, which validates the inputs against the schema, creates a run, and schedules the first job.
 

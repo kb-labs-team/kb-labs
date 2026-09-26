@@ -59,7 +59,7 @@ function findCommand(sourceText, sourcePath, command) {
   throw new Error(`Unclosed examples array for "${command}" (${sourcePath})`);
 }
 
-export function renderCommandExamples(command, generatedSources) {
+export function renderCommandExamples(command, generatedSources, match) {
   const sourcePath = commandSources[command];
   if (!sourcePath) throw new Error(`Command "${command}" is not in the docs source allowlist`);
   const generated = generatedSources?.[command];
@@ -71,7 +71,7 @@ export function renderCommandExamples(command, generatedSources) {
     examples: findCommand(readFileSync(path.join(repoRoot, sourcePath), 'utf8'), sourcePath, command),
   };
   if (sourceData.examples.length === 0) throw new Error(`Command "${command}" has no examples`);
-  return renderGeneratedDocSource(command, { [command]: sourceData });
+  return renderGeneratedDocSource(command, { [command]: sourceData }, match);
 }
 
 export function getDocsDir() {
