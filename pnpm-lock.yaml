@@ -111,9 +111,6 @@ importers:
       '@duckdb/node-api':
         specifier: ^1.4.4-r.1
         version: 1.4.4-r.3
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../core/project-registry
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
@@ -142,9 +139,6 @@ importers:
 
   adapters/analytics-file:
     dependencies:
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../core/project-registry
       date-fns:
         specifier: ^3.6.0
         version: 3.6.0
@@ -182,9 +176,6 @@ importers:
 
   adapters/analytics-sqlite:
     dependencies:
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../core/project-registry
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
@@ -709,10 +700,6 @@ importers:
         version: 3.2.6(@types/debug@4.1.13)(@types/node@24.12.4)(jiti@2.6.1)(jsdom@27.4.0)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3)
 
   adapters/snapshot-localfs:
-    dependencies:
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../core/project-registry
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
@@ -912,10 +899,6 @@ importers:
         version: 3.2.6(@types/debug@4.1.13)(@types/node@24.12.2)(@vitest/browser@4.1.10)(jiti@2.6.1)(jsdom@27.4.0)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3)
 
   adapters/workspace-agent:
-    dependencies:
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../core/project-registry
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
@@ -943,10 +926,6 @@ importers:
         version: 3.2.6(@types/debug@4.1.13)(@types/node@24.12.2)(@vitest/browser@4.1.10)(jiti@2.6.1)(jsdom@27.4.0)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3)
 
   adapters/workspace-localfs:
-    dependencies:
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../core/project-registry
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
@@ -2624,9 +2603,6 @@ importers:
       '@kb-labs/agent-tracing':
         specifier: workspace:*
         version: link:../tracing
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../../core/project-registry
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
@@ -2923,9 +2899,6 @@ importers:
       '@kb-labs/agent-contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../../core/project-registry
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
@@ -4115,9 +4088,6 @@ importers:
       '@kb-labs/cli-runtime':
         specifier: workspace:*
         version: link:../../../cli/runtime
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../../core/project-registry
       '@kb-labs/core-workspace':
         specifier: workspace:*
         version: link:../../../core/workspace
@@ -5756,6 +5726,9 @@ importers:
 
   sdk/sdk:
     dependencies:
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../core/project-registry
       '@kb-labs/core-retry':
         specifier: workspace:*
         version: link:../../core/retry

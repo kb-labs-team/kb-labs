@@ -11,7 +11,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import type { DetailedTraceEntry } from '@kb-labs/agent-contracts';
-import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk';
 
 const TRACE_DIR_SEGMENTS = ['traces', 'incremental'] as const;
 

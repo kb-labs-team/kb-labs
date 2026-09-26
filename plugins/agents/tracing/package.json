@@ -28,7 +28,6 @@
   },
   "dependencies": {
     "@kb-labs/agent-contracts": "workspace:*",
-    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/sdk": "workspace:*"
   },
   "devDependencies": {

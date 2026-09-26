@@ -1,5 +1,5 @@
 import * as fs from 'node:fs/promises';
-import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk';
 import { defineCommand, handleError, type CLIInput, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
 
 interface RefreshFlags {

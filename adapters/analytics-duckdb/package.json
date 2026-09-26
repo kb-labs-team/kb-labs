@@ -33,8 +33,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@duckdb/node-api": "^1.4.4-r.1",
-    "@kb-labs/core-project-registry": "workspace:*"
+    "@duckdb/node-api": "^1.4.4-r.1"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

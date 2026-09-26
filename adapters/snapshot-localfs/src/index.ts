@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile, access, cp, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { randomUUID } from 'node:crypto';
 import type {
   ISnapshotProvider,

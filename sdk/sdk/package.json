@@ -74,6 +74,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/core-retry": "workspace:*",
     "zod": "^3.25.76"
   },

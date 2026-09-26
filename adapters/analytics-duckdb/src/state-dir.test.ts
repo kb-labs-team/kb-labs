@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { DuckDBAnalytics } from './index.js';
 
 const context = { source: { product: 'test', version: '1.0.0' }, runId: 'run-test' };

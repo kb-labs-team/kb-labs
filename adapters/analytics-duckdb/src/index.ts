@@ -13,7 +13,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import type { DuckDBValue } from '@duckdb/node-api';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join, isAbsolute } from 'node:path';
-import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import type {
   IAnalytics,
   AnalyticsContext,

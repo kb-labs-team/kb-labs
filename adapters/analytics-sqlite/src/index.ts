@@ -12,7 +12,7 @@
 
 import Database from 'better-sqlite3';
 import { join, isAbsolute, dirname } from 'node:path';
-import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { mkdirSync } from 'node:fs';
 import type {
   IAnalytics,

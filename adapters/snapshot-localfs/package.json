@@ -29,9 +29,6 @@
     "test:watch": "vitest",
     "type-check": "tsc --noEmit"
   },
-  "dependencies": {
-    "@kb-labs/core-project-registry": "workspace:*"
-  },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
     "@kb-labs/sdk": "workspace:*",

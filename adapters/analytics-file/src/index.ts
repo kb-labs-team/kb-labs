@@ -1,6 +1,6 @@
 import fs from "fs-extra";
 import { join } from "node:path";
-import { resolveRuntimeStatePath } from "@kb-labs/core-project-registry";
+import { resolveRuntimeStatePath } from "@kb-labs/sdk/adapters";
 import { format, parseISO } from "date-fns";
 import type {
   IAnalytics,

@@ -29,7 +29,6 @@
   },
   "dependencies": {
     "@kb-labs/cli-runtime": "workspace:*",
-    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/core-workspace": "workspace:*",
     "@kb-labs/marketplace-contracts": "workspace:*",
     "@kb-labs/sdk": "workspace:*"

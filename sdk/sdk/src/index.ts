@@ -60,6 +60,11 @@ export {
   DEFAULT_TRANSIENT_RETRY_POLICY,
 } from "@kb-labs/core-retry";
 
+// Per-project runtime state location (ADR-0044). Adapters and plugins resolve
+// caches, traces and other runtime files here instead of writing into the
+// project's `.kb/` directory.
+export { resolveRuntimeStatePath } from "@kb-labs/core-project-registry";
+
 // Test utilities (legacy — prefer `@kb-labs/sdk/testing` for full mock builders)
 export {
   createTestContext,

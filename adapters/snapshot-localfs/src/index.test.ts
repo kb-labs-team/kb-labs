@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm, writeFile, readFile, mkdir, access } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { LocalFsSnapshotAdapter } from './index.js';
 
 let tmp: string;
