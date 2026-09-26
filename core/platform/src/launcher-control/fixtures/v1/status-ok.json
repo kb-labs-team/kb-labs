@@ -1,0 +1,21 @@
+{
+  "description": "GET /v1/status with a valid token while the host runs.",
+  "request": { "method": "GET", "path": "/v1/status", "auth": "valid" },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "protocol": 1,
+      "launcher": { "version": "$string", "pid": "$number", "startedAt": "$iso8601" },
+      "host": {
+        "runner": "process",
+        "state": "running",
+        "pid": "$number",
+        "healthy": true,
+        "healthUrl": "$string",
+        "startedAt": "$iso8601"
+      },
+      "updateRequests": { "pending": 0 }
+    }
+  }
+}

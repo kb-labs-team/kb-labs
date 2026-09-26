@@ -26,8 +26,8 @@
   "retryable": false,
   "message": "Порт 4000 занят другим приложением.",     // что случилось, человеческим языком
   "cause": "Процесс node (pid 4321) слушает 127.0.0.1:4000.", // почему (без секретов)
-  "hint": "Освободите порт или выберите другой: kb-create start --port 4100",   // что делать сейчас
-  "actions": [{ "id": "choose-port", "label": "Выбрать другой порт", "command": "kb-create start --port 4100" }],
+  "hint": "Остановите приложение, занявшее порт, или измените порт хоста в конфигурации установки, затем снова: kb-create start",   // что делать сейчас
+  "actions": [{ "id": "retry-start", "label": "Запустить снова", "command": "kb-create start" }],
   "docs": "https://…/errors/KB_HOST_PORT_IN_USE",       // опционально
   "correlationId": "01J…",              // по нему находится запись в логах
   "details": { "port": "4000" }         // структурировано, без секретов
@@ -114,6 +114,9 @@
 | `KB_HOST_VERSION_SKEW` | версия лаунчера/CLI ≠ версия хоста | `kb-create update` | K, L |
 | `KB_HOST_CONTROL_UNAVAILABLE` | control-канал лаунчера недоступен | запустить лаунчер/оболочку | S |
 | `KB_HOST_STATE_DIR_UNWRITABLE` | нельзя писать в `~/.kb/state` | права/место | L |
+| `KB_HOST_STOP_FAILED` | процесс хоста не остановился за grace-период | повторить `kb-create stop` или завершить процесс вручную | L |
+| `KB_HOST_SPEC_INVALID` | описание хоста в receipt некорректно | `kb-create doctor --fix` или переустановка | L |
+| `KB_HOST_CONTROL_UNAUTHORIZED` | control-канал лаунчера отклонил токен | взять актуальный токен из `control.json` | S |
 | `KB_HOST_ADAPTER_UNAVAILABLE` | адаптер (БД, кэш, LLM) недоступен | какой, как запустить/настроить | K, S |
 
 ### C. Авторизация
