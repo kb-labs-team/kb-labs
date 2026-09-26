@@ -114,6 +114,9 @@
 | `KB_HOST_VERSION_SKEW` | версия лаунчера/CLI ≠ версия хоста | `kb-create update` | K, L |
 | `KB_HOST_CONTROL_UNAVAILABLE` | control-канал лаунчера недоступен | запустить лаунчер/оболочку | S |
 | `KB_HOST_STATE_DIR_UNWRITABLE` | нельзя писать в `~/.kb/state` | права/место | L |
+| `KB_HOST_STOP_FAILED` | процесс хоста не остановился за grace-период | повторить `kb-create stop` или завершить процесс вручную | L |
+| `KB_HOST_SPEC_INVALID` | описание хоста в receipt некорректно | `kb-create doctor --fix` или переустановка | L |
+| `KB_HOST_CONTROL_UNAUTHORIZED` | control-канал лаунчера отклонил токен | взять актуальный токен из `control.json` | S |
 | `KB_HOST_ADAPTER_UNAVAILABLE` | адаптер (БД, кэш, LLM) недоступен | какой, как запустить/настроить | K, S |
 
 ### C. Авторизация
