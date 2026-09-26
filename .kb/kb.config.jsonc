@@ -237,39 +237,6 @@
             ]
           },
           "flows": {
-            "sdk": {
-              "versioningStrategy": "lockstep",
-              "packages": {
-                "include": [
-                  "@kb-labs/sdk",
-                  "@kb-labs/platform-client"
-                ]
-              },
-              "checks": [
-                {
-                  "id": "dist-exports",
-                  "name": "dist/index.js — no directory imports",
-                  "command": "bash",
-                  "args": [
-                    "scripts/gates/check-dist-exports.sh"
-                  ],
-                  "timeoutMs": 30000,
-                  "blocking": true,
-                  "runIn": "perPackage"
-                },
-                {
-                  "id": "pack-install",
-                  "name": "npm pack + import verification",
-                  "command": "bash",
-                  "args": [
-                    "scripts/gates/check-pack-install.sh"
-                  ],
-                  "timeoutMs": 120000,
-                  "dependsOn": ["dist-exports"],
-                  "runIn": "perPackage"
-                }
-              ]
-            },
             "platform": {
               "versioningStrategy": "lockstep",
               "platformMembers": [
@@ -284,15 +251,13 @@
               ],
               "packages": {
                 "exclude": [
-                  "@kb-labs/sdk",
                   "templates/*",
                   "{{.Name}}",
                   "@product-name/*",
                   "tmp/notifier-test",
                   "tmp/notifier-test/*",
                   "tmp/notifier-test/packages/*",
-                  "@kb-labs/adapters-fs",
-                  "@kb-labs/platform-client"
+                  "@kb-labs/adapters-fs"
                 ]
               },
               "checks": [

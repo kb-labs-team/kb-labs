@@ -36,7 +36,7 @@ on:
 inputs:
   flow:
     type: string
-    description: Release flow to prepare — must match a key under release.flows in .kb/kb.config.json (e.g. "platform", "sdk")
+    description: Release flow to prepare — must match a key under release.flows in .kb/kb.config.json (only "platform": SDK, platform and binaries release as one flow with one version)
     required: true
   channel:
     type: string
@@ -60,7 +60,7 @@ inputs:
       breaking release regardless of what commit messages say. This only
       changes the version number: the compatibility matrix in each release's
       release-index.json already relates platform/SDK/binary versions by
-      exact, explicit pairs (tools/kb-create/v2/catalog/catalog.go,
+      exact, explicit pairs (all three share one version) (tools/kb-create/v2/catalog/catalog.go,
       CheckCompatibility) — nothing is compatible by default, so a major bump
       does not need a separate "breaking" flag to stop old installs from
       silently picking it up.
