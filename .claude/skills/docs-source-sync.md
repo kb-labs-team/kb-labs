@@ -7,6 +7,8 @@ description: Keep KB Labs documentation aligned with code by updating source-bac
 
 Use this workflow when editing `sites/web/apps/docs/` content or its source-to-doc mapping.
 
+For prose, structure, and copyable examples, follow `.claude/skills/docs-authoring.md`.
+
 ## How to choose the mechanism
 
 - If code contains a canonical literal example (currently CLI manifest examples), use an allowlisted source-backed MDX fragment such as `<CommandExamples command="workflow run" match="--input" />`.

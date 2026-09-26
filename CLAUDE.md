@@ -38,10 +38,11 @@ These flat skills are auto-loaded by their `globs`; consult only the one matchin
 - `new-route.md`, `deps-hygiene.md`, `docker-build-hygiene.md`, `worktree-isolated-stack.md`
 - `tool-kb-dev.md`, `tool-kb-devkit.md`, `tool-kb-deploy.md`, `tool-kb-monitor.md`, `tool-release.md`, `tool-generate.md`
 - `commit.md`, `marketplace-rehash.md`, `aeza-proxy.md`, `kb-labs-site-voice.md`, `clickup.md`
+- `docs-authoring.md` — auto-loaded for Markdown and MDX edits across the repository.
 
 The `kb-labs-*` folders are managed by KB Labs and are intentionally not maintained here.
 
-For source-backed documentation edits and staleness mapping, follow `.claude/skills/docs-source-sync.md` (mirrored for agents in `.agents/skills/docs-source-sync/SKILL.md`).
+For documentation writing, follow `.claude/skills/docs-authoring.md` (mirrored for agents in `.agents/skills/docs-authoring/SKILL.md`). For source-backed examples and staleness mapping, also follow `.claude/skills/docs-source-sync.md` (mirrored in `.agents/skills/docs-source-sync/SKILL.md`).
 
 ## Logging
 
