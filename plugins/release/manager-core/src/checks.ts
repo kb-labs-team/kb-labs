@@ -5,8 +5,9 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CustomCheckConfig, CheckResult, CheckResultDetails, PluginLogger, ReleaseShell } from './types';
+import type { CustomCheckConfig, CheckResult, CheckResultDetails, CheckPhaseTiming, PluginLogger, ReleaseShell } from './types';
 import { matchesPackagePattern } from './planner';
+import { defaultBuiltinChecks, type BuiltinCheckHandler, type PackVerifyRuntime } from './pack-verify';
 
 export interface CheckRunnerOptions {
   repoRoot: string;
@@ -14,6 +15,12 @@ export interface CheckRunnerOptions {
   scopePath?: string;
   logger?: Pick<PluginLogger, 'info' | 'warn'>;
   shell: ReleaseShell;
+  /** Staged-tarball information for the `pack-static` / `pack-install` builtin checks. */
+  pack?: PackVerifyRuntime;
+  /** Override builtin check implementations (tests). */
+  builtins?: Partial<Record<NonNullable<CustomCheckConfig['builtin']>, BuiltinCheckHandler>>;
+  /** Ids to run even when the check is `disabled` in config; when set, ONLY these run. */
+  only?: string[];
 }
 
 /**
@@ -45,7 +52,11 @@ export async function runReleaseChecks(
   // Failure state of every finished check, used to resolve `dependsOn`.
   const outcomes = new Map<string, CheckOutcome>();
 
-  for (const check of checks) {
+  const selected = options.only?.length
+    ? checks.filter(c => options.only!.includes(c.id))
+    : checks.filter(c => !c.disabled);
+
+  for (const check of selected) {
     const skip = resolveSkip(check, outcomes, options);
     const result = skip?.whole
       ? skippedResult(check, skip.reason, options.packagePaths)
@@ -189,6 +200,7 @@ async function runSingleCheck(
   async function runForPath(pkgPath: string, attempt = 1): Promise<PkgRunResult> {
     const startedAt = Date.now();
     try {
+      if (!check.command) { throw new Error(`Check ${check.id} has neither "command" nor "builtin"`); }
       const result = await options.shell.exec(check.command, resolvedArgs, { cwd: pkgPath, timeout: timeoutMs });
       const ok = evaluateParser(check, result.stdout, result.stderr, result.code);
       return {
@@ -243,8 +255,23 @@ async function runSingleCheck(
   }
 
   let pkgResults: PkgRunResult[];
+  let phases: CheckPhaseTiming[] | undefined;
+  let builtinDurationMs: number | undefined;
 
-  if (pathsToRun.length === 0) {
+  if (check.builtin) {
+    // In-process batch check: one call covers every remaining package.
+    const packages = pathsToRun.map(path => ({ path, name: readPackageName(path) ?? path }));
+    const handler = options.builtins?.[check.builtin] ?? defaultBuiltinChecks[check.builtin];
+    const out = await handler({ check, packages, pack: options.pack, timeoutMs });
+    phases = out.phases;
+    builtinDurationMs = out.durationMs;
+    pkgResults = out.packages.map(p => ({
+      path: p.path,
+      ok: p.ok,
+      durationMs: p.durationMs,
+      details: p.details ?? { packagePath: p.path },
+    }));
+  } else if (pathsToRun.length === 0) {
     pkgResults = [];
   } else if (runIn === 'perPackage' && pathsToRun.length > 1) {
     // Parallel with concurrency limit
@@ -265,7 +292,7 @@ async function runSingleCheck(
   }
 
   const firstFailure = pkgResults.find(r => !r.ok)?.details;
-  const totalDurationMs = pkgResults.reduce((sum, r) => sum + r.durationMs, 0);
+  const totalDurationMs = builtinDurationMs ?? pkgResults.reduce((sum, r) => sum + r.durationMs, 0);
   const ran = pathsToRun.length + skippedPaths.length > 1
     ? pkgResults.map(r => ({ path: r.path, ok: r.ok, details: r.ok ? undefined : r.details }))
     : undefined;
@@ -285,6 +312,7 @@ async function runSingleCheck(
     details: firstFailure,
     hint: check.optional ? 'optional' : undefined,
     timingMs: totalDurationMs,
+    phases: phases && phases.length > 0 ? phases : undefined,
     packages: perPackage && perPackage.length > 0 ? perPackage : undefined,
   };
 }

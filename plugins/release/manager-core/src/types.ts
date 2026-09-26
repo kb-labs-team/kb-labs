@@ -108,6 +108,8 @@ export interface CheckResult {
   skipped?: boolean;
   /** Why the check was skipped, e.g. "blocking check dist-exports failed". */
   skipReason?: string;
+  /** Wall-clock timing per phase for checks that run in phases (pack-static, pack-install). */
+  phases?: CheckPhaseTiming[];
   /** Per-package breakdown for perPackage checks. */
   packages?: Array<{
     path: string;
@@ -117,6 +119,43 @@ export interface CheckResult {
     skipReason?: string;
     details?: CheckResultDetails;
   }>;
+}
+
+export interface CheckPhaseTiming {
+  name: string;
+  durationMs: number;
+  /** Optional human-readable note (counts, truncation, fallback taken). */
+  detail?: string;
+}
+
+/** Checks implemented inside the release plugin instead of by a shell command. */
+export type BuiltinCheckKind = 'pack-static' | 'pack-install';
+
+/**
+ * Tuning for the aggregated `pack-install` builtin check. See
+ * plugins/release/manager-core/src/pack-verify.ts.
+ */
+export interface PackInstallConfig {
+  /**
+   * Package name patterns that always get their own isolated clean install in
+   * addition to the aggregated one: public standalone packages consumers
+   * install directly (e.g. `@kb-labs/sdk`, `@kb-labs/platform-client`).
+   */
+  isolatedPackages?: string[];
+  /** Also isolate packages the planner marks as changed (bump != none). Default true. */
+  isolateChanged?: boolean;
+  /** Upper bound for isolated installs of changed packages. Default 15. */
+  maxIsolatedChanged?: number;
+  /** Package name patterns that must never be `import()`ed (daemons/apps): resolve-only. */
+  appPackages?: string[];
+  /** Also treat packages with a `bin` field or a `-app`/`-daemon` name as apps. Default true. */
+  detectApps?: boolean;
+  /** Per-import timeout inside the single import pass. Default 20000. */
+  importTimeoutMs?: number;
+  /** Concurrency of isolated installs. Default 2. */
+  isolatedConcurrency?: number;
+  /** Max extra installs spent bisecting a failed aggregated install. Default 40. */
+  maxBisectInstalls?: number;
 }
 
 // CheckId is now dynamic - any string is allowed
@@ -130,7 +169,8 @@ export interface CustomCheckConfig {
   id: string;
   /** Human-readable name shown in UI. Falls back to id if not set. */
   name?: string;
-  command: string;
+  /** Shell command. Required unless `builtin` is set. */
+  command?: string;
   args?: string[];
   parser?: 'json' | 'exitcode' | ((stdout: string, stderr: string, exitCode: number) => boolean);
   timeoutMs?: number;
@@ -165,6 +205,21 @@ export interface CustomCheckConfig {
    * excluding the package from the release itself.
    */
   skipPackages?: string[];
+  /**
+   * Run an in-process check from the release plugin instead of `command`
+   * (`command` is then ignored). `pack-static` verifies every staged tarball in
+   * one process; `pack-install` does one aggregated clean install + one import
+   * pass, plus isolated installs only for a small configured/changed subset.
+   */
+  builtin?: BuiltinCheckKind;
+  /** Options for `builtin: 'pack-install'`. */
+  packInstall?: PackInstallConfig;
+  /**
+   * Keep the check in config but do not run it, unless it is requested
+   * explicitly with `kb release checks --only <id>`. Used for the legacy
+   * per-package `pack-install-per-package` debugging check.
+   */
+  disabled?: boolean;
 }
 
 export interface ReleaseResult {
