@@ -12,6 +12,7 @@ import type { GatewayConfig } from "@kb-labs/gateway-contracts";
 import { createServer } from "../server.js";
 import {
   StudioAssetsMissingError,
+  createStudioStatic,
   createStudioUrlRewriter,
   resolveStudioDir,
 } from "../studio/static.js";
@@ -239,7 +240,9 @@ describe("studio hosting startup", () => {
   });
 
   it("reports missing assets when the package cannot be resolved", async () => {
-    const promise = build(baseConfig({ enabled: true }));
+    const promise = createStudioStatic(baseConfig({ enabled: true }), () => {
+      throw new Error("Cannot find module");
+    });
     await expect(promise).rejects.toMatchObject({
       envelope: { code: "KB_HOST_STUDIO_ASSETS_MISSING" },
     });
