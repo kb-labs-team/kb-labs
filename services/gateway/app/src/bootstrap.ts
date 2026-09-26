@@ -8,7 +8,11 @@ import {
 } from "@kb-labs/core-platform/inmemory";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
-import type { IHostStore, AuthConfig } from "@kb-labs/gateway-contracts";
+import type {
+  IHostStore,
+  AuthConfig,
+  GatewayConfig,
+} from "@kb-labs/gateway-contracts";
 import type { IContextLogger } from "@kb-labs/core-platform";
 import type { IDocumentDatabase } from "@kb-labs/core-platform/adapters";
 import { HostStore } from "@kb-labs/gateway-core";
@@ -65,13 +69,35 @@ export async function bootstrap(
  * `config.port + ctx.netOffset`; the offset is resolved once by the launcher
  * and the gateway never reads KB_NET_OFFSET itself.
  */
-export async function setup({
-  platform,
-  projectRoot,
-  platformRoot,
-  netOffset,
-  logger: serviceLogger,
-}: ServiceContext): Promise<() => Promise<void>> {
+export async function setup(
+  ctx: ServiceContext,
+): Promise<() => Promise<void>> {
+  return startGateway(ctx, {});
+}
+
+/**
+ * Hooks for an embedding process (the machine-level host). They let it adjust
+ * the resolved gateway config in memory without writing config files.
+ */
+export interface GatewayEmbedOptions {
+  /**
+   * Called with the validated gateway config before anything is derived from
+   * it (bind host, access mode, upstreams). May throw to refuse startup.
+   */
+  configure?: (config: GatewayConfig) => GatewayConfig;
+}
+
+/** Gateway service body with embedding hooks; {@link setup} is the no-hook case. */
+export async function startGateway(
+  {
+    platform,
+    projectRoot,
+    platformRoot,
+    netOffset,
+    logger: serviceLogger,
+  }: ServiceContext,
+  options: GatewayEmbedOptions,
+): Promise<() => Promise<void>> {
   const logger = serviceLogger
     .forComponent("gateway-bootstrap")
     .forOperation("gateway.bootstrap");
@@ -83,7 +109,10 @@ export async function setup({
   // than process.cwd() — in installed mode the gateway process is
   // spawned with cwd at the platform root, and we MUST not conflate
   // that with the project root.
-  const config = await loadGatewayConfig(projectRoot, platformRoot);
+  const loadedConfig = await loadGatewayConfig(projectRoot, platformRoot);
+  const config = options.configure
+    ? options.configure(loadedConfig)
+    : loadedConfig;
   const access = resolveAccess(config);
   const listenPort = config.port + netOffset;
   logger.info("Gateway config loaded", {
