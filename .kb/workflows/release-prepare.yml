@@ -36,7 +36,7 @@ on:
 inputs:
   flow:
     type: string
-    description: Release flow to prepare — must match a key under release.flows in .kb/kb.config.json (only "platform": SDK, platform and binaries release as one flow with one version)
+    description: Release flow to prepare — must match a key under release.flows in .kb/kb.config.json (only "platform"; SDK, platform and binaries release as one flow with one version)
     required: true
   channel:
     type: string

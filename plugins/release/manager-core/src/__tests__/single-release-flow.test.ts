@@ -9,30 +9,13 @@ import type { ReleaseConfig } from '../types';
 
 const repoRoot = resolve(__dirname, '../../../../..');
 
-/** Strip // and block comments plus trailing commas, respecting strings. */
+/** Strip // and block comments (string-aware) plus trailing commas. */
 function parseJsonc(src: string): unknown {
-  let out = '';
-  let i = 0;
-  while (i < src.length) {
-    const ch = src[i];
-    if (ch === '"') {
-      out += src[i++];
-      while (i < src.length) {
-        if (src[i] === '\\') { out += src[i++] + src[i++]; continue; }
-        out += src[i];
-        if (src[i++] === '"') break;
-      }
-    } else if (ch === '/' && src[i + 1] === '/') {
-      while (i < src.length && src[i] !== '\n') i++;
-    } else if (ch === '/' && src[i + 1] === '*') {
-      i += 2;
-      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
-      i += 2;
-    } else {
-      out += src[i++];
-    }
-  }
-  return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'));
+  const withoutComments = src.replace(
+    /("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g,
+    (_match, str: string | undefined) => str ?? '',
+  );
+  return JSON.parse(withoutComments.replace(/,(\s*[}\]])/g, '$1'));
 }
 
 function makeMonorepo(packages: Array<{ name: string; dir: string; version: string }>): string {
