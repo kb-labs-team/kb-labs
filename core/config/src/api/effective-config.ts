@@ -3,10 +3,13 @@
  *
  * Canonical "give me the effective raw config" entry point.
  *
- * Assembles the three configuration layers any KB Labs project may have
+ * Assembles the configuration layers any KB Labs project may have
  * and returns the deep-merged result plus diagnostics about how it was
- * resolved:
+ * resolved (ADR-0047: generated < platform user < project user < overlays):
  *
+ *   0. `<root>/.kb/generated/*.json|jsonc`  — installer-written GENERATED
+ *      config (platform root first, then project root). Lowest precedence;
+ *      absent in installs that do not generate config yet.
  *   1. `<platformRoot>/.kb/kb.config.*`  — platform baseline (installed
  *      mode only; absent in solo dev where projectRoot == platformRoot)
  *   2. `<projectRoot>/.kb/kb.config.*`   — project layer
@@ -34,6 +37,12 @@ import { readJsonWithDiagnostics, mergeDefined } from '../runtime/runtime.js';
 import type { Diagnostic } from '../types/index.js';
 import { loadOverlays } from '../overlay/loader.js';
 import { mergeOverlay } from '../overlay/merge.js';
+import {
+  buildProvenance,
+  loadGeneratedLayer,
+  type ConfigLayerFile,
+  type ValueProvenance,
+} from '../user-config/layers.js';
 
 // Order matters: each entry is deep-merged onto the previous one within the
 // same root, so the LAST file found wins on conflicts. Convention:
@@ -79,6 +88,15 @@ export interface EffectiveConfigResult {
   projectConfigPath?: string;
   /** Absolute paths of overlays applied, in merge order. */
   overlayPaths: string[];
+  /** Absolute paths of generated-layer files applied, in merge order. */
+  generatedConfigPaths: string[];
+  /** Every file that contributed, lowest precedence first. */
+  layers: ConfigLayerFile[];
+  /**
+   * Which layer/file supplied each leaf of `data`, keyed by dotted path
+   * (arrays are leaves; see `ValueProvenance.contributors`).
+   */
+  provenance: Record<string, ValueProvenance>;
   /** Non-fatal diagnostics (malformed files, layer rejected, etc). */
   diagnostics: Diagnostic[];
 }
@@ -117,10 +135,12 @@ async function findAllConfigsInRoot(root: string): Promise<string[]> {
 async function readObjectsAtRoot(
   root: string,
   diagnostics: Diagnostic[],
-): Promise<{ paths: string[]; data: Record<string, unknown> }> {
+  layer: 'platform' | 'project',
+): Promise<{ paths: string[]; data: Record<string, unknown>; files: ConfigLayerFile[] }> {
   const paths = await findAllConfigsInRoot(root);
   let merged: Record<string, unknown> = {};
   const loaded: string[] = [];
+  const files: ConfigLayerFile[] = [];
 
   for (const configPath of paths) {
     const read = await readJsonWithDiagnostics<unknown>(configPath);
@@ -148,9 +168,10 @@ async function readObjectsAtRoot(
     // reserved for the explicit overlay step below and the `kb:merge`
     // directive within overlays.
     merged = mergeDefined(merged, data as Record<string, unknown>);
+    files.push({ layer, path: configPath, data: data as Record<string, unknown> });
   }
 
-  return { paths: loaded, data: merged };
+  return { paths: loaded, data: merged, files };
 }
 
 /**
@@ -166,15 +187,20 @@ export async function loadEffectiveConfig(
   const usePlatform =
     !!options.platformRoot && options.platformRoot !== projectRoot;
 
+  const generatedRoots = usePlatform ? [options.platformRoot!, projectRoot] : [projectRoot];
+  const generatedLayer = await loadGeneratedLayer(generatedRoots);
+  diagnostics.push(...generatedLayer.diagnostics);
+
   const platformLayer = usePlatform
-    ? await readObjectsAtRoot(options.platformRoot!, diagnostics)
-    : { paths: [] as string[], data: {} as Record<string, unknown> };
-  const projectLayer = await readObjectsAtRoot(projectRoot, diagnostics);
+    ? await readObjectsAtRoot(options.platformRoot!, diagnostics, 'platform')
+    : { paths: [] as string[], data: {} as Record<string, unknown>, files: [] as ConfigLayerFile[] };
+  const projectLayer = await readObjectsAtRoot(projectRoot, diagnostics, 'project');
 
   const overlayResult = await loadOverlays(projectRoot);
   diagnostics.push(...overlayResult.diagnostics);
 
   const nothingFound =
+    generatedLayer.files.length === 0 &&
     platformLayer.paths.length === 0 &&
     projectLayer.paths.length === 0 &&
     overlayResult.overlays.length === 0;
@@ -185,17 +211,27 @@ export async function loadEffectiveConfig(
   // Platform ← project: SAME semantics as loadPlatformConfig — `mergeDefined`
   // (arrays concatenate). Keeps both APIs returning the same shape for the
   // shared two-layer step.
+  // The generated layer is the baseline under both user layers.
   let merged: Record<string, unknown> = mergeDefined(
-    platformLayer.data,
+    mergeDefined(generatedLayer.data, platformLayer.data),
     projectLayer.data,
   );
   // Overlays: REPLACE semantics for arrays (with opt-in `kb:merge: append`)
   // — overlays are the explicit override layer, not a deep-merge layer.
   const overlayPaths: string[] = [];
+  const overlayFiles: ConfigLayerFile[] = [];
   for (const overlay of overlayResult.overlays) {
     merged = mergeOverlay(merged, overlay.data);
     overlayPaths.push(overlay.path);
+    overlayFiles.push({ layer: 'overlay', path: overlay.path, data: overlay.data });
   }
+
+  const layers: ConfigLayerFile[] = [
+    ...generatedLayer.files,
+    ...platformLayer.files,
+    ...projectLayer.files,
+    ...overlayFiles,
+  ];
 
   return {
     data: merged,
@@ -205,6 +241,9 @@ export async function loadEffectiveConfig(
       platformLayer.paths[platformLayer.paths.length - 1],
     projectConfigPath: projectLayer.paths[projectLayer.paths.length - 1],
     overlayPaths,
+    generatedConfigPaths: generatedLayer.files.map((file) => file.path),
+    layers,
+    provenance: buildProvenance(layers, merged),
     diagnostics,
   };
 }

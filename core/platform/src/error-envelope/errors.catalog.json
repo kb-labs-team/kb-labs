@@ -327,6 +327,15 @@
       "hint": "Enable authentication or bind to a loopback address."
     },
     {
+      "code": "KB_HOST_STUDIO_ASSETS_MISSING",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "Studio is enabled but its built files were not found: {dir}.",
+      "hint": "Reinstall or update KB Labs so the Studio bundle is present, or point gateway.studio.dir at a built Studio directory, or disable gateway.studio."
+    },
+    {
       "code": "KB_HOST_VERSION_SKEW",
       "area": "host",
       "stage": "run",
@@ -576,7 +585,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Unknown configuration key {path}.",
-      "hint": "Did you mean {suggestion}? Fix the key in kb.config.json."
+      "hint": "{suggestion} Run \"kb config show\" to list the keys that are set."
     },
     {
       "code": "KB_CONFIG_SECRET_MISSING",
@@ -586,6 +595,15 @@
       "retryable": false,
       "message": "The configuration references {variable}, which has no value.",
       "hint": "Set the environment variable or store the secret, then retry."
+    },
+    {
+      "code": "KB_CONFIG_SECRET_PLAINTEXT",
+      "area": "config",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Refusing to store a plain secret at {path}.",
+      "hint": "Put the secret in an environment variable and store a reference: {example}. Use --allow-plain-secret only for throwaway local values."
     },
     {
       "code": "KB_CONFIG_CONFLICT",
@@ -783,7 +801,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Configuration value {path} is invalid.",
-      "hint": "Fix {path} in kb.config.json; see the documentation for allowed values."
+      "hint": "Provide a valid value for {path} (see the cause) and retry; \"kb config get {path}\" shows the current one."
     },
     {
       "code": "KB_PLUGIN_NOT_FOUND",
