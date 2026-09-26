@@ -27,11 +27,16 @@ func DecodeRequest(data []byte) (contracts.InstallRequest, error) {
 }
 
 func Plan(data []byte, source catalog.Catalog) PlanResponse {
+	return PlanWith(data, source, resolve.Options{})
+}
+
+// PlanWith is Plan for a launcher of a known version and target.
+func PlanWith(data []byte, source catalog.Catalog, options resolve.Options) PlanResponse {
 	request, err := DecodeRequest(data)
 	if err != nil {
 		return failure(contracts.CodeIncompatibleComponents, contracts.StageResolve, err)
 	}
-	resolved, err := resolve.Plan(request, source)
+	resolved, err := resolve.PlanWith(request, source, options)
 	if err != nil {
 		if typed, ok := err.(*contracts.LauncherError); ok {
 			return PlanResponse{OK: false, Error: typed}

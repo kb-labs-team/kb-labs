@@ -48,6 +48,24 @@
       "hint": "Retry the command; if it persists report the correlationId (this is a KB Labs problem)."
     },
     {
+      "code": "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The release index uses schema {schema}, which this launcher does not support.",
+      "hint": "Update the launcher (kb-create update, or download the current launcher) and retry."
+    },
+    {
+      "code": "KB_INSTALL_LAUNCHER_TOO_OLD",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "Platform {platform} requires launcher {minLauncherVersion} or newer, but this is {launcher}.",
+      "hint": "Run kb-create update, or download the current launcher, then retry."
+    },
+    {
       "code": "KB_INSTALL_NODE_MISSING",
       "area": "install",
       "stage": "preflight",

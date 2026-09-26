@@ -73,8 +73,8 @@ func Seal(source Catalog) (Catalog, error) {
 }
 
 func Validate(source Catalog) error {
-	if source.Schema != Schema {
-		return fmt.Errorf("unsupported release index schema %q", source.Schema)
+	if err := CheckSchema(source.Schema); err != nil {
+		return err
 	}
 	if len(source.Platforms) == 0 {
 		return fmt.Errorf("release index contains no platform bundles")
@@ -246,7 +246,7 @@ func Verify(source Catalog) error {
 		return err
 	}
 	if !strings.EqualFold(expected, actual) {
-		return fmt.Errorf("release index digest mismatch")
+		return contracts.NewLauncherError(contracts.CodeReleaseIndexInvalid, "The release index digest does not match its content.", indexInvalidHint, nil)
 	}
 	return nil
 }
@@ -286,17 +286,20 @@ func findPlatform(values []PlatformBundle, version string) (PlatformBundle, bool
 // PlatformBundle is released atomically: core, official services, defaults and
 // compatible binaries are one platform decision, not independently guessed.
 type PlatformBundle struct {
-	ID       string                            `json:"id"`
-	Version  string                            `json:"version"`
-	Package  string                            `json:"package"`
-	SHA256   string                            `json:"sha256"`
-	Tarball  string                            `json:"tarball"`
-	SDKRange string                            `json:"sdkRange,omitempty"`
-	Profiles map[string]contracts.ServiceGraph `json:"profiles"`
-	Requires []Requirement                     `json:"requires,omitempty"`
-	Config   []ConfigRequirement               `json:"config,omitempty"`
-	Binaries []Binary                          `json:"binaries,omitempty"`
-	Members  []Component                       `json:"members,omitempty"`
+	ID       string `json:"id"`
+	Version  string `json:"version"`
+	Package  string `json:"package"`
+	SHA256   string `json:"sha256"`
+	Tarball  string `json:"tarball"`
+	SDKRange string `json:"sdkRange,omitempty"`
+	// MinLauncherVersion is the oldest kb-create launcher allowed to install
+	// this platform. Empty means no constraint.
+	MinLauncherVersion string                            `json:"minLauncherVersion,omitempty"`
+	Profiles           map[string]contracts.ServiceGraph `json:"profiles"`
+	Requires           []Requirement                     `json:"requires,omitempty"`
+	Config             []ConfigRequirement               `json:"config,omitempty"`
+	Binaries           []Binary                          `json:"binaries,omitempty"`
+	Members            []Component                       `json:"members,omitempty"`
 }
 
 // Binary is release-owned tooling required by a platform bundle. URLs and

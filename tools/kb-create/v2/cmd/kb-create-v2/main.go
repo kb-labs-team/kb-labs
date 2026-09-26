@@ -5,6 +5,7 @@ package v2cli
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/kb-labs/create/v2/logs"
 	"github.com/kb-labs/create/v2/preflight"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/scenario"
 	"github.com/kb-labs/create/v2/secrets"
@@ -127,7 +129,7 @@ func run(operation, indexPath, inputPath, doctorInput, platformRoot, snapshotID,
 	}
 	source, err := catalog.LoadFile(indexPath)
 	if err != nil {
-		write(output, failure("KB_INSTALL_RELEASE_INDEX_INVALID", "release index could not be loaded", "supply a valid immutable V2 release index", err))
+		writeIndexFailure(output, err, "supply a valid immutable V2 release index")
 		return 2
 	}
 	var response transport.PlanResponse
@@ -137,7 +139,7 @@ func run(operation, indexPath, inputPath, doctorInput, platformRoot, snapshotID,
 			write(output, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a readable V2 request JSON file", err))
 			return 2
 		}
-		response = transport.Plan(data, source)
+		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
 	} else {
 		request, requestErr := direct.normalize()
 		if requestErr != nil {
@@ -153,7 +155,7 @@ func run(operation, indexPath, inputPath, doctorInput, platformRoot, snapshotID,
 			request = compiled
 		}
 		data, _ := json.Marshal(request)
-		response = transport.Plan(data, source)
+		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
 	}
 	if !response.OK {
 		write(output, response)
@@ -288,7 +290,7 @@ func runWizard(indexPath, platformRoot, scenarioID string, output *os.File) int 
 	}
 	source, err := catalog.LoadFile(indexPath)
 	if err != nil {
-		write(output, failure("KB_INSTALL_RELEASE_INDEX_INVALID", "release index could not be loaded", "supply a valid sealed V2 release index", err))
+		writeIndexFailure(output, err, "supply a valid sealed V2 release index")
 		return 2
 	}
 	request, err := wizard.RequestScenario(source, platformRoot, scenarioID, wizard.IO{In: os.Stdin, Out: os.Stderr})
@@ -450,6 +452,17 @@ func runRecovery(operation, platformRoot, snapshotID, registry, kbdev string, ou
 }
 
 func write(output *os.File, value any) { _ = json.NewEncoder(output).Encode(value) }
+
+// writeIndexFailure emits a typed launcher error from the index gate as is
+// (schema unsupported, corrupt digest); anything else is a generic load failure.
+func writeIndexFailure(output *os.File, err error, hint string) {
+	var typed *contracts.LauncherError
+	if errors.As(err, &typed) {
+		write(output, map[string]any{"ok": false, "error": typed})
+		return
+	}
+	write(output, failure("KB_INSTALL_RELEASE_INDEX_INVALID", "release index could not be loaded", hint, err))
+}
 
 func failure(code, message, hint string, cause error) map[string]any {
 	return map[string]any{"ok": false, "error": contracts.NewLauncherError(code, message, hint, cause)}
