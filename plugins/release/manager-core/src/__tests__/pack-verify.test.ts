@@ -249,7 +249,10 @@ describe('pack-install (aggregated)', () => {
   it('turns an install that outlives its budget into a failure that classifies as a timeout', async () => {
     const { artifacts, packages } = tarballs('a');
     const f = fakeDeps();
-    f.deps.install = () => new Promise(() => undefined);
+    f.deps.install = () =>
+      new Promise(() => {
+        // never settles: the check must give up on its own budget
+      });
     const out = await runPackInstallCheck({ packages, artifacts, config: {}, timeoutMs: 20 }, f.deps);
     expect(out.packages[0]?.ok).toBe(false);
     expect(classifyFailure({ error: out.packages[0]?.details?.stderr }).timedOut).toBe(true);
