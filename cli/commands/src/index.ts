@@ -26,6 +26,7 @@ export { version } from "./commands/system/version";
 export { createCompletionCommand } from "./commands/system/completion";
 
 // Logs commands (agent-first log viewing and analysis)
+export { projectAdd, projectList, projectShow, projectRemove } from "./commands/system/project";
 export { logsDiagnose, logsContext, logsSummarize, logsQuery, logsSearch, logsGet, logsStats } from "./commands/system/logs";
 
 export { generateCommandSchema } from "./presentation/schema-generator";

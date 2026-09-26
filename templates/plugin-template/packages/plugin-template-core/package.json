@@ -48,15 +48,17 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/plugin-template-contracts": "workspace:*",
-    "@kb-labs/sdk": "workspace:*",
     "react": "^19.0.0",
     "zod": "^3.25.76"
+  },
+  "peerDependencies": {
+    "@kb-labs/sdk": "workspace:*"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",
+    "@kb-labs/sdk": "workspace:*",
     "@types/node": "^24.3.3",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

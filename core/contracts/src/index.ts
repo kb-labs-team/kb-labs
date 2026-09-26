@@ -51,3 +51,6 @@ export {
 export * from "./permissions.js";
 export * from "./identity-provider.js";
 export * from "./policy.js";
+
+// Project registry (ADR-0044)
+export * from "./project-registry.js";
