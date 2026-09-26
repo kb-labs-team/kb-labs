@@ -128,7 +128,7 @@ function readPackedPackageName(tarballPath: string): string | undefined {
  * both — the code alone ("EUNSUPPORTEDPROTOCOL") is what npm's own debug log
  * would have shown if it hadn't swallowed the message entirely.
  */
-function describeArboristError(err: unknown): string {
+export function describeArboristError(err: unknown): string {
   if (err instanceof Error) {
     const code = (err as NodeJS.ErrnoException).code;
     return code ? `[${code}] ${err.message}` : err.message;

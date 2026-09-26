@@ -10,10 +10,12 @@ import {
   resolveScopePath,
   buildReleaseRunReport,
   renderFailureLines,
+  STAGED_TARBALLS_REL_DIR,
   type ReleaseConfig,
   type CheckResult,
   type ReleaseRunReport,
 } from '@kb-labs/release-manager-core';
+import { join } from 'node:path';
 import { findRepoRoot } from '../../shared/utils';
 import { runPreflightFor } from '../../shared/run-preflight';
 
@@ -23,6 +25,8 @@ interface ChecksFlags {
   json?: boolean;
   /** Opt-in: run the release preflight first and stop before checks if it fails. */
   preflight?: boolean;
+  /** Comma-separated check ids to run exclusively (includes `disabled` ones). */
+  only?: string;
   'net-offset'?: number | string;
 }
 
@@ -124,6 +128,18 @@ export default defineCommand({
       const scopePath = await resolveScopePath(repoRoot, flags.scope ?? 'root');
       const packagePaths = plan.packages.map(p => p.path);
 
+      // Tarballs come from the Stage step (`release stage plan`), never re-packed here.
+      const needsStaged = checks.some(c => c.builtin);
+      const pack = needsStaged
+        ? {
+            plannedPackages: plan.packages.map(p => ({ name: p.name, version: p.nextVersion })),
+            stagedDir: process.env.KB_RELEASE_STAGED_TARBALLS_DIR ?? join(repoRoot, STAGED_TARBALLS_REL_DIR),
+            registry: process.env.KB_RELEASE_STAGING_REGISTRY || undefined,
+            changedPackages: plan.packages.filter(p => p.bump !== 'none').map(p => p.name),
+          }
+        : undefined;
+      const only = flags.only?.split(',').map(s => s.trim()).filter(Boolean);
+
       const checksLoader = useLoader(`Running ${checks.length} check(s)...`);
       checksLoader.start();
 
@@ -134,6 +150,8 @@ export default defineCommand({
         scopePath,
         logger: ctx.platform?.logger,
         shell: ctx.api.shell,
+        pack,
+        only,
       });
 
       const runReport = buildReleaseRunReport({

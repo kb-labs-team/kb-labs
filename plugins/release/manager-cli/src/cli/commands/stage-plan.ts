@@ -19,13 +19,13 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineCommand, type CLIInput, type PluginContextV3, useLoader, useConfig, type CommandResult } from '@kb-labs/sdk';
 import {
   discoverCurrentPackages,
   type ReleaseConfig,
+  STAGED_TARBALLS_REL_DIR,
   type ReleasePlan,
 } from '@kb-labs/release-manager-core';
 import { findRepoRoot } from '../../shared/utils';
@@ -143,7 +143,14 @@ export default defineCommand({
       // unresolvable `workspace:*` in the published tarball.
       const packLoader = useLoader(`Packing ${plan.packages.length} planned package version(s)...`);
       packLoader.start();
-      const outDir = mkdtempSync(join(tmpdir(), 'kb-stage-plan-'));
+      // Persistent, so the pack-static / pack-install checks verify these very
+      // tarballs instead of packing every package again. Only stale .tgz files
+      // and the manifest of a previous stage run are removed.
+      const outDir = join(repoRoot, STAGED_TARBALLS_REL_DIR);
+      mkdirSync(outDir, { recursive: true });
+      for (const f of readdirSync(outDir)) {
+        if (f.endsWith('.tgz') || f === 'manifest.json') { rmSync(join(outDir, f), { force: true }); }
+      }
       const packagesToPublish: PackageToPublish[] = [];
       try {
         for (const pkg of plan.packages) {
@@ -156,6 +163,10 @@ export default defineCommand({
         if (flags.json) { ctx.ui?.json?.({ error: msg }); } else { ctx.ui?.error?.(msg); }
         return { ok: false, error: 'Command failed' };
       }
+      writeFileSync(
+        join(outDir, 'manifest.json'),
+        JSON.stringify(packagesToPublish.map(p => ({ name: p.name, version: p.version, tarball: (p.tarballPath ?? '').slice(outDir.length + 1) })), null, 2) + '\n',
+      );
       packLoader.succeed(`Packed ${packagesToPublish.length} package(s)`);
 
       const stageLoader = useLoader(`Staging ${packagesToPublish.length} planned package version(s) to ${registry}...`);
