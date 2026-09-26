@@ -327,6 +327,15 @@
       "hint": "Enable authentication or bind to a loopback address."
     },
     {
+      "code": "KB_HOST_STUDIO_ASSETS_MISSING",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "Studio is enabled but its built files were not found: {dir}.",
+      "hint": "Reinstall or update KB Labs so the Studio bundle is present, or point gateway.studio.dir at a built Studio directory, or disable gateway.studio."
+    },
+    {
       "code": "KB_HOST_VERSION_SKEW",
       "area": "host",
       "stage": "run",
