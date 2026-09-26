@@ -13,8 +13,7 @@ import {
 } from "../commands/system/groups";
 import { createCompletionCommand, autoUpdateCompletion } from "../commands/system/completion";
 import { diag } from "../commands/system/diag";
-import { registerManifests, disposeAllPlugins, preflightManifests } from "../registry/register";
-import { registerShutdownHook } from "./shutdown";
+import { registerManifests, preflightManifests } from "../registry/register";
 import { getContextCwd } from "@kb-labs/shared-cli-ui";
 import type { ILogger } from "@kb-labs/core-platform";
 import { platform } from "@kb-labs/core-runtime";
@@ -27,18 +26,16 @@ export interface RegisterBuiltinCommandsInput {
   env?: NodeJS.ProcessEnv;
   logger?: ILogger;
   /**
-   * Where the KB Labs platform is installed (parent of
-   * `node_modules/@kb-labs/*`). Forwarded to `discoverManifests` so that
-   * plugin discovery scans the platform `node_modules` regardless of where
-   * the CLI is invoked from. When omitted, falls back to `cwd` — this keeps
-   * dev-mode behavior unchanged.
+   * Where the KB Labs platform is installed (holds the platform
+   * `.kb/marketplace.lock`). Forwarded to `discoverManifests` so that platform
+   * plugins are found regardless of where the CLI is invoked from. When omitted,
+   * falls back to `cwd` — this keeps dev-mode behavior unchanged.
    */
   platformRoot?: string;
   /**
    * The user's project root (directory containing `.kb/kb.config.{json,jsonc}`).
-   * Discovery uses this to pick up project-scope plugins from
-   * `<projectRoot>/.kb/plugins/` and to invalidate the cache when the
-   * project's `marketplace.lock` changes. When omitted, falls back to `cwd`.
+   * Discovery reads the project-scope `<projectRoot>/.kb/marketplace.lock` from
+   * here. When omitted, falls back to `cwd`.
    */
   projectRoot?: string;
 }
@@ -74,11 +71,8 @@ export async function registerBuiltinCommands(
 
   try {
     const cwd = getContextCwd({ cwd: input.cwd });
-    const env = input.env ?? process.env;
-    const noCache =
-      process.argv.includes("--no-cache") || env.KB_PLUGIN_NO_CACHE === "1";
     const { discoverManifests } = await import('../registry/discover');
-    const discovered = await discoverManifests(cwd, noCache, {
+    const discovered = await discoverManifests(cwd, {
       platformRoot: input.platformRoot,
       projectRoot: input.projectRoot,
     });
@@ -133,9 +127,6 @@ export async function registerBuiltinCommands(
   // Regenerate static shell completions if command set changed — cheap check (<1ms typical)
   await autoUpdateCompletion(registry).catch(() => { /* best-effort, never fail startup */ });
 
-  registerShutdownHook(async () => {
-    await disposeAllPlugins(registry, log);
-  });
 }
 
 export function checkSelfUpdateNotices(registered: RegisteredCommand[]): void {

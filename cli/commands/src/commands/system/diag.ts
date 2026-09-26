@@ -1,7 +1,7 @@
 /**
  * diag command — Unified diagnostics + command-trace tool.
  *
- * Base mode  (`kb diag`):            environment, cache, marketplace overview with
+ * Base mode  (`kb diag`):            environment, marketplace overview with
  *                                    per-command unavailability and load failures.
  * Trace mode (`kb diag --command X`): five-stage pipeline trace explaining exactly
  *                                    why a specific command is (or isn't) visible.
@@ -10,14 +10,14 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../utils/generate-examples';
 import { registry } from '../../registry/service';
-import { discoverManifests, resetInProcCache, loadConfig } from '../../registry/discover';
+import { discoverManifests } from '../../registry/discover';
 import { preflightManifests } from '../../registry/register';
 import { validateManifests } from '../../registry/schema';
 import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
 import type { MarketplaceEntry } from '@kb-labs/core-discovery';
 import type { DiscoveryResult } from '../../registry/types';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
-import { access as fsAccess, readFile as fsReadFile } from 'node:fs/promises';
+import { access as fsAccess } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getContextCwd, safeColors, safeSymbols } from '@kb-labs/shared-cli-ui';
@@ -280,26 +280,16 @@ async function runRegistryStage(
 async function runDiscoveryStage(
   ctx: TraceCtx,
 ): Promise<TraceStage & { enrich?: Partial<TraceCtx> }> {
-  resetInProcCache();
   const opts = { platformRoot: ctx.platformRoot, projectRoot: ctx.projectRoot };
-  const discovered = await discoverManifests(ctx.cwd, true, opts);
+  const discovered = await discoverManifests(ctx.cwd, opts);
 
   const [topSegment] = ctx.segments;
   const result = discovered.find(r => matchesTopSegment(r, topSegment ?? ''));
 
   if (!result) {
-    const { block: blocklist = [] } = await loadConfig(ctx.cwd);
-    const blocked = blocklist.some(b => b === topSegment || b.includes(`/${topSegment ?? ''}`));
-    if (blocked) {
-      return {
-        stage: 'discovery', status: 'error', code: 'PLUGIN_BLOCKLISTED',
-        message: `Plugin "${topSegment}" is in plugins.block in .kb/kb.config.json`,
-        remediation: 'Remove it from plugins.block in .kb/kb.config.json',
-      };
-    }
     return {
       stage: 'discovery', status: 'info', code: 'NOT_IN_DISCOVERY',
-      message: `No package found for group "${topSegment}" in workspace or node_modules`,
+      message: `No plugin found for group "${topSegment}" in a marketplace.lock or the workspace`,
     };
   }
 
@@ -499,7 +489,7 @@ async function runTrace(ctx: TraceCtx): Promise<CommandTraceResult> {
 
 export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResult>({
   name: 'diag',
-  description: 'Comprehensive system diagnostics (plugins, cache, environment, versions)',
+  description: 'Comprehensive system diagnostics (plugins, environment, versions)',
   category: 'info',
   examples: generateExamples('diag', 'kb', [
     { flags: {} },
@@ -547,7 +537,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
     // 2. Plugin discovery
     let discovered: DiscoveryResult[] = [];
     try {
-      discovered = await discoverManifests(cwd, false, { platformRoot, projectRoot });
+      discovered = await discoverManifests(cwd, { platformRoot, projectRoot });
       const allCommands = registry.listCommands();
       const enabled = allCommands.filter(m => m.available && !m.shadowed).length;
       const disabled = allCommands.filter(m => !m.available && !m.shadowed).length;
@@ -597,38 +587,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
       });
     }
 
-    // 3. Cache
-    try {
-      const cachePath = path.join(cwd, '.kb', 'cache', 'cli-manifests.json');
-      const cacheExists = await fsAccess(cachePath).then(() => true).catch(() => false);
-      if (cacheExists) {
-        const cache = JSON.parse(await fsReadFile(cachePath, 'utf8')) as { timestamp?: number; packages?: Record<string, unknown> };
-        const ageHours = Math.floor((Date.now() - (cache.timestamp ?? 0)) / (1000 * 60 * 60));
-        diagnostics.push({
-          category: 'cache',
-          status: 'ok',
-          message: `Cache exists, ${ageHours}h old, ${Object.keys(cache.packages ?? {}).length} packages cached`,
-          details: { exists: true, ageHours, packages: Object.keys(cache.packages ?? {}).length },
-        });
-      } else {
-        diagnostics.push({
-          category: 'cache',
-          status: 'ok',
-          message: 'No cache found (will be created on next discovery)',
-          details: { exists: false },
-        });
-      }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      diagnostics.push({
-        category: 'cache',
-        status: 'warning',
-        message: `Cache check failed: ${errMsg}`,
-        details: { error: errMsg },
-      });
-    }
-
-    // 4. Marketplace lock — also surface DiagnosticCollector events
+    // 3. Marketplace lock — also surface DiagnosticCollector events
     try {
       const collector = new DiagnosticCollector();
       const lock = await readMarketplaceLock(cwd, collector);
@@ -673,7 +632,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
       });
     }
 
-    // 5. Version compatibility
+    // 4. Version compatibility
     try {
       const cliVersion = process.env.CLI_VERSION ?? '0.1.0';
       const versionIssues: Array<{ plugin: string; required: string; current: string }> = [];
