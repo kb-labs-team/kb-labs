@@ -41,6 +41,8 @@ These flat skills are auto-loaded by their `globs`; consult only the one matchin
 
 The `kb-labs-*` folders are managed by KB Labs and are intentionally not maintained here.
 
+For source-backed documentation edits and staleness mapping, follow `.claude/skills/docs-source-sync.md` (mirrored for agents in `.agents/skills/docs-source-sync/SKILL.md`).
+
 ## Logging
 
 Platform-backed processes use `IContextLogger` from `@kb-labs/core-platform`. Create root context in the launcher, derive scopes with `forComponent`, `forOperation`, or `forPlugin`, and keep diagnostics structured and secret-free. See `docs/adr/0036-platform-log-context-contract.md` for the full contract.

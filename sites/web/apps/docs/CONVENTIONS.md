@@ -167,6 +167,8 @@ The command identifier must be explicitly allowlisted in `lib/doc-source-map.mjs
 
 Use this for facts the source can prove. Keep scenario-specific explanation and workflow narrative in MDX; CI reports changed owner pages for agent review rather than trying to infer prose from implementation.
 
+An explicit `<CommandExamples>` source reference is an authoritative dependency for its source file and takes precedence over broad `owners` zones for that file. Other owner matches are heuristic review hints, not proof that the page is stale. Keep `owners` scoped to the smallest source area that can materially change the page; use paths that exist in the repository (not conceptual package names such as `core/` if the implementation lives in `engine/`). A time-based review date is not currently a freshness guarantee: use source links for code-backed facts, and treat external or narrative material as a separate human review concern.
+
 ---
 
 ## Component Naming

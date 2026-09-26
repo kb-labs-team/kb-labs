@@ -21,6 +21,7 @@
 - Cross-cutting ADRs: `docs/adr/`; module ADRs: `<module>/docs/adr/`.
 - Managed KB Labs skills: `.claude/skills/kb-labs-*/` — do not edit manually.
 - Task-specific Claude guidance: `.claude/skills/*.md` is versioned with the repository; keep per-user Claude state outside this directory.
+- Documentation source-sync workflow: use `.agents/skills/docs-source-sync/SKILL.md` when changing source-backed docs or their review mapping.
 
 ## Common commands
 

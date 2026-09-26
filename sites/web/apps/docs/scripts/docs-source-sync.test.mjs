@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -53,4 +54,32 @@ test('rejects generated snapshots that point outside the allowlisted source', ()
     }),
     /unexpected path/,
   );
+});
+
+test('an explicit generated source reference takes precedence over broad owner zones', () => {
+  const output = execFileSync(process.execPath, ['scripts/docs-staleness.mjs'], {
+    cwd: getDocsDir(),
+    env: { ...process.env, CHANGED_FILES: 'plugins/workflow/entry/src/manifest.ts' },
+    encoding: 'utf8',
+  });
+  const { affected } = JSON.parse(output);
+
+  assert.deepEqual(affected.map((page) => page.slug), ['guides/first-workflow']);
+  assert.equal(affected[0].matchKind, 'exact');
+  assert.deepEqual(affected[0].sourceReferences, ['workflow run', 'workflow runs status']);
+});
+
+test('workflow engine ownership zones point at real, relevant source areas', () => {
+  const output = execFileSync(process.execPath, ['scripts/docs-staleness.mjs'], {
+    cwd: getDocsDir(),
+    env: { ...process.env, CHANGED_FILES: 'plugins/workflow/engine/src/retry.ts' },
+    encoding: 'utf8',
+  });
+  const { affected } = JSON.parse(output);
+
+  assert.deepEqual(
+    affected.map((page) => page.slug).sort(),
+    ['concepts/workflow-engine', 'guides/first-workflow', 'workflows/jobs', 'workflows/retry-and-errors'],
+  );
+  assert.ok(affected.every((page) => page.matchKind === 'zone'));
 });
