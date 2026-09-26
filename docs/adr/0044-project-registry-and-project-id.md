@@ -84,7 +84,10 @@ There is no host process yet, so the registry must be usable directly from the C
 - `core/contracts/src/project-registry.ts`, `core/project-registry/`, `cli/commands/src/commands/system/project/`.
 - New catalog codes: `KB_PROJECT_NAME_TAKEN`, `KB_PROJECT_REGISTRY_CORRUPT`, `KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED`,
   `KB_PROJECT_REGISTRY_LOCKED`.
-- Follow-ups: move runtime state to `state/<projectId>/`; wire `--init` to the future init flow; host takes over the
+- Runtime-state move (task 1.3): `resolveProjectStateDir` and the legacy read fallback are in
+  `core/project-registry/src/state-dir.ts`; the inventory and the deferred paths are in
+  `docs/architecture/target/13-runtime-state-inventory.md`.
+- Follow-ups: move the remaining runtime state (see the inventory) to `state/<projectId>/`; wire `--init` to the future init flow; host takes over the
   registry; reserve `project` in the namespace list.
 
 ## References
