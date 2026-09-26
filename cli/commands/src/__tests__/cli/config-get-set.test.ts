@@ -45,7 +45,7 @@ function makeCtx(cwd: string): { ctx: PluginContextV3; out: Captured } {
         out.written.push(text);
       },
       success: (title, options) => {
-        out.success.push({ title, items: options?.sections?.flatMap((s) => s.items ?? []) ?? [] });
+        out.success.push({ title, items: (options?.sections?.flatMap((s) => s.items) ?? []).filter((item): item is string => typeof item === 'string') });
       },
     },
     platform: {
