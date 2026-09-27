@@ -9,8 +9,9 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { confirmDestructive, getContextCwd } from '@kb-labs/shared-cli-ui';
 import type { ProjectRecord } from '@kb-labs/core-contracts';
+import { projectErrorEnvelope } from '@kb-labs/core-project-registry';
 import { generateExamples } from '../../../utils/generate-examples';
-import { failWithEnvelope, openRegistry, projectRef, toProjectEnvelope } from './project-support';
+import { failWithEnvelope, openRegistry, projectRef } from './project-support';
 
 type RemoveFlags = {
   json: { type: 'boolean'; description?: string };
@@ -86,7 +87,7 @@ export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResul
       }
       return { ok: true, project: removed };
     } catch (error) {
-      return failWithEnvelope(ctx.ui, toProjectEnvelope(error), json);
+      return failWithEnvelope(ctx.ui, projectErrorEnvelope(error), json);
     }
   },
 });

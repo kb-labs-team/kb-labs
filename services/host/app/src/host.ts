@@ -41,6 +41,7 @@ import {
   type RuntimeLauncher,
 } from "./project-runtime/manager.js";
 import { createProjectRouting } from "./project-runtime/routing.js";
+import { createProjectsRoutes } from "./projects-routes.js";
 import {
   parseHostSettings,
   type HostModuleId,
@@ -325,6 +326,7 @@ export async function createHostConfig(
           configure: (config) =>
             applyHostGatewayPolicy(config, { auth: settings.auth, upstreams }),
           projectRouting: createProjectRouting({ registry, manager, logger }),
+          hostRoutes: createProjectsRoutes({ registry, manager }),
         },
       );
       return async () => {

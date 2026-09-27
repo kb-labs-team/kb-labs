@@ -8,16 +8,64 @@
  * (`initWorkspaceConfig` from @kb-labs/core-config).
  */
 
-import { promises as fs } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
-import { initWorkspaceConfig } from '@kb-labs/core-config';
-import { canonicalizeProjectPath } from '@kb-labs/core-project-registry';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
+import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { addProject, projectErrorEnvelope, type AddProjectOutcome } from '@kb-labs/core-project-registry';
 import type { ProjectRecord } from '@kb-labs/core-contracts';
 import { generateExamples } from '../../../utils/generate-examples';
-import { failWithEnvelope, openRegistry, toProjectEnvelope } from './project-support';
+import { failWithEnvelope, openRegistry } from './project-support';
+
+type Ui = PluginContextV3['ui'];
+
+function reportInitializationRequired(ui: Ui | undefined, path: string, json: boolean) {
+  const nextStep = `kb project add ${path} --init`;
+  const payload = { ok: false as const, initializationRequired: true, path, nextStep };
+  if (json) {
+    ui?.json(payload);
+  } else {
+    ui?.warn(`${path} has no .kb/ directory, so it was not registered.`);
+    ui?.write(`Initialize and register it in one step: ${nextStep}\n`);
+  }
+  return { ...payload, error: 'Project initialization required' };
+}
+
+function reportPlanned(
+  ui: Ui | undefined,
+  outcome: Extract<AddProjectOutcome, { status: 'planned' }>,
+  json: boolean,
+) {
+  const payload = {
+    ok: true as const,
+    dryRun: true,
+    project: outcome.project,
+    wouldInitialize: outcome.wouldInitialize,
+  };
+  if (json) {
+    ui?.json(payload);
+  } else {
+    ui?.info(`Dry run: would register ${outcome.project.name} (${outcome.project.id}) at ${outcome.project.path}`);
+    if (outcome.wouldInitialize) {
+      ui?.write('Dry run: would create .kb/ with a minimal configuration.\n');
+    }
+  }
+  return payload;
+}
+
+function reportAdded(ui: Ui | undefined, outcome: Extract<AddProjectOutcome, { status: 'added' }>, json: boolean) {
+  const { project, initialized, created } = outcome;
+  const payload = { ok: true as const, project, initialized, created };
+  if (json) {
+    ui?.json(payload);
+  } else {
+    ui?.success(`Registered ${project.name} (${project.id})`);
+    ui?.write(`  path: ${project.path}\n`);
+    if (initialized) {
+      ui?.write(`  created: ${created.join(', ') || '.kb/'}\n`);
+    }
+  }
+  return payload;
+}
 
 type AddFlags = {
   json: { type: 'boolean'; description?: string };
@@ -37,14 +85,6 @@ export type ProjectAddResult = CommandResult & {
   created?: string[];
   nextStep?: string;
 };
-
-async function hasKbDir(projectPath: string): Promise<boolean> {
-  try {
-    return (await fs.stat(join(projectPath, '.kb'))).isDirectory();
-  } catch {
-    return false;
-  }
-}
 
 export const projectAdd = defineSystemCommand<AddFlags, ProjectAddResult>({
   name: 'add',
@@ -77,81 +117,23 @@ export const projectAdd = defineSystemCommand<AddFlags, ProjectAddResult>({
     const ui = ctx.ui;
 
     try {
-      const input = resolve(getContextCwd(ctx), argv[0] ?? '.');
-      const canonical = await canonicalizeProjectPath(input);
-      const registry = openRegistry();
-      const declared = await hasKbDir(canonical);
+      const outcome = await addProject(openRegistry(), {
+        path: argv[0] ?? '.',
+        cwd: getContextCwd(ctx),
+        name: flags.name,
+        init,
+        dryRun,
+      });
 
-      if (!declared && !init) {
-        const nextStep = `kb project add ${canonical} --init`;
-        const payload = { ok: false as const, initializationRequired: true, path: canonical, nextStep };
-        if (json) {
-          ui?.json(payload);
-        } else {
-          ui?.warn(`${canonical} has no .kb/ directory, so it was not registered.`);
-          ui?.write(`Initialize and register it in one step: ${nextStep}\n`);
-        }
-        return { ...payload, error: 'Project initialization required' };
+      if (outcome.status === 'initialization-required') {
+        return reportInitializationRequired(ui, outcome.path, json);
       }
-
-      // Validate the registration (duplicate, name) before touching the folder.
-      const planned = await registry.add(canonical, { name: flags.name, dryRun: true });
-
-      let created: string[] = [];
-      const needsInit = !declared;
-      if (needsInit) {
-        // initWorkspaceConfig looks upward for an existing config; never let it edit a parent's.
-        const probe = await initWorkspaceConfig({ cwd: canonical, dryRun: true });
-        const escapes = probe.actions.some((a) => {
-          const rel = relative(join(canonical, '.kb'), resolve(a.path));
-          return rel.startsWith('..') || isAbsolute(rel);
-        });
-        if (escapes) {
-          return failWithEnvelope(
-            ui,
-            createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
-              cause: 'An enclosing folder already owns a .kb/ configuration; initializing here would modify it.',
-            }),
-            json,
-          );
-        }
-        if (!dryRun) {
-          created = (await initWorkspaceConfig({ cwd: canonical })).created;
-        }
+      if (outcome.status === 'planned') {
+        return reportPlanned(ui, outcome, json);
       }
-
-      if (dryRun) {
-        const payload = {
-          ok: true as const,
-          dryRun: true,
-          project: planned.project,
-          wouldInitialize: needsInit,
-        };
-        if (json) {
-          ui?.json(payload);
-        } else {
-          ui?.info(`Dry run: would register ${planned.project.name} (${planned.project.id}) at ${canonical}`);
-          if (needsInit) {
-            ui?.write('Dry run: would create .kb/ with a minimal configuration.\n');
-          }
-        }
-        return payload;
-      }
-
-      const { project } = await registry.add(canonical, { name: flags.name });
-      const payload = { ok: true as const, project, initialized: needsInit, created };
-      if (json) {
-        ui?.json(payload);
-      } else {
-        ui?.success(`Registered ${project.name} (${project.id})`);
-        ui?.write(`  path: ${project.path}\n`);
-        if (needsInit) {
-          ui?.write(`  created: ${created.join(', ') || '.kb/'}\n`);
-        }
-      }
-      return payload;
+      return reportAdded(ui, outcome, json);
     } catch (error) {
-      return failWithEnvelope(ui, toProjectEnvelope(error), json);
+      return failWithEnvelope(ui, projectErrorEnvelope(error), json);
     }
   },
 });

@@ -552,6 +552,15 @@
       "hint": "Pick another name with --name, or run \"kb project list\" to see the registered names."
     },
     {
+      "code": "KB_PROJECT_INIT_REQUIRED",
+      "area": "project",
+      "stage": "add-project",
+      "severity": "error",
+      "retryable": false,
+      "message": "The folder {path} has no .kb/ configuration, so it was not registered.",
+      "hint": "Confirm initialization to create a minimal .kb/ and register the folder (CLI: \"kb project add {path} --init\")."
+    },
+    {
       "code": "KB_PROJECT_REGISTRY_CORRUPT",
       "area": "project",
       "stage": "add-project",

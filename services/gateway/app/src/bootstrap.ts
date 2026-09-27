@@ -45,6 +45,7 @@ import { HostRegistry } from "./hosts/registry.js";
 import { registerPressureLimits } from "./pressure/index.js";
 import type { WebhookManifestEntry } from "./webhook/router.js";
 import type { ProjectRouting } from "./project-routing.js";
+import type { HostRoutes } from "./host-routes.js";
 
 export async function bootstrap(
   repoRoot: string = process.cwd(),
@@ -92,6 +93,11 @@ export interface GatewayEmbedOptions {
    * `upstreams` of its config.
    */
   projectRouting?: ProjectRouting;
+  /**
+   * Machine-level API routes of the host, mounted after the global auth hooks
+   * (so they need no auth of their own).
+   */
+  hostRoutes?: HostRoutes;
 }
 
 /** Gateway service body with embedding hooks; {@link setup} is the no-hook case. */
@@ -456,6 +462,7 @@ export async function startGateway(
     userAuth,
     webhookManifests,
     options.projectRouting,
+    options.hostRoutes,
   );
 
   // 11. Listen

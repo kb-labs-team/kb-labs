@@ -11,6 +11,7 @@ export {
   isLoopbackHost,
   type GatewayEmbedOptions,
 } from "./bootstrap.js";
+export type { HostRoutes } from "./host-routes.js";
 export { loadGatewayConfig } from "./config.js";
 export { resolvePublicUrl } from "./server.js";
 export {

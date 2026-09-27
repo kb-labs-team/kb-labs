@@ -71,6 +71,13 @@ export const qk = {
     all: ['plugins'] as const,
     registry: () => [...qk.plugins.all, 'registry'] as const,
   },
+
+  // Projects queries (stage 6: host project registry)
+  projects: {
+    all: ['projects'] as const,
+    list: () => [...qk.projects.all, 'list'] as const,
+    byId: (id: string) => [...qk.projects.all, 'detail', id] as const,
+  },
   workflows: {
     all: ['workflows'] as const,
     list: (filters?: WorkflowRunsFilters) => [...qk.workflows.all, 'list', filters ?? {}] as const,

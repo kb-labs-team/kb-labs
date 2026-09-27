@@ -3,14 +3,16 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
-import { failWithEnvelope, openRegistry, projectRef, toProjectEnvelope, toRow, type ProjectRow } from './project-support';
+import type { ProjectSummary } from '@kb-labs/core-contracts';
+import { projectErrorEnvelope, showProject } from '@kb-labs/core-project-registry';
+import { failWithEnvelope, openRegistry, projectRef } from './project-support';
 
 type ShowFlags = {
   json: { type: 'boolean'; description?: string };
 };
 
 export type ProjectShowResult = CommandResult & {
-  project?: ProjectRow;
+  project?: ProjectSummary;
 };
 
 export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
@@ -32,8 +34,7 @@ export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
   async handler(ctx, argv, flags) {
     const json = Boolean(flags.json);
     try {
-      const view = await openRegistry().get(projectRef(argv[0], getContextCwd(ctx)));
-      const project = toRow(view);
+      const project = await showProject(openRegistry(), projectRef(argv[0], getContextCwd(ctx)));
       if (json) {
         ctx.ui?.json({ ok: true, project });
       } else {
@@ -47,7 +48,7 @@ export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
       }
       return { ok: true, project };
     } catch (error) {
-      return failWithEnvelope(ctx.ui, toProjectEnvelope(error), json);
+      return failWithEnvelope(ctx.ui, projectErrorEnvelope(error), json);
     }
   },
 });

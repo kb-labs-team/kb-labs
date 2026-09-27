@@ -2,14 +2,16 @@
 
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../../utils/generate-examples';
-import { failWithEnvelope, openRegistry, toProjectEnvelope, toRow, type ProjectRow } from './project-support';
+import type { ProjectSummary } from '@kb-labs/core-contracts';
+import { listProjects, projectErrorEnvelope } from '@kb-labs/core-project-registry';
+import { failWithEnvelope, openRegistry } from './project-support';
 
 type ListFlags = {
   json: { type: 'boolean'; description?: string };
 };
 
 export type ProjectListResult = CommandResult & {
-  projects?: ProjectRow[];
+  projects?: ProjectSummary[];
   total?: number;
 };
 
@@ -34,7 +36,7 @@ export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
   async handler(ctx, _argv, flags) {
     const json = Boolean(flags.json);
     try {
-      const projects = (await openRegistry().list()).map(toRow);
+      const projects = await listProjects(openRegistry());
       if (json) {
         ctx.ui?.json({ ok: true, projects, total: projects.length });
       } else if (projects.length === 0) {
@@ -49,7 +51,7 @@ export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
       }
       return { ok: true, projects, total: projects.length };
     } catch (error) {
-      return failWithEnvelope(ctx.ui, toProjectEnvelope(error), json);
+      return failWithEnvelope(ctx.ui, projectErrorEnvelope(error), json);
     }
   },
 });

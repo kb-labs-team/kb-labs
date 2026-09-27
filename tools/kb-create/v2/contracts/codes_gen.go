@@ -75,6 +75,7 @@ var launcherCodes = map[string]CodeInfo{
 	"KB_PLUGIN_TIMEOUT":                      {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: true},
 	"KB_PROJECT_ALREADY_REGISTERED":          {Area: ErrorArea("project"), Stage: ErrorStage("add-project"), Retryable: false},
 	"KB_PROJECT_DECLARATION_INVALID":         {Area: ErrorArea("project"), Stage: ErrorStage("add-project"), Retryable: false},
+	"KB_PROJECT_INIT_REQUIRED":               {Area: ErrorArea("project"), Stage: ErrorStage("add-project"), Retryable: false},
 	"KB_PROJECT_NAME_TAKEN":                  {Area: ErrorArea("project"), Stage: ErrorStage("add-project"), Retryable: false},
 	"KB_PROJECT_NOT_A_DIRECTORY":             {Area: ErrorArea("project"), Stage: ErrorStage("add-project"), Retryable: false},
 	"KB_PROJECT_NO_ACCESS":                   {Area: ErrorArea("project"), Stage: ErrorStage("add-project"), Retryable: false},

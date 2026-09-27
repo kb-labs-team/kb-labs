@@ -71,6 +71,7 @@ import {
   registerProjectRoutes,
   type ProjectRouting,
 } from "./project-routing.js";
+import type { HostRoutes } from "./host-routes.js";
 
 /**
  * User-auth dependencies injected from bootstrap. All fields optional so
@@ -129,6 +130,7 @@ export async function createServer(
   userAuth?: UserAuthServerDeps,
   webhookManifests?: WebhookManifestEntry[],
   projectRouting?: ProjectRouting,
+  hostRoutes?: HostRoutes,
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -331,6 +333,15 @@ export async function createServer(
     gatewayLogger.info(
       "Project routing enabled: /api/v1/projects/{projectId}/*",
     );
+  }
+
+  // ── Host API routes ─────────────────────────────────────────────────
+  // Machine-level routes owned by the embedding host (for example
+  // `/api/v1/projects`). Registered after the global auth hooks, so they are
+  // covered by the same authentication; the gateway adds nothing on top.
+  if (hostRoutes) {
+    await app.register(hostRoutes);
+    gatewayLogger.info("Host API routes registered");
   }
 
   // ── Gateway's own routes ────────────────────────────────────────────

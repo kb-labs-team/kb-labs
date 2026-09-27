@@ -29,6 +29,7 @@ export {
   type ChildProcessLauncherOptions,
 } from "./project-runtime/launcher.js";
 export { createProjectRouting } from "./project-runtime/routing.js";
+export { createProjectsRoutes, type ProjectsRoutesOptions } from "./projects-routes.js";
 export {
   ProjectRuntimeError,
   runtimeLimitReached,

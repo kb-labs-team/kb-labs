@@ -91,3 +91,36 @@ export interface IProjectRegistry {
   /** Path helper only; the directory is created by whoever writes runtime state. */
   stateDir(id: ProjectId): string;
 }
+
+/**
+ * A registered project as presented by `kb project list|show` and by the host
+ * API (`/api/v1/projects`). One shape for both, so the terminal and Studio show
+ * the same facts.
+ */
+export interface ProjectSummary {
+  id: ProjectId;
+  name: string;
+  status: ProjectStatus;
+  declaration: ProjectDeclarationState;
+  pathExists: boolean;
+  addedAt: string;
+  lastUsedAt: string | null;
+  path: string;
+  stateDir: string;
+}
+
+/** State of a project runtime as the host reports it; `stopped` means no runtime process exists. */
+export type ProjectRuntimeState = 'stopped' | 'starting' | 'ready' | 'restarting' | 'stopping' | 'failed';
+
+/** Runtime facts of one project (no pids, ports or failure causes: those are diagnostics, not API). */
+export interface ProjectRuntimeInfo {
+  state: ProjectRuntimeState;
+  /** ISO-8601 timestamp of the last request the runtime served; absent while `stopped`. */
+  lastUsedAt?: string;
+  restarts: number;
+}
+
+/** One entry of the host's project list: registry facts plus runtime state. */
+export interface ProjectEntry extends ProjectSummary {
+  runtime: ProjectRuntimeInfo;
+}

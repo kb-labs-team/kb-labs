@@ -2,7 +2,8 @@ import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { createDataSources, type DataSources } from '@kb-labs/studio-data-client';
 import { studioConfig } from '@/config/studio.config';
 
-const DataSourcesContext = createContext<DataSources | null>(null);
+// Exported so tests can inject a mock DataSources value via <DataSourcesContext.Provider>.
+export const DataSourcesContext = createContext<DataSources | null>(null);
 
 export function DataSourcesProvider({ children }: { children: ReactNode }) {
   const sources = useMemo(
