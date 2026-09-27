@@ -24,7 +24,7 @@
       "services": [
         "gateway"
       ],
-      "hint": "Password of the first administrator; without it no admin is created (recover later with `kb auth reset-admin`)"
+      "hint": "Password of the first administrator; without it no admin is created (recover later with `kb-create doctor --recover`)"
     },
     {
       "id": "gateway.jwtSecret",

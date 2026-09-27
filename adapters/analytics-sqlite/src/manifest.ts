@@ -30,8 +30,7 @@ export const manifest: AdapterManifest = {
   configSchema: {
     dbPath: {
       type: 'string',
-      default: '.kb/analytics/analytics.sqlite',
-      description: 'Path to the SQLite database file (relative to workspace root)',
+      description: 'Path to the SQLite database file (relative to workspace root) (default: <KB_HOME>/state/<projectId>/analytics/analytics.sqlite)',
     },
     filename: {
       type: 'string',

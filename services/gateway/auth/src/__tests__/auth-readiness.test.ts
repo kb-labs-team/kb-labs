@@ -62,7 +62,7 @@ describe('auth enabled', () => {
     expect(r.activeAdmins).toBe(0);
     expect(r.issues).toHaveLength(1);
     expect(r.issues[0]).toMatchObject({ code: 'no_active_admin', severity: 'error' });
-    expect(r.issues[0]!.hint).toContain(`kb auth reset-admin --email ${EMAIL} --tenant ${TENANT}`);
+    expect(r.issues[0]!.hint).toContain(`kb-create doctor --recover --email ${EMAIL} --tenant ${TENANT}`);
   });
 
   it('falls back to a placeholder email in the hint when none is configured', async () => {

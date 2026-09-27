@@ -10,7 +10,10 @@
  *    These are *two different logical roots* — see `resolveRoots` docs for
  *    the distinction.
  *
- *  - Load two layers of platform configuration:
+ *  - Load the layers of platform configuration (precedence, low to high,
+ *    ADR-0047 / ADR-0012: generated < platform user < project user < overlays):
+ *      0. Installer-GENERATED config from `<root>/.kb/generated/*.json|jsonc`
+ *         (optional — absent until the installer generates config).
  *      1. Platform defaults from `<platformRoot>/.kb/kb.config.json`
  *         (optional — absent in solo dev mode).
  *      2. Project config from `<projectRoot>/.kb/kb.config.json`
@@ -46,6 +49,8 @@ import { createHash } from "node:crypto";
 import {
   readJsonWithDiagnostics,
   mergeWithFieldPolicy,
+  mergeDefined,
+  loadGeneratedLayer,
   loadOverlays,
   mergeOverlay,
   validateProductConfig,
@@ -139,6 +144,12 @@ export interface LoadPlatformConfigResult {
     platformDefaults?: string;
     /** Absolute path to project config file, if one was loaded. */
     projectConfig?: string;
+    /**
+     * Absolute paths of installer-generated config files (`.kb/generated/`)
+     * applied as the lowest-precedence layer, in merge order. Omitted when
+     * the install has none.
+     */
+    generated?: string[];
     /** How each root was resolved. */
     roots: RootsResolution["sources"];
     /** Per-top-level-field provenance after policy merge. */
@@ -243,6 +254,42 @@ function findConfigAtRoot(root: string): string | undefined {
 }
 
 /**
+ * Project a raw config object onto the `PlatformConfig` view: normalise the
+ * `platform` string shorthand and fold top-level `adapterOptions` in.
+ */
+function toPlatformSection(
+  data: Record<string, unknown> & {
+    platform?: PlatformConfig | string;
+    adapterOptions?: Partial<Record<string, unknown>>;
+  },
+): PlatformConfig | undefined {
+  // Normalise the shorthand form produced by `kb-create` (installed mode),
+  // where the top-level `platform` is a bare string pointing at the platform
+  // directory instead of the structured `{ dir, adapters, ... }` object used
+  // by the dev-mode monorepo. Treat the string as `{ dir: "…" }` so the
+  // loader can still honour `platform.dir` without mis-parsing the section.
+  const rawPlatform = data.platform;
+  const normalizedPlatform: PlatformConfig | undefined =
+    typeof rawPlatform === "string"
+      ? { platform: { dir: rawPlatform } }
+      : rawPlatform;
+
+  // Merge top-level adapterOptions into the platform section so initPlatform
+  // receives adapter credentials (e.g. llm.kbClientId) alongside adapter bindings.
+  const platformSection: PlatformConfig | undefined = normalizedPlatform
+    ? {
+        ...normalizedPlatform,
+        adapterOptions:
+          data.adapterOptions ?? normalizedPlatform.adapterOptions,
+      }
+    : data.adapterOptions
+      ? { adapters: {}, adapterOptions: data.adapterOptions }
+      : undefined;
+
+  return platformSection;
+}
+
+/**
  * Read a KB Labs config file and extract its `platform` section. Returns
  * `{ platformSection, rawConfig }` where either field may be `undefined` if
  * the file is missing, malformed, or has no `platform` section.
@@ -269,29 +316,7 @@ async function readConfigFile(configPath: string): Promise<{
     platform?: PlatformConfig | string;
     adapterOptions?: Partial<Record<string, unknown>>;
   };
-
-  // Normalise the shorthand form produced by `kb-create` (installed mode),
-  // where the top-level `platform` is a bare string pointing at the platform
-  // directory instead of the structured `{ dir, adapters, ... }` object used
-  // by the dev-mode monorepo. Treat the string as `{ dir: "…" }` so the
-  // loader can still honour `platform.dir` without mis-parsing the section.
-  const rawPlatform = data.platform;
-  const normalizedPlatform: PlatformConfig | undefined =
-    typeof rawPlatform === "string"
-      ? { platform: { dir: rawPlatform } }
-      : rawPlatform;
-
-  // Merge top-level adapterOptions into the platform section so initPlatform
-  // receives adapter credentials (e.g. llm.kbClientId) alongside adapter bindings.
-  const platformSection: PlatformConfig | undefined = normalizedPlatform
-    ? {
-        ...normalizedPlatform,
-        adapterOptions:
-          data.adapterOptions ?? normalizedPlatform.adapterOptions,
-      }
-    : data.adapterOptions
-      ? { adapters: {}, adapterOptions: data.adapterOptions }
-      : undefined;
+  const platformSection = toPlatformSection(data);
 
   return {
     platformSection,
@@ -420,6 +445,21 @@ export async function loadPlatformConfig(
     platformDefaultsSource = platformConfigPath;
   }
 
+  // Generated layer (ADR-0047): installer-written `.kb/generated/*.json|jsonc`
+  // is the lowest-precedence baseline, under BOTH user layers. It is folded
+  // into the platform defaults so every user value (platform or project) wins
+  // over it, and it is absent (no-op) for installs that do not generate config.
+  const generatedLayer = await loadGeneratedLayer([
+    roots.platformRoot,
+    roots.projectRoot,
+  ]);
+  if (generatedLayer.files.length > 0) {
+    const generatedSection = toPlatformSection(generatedLayer.data);
+    if (generatedSection) {
+      platformDefaults = mergeDefined(generatedSection, platformDefaults ?? {});
+    }
+  }
+
   // Policy-aware merge: platform-only fields reject project overrides;
   // mergeable fields deep-merge with project winning.
   const mergeResult = mergeWithFieldPolicy<PlatformConfig>(
@@ -453,8 +493,15 @@ export async function loadPlatformConfig(
   // overlays must reach it too — otherwise scenario overlays only affect
   // platform fields and plugin config silently ignores them.
   let effectiveConfig = rawProjectConfig;
-  if (rawProjectConfig && overlayResult.overlays.length > 0) {
-    let acc = rawProjectConfig as Record<string, unknown>;
+  if (generatedLayer.files.length > 0) {
+    // Generated product sections sit under the user's project config.
+    effectiveConfig = mergeDefined(
+      generatedLayer.data,
+      rawProjectConfig ?? {},
+    );
+  }
+  if (effectiveConfig && overlayResult.overlays.length > 0) {
+    let acc = effectiveConfig;
     for (const overlay of overlayResult.overlays) {
       acc = mergeOverlay(acc as never, overlay.data as never) as Record<
         string,
@@ -503,6 +550,10 @@ export async function loadPlatformConfig(
     sources: {
       platformDefaults: platformDefaultsSource,
       projectConfig: projectConfigSource,
+      generated:
+        generatedLayer.files.length > 0
+          ? generatedLayer.files.map((file) => file.path)
+          : undefined,
       roots: roots.sources,
       fields: mergeResult.sources,
       ignoredProjectFields:

@@ -15,7 +15,7 @@
  * before it rots silently for months — see the MKT-02 e2e diagnostics test,
  * which reads the same lock via `kb marketplace doctor`.
  *
- * Fix stale entries: `pnpm kb marketplace rehash` (see marketplace-rehash skill),
+ * Fix stale entries: `kb marketplace plugins link`/`unlink` the package again,
  * or remove the offending key from `.kb/marketplace.lock` by hand for a one-off.
  *
  * Standalone: node scripts/checks/check-marketplace-lock.mjs

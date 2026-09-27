@@ -198,7 +198,6 @@ The service reads `kb.config.json` from the repo root for platform configuration
 After an install, running services (CLI, REST API, workflow daemon) each have their own registry cache in memory. Freshly installed entities don't appear until those caches are refreshed:
 
 ```bash
-pnpm kb marketplace plugins refresh
 ```
 
 This is the #1 source of "my plugin built but doesn't show up" confusion. The rule is: after any marketplace install, link, or rebuild of a linked plugin, clear the cache.

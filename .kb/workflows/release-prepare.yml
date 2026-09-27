@@ -10,7 +10,7 @@
 #
 # The Preflight step runs first (even with skipChecks) and fails fast on a broken
 # environment. To re-run it by hand:
-#   pnpm kb release preflight --flow <flow> --net-offset "${KB_NET_OFFSET:-0}"
+#   pnpm kb release doctor --flow <flow> --net-offset "${KB_NET_OFFSET:-0}"
 #
 # Emergency escape hatch: add "skipChecks":true to the input to skip the
 # Stage and Checks steps entirely (e.g. when Checks itself is broken, Verdaccio/
@@ -36,7 +36,7 @@ on:
 inputs:
   flow:
     type: string
-    description: Release flow to prepare — must match a key under release.flows in .kb/kb.config.json (e.g. "platform", "sdk")
+    description: Release flow to prepare — must match a key under release.flows in .kb/kb.config.json (only "platform"; SDK, platform and binaries release as one flow with one version)
     required: true
   channel:
     type: string
@@ -60,7 +60,7 @@ inputs:
       breaking release regardless of what commit messages say. This only
       changes the version number: the compatibility matrix in each release's
       release-index.json already relates platform/SDK/binary versions by
-      exact, explicit pairs (tools/kb-create/v2/catalog/catalog.go,
+      exact, explicit pairs (all three share one version) (tools/kb-create/v2/catalog/catalog.go,
       CheckCompatibility) — nothing is compatible by default, so a major bump
       does not need a separate "breaking" flag to stop old installs from
       silently picking it up.
@@ -107,7 +107,7 @@ jobs:
         # CI candidate dispatch. Exits non-zero with the run report (root cause,
         # hint, next command per failure) when the environment is broken.
         timeoutMs: 120000
-        run: pnpm kb release preflight --flow ${{ inputs.flow }} --net-offset "${KB_NET_OFFSET:-0}" --json
+        run: pnpm kb release doctor --flow ${{ inputs.flow }} --net-offset "${KB_NET_OFFSET:-0}" --json
 
       - name: Preview
         id: plan

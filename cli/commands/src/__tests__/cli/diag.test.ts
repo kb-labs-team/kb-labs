@@ -11,11 +11,19 @@ import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
-vi.mock('../../registry/discover.js', () => ({
-  discoverManifests: vi.fn(async () => []),
-  resetInProcCache: vi.fn(),
-  loadConfig: vi.fn(async () => ({})),
-}));
+const discoverState = vi.hoisted(() => ({ diagnostics: [] as unknown[] }));
+
+vi.mock('../../registry/discover.js', () => {
+  const discoverManifests = vi.fn(async (..._args: unknown[]): Promise<unknown[]> => []);
+  return {
+    discoverManifests,
+    // The trace uses the detailed variant; it shares the mocked results.
+    discoverManifestsDetailed: vi.fn(async (...args: unknown[]) => ({
+      results: await discoverManifests(...args),
+      diagnostics: discoverState.diagnostics,
+    })),
+  };
+});
 
 vi.mock('../../registry/service.js', () => ({
   registry: {
@@ -100,7 +108,7 @@ async function getRegistryMock() {
 
 async function getDiscoverMock() {
   const mod = await import('../../registry/discover.js');
-  return mod as unknown as { discoverManifests: ReturnType<typeof vi.fn>; resetInProcCache: ReturnType<typeof vi.fn> };
+  return mod as unknown as { discoverManifests: ReturnType<typeof vi.fn> };
 }
 
 async function getLockMock() {
@@ -163,7 +171,7 @@ describe('diag — base (no --command)', () => {
         severity: 'error' as const,
         code: 'INTEGRITY_MISMATCH' as never,
         message: 'Hash mismatch for @kb-labs/workflow-entry',
-        remediation: 'kb marketplace plugins refresh',
+        remediation: 'kb marketplace plugins doctor',
         context: { pluginId: '@kb-labs/workflow-entry' },
         ts: Date.now(),
       } as never,
@@ -510,24 +518,34 @@ describe('diag --command', () => {
     expect(stage?.details?.failures?.[0]?.reason).toContain('Missing describe');
   });
 
-  it('reports PLUGIN_BLOCKLISTED when plugin is in plugins.block config', async () => {
+  it('reports PLUGIN_BLOCKLISTED when discovery blocked the plugin by plugins.block', async () => {
     const reg = await getRegistryMock();
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['blocked', 'cmd'], suggestions: [] });
 
-    const discover = await getDiscoverMock() as { discoverManifests: ReturnType<typeof vi.fn>; resetInProcCache: ReturnType<typeof vi.fn>; loadConfig: ReturnType<typeof vi.fn> };
+    const discover = await getDiscoverMock();
     discover.discoverManifests.mockResolvedValue([]);
-    discover.loadConfig.mockResolvedValueOnce({ block: ['blocked'] });
+    discoverState.diagnostics = [{
+      severity: 'info',
+      code: 'PLUGIN_BLOCKED',
+      message: 'Plugin "@x/blocked" is blocked by plugins.block',
+      context: { pluginId: '@x/blocked', entityId: '@x/blocked' },
+      remediation: 'Remove it from plugins.block in .kb/kb.config.json',
+      ts: 0,
+    }];
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({ installed: {} });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
-    await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'blocked cmd' });
+    try {
+      await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'blocked cmd' });
+    } finally {
+      discoverState.diagnostics = [];
+    }
 
     const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string }> };
-    const stage = result.stages.find(s => s.code === 'PLUGIN_BLOCKLISTED');
-    expect(stage).toBeDefined();
+    expect(result.stages.find(s => s.code === 'PLUGIN_BLOCKLISTED')).toBeDefined();
   });
 
   it('reports PATH_MISSING when resolvedPath does not exist on filesystem', async () => {
@@ -636,9 +654,8 @@ describe('diag --command (review-fix scenarios)', () => {
     // Reset mocks that earlier tests may have overridden back to their defaults
     const { preflightManifests } = await import('../../registry/register.js') as unknown as { preflightManifests: ReturnType<typeof vi.fn> };
     preflightManifests.mockReturnValue({ valid: [], skipped: [] });
-    const discoverMod = await import('../../registry/discover.js') as unknown as { discoverManifests: ReturnType<typeof vi.fn>; resetInProcCache: ReturnType<typeof vi.fn>; loadConfig: ReturnType<typeof vi.fn> };
+    const discoverMod = await import('../../registry/discover.js') as unknown as { discoverManifests: ReturnType<typeof vi.fn> };
     discoverMod.discoverManifests.mockResolvedValue([]);
-    discoverMod.loadConfig.mockResolvedValue({});
   });
 
   it('reports NOT_IN_MARKETPLACE (info) when registry OK but plugin not in lock', async () => {
@@ -695,7 +712,7 @@ describe('diag --command (review-fix scenarios)', () => {
     const reg = await getRegistryMock();
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['bigplug', 'typo'], suggestions: [] });
 
-    const discoverMod = await getDiscoverMock() as { discoverManifests: ReturnType<typeof vi.fn>; resetInProcCache: ReturnType<typeof vi.fn>; loadConfig: ReturnType<typeof vi.fn> };
+    const discoverMod = await getDiscoverMock() as { discoverManifests: ReturnType<typeof vi.fn> };
     const manyCommands = Array.from({ length: 8 }, (_, i) => ({
       _synthetic: false,
       group: 'bigplug',
@@ -715,8 +732,6 @@ describe('diag --command (review-fix scenarios)', () => {
       scope: 'platform' as const,
       manifests: manyCommands,
     }]);
-    discoverMod.resetInProcCache.mockReturnValue(undefined);
-    discoverMod.loadConfig.mockResolvedValue({});
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({ installed: { '@kb-labs/bigplug-entry': { enabled: true, resolvedPath: '/test' } } });

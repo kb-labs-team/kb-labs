@@ -124,7 +124,6 @@ Never: core → entry, core → daemon, contracts → anything internal
 ## After Building
 
 ```bash
-pnpm kb marketplace plugins refresh
 ```
 
 Always run this after building — CLI caches plugin discovery.

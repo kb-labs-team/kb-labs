@@ -1,0 +1,13 @@
+{
+  "description": "POST /v1/host/restart stops the host (gracefully) and starts it again.",
+  "request": { "method": "POST", "path": "/v1/host/restart", "auth": "valid" },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "protocol": 1,
+      "stopped": { "runner": "process", "wasRunning": true, "graceful": true, "forced": false, "pid": "$number" },
+      "host": { "runner": "process", "pid": "$number", "healthUrl": "$string" }
+    }
+  }
+}

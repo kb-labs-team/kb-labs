@@ -9,6 +9,7 @@ import type {
   EntityKind,
   EntitySignature,
   DiagnosticEvent,
+  DiscoveredPlugin,
 } from '@kb-labs/core-discovery';
 
 // Re-export from core-discovery for consumer convenience
@@ -72,6 +73,12 @@ export interface RegistrySnapshotManifestEntry {
   manifest: ManifestV3;
   pluginRoot: string;
   source: { kind: 'marketplace' | 'local'; path: string };
+  /** Discovery facts, so a snapshot restores exactly what discovery found. */
+  packageName: DiscoveredPlugin['packageName'];
+  scope: DiscoveredPlugin['scope'];
+  origin: DiscoveredPlugin['origin'];
+  manifestPath: DiscoveredPlugin['manifestPath'];
+  manifestKind: DiscoveredPlugin['manifestKind'];
 }
 
 export interface RegistrySnapshot {

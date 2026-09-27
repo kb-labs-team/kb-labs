@@ -20,13 +20,11 @@ export const manifest: AdapterManifest = {
   configSchema: {
     rootDir: {
       type: 'string',
-      default: '.kb/runtime/workspaces',
-      description: 'Root directory where managed workspaces are created',
+      description: 'Root directory where managed workspaces are created (default: <KB_HOME>/state/<projectId>/runtime/workspaces)',
     },
     registryDir: {
       type: 'string',
-      default: '.kb/runtime/workspace-registry',
-      description: 'Directory with workspace metadata for cross-adapter lookup',
+      description: 'Directory with workspace metadata for cross-adapter lookup (default: <KB_HOME>/state/<projectId>/runtime/workspace-registry)',
     },
   },
 };

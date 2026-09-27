@@ -1,14 +1,7 @@
-#!/usr/bin/env node
-
 /**
  * @module @kb-labs/workflow-daemon
- * Entry point for KB Workflow Daemon
+ * Workflow daemon library entry. Importing this module has no side effects;
+ * the `kb-workflow` executable lives in `bin.ts`.
  */
 
-import { bootstrap } from "./bootstrap.js";
-
-bootstrap(process.cwd()).catch(() => {
-  // runService() already emitted the canonical platform/service failure event.
-  // Setting exitCode lets its logger flush without duplicating an unstructured stack.
-  process.exitCode = 1;
-});
+export { bootstrap, setup } from "./bootstrap.js";

@@ -25,7 +25,17 @@ function entry(pluginId: string, commands: CliCommandDecl[], version = '1.2.3'):
     version,
     cli: { commands },
   };
-  return { pluginId, manifest, pluginRoot: `/plugins/${pluginId}`, source: { kind: 'local', path: `/plugins/${pluginId}` } };
+  return {
+    pluginId,
+    manifest,
+    pluginRoot: `/plugins/${pluginId}`,
+    source: { kind: 'local', path: `/plugins/${pluginId}` },
+    packageName: pluginId,
+    scope: 'platform',
+    origin: 'node_modules',
+    manifestPath: `/plugins/${pluginId}/dist/manifest.json`,
+    manifestKind: 'static',
+  };
 }
 
 describe('filterTools', () => {
@@ -76,7 +86,17 @@ describe('filterTools', () => {
 
   it('ignores manifests without cli commands', () => {
     const manifest: ManifestV3 = { schema: 'kb.plugin/3', id: 'nocli', version: '1.0.0' };
-    const e: RegistrySnapshotManifestEntry = { pluginId: 'nocli', manifest, pluginRoot: '/p', source: { kind: 'local', path: '/p' } };
+    const e: RegistrySnapshotManifestEntry = {
+      pluginId: 'nocli',
+      manifest,
+      pluginRoot: '/p',
+      source: { kind: 'local', path: '/p' },
+      packageName: 'nocli',
+      scope: 'platform',
+      origin: 'node_modules',
+      manifestPath: '/p/dist/manifest.json',
+      manifestKind: 'static',
+    };
     expect(filterTools({ manifests: [e] }, allow)).toEqual([]);
   });
 

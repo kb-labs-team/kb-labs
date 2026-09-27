@@ -49,15 +49,18 @@ type ProviderBinding struct {
 // The runtime converts its artifacts/config/variables to actions; it must not
 // re-resolve versions or discover unplanned services.
 type ResolvedInstallPlan struct {
-	Schema              string            `json:"schema"`
-	Request             InstallRequest    `json:"request"`
-	Artifacts           []Artifact        `json:"artifacts"`
-	ServiceGraph        ServiceGraph      `json:"serviceGraph"`
-	ProviderBindings    []ProviderBinding `json:"providerBindings,omitempty"`
-	ConfigPatches       []ConfigPatch     `json:"configPatches,omitempty"`
-	PlanHash            string            `json:"planHash"`
-	ReleaseDigest       string            `json:"releaseDigest,omitempty"`
-	ScenarioStateDigest string            `json:"scenarioStateDigest,omitempty"`
+	Schema           string            `json:"schema"`
+	Request          InstallRequest    `json:"request"`
+	Artifacts        []Artifact        `json:"artifacts"`
+	ServiceGraph     ServiceGraph      `json:"serviceGraph"`
+	ProviderBindings []ProviderBinding `json:"providerBindings,omitempty"`
+	// Host is how the launcher runs this platform: one supervised process. The
+	// resolver copies it from the platform bundle; a plan without it is invalid.
+	Host                *HostSpec     `json:"host,omitempty"`
+	ConfigPatches       []ConfigPatch `json:"configPatches,omitempty"`
+	PlanHash            string        `json:"planHash"`
+	ReleaseDigest       string        `json:"releaseDigest,omitempty"`
+	ScenarioStateDigest string        `json:"scenarioStateDigest,omitempty"`
 }
 
 type ConfigPatch struct {
@@ -69,10 +72,11 @@ type ConfigPatch struct {
 	Services    []string `json:"services,omitempty"`
 }
 
+// Verification is what the installer checked before committing a receipt: the
+// generated config on disk and the host spec the launcher will run.
 type Verification struct {
 	ConfigSHA256       string    `json:"configSha256"`
-	DevservicesSHA256  string    `json:"devservicesSha256"`
-	ServiceStatus      []string  `json:"serviceStatus"`
+	HostHealthURL      string    `json:"hostHealthUrl"`
 	ReadinessCheckedAt time.Time `json:"readinessCheckedAt"`
 }
 

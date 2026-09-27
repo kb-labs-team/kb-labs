@@ -165,35 +165,6 @@ export async function registerManifests(
           packageName: result.packageName,
         };
 
-        // Lifecycle hooks (init / register / dispose)
-        try {
-          const manifestModule = await import(result.manifestPath);
-
-          if (typeof manifestModule.init === 'function') {
-            await manifestModule.init({
-              cwd: result.pkgRoot,
-              package: result.packageName,
-              manifest: cmd.manifest,
-            });
-          }
-
-          if (typeof manifestModule.register === 'function') {
-            await manifestModule.register({
-              registry,
-              command: cmd,
-              cwd: result.pkgRoot,
-              package: result.packageName,
-            });
-          }
-
-          if (typeof manifestModule.dispose === 'function') {
-            cmd._disposeHook = manifestModule.dispose as () => Promise<void>;
-          }
-        } catch (hookError: unknown) {
-          const hookMsg = hookError instanceof Error ? hookError.message : String(hookError);
-          log.debug(`Lifecycle hooks unavailable for ${manifestId}: ${hookMsg}`);
-        }
-
         // Canonical key is the full path — unique by construction in the trie
         const canonicalKey = manifest.segments.join(':');
         const existing = globalIds.get(canonicalKey);
@@ -246,28 +217,4 @@ export async function registerManifests(
   }
 
   return { registered, skipped, collisions, errors };
-}
-
-// ─── Dispose ──────────────────────────────────────────────────────────────────
-
-export async function disposeAllPlugins(
-  registry: TrieBackedRegistry,
-  logger?: ILogger
-): Promise<void> {
-  const log = logger ?? platform.logger;
-  const manifests = registry.listCommands();
-  const disposePromises: Promise<void>[] = [];
-
-  for (const cmd of manifests) {
-    const disposeHook = cmd._disposeHook;
-    if (typeof disposeHook === 'function') {
-      disposePromises.push(
-        Promise.resolve(disposeHook()).catch((err: unknown) => {
-          log.warn(`Dispose hook failed for ${cmd.manifest.segments.join(' ')}: ${err instanceof Error ? err.message : String(err)}`);
-        })
-      );
-    }
-  }
-
-  await Promise.allSettled(disposePromises);
 }

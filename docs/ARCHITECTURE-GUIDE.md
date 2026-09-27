@@ -250,7 +250,6 @@ pnpm dev:logs <service>                  # Check what happened
 
 # Ghost host-agent daemons stealing CLI execution
 pkill -9 -f "host-agent-app/dist/index.js"
-pnpm kb marketplace plugins refresh
 
 # Stale hosts showing "online" after Gateway restart
 # Fixed: Gateway resets all hosts to offline on startup

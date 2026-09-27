@@ -29,7 +29,6 @@ import enableCommand from '../../commands/plugins/enable.js';
 import disableCommand from '../../commands/plugins/disable.js';
 import linkCommand from '../../commands/plugins/link.js';
 import unlinkCommand from '../../commands/plugins/unlink.js';
-import refreshCommand from '../../commands/plugins/refresh.js';
 
 const mockedPost = vi.mocked(post);
 const mockedResolveCliScope = vi.mocked(resolveCliScope);
@@ -137,32 +136,6 @@ describe('marketplace:plugins:unlink', () => {
 
     expect(result.ok).toBe(true);
     expect(mockedPost).not.toHaveBeenCalled();
-    expect(captured.infos[0]?.message).toContain('Dry-run');
-  });
-});
-
-describe('marketplace:plugins:refresh', () => {
-  it('PR-01: clears cache and prints success', async () => {
-    const { unlink } = await import('node:fs/promises');
-    vi.mocked(unlink).mockResolvedValue(undefined);
-    const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui });
-
-    const result = await refreshCommand.execute(ctx, mockCLIInput({ flags: {} }));
-
-    expect(result.ok).toBe(true);
-    expect(captured.success.length).toBeGreaterThan(0);
-  });
-
-  it('PR-02: --dry-run shows intent, unlink is NOT called', async () => {
-    const { unlink } = await import('node:fs/promises');
-    const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui });
-
-    const result = await refreshCommand.execute(ctx, mockCLIInput({ flags: { 'dry-run': true } }));
-
-    expect(result.ok).toBe(true);
-    expect(vi.mocked(unlink)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });
 });

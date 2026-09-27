@@ -26,8 +26,8 @@
   "retryable": false,
   "message": "Порт 4000 занят другим приложением.",     // что случилось, человеческим языком
   "cause": "Процесс node (pid 4321) слушает 127.0.0.1:4000.", // почему (без секретов)
-  "hint": "Освободите порт или выберите другой: kb-create start --port 4100",   // что делать сейчас
-  "actions": [{ "id": "choose-port", "label": "Выбрать другой порт", "command": "kb-create start --port 4100" }],
+  "hint": "Остановите приложение, занявшее порт, или измените порт хоста в конфигурации установки, затем снова: kb-create start",   // что делать сейчас
+  "actions": [{ "id": "retry-start", "label": "Запустить снова", "command": "kb-create start" }],
   "docs": "https://…/errors/KB_HOST_PORT_IN_USE",       // опционально
   "correlationId": "01J…",              // по нему находится запись в логах
   "details": { "port": "4000" }         // структурировано, без секретов
@@ -99,7 +99,10 @@
 | `KB_INSTALL_SCENARIO_INVALID` / `_WIZARD_INPUT_INVALID` / `_SECRET_INPUT_INVALID` / `_DOCTOR_INPUT_INVALID` | (есть) ответы сценария/мастера, секрет или вход doctor не приняты | что поправить | L |
 | `KB_INSTALL_RECOVERY_FAILED` / `_RECEIPT_UNAVAILABLE` / `_STATUS_UNHEALTHY` | (есть) восстановление не дошло до проверенного состояния / нет активного receipt / граф сервисов не готов | `doctor --fix`, снимок | L |
 | `KB_INSTALL_LOG_UNAVAILABLE` / `_DIAGNOSTIC_UNAVAILABLE` | (есть) нельзя записать лог/досье | права на каталог | L |
-| `KB_INSTALL_ROLLBACK_FAILED` | откат не удался | восстановление вручную, путь к снимку | L |
+| `KB_INSTALL_ROLLBACK_FAILED` | откат не удался (в т.ч. после неудачного обновления не поднялась и прежняя версия) | восстановление вручную, путь к снимку | L |
+| `KB_INSTALL_OPERATION_IN_PROGRESS` | другая операция лаунчера уже идёт (блокировка `operation.lock`) | дождаться; если лаунчера нет — удалить устаревший lock | L |
+| `KB_INSTALL_RECOVERY_HOST_RUNNING` | `doctor --recover` при запущенном хосте | `kb-create stop`, восстановить, `kb-create start` | L |
+| `KB_INSTALL_RECOVERY_UNAVAILABLE` | платформа не поставляет инструмент восстановления | `kb-create update` | L |
 
 ### B. Запуск и здоровье хоста
 
@@ -114,6 +117,9 @@
 | `KB_HOST_VERSION_SKEW` | версия лаунчера/CLI ≠ версия хоста | `kb-create update` | K, L |
 | `KB_HOST_CONTROL_UNAVAILABLE` | control-канал лаунчера недоступен | запустить лаунчер/оболочку | S |
 | `KB_HOST_STATE_DIR_UNWRITABLE` | нельзя писать в `~/.kb/state` | права/место | L |
+| `KB_HOST_STOP_FAILED` | процесс хоста не остановился за grace-период | повторить `kb-create stop` или завершить процесс вручную | L |
+| `KB_HOST_SPEC_INVALID` | описание хоста в receipt некорректно | `kb-create doctor --fix` или переустановка | L |
+| `KB_HOST_CONTROL_UNAUTHORIZED` | control-канал лаунчера отклонил токен | взять актуальный токен из `control.json` | S |
 | `KB_HOST_ADAPTER_UNAVAILABLE` | адаптер (БД, кэш, LLM) недоступен | какой, как запустить/настроить | K, S |
 
 ### C. Авторизация
@@ -149,6 +155,7 @@
 | `KB_CONFIG_INVALID` | значение не проходит схему | путь `llm.model`, допустимые значения | K, S |
 | `KB_CONFIG_UNKNOWN_KEY` | неизвестное поле | ближайшее известное («вы имели в виду …») | K, S |
 | `KB_CONFIG_SECRET_MISSING` | ссылка на `${ENV}` без значения | задать переменную/секрет | K, S |
+| `KB_CONFIG_SECRET_PLAINTEXT` | `kb config set` получил сырой секрет вместо `${ENV}`-ссылки | сохранить ссылку; `--allow-plain-secret` только для локальных значений | K, S |
 | `KB_CONFIG_CONFLICT` | файл изменён другим писателем | перечитать/повторить | K, S |
 | `KB_CONFIG_LLM_KEY_INVALID` | ключ провайдера отклонён | заменить ключ | S, K |
 | `KB_CONFIG_LLM_QUOTA` | квота/бюджет исчерпаны | пополнить/поменять модель | S, K |
@@ -164,6 +171,7 @@
 | `KB_PLUGIN_COMMAND_SHADOWED` | команда скрыта (`06` §7) | `kb plugin doctor` | K |
 | `KB_PLUGIN_INSTALL_FAILED` | установка пакета не удалась | причина сети/реестра | K, S |
 | `KB_PLUGIN_LOAD_FAILED` | плагин не загрузился (манифест, зависимость) | что именно | K, S |
+| `KB_PLUGIN_PLATFORM_DUPLICATE` | плагин загрузил собственную копию платформенного пакета, хук подмены не смог её заменить (ADR-0048 D5) | сделать пакет peer-зависимостью плагина; `kb plugin doctor` | K, S |
 | `KB_PLUGIN_CRASHED` | плагин упал при выполнении | повторить; `correlationId`, отчёт | K, S |
 | `KB_PLUGIN_TIMEOUT` | плагин завис | повторить, увеличить таймаут | K, S |
 | `KB_PLUGIN_PERMISSION_DENIED` | песочница запретила действие | какое разрешение запросить | K, S |
@@ -176,7 +184,8 @@
 | `KB_UPDATE_DOWNLOAD_FAILED` | не скачалось | сеть, `retry` | L |
 | `KB_UPDATE_INCOMPATIBLE` | обновление несовместимо с установленным | что мешает | L |
 | `KB_UPDATE_VERIFY_FAILED` | после обновления проверка не прошла (автооткат) | что сломалось, куда откатились | L |
-| `KB_UPDATE_HOST_NOT_HEALTHY` | хост не поднялся после обновления | автооткат/`rollback` | L |
+| `KB_UPDATE_APPLY_FAILED` | обновление (или откат/ремонт) не применилось; прежняя версия восстановлена и запущена | лог и досье, повторить | L |
+| `KB_UPDATE_HOST_NOT_HEALTHY` | хост не поднялся после обновления; выполнен автооткат, прежняя версия запущена | лог хоста, `correlationId` | L |
 | `KB_UPDATE_NO_SNAPSHOT` | откатываться некуда | | L |
 
 ### H. Повседневная работа

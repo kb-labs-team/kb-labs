@@ -138,15 +138,16 @@ The bootstrap admin is created once on first gateway startup for the tenant spec
 
 ### Lost the admin password?
 
-Stop the gateway and run `kb auth reset-admin` on the VPS. It works offline against the platform database, sets a new password, reactivates the account, restores the admin role and revokes all its sessions:
+Stop the host and run `kb-create doctor --recover` on the VPS. It works offline against the platform database, sets a new password, reactivates the account, restores the admin role and revokes all its sessions:
 
 ```bash
-kb-dev stop gateway
-kb auth reset-admin --email admin@example.com --tenant my-company            # dry run
-kb auth reset-admin --email admin@example.com --tenant my-company --generate --yes
+kb-create stop
+kb-create doctor --recover --email admin@example.com --tenant my-company            # dry run
+kb-create doctor --recover --email admin@example.com --tenant my-company --generate --yes
+kb-create start
 ```
 
-Then start the gateway again. Do not delete rows from the database by hand — bootstrap will not recreate a missing credential for an existing user.
+ Do not delete rows from the database by hand — bootstrap will not recreate a missing credential for an existing user.
 
 ## Updating the platform
 

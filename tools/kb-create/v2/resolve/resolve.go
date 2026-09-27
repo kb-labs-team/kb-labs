@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"runtime"
 	"sort"
 	"strings"
@@ -161,9 +162,26 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if err != nil {
 		return contracts.ResolvedInstallPlan{}, err
 	}
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, ProviderBindings: bindings, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
+	if platform.Host == nil {
+		return contracts.ResolvedInstallPlan{}, incompatible("platform", platform.Version, "declares no host to run")
+	}
+	host := cloneHost(*platform.Host)
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, ProviderBindings: bindings, Host: &host, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
 	plan.PlanHash = hash(plan)
 	return plan, nil
+}
+
+// cloneHost gives the plan its own copy: the plan is hashed and persisted, and
+// must not change if the release index value it came from is reused.
+func cloneHost(host contracts.HostSpec) contracts.HostSpec {
+	host.Args = append([]string(nil), host.Args...)
+	host.Env = maps.Clone(host.Env)
+	if host.Recover != nil {
+		recovery := *host.Recover
+		recovery.Args = append([]string(nil), recovery.Args...)
+		host.Recover = &recovery
+	}
+	return host
 }
 
 func profileName(value string) string {

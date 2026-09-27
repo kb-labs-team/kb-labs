@@ -1,32 +1,16 @@
 /**
  * Shared helpers for `kb project *`: registry access (KB_HOME aware, works
- * directly against the file because there is no host yet) and rendering of
- * failures as the unified error envelope (08-errors.md).
+ * directly against the file because there is no host yet) and printing of
+ * failures as the unified error envelope (08-errors.md; built by `projectErrorEnvelope`).
  */
 
-import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
-import type { ProjectView } from '@kb-labs/core-contracts';
-import { createErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
-import { createProjectRegistry, isProjectRegistryError } from '@kb-labs/core-project-registry';
+import type { ErrorEnvelope } from '@kb-labs/core-platform';
+import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
 export function openRegistry() {
   return createProjectRegistry({ env: process.env });
-}
-
-/** Replaces the home directory prefix with `~` so envelopes never carry it. */
-function redactHome(value: string): string {
-  const home = homedir();
-  return home.length > 1 ? value.split(home).join('~') : value;
-}
-
-export function toProjectEnvelope(error: unknown): ErrorEnvelope {
-  if (isProjectRegistryError(error)) {
-    const details = Object.fromEntries(Object.entries(error.details).map(([k, v]) => [k, redactHome(v)]));
-    return createErrorEnvelope(error.code, { cause: redactHome(error.message), details });
-  }
-  return toErrorEnvelope(error);
 }
 
 /**
@@ -52,31 +36,4 @@ export function failWithEnvelope(ui: Ui | undefined, envelope: ErrorEnvelope, js
     ui?.write(`Hint: ${envelope.hint}\n`);
   }
   return { ok: false as const, error: envelope.message, result: { envelope } };
-}
-
-export interface ProjectRow {
-  id: string;
-  name: string;
-  status: string;
-  declaration: string;
-  pathExists: boolean;
-  addedAt: string;
-  lastUsedAt: string | null;
-  path: string;
-  stateDir: string;
-}
-
-export function toRow(view: ProjectView): ProjectRow {
-  const { project } = view;
-  return {
-    id: project.id,
-    name: project.name,
-    status: project.status,
-    declaration: view.declaration,
-    pathExists: view.pathExists,
-    addedAt: project.addedAt,
-    lastUsedAt: project.lastUsedAt,
-    path: project.path,
-    stateDir: view.stateDir,
-  };
 }

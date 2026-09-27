@@ -12,7 +12,7 @@ func TestRunSealsNormalizedReleaseExport(t *testing.T) {
 	dir := t.TempDir()
 	input, output := filepath.Join(dir, "export.json"), filepath.Join(dir, "release", "index.json")
 	manifestRoot := filepath.Join(dir, "staging")
-	if err := os.WriteFile(input, []byte(`{"channels":{"stable":"2.0.0"},"compatibility":{"schema":"kb.release-compatibility/2","labels":[{"id":"platform@2.0.0","kind":"platform","artifactId":"platform","version":"2.0.0","status":"prepared","validatedBy":["stage"]}]},"platforms":[{"id":"platform","version":"2.0.0","package":"@kb/platform","tarball":"https://example.test/platform.tgz","sha256":"artifact","profiles":{"default":{}}}]}`), 0o600); err != nil {
+	if err := os.WriteFile(input, []byte(`{"channels":{"stable":"2.0.0"},"compatibility":{"schema":"kb.release-compatibility/2","labels":[{"id":"platform@2.0.0","kind":"platform","artifactId":"platform","version":"2.0.0","status":"prepared","validatedBy":["stage"]}]},"platforms":[{"id":"platform","version":"2.0.0","package":"@kb/platform","tarball":"https://example.test/platform.tgz","sha256":"artifact","host":{"command":"node_modules/.bin/kb-host","healthUrl":"http://127.0.0.1:4000/health"},"profiles":{"default":{}}}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(manifestRoot, "node_modules", "@kb", "platform"), 0o750); err != nil {

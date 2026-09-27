@@ -25,8 +25,7 @@ export const manifest: AdapterManifest = {
     },
     cacheDir: {
       type: 'string',
-      default: '.kb/runtime/workspaces',
-      description: 'Local directory where fetched workspace files are cached',
+      description: 'Local directory where fetched workspace files are cached (default: <KB_HOME>/state/<projectId>/runtime/workspaces)',
     },
     hostId: {
       type: 'string',

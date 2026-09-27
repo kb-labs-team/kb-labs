@@ -1,0 +1,20 @@
+{
+  "description": "Version and channel together are rejected with the unified error envelope.",
+  "request": { "method": "POST", "path": "/v1/update-request", "auth": "valid", "body": { "version": "1.0.0", "channel": "stable" } },
+  "response": {
+    "status": 400,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "KB_RUNTIME_INPUT_INVALID",
+        "area": "runtime",
+        "stage": "run",
+        "severity": "error",
+        "retryable": false,
+        "message": "The update request is not valid.",
+        "cause": "$string",
+        "hint": "Send exactly one of an exact version or a channel (stable, canary, experimental)."
+      }
+    }
+  }
+}

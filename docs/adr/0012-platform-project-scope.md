@@ -31,7 +31,8 @@ Before this decision the boundary was blurred:
    plugins whose deps live at `<projectRoot>/.kb/plugins/<name>/node_modules/`
    were invisible to the resolver.
 4. The CLI discovery cache (`.kb/cache/cli-manifests.json`) hashed a single
-   marketplace lock and couldn't represent a project lock separately.
+   marketplace lock and couldn't represent a project lock separately
+   (removed together with the CLI scanner in task 7.6).
 
 Ad-hoc patches (pass `platformRoot` to one path, `KB_PLATFORM_ROOT` to
 another) were already accumulating. We needed a coherent model.
@@ -151,37 +152,29 @@ tag to each row.
 
 ### 6. Discovery
 
-`DiscoveryResult` gained `scope: 'platform' | 'project'`. Every result
-carries where it physically came from:
+> Amended by task 7.6 (ADR-0048, `docs/architecture/target/14-discovery-unification.md`):
+> the CLI-only scanner (`discoverWorkspace`, `discoverNodeModules`,
+> `discoverProjectLocalPlugins`, `discoverCurrentPackage`, `deduplicateManifests`)
+> and its cache are gone. There is one pipeline, `core-discovery`
+> (`DiscoveryManager`); the CLI only adapts its result.
 
-- `discoverWorkspace(platformRoot)` → `scope: 'platform'`
-- `discoverNodeModules(platformRoot)` → `scope: 'platform'`
-- `discoverProjectLocalPlugins(projectRoot)` → `scope: 'project'`
-  (scans `<projectRoot>/.kb/plugins/*/packages/*-entry/`, independent from
-  `pnpm-workspace.yaml` so it works in installed mode)
-- `discoverCurrentPackage(cwd)` → `scope: 'project'`
+Every discovered plugin carries `scope: 'platform' | 'project'` and an
+`origin` (`workspace` | `linked` | `node_modules`):
 
-**Dedup policy** in `deduplicateManifests`:
-- Same `pkgRoot` from both sources (dev mode) → prefer `project`-scoped
-  entry (more precise annotation).
-- Different `pkgRoot` cross-scope collision → **project wins** + debug log
-  `DISCOVERY_SCOPE_OVERRIDE`. Workspace packages override the installed
-  platform's packages.
-- When `platform.dir != projectRoot` (prod mode), `discoverWorkspace` is
-  also run against `projectRoot` (tagged `scope: 'project'`), so all
-  workspace packages participate in deduplication with project-wins semantics.
+- Lock entries of `<platformRoot>/.kb/marketplace.lock` → `scope: 'platform'`;
+  of `<projectRoot>/.kb/marketplace.lock` → `scope: 'project'`. A lock entry
+  with `source: 'local'` is `linked`, one with `source: 'marketplace'` is
+  `node_modules`.
+- pnpm workspace packages under a scope root that declare `kb.manifest` are
+  `workspace` (monorepo development). A root without `pnpm-workspace.yaml`
+  contributes only its own package.
+- With a single root (`platformRoot` unset or equal to the project root) every
+  entry is reported as `platform`.
 
-**Cache invalidation** tracks both locks:
-```ts
-CacheFile {
-  platformMarketplaceLockHash
-  projectMarketplaceLockHash
-  platformRoot   // drift → invalidate
-  projectRoot    // drift → invalidate
-  ...
-}
-```
-If either lock or either root drifts, the cache is rebuilt.
+**Shadowing** is by plugin id: a project-scope plugin beats a platform-scope one;
+inside one scope `workspace` > `linked` > `node_modules`. The CLI registry then
+applies the same source priority per command path when two different plugins
+claim one path.
 
 ### 7. Runtime — module resolution
 
@@ -198,8 +191,9 @@ Fallback resolver (`resolvePluginRoot`) is narrowed to
 
 ### 8. State & cache — explicitly NOT split
 
-- `.kb/cache/cli-manifests.json` remains per-root (stored in `projectRoot`,
-  merged with cross-scope content inside). Not duplicated per scope.
+- The CLI discovery cache `.kb/cache/cli-manifests.json` no longer exists
+  (task 7.6): discovery reads the build-emitted static `dist/manifest.json`,
+  which is as cheap as the cache was.
 - `.kb/plugins.json` (enable/disable state) remains per-project as before.
 - `.kb/lock.json`, `database/`, `logs/`, `analytics/` unchanged.
 

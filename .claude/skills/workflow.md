@@ -156,5 +156,4 @@ export default defineCommand<unknown, CLIInput<MyFlags>, { exitCode: number }>({
 
 ```bash
 kb-devkit run build --packages=@kb-labs/workflow-entry,@kb-labs/workflow-daemon
-pnpm kb marketplace plugins refresh
 ```

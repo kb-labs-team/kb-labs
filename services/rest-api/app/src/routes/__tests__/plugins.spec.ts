@@ -60,7 +60,9 @@ vi.mock('../../middleware/metrics', () => ({
 
 vi.mock('node:fs/promises');
 
-vi.mock('node:fs', () => ({
+vi.mock('node:fs', async (importOriginal) => ({
+  // Real module underneath: the state-dir resolver reached through core-registry needs realpath.
+  ...(await importOriginal<typeof import('node:fs')>()),
   existsSync: vi.fn().mockReturnValue(true),
   statSync: vi.fn().mockReturnValue({ isFile: () => true, size: 42 }),
   createReadStream: vi.fn().mockReturnValue(Buffer.from('fake-chunk')),
@@ -153,6 +155,11 @@ function createMockSnapshot(manifests: Array<{
       manifest: entry.manifest,
       pluginRoot: entry.pluginRoot,
       source: { kind: 'local' as const, path: entry.source ?? 'test' },
+      packageName: entry.pluginId,
+      scope: 'project' as const,
+      origin: 'workspace' as const,
+      manifestPath: `${entry.pluginRoot}/manifest.json`,
+      manifestKind: 'static' as const,
     })),
     diagnostics: options?.diagnostics?.map((diagnostic) => ({
       severity: diagnostic.severity,

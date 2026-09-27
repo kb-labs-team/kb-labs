@@ -19,7 +19,7 @@ export { registerBuiltinCommands } from "./utils/register";
 export * from "./utils/help-generator";
 export { generateExamples, type ExampleCase } from "./utils/generate-examples";
 export { TimingTracker } from "@kb-labs/shared-cli-ui";
-export { discoverManifestsByNamespace, discoverManifests } from "./registry/discover";
+export { discoverManifests } from "./registry/discover";
 export { hello } from "./commands/system/hello";
 export { health } from "./commands/system/health";
 export { version } from "./commands/system/version";

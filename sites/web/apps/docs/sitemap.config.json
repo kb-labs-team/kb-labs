@@ -22,7 +22,7 @@
       "label": "Getting Started",
       "stalenessRisk": "low",
       "pages": [
-        { "slug": "index",       "type": "manual", "owners": ["sites/web/apps/docs/**"] },
+        { "slug": "index",       "type": "manual", "static": true },
         { "slug": "quick-start", "type": "hybrid", "owners": ["cli/**", "plugins/marketplace/**"] },
         { "slug": "installation","type": "hybrid", "owners": ["tools/kb-create/**", "cli/**"] },
         { "slug": "privacy",     "type": "manual", "static": true }
@@ -40,7 +40,7 @@
         { "slug": "concepts/plugin-system",   "type": "manual", "owners": ["core/plugin-runtime/**", "core/plugin-contracts/**"] },
         { "slug": "concepts/adapter-system",  "type": "manual", "owners": ["core/platform/**", "adapters/**"] },
         { "slug": "concepts/execution-model", "type": "manual", "owners": ["core/plugin-execution/**", "core/sandbox/**"] },
-        { "slug": "concepts/workflow-engine", "type": "manual", "owners": ["plugins/workflow/**"] },
+        { "slug": "concepts/workflow-engine", "type": "manual", "owners": ["plugins/workflow/engine/**", "plugins/workflow/contracts/**"] },
         { "slug": "concepts/permissions",     "type": "manual", "owners": ["core/policy/**", "shared/perm-presets/**"] },
         { "slug": "concepts/multi-tenancy",   "type": "manual", "owners": ["core/tenant/**"] },
         { "slug": "concepts/llm-routing",     "type": "manual", "owners": ["core/llm-router/**"], "status": "missing" }
@@ -81,7 +81,7 @@
             { "slug": "sdk/platform-client/index",          "type": "manual", "owners": ["sdk/platform-client/**"] },
             { "slug": "sdk/platform-client/quickstart",     "type": "manual", "owners": ["sdk/platform-client/**"] },
             { "slug": "sdk/platform-client/commands",       "type": "hybrid", "owners": ["sdk/platform-client/**"] },
-            { "slug": "sdk/platform-client/workflows",      "type": "hybrid", "owners": ["sdk/platform-client/**", "plugins/workflow/**"] },
+            { "slug": "sdk/platform-client/workflows",      "type": "hybrid", "owners": ["sdk/platform-client/**", "plugins/workflow/daemon/src/api/workflows-api.ts"] },
             { "slug": "sdk/platform-client/authentication", "type": "manual", "owners": ["sdk/platform-client/**", "plugins/gateway/**"] },
             { "slug": "sdk/platform-client/streaming",      "type": "hybrid", "owners": ["sdk/platform-client/**"] },
             { "slug": "sdk/platform-client/errors",         "type": "hybrid", "owners": ["sdk/platform-client/**", "core/contracts/**"] }
@@ -99,7 +99,7 @@
       "pages": [
         { "slug": "guides/first-plugin",         "type": "manual", "owners": ["sdk/**", "plugins/scaffold/**"] },
         { "slug": "guides/first-adapter",        "type": "manual", "owners": ["sdk/**", "adapters/**"] },
-        { "slug": "guides/first-workflow",       "type": "manual", "owners": ["plugins/workflow/**"] },
+        { "slug": "guides/first-workflow",       "type": "manual", "owners": ["plugins/workflow/entry/src/manifest.ts", "plugins/workflow/engine/**", "plugins/workflow/contracts/**", "plugins/workflow/builtins/**", "plugins/workflow/daemon/src/api/workflows-api.ts", "tools/kb-dev/**", "studio/**"] },
         { "slug": "guides/add-studio-page",      "type": "manual", "owners": ["studio/**", "sdk/**"] },
         { "slug": "guides/llm-setup",            "type": "manual", "owners": ["adapters/openai/**", "adapters/kblabs-gateway/**"] },
         { "slug": "guides/testing",              "type": "manual", "owners": ["shared/testing/**", "shared/testing-e2e/**"] },
@@ -183,15 +183,15 @@
       "label": "Workflows",
       "stalenessRisk": "medium",
       "pages": [
-        { "slug": "workflows/index",           "type": "manual", "owners": ["plugins/workflow/**"] },
+        { "slug": "workflows/index",           "type": "manual", "owners": ["plugins/workflow/contracts/src/schemas.ts", "plugins/workflow/contracts/src/expressions.ts", "plugins/workflow/constants/src/index.ts"] },
         { "slug": "workflows/spec-reference",  "type": "hybrid", "owners": ["plugins/workflow/contracts/**"] },
-        { "slug": "workflows/steps",           "type": "manual", "owners": ["plugins/workflow/core/**"] },
-        { "slug": "workflows/jobs",            "type": "manual", "owners": ["plugins/workflow/core/**"] },
-        { "slug": "workflows/triggers",        "type": "manual", "owners": ["plugins/workflow/core/**"] },
-        { "slug": "workflows/gates",           "type": "manual", "owners": ["plugins/workflow/core/**"] },
-        { "slug": "workflows/artifacts",       "type": "manual", "owners": ["plugins/workflow/core/**"] },
-        { "slug": "workflows/retry-and-errors","type": "manual", "owners": ["plugins/workflow/core/**"] },
-        { "slug": "workflows/patterns",        "type": "manual", "owners": ["plugins/workflow/**"] }
+        { "slug": "workflows/steps",           "type": "manual", "owners": ["plugins/workflow/builtins/**", "plugins/workflow/constants/src/index.ts", "plugins/workflow/contracts/src/expressions.ts"] },
+        { "slug": "workflows/jobs",            "type": "manual", "owners": ["plugins/workflow/engine/**", "plugins/workflow/contracts/src/schemas.ts"] },
+        { "slug": "workflows/triggers",        "type": "manual", "owners": ["plugins/workflow/contracts/src/schemas.ts", "plugins/workflow/daemon/src/cron-discovery.ts"] },
+        { "slug": "workflows/gates",           "type": "manual", "owners": ["plugins/workflow/builtins/src/approval.ts", "plugins/workflow/builtins/src/gate.ts", "plugins/workflow/daemon/src/api/approvals-api.ts"] },
+        { "slug": "workflows/artifacts",       "type": "manual", "owners": ["plugins/workflow/artifacts/**", "plugins/workflow/engine/src/artifact-merger.ts"] },
+        { "slug": "workflows/retry-and-errors","type": "manual", "owners": ["plugins/workflow/engine/**"] },
+        { "slug": "workflows/patterns",        "type": "manual", "owners": ["plugins/workflow/contracts/**", "plugins/workflow/builtins/**"] }
       ]
     },
 
@@ -227,7 +227,7 @@
         { "slug": "services/rest-api",        "type": "hybrid", "owners": ["plugins/rest-api/**"] },
         { "slug": "services/studio",          "type": "manual", "owners": ["studio/app/**"] },
         { "slug": "services/host-agent",      "type": "manual", "owners": ["plugins/host-agent/**"] },
-        { "slug": "services/workflow-daemon", "type": "manual", "owners": ["plugins/workflow/**"] }
+        { "slug": "services/workflow-daemon", "type": "manual", "owners": ["plugins/workflow/daemon/**"] }
       ]
     },
 

@@ -28,6 +28,7 @@ import { AVAILABLE_ICONS, KBPageLayout, KBStatusBar, type NavigationItem, Status
 // Module routes
 import { dashboardRoutes, dashboardNavigation } from './modules/dashboard/routes';
 // Workflow routes removed — now served via Module Federation from @kb-labs/workflow-cli studio plugin
+import { projectsRoutes, projectsNavigation } from './modules/projects/routes';
 import { pluginsRoutes, pluginsNavigation } from './modules/plugins/routes';
 import { analyticsRoutes, analyticsNavigation } from './modules/analytics/routes';
 import { observabilityRoutes, observabilityNavigation } from './modules/observability/routes';
@@ -66,6 +67,7 @@ function renderPluginIcon(iconName?: string): React.ReactElement | undefined {
 // System module navigation items (order matters)
 const systemNavigation: NavigationItem[] = [
   dashboardNavigation,
+  projectsNavigation,
   pluginsNavigation,
   analyticsNavigation,
   observabilityNavigation,
@@ -252,6 +254,7 @@ export const router = createBrowserRouter([
     errorElement: <ErrorBoundary />,
     children: [
       ...dashboardRoutes,
+      ...projectsRoutes,
       ...pluginsRoutes,
       ...analyticsRoutes,
       ...observabilityRoutes,

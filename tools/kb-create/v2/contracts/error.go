@@ -81,6 +81,15 @@ const (
 	CodeDoctorInputInvalid     = "KB_INSTALL_DOCTOR_INPUT_INVALID"
 	CodeLogUnavailable         = "KB_INSTALL_LOG_UNAVAILABLE"
 	CodeDiagnosticUnavailable  = "KB_INSTALL_DIAGNOSTIC_UNAVAILABLE"
+	CodeRollbackFailed         = "KB_INSTALL_ROLLBACK_FAILED"
+	CodeOperationInProgress    = "KB_INSTALL_OPERATION_IN_PROGRESS"
+	CodeRecoveryHostRunning    = "KB_INSTALL_RECOVERY_HOST_RUNNING"
+	CodeRecoveryUnavailable    = "KB_INSTALL_RECOVERY_UNAVAILABLE"
+	CodeUpdateApplyFailed      = "KB_UPDATE_APPLY_FAILED"
+	CodeUpdateHostNotHealthy   = "KB_UPDATE_HOST_NOT_HEALTHY"
+	CodeUpdateNoSnapshot       = "KB_UPDATE_NO_SNAPSHOT"
+	CodeHostSpecInvalid        = "KB_HOST_SPEC_INVALID"
+	CodeHostStateDirUnwritable = "KB_HOST_STATE_DIR_UNWRITABLE"
 )
 
 // CodeInfo is the catalog data the launcher needs to build an envelope offline.

@@ -85,7 +85,11 @@ export class EntityRegistry implements IEntityRegistry {
   async initialize(): Promise<void> {
     // Try loading from snapshot first (fast path)
     const cached = await this.snapshotMgr.load();
-    if (cached && !cached.stale && !cached.corrupted && cached.manifests.length > 0) {
+    if (
+      cached && !cached.stale && !cached.corrupted && cached.manifests.length > 0
+      // A snapshot written before discovery recorded scope/origin cannot restore them.
+      && cached.manifests.every(e => typeof e.origin === 'string' && typeof e.scope === 'string')
+    ) {
       this.applySnapshot(cached);
       this.initialized = true;
       return;
@@ -268,6 +272,11 @@ export class EntityRegistry implements IEntityRegistry {
           manifest: this.manifests.get(p.id)!,
           pluginRoot: p.packageRoot,
           source: p.source,
+          packageName: p.packageName,
+          scope: p.scope,
+          origin: p.origin,
+          manifestPath: p.manifestPath,
+          manifestKind: p.manifestKind,
         })),
       diagnostics: this.diagnosticEvents,
       ts: Date.now(),
@@ -289,6 +298,11 @@ export class EntityRegistry implements IEntityRegistry {
         id: entry.pluginId,
         version: entry.manifest.version,
         packageRoot: entry.pluginRoot,
+        packageName: entry.packageName,
+        scope: entry.scope,
+        origin: entry.origin,
+        manifestPath: entry.manifestPath,
+        manifestKind: entry.manifestKind,
         source: entry.source,
         display: entry.manifest.display
           ? { name: entry.manifest.display.name, description: entry.manifest.display.description }

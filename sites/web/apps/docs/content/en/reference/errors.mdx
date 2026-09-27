@@ -145,7 +145,6 @@ kb-dev logs rest -f                    # follow in real time
 **Plugin loading issues:**
 ```bash
 pnpm kb marketplace plugins doctor     # diagnose all installed plugins
-pnpm kb marketplace plugins refresh # clear all caches and retry
 ```
 
 **Workflow failures:**
@@ -163,14 +162,12 @@ GET http://localhost:5050/api/v1/workflows/runs/<id>/logs
 Zombie host-agent daemon processes are intercepting plugin execution:
 ```bash
 pkill -9 -f "host-agent-app/dist/index.js"
-pnpm kb marketplace plugins refresh
 ```
 
 **"Command not found" after building a plugin**
 
 Registry cache is stale:
 ```bash
-pnpm kb marketplace plugins refresh
 ```
 
 **"Cannot find module '@kb-labs/...'"**

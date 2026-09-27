@@ -9,10 +9,12 @@ import (
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
-	"github.com/kb-labs/create/v2/receipt"
-	"github.com/kb-labs/create/v2/render"
 	"github.com/kb-labs/create/v2/secrets"
 )
+
+func testHost() *contracts.HostSpec {
+	return &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}
+}
 
 func testCompatibility(version string) *catalog.CompatibilityMatrix {
 	return &catalog.CompatibilityMatrix{
@@ -29,7 +31,7 @@ func TestRunEmitsOnlyStructuredPlan(t *testing.T) {
 	index := filepath.Join(dir, "index.json")
 	input := filepath.Join(dir, "request.json")
 	output := filepath.Join(dir, "output.json")
-	release, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: testCompatibility("2.0.0"), Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "abc", Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}}}})
+	release, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: testCompatibility("2.0.0"), Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "abc", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +49,7 @@ func TestRunEmitsOnlyStructuredPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code := run("plan", index, input, "", "", "", "", "kb-dev", "", false, "", "", false, directRequest{}, file)
+	code := invocation{Operation: "plan", Index: index, Input: input}.run(file)
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +96,7 @@ func TestRunRequiresBothMachineInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer file.Close()
-	if code := run("plan", "", "", "", "", "", "", "kb-dev", "", false, "", "", false, directRequest{}, file); code != 2 {
+	if code := (invocation{Operation: "plan"}).run(file); code != 2 {
 		t.Fatalf("exit code = %d", code)
 	}
 }
@@ -105,7 +107,7 @@ func TestRunRejectsUnknownOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer file.Close()
-	if code := run("destroy-everything", "", "", "", "", "", "", "kb-dev", "", false, "", "", false, directRequest{}, file); code != 2 {
+	if code := (invocation{Operation: "destroy-everything"}).run(file); code != 2 {
 		t.Fatalf("exit code = %d", code)
 	}
 }
@@ -116,7 +118,7 @@ func TestRecoveryRequiresPlatformRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer file.Close()
-	if code := run("uninstall", "", "", "", "", "", "", "kb-dev", "", false, "", "", false, directRequest{}, file); code != 2 {
+	if code := (invocation{Operation: "uninstall"}).run(file); code != 2 {
 		t.Fatalf("exit code = %d", code)
 	}
 }
@@ -132,7 +134,7 @@ func TestDoctorReturnsStructuredManifestFindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code := run("doctor", "", "", input, "", "", "", "kb-dev", "", false, "", "", false, directRequest{}, file); code != 1 {
+	if code := (invocation{Operation: "doctor", DoctorInput: input}).run(file); code != 1 {
 		t.Fatalf("exit code = %d", code)
 	}
 	if err := file.Close(); err != nil {
@@ -151,7 +153,7 @@ func TestDoctorReturnsStructuredManifestFindings(t *testing.T) {
 func TestDirectRequestUsesSamePlanTransport(t *testing.T) {
 	dir := t.TempDir()
 	index := filepath.Join(dir, "index.json")
-	release, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: testCompatibility("2.0.0"), Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Profiles: map[string]contracts.ServiceGraph{"default": {}}}}, Plugins: []catalog.Component{{ID: "review", Version: "1.2.0", Package: "@kb/review", Tarball: "https://example.test/review.tgz", SHA256: "review"}}})
+	release, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: testCompatibility("2.0.0"), Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {}}}}, Plugins: []catalog.Component{{ID: "review", Version: "1.2.0", Package: "@kb/review", Tarball: "https://example.test/review.tgz", SHA256: "review"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +168,7 @@ func TestDirectRequestUsesSamePlanTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code := run("plan", index, "", "", "", "", "", "kb-dev", "", false, "", "", false, directRequest{PlatformRoot: "/tmp/platform", Plugins: "review@1.2.0", Offline: true, Policy: "strict"}, output); code != 0 {
+	if code := (invocation{Operation: "plan", Index: index, Direct: directRequest{PlatformRoot: "/tmp/platform", Plugins: "review@1.2.0", Offline: true, Policy: "strict"}}).run(output); code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
 	if err := output.Close(); err != nil {
@@ -177,7 +179,7 @@ func TestDirectRequestUsesSamePlanTransport(t *testing.T) {
 func TestScenarioAnswersCompileThroughManifestBoundPlan(t *testing.T) {
 	dir := t.TempDir()
 	index := filepath.Join(dir, "index.json")
-	release, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: testCompatibility("2.0.0"), Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Profiles: map[string]contracts.ServiceGraph{"default": {}}, Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`}}}}})
+	release, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: testCompatibility("2.0.0"), Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {}}, Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +194,7 @@ func TestScenarioAnswersCompileThroughManifestBoundPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code := run("plan", index, "", "", "", "", "", "kb-dev", "", false, "custom", `{"access.mode":"local"}`, false, directRequest{PlatformRoot: "/tmp/platform", Offline: true, Policy: "compatible"}, output)
+	code := invocation{Operation: "plan", Index: index, ScenarioID: "custom", ScenarioAnswers: `{"access.mode":"local"}`, Direct: directRequest{PlatformRoot: "/tmp/platform", Offline: true, Policy: "compatible"}}.run(output)
 	if err := output.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -205,39 +207,5 @@ func TestScenarioAnswersCompileThroughManifestBoundPlan(t *testing.T) {
 	}
 	if !strings.Contains(string(result), `"path":"/gateway/access/mode"`) || !strings.Contains(string(result), `"json":"\"local\""`) {
 		t.Fatalf("plan = %s", result)
-	}
-}
-
-func TestRunStatusVerifiesTheReceiptOwnedGraph(t *testing.T) {
-	dir := t.TempDir()
-	plan := contracts.ResolvedInstallPlan{
-		Schema:       contracts.ResolvedPlanSchema,
-		PlanHash:     "status-plan",
-		Request:      contracts.InstallRequest{PlatformRoot: dir},
-		ServiceGraph: contracts.ServiceGraph{Services: []contracts.Service{{ID: "workflow", Command: "workflow", Required: true}}},
-	}
-	if _, err := render.Write(plan); err != nil {
-		t.Fatal(err)
-	}
-	if err := receipt.Write(dir, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "receipt", Plan: plan}); err != nil {
-		t.Fatal(err)
-	}
-	kbdev := filepath.Join(dir, "kb-dev")
-	if err := os.WriteFile(kbdev, []byte("#!/bin/sh\nprintf '%s\\n' '{\"services\":{\"workflow\":{\"state\":\"alive\"}}}'\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	output, err := os.CreateTemp(dir, "status-output")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code := runStatus(dir, kbdev, output); code != 0 {
-		t.Fatalf("status exit code = %d", code)
-	}
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(output.Name())
-	if err != nil || !strings.Contains(string(data), `"operation":"status"`) {
-		t.Fatalf("status output = %s, error = %v", data, err)
 	}
 }

@@ -122,7 +122,6 @@ cd plugins/kb-labs-mind
 pnpm --filter @kb-labs/<package> run build
 
 # 4. После CLI плагина
-pnpm kb marketplace plugins refresh
 
 # 5. Коммит (через commit plugin или вручную)
 pnpm kb commit commit --scope="@kb-labs/<package>"

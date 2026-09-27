@@ -143,7 +143,6 @@ pnpm check:affected      # build + lint + type-check + test (only changed packag
 - **No `as any`, `@ts-ignore`** — fix the root cause
 - **No stub/mock files as workarounds** — fix the underlying issue
 - **Build with `pnpm build`** (uses kb-devkit) — not `pnpm -r run build`
-- **After building a CLI plugin**: `pnpm kb marketplace plugins refresh`
 
 ### Workspace health
 

@@ -237,61 +237,6 @@
             ]
           },
           "flows": {
-            "sdk": {
-              "versioningStrategy": "lockstep",
-              "packages": {
-                "include": [
-                  "@kb-labs/sdk",
-                  "@kb-labs/platform-client"
-                ]
-              },
-              "checks": [
-                {
-                  "id": "dist-exports",
-                  "name": "dist/index.js — no directory imports",
-                  "command": "bash",
-                  "args": [
-                    "scripts/gates/check-dist-exports.sh"
-                  ],
-                  "timeoutMs": 30000,
-                  "blocking": true,
-                  "runIn": "perPackage"
-                },
-                {
-                  "id": "pack-static",
-                  "name": "packed artifacts — static checks (one process)",
-                  "builtin": "pack-static",
-                  "timeoutMs": 120000,
-                  "blocking": true,
-                  "dependsOn": ["dist-exports"],
-                  "runIn": "perPackage"
-                },
-                {
-                  "id": "pack-install",
-                  "name": "aggregated clean install of staged tarballs + one import pass",
-                  "builtin": "pack-install",
-                  "timeoutMs": 900000,
-                  "dependsOn": ["dist-exports", "pack-static"],
-                  "runIn": "perPackage",
-                  "packInstall": {
-                    "isolatedPackages": ["@kb-labs/sdk", "@kb-labs/platform-client"],
-                    "isolateChanged": true,
-                    "maxIsolatedChanged": 15,
-                    "detectApps": true,
-                    "appPackages": ["@kb-labs/mcp-app", "@kb-labs/rest-api-app", "@kb-labs/gateway-app", "@kb-labs/studio-app", "@kb-labs/marketplace-app", "@kb-labs/marketplace-registry-app", "@kb-labs/workflow-daemon", "@kb-labs/core-state-daemon"]
-                  }
-                },
-                {
-                  "id": "pack-install-per-package",
-                  "name": "LEGACY per-package pack + clean install (debug: kb release checks --only pack-install-per-package)",
-                  "command": "bash",
-                  "args": ["scripts/gates/check-pack-install.sh"],
-                  "timeoutMs": 120000,
-                  "disabled": true,
-                  "runIn": "perPackage"
-                }
-              ]
-            },
             "platform": {
               "versioningStrategy": "lockstep",
               "platformMembers": [
@@ -306,15 +251,13 @@
               ],
               "packages": {
                 "exclude": [
-                  "@kb-labs/sdk",
                   "templates/*",
                   "{{.Name}}",
                   "@product-name/*",
                   "tmp/notifier-test",
                   "tmp/notifier-test/*",
                   "tmp/notifier-test/packages/*",
-                  "@kb-labs/adapters-fs",
-                  "@kb-labs/platform-client"
+                  "@kb-labs/adapters-fs"
                 ]
               },
               "checks": [

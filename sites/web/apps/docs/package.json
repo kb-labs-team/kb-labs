@@ -5,9 +5,11 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev -p 3001",
+    "docs:source-check": "node scripts/docs-source-check.mjs",
+    "docs:source-sync": "node scripts/docs-source-check.mjs --write",
     "lint": "eslint .",
     "start": "next start -p 3001",
-    "test": "echo 'No tests yet'",
+    "test": "node --test scripts/docs-source-sync.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

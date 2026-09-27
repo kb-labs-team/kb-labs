@@ -6,6 +6,7 @@ import type { AnalyticsDataSource } from './sources/analytics-source';
 import type { AdaptersDataSource } from './sources/adapters-source';
 import type { PlatformDataSource } from './sources/platform-source';
 import type { PluginsDataSource } from './sources/plugins-source';
+import type { ProjectsDataSource } from './sources/projects-source';
 import { MockSystemSource } from './mocks/mock-system-source';
 import { MockWorkflowSource } from './mocks/mock-workflow-source';
 import { MockCacheSource } from './mocks/mock-cache-source';
@@ -14,6 +15,7 @@ import { MockAnalyticsSource } from './mocks/mock-analytics-source';
 import { MockAdaptersSource } from './mocks/mock-adapters-source';
 import { MockPlatformSource } from './mocks/mock-platform-source';
 import { MockPluginsSource } from './mocks/mock-plugins-source';
+import { MockProjectsSource } from './mocks/mock-projects-source';
 import { HttpSystemSource } from './sources/http-system-source';
 import { HttpWorkflowSource } from './sources/http-workflow-source';
 import { HttpCacheSource } from './sources/http-cache-source';
@@ -22,6 +24,7 @@ import { HttpAnalyticsSource } from './sources/http-analytics-source';
 import { HttpAdaptersSource } from './sources/http-adapters-source';
 import { HttpPlatformSource } from './sources/http-platform-source';
 import { HttpPluginsSource } from './sources/http-plugins-source';
+import { HttpProjectsSource } from './sources/http-projects-source';
 import { HttpClient } from './client/http-client';
 
 export interface DataSourcesConfig {
@@ -40,6 +43,7 @@ export interface DataSources {
   adapters: AdaptersDataSource;
   platform: PlatformDataSource;
   plugins: PluginsDataSource;
+  projects: ProjectsDataSource;
 }
 
 export function createDataSources(config: DataSourcesConfig): DataSources {
@@ -53,6 +57,7 @@ export function createDataSources(config: DataSourcesConfig): DataSources {
       adapters: new MockAdaptersSource(),
       platform: new MockPlatformSource(),
       plugins: new MockPluginsSource(),
+      projects: new MockProjectsSource(),
     };
   }
 
@@ -68,5 +73,6 @@ export function createDataSources(config: DataSourcesConfig): DataSources {
     adapters: new HttpAdaptersSource(client),
     platform: new HttpPlatformSource(client),
     plugins: new HttpPluginsSource(client),
+    projects: new HttpProjectsSource(client),
   };
 }

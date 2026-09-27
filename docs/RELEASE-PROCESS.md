@@ -1,12 +1,15 @@
 # KB Labs release process
 
-KB Labs has independent SDK, platform and binary streams. A release is only promotable when its immutable artifacts, launcher index and required smoke are all verified; publishing a tag is not itself a stable release.
+KB Labs releases the SDK, platform and binaries as one flow with one version (`platform`); separate SDK versioning may return later. A release is only promotable when its immutable artifacts, launcher index and required smoke are all verified; publishing a tag is not itself a stable release.
 
 | Stream | Tag | Publishes | Required order |
 | --- | --- | --- | --- |
-| SDK | `sdk-vX.Y.Z` | SDK npm tarballs with V2 launcher manifests | first when SDK changes |
-| Platform | `platform-vX.Y.Z` | platform, services, binaries and one sealed release index | after required SDK candidate |
+| Platform (includes `@kb-labs/sdk` and `@kb-labs/platform-client`) | `platform-vX.Y.Z` | SDK, platform and service npm tarballs with V2 launcher manifests, binaries and one sealed release index | one candidate, one version |
 | Binaries | `vX.Y.Z-binaries` | the binary assets and checksums referenced by that candidate index | as part of the same candidate |
+
+There is no separate `sdk` flow: `sdk-vX.Y.Z` tags are no longer created
+(existing ones stay). The release index generator rejects SDK, platform or
+binary version skew unless `--allow-version-skew` is passed on purpose.
 
 ## Candidate gates
 
@@ -35,7 +38,7 @@ the candidate identity and smoke evidence are valid.
 The candidate smoke is deliberately a bounded installer/package/config/workflow gate. Actual service startup remains covered by the sharded integration suites; a green smoke does not replace them.
 
 The compatibility matrix is conservative in the first release: it records the
-exact staged Platform/SDK pair and the SDK's declared runtime peer range. A
+exact staged Platform/SDK pair (same version) and the SDK's declared runtime peer range. A
 broader compatibility range must be earned by additional release evidence; it
 is never inferred from a shared `2.x` or `3.x` major.
 

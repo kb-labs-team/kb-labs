@@ -15,10 +15,13 @@ The V2 boundary is executable and covered by an offline journey test:
   capability providers without scanning an installation.
 - `resolve/` emits the immutable `ResolvedInstallPlan` and fails on missing or
   ambiguous providers instead of selecting one by iteration order.
-- `render/` projects that plan into `kb.config.jsonc` and `devservices.yaml`,
-  with V2-owned validation and atomic writes.
-- `verify/` enforces `resolved graph == devservices == kb-dev status` through
-  a status adapter, equally usable in a real run and an offline journey.
+- `render/` projects that plan into the generated runtime config
+  `kb.config.jsonc` (including the host's own `host` section), with atomic
+  writes. There is no service-manager file: the platform runs as one host
+  process.
+- `verify/` checks the generated config and the plan's host declaration before
+  a receipt is committed; a trial run of the host (`host.Prober`) proves that it
+  really starts.
 - `artifacts/`, `runtime/`, `receipt/`, `doctor/` and `diagnostics/` establish
   exact artifact application, recovery, manifest-gap
   reporting and redacted dossiers before CLI cutover exposes the flow.
@@ -73,11 +76,11 @@ Secret input uses `--secret-env requirement.id=ENV_VAR`, so CI/agents pass a
 reference to process environment rather than secret text through argv/JSON.
 V2 stores the value only in `.kb/v2/secrets.env` (0600); generated config,
 receipt, scenario state, logs, diagnostics and telemetry retain only the
-manifest requirement or `${ENV_VAR}` placeholder. `kb-dev` reads this private
-store when it expands the rendered service environment.
+manifest requirement or environment variable name. The launcher hands the
+private store to the host process as its environment (see Host supervision).
 
-`kb-dev` resolves `${ENV_VAR}` by the *variable name*, so on every apply/update
-the launcher also stores each present secret under the environment variable its
+The host receives its secrets by environment variable name, so on every
+apply/update the launcher also stores each present secret under the environment variable its
 plan patch binds it to, next to the requirement ID (what the launcher verifies
 and doctor checks). This holds whatever supplied the value (`--secret-env` or the
 wizard). Two secrets bound to one variable must hold the same value or the run
@@ -97,9 +100,11 @@ Scenario field rules that matter to authors:
   256-bit value when it is left blank (for machine-owned secrets such as a
   token-signing key). `generate` is only valid on secret fields.
 
-The platform bundle can also declare an OS/architecture-specific `kb-dev`
-binary asset. V2 verifies its SHA-256 and installs it in `.kb/v2/bin`; a CLI
-`--kb-dev` is an explicit development override, not a release dependency.
+The platform bundle can declare OS/architecture-specific launcher binaries;
+V2 verifies their SHA-256 and installs them in `.kb/v2/bin`. Author and ops tools
+(`kb-dev`, `kb-devkit`, `kb-env`, `kb-deploy`, `kb-monitor`) are not part of a
+user installation: the release index never lists them and no launcher command
+takes a `kb-dev` path.
 
 ## Why V2
 
@@ -135,26 +140,23 @@ flowchart TD
   D --> E["V2 runtime: apply, journal, rollback"]
   E --> F["InstallReceipt + immutable snapshot"]
   F --> G["Render config + service graph"]
-  G --> H["Verify artifacts, kb-dev status, readiness"]
+  G --> H["Verify config + host declaration, trial-run the host"]
   H --> I["Success or LauncherError + diagnostic bundle"]
-  F --> J["doctor --fix / update / uninstall / rollback"]
+  F --> J["doctor --fix / update / uninstall / rollback (around the host)"]
 ```
 
 ### One ownership rule
 
 `ResolvedInstallPlan` owns requested platform/SDK/plugins/adapters, exact
-artifact versions, config patches, provider bindings, binaries and the
-expected service graph.
-`devservices.yaml` and generated runtime configuration are rendered outputs.
-A package scan validates declared artifacts; it must never decide which
-services the user received merely because a transitive dependency exposes a
-manifest.
+artifact versions, config patches, provider bindings, binaries, the platform's
+service graph and the host that runs it.
+The generated runtime configuration is a rendered output. A package scan
+validates declared artifacts; it must never decide which services the user
+received merely because a transitive dependency exposes a manifest.
 
-The required post-condition is:
-
-```text
-resolved expected services == rendered devservices services == kb-dev status services
-```
+The required post-condition is that the receipt's host starts and answers its
+health check; the launcher proves it with a trial run before committing a
+receipt and with the real restart after an update.
 
 For the current product horizon, core and official services are one platform
 bundle. A selected platform version owns their exact packages, default
@@ -314,7 +316,8 @@ generate it (fields with `generate`, e.g. the session signing secret), fail
 request names are written to the private store (`.kb/v2/secrets.env`, 0600); a
 secret never reaches the answers, the request, the terminal output or the resume
 state. Skipping the admin password leaves a secured install without an admin
-until `kb auth reset-admin` is run; `kb-dev doctor` reports exactly that.
+until `kb-create doctor --recover` is run; `kb-create doctor` reports exactly that
+(`auth:no_active_admin` in its `platform` section).
 
 ## Engine, receipt and snapshots
 
@@ -348,7 +351,7 @@ protocol, persisted in the journal/receipt, and consumed by `doctor --fix`.
 Each invocation writes a full local log. A failure additionally writes a
 redacted dossier under `.kb/diagnostics/<correlation-id>/` with resolved plan,
 receipt/snapshot metadata, engine journal, package-manager output, toolchain,
-config hashes, service graph and `kb-dev status`. The CLI prints one recovery
+config hashes and the service graph. The CLI prints one recovery
 command and the bundle path so users can attach it to an issue without manual
 terminal reconstruction.
 
@@ -370,7 +373,7 @@ failure never changes the installation result.
 | `engine-recovery` | fake package/binary adapters | journal, partial failure, retry, rollback and doctor recovery | none |
 | `doctor-manifest-contract` | manifests + effective-config fixtures | required/default/secret fields, provider bindings and repair-plan generation | none |
 | `launcher-journey` | offline tarball/binary fixtures | fresh, explicit, rerun, update, uninstall and rollback | none |
-| `service-profile` | isolated fixture per profile | `kb-dev status` equals receipt graph; required services meet readiness | fixture/local |
+| `service-profile` | isolated fixture per profile | the receipt's host starts and answers its health check | fixture/local |
 | `release-smoke` | exact npm canary + released binaries | default fresh install and required runtime contract | real npm only |
 
 Each shard owns a distinct HOME, platform/project roots, port allocation and

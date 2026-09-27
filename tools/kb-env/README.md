@@ -23,7 +23,7 @@ Profiles live in `e2e/testbed/testbed.yaml` (repo) or the embedded defaults:
 ## Isolation & parallel environments
 
 Each environment installs into an external dir (`KB_ENV_HOME`, default
-`~/.kb-env`), with an isolated `KB_CREATE_STATE_HOME` and a clean PATH, so it
+`~/.kb-env`), with an isolated `KB_HOME` and a clean PATH, so it
 never picks up the workspace `node_modules` or the `pnpm kb` alias.
 
 Ports shift through one knob, **`KB_ENV_OFFSET`** (additive). It flows to the

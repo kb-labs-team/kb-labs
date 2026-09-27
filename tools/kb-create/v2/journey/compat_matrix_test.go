@@ -60,6 +60,7 @@ func fixtureIndex(t *testing.T, options fixtureOptions) []byte {
 		Platforms: []catalog.PlatformBundle{{
 			ID: "platform", Version: fixtureVersion, Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
 			MinLauncherVersion: options.minLauncher,
+			Host:               testHost(),
 			Profiles:           map[string]contracts.ServiceGraph{"default": {}},
 			Binaries:           []catalog.Binary{{ID: "kb-create", OS: binaryOS, Arch: targetArch, URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}},
 		}},

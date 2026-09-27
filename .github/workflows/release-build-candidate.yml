@@ -19,7 +19,7 @@ on:
         description: Release flow selected by the workflow engine
         required: true
         type: choice
-        options: [platform, sdk]
+        options: [platform]
       version:
         description: Exact release version selected by the workflow engine
         required: true
@@ -249,36 +249,6 @@ jobs:
           FLOW: ${{ inputs.flow }}
         run: pnpm kb release stage --flow "$FLOW" --out-dir .kb/release/artifacts --json
 
-      - name: Stage latest published compatible SDK for platform compatibility
-        if: inputs.flow == 'platform'
-        run: |
-          set -euo pipefail
-          # A platform canary does not version or publish the SDK flow.  Building
-          # a fresh SDK tarball with the existing SDK version made the sealed
-          # index attest bytes which do not exist in npm, so a clean install
-          # failed its checksum verification.  The platform index must instead
-          # reference an immutable, already-published SDK artifact.  The index
-          # builder verifies that this latest SDK's peer range accepts the
-          # platform candidate and fails closed otherwise.
-          rm -rf .kb/release/sdk-artifacts
-          mkdir -p .kb/release/sdk-artifacts
-          packed="$(npm pack '@kb-labs/sdk@latest' --pack-destination .kb/release/sdk-artifacts --json)"
-          node -e '
-            const { createHash } = require("node:crypto");
-            const { readFileSync, writeFileSync } = require("node:fs");
-            const { join } = require("node:path");
-            const directory = ".kb/release/sdk-artifacts";
-            const [entry] = JSON.parse(readFileSync(0, "utf8"));
-            if (!entry?.name || !entry?.version || !entry?.filename) throw new Error("npm pack did not return an SDK artifact");
-            const payload = readFileSync(join(directory, entry.filename));
-            writeFileSync(join(directory, "manifest.json"), JSON.stringify([{
-              name: entry.name,
-              version: entry.version,
-              tarball: entry.filename,
-              sha256: createHash("sha256").update(payload).digest("hex"),
-            }]) + "\n");
-          ' <<< "$packed"
-
       - name: Build exact Go binary assets
         uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29
         if: inputs.flow == 'platform'
@@ -360,7 +330,6 @@ jobs:
             --flow "$FLOW" \
             --channel "$CHANNEL" \
             --artifacts-dir .kb/release/artifacts \
-            --sdk-artifacts-dir .kb/release/sdk-artifacts \
             --binary-manifest .kb/release/binary-manifest.json \
             --platform-member-packages "$platform_members" \
             --platform-adapter-config "$platform_adapters" \

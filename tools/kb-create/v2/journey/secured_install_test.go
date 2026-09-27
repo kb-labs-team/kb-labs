@@ -2,6 +2,7 @@ package journey_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -73,7 +74,7 @@ func sealedGatewayCatalog(t *testing.T) catalog.Catalog {
 	source := catalog.Catalog{
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Platforms: []catalog.PlatformBundle{{
-			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(),
 			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "gateway-app", Port: 4000, Required: true}}}},
 			Members:  []catalog.Component{{ID: "gateway", Version: "2.0.0", Package: "@kb-labs/gateway-app", Tarball: "https://example.test/gateway.tgz", SHA256: "gateway"}},
 		}},
@@ -90,11 +91,13 @@ func sealedGatewayCatalog(t *testing.T) catalog.Catalog {
 }
 
 type journeyResult struct {
-	root    string
-	config  map[string]any
-	devsvcs string
-	secrets map[string]string
-	plan    contracts.ResolvedInstallPlan
+	root   string
+	config map[string]any
+	// secrets is the private store as written; environment is what the host
+	// process receives from it (variables only).
+	secrets     map[string]string
+	environment map[string]string
+	plan        contracts.ResolvedInstallPlan
 }
 
 // install runs wizard -> plan -> apply. `answers` is what the user types.
@@ -114,8 +117,7 @@ func install(t *testing.T, answers string) journeyResult {
 	}
 	store := secrets.Store{PlatformRoot: root}
 	artifacts := &offlineArtifacts{}
-	services := &lifecycleServices{status: status{{ID: "gateway", State: "alive"}}}
-	if _, err := runtime.Apply(plan, runtime.Dependencies{Artifacts: artifacts, Status: services, Activator: services, Secrets: &store, Clock: journeyClock{time.Unix(1, 0)}}); err != nil {
+	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts, Secrets: &store, Clock: journeyClock{time.Unix(1, 0)}}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	return readInstall(t, root, plan)
@@ -131,11 +133,14 @@ func readInstall(t *testing.T, root string, plan contracts.ResolvedInstallPlan) 
 	if err := json.Unmarshal(config, &result.config); err != nil {
 		t.Fatal(err)
 	}
-	devsvcs, err := os.ReadFile(filepath.Join(root, ".kb", "devservices.yaml"))
+	if _, err := os.Stat(filepath.Join(root, ".kb", "devservices.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("an installation must not render devservices.yaml: %v", err)
+	}
+	environment, err := secrets.Store{PlatformRoot: root}.Environment()
 	if err != nil {
 		t.Fatal(err)
 	}
-	result.devsvcs = string(devsvcs)
+	result.environment = environment
 	if data, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "secrets.env")); err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 			if key, value, ok := strings.Cut(line, "="); ok {
@@ -191,20 +196,26 @@ func TestSecuredWizardInstallDeliversTheGatewayItsAdminAndSecrets(t *testing.T) 
 		t.Fatalf("an unanswered tenant must not be written: %v", bootstrap)
 	}
 
-	// The service env references the secrets by variable name only.
+	// The host process receives each secret as the environment variable the plan
+	// binds it to, and the generated config never mentions one.
+	if strings.Contains(string(mustMarshal(t, result.config)), "${") {
+		t.Fatalf("the config must not carry secret placeholders: %v", result.config)
+	}
 	for _, variable := range []string{"GATEWAY_BOOTSTRAP_ADMIN_PASSWORD", "GATEWAY_JWT_SECRET"} {
-		if !strings.Contains(result.devsvcs, variable+": ${"+variable+"}") {
-			t.Fatalf("service env must reference ${%s}:\n%s", variable, result.devsvcs)
+		if result.environment[variable] == "" {
+			t.Fatalf("the host must receive %s (environment: %v)", variable, keysOf(result.environment))
 		}
 	}
-
-	// kb-dev resolves ${VAR} by NAME against the private store. Every variable the
-	// generated env references must therefore exist there, with the right value:
-	// the requirement-ID key alone is what used to leave the gateway unable to start.
-	for _, reference := range regexp.MustCompile(`\$\{([A-Z0-9_]+)\}`).FindAllStringSubmatch(result.devsvcs, -1) {
-		if result.secrets[reference[1]] == "" {
-			t.Fatalf("${%s} is referenced by the service env but not resolvable from the secret store (keys: %v)", reference[1], keysOf(result.secrets))
+	// Every variable the plan binds must reach the host: the requirement-ID key
+	// alone is what used to leave the gateway unable to start.
+	for _, patch := range result.plan.ConfigPatches {
+		if patch.Environment != "" && result.environment[patch.Environment] == "" {
+			t.Fatalf("plan binds %s but the host would not receive it (environment: %v)", patch.Environment, keysOf(result.environment))
 		}
+	}
+	// A secured install also tells the host to require login.
+	if result.config["host"].(map[string]any)["auth"] != "on" {
+		t.Fatalf("host.auth = %v, want on", result.config["host"])
 	}
 	if result.secrets["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"] != adminPassword {
 		t.Fatal("the password the user typed must be what the gateway will receive")
@@ -233,11 +244,11 @@ func TestSecuredInstallWithoutAnAdminPasswordStillSecuresSessions(t *testing.T) 
 	// email and password skipped; the signing secret is still generated.
 	result := install(t, "\n\nsecured\n\n\n\n\n")
 
-	if !strings.Contains(result.devsvcs, "GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET}") {
-		t.Fatalf("the signing secret must still reach the gateway:\n%s", result.devsvcs)
+	if result.environment["GATEWAY_JWT_SECRET"] == "" {
+		t.Fatalf("the signing secret must still reach the host: %v", keysOf(result.environment))
 	}
-	if strings.Contains(result.devsvcs, "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD") {
-		t.Fatalf("no admin password was given, none may be wired:\n%s", result.devsvcs)
+	if _, wired := result.environment["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"]; wired {
+		t.Fatalf("no admin password was given, none may be wired: %v", keysOf(result.environment))
 	}
 	// Nothing answered, nothing defaulted: the gateway config carries no auth block at all.
 	if auth, present := gatewaySection(t, result)["auth"]; present {
@@ -252,8 +263,11 @@ func TestLocalInstallNeedsNoSecretsAndConfiguresNoLoginAccess(t *testing.T) {
 	if access, _ := gateway["access"].(map[string]any); access["mode"] != "local" {
 		t.Fatalf("gateway.access = %v", gateway["access"])
 	}
-	if strings.Contains(result.devsvcs, "${") {
-		t.Fatalf("a local install references no secrets:\n%s", result.devsvcs)
+	if len(result.environment) != 0 {
+		t.Fatalf("a local install gives the host no secrets: %v", keysOf(result.environment))
+	}
+	if result.config["host"].(map[string]any)["auth"] != "off" {
+		t.Fatalf("host.auth = %v, want off for a no-login install", result.config["host"])
 	}
 	if len(result.secrets) != 0 {
 		t.Fatalf("a local install stores no secrets: %v", keysOf(result.secrets))
@@ -310,8 +324,7 @@ func TestMachineRequestSecuredInstallDeliversSecretsThroughTheSameStore(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	services := &lifecycleServices{status: status{{ID: "gateway", State: "alive"}}}
-	if _, err := runtime.Apply(plan, runtime.Dependencies{Artifacts: &offlineArtifacts{}, Status: services, Activator: services, Secrets: &store}); err != nil {
+	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: &offlineArtifacts{}, Secrets: &store}); err != nil {
 		t.Fatal(err)
 	}
 	result := readInstall(t, root, plan)
@@ -331,14 +344,22 @@ func TestSecretInputWithNoStoredValueFailsBeforeAnythingIsInstalled(t *testing.T
 		t.Fatal(err)
 	}
 	artifacts := &offlineArtifacts{}
-	services := &lifecycleServices{status: status{{ID: "gateway", State: "alive"}}}
 	store := secrets.Store{PlatformRoot: root}
-	if _, err := runtime.Apply(plan, runtime.Dependencies{Artifacts: artifacts, Status: services, Activator: services, Secrets: &store}); err == nil || !strings.Contains(err.Error(), "gateway.jwtSecret is not set") {
+	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts, Secrets: &store}); err == nil || !strings.Contains(err.Error(), "gateway.jwtSecret is not set") {
 		t.Fatalf("apply must refuse a declared secret with no value, got %v", err)
 	}
 	if len(artifacts.installed) != 0 {
 		t.Fatalf("nothing may be installed after a missing secret: %#v", artifacts.installed)
 	}
+}
+
+func mustMarshal(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func keysOf(values map[string]string) []string {

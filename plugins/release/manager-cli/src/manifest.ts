@@ -555,7 +555,7 @@ export const manifest = {
           scope: { type: 'string', description: 'Package scope (glob pattern)' },
           flow: { type: 'string', description: 'Named release flow from release.flows' },
           only: { type: 'string', description: 'Comma-separated check ids to run exclusively (also runs checks marked disabled, e.g. pack-install-per-package for debugging)' },
-          preflight: { type: 'boolean', description: 'Run the release preflight first and stop before checks if the environment is broken' },
+          preflight: { type: 'boolean', description: 'Run the release doctor first and stop before checks if the environment is broken' },
           'net-offset': { type: 'number', description: 'kb-dev network offset for the staging registry (used with --preflight)' },
           json: { type: 'boolean', description: 'Output in JSON format' },
         }),
@@ -567,9 +567,9 @@ export const manifest = {
         ],
       },
 
-      // release:preflight - Seconds-fast environment gate before checks
+      // release:doctor - Seconds-fast environment gate before checks
       {
-        path: 'release preflight',
+        path: 'release doctor',
         category: 'Validation',
         describe: 'Check the release environment before running the long checks stage',
         operationType: 'analyze' as const,
@@ -577,7 +577,7 @@ export const manifest = {
           'Read-only: verifies the release branch, clean working tree, Docker, local staging registry, npm registry, ' +
           'GitHub auth and stable-tag/npm baseline drift. Never starts anything; prints the exact command to fix a broken environment.',
 
-        handler: './cli/commands/preflight.js#default',
+        handler: './cli/commands/doctor.js#default',
 
         flags: defineCommandFlags({
           flow: { type: 'string', description: 'Named release flow; enables the baseline drift check' },
@@ -588,8 +588,8 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release preflight --flow platform',
-          'kb release preflight --flow platform --net-offset 100 --json',
+          'kb release doctor --flow platform',
+          'kb release doctor --flow platform --net-offset 100 --json',
         ],
       },
 

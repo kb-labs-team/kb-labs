@@ -105,6 +105,12 @@ func Validate(source Catalog) error {
 		if len(platform.Profiles) == 0 {
 			return fmt.Errorf("platform bundle %q has no service profile", key)
 		}
+		if platform.Host == nil {
+			return fmt.Errorf("platform bundle %q declares no host", key)
+		}
+		if err := platform.Host.Validate(); err != nil {
+			return fmt.Errorf("platform bundle %q declares an invalid host: %w", key, err)
+		}
 		for _, binary := range platform.Binaries {
 			if binary.ID == "" || binary.OS == "" || binary.Arch == "" || binary.URL == "" || binary.SHA256 == "" || binary.Filename == "" {
 				return fmt.Errorf("platform bundle %q has incomplete binary artifact", key)
@@ -296,10 +302,13 @@ type PlatformBundle struct {
 	// this platform. Empty means no constraint.
 	MinLauncherVersion string                            `json:"minLauncherVersion,omitempty"`
 	Profiles           map[string]contracts.ServiceGraph `json:"profiles"`
-	Requires           []Requirement                     `json:"requires,omitempty"`
-	Config             []ConfigRequirement               `json:"config,omitempty"`
-	Binaries           []Binary                          `json:"binaries,omitempty"`
-	Members            []Component                       `json:"members,omitempty"`
+	// Host is how the launcher runs this platform: the one supervised host
+	// process. Every platform bundle declares it; there is no other runner.
+	Host     *contracts.HostSpec `json:"host,omitempty"`
+	Requires []Requirement       `json:"requires,omitempty"`
+	Config   []ConfigRequirement `json:"config,omitempty"`
+	Binaries []Binary            `json:"binaries,omitempty"`
+	Members  []Component         `json:"members,omitempty"`
 }
 
 // Binary is release-owned tooling required by a platform bundle. URLs and

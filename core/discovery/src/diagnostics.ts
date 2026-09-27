@@ -49,6 +49,11 @@ export class DiagnosticCollector {
     });
   }
 
+  /** Append already-built events (e.g. from a per-candidate collector), preserving order */
+  addAll(events: readonly DiagnosticEvent[]): void {
+    this.events.push(...events);
+  }
+
   error(code: DiagnosticCode, message: string, opts?: Parameters<DiagnosticCollector['add']>[3]): void {
     this.add('error', code, message, opts);
   }

@@ -28,7 +28,9 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kb-labs/core-contracts": "workspace:*"
+    "@kb-labs/core-config": "workspace:*",
+    "@kb-labs/core-contracts": "workspace:*",
+    "@kb-labs/core-platform": "workspace:*"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

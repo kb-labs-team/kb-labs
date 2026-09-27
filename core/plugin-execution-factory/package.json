@@ -31,6 +31,7 @@
     "@kb-labs/core-contracts": "workspace:*",
     "@kb-labs/core-ipc": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/core-resource-broker": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",

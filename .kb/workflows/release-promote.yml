@@ -51,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           case '${{ inputs.target }}' in canary|stable) ;; *) echo 'unsupported promotion target' >&2; exit 2 ;; esac
-          case '${{ inputs.flow }}' in platform|sdk) ;; *) echo 'unsupported release flow' >&2; exit 2 ;; esac
+          case '${{ inputs.flow }}' in platform) ;; *) echo 'unsupported release flow' >&2; exit 2 ;; esac
           test '${{ inputs.candidateRunId }}' -eq '${{ inputs.candidateRunId }}'
 
       - name: Confirm promotion
@@ -75,8 +75,8 @@ jobs:
             --repository "${GITHUB_REPOSITORY:-kb-labs-team/kb-labs}"
 
       - name: Advance verified channel
-        # 20 minutes was tight for sdk's 2 packages but too short for
-        # platform's ~167 — confirmed live: this step ran ~32 minutes moving
+        # 20 minutes was too short for
+        # the platform flow's ~167 — confirmed live: this step ran ~32 minutes moving
         # dist-tags across all platform packages (each with its own retry
         # loop for registry replication lag) and was killed by the timeout
         # mid-run, which the engine then rejected as an illegal status

@@ -4,6 +4,7 @@
  */
 
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
+import type { DiscoveryOrigin, DiscoveryScope } from '@kb-labs/core-discovery';
 
 export interface CommandManifest {
   manifestVersion: '1.0';
@@ -34,7 +35,7 @@ export interface CommandManifest {
   telemetry?: 'opt-in' | 'off';
   manifestV2?: ManifestV3;
   pkgRoot?: string;
-  /** Internal flag: true for synthetic "unavailable" manifests that must not be cached. */
+  /** Internal flag: true for synthetic "unavailable" manifests (the manifest file exists but failed to load). */
   _synthetic?: boolean;
   /** Archetype from manifest — drives automatic flag injection and --schema generation. */
   operationType?: 'read' | 'mutate' | 'execute' | 'analyze';
@@ -58,31 +59,25 @@ export interface RegisteredCommand {
   available: boolean;
   unavailableReason?: string;
   hint?: string;
-  source: 'workspace' | 'node_modules' | 'linked' | 'builtin';
-  scope?: 'platform' | 'project'; // Scope the manifest was discovered in (see ADR-0012)
+  source: DiscoveryOrigin | 'builtin';
+  scope?: DiscoveryScope; // Scope the manifest was discovered in (see ADR-0012)
   shadowed: boolean;         // True if overridden by higher priority
   pkgRoot?: string;          // Package root directory (for workspace/linked plugins)
   packageName?: string;       // Full package name
-  /** Lifecycle dispose hook, set by manifest module if it exports `dispose`. */
-  _disposeHook?: () => Promise<void>;
 }
 
 export interface CommandModule {
   run: (ctx: unknown, argv: string[], flags: Record<string, unknown>) => Promise<number | void>;
 }
 
+/** Commands of one discovered plugin, as produced by the core-discovery adapter. */
 export interface DiscoveryResult {
-  source: 'workspace' | 'node_modules' | 'linked' | 'builtin';
-  /**
-   * Scope this result came from. Platform-wide discovery (monorepo workspace,
-   * platform node_modules) reports `platform`; discovery from
-   * `<projectRoot>/.kb/plugins/` or `<projectRoot>` workspace reports `project`.
-   * On collision (same packageName in both scopes) the project entry wins —
-   * project overrides platform defaults.
-   */
-  scope: 'platform' | 'project';
+  /** Origin, also the shadowing priority: workspace > linked > node_modules. */
+  source: DiscoveryOrigin;
+  /** Scope the plugin was discovered in (ADR-0012). */
+  scope: DiscoveryScope;
   packageName: string;
-  manifestPath: string;      // Absolute JS path (POSIX)
+  manifestPath: string;      // Absolute manifest path (POSIX): static JSON or compiled module
   pkgRoot: string;           // Absolute package directory (POSIX)
   manifests: CommandManifest[];
 }
@@ -90,43 +85,11 @@ export interface DiscoveryResult {
 export interface GlobalFlags {
   json?: boolean;
   onlyAvailable?: boolean;
-  noCache?: boolean;
   verbose?: boolean;
   quiet?: boolean;
   help?: boolean;
   version?: boolean;
   dryRun?: boolean;  // Global --dry-run flag for simulating commands
-}
-
-export interface PackageCacheEntry {
-  version: string;           // From package.json
-  manifestHash: string;      // SHA256 of manifest file
-  manifestPath: string;
-  pkgJsonMtime: number;
-  manifestMtime: number;
-  cachedAt: number;
-  result: DiscoveryResult;
-}
-
-export interface CacheFile {
-  version: string;           // Node version
-  cliVersion: string;        // CLI version
-  discoveryVersion?: number; // Bump when discovery logic changes to force cache invalidation
-  timestamp: number;
-  ttlMs?: number;
-  stateHash?: string;
-  lockfileHash?: string;     // Hash of pnpm-lock.yaml
-  configHash?: string;       // Hash of kb-labs.config.json
-  pluginsStateHash?: string; // Hash of .kb/plugins.json
-  /** Hash of <platformRoot>/.kb/marketplace.lock. Invalidates when global plugins change. */
-  platformMarketplaceLockHash?: string;
-  /** Hash of <projectRoot>/.kb/marketplace.lock. Invalidates when project-scoped plugins change. */
-  projectMarketplaceLockHash?: string;
-  /** Absolute platform root at the time of caching — cache is invalid if it differs on next run. */
-  platformRoot?: string;
-  /** Absolute project root at the time of caching. */
-  projectRoot?: string;
-  packages: Record<string, PackageCacheEntry>;  // Changed from flat structure
 }
 
 export type AvailabilityCheck = 

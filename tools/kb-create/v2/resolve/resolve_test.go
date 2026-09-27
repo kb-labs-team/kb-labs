@@ -9,7 +9,7 @@ import (
 )
 
 func TestAmbiguousProviderFailsFast(t *testing.T) {
-	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{Version: "2.0.0", Profiles: map[string]contracts.ServiceGraph{"default": {}}, Requires: []catalog.Requirement{{Capability: "logs"}}}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "a", Version: "1"}, Provides: []string{"logs"}}, {Component: catalog.Component{ID: "b", Version: "1"}, Provides: []string{"logs"}}}}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{Version: "2.0.0", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Requires: []catalog.Requirement{{Capability: "logs"}}}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "a", Version: "1"}, Provides: []string{"logs"}}, {Component: catalog.Component{ID: "b", Version: "1"}, Provides: []string{"logs"}}}}
 	_, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
 	if err == nil {
 		t.Fatal("expected error")
@@ -20,7 +20,7 @@ func TestAmbiguousProviderFailsFast(t *testing.T) {
 }
 
 func TestPlanProjectsSecretOnlyAsEnvironmentReference(t *testing.T) {
-	source := catalog.Catalog{Digest: "release-digest", Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "serve"}}}}, Config: []catalog.ConfigRequirement{{ID: "openai.apiKey", Secret: true, Required: true, Env: "OPENAI_API_KEY", Services: []string{"gateway"}}}}}}
+	source := catalog.Catalog{Digest: "release-digest", Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "serve"}}}}, Config: []catalog.ConfigRequirement{{ID: "openai.apiKey", Secret: true, Required: true, Env: "OPENAI_API_KEY", Services: []string{"gateway"}}}}}}
 	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x", SecretInputs: []string{"openai.apiKey"}}, source)
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestPlanProjectsSecretOnlyAsEnvironmentReference(t *testing.T) {
 }
 
 func TestPlanPreservesScenarioProvenance(t *testing.T) {
-	source := catalog.Catalog{Digest: "release", Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Profiles: map[string]contracts.ServiceGraph{"default": {}}}}}
+	source := catalog.Catalog{Digest: "release", Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}}
 	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x", ScenarioID: "custom", ScenarioStateDigest: "state"}, source)
 	if err != nil || plan.ReleaseDigest != "release" || plan.ScenarioStateDigest != "state" {
 		t.Fatalf("plan/error = %#v / %v", plan, err)
@@ -46,7 +46,7 @@ func TestPlanPreservesScenarioProvenance(t *testing.T) {
 }
 
 func TestPlanInstallsPlatformMembersAtomically(t *testing.T) {
-	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Members: []catalog.Component{{ID: "gateway", Version: "2.0.0", Package: "@kb/gateway", Tarball: "https://example.test/gateway.tgz", SHA256: "gateway"}}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Members: []catalog.Component{{ID: "gateway", Version: "2.0.0", Package: "@kb/gateway", Tarball: "https://example.test/gateway.tgz", SHA256: "gateway"}}, Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}}
 	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
 	member := false
 	for _, artifact := range plan.Artifacts {
@@ -76,7 +76,7 @@ func TestPlanKeepsPlatformMembersThatShareACatalogID(t *testing.T) {
 			{ID: "marketplace", Version: "2.0.0", Package: "@kb-labs/marketplace-app", Tarball: "https://example.test/marketplace-app.tgz", SHA256: "app"},
 			{ID: "marketplace", Version: "2.0.0", Package: "@kb-labs/marketplace-entry", Tarball: "https://example.test/marketplace-entry.tgz", SHA256: "entry"},
 		},
-		Profiles: map[string]contracts.ServiceGraph{"default": {}},
+		Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}},
 	}}}
 	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
 	if err != nil {
@@ -94,7 +94,7 @@ func TestPlanKeepsPlatformMembersThatShareACatalogID(t *testing.T) {
 }
 
 func TestPlanTargetsReleaseManagedBinaryByLogicalID(t *testing.T) {
-	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelCanary: "2.0.0-canary.abc123456"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0-canary.abc123456", Package: "@kb/platform", SHA256: "platform", Profiles: map[string]contracts.ServiceGraph{"default": {}}, Binaries: []catalog.Binary{{ID: "kb-dev", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-dev-linux-amd64", Filename: "kb-dev-linux-amd64", SHA256: "binary"}}}}}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelCanary: "2.0.0-canary.abc123456"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0-canary.abc123456", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Binaries: []catalog.Binary{{ID: "kb-dev", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-dev-linux-amd64", Filename: "kb-dev-linux-amd64", SHA256: "binary"}}}}}
 	plan, err := PlanWith(contracts.InstallRequest{PlatformRoot: "/tmp/x", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}}, source, Options{OS: "linux", Arch: "amd64"})
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestPlanTargetsReleaseManagedBinaryByLogicalID(t *testing.T) {
 }
 
 func TestPlanCarriesServiceHealthCheckIntoServiceGraph(t *testing.T) {
-	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "serve", Port: 4000, HealthCheck: "/health"}}}}}}}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "serve", Port: 4000, HealthCheck: "/health"}}}}}}}
 	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestPlanCarriesServiceHealthCheckIntoServiceGraph(t *testing.T) {
 }
 
 func TestPlanRejectsConflictingManifestRequirementOwnership(t *testing.T) {
-	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Profiles: map[string]contracts.ServiceGraph{"default": {}}, Config: []catalog.ConfigRequirement{{ID: "shared", Path: "/platform/shared"}}}}, Plugins: []catalog.Component{{ID: "plugin", Version: "1", Package: "@kb/plugin", SHA256: "plugin", Config: []catalog.ConfigRequirement{{ID: "shared", Path: "/plugin/shared"}}}}}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Config: []catalog.ConfigRequirement{{ID: "shared", Path: "/platform/shared"}}}}, Plugins: []catalog.Component{{ID: "plugin", Version: "1", Package: "@kb/plugin", SHA256: "plugin", Config: []catalog.ConfigRequirement{{ID: "shared", Path: "/plugin/shared"}}}}}
 	_, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x", Plugins: []contracts.ComponentRequest{{ID: "plugin"}}}, source)
 	if value, ok := err.(*contracts.LauncherError); !ok || value.Code != contracts.CodeConfigRequired {
 		t.Fatalf("error = %#v", err)
@@ -126,7 +126,7 @@ func TestPlanRejectsConflictingManifestRequirementOwnership(t *testing.T) {
 }
 
 func TestPlanIncludesSDKAndResolvedAdapterArtifacts(t *testing.T) {
-	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: []catalog.CompatibilityLabel{{ID: "platform@2.0.0", Kind: "platform", ArtifactID: "platform", Version: "2.0.0", Requires: []catalog.CompatibilityRelation{{Label: "sdk@2.1.0"}}, Status: "prepared", ValidatedBy: []string{"stage"}}, {ID: "sdk@2.1.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.1.0", Status: "prepared", ValidatedBy: []string{"stage"}}}}, Platforms: []catalog.PlatformBundle{{Version: "2.0.0", SDKRange: "^2.0.0", Profiles: map[string]contracts.ServiceGraph{"default": {}}, Requires: []catalog.Requirement{{Capability: "logs"}}}}, SDKs: []catalog.Component{{ID: "sdk", Version: "2.1.0", Package: "@kb/sdk", SHA256: "sdk"}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "pino", Version: "1.0.0", Package: "@kb/pino", SHA256: "pino"}, Provides: []string{"logs"}}}}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: []catalog.CompatibilityLabel{{ID: "platform@2.0.0", Kind: "platform", ArtifactID: "platform", Version: "2.0.0", Requires: []catalog.CompatibilityRelation{{Label: "sdk@2.1.0"}}, Status: "prepared", ValidatedBy: []string{"stage"}}, {ID: "sdk@2.1.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.1.0", Status: "prepared", ValidatedBy: []string{"stage"}}}}, Platforms: []catalog.PlatformBundle{{Version: "2.0.0", SDKRange: "^2.0.0", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Requires: []catalog.Requirement{{Capability: "logs"}}}}, SDKs: []catalog.Component{{ID: "sdk", Version: "2.1.0", Package: "@kb/sdk", SHA256: "sdk"}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "pino", Version: "1.0.0", Package: "@kb/pino", SHA256: "pino"}, Provides: []string{"logs"}}}}
 	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x", SDK: contracts.VersionSelector{Version: "2.1.0"}}, source)
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestPlanMarksPlatformMembersThatAreCatalogPluginsOrAdapters(t *testing.T) {
 			{ID: "logger", Version: "2.0.0", Package: "@kb/adapter-logger", Tarball: "t", SHA256: "b"},
 			{ID: "gateway", Version: "2.0.0", Package: "@kb/gateway", Tarball: "t", SHA256: "c"},
 		},
-		Profiles: map[string]contracts.ServiceGraph{"default": {}},
+		Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}},
 	}},
 		Plugins:  []catalog.Component{{ID: "workflow", Version: "2.0.0", Package: "@kb/workflow-entry", Tarball: "t", SHA256: "a"}},
 		Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "logger", Version: "2.0.0", Package: "@kb/adapter-logger", Tarball: "t", SHA256: "b"}}},

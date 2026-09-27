@@ -1,0 +1,12 @@
+{
+  "description": "POST /v1/update-request records the request and returns 202; the update itself happens later.",
+  "request": { "method": "POST", "path": "/v1/update-request", "auth": "valid", "body": { "channel": "stable", "requestedBy": "studio" } },
+  "response": {
+    "status": 202,
+    "body": {
+      "ok": true,
+      "protocol": 1,
+      "request": { "id": "$string", "status": "pending", "channel": "stable", "requestedBy": "studio", "createdAt": "$iso8601" }
+    }
+  }
+}

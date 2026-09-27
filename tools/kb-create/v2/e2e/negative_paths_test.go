@@ -21,7 +21,7 @@ func TestV2CompatibilityFailureIsRejectedBeforeArtifactExecution(t *testing.T) {
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Platforms: []catalog.PlatformBundle{{
 			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
-			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+			Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}},
 		}},
 		Plugins: []catalog.Component{{
 			ID: "future-plugin", Version: "3.0.0", Package: "@kb/future-plugin", SHA256: "plugin", PlatformRange: "^3.0.0",

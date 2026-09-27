@@ -53,6 +53,14 @@ jobs:
             console.log('All doc conventions pass.');
           "
 
+      - name: Check generated docs sources and deprecated CLI examples
+        working-directory: sites/web/apps/docs
+        run: node scripts/docs-source-check.mjs
+
+      - name: Test docs source sync
+        working-directory: sites/web/apps/docs
+        run: node --test scripts/docs-source-sync.test.mjs
+
   # ── Staleness check — posts reminder threads, never blocks merge ───────────
   # Inline threads on changed files tell the author which doc pages to verify.
   # Threads are resolved manually after updating or confirming no change needed.
@@ -122,13 +130,26 @@ jobs:
 
               body = [
                 BOT_MARKER,
+                '<!-- docs-agent-review-queue:v1 -->',
                 '## 📚 Docs Bot',
                 '',
-                `**${affected.length} doc page(s) may need updating.** Verify each one and resolve the inline thread.`,
+                `**${affected.length} doc page(s) are candidates for review.** Exact source references take precedence over broad ownership zones. Resolve each inline thread after updating the page or confirming it remains accurate.`,
                 '',
                 '| Risk | Doc page | Link | Changed files |',
                 '|------|----------|------|---------------|',
                 rows,
+                '',
+                '### Agent review queue',
+                '',
+                'For each entry, compare the changed source with the guide, update stale prose or examples, and leave an explicit no-change reason when the page remains accurate.',
+                '',
+                ...affected.map(a => {
+                  const sourceRefs = a.sourceReferences?.length
+                    ? `; generated references: ${a.sourceReferences.map(ref => `\`${ref}\``).join(', ')}`
+                    : '';
+                  const confidence = a.matchKind === 'exact' ? 'exact source link' : `ownership zone \`${a.matchedOwner}\``;
+                  return `- **${a.slug}** (${confidence}) — review source files: ${a.matchedFiles.map(f => `\`${f}\``).join(', ')}${sourceRefs}`;
+                }),
                 '',
                 `_[CONVENTIONS.md](https://github.com/${owner}/${repo}/blob/master/sites/web/apps/docs/CONVENTIONS.md)_`,
               ].join('\n');
@@ -185,7 +206,9 @@ jobs:
                 body: [
                   `📚 **Check doc page:** [\`${page.slug}\`](https://docs.kblabs.ru${page.docPath})`,
                   '',
-                  `This file matches owner \`${page.matchedOwner}\`. Please verify the doc is still accurate, then resolve this thread.`,
+                  page.matchKind === 'exact'
+                    ? `This page has an explicit generated reference to this source (${(page.sourceReferences ?? []).map(ref => `\`${ref}\``).join(', ')}). Verify related surrounding guidance, then resolve this thread.`
+                    : `This file matches ownership zone \`${page.matchedOwner}\` (a review hint, not proof of a direct dependency). Verify whether the page is affected, then resolve this thread.`,
                   '',
                   `_Risk: **${page.stalenessRisk}** · [Edit](https://github.com/${owner}/${repo}/edit/master/sites/web/apps/docs/content/en/${page.slug}.mdx)_`,
                   BOT_MARKER,

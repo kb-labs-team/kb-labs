@@ -10,8 +10,8 @@ export PATH="$HOME/.local/bin:$PATH"
 echo "==> [1/3] Installing KB Labs..."
 # E2E must be hermetic. The image is required to provide every bootstrap
 # binary; falling back to kblabs.ru made results depend on public infrastructure.
-if ! command -v kb-create > /dev/null 2>&1 || ! command -v kb-dev > /dev/null 2>&1 || ! command -v kb-devkit > /dev/null 2>&1; then
-  echo "ERROR: hermetic E2E image is missing kb-create, kb-dev, or kb-devkit"
+if ! command -v kb-create > /dev/null 2>&1; then
+  echo "ERROR: hermetic E2E image is missing kb-create"
   exit 1
 fi
 echo "    Using binaries baked into the E2E image"
@@ -34,12 +34,8 @@ PLATFORM_ROOT=/workspace/kb-e2e
 # wire Google/Okta/Keycloak in kb.config. The client secret stays in an env var
 # (clientSecretEnv), never in the config file.
 #
-# This must be written BEFORE `kb-create apply`: V2's apply already starts
-# every service (including gateway) as its last step, so gateway reads
-# auth.providers on that very first boot. Writing the overlay afterward (as
-# this script did pre-V2, when `install` and service-start were separate
-# steps) leaves gateway running with whatever it saw at boot — email-password
-# only — for the rest of the container's life; nothing here ever restarts it.
+# Write it BEFORE `kb-create start`: the host reads auth.providers when it
+# boots, and nothing in this script restarts it afterwards.
 if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
   echo "    OIDC_E2E_ENABLED=true — writing oidc provider overlay"
   OIDC_ISSUER="${OIDC_CORP_ISSUER:-https://idp-stub:9443}"
@@ -67,25 +63,10 @@ if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
 OIDC_OVERLAY
 fi
 
-# state-daemon binds to KB_STATE_DAEMON_HOST — override to 0.0.0.0 so it's
-# reachable from the tests container via Docker bridge network. mcp-daemon
-# defaults to localhost and is hit directly on :7779 by the e2e specs (not
-# proxied through the gateway), so it must bind 0.0.0.0 too.
-#
-# Both must be exported BEFORE `kb-create apply`, same reason as the OIDC
-# overlay above: apply already starts every service in the plan (including
-# state-daemon and mcp-daemon) as its last step, binding to whatever host
-# was in the environment at that moment. `kb-dev start` below is a no-op
-# against services apply already started — it never re-binds them.
-export KB_STATE_DAEMON_HOST=0.0.0.0
-export KB_MCP_DAEMON_HOST=0.0.0.0
-
-# The sealed index's binary manifest is deliberately empty (E2E never
-# downloads GH release assets — see the Dockerfile), so kb-create apply
-# never provisions a local .kb/v2/bin/kb-dev copy from it. --kb-dev points
-# V2's service ensure/status calls at the binary already baked into the
-# image instead, matching what the "Installing KB Labs" step above verified
-# is present.
+# The platform runs as one supervised host process (kb-host): the launcher
+# installs it, `kb-create start` runs it. Marketplace and state bind internal
+# loopback ports, rest and workflow run in a per-project runtime the host starts
+# on demand; there is no kb-dev, no --net-offset and no devservices.yaml here.
 kb-create apply \
   --index /release-index.json \
   --request-platform-root "$PLATFORM_ROOT" \
@@ -94,8 +75,7 @@ kb-create apply \
   --service-profile default \
   --plugins "$(jq -r '[.plugins[] | select(.default == true) | .id] | join(",")' /e2e-registry-manifest.json)" \
   --adapters "$(jq -r '[.adapters[].id] | join(",")' /release-index.json)" \
-  --registry http://verdaccio:4873 \
-  --kb-dev /usr/local/bin/kb-dev
+  --registry http://verdaccio:4873
 cd "$PLATFORM_ROOT"
 
 # Bootstrap admin for E2E — gateway creates this user on first start.
@@ -187,18 +167,12 @@ jobs:
           command: echo "after approval"
 EOF
 
-# ── Step 3: Start backend services ────────────────────────────────────────
-# Start infra first (state-daemon), then backend group.
-# kb-dev start accepts one service/group name — not multiple.
-# Redis is optional (in-memory fallback); qdrant skipped (mind/RAG only, not needed for e2e).
-echo "==> [3/3] Starting services..."
-# KB_STATE_DAEMON_HOST / KB_MCP_DAEMON_HOST are exported above, before
-# `kb-create apply`, so both daemons already bound 0.0.0.0 on their first
-# (and only) boot. These calls just cover the case a service didn't come up
-# clean out of apply.
-kb-dev start state-daemon &
-sleep 3
-kb-dev start backend &
+# ── Step 3: Start the host ─────────────────────────────────────────────────
+# One supervised process; the launcher waits until it is healthy. The project
+# is registered so the host can route /api/v1/projects/{id}/... to its runtime.
+echo "==> [3/3] Starting the host..."
+node "$PLATFORM_ROOT/node_modules/@kb-labs/cli-bin/dist/bin.js" project add "$PLATFORM_ROOT"
+kb-create start --platform-root "$PLATFORM_ROOT"
 
 echo "==> Waiting for gateway process to start (/health)..."
 ATTEMPTS=0
@@ -206,7 +180,7 @@ until curl -sf http://localhost:4000/health > /dev/null 2>&1; do
   ATTEMPTS=$((ATTEMPTS + 1))
   if [ "$ATTEMPTS" -ge 300 ]; then
     echo "ERROR: Gateway did not start after 600s"
-    kb-dev status || true
+    kb-create status --platform-root "$PLATFORM_ROOT" || true
     exit 1
   fi
   sleep 2
@@ -216,13 +190,13 @@ echo "    Gateway process up after ${ATTEMPTS}x2s"
 # Wait for all upstreams to be wired (/ready returns 200 only when REST API,
 # workflow daemon, marketplace etc. are all responding).
 # Docker Compose healthcheck also polls /ready — we must be ready before tail.
-echo "==> Waiting for all services to be ready (/ready)..."
+echo "==> Waiting for the host to be ready (/ready)..."
 ATTEMPTS=0
 until curl -sf http://localhost:4000/ready > /dev/null 2>&1; do
   ATTEMPTS=$((ATTEMPTS + 1))
   if [ "$ATTEMPTS" -ge 60 ]; then
     echo "ERROR: Platform /ready did not pass after 120s — upstreams still down"
-    kb-dev status || true
+    kb-create status --platform-root "$PLATFORM_ROOT" || true
     curl -s http://localhost:4000/ready || true
     exit 1
   fi
@@ -231,21 +205,7 @@ done
 
 echo "==> Platform fully ready after ${ATTEMPTS}x2s"
 
-echo "==> Waiting for marketplace-registry (/health)..."
-ATTEMPTS=0
-until curl -sf http://localhost:5071/health > /dev/null 2>&1; do
-  ATTEMPTS=$((ATTEMPTS + 1))
-  if [ "$ATTEMPTS" -ge 30 ]; then
-    echo "WARN: marketplace-registry did not respond after 60s — continuing anyway"
-    break
-  fi
-  sleep 2
-done
-if curl -sf http://localhost:5071/health > /dev/null 2>&1; then
-  echo "    marketplace-registry ready after ${ATTEMPTS}x2s"
-fi
-
-kb-dev status
+kb-create status --platform-root "$PLATFORM_ROOT"
 
 # Keep container alive while tests run
 exec tail -f /dev/null
