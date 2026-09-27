@@ -163,7 +163,7 @@ describe('Agents HTTP/WS user scenarios', () => {
         payload: { task: firstTask, sessionId: session.id, tier: 'small' } satisfies RunRequest,
       });
 
-      expect(response.statusCode).toBe(200);
+      expect(response.statusCode, response.body).toBe(200);
       const run = response.json<{ runId: string; sessionId: string; eventsPath: string; status: string }>();
       expect(run).toMatchObject({ sessionId: session.id, status: 'started' });
       expect(run.eventsPath).toContain(session.id);
@@ -313,7 +313,7 @@ describe('Agents HTTP/WS user scenarios', () => {
         method: 'POST', url: `${AGENTS_BASE_PATH}${AGENTS_ROUTES.RUN}`,
         payload: { task, sessionId: session.id, tier: 'small', mode: 'plan' } satisfies RunRequest,
       });
-      expect(draftResponse.statusCode).toBe(200);
+      expect(draftResponse.statusCode, draftResponse.body).toBe(200);
       const draftRun = draftResponse.json<{ runId: string }>();
       const draftCompletion = await waitForMessage(messages, (message) =>
         message.type === 'run:completed' && message.payload.runId === draftRun.runId,
@@ -437,7 +437,7 @@ describe('Agents HTTP/WS user scenarios', () => {
         payload: { task: 'Проверка отказа LLM', sessionId: session.id, tier: 'small' } satisfies RunRequest,
       });
 
-      expect(response.statusCode).toBe(200);
+      expect(response.statusCode, response.body).toBe(200);
       const run = response.json<{ runId: string }>();
       const completion = await waitForMessage(messages, (message) => message.type === 'run:completed');
       expect(completion.payload).toMatchObject({ runId: run.runId, success: false });
