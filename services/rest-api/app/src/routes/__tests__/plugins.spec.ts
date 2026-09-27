@@ -155,6 +155,11 @@ function createMockSnapshot(manifests: Array<{
       manifest: entry.manifest,
       pluginRoot: entry.pluginRoot,
       source: { kind: 'local' as const, path: entry.source ?? 'test' },
+      packageName: entry.pluginId,
+      scope: 'project' as const,
+      origin: 'workspace' as const,
+      manifestPath: `${entry.pluginRoot}/manifest.json`,
+      manifestKind: 'static' as const,
     })),
     diagnostics: options?.diagnostics?.map((diagnostic) => ({
       severity: diagnostic.severity,
