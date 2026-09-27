@@ -123,3 +123,14 @@ export type {
   CommandResultWithMeta,
   StandardMeta,
 } from '@kb-labs/plugin-contracts';
+
+// One copy of the platform at runtime (ADR-0048 D5)
+export {
+  installPlatformResolveHook,
+  PlatformDuplicateError,
+  isPlatformPackage,
+  platformPackageOf,
+  type PlatformOverrideDiagnostic,
+  type PlatformResolveHook,
+  type PlatformResolveHookOptions,
+} from './platform-resolve/index.js';

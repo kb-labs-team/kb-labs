@@ -687,6 +687,15 @@
       "hint": "Run \"kb plugin doctor\" to see the manifest or dependency problem."
     },
     {
+      "code": "KB_PLUGIN_PLATFORM_DUPLICATE",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Plugin {plugin} loads its own copy of the platform package {package}.",
+      "hint": "Make the platform package a peer dependency of the plugin and reinstall it; run \"kb plugin doctor\" for details."
+    },
+    {
       "code": "KB_PLUGIN_CRASHED",
       "area": "plugin",
       "stage": "run",

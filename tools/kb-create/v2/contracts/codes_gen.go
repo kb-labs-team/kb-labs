@@ -71,6 +71,7 @@ var launcherCodes = map[string]CodeInfo{
 	"KB_PLUGIN_NAMESPACE_TAKEN":              {Area: ErrorArea("plugin"), Stage: ErrorStage("extend"), Retryable: false},
 	"KB_PLUGIN_NOT_FOUND":                    {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_PLUGIN_PERMISSION_DENIED":            {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: false},
+	"KB_PLUGIN_PLATFORM_DUPLICATE":           {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_PLUGIN_SDK_INCOMPATIBLE":             {Area: ErrorArea("plugin"), Stage: ErrorStage("extend"), Retryable: false},
 	"KB_PLUGIN_TIMEOUT":                      {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: true},
 	"KB_PROJECT_ALREADY_REGISTERED":          {Area: ErrorArea("project"), Stage: ErrorStage("add-project"), Retryable: false},

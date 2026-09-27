@@ -168,6 +168,7 @@
 | `KB_PLUGIN_COMMAND_SHADOWED` | команда скрыта (`06` §7) | `kb plugin doctor` | K |
 | `KB_PLUGIN_INSTALL_FAILED` | установка пакета не удалась | причина сети/реестра | K, S |
 | `KB_PLUGIN_LOAD_FAILED` | плагин не загрузился (манифест, зависимость) | что именно | K, S |
+| `KB_PLUGIN_PLATFORM_DUPLICATE` | плагин загрузил собственную копию платформенного пакета, хук подмены не смог её заменить (ADR-0048 D5) | сделать пакет peer-зависимостью плагина; `kb plugin doctor` | K, S |
 | `KB_PLUGIN_CRASHED` | плагин упал при выполнении | повторить; `correlationId`, отчёт | K, S |
 | `KB_PLUGIN_TIMEOUT` | плагин завис | повторить, увеличить таймаут | K, S |
 | `KB_PLUGIN_PERMISSION_DENIED` | песочница запретила действие | какое разрешение запросить | K, S |

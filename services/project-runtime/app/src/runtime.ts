@@ -12,7 +12,11 @@ import { realpath } from "node:fs/promises";
 import { HttpServiceTransport } from "@kb-labs/adapters-service-transport-http";
 import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { PlatformAssemblyHook } from "@kb-labs/core-runtime";
-import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
+import {
+  installPlatformResolveHook,
+  makeAssemblyHook,
+  type PlatformResolveHook,
+} from "@kb-labs/plugin-runtime";
 import { setup as setupRest } from "@kb-labs/rest-api-app";
 import {
   defineHostModule,
@@ -140,7 +144,21 @@ export async function createProjectRuntimeConfig(
     };
   };
 
-  const serviceModules = modules.map((spec) =>
+  // One platform per process: plugins loaded from outside the platform root get
+  // the host's copy of the platform packages (ADR-0048 D5). Installed once, by
+  // whichever module starts first, and removed by that same module's teardown
+  // (modules are torn down in reverse start order, so this runs last) — a fresh
+  // runtime in the same process (as in tests) can then install its own.
+  let resolveHook: PlatformResolveHook | undefined;
+  const installResolveHook = (ctx: ServiceContext): void => {
+    resolveHook = installPlatformResolveHook({
+      platformRoot: ctx.platformRoot,
+      anchors: options.moduleUrl ? [options.moduleUrl] : [],
+      logger: ctx.logger.forComponent("platform-resolve"),
+    });
+  };
+
+  const serviceModules = modules.map((spec, index) =>
     defineHostModule({
       id: spec.id,
       serviceId: spec.serviceId,
@@ -149,9 +167,22 @@ export async function createProjectRuntimeConfig(
       // Project services never bind beyond loopback and take no env override.
       defaultHost: LOOPBACK_HOST,
       setup: async (ctx) => {
+        if (index === 0) {
+          installResolveHook(ctx);
+        }
         await assertProjectRoot(ctx, options.projectRoot);
         assertModuleAddress(ctx, spec.serviceId);
-        return spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) });
+        const teardown = await spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) });
+        if (index === 0) {
+          return async () => {
+            try {
+              await teardown();
+            } finally {
+              resolveHook?.deregister();
+            }
+          };
+        }
+        return teardown;
       },
     }),
   );

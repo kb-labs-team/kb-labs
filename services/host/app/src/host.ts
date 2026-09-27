@@ -24,7 +24,11 @@ import {
 } from "@kb-labs/gateway-app";
 import { setup as setupMarketplace } from "@kb-labs/marketplace-app";
 import { setup as setupState } from "@kb-labs/core-state-daemon";
-import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
+import {
+  installPlatformResolveHook,
+  makeAssemblyHook,
+  type PlatformResolveHook,
+} from "@kb-labs/plugin-runtime";
 import {
   defineHostModule,
   reserveLoopbackPorts,
@@ -209,37 +213,60 @@ export async function createHostConfig(
     };
   };
 
+  // One platform per process: plugins loaded from outside the platform root get
+  // the host's copy of the platform packages (ADR-0048 D5). Removed by the first
+  // internal module's teardown (modules are torn down in reverse start order, so
+  // this runs last) — a fresh host in the same process (as in tests) can then
+  // install its own.
+  let resolveHook: PlatformResolveHook | undefined;
+
   let preparing: Promise<PreparedHost> | undefined;
   const prepare = (ctx: ServiceContext): Promise<PreparedHost> => {
     preparing ??= (async (): Promise<PreparedHost> => {
-      if (process.env.KB_SOCKET_PATH) {
-        // getListenOptions() would bind every module to the same socket path.
-        throw new Error(
-          "KB_SOCKET_PATH is set: the host runs several modules in one process and cannot share one socket path between them. Unset it.",
-        );
-      }
-      const effective = await loadEffectiveConfig(ctx.projectRoot, {
+      // Before anything can load extension code: plugins loaded from outside the
+      // platform root get the host's copy of the platform packages (ADR-0048 D5).
+      // If anything below refuses to start, no module teardown ever runs to remove
+      // it, so it is removed here instead — otherwise a later host in the same
+      // process (as in tests) could never install its own.
+      resolveHook = installPlatformResolveHook({
         platformRoot: ctx.platformRoot,
+        anchors: options.moduleUrl ? [options.moduleUrl] : [],
+        logger: ctx.logger.forComponent("platform-resolve"),
       });
-      const settings = parseHostSettings(
-        (effective?.data as { host?: unknown } | undefined)?.host,
-      );
-      const upstreams = generatedUpstreams(settings);
-      if (isSelected(settings, "gateway")) {
-        // Dry run: refuse an unsafe exposure before any module binds a port.
-        applyHostGatewayPolicy(
-          await loadGatewayConfig(ctx.projectRoot, ctx.platformRoot),
-          { auth: settings.auth, upstreams },
+      try {
+        if (process.env.KB_SOCKET_PATH) {
+          // getListenOptions() would bind every module to the same socket path.
+          throw new Error(
+            "KB_SOCKET_PATH is set: the host runs several modules in one process and cannot share one socket path between them. Unset it.",
+          );
+        }
+        const effective = await loadEffectiveConfig(ctx.projectRoot, {
+          platformRoot: ctx.platformRoot,
+        });
+        const settings = parseHostSettings(
+          (effective?.data as { host?: unknown } | undefined)?.host,
         );
+        const upstreams = generatedUpstreams(settings);
+        if (isSelected(settings, "gateway")) {
+          // Dry run: refuse an unsafe exposure before any module binds a port.
+          applyHostGatewayPolicy(
+            await loadGatewayConfig(ctx.projectRoot, ctx.platformRoot),
+            { auth: settings.auth, upstreams },
+          );
+        }
+        return { settings, upstreams };
+      } catch (error) {
+        resolveHook.deregister();
+        resolveHook = undefined;
+        throw error;
       }
-      return { settings, upstreams };
     })();
     return preparing;
   };
 
   const skipped = async (): Promise<Teardown> => async () => {};
 
-  const internal = INTERNAL_MODULES.map((spec) =>
+  const internal = INTERNAL_MODULES.map((spec, index) =>
     defineHostModule({
       id: spec.id,
       serviceId: spec.serviceId,
@@ -249,14 +276,26 @@ export async function createHostConfig(
       defaultHost: INTERNAL_BIND_HOST,
       setup: async (ctx) => {
         const { settings } = await prepare(ctx);
-        if (!isSelected(settings, spec.id)) {
-          ctx.logger.info("Module disabled by host.modules", {
-            moduleId: spec.id,
-          });
-          return skipped();
+        const teardown = await (async (): Promise<Teardown> => {
+          if (!isSelected(settings, spec.id)) {
+            ctx.logger.info("Module disabled by host.modules", {
+              moduleId: spec.id,
+            });
+            return skipped();
+          }
+          assertInternalAddress(ctx, spec.serviceId);
+          return spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) });
+        })();
+        if (index !== 0) {
+          return teardown;
         }
-        assertInternalAddress(ctx, spec.serviceId);
-        return spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) });
+        return async () => {
+          try {
+            await teardown();
+          } finally {
+            resolveHook?.deregister();
+          }
+        };
       },
     }),
   );
