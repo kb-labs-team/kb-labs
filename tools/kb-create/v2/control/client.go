@@ -54,6 +54,12 @@ func (c *Client) Restart(ctx context.Context) (RestartResponse, error) {
 	return out, c.do(ctx, http.MethodPost, "/v1/host/restart", nil, &out)
 }
 
+// Doctor calls GET /v1/doctor.
+func (c *Client) Doctor(ctx context.Context) (DoctorResponse, error) {
+	var out DoctorResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/doctor", nil, &out)
+}
+
 // RequestUpdate calls POST /v1/update-request.
 func (c *Client) RequestUpdate(ctx context.Context, input UpdateRequestInput) (UpdateRequestResponse, error) {
 	var out UpdateRequestResponse

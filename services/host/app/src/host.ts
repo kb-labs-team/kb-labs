@@ -38,6 +38,7 @@ import {
   type HostModule,
   type ServiceContext,
 } from "@kb-labs/shared-daemon";
+import { createHealthRoutes } from "./health-routes.js";
 import { applyHostGatewayPolicy, type GatewayUpstreams } from "./policy.js";
 import { createAdaptersRoutes } from "./adapters-routes.js";
 import { MarketplaceClient } from "./marketplace-client.js";
@@ -112,6 +113,19 @@ function isSelected(settings: HostSettings, id: HostModuleId): boolean {
 }
 
 /**
+ * The gateway accepts one `hostRoutes` plugin; this registers several,
+ * preserving Fastify's own encapsulation for each (a route collision between
+ * them is still caught, just at `app.register` time instead of earlier).
+ */
+function combineHostRoutes(...plugins: readonly HostRoutes[]): HostRoutes {
+  return async function combinedHostRoutes(app) {
+    for (const plugin of plugins) {
+      await app.register(plugin);
+    }
+  };
+}
+
+/**
  * An internal module must bind the loopback port the host's transport gave it.
  * If the transport does not know the service, runHost falls back to the
  * well-known default port (e.g. 5070/7777), which could collide with another
@@ -147,15 +161,6 @@ function internalBaseUrl(ctx: ServiceContext, serviceId: string): string | undef
     return undefined;
   }
   return `http://127.0.0.1:${address.port}`;
-}
-
-/** Registers several {@link HostRoutes} plugins on the same gateway instance, in order. */
-function combineHostRoutes(...routes: HostRoutes[]): HostRoutes {
-  return async (app) => {
-    for (const route of routes) {
-      await app.register(route);
-    }
-  };
 }
 
 function generatedUpstreams(settings: HostSettings): GatewayUpstreams {
@@ -414,6 +419,7 @@ export async function createHostConfig(
             createProjectsRoutes({ registry, manager }),
             createAdaptersRoutes({ registry, platformRoot: ctx.platformRoot }),
             ...pluginsRoutes,
+            createHealthRoutes(),
           ),
         },
       );

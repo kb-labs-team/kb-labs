@@ -79,6 +79,12 @@ export const qk = {
     byId: (id: string) => [...qk.projects.all, 'detail', id] as const,
   },
 
+  // Host health/status queries (stage 6, final slice: launcher control channel)
+  health: {
+    all: ['host-health'] as const,
+    report: () => [...qk.health.all, 'report'] as const,
+  },
+
   // Per-project plugin enable/disable (stage 6, second slice).
   projectPlugins: {
     all: ['projectPlugins'] as const,
