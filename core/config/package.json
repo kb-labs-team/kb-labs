@@ -28,6 +28,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-platform": "workspace:*",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "picomatch": "^4.0.2",

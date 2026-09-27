@@ -9,22 +9,14 @@
 import {
   ConfigWriteError,
   type ConfigLayerName,
-  isEnvReference,
-  isSecretKeyPath,
   resolveUserConfigFile,
 } from '@kb-labs/core-config';
 import { loadPlatformConfig } from '@kb-labs/core-runtime';
-import {
-  createErrorEnvelope,
-  toErrorEnvelope,
-  type ErrorEnvelope,
-} from '@kb-labs/core-platform';
+import type { ErrorEnvelope } from '@kb-labs/core-platform';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 export const CONFIG_SCOPES = ['platform', 'project'] as const;
 export type ConfigScope = (typeof CONFIG_SCOPES)[number];
-
-export const REDACTED = '***REDACTED***';
 
 export interface ConfigRoots {
   platformRoot: string;
@@ -87,24 +79,6 @@ export function parseValueArg(raw: string | undefined, forceString: boolean, key
   }
 }
 
-/** Redact secret leaves (raw credentials); `${ENV}` references are safe and stay visible. */
-export function redactValue(path: readonly string[], value: unknown): unknown {
-  if (typeof value === 'string') {
-    return isSecretKeyPath(path) && !isEnvReference(value) && value.trim() !== '' ? REDACTED : value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item, index) => redactValue([...path, String(index)], item));
-  }
-  if (value !== null && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [key, nested] of Object.entries(value)) {
-      out[key] = redactValue([...path, key], nested);
-    }
-    return out;
-  }
-  return value;
-}
-
 export function valueAtPath(data: unknown, path: readonly string[]): { found: boolean; value?: unknown } {
   let current: unknown = data;
   for (const segment of path) {
@@ -116,71 +90,10 @@ export function valueAtPath(data: unknown, path: readonly string[]): { found: bo
   return { found: true, value: current };
 }
 
-// ── Error envelope ───────────────────────────────────────────────────────────
-
-function unknownKeyEnvelope(error: ConfigWriteError): ErrorEnvelope {
-  const suggestion = error.details.suggestion;
-  return createErrorEnvelope('KB_CONFIG_UNKNOWN_KEY', {
-    details: {
-      path: error.details.path ?? '',
-      suggestion: suggestion
-        ? `Did you mean "${replaceKey(error.details.path ?? '', error.details.key ?? '', suggestion)}"?`
-        : 'No similar key was found.',
-    },
-    cause: error.details.knownKeys
-      ? `"${error.details.parent || '(top level)'}" declares: ${error.details.knownKeys.split(',').join(', ')}`
-      : undefined,
-  });
-}
-
-function replaceKey(path: string, wrong: string, right: string): string {
-  return path
-    .split('.')
-    .map((segment) => (segment === wrong ? right : segment))
-    .join('.');
-}
-
-/** Build the unified envelope for a failed config command. Never contains values. */
-export function configErrorEnvelope(error: unknown): ErrorEnvelope {
-  if (!(error instanceof ConfigWriteError)) {
-    return toErrorEnvelope(error);
-  }
-  switch (error.code) {
-    case 'KB_CONFIG_UNKNOWN_KEY':
-      return unknownKeyEnvelope(error);
-    case 'KB_CONFIG_SECRET_MISSING':
-      return createErrorEnvelope('KB_CONFIG_SECRET_MISSING', {
-        details: { variable: error.details.variable ?? '', path: error.details.path ?? '' },
-        cause: `${error.details.path ?? 'The value'} is a secret and refers to \${${error.details.variable ?? ''}}, which is not set in this environment.`,
-      });
-    case 'KB_CONFIG_SECRET_PLAINTEXT': {
-      const path = error.details.path ?? '';
-      const variable = suggestVariableName(path);
-      return createErrorEnvelope('KB_CONFIG_SECRET_PLAINTEXT', {
-        details: { path, example: `kb config set ${path} '\${${variable}}'` },
-        cause:
-          error.details.reason === 'secret-shape'
-            ? 'The value has the shape of a credential.'
-            : 'The key is declared secret, so its value must be an ${ENV_VAR} reference.',
-      });
-    }
-    case 'KB_CONFIG_CONFLICT':
-      return createErrorEnvelope('KB_CONFIG_CONFLICT', {
-        details: { path: error.details.path ?? '' },
-        cause: error.message,
-      });
-    case 'KB_CONFIG_INVALID':
-      return createErrorEnvelope('KB_CONFIG_INVALID', {
-        details: { path: error.details.path ?? '' },
-        cause: error.message,
-      });
-  }
-}
-
-function suggestVariableName(path: string): string {
-  const tail = path.split('.').slice(-2).join('_');
-  return tail.replace(/[^A-Za-z0-9]+/g, '_').replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase() || 'MY_SECRET';
-}
+// ── Error envelope rendering ─────────────────────────────────────────────────
+// `configErrorEnvelope` (the ConfigWriteError -> ErrorEnvelope mapping) now
+// lives in `@kb-labs/core-config` (ADR-0049), shared with the host's
+// `/api/v1/adapters` API; only terminal rendering stays here.
 
 /** Print an envelope: one compact JSON object with `--json`, otherwise a readable message. */
 export function renderErrorEnvelope(ctx: PluginContextV3, envelope: ErrorEnvelope, json: boolean): void {

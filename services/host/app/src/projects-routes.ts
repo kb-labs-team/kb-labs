@@ -19,8 +19,8 @@
  * handle it unchanged; `error` is the unified envelope (ADR-0049).
  */
 
-import type { FastifyInstance, FastifyReply } from "fastify";
-import { createErrorEnvelope, type ErrorEnvelope } from "@kb-labs/core-platform";
+import type { FastifyInstance } from "fastify";
+import { createErrorEnvelope } from "@kb-labs/core-platform";
 import type {
   IProjectRegistry,
   ProjectEntry,
@@ -36,38 +36,12 @@ import {
   showProject,
 } from "@kb-labs/core-project-registry";
 import type { HostRoutes } from "@kb-labs/gateway-app";
+import { invalidBody, sendData, sendEnvelope } from "./envelope.js";
 import type { ProjectRuntimeManager } from "./project-runtime/manager.js";
 
 export interface ProjectsRoutesOptions {
   registry: IProjectRegistry;
   manager: ProjectRuntimeManager;
-}
-
-const STATUS_BY_CODE: Readonly<Record<string, number>> = {
-  KB_PROJECT_PATH_NOT_FOUND: 404,
-  KB_PROJECT_NOT_A_DIRECTORY: 400,
-  KB_PROJECT_NO_ACCESS: 403,
-  KB_PROJECT_ALREADY_REGISTERED: 409,
-  KB_PROJECT_UNKNOWN: 404,
-  KB_PROJECT_NAME_TAKEN: 409,
-  KB_PROJECT_DECLARATION_INVALID: 422,
-  KB_PROJECT_REGISTRY_CORRUPT: 500,
-  KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED: 500,
-  KB_PROJECT_REGISTRY_LOCKED: 503,
-  KB_PROJECT_INIT_REQUIRED: 409,
-  KB_RUNTIME_INPUT_INVALID: 400,
-};
-
-function statusFor(envelope: ErrorEnvelope): number {
-  return STATUS_BY_CODE[envelope.code] ?? 500;
-}
-
-function sendEnvelope(reply: FastifyReply, envelope: ErrorEnvelope): FastifyReply {
-  return reply.code(statusFor(envelope)).send({ ok: false, error: envelope });
-}
-
-function sendData(reply: FastifyReply, data: unknown, status = 200): FastifyReply {
-  return reply.code(status).send({ ok: true, data });
 }
 
 /** `stopped` for a registered project the manager has no entry for. */
@@ -99,13 +73,6 @@ interface AddProjectBody {
   path?: unknown;
   name?: unknown;
   init?: unknown;
-}
-
-function invalidBody(field: string, expected: string): ErrorEnvelope {
-  return createErrorEnvelope("KB_RUNTIME_INPUT_INVALID", {
-    cause: `"${field}" ${expected}.`,
-    details: { field },
-  });
 }
 
 /**

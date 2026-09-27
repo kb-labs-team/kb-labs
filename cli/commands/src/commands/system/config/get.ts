@@ -9,8 +9,10 @@
 
 import {
   ConfigWriteError,
+  configErrorEnvelope,
   loadEffectiveConfig,
   parseJsonc,
+  redactValue,
   resolveKeyPath,
   type ConfigLayerName,
   type ValueProvenance,
@@ -24,10 +26,8 @@ import { promises as fsp } from 'node:fs';
 import { generateExamples } from '../../../utils/generate-examples';
 import {
   CONFIG_SCOPES,
-  configErrorEnvelope,
   layerLabel,
   parseKeyPath,
-  redactValue,
   renderErrorEnvelope,
   resolveConfigRoots,
   userConfigFileForScope,

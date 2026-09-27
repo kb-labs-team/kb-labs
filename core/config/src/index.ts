@@ -42,3 +42,11 @@ export * from './user-config/index.js';
 // Canonical layered config loader: generated → platform → project → project overlays.
 // Use this when reading the raw effective config (e.g. plugin sections).
 export * from './api/effective-config.js';
+
+// Adapter manifest `configSchema` validation, shared by `kb config set` and
+// the host's `/api/v1/adapters` API (ADR-0047).
+export * from './adapter-schema.js';
+
+// Config command error mapping (unified envelope, ADR-0049), shared by
+// `kb config get|set` and the host's `/api/v1/adapters` API.
+export * from './error-envelope.js';
