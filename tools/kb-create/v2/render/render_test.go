@@ -69,8 +69,9 @@ func TestBuildDerivesHostAuthFromTheAccessMode(t *testing.T) {
 // Regression coverage: gateway.upstreams (services/gateway/contracts/src/config.ts's
 // UpstreamConfigSchema) defaults to {} when absent from rendered config —
 // distinct from platform.adapterOptions.serviceTransport.services, which V2
-// already renders and which only supplies per-service RPC URLs, not HTTP
-// proxy routing. Without any gateway.upstreams entries, /ready's single
+// never renders at all (the host/project runtime generate it in-process from
+// their actual bound ports, ADR-0043 B8) and which only supplies per-service
+// RPC URLs, not HTTP proxy routing. Without any gateway.upstreams entries, /ready's single
 // required check (the "rest" upstream) can never turn "up", so the gateway
 // never becomes ready. Only routes whose target service is actually part of
 // this install's resolved service graph should render — a route pointing at

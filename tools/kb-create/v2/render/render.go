@@ -24,11 +24,18 @@ type Output struct {
 // gatewayUpstreamRoute is a single entry of the gateway's proxy routing
 // table (services/gateway/contracts/src/config.ts's UpstreamConfigSchema:
 // serviceId, prefix, optional rewritePrefix/websocket/description). This is
-// a distinct concept from platform.adapterOptions.serviceTransport.services
-// (which V2 already renders): serviceTransport supplies the URL a given
-// service ID resolves to for RPC calls, while gatewayUpstreamRoute maps an
-// inbound HTTP path prefix to which service ID handles it. Nothing in the
-// V2 plan/manifest pipeline carries per-service routing metadata today (a
+// a distinct concept from platform.adapterOptions.serviceTransport.services:
+// serviceTransport supplies the URL a given service ID resolves to for RPC
+// calls, while gatewayUpstreamRoute maps an inbound HTTP path prefix to
+// which service ID handles it. V2 renders only the serviceTransport adapter
+// *selection* (platform.adapters.serviceTransport, a manifest default); it
+// never renders adapterOptions.serviceTransport.services itself — the host
+// and project runtime build that map in-process from the loopback ports they
+// actually bind and inject it during platform assembly (ADR-0043 B8,
+// services/host/app/src/transport.ts, services/project-runtime/app/src/
+// transport.ts), so no service address is ever written to kb.config.jsonc
+// (ADR-0047, docs/architecture/target/07-migration.md stage 5.4). Nothing in
+// the V2 plan/manifest pipeline carries per-service routing metadata today (a
 // kb.service/1 manifest has no equivalent of a plugin's declared `requires`/
 // `config`), so this mirrors .kb/kb.config.json's hand-authored `gateway.
 // upstreams` table verbatim rather than deriving it. Without it, the
