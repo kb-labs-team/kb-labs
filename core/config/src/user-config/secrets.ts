@@ -109,6 +109,31 @@ export function findPlainSecrets(basePath: readonly string[], value: unknown): P
   return found;
 }
 
+/** Placeholder shown instead of a redacted secret value. */
+export const REDACTED = '***REDACTED***';
+
+/**
+ * Redact secret leaves (raw credentials) in a value read back to a caller;
+ * `${ENV}` references are safe and stay visible. Shared by `kb config get|set`
+ * and the host's `/api/v1/adapters` API so neither leaks a raw secret.
+ */
+export function redactValue(path: readonly string[], value: unknown): unknown {
+  if (typeof value === 'string') {
+    return isSecretKeyPath(path) && !isEnvReference(value) && value.trim() !== '' ? REDACTED : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, index) => redactValue([...path, String(index)], item));
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      out[key] = redactValue([...path, key], nested);
+    }
+    return out;
+  }
+  return value;
+}
+
 export interface EnvReferenceLeaf {
   path: string[];
   variable: string;

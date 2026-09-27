@@ -78,6 +78,18 @@ export const qk = {
     list: () => [...qk.projects.all, 'list'] as const,
     byId: (id: string) => [...qk.projects.all, 'detail', id] as const,
   },
+
+  // Per-project plugin enable/disable (stage 6, second slice).
+  projectPlugins: {
+    all: ['projectPlugins'] as const,
+    list: (projectId: string) => [...qk.projectPlugins.all, projectId] as const,
+  },
+
+  // Per-project adapter configuration (stage 6, second slice).
+  projectAdapters: {
+    all: ['projectAdapters'] as const,
+    list: (projectId: string) => [...qk.projectAdapters.all, projectId] as const,
+  },
   workflows: {
     all: ['workflows'] as const,
     list: (filters?: WorkflowRunsFilters) => [...qk.workflows.all, 'list', filters ?? {}] as const,

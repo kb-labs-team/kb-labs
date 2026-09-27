@@ -11,7 +11,10 @@
  */
 
 import {
+  configErrorEnvelope,
+  createAdapterOptionsValidator,
   loadEffectiveConfig,
+  redactValue,
   setUserConfigValue,
   type SetUserConfigResult,
 } from '@kb-labs/core-config';
@@ -21,13 +24,10 @@ import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 
 import { generateExamples } from '../../../utils/generate-examples';
-import { createAdapterOptionsValidator } from './adapter-schema';
 import {
   CONFIG_SCOPES,
-  configErrorEnvelope,
   parseKeyPath,
   parseValueArg,
-  redactValue,
   renderErrorEnvelope,
   resolveConfigRoots,
   userConfigFileForScope,

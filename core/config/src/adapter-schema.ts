@@ -2,6 +2,10 @@
  * Validation of `platform.adapterOptions.<adapter>` against the adapter's
  * manifest `configSchema` (ADR-0047: adapters already declare their options).
  *
+ * Shared by `kb config set` (`cli/commands`) and the host's `/api/v1/adapters`
+ * API (`services/host`, stage 6 second slice) so both write through the same
+ * validation rules — neither owns a private copy of this logic.
+ *
  * The manifest `configSchema` is a descriptive map (`type`, `enum`, ...) that
  * is not guaranteed to list every option an adapter accepts, so the check is
  * deliberately narrow: only options the manifest DECLARES are type/enum
@@ -15,7 +19,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { isEnvReference, type ConfigIssue } from '@kb-labs/core-config';
+import { isEnvReference } from './user-config/secrets.js';
+import type { ConfigIssue } from './user-config/write-user-config.js';
 
 export interface ManifestFieldSchema {
   type?: string;

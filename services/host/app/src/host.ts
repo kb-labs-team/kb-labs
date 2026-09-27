@@ -21,6 +21,7 @@ import {
   isLoopbackHost,
   loadGatewayConfig,
   startGateway,
+  type HostRoutes,
 } from "@kb-labs/gateway-app";
 import { setup as setupMarketplace } from "@kb-labs/marketplace-app";
 import { setup as setupState } from "@kb-labs/core-state-daemon";
@@ -38,6 +39,8 @@ import {
   type ServiceContext,
 } from "@kb-labs/shared-daemon";
 import { applyHostGatewayPolicy, type GatewayUpstreams } from "./policy.js";
+import { createAdaptersRoutes } from "./adapters-routes.js";
+import { MarketplaceClient } from "./marketplace-client.js";
 import { createChildProcessLauncher } from "./project-runtime/launcher.js";
 import {
   ProjectRuntimeManager,
@@ -46,6 +49,7 @@ import {
 } from "./project-runtime/manager.js";
 import { createProjectRouting } from "./project-runtime/routing.js";
 import { createProjectsRoutes } from "./projects-routes.js";
+import { createPluginsRoutes } from "./plugins-routes.js";
 import {
   parseHostSettings,
   type HostModuleId,
@@ -127,6 +131,31 @@ function assertInternalAddress(ctx: ServiceContext, serviceId: string): void {
       `Internal module "${serviceId}" would bind "${ctx.host}"; internal modules bind loopback only.`,
     );
   }
+}
+
+/**
+ * The internal loopback base URL for a co-located module (ADR-0043), or
+ * `undefined` when the transport has no TCP address for it — e.g. the module
+ * is disabled by `host.modules`. Used to reach the marketplace module
+ * directly, without a second gateway hop.
+ */
+function internalBaseUrl(ctx: ServiceContext, serviceId: string): string | undefined {
+  const address = ctx.platform
+    .getAdapter<IServiceTransport>("serviceTransport")
+    ?.listenAddress?.(serviceId);
+  if (!address || !("port" in address)) {
+    return undefined;
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
+
+/** Registers several {@link HostRoutes} plugins on the same gateway instance, in order. */
+function combineHostRoutes(...routes: HostRoutes[]): HostRoutes {
+  return async (app) => {
+    for (const route of routes) {
+      await app.register(route);
+    }
+  };
 }
 
 function generatedUpstreams(settings: HostSettings): GatewayUpstreams {
@@ -359,13 +388,33 @@ export async function createHostConfig(
         },
       });
 
+      // The marketplace module (if selected) already started listening above
+      // (internal modules run before "gateway" in `modules`); reach it on its
+      // internal loopback address so `/api/v1/plugins` never opens a second
+      // writer of `.kb/marketplace.lock`.
+      const marketplaceBaseUrl = isSelected(settings, "marketplace")
+        ? internalBaseUrl(ctx, "marketplace")
+        : undefined;
+      const pluginsRoutes = marketplaceBaseUrl
+        ? [createPluginsRoutes({ registry, marketplace: new MarketplaceClient(marketplaceBaseUrl) })]
+        : [];
+      if (isSelected(settings, "marketplace") && !marketplaceBaseUrl) {
+        ctx.logger.warn(
+          "Marketplace module selected but has no internal address; /api/v1/plugins will not be mounted",
+        );
+      }
+
       const stopGateway = await startGateway(
         { ...ctx, logger: ctx.logger.forComponent("gateway") },
         {
           configure: (config) =>
             applyHostGatewayPolicy(config, { auth: settings.auth, upstreams }),
           projectRouting: createProjectRouting({ registry, manager, logger }),
-          hostRoutes: createProjectsRoutes({ registry, manager }),
+          hostRoutes: combineHostRoutes(
+            createProjectsRoutes({ registry, manager }),
+            createAdaptersRoutes({ registry, platformRoot: ctx.platformRoot }),
+            ...pluginsRoutes,
+          ),
         },
       );
       return async () => {
