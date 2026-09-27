@@ -1,7 +1,7 @@
 # ADR-0047: Config Layers, Generated vs User, One Writer per File
 
 **Date:** 2026-09-26
-**Status:** Proposed
+**Status:** Accepted
 **Deciders:** KB Labs Team
 **Last Reviewed:** 2026-09-26
 **Tags:** architecture, configuration, installer, cli

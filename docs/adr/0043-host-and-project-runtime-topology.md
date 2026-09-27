@@ -1,7 +1,7 @@
 # ADR-0043: Host and Project Runtime Topology
 
 **Date:** 2026-09-26
-**Status:** Proposed
+**Status:** Accepted
 **Deciders:** KB Labs Team
 **Last Reviewed:** 2026-09-26
 **Tags:** runtime, topology, gateway, services, architecture
