@@ -256,6 +256,22 @@ export interface EventBusSubscribe {
   topic: string;
 }
 
+/** Parent → Child: confirms the requested event subscription is active. */
+export interface EventBusSubscribed {
+  type: 'eventbus:subscribed';
+  subscriptionId: string;
+}
+
+/** Child → Parent: cancel an in-flight adapter request by its request ID. */
+export interface AdapterCancel {
+  type: 'adapter:cancel';
+  requestId: string;
+}
+
+export function isAdapterCancel(msg: unknown): msg is AdapterCancel {
+  return isRecord(msg) && msg['type'] === 'adapter:cancel' && typeof msg['requestId'] === 'string';
+}
+
 /**
  * Child → Parent: cancel a previous subscription.
  */
@@ -283,6 +299,14 @@ export function isEventBusSubscribe(msg: unknown): msg is EventBusSubscribe {
   );
 }
 
+export function isEventBusSubscribed(msg: unknown): msg is EventBusSubscribed {
+  return (
+    isRecord(msg) &&
+    msg['type'] === 'eventbus:subscribed' &&
+    typeof msg['subscriptionId'] === 'string'
+  );
+}
+
 export function isEventBusUnsubscribe(msg: unknown): msg is EventBusUnsubscribe {
   return (
     isRecord(msg) &&
@@ -304,14 +328,16 @@ export function isEventBusPush(msg: unknown): msg is EventBusPush {
  * All possible IPC messages.
  *
  * Child → Parent: AdapterCall | EventBusSubscribe | EventBusUnsubscribe
- * Parent → Child: AdapterResponse | EventBusPush
+ * Parent → Child: AdapterResponse | EventBusPush | EventBusSubscribed
  */
 export type IPCMessage =
   | AdapterCall
   | AdapterResponse
   | EventBusSubscribe
   | EventBusUnsubscribe
-  | EventBusPush;
+  | EventBusPush
+  | EventBusSubscribed
+  | AdapterCancel;
 
 /**
  * Narrows `unknown` to a plain object with string-keyed unknown values.

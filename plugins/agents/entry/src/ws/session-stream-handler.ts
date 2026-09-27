@@ -98,7 +98,7 @@ export default defineWebSocket<unknown, ClientMessage, ServerMessage>({
       // snapshot creation and subscription. Buffer until the snapshot is sent.
       let snapshotSent = false;
       const pendingEvents: AgentsSessionEvent[] = [];
-      const sendSessionEvent = async (payload: AgentsSessionEvent): Promise<void> => {
+      const sendSessionEvent = async (payload: AgentsSessionEvent, afterSeq?: number): Promise<void> => {
         if (payload.kind === 'cursor') {
           await sender.send({
             type: 'session:cursor',
@@ -110,6 +110,9 @@ export default defineWebSocket<unknown, ClientMessage, ServerMessage>({
 
         if (payload.kind === 'deltas') {
           for (const delta of payload.deltas) {
+            if (afterSeq != null && delta.seq <= afterSeq) {
+              continue;
+            }
             await sender.send({
               type: 'turn:delta',
               payload: { sessionId, delta },
@@ -153,6 +156,7 @@ export default defineWebSocket<unknown, ClientMessage, ServerMessage>({
       );
 
       try {
+        await unsubscribe.ready;
         const { turns: projectionTurns, seq } = await sessionManager.getProjection(sessionId);
         const turns = await RunManager.reconcileSessionTurns(sessionManager, sessionId, projectionTurns);
         const completedTurns = turns.filter((t) => t.status !== 'streaming');
@@ -170,9 +174,20 @@ export default defineWebSocket<unknown, ClientMessage, ServerMessage>({
           timestamp: Date.now(),
         } satisfies ConversationSnapshotMessage);
         snapshotSent = true;
-        for (const pending of pendingEvents.splice(0)) await sendSessionEvent(pending);
-        if (connectionId) connectionState.set(connectionId, { sessionId, unsubscribe, connectedAt });
-        else unsubscribe();
+        for (const pending of pendingEvents.splice(0)) {
+          if (pending.kind === 'deltas') {
+            if (pending.deltas.some((delta) => delta.seq > seq)) {
+              await sendSessionEvent(pending, seq);
+            }
+          } else if (pending.seq > seq) {
+            await sendSessionEvent(pending, seq);
+          }
+        }
+        if (connectionId) {
+          connectionState.set(connectionId, { sessionId, unsubscribe, connectedAt });
+        } else {
+          unsubscribe();
+        }
         ctx.platform.logger.info('[session-ws] Session event subscription registered', {
           event: 'agent.session.websocket.subscribed',
           sessionId,

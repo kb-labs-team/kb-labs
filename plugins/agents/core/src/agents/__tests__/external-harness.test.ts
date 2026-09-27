@@ -90,9 +90,15 @@ describe('external harness adapters', () => {
     const originalParentToken = process.env.KB_MCP_TOKEN;
     const originalJwtSecret = process.env.GATEWAY_JWT_SECRET;
     const originalInternalSecret = process.env.GATEWAY_INTERNAL_SECRET;
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalAwsSecret = process.env.AWS_SECRET_ACCESS_KEY;
+    const originalCustomSecret = process.env.CUSTOM_SECRET;
     process.env.KB_MCP_TOKEN = 'parent-user-token-must-not-leak';
     process.env.GATEWAY_JWT_SECRET = 'platform-signing-secret';
     process.env.GATEWAY_INTERNAL_SECRET = 'platform-dispatch-secret';
+    process.env.OPENAI_API_KEY = 'provider-secret';
+    process.env.AWS_SECRET_ACCESS_KEY = 'cloud-secret';
+    process.env.CUSTOM_SECRET = 'custom-secret';
     let capturedArgs: string[] = [];
     let capturedEnv: NodeJS.ProcessEnv | undefined;
     const spawnProcess = vi.fn((command: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
@@ -120,6 +126,11 @@ describe('external harness adapters', () => {
       expect(capturedEnv?.KB_MCP_TOKEN).toBeUndefined();
       expect(capturedEnv?.GATEWAY_JWT_SECRET).toBeUndefined();
       expect(capturedEnv?.GATEWAY_INTERNAL_SECRET).toBeUndefined();
+      expect(capturedEnv?.OPENAI_API_KEY).toBeUndefined();
+      expect(capturedEnv?.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+      expect(capturedEnv?.CUSTOM_SECRET).toBeUndefined();
+      expect(capturedEnv?.PATH).toBe(process.env.PATH);
+      expect(capturedEnv?.HOME).toBe(process.env.HOME);
       expect(capturedArgs.at(-1)).toContain('host-agent__workspace_status');
     } finally {
       if (originalParentToken === undefined) { delete process.env.KB_MCP_TOKEN; }
@@ -128,6 +139,12 @@ describe('external harness adapters', () => {
       else { process.env.GATEWAY_JWT_SECRET = originalJwtSecret; }
       if (originalInternalSecret === undefined) { delete process.env.GATEWAY_INTERNAL_SECRET; }
       else { process.env.GATEWAY_INTERNAL_SECRET = originalInternalSecret; }
+      if (originalOpenAiKey === undefined) { delete process.env.OPENAI_API_KEY; }
+      else { process.env.OPENAI_API_KEY = originalOpenAiKey; }
+      if (originalAwsSecret === undefined) { delete process.env.AWS_SECRET_ACCESS_KEY; }
+      else { process.env.AWS_SECRET_ACCESS_KEY = originalAwsSecret; }
+      if (originalCustomSecret === undefined) { delete process.env.CUSTOM_SECRET; }
+      else { process.env.CUSTOM_SECRET = originalCustomSecret; }
     }
   });
 

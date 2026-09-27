@@ -16,12 +16,14 @@ import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import type { AdapterCall, AdapterResponse, SerializableError } from '@kb-labs/core-platform/serializable';
 import {
   isAdapterCall,
+  isAdapterCancel,
   isEventBusSubscribe,
   isEventBusUnsubscribe,
   serialize,
   deserialize,
 } from '@kb-labs/core-platform/serializable';
 import { resolveIPCAdapter } from './adapter-route.js';
+import { attachLlmCallAbortSignal } from './llm-call-signal.js';
 
 /**
  * Serialize an Error (or any value) to SerializableError for IPC response.
@@ -52,6 +54,7 @@ export class ChildIPCServer {
   private started = false;
   /** Active EventBus subscriptions: subscriptionId → unsubscribe fn */
   private eventBusSubs = new Map<string, () => void>();
+  private activeLlmCalls = new Map<string, AbortController>();
 
   constructor(
     private readonly platform: IPlatformAdapters,
@@ -84,6 +87,8 @@ export class ChildIPCServer {
 
     for (const unsub of this.eventBusSubs.values()) { unsub(); }
     this.eventBusSubs.clear();
+    for (const controller of this.activeLlmCalls.values()) { controller.abort(new Error('IPC child disconnected')); }
+    this.activeLlmCalls.clear();
   }
 
   /**
@@ -92,15 +97,23 @@ export class ChildIPCServer {
    * WorkerMessages (execute, result, etc.) pass through untouched.
    */
   private async handleMessage(msg: unknown): Promise<void> {
+    if (isAdapterCancel(msg)) {
+      this.activeLlmCalls.get(msg.requestId)?.abort(new Error('LLM request cancelled by caller'));
+      return;
+    }
     if (isEventBusSubscribe(msg)) {
-      if (!this.platform.eventBus) { return; }
       const { subscriptionId, topic } = msg;
+      if (!this.platform.eventBus) {
+        if (this.child.connected) { this.child.send({ type: 'eventbus:subscribed', subscriptionId }); }
+        return;
+      }
       const unsub = this.platform.eventBus.subscribe(topic, async (payload) => {
         if (this.child.connected) {
           this.child.send({ type: 'eventbus:push', subscriptionId, topic, payload: serialize(payload) });
         }
       });
       this.eventBusSubs.set(subscriptionId, unsub);
+      if (this.child.connected) { this.child.send({ type: 'eventbus:subscribed', subscriptionId }); }
       return;
     }
 
@@ -126,6 +139,7 @@ export class ChildIPCServer {
       return;
     }
 
+    let activeRequestId: string | undefined;
     try {
       const adapter = resolveIPCAdapter(this.platform, msg.adapter);
       const method = (adapter as Record<string, unknown>)[msg.method];
@@ -137,6 +151,11 @@ export class ChildIPCServer {
       }
 
       const args = msg.args.map((arg) => deserialize(arg));
+      const controller = new AbortController();
+      if (attachLlmCallAbortSignal(msg.adapter, msg.method, args, controller.signal)) {
+        activeRequestId = msg.requestId;
+        this.activeLlmCalls.set(msg.requestId, controller);
+      }
       const result = await method.apply(adapter, args);
 
       this.sendResponse({
@@ -150,6 +169,8 @@ export class ChildIPCServer {
         requestId: msg.requestId,
         error: serializeError(error),
       });
+    } finally {
+      if (activeRequestId) { this.activeLlmCalls.delete(activeRequestId); }
     }
   }
 

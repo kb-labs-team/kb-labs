@@ -44,10 +44,8 @@ import type {
   LLMProtocolCapabilities,
   LLMCacheDecisionTrace,
   LLMCapability,
-  LLMContent,
-  LLMContentPart,
 } from '@kb-labs/core-platform';
-import { LLM_CAPABILITIES, LLM_CONTRACT, LLMContentValidationError, getLLMContentText, validateLLMContent } from '@kb-labs/core-platform';
+import { LLMContentValidationError, validateLLMContent } from '@kb-labs/core-platform';
 
 /**
  * Access global LLM adapter with tier-based selection.

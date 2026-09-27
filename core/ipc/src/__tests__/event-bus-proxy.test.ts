@@ -54,6 +54,21 @@ describe('EventBusProxy', () => {
     });
   });
 
+  it('resolves readiness only after the parent confirms the subscription', async () => {
+    const proxy = new EventBusProxy(transport);
+    const unsubscribe = proxy.subscribe('my-topic', vi.fn());
+    let ready = false;
+    void unsubscribe.ready?.then(() => { ready = true; });
+    await Promise.resolve();
+    expect(ready).toBe(false);
+
+    const subscriptionId = (sentMessages[0] as { subscriptionId: string }).subscriptionId;
+    push({ type: 'eventbus:subscribed', subscriptionId });
+    await unsubscribe.ready;
+    expect(ready).toBe(true);
+    unsubscribe();
+  });
+
   it('unsubscribe sends eventbus:unsubscribe and removes local handler', () => {
     const proxy = new EventBusProxy(transport);
     const handler = vi.fn();

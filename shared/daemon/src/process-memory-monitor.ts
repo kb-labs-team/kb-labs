@@ -49,7 +49,7 @@ export class ProcessMemoryMonitor {
   }
 
   start(): void {
-    if (this.timer) return;
+    if (this.timer) { return; }
     const sample = (): void => this.collect();
     sample();
     this.timer = setInterval(sample, this.options.sampleIntervalMs ?? 10_000);
@@ -57,7 +57,7 @@ export class ProcessMemoryMonitor {
   }
 
   stop(): void {
-    if (!this.timer) return;
+    if (!this.timer) { return; }
     clearInterval(this.timer);
     this.timer = null;
   }
@@ -91,7 +91,9 @@ export class ProcessMemoryMonitor {
     }
 
     const transitions = getHeapPressureTransitions(heapLimitPercentage, this.warnedThresholds);
-    for (const threshold of transitions.cleared) this.warnedThresholds.delete(threshold);
+    for (const threshold of transitions.cleared) {
+      this.warnedThresholds.delete(threshold);
+    }
     for (const threshold of transitions.entered) {
       this.warnedThresholds.add(threshold);
       this.logger.event("warn", {

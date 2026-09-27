@@ -26,10 +26,11 @@ import * as fs from 'fs';
 import * as os from 'os';
 import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import type { AdapterCall, AdapterResponse, SerializableError } from '@kb-labs/core-platform/serializable';
-import { serialize, deserialize, IPC_PROTOCOL_VERSION } from '@kb-labs/core-platform/serializable';
+import { isAdapterCall, isAdapterCancel, serialize, deserialize, IPC_PROTOCOL_VERSION } from '@kb-labs/core-platform/serializable';
 import { BulkTransferHelper } from '../transport/bulk-transfer';
 import { DEFAULT_SOCKET_PATH } from '../socket-path';
 import { resolveIPCAdapter } from './adapter-route.js';
+import { attachLlmCallAbortSignal } from './llm-call-signal.js';
 
 export interface UnixSocketServerConfig {
   /** Path to Unix socket file (default: /tmp/kb-ipc.sock) */
@@ -54,6 +55,7 @@ export class UnixSocketServer {
   private socketPath: string;
   private authToken?: string;
   private started = false;
+  private activeLlmCalls = new Map<string, AbortController>();
 
   /**
    * Create a Unix Socket server.
@@ -129,8 +131,12 @@ export class UnixSocketServer {
         }
 
         try {
-          const call = JSON.parse(line) as AdapterCall;
-          this.handleCall(socket, call);
+          const message: unknown = JSON.parse(line);
+          if (isAdapterCancel(message)) {
+            this.activeLlmCalls.get(message.requestId)?.abort(new Error('LLM request cancelled by caller'));
+          } else if (isAdapterCall(message)) {
+            this.handleCall(socket, message);
+          }
         } catch (error) {
           this.platform.logger.warn('UnixSocketServer: failed to parse message', { error });
         }
@@ -186,6 +192,7 @@ export class UnixSocketServer {
       });
     }
 
+    let activeRequestId: string | undefined;
     try {
       // Get the adapter from platform
       const adapter = resolveIPCAdapter(this.platform, call.adapter);
@@ -214,6 +221,11 @@ export class UnixSocketServer {
           return deserialized;
         })
       );
+      const controller = new AbortController();
+      if (attachLlmCallAbortSignal(call.adapter, call.method, args, controller.signal)) {
+        activeRequestId = call.requestId;
+        this.activeLlmCalls.set(call.requestId, controller);
+      }
 
       // Execute method on adapter
       const result = await method.apply(adapter, args);
@@ -263,6 +275,8 @@ export class UnixSocketServer {
         error instanceof Error ? error : new Error(String(error)),
         { adapter: call.adapter, method: call.method, ...getSafeErrorLogFields(error) },
       );
+    } finally {
+      if (activeRequestId) { this.activeLlmCalls.delete(activeRequestId); }
     }
   }
 
@@ -279,6 +293,8 @@ export class UnixSocketServer {
       client.destroy();
     }
     this.clients.clear();
+    for (const controller of this.activeLlmCalls.values()) { controller.abort(new Error('Unix socket server stopped')); }
+    this.activeLlmCalls.clear();
 
     // Close server
     if (this.server) {
@@ -308,7 +324,7 @@ export class UnixSocketServer {
 }
 
 function getSafeErrorLogFields(error: unknown): Record<string, unknown> {
-  if (!error || typeof error !== 'object') return {};
+  if (!error || typeof error !== 'object') { return {}; }
 
   const fields: Record<string, unknown> = {};
   if ('code' in error && typeof error.code === 'string') {

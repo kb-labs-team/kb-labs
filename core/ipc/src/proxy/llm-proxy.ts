@@ -91,17 +91,19 @@ export class LLMProxy extends RemoteAdapter<ILLM> implements ILLM, ILLMRouter {
   getCapabilities(): LLMCapability[] {
     const capabilities = new Set(this.routing.capabilities ?? []);
     for (const entries of Object.values(this.routing.tierMapping ?? {})) {
-      for (const entry of entries ?? []) entry.capabilities?.forEach((capability) => capabilities.add(capability));
+      for (const entry of entries ?? []) {
+        entry.capabilities?.forEach((capability) => capabilities.add(capability));
+      }
     }
     return [...capabilities];
   }
 
   supportsCapabilities(options?: UseLLMOptions): boolean {
     const required = options?.capabilities ?? [];
-    if (required.length === 0) return true;
+    if (required.length === 0) { return true; }
     const tier = options?.tier ?? this.getConfiguredTier();
     const entries = this.routing.tierMapping?.[tier];
-    if (entries) return entries.some((entry) => required.every((capability) => entry.capabilities?.includes(capability)));
+    if (entries) { return entries.some((entry) => required.every((capability) => entry.capabilities?.includes(capability))); }
     return required.every((capability) => this.routing.capabilities?.includes(capability));
   }
 
@@ -143,7 +145,8 @@ export class LLMProxy extends RemoteAdapter<ILLM> implements ILLM, ILLMRouter {
    * @returns LLM response with content and token usage
    */
   async complete(prompt: string, options?: LLMOptions): Promise<LLMResponse> {
-    return (await this.callRemote('complete', [prompt, options])) as LLMResponse;
+    const { signal, ...remoteOptions } = options ?? {};
+    return (await this.callRemote('complete', [prompt, remoteOptions], undefined, signal)) as LLMResponse;
   }
 
   getProtocolCapabilities(): LLMProtocolCapabilities {
@@ -187,7 +190,8 @@ export class LLMProxy extends RemoteAdapter<ILLM> implements ILLM, ILLMRouter {
     messages: LLMMessage[],
     options: LLMToolCallOptions
   ): Promise<LLMToolCallResponse> {
-    return (await this.callRemote('chatWithTools', [messages, options])) as LLMToolCallResponse;
+    const { signal, ...remoteOptions } = options;
+    return (await this.callRemote('chatWithTools', [messages, remoteOptions], undefined, signal)) as LLMToolCallResponse;
   }
 }
 

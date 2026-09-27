@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { LLMRouterMetadata } from '@kb-labs/core-platform';
+import type { AdapterCall, AdapterResponse, SerializableError } from '@kb-labs/core-platform/serializable';
 import type { ITransport } from '../transport/transport.js';
 import { LLMProxy } from '../proxy/llm-proxy.js';
+import { serialize } from '@kb-labs/core-platform/serializable';
 
 describe('LLMProxy capability metadata', () => {
   const transport = {} as ITransport;
@@ -30,5 +32,35 @@ describe('LLMProxy capability metadata', () => {
     expect(binding).toMatchObject({ model: 'gpt-6-sol', tier: 'medium' });
     expect(binding.adapter).toBe(llm);
     expect(() => llm.resolve({ tier: 'small', capabilities: ['reasoning'] })).toThrow(/LLM_CAPABILITY_NOT_SUPPORTED/);
+  });
+
+  it('sends a cancellation control message without serializing AbortSignal', async () => {
+    let resolveResponse!: (response: AdapterResponse) => void;
+    let requestId = '';
+    const sendMessage = vi.fn((message: unknown) => {
+      const cancel = message as { requestId: string };
+      expect(cancel).toMatchObject({ type: 'adapter:cancel', requestId });
+      resolveResponse({ type: 'adapter:response', requestId, error: serialize(new Error('request cancelled')) as SerializableError });
+    });
+    const requestTransport: ITransport = {
+      send: vi.fn((call: AdapterCall): Promise<AdapterResponse> => {
+        requestId = call.requestId;
+        return new Promise((resolve) => { resolveResponse = resolve; });
+      }),
+      sendMessage,
+      onPushMessage: () => () => {},
+      close: async () => {},
+      isClosed: () => false,
+    };
+    const controller = new AbortController();
+    const llm = new LLMProxy(requestTransport);
+    const pending = llm.complete('prompt', { signal: controller.signal });
+    await vi.waitFor(() => expect(requestId).not.toBe(''));
+    const call = vi.mocked(requestTransport.send).mock.calls[0]![0];
+    expect(JSON.stringify(call.args)).not.toContain('AbortSignal');
+
+    controller.abort();
+    await expect(pending).rejects.toThrow('request cancelled');
+    expect(sendMessage).toHaveBeenCalledOnce();
   });
 });

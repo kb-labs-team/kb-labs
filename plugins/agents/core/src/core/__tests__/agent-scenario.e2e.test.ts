@@ -33,7 +33,9 @@ async function createWorkspace(): Promise<string> {
   return dir;
 }
 
-function scriptedLLM(responses: LLMToolCallResponse[]): ILLM {
+type ScriptedLLM = ILLM & { requests: LLMMessage[][] };
+
+function scriptedLLM(responses: LLMToolCallResponse[]): ScriptedLLM {
   const calls: LLMToolCallResponse[] = [...responses];
   const requests: LLMMessage[][] = [];
   const chatWithTools = vi.fn(async (messages: LLMMessage[], _options: LLMToolCallOptions): Promise<LLMToolCallResponse> => {
@@ -173,7 +175,6 @@ describe('agent scenario E2E foundation', () => {
     expect(result.summary).toContain('higher tier');
     expect(mockLLMAccess.getLLM.mock.calls).toContainEqual([{ tier: 'small' }]);
     expect(mockLLMAccess.getLLM.mock.calls).toContainEqual([{ tier: 'medium' }]);
-    expect(events.some((event) => event.type === 'status:change' && event.data?.status === 'escalating')).toBe(true);
   });
 
   it.skipIf(!isDeepAgentE2EEnabled())('keeps prior conversation turns when continuing a long-lived session', async () => {

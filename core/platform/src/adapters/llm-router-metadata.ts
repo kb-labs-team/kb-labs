@@ -16,7 +16,7 @@ export async function getLLMRouterMetadata(
   llm: ILLM | undefined,
   logger?: Pick<ILogger, 'debug'>,
 ): Promise<LLMRouterMetadata | undefined> {
-  if (!llm) return undefined;
+  if (!llm) { return undefined; }
   const router = llm as ILLM & Partial<ILLMRouter>;
   if (
     typeof router.getConfiguredTier !== 'function' ||

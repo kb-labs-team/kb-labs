@@ -90,4 +90,49 @@ describe('session stream WebSocket handler', () => {
       subscriptionFound: true,
     }));
   });
+
+  it('waits for IPC subscription readiness and replays only events newer than the snapshot', async () => {
+    let subscriber: ((event: unknown) => Promise<void>) | undefined;
+    let markReady!: () => void;
+    const ready = new Promise<void>((resolve) => { markReady = resolve; });
+    const unsubscribe = Object.assign(() => {}, { ready });
+    const sent: WSMessage[] = [];
+    const bus: IEventBus = {
+      publish: async () => undefined,
+      subscribe: (_topic, handler) => {
+        subscriber = handler as (event: unknown) => Promise<void>;
+        return unsubscribe;
+      },
+    };
+    getProjectionMock.mockImplementation(async () => {
+      await subscriber?.({ kind: 'cursor', seq: 5 });
+      return { turns: [], seq: 5 };
+    });
+    const sender = {
+      send: async (message: WSMessage) => {
+        sent.push(message);
+        if (message.type === 'conversation:snapshot') {
+          await subscriber?.({ kind: 'cursor', seq: 6 });
+        }
+      },
+      broadcast: async () => undefined,
+      sendTo: async () => undefined,
+      close: () => undefined,
+      getConnectionId: () => 'connection-ready',
+    } as unknown as WSSender;
+    const connectedContext = {
+      host: 'ws', cwd: '/workspace',
+      hostContext: { host: 'ws', channelPath: '/session/:sessionId', connectionId: 'connection-ready', params: { sessionId: 'session-ready' } },
+      platform: { eventBus: bus, logger: { info: vi.fn(), error: vi.fn() } },
+    } as unknown as PluginContextV3;
+
+    const connecting = sessionStreamHandler.execute(connectedContext, { event: 'connect', sender } as WSInput);
+    await Promise.resolve();
+    expect(getProjectionMock).not.toHaveBeenCalled();
+    markReady();
+    await connecting;
+
+    expect(sent.map((message) => message.type)).toEqual(['connection:ready', 'conversation:snapshot', 'session:cursor']);
+    expect(sent.at(-1)).toMatchObject({ type: 'session:cursor', payload: { seq: 6 } });
+  });
 });

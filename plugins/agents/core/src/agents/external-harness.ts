@@ -9,6 +9,12 @@ const MAX_STDERR_BYTES = 16 * 1024;
 const MAX_PROMPT_INSTRUCTIONS_CHARS = 4_000;
 const MAX_RESULT_CHARS = 12_000;
 const TERMINATION_GRACE_MS = 1_000;
+const INHERITED_ENV_ALLOWLIST = [
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TMP', 'TEMP',
+  'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'COLORTERM', 'NO_COLOR',
+  'CODEX_HOME', 'CLAUDE_CONFIG_DIR',
+  'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'SYSTEMROOT', 'WINDIR', 'PATHEXT', 'COMSPEC',
+] as const;
 const PLATFORM_SECRET_ENV_VARS = [
   'KB_MCP_TOKEN',
   'KB_AGENT_MCP_TOKEN',
@@ -85,8 +91,16 @@ export async function runExternalHarness(
     // Supported launchers place the prompt as the final positional argument.
     args.splice(Math.max(0, args.length - 1), 0, ...mcpConfig.args);
   }
-  const childEnv: NodeJS.ProcessEnv = { ...process.env };
-  // Never let a broad parent bearer accidentally reach the external process.
+  const childEnv: NodeJS.ProcessEnv = {};
+  for (const name of INHERITED_ENV_ALLOWLIST) {
+    const value = process.env[name];
+    if (value !== undefined) { childEnv[name] = value; }
+  }
+  // Locale variables are configuration, not credentials; retain custom locales.
+  for (const [name, value] of Object.entries(process.env)) {
+    if (name.startsWith('LC_') && value !== undefined) { childEnv[name] = value; }
+  }
+  // Pass only the child-scoped MCP bearer, never broad parent/platform bearers.
   for (const name of PLATFORM_SECRET_ENV_VARS) { delete childEnv[name]; }
   Object.assign(childEnv, mcpConfig?.env);
   const sanitize = (value: string) => redactSecrets(
