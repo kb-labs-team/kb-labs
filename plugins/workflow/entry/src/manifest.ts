@@ -380,6 +380,7 @@ export const manifest = {
           'kb workflow run --workflow-id=release-manager/create-release',
           'kb workflow run --workflow-id=release-manager/create-release --isolation=strict --target-namespace=team-a/prod',
           'kb workflow run --workflow-id=release-manager/create-release --target-environment-id=env-123 --json',
+          'kb workflow run --workflow-id=<workflow-id> --input=\'{"key":"value"}\'',
         ],
       },
     ],

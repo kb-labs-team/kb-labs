@@ -100,10 +100,9 @@ See [Workflows → Spec Reference](/workflows/spec-reference) for every field.
 
 ## Step 2 — Trigger the workflow
 
-```bash
-kb workflow run --workflow-id=hello-workflow \
-  --inputs='{"url":"https://raw.githubusercontent.com/github/explore/main/topics/nodejs/index.md"}'
-```
+The workflow CLI documents its JSON-input form; replace the workflow ID and sample JSON with the values from your spec.
+
+<CommandExamples command="workflow run" match="--input" />
 
 This POSTs to the workflow daemon, which validates the inputs against the schema, creates a run, and schedules the first job.
 
@@ -117,11 +116,9 @@ You'll see the run ID printed:
 
 Option A — CLI polling per job:
 
-```bash
-kb workflow status --job-id=<job-id>
-```
+<CommandExamples command="workflow runs status" />
 
-The CLI is job-centric: each run spawns one job per `jobs[]` entry in the spec, and `workflow status` reports a single job's state, start time, and outputs. Get the job IDs from the run output, the workflow daemon log (`kb-dev logs workflow`), or the Studio UI.
+The current command reports the run and its jobs. For a specific job's logs, use `kb workflow runs logs <run-id>` and select a step if needed.
 
 Option B — Studio UI:
 
@@ -191,7 +188,7 @@ Pass a URL that doesn't exist:
 
 ```bash
 kb workflow run --workflow-id=hello-workflow \
-  --inputs='{"url":"https://does-not-exist.example.com/missing.json"}'
+  --input='{"url":"https://does-not-exist.example.com/missing.json"}'
 ```
 
 The run will fail at the `fetch` job because `curl` returns a non-zero exit code. The `process` job is marked `skipped` because its dependency failed.

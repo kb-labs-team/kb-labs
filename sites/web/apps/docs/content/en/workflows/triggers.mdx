@@ -45,7 +45,7 @@ With inputs:
 
 ```bash
 pnpm kb workflow:run --workflow-id=my-workflow \
-  --inputs='{"version":"1.0.0","dryRun":true}'
+  --input='{"version":"1.0.0","dryRun":true}'
 ```
 
 The run record gets `trigger.type: 'manual'` and `trigger.actor` set to whoever invoked it. Inside `if` expressions and `${{ … }}` interpolation, you can distinguish manual runs:

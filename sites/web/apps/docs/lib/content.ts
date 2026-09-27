@@ -7,6 +7,8 @@ import rehypePrettyCode, { type Options as PrettyCodeOptions } from 'rehype-pret
 import remarkGfm from 'remark-gfm';
 
 import { MdxComponents } from '@/components/MdxComponents';
+import { syncDocSources } from './expand-doc-sources.mjs';
+import generatedDocSources from '../generated/doc-source-snippets.json';
 
 const prettyCodeOptions: PrettyCodeOptions = {
   theme: { light: 'github-light', dark: 'github-dark-dimmed' },
@@ -35,9 +37,10 @@ function resolveFilePath(localeDir: string, slugParts: string[]): string | null 
 async function loadPage(filePath: string) {
   const raw = fs.readFileSync(filePath, 'utf8');
   const { content, data } = matter(raw);
+  const sourceSyncedContent = syncDocSources(content, path.relative(process.cwd(), filePath), generatedDocSources);
 
   const compiled = await compileMDX<Frontmatter>({
-    source: content,
+    source: sourceSyncedContent,
     components: MdxComponents,
     options: {
       parseFrontmatter: false,
