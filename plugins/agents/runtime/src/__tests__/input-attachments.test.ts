@@ -37,8 +37,8 @@ describe('prepareAgentAttachments', () => {
     expect(prepared.requiredCapabilities).toEqual(['vision']);
     expect(prepared.references).toHaveLength(1);
     expect(prepared.references[0]).toMatchObject({ name: 'photo.png', mediaType: 'image/png', sizeBytes: 8 });
-    expect(prepared.references[0].attachmentId).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(prepared.files[0].bytes.toString('base64')).toBe('iVBORw0KGgo=');
+    expect(prepared.references[0]?.attachmentId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(prepared.files[0]?.bytes.toString('base64')).toBe('iVBORw0KGgo=');
     expect(JSON.stringify(prepared.references)).not.toContain('iVBOR');
   });
 
