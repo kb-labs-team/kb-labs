@@ -115,6 +115,24 @@ describe('fs_read', () => {
     expect(result.output).toContain('line2');
   });
 
+  it('records bounded current-run evidence for report verification', async () => {
+    mockExists.mockReturnValue(true);
+    mockStat.mockReturnValue(statStub({ isDirectory: false, size: 100 }));
+    mockReadFile.mockReturnValue('export const answer = 42;\n');
+    const runEvidence: NonNullable<ToolContext['runEvidence']> = [];
+    const tool = createFsReadTool({ ...ctx(), runEvidence });
+
+    await tool.executor({ path: 'src/answer.ts' });
+
+    expect(runEvidence).toHaveLength(1);
+    expect(runEvidence[0]).toMatchObject({
+      toolName: 'fs_read',
+      toolInputSummary: 'src/answer.ts',
+      filePaths: ['src/answer.ts'],
+    });
+    expect(runEvidence[0]?.summary).toContain('export const answer = 42');
+  });
+
   it('returns OFFSET_OUT_OF_RANGE when offset exceeds file length', async () => {
     mockExists.mockReturnValue(true);
     mockStat.mockReturnValue(statStub({ isDirectory: false, size: 50 }));
@@ -146,12 +164,14 @@ describe('fs_write', () => {
   it('writes file and returns success', async () => {
     mockExists.mockReturnValue(false);
     mockStat.mockReturnValue(statStub({ isDirectory: false }));
-    const tool = createFsWriteTool(ctx());
+    const filesWritten = new Set<string>();
+    const tool = createFsWriteTool({ ...ctx(), filesWritten });
 
     const result = await tool.executor({ path: 'new.ts', content: 'export const x = 1;' }) as ToolResult;
 
     expect(result.success).toBe(true);
     expect(mockWriteFile).toHaveBeenCalledOnce();
+    expect(filesWritten).toEqual(new Set(['new.ts']));
   });
 
   it('rejects content larger than maxWriteSize', async () => {

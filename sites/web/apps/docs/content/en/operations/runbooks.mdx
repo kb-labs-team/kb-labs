@@ -297,7 +297,7 @@ git worktree prune
 On the developer's machine:
 
 ```bash
-kb agent register --gateway https://gateway.example.com
+kb workspace register --gateway https://gateway.example.com
 ```
 
 Prompts for authentication, writes `~/.kb/agent.json`, and registers with the gateway.
@@ -307,7 +307,7 @@ Prompts for authentication, writes `~/.kb/agent.json`, and registers with the ga
 ```bash
 kb agent start
 kb agent stop
-kb agent status
+kb workspace status
 ```
 
 For debugging, run in the foreground:

@@ -49,6 +49,10 @@ const runFlags = {
     type: 'array',
     description: 'Target files (for edit mode)',
   },
+  attachments: {
+    type: 'array',
+    description: 'Attach PDF or image files as input for the agent (repeatable)',
+  },
   trace: {
     type: 'string',
     description: 'Trace file path (for debug mode)',
@@ -95,6 +99,7 @@ const pluginPermissions = combinePermissions()
     llm: true,  // Full LLM access for agent execution
     cache: ['agent:'], // Cache namespace prefix
     analytics: true,  // Track agent usage
+    storage: ['agents/attachments/'], // Durable attachment bytes, separate from turn/event artifacts
   })
   .withQuotas({
     timeoutMs: 1800000, // 30 min for complex tasks
@@ -139,7 +144,7 @@ export const manifest = {
           'plan - generate execution plan without running, ' +
           'edit - modify existing files, ' +
           'debug - analyze errors with trace context. ' +
-          'Supports filesystem, search, shell, memory, and user interaction tools.',
+          'Accepts PDF and image attachments via the UI or --attachments, and supports filesystem, search, shell, memory, and user interaction tools.',
 
         handler: './cli/commands/run.js#default',
 
@@ -151,6 +156,7 @@ export const manifest = {
           'kb agent run --mode=plan --task="Add auth" --approve',
           'kb agent run --mode=plan --task="Add auth" --approve --execute',
           'kb agent run --mode=edit --task="Fix bug" --files src/auth.ts',
+          'kb agent run --task="Summarize these notes" --attachments ./notes.pdf --attachments ./diagram.png',
           'kb agent run --mode=debug --task="Why crash?" --trace .kb/traces/trace-123.json',
           'kb agent run --task="Refactor auth module" --timeout=120',
         ],
@@ -444,6 +450,13 @@ export const manifest = {
         path: AGENTS_ROUTES.SESSION_TURNS,
         description: 'Get session turns (turn-based UI)',
         handler: './rest/handlers/get-session-turns-handler.js',
+        security: ['none'],
+      },
+      {
+        method: 'GET',
+        path: AGENTS_ROUTES.SESSION_ATTACHMENT,
+        description: 'Get an attachment belonging to a session turn',
+        handler: './rest/handlers/get-session-attachment-handler.js',
         security: ['none'],
       },
       {

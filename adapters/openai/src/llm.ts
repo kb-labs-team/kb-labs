@@ -14,7 +14,9 @@ import type {
   LLMTool,
   LLMToolCall,
   LLMProtocolCapabilities,
+  LLMContentPart,
 } from "@kb-labs/sdk/adapters";
+import { LLMContentValidationError, validateLLMContent } from "@kb-labs/sdk/adapters";
 
 /**
  * Configuration for OpenAI LLM adapter.
@@ -115,7 +117,7 @@ export class OpenAILLM implements ILLM {
       max_tokens: options?.maxTokens ?? this.defaultMaxTokens,
       stop: options?.stop,
       ...(this.buildCacheRequestPatch(options) as Record<string, unknown>),
-    });
+    }, { signal: options?.signal });
 
     const choice = response.choices[0];
     const content = choice?.message?.content ?? "";
@@ -154,7 +156,7 @@ export class OpenAILLM implements ILLM {
       stop: options?.stop,
       stream: true,
       ...(this.buildCacheRequestPatch(options) as Record<string, unknown>),
-    });
+    }, { signal: options?.signal });
 
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content;
@@ -174,11 +176,18 @@ export class OpenAILLM implements ILLM {
     options: LLMToolCallOptions,
   ): Promise<LLMToolCallResponse> {
     const model = options?.model ?? this.defaultModel;
+    const validatedMessages = messages.map((message) => ({
+      ...message,
+      content: validateLLMContent(message.role, message.content).content,
+    }));
 
     // Convert LLMMessage[] to OpenAI format
-    const openaiMessages: OpenAI.ChatCompletionMessageParam[] = messages.map(
+    const openaiMessages: OpenAI.ChatCompletionMessageParam[] = validatedMessages.map(
       (msg) => {
         if (msg.role === "tool") {
+          if (typeof msg.content !== 'string') {
+            throw new LLMContentValidationError('tool messages must contain plain text');
+          }
           return {
             role: "tool" as const,
             content: msg.content,
@@ -189,7 +198,7 @@ export class OpenAILLM implements ILLM {
           // Assistant message with tool calls
           return {
             role: "assistant" as const,
-            content: msg.content || null,
+            content: typeof msg.content === 'string' ? msg.content || null : null,
             tool_calls: msg.toolCalls.map((tc) => ({
               id: tc.id,
               type: "function" as const,
@@ -200,10 +209,15 @@ export class OpenAILLM implements ILLM {
             })),
           };
         }
-        return {
-          role: msg.role as "system" | "user" | "assistant",
-          content: msg.content,
-        };
+        if (msg.role === "user") {
+          return {
+            role: "user" as const,
+            content: typeof msg.content === 'string'
+              ? msg.content
+              : msg.content.map((part) => this.toOpenAIContentPart(part)),
+          };
+        }
+        return { role: msg.role, content: typeof msg.content === "string" ? msg.content : "" };
       },
     );
 
@@ -244,7 +258,7 @@ export class OpenAILLM implements ILLM {
       max_tokens: options?.maxTokens ?? this.defaultMaxTokens,
       stop: options?.stop,
       ...(this.buildCacheRequestPatch(options) as Record<string, unknown>),
-    });
+    }, { signal: options?.signal });
 
     const choice = response.choices[0];
     const content = choice?.message?.content ?? "";
@@ -290,6 +304,16 @@ export class OpenAILLM implements ILLM {
       model: response.model,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       stopReason,
+    };
+  }
+
+  private toOpenAIContentPart(part: LLMContentPart): OpenAI.ChatCompletionContentPart {
+    if (part.type === "text") {
+      return { type: "text", text: part.text };
+    }
+    return {
+      type: "image_url",
+      image_url: { url: `data:${part.mediaType};base64,${part.data}` },
     };
   }
 }

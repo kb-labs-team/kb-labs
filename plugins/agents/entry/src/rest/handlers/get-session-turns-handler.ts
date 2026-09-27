@@ -6,6 +6,7 @@
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import { SessionManager } from '@kb-labs/agent-core';
 import type { Turn } from '@kb-labs/agent-contracts';
+import { RunManager } from '../run-manager.js';
 
 interface GetSessionTurnsRequest {
   sessionId?: string;
@@ -44,7 +45,11 @@ export default defineHandler({
       }
 
       // Get turns (with lazy migration from events if needed)
-      let turns = await sessionManager.getTurns(sessionId);
+      let turns = await RunManager.reconcileSessionTurns(
+        sessionManager,
+        sessionId,
+        await sessionManager.getTurns(sessionId),
+      );
 
       ctx.platform.logger.info(`[get-session-turns] Found ${turns.length} turns`);
 

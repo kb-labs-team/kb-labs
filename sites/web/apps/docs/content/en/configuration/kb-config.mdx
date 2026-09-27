@@ -116,6 +116,25 @@ The first entry is the primary; the rest are available for per-model routing via
 
 Per-adapter configuration — whatever the adapter's `createAdapter(config)` function accepts. The keys mirror `adapters`, so `adapterOptions.cache` is the options bag for the `cache` adapter.
 
+When `kb-dev` runs a stack with `--net-offset`, loopback URLs in adapter options
+are shifted by that offset to isolate the stack's managed services. If an
+adapter connects to a host-level service intentionally listening on a fixed
+port (such as a local LLM proxy), exempt that option path:
+
+```json
+{
+  "platform": {
+    "networkOffsetExemptions": ["adapterOptions.llm"],
+    "adapterOptions": {
+      "llm": { "baseURL": "http://localhost:8317" }
+    }
+  }
+}
+```
+
+Use the narrowest path possible. Exemptions affect only config URL rewriting;
+they do not alter network permissions.
+
 The LLM options slot has typed fields via `LLMAdapterOptions`:
 
 ```ts
@@ -137,7 +156,7 @@ interface TierMapping {
 interface TierModelEntry {
   model:        string;
   priority:     number;               // lower = higher priority
-  capabilities?: ('coding' | 'reasoning' | 'vision' | 'fast' | ...)[];
+  capabilities?: LLMCapability[]; // IDs from LLM_CAPABILITIES in @kb-labs/sdk
   adapter?:     string;               // override: use this adapter for this model
 }
 ```
@@ -162,7 +181,7 @@ A production-ish LLM config with tier routing:
           "adapter": "@kb-labs/adapters-vibeproxy",
           "model": "claude-sonnet-4-6",
           "priority": 1,
-          "capabilities": ["coding", "reasoning", "vision"]
+          "capabilities": ["code", "reasoning", "vision"]
         }
       ],
       "large": [
@@ -170,7 +189,7 @@ A production-ish LLM config with tier routing:
           "adapter": "@kb-labs/adapters-vibeproxy",
           "model": "gpt-5.1-codex-max",
           "priority": 1,
-          "capabilities": ["reasoning", "coding"]
+          "capabilities": ["reasoning", "code"]
         }
       ]
     }

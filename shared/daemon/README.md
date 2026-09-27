@@ -36,6 +36,12 @@ await runService({
 - **Port/host** — read from the configured env vars with defaults.
 - **Shutdown** — a single re-entrant handler runs `setup()`'s teardown, then
   `platform.shutdown()`, then exits; a second signal is ignored.
+- **Process memory diagnostics** — every managed service/host logs an initial
+  `process.memory.sample`, then a periodic sample with RSS, heap, V8 heap limit,
+  external memory, and uptime. `process.memory.pressure` warnings are emitted
+  as heap usage crosses 75%, 85%, 90%, and 95% of the V8 limit, with hysteresis
+  to avoid warning spam. The monitor is stopped during normal and failed-startup
+  shutdown.
 
 Pairs with `createDaemonServer()` from `@kb-labs/shared-http`, which owns the
 HTTP-layer boilerplate (Fastify, request correlation, observability routes).

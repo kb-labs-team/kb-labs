@@ -11,11 +11,12 @@
 import { randomUUID } from 'node:crypto';
 import type { IEventBus, EventHandler, Unsubscribe } from '@kb-labs/core-platform/adapters';
 import type { ITransport } from '../transport/transport.js';
-import { isEventBusPush, serialize, deserialize } from '@kb-labs/core-platform/serializable';
+import { isEventBusPush, isEventBusSubscribed, serialize, deserialize } from '@kb-labs/core-platform/serializable';
 import { IPC_PROTOCOL_VERSION } from '@kb-labs/core-platform/serializable';
 
 export class EventBusProxy implements IEventBus {
   private handlers = new Map<string, { topic: string; handler: EventHandler<unknown> }>();
+  private subscriptionWaiters = new Map<string, { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private unregisterPush: () => void;
 
   constructor(private readonly transport: ITransport) {
@@ -43,20 +44,44 @@ export class EventBusProxy implements IEventBus {
 
     this.handlers.set(subscriptionId, { topic, handler: handler as EventHandler<unknown> });
 
+    let resolveReady!: () => void;
+    let rejectReady!: (error: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    // Existing consumers may ignore readiness; mark rejections handled while
+    // preserving rejection for callers that explicitly await `unsubscribe.ready`.
+    void ready.catch(() => undefined);
+    const timer = setTimeout(() => {
+      this.subscriptionWaiters.delete(subscriptionId);
+      rejectReady(new Error(`EventBus subscription acknowledgement timed out for ${topic}`));
+    }, 10_000);
+    timer.unref?.();
+    this.subscriptionWaiters.set(subscriptionId, { resolve: resolveReady, reject: rejectReady, timer });
+
     this.transport.sendMessage({
       type: 'eventbus:subscribe',
       subscriptionId,
       topic,
     });
 
-    return () => {
+    const unsubscribe = (() => {
       if (!this.handlers.has(subscriptionId)) { return; }
       this.handlers.delete(subscriptionId);
+      const waiter = this.subscriptionWaiters.get(subscriptionId);
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        this.subscriptionWaiters.delete(subscriptionId);
+        waiter.resolve();
+      }
       this.transport.sendMessage({
         type: 'eventbus:unsubscribe',
         subscriptionId,
       });
-    };
+    }) as Unsubscribe;
+    unsubscribe.ready = ready;
+    return unsubscribe;
   }
 
   dispose(): void {
@@ -65,6 +90,15 @@ export class EventBusProxy implements IEventBus {
   }
 
   private handlePush(msg: unknown): void {
+    if (isEventBusSubscribed(msg)) {
+      const waiter = this.subscriptionWaiters.get(msg.subscriptionId);
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        this.subscriptionWaiters.delete(msg.subscriptionId);
+        waiter.resolve();
+      }
+      return;
+    }
     if (!isEventBusPush(msg)) { return; }
     const entry = this.handlers.get(msg.subscriptionId);
     if (!entry) { return; }

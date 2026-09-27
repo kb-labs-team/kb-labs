@@ -67,7 +67,7 @@ export async function startDaemon(): Promise<void> {
   try {
     raw = await readFile(AGENT_CONFIG_PATH, 'utf-8');
   } catch {
-    throw new Error(`Agent config not found at ${AGENT_CONFIG_PATH}. Run 'kb agent register' first.`);
+    throw new Error(`Agent config not found at ${AGENT_CONFIG_PATH}. Run 'kb workspace register' first.`);
   }
   let parsed: unknown;
   try {

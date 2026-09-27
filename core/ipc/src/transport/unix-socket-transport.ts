@@ -252,9 +252,13 @@ export class UnixSocketTransport implements ITransport {
   }
 
   sendMessage(msg: unknown): void {
-    // Unix socket transport: serialize and write as a JSON line to the socket.
-    // Push messages are not yet supported over Unix sockets; ignore silently.
-    void msg;
+    if (this.closed) { return; }
+    const send = () => {
+      if (!this.socket || this.socket.destroyed) { return; }
+      this.socket.write(`${JSON.stringify(msg)}\n`, 'utf8');
+    };
+    if (this.socket && !this.socket.destroyed) { send(); }
+    else { void this.connect().then(send).catch(() => undefined); }
   }
 
   onPushMessage(_handler: (msg: unknown) => void): () => void {

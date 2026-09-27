@@ -89,6 +89,13 @@ export function createDefaultTurnInterpreter(): TurnInterpreter {
         return null;
       }
 
+      // Most turns are ordinary follow-ups. Avoid a serial classifier call for
+      // them; reserve the LLM interpreter for messages that look like durable
+      // corrections or instructions.
+      if (!looksLikePersistentInstruction(normalized)) {
+        return interpretHeuristic(input);
+      }
+
       const llmInterpretation = await interpretWithLLM(input);
       if (llmInterpretation) {
         return llmInterpretation;
@@ -97,6 +104,10 @@ export function createDefaultTurnInterpreter(): TurnInterpreter {
       return interpretHeuristic(input);
     },
   };
+}
+
+function looksLikePersistentInstruction(message: string): boolean {
+  return /\b(correction|correct|actually|instead|from now on|don't|dont|do not|only answer|remember|forget)\b|теперь|только|я имел в виду|не это|запомни|забудь|корректировк/i.test(message);
 }
 
 async function interpretWithLLM(input: InterpreterInput): Promise<TurnInterpretation | null> {

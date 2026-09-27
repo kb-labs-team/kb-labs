@@ -12,7 +12,10 @@ import type {
 } from "@kb-labs/plugin-contracts";
 import { wrapCliResult } from "@kb-labs/plugin-runtime";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
-import type { ExecutionRequest } from "@kb-labs/plugin-execution-factory";
+import type {
+  ExecutionRequest,
+  OnLogCallback,
+} from "@kb-labs/plugin-execution-factory";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -101,6 +104,12 @@ export interface ExecuteCommandV3Options {
    */
   signal?: AbortSignal;
 
+  /** Worker stdout/stderr callback, when the caller needs command output. */
+  onLog?: OnLogCallback;
+
+  /** Structured plugin logger callback, when the caller needs command output. */
+  onLoggerLog?: OnLogCallback;
+
   /**
    * Development mode (runs in-process for easier debugging)
    */
@@ -125,6 +134,9 @@ export interface ExecuteCommandV3Options {
    * Config section identifier from manifest (for useConfig auto-detection)
    */
   configSection?: string;
+
+  /** Sanitized, non-secret LLM routing metadata for sandbox workers. */
+  llmRouting?: PluginContextDescriptor["llmRouting"];
 }
 
 /**
@@ -163,10 +175,13 @@ export async function executeCommandV3(
     ui,
     platform: _platform,
     signal,
+    onLog,
+    onLoggerLog,
     devMode: _devMode = false,
     socketPath: _socketPath,
     quotas,
     configSection,
+    llmRouting,
   } = options;
 
   // Create plugin context descriptor
@@ -185,6 +200,7 @@ export async function executeCommandV3(
     hostContext: { host: "cli", argv, flags },
     requestId,
     configSection,
+    llmRouting,
   };
   Object.assign(descriptor as unknown as Record<string, unknown>, {
     traceId,
@@ -225,6 +241,8 @@ export async function executeCommandV3(
     const result =
       await options.platformContainer.executionBackend.execute(request, {
         signal,
+        onLog,
+        onLoggerLog,
       });
 
     // Handle execution result

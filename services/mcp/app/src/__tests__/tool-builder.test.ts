@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ManifestV3, CliCommandDecl } from '@kb-labs/plugin-contracts';
 import type { RegistrySnapshotManifestEntry } from '@kb-labs/core-registry';
-import { filterTools, validateManifests } from '../mcp/tool-builder.js';
+import { filterTools, toMcpToolDescriptor, validateManifests } from '../mcp/tool-builder.js';
 import type { Permits } from '../mcp/authz.js';
 
 const allow: Permits = () => true;
@@ -130,6 +130,31 @@ describe('filterTools', () => {
     const tools = filterTools({ manifests: [entry('notifier-test', [malformed, good])] }, allow);
     expect(tools).toHaveLength(1);
     expect(tools[0]!.name).toBe('notifier-test__mind_search');
+  });
+});
+
+describe('toMcpToolDescriptor', () => {
+  it('projects declared operation effects into advisory MCP annotations', () => {
+    const [read, analyze, mutate, execute, unknown] = filterTools({ manifests: [
+      entry('effects', [
+        cmd('read', 'read'), cmd('analyze', 'analyze'), cmd('mutate', 'mutate'),
+        cmd('execute', 'execute'), cmd('unknown', undefined),
+      ]),
+    ] }, allow);
+
+    expect(toMcpToolDescriptor(read!).annotations).toEqual({
+      readOnlyHint: true, destructiveHint: false, openWorldHint: false,
+    });
+    expect(toMcpToolDescriptor(analyze!).annotations.readOnlyHint).toBe(true);
+    expect(toMcpToolDescriptor(mutate!).annotations).toMatchObject({
+      readOnlyHint: false, destructiveHint: true, openWorldHint: false,
+    });
+    expect(toMcpToolDescriptor(execute!).annotations).toMatchObject({
+      readOnlyHint: false, destructiveHint: true, openWorldHint: true,
+    });
+    expect(toMcpToolDescriptor(unknown!).annotations).toMatchObject({
+      readOnlyHint: false, destructiveHint: true, openWorldHint: true,
+    });
   });
 });
 

@@ -61,10 +61,25 @@ export type {
 export type {
   LLMTier,
   LLMCapability,
+  LLMCapabilityCategory,
+  LLMCapabilityDefinition,
+  LLMModelEntry,
+  LLMTierMapping,
+  LLMRouterMetadata,
+  LLMContent,
+  LLMContentPart,
   UseLLMOptions,
   LLMResolution,
   LLMAdapterBinding,
   ILLMRouter,
+} from "./llm-types.js";
+export { getLLMRouterMetadata } from './llm-router-metadata.js';
+export {
+  LLM_CAPABILITIES,
+  LLM_CONTRACT,
+  LLMContentValidationError,
+  validateLLMContent,
+  getLLMContentText,
 } from "./llm-types.js";
 export { TIER_ORDER, isTierHigher, isTierLower } from "./llm-types.js";
 

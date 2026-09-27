@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@kb-labs/agent-contracts": "workspace:*",
+    "@kb-labs/agent-harnesses": "workspace:*",
     "@kb-labs/agent-history": "workspace:*",
     "@kb-labs/agent-kernel": "workspace:*",
     "@kb-labs/agent-runtime": "workspace:*",
@@ -42,6 +43,7 @@
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
+    "@kb-labs/shared-testing-e2e": "workspace:*",
     "@kb-labs/shared-testing": "workspace:*",
     "@types/node": "^24.3.3",
     "eslint": "^9",

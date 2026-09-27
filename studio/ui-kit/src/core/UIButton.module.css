@@ -14,15 +14,13 @@
 }
 
 /*
- * CRITICAL: SVG icon color inheritance
+ * SVG icon color inheritance
  *
- * Force all SVG icons to inherit button text color automatically
- * Works for lucide-react, heroicons, and any other icon libraries
+ * Preserve each icon library's own fill/stroke drawing model (Lucide uses
+ * strokes, while Ant Design icons use filled paths) and only inherit color.
  */
 .uiButton svg {
   color: inherit !important;
-  stroke: currentColor !important;
-  fill: currentColor !important;
 }
 
 /*

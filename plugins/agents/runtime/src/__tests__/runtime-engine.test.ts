@@ -282,6 +282,23 @@ describe('RuntimeEngine', () => {
   it('can resolve direct file recall from persisted tool evidence without rereading files', async () => {
     const workingDir = await createTempDir();
     const sdk = new AgentSDK();
+    let requirementSelections = 0;
+    sdk.registerResponseRequirementsSelector({
+      id: 'count-response-requirements',
+      select() {
+        requirementSelections += 1;
+        return {
+          requirements: {
+            allowsMemoryOnlyRecall: true,
+            needsDirectToolEvidence: true,
+            needsFileBackedClaims: false,
+            allowsInference: false,
+            maxUnsupportedClaims: 0,
+          },
+          rationale: 'Use recorded evidence.',
+        };
+      },
+    });
     sdk.registerTurnInterpreter({
       id: 'recall-interpreter',
       supports() {
@@ -350,6 +367,8 @@ describe('RuntimeEngine', () => {
     const directAnswer = await runtime.tryResolveDirectAnswer([]);
     expect(directAnswer?.answer).toContain('plugins/kb-labs-agents/packages/agent-runtime/src/index.ts');
     expect(directAnswer?.filesRead).toEqual(['plugins/kb-labs-agents/packages/agent-runtime/src/index.ts']);
+    await runtime.projectPrompt([]);
+    expect(requirementSelections).toBe(1);
   });
 
   it('supports custom session recall resolvers via the SDK extension surface', async () => {

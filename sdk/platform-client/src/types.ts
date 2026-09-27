@@ -24,6 +24,8 @@ export interface PlatformCallResponse<T = unknown> {
 // ── LLM types ─────────────────────────────────────────────────────────────
 
 export interface LLMOptions {
+  /** Cancel an in-flight provider request (local adapters only). */
+  signal?: AbortSignal;
   model?: string;
   temperature?: number;
   maxTokens?: number;

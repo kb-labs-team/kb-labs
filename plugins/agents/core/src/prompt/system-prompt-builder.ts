@@ -13,10 +13,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { AgentMemory } from '@kb-labs/agent-contracts';
+import { EXTERNAL_HARNESS_IDS } from '@kb-labs/agent-contracts';
 import type { WorkspaceDiscoveryResult } from '../execution/workspace-discovery.js';
 
 const MAX_INSTRUCTIONS_CHARS = 4_000; // reduced from 12K — AGENTS.md was 6.5K
-const INSTRUCTION_FILE_NAMES = ['AGENT.md', 'KB_AGENT.md', '.agent.md', 'CLAUDE.md'];
+const INSTRUCTION_FILE_NAMES = ['AGENTS.md', 'AGENT.md', 'KB_AGENT.md', '.agent.md', 'CLAUDE.md'];
 
 export interface SystemPromptInput {
   workingDir: string;
@@ -126,6 +127,7 @@ function buildSessionContext(input: SystemPromptInput): string {
 - **task_submit** — start a sub-agent in background. Returns task ID immediately.
 - **task_status** — check progress without blocking.
 - **task_collect** — wait for task to complete and get result.
+task_submit may optionally target an installed local harness (${EXTERNAL_HARNESS_IDS.join(' or ')}); omit it for a KB-native sub-agent. Decide whether to delegate and which target to use from the user's request, project instructions, and task needs. Do not force external harness use when not useful.
 For complex multi-part tasks, delegate independent subtasks to run concurrently.`);
   }
 

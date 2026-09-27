@@ -209,6 +209,19 @@ export function createFsReadTool(context: ToolContext): Tool {
         ? `Next chunk: fs_read(path="${filePath}", offset=${endIndex + 1})`
         : '';
 
+      context.runEvidence?.push({
+        id: `ev-${Date.now()}-fs_read`,
+        summary: rawOutput.slice(0, 1_600),
+        source: 'fs_read',
+        createdAt: new Date().toISOString(),
+        toolName: 'fs_read',
+        toolInputSummary: filePath,
+        filePaths: [filePath],
+      });
+      if (context.runEvidence && context.runEvidence.length > 8) {
+        context.runEvidence.splice(0, context.runEvidence.length - 8);
+      }
+
       // Register this file as read so fs_patch / fs_edit can edit it.
       // We update context directly here — this is the single authoritative place
       // to mark a file as "seen", regardless of whether the read was partial or full.
@@ -304,6 +317,7 @@ HOW TO FIX: Split the content into smaller files, or write in chunks.`,
 
       // Write file
       fs.writeFileSync(fullPath, content, 'utf-8');
+      context.filesWritten?.add(filePath);
 
       // Update read state so subsequent edits don't require a separate read
       const writeHash = computeHash(content);
@@ -472,6 +486,7 @@ export function createFsPatchTool(context: ToolContext): Tool {
 
       // Write updated content
       fs.writeFileSync(fullPath, patchedContent, 'utf-8');
+      context.filesWritten?.add(filePath);
 
       // Update read state so subsequent edits don't require re-read.
       // Mirrors Claude Code pattern: readFileState.set() after every edit.
@@ -660,6 +675,7 @@ export function createFsReplaceTool(context: ToolContext): Tool {
 
       // ── Write file ──
       fs.writeFileSync(fullPath, updatedContent, 'utf-8');
+      context.filesWritten?.add(filePath);
 
       // ── Update read state for chained edits ──
       const newHash = computeHash(updatedContent);

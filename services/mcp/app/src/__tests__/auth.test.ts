@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { AuthService } from '@kb-labs/gateway-auth';
 import type { ICache } from '@kb-labs/core-platform';
 import type { AuthContext } from '@kb-labs/gateway-contracts';
-import { extractBearer, loadJwtConfig, resolveAuthContext } from '../mcp/auth.js';
+import { extractBearer, loadJwtConfig, resolveAuthContext, resolveMcpCallerContext } from '../mcp/auth.js';
+import { issueAgentLease } from '../mcp/agent-leases.js';
 
 const mockCache = {} as ICache;
 const cfg = { secret: 'test-secret' };
@@ -94,5 +95,32 @@ describe('resolveAuthContext', () => {
   it('returns null when the token is invalid', async () => {
     vi.spyOn(AuthService.prototype, 'verify').mockResolvedValue(null);
     expect(await resolveAuthContext('Bearer bad', mockCache, cfg)).toBeNull();
+  });
+});
+
+describe('resolveMcpCallerContext', () => {
+  it('resolves a lease bearer to its inherited user identity and scope', async () => {
+    vi.spyOn(AuthService.prototype, 'verify').mockResolvedValue(null);
+    const store = new Map<string, unknown>();
+    const cache = {
+      get: async (key: string) => store.get(key) ?? null,
+      set: async (key: string, value: unknown) => { store.set(key, value); },
+      delete: async (key: string) => { store.delete(key); },
+    } as unknown as ICache;
+    const identity = {
+      type: 'user', userId: 'user-1', namespaceId: 'team-1', tier: 'pro', permissions: [],
+    } as AuthContext;
+    const issued = await issueAgentLease(cache, {
+      executionId: 'child-1', identity, allowedTools: ['workspace__status'],
+    });
+
+    const caller = await resolveMcpCallerContext(`Bearer ${issued.token}`, cache, cfg);
+    expect(caller).toEqual({ auth: identity, lease: issued.record });
+  });
+
+  it('does not resolve an unknown opaque bearer as an authenticated caller', async () => {
+    vi.spyOn(AuthService.prototype, 'verify').mockResolvedValue(null);
+    const cache = { get: async () => null, delete: async () => {} } as unknown as ICache;
+    expect(await resolveMcpCallerContext('Bearer unknown-lease', cache, cfg)).toBeNull();
   });
 });

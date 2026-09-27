@@ -4,6 +4,7 @@ import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { ManifestV3, CliCommandDecl } from '@kb-labs/plugin-contracts';
 import type { Permits } from '../mcp/authz.js';
+import type { AgentLeaseRecord } from '../mcp/agent-leases.js';
 import type { McpTool } from '../mcp/tool-builder.js';
 import { callOutput } from '../mcp/output-capture.js';
 
@@ -131,6 +132,15 @@ describe('resolveVisibleTools', () => {
     expect(tools.map((t) => t.name)).toEqual(['mind__mind_search']);
   });
 
+  it('filters a lease listing to its explicit tool allowlist', async () => {
+    const registry = makeRegistry([cmd('mind search', 'read'), cmd('mind deploy', 'execute')]);
+    const lease = {
+      allowedTools: ['mind__mind_search'], inputEquals: {}, expiresAt: Date.now() + 60_000,
+    } as unknown as AgentLeaseRecord;
+    const tools = await resolveVisibleTools({ permits: allow, lease, authHeader: 'Bearer lease', registry, cache });
+    expect(tools.map((item) => item.name)).toEqual(['mind__mind_search']);
+  });
+
   it('returns the cached list on a hit without re-reading the registry', async () => {
     const registry = makeRegistry([cmd('mind search', 'read')]);
     const key = toolsCacheKey('Bearer t');
@@ -198,6 +208,32 @@ describe('executeToolCall', () => {
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('Not authorized');
+    expect(executeCommandV3).not.toHaveBeenCalled();
+  });
+
+  it('blocks a visible tool when the lease resource constraint does not match', async () => {
+    const lease = {
+      allowedTools: [tool.name], inputEquals: { [tool.name]: { server: 'staging' } },
+      expiresAt: Date.now() + 60_000,
+    } as unknown as AgentLeaseRecord;
+    const result = await executeToolCall({
+      name: tool.name, args: { server: 'production' }, visibleTools: [tool], permits: allow,
+      lease, tenantId: 't1', resolvePlatform,
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('Not authorized by agent lease');
+    expect(executeCommandV3).not.toHaveBeenCalled();
+  });
+
+  it('blocks an expired lease even if the MCP listing still contains the tool', async () => {
+    const lease = {
+      allowedTools: [tool.name], inputEquals: {}, expiresAt: Date.now() - 1,
+    } as AgentLeaseRecord;
+    const result = await executeToolCall({
+      name: tool.name, args: {}, visibleTools: [tool], permits: allow,
+      lease, tenantId: 't1', resolvePlatform,
+    });
+    expect(result.isError).toBe(true);
     expect(executeCommandV3).not.toHaveBeenCalled();
   });
 

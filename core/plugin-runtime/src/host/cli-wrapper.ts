@@ -66,7 +66,10 @@ export function wrapCliResult<T>(
   // Case 1: Handler returned CommandResult
   if (isCommandResult<T>(data)) {
     const ok = data.ok;
-    const exitCode = ok ? 0 : 1;
+    const isTimeout = !ok
+      && typeof data.error === 'object'
+      && data.error.code === 'TIMEOUT';
+    const exitCode = ok ? 0 : isTimeout ? 124 : 1;
     const mergedMeta: StandardMeta & Record<string, unknown> = {
       ...data.meta,
       ...standardMeta,

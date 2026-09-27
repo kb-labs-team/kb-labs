@@ -8,6 +8,7 @@ import { SessionManager, SpecModeHandler, createSessionMemoryBridge } from '@kb-
 import { createDefaultResponseRequirementsSelector } from '@kb-labs/agent-runtime';
 import { IncrementalTraceWriter, resolveTraceDir } from '@kb-labs/agent-tracing';
 import { createToolRegistry } from '@kb-labs/agent-tools';
+import { getAgentsSessionEventTopic } from '@kb-labs/agent-contracts';
 import type {
   AgentEvent,
   DetailedTraceEntry,
@@ -84,6 +85,7 @@ export default defineHandler({
         workingDir,
         currentTask: `Generate spec for plan ${plan.id}`,
         sessionId,
+        filesWritten: new Set<string>(),
         sessionMemory,
         responseRequirementsResolver: async ({ task, kernel }: {
           task?: string;
@@ -98,15 +100,33 @@ export default defineHandler({
       });
 
       const specPromise = (async () => {
+        let sessionEventQueue: Promise<void> = Promise.resolve();
         const configOnEvent = (event: AgentEvent) => {
           traceWriter.trace(event as unknown as DetailedTraceEntry);
           // Persist first, broadcast only once confirmed — see run-handler.ts's onEvent for why.
-          void sessionManager.addEvent(sessionId, {
-            ...event,
-            sessionId,
-            runId,
-          } as unknown as AgentEvent).then((deltas) => {
-            RunManager.broadcastSessionDeltas(sessionId, deltas);
+          sessionEventQueue = sessionEventQueue.then(async () => {
+            const deltas = await sessionManager.addEvent(sessionId, {
+              ...event,
+              sessionId,
+              runId,
+            } as unknown as AgentEvent);
+            if (deltas.length > 0) {
+              await ctx.platform.eventBus.publish(getAgentsSessionEventTopic(sessionId), {
+                kind: 'deltas',
+                deltas,
+              });
+            } else {
+              await ctx.platform.eventBus.publish(getAgentsSessionEventTopic(sessionId), {
+                kind: 'cursor',
+                seq: await sessionManager.getCurrentSessionSeq(sessionId),
+              });
+            }
+          }).catch((error: unknown) => {
+            ctx.platform.logger.error('[generate-spec-handler] Failed to persist or broadcast session event', error instanceof Error ? error : new Error(String(error)), {
+              event: 'agent.session.event_failed',
+              sessionId,
+              runId,
+            });
           });
         };
 
@@ -121,21 +141,30 @@ export default defineHandler({
             temperature: 0.1,
             onEvent: configOnEvent,
           }, toolRegistry);
+          await sessionEventQueue;
           await RunManager.updateStatus(runId, result.success ? 'completed' : 'failed', {
             completedAt: new Date().toISOString(),
             summary: result.summary,
             error: result.success ? undefined : result.summary,
           });
           const seq = await sessionManager.getCurrentSessionSeq(sessionId);
-          RunManager.broadcastRunCompleted(sessionId, {
-            runId,
-            success: result.success,
-            summary: result.summary,
-            durationMs: Date.now() - specStartTime,
-            seq,
-          });
+          try {
+            await ctx.platform.eventBus.publish(getAgentsSessionEventTopic(sessionId), {
+              kind: 'run:completed',
+              runId,
+              success: result.success,
+              summary: result.summary,
+              durationMs: Date.now() - specStartTime,
+              seq,
+            });
+          } catch (publishError) {
+            ctx.platform.logger.error('[generate-spec-handler] Failed to publish run completion', publishError instanceof Error ? publishError : new Error(String(publishError)), {
+              event: 'agent.session.event_failed', sessionId, runId, eventKind: 'run:completed',
+            });
+          }
           return result;
         } catch (error) {
+          await sessionEventQueue;
           const message = error instanceof Error ? error.message : String(error);
           await RunManager.updateStatus(runId, 'failed', {
             completedAt: new Date().toISOString(),
@@ -143,13 +172,20 @@ export default defineHandler({
             error: message,
           });
           const seq = await sessionManager.getCurrentSessionSeq(sessionId);
-          RunManager.broadcastRunCompleted(sessionId, {
-            runId,
-            success: false,
-            summary: message,
-            durationMs: Date.now() - specStartTime,
-            seq,
-          });
+          try {
+            await ctx.platform.eventBus.publish(getAgentsSessionEventTopic(sessionId), {
+              kind: 'run:completed',
+              runId,
+              success: false,
+              summary: message,
+              durationMs: Date.now() - specStartTime,
+              seq,
+            });
+          } catch (publishError) {
+            ctx.platform.logger.error('[generate-spec-handler] Failed to publish run failure', publishError instanceof Error ? publishError : new Error(String(publishError)), {
+              event: 'agent.session.event_failed', sessionId, runId, eventKind: 'run:completed',
+            });
+          }
           throw error;
         } finally {
           const detailedTrace = traceWriter.getEntries() as unknown as Array<Record<string, unknown>>;

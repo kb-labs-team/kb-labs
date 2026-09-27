@@ -145,6 +145,17 @@ describe('turn-reducer — setTurn / advanceSeq', () => {
     expect(advanceSeq(state, 15).lastSeq).toBe(15);
     expect(advanceSeq(state, 3)).toBe(state); // no-op, same reference
   });
+
+  it('cursor-only session events keep the next turn delta contiguous', () => {
+    const initial = createInitialState();
+    const afterCursor = advanceSeq(initial, 4);
+    const result = applyDelta(afterCursor, {
+      kind: 'turn:created', seq: 5, turn: assistantTurn(),
+    });
+
+    expect(result.status).toBe('applied');
+    expect(result.state.lastSeq).toBe(5);
+  });
 });
 
 describe('turn-reducer — reconcileOptimistic', () => {

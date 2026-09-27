@@ -17,6 +17,7 @@ import {
   compactKernelState,
   completePendingActions,
   createKernelState,
+  createDefaultPromptContextSelection,
   ingestUserTurn,
   isCorrectionPendingAction,
   projectKernelPrompt,
@@ -43,6 +44,8 @@ import { createDefaultTurnInterpreter } from './default-turn-interpreter.js';
 
 export { createDefaultResponseRequirementsSelector } from './default-response-requirements-selector.js';
 export { resolveRuntimeMode, resolveRuntimeProfile } from './profiles.js';
+export { AgentAttachmentError, prepareAgentAttachments } from './input-attachments.js';
+export type { PreparedAgentAttachments } from './input-attachments.js';
 
 export interface RunCompletionResult {
   persisted: boolean;
@@ -61,6 +64,9 @@ export class RuntimeEngine {
   private activeToolCapabilities: ToolCapability[] = [];
   private readonly pendingToolInputs = new Map<string, { toolName: string; input: Record<string, unknown> }>();
   private lastResponseRequirements: RuntimeResponseRequirements | null = null;
+  private lastResponseRequirementsTask: string | null = null;
+  private hasPriorSessionContext = false;
+  private activeTask = '';
 
   constructor(
     private readonly sdk: AgentSDK,
@@ -73,7 +79,9 @@ export class RuntimeEngine {
     mode?: AgentMode;
     task: string;
   }): Promise<KernelState> {
+    this.activeTask = input.task;
     const existing = await this.store.loadKernelState(input.sessionId);
+    this.hasPriorSessionContext = Boolean(existing);
     const runtimeMode = resolveRuntimeMode(input.mode);
     const state = existing ?? createKernelState({
       sessionId: input.sessionId,
@@ -150,9 +158,19 @@ export class RuntimeEngine {
     if (!this.kernel) {
       return null;
     }
-    const task = getCurrentTaskForMessages(this.kernel, messages);
+    const hasCustomRecallResolver = Boolean(
+      this.sdk.sessionRecallResolvers.length
+      || this.activeProfile?.sessionRecallResolvers?.length,
+    );
+    // A fresh session has no previous-run evidence to answer from. In
+    // particular, don't make a hidden LLM classification call before the
+    // agent's first visible response.
+    if (!this.hasPriorSessionContext && !hasCustomRecallResolver) {
+      return null;
+    }
+    const task = getCurrentTaskForMessages(this.kernel, messages) || this.activeTask;
     const toolRecords = await this.store.loadToolRecords(this.kernel.sessionId, 300);
-    const requirements = await this.selectResponseRequirements(this.kernel, messages);
+    const requirements = await this.selectResponseRequirements(this.kernel, messages, true, task);
     const resolvers = [
       ...(this.activeProfile?.sessionRecallResolvers ?? []),
       ...this.sdk.sessionRecallResolvers,
@@ -181,8 +199,20 @@ export class RuntimeEngine {
     if (!this.kernel) {
       return '';
     }
-    const responseRequirements = await this.selectResponseRequirements(this.kernel, messages);
-    const selection = await this.selectPromptContext(this.kernel, messages, responseRequirements);
+    const hasPromptMemory = this.hasPriorSessionContext && hasSelectablePromptMemory(this.kernel);
+    const hasCustomRequirements = Boolean(
+      this.activeProfile?.responseRequirementsSelectors?.length
+      || this.sdk.responseRequirementsSelectors.length,
+    );
+    const responseRequirements = hasPromptMemory || hasCustomRequirements
+      ? await this.selectResponseRequirements(this.kernel, messages, hasPromptMemory, this.activeTask)
+      : null;
+    const selection = await this.selectPromptContext(
+      this.kernel,
+      messages,
+      responseRequirements ?? undefined,
+      hasPromptMemory,
+    );
     const promptProjectors = [
       createRepositoryContextProjector(),
       ...(this.activeProfile?.promptProjectors ?? []),
@@ -419,11 +449,12 @@ export class RuntimeEngine {
     state: KernelState,
     messages: LLMMessage[],
     responseRequirements?: RuntimeResponseRequirements,
+    includeDefaultSelector = true,
   ): Promise<PromptContextSelection> {
     const selectors = [
       ...(this.activeProfile?.promptContextSelectors ?? []),
       ...this.sdk.promptContextSelectors,
-      createDefaultPromptContextSelector(),
+      ...(includeDefaultSelector ? [createDefaultPromptContextSelector()] : []),
     ];
     let selected: PromptContextSelection | null = null;
     for (const selector of selectors) {
@@ -432,21 +463,23 @@ export class RuntimeEngine {
         selected = result;
       }
     }
-    if (!selected) {
-      throw new Error('Prompt context selection failed to produce a result');
-    }
-    return selected;
+    return selected ?? createDefaultPromptContextSelection(state);
   }
 
   private async selectResponseRequirements(
     state: KernelState,
     messages: LLMMessage[],
+    includeDefaultSelector = true,
+    taskOverride?: string,
   ): Promise<RuntimeResponseRequirements> {
-    const task = getCurrentTaskForMessages(state, messages);
+    const task = taskOverride ?? getCurrentTaskForMessages(state, messages);
+    if (includeDefaultSelector && this.lastResponseRequirementsTask === task && this.lastResponseRequirements) {
+      return this.lastResponseRequirements;
+    }
     const selectors = [
       ...(this.activeProfile?.responseRequirementsSelectors ?? []),
       ...this.sdk.responseRequirementsSelectors,
-      createDefaultResponseRequirementsSelector(),
+      ...(includeDefaultSelector ? [createDefaultResponseRequirementsSelector()] : []),
     ];
     let selected: RuntimeResponseRequirements | null = null;
     for (const selector of selectors) {
@@ -455,7 +488,10 @@ export class RuntimeEngine {
         selected = result;
       }
     }
-    this.lastResponseRequirements = selected;
+    if (includeDefaultSelector) {
+      this.lastResponseRequirements = selected;
+      this.lastResponseRequirementsTask = task;
+    }
     return selected ?? {
       requirements: {
         allowsMemoryOnlyRecall: true,
@@ -522,6 +558,19 @@ export class RuntimeEngine {
       ? filtered.filter((capability) => allowed.includes(capability))
       : filtered;
   }
+}
+
+function hasSelectablePromptMemory(state: KernelState): boolean {
+  return Boolean(
+    state.rollup?.summary
+    || state.memory.latestSummary
+    || state.memory.corrections.length
+    || state.memory.decisions.length
+    || state.memory.evidence.length
+    || state.memory.pendingActions.length
+    || state.memory.openQuestions.length
+    || state.childResults.length,
+  );
 }
 
 function normalizeInterpretationPersistence(

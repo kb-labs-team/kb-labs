@@ -7,6 +7,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { platform } from '@kb-labs/core-runtime';
+import { getLLMContentText } from '@kb-labs/core-platform';
 import type {
   ILLM,
   ILogger,
@@ -185,7 +186,8 @@ async function handleCompletionRequest(
   }
 
   // No tools — use simple complete()
-  const systemPrompt = messages.find((m) => m.role === 'system')?.content;
+  const systemPromptContent = messages.find((m) => m.role === 'system')?.content;
+  const systemPrompt = systemPromptContent == null ? undefined : getLLMContentText(systemPromptContent);
   const userMessages = messages.filter((m) => m.role !== 'system');
   const prompt = userMessages.map((m) => m.content).join('\n\n');
 

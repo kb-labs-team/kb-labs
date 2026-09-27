@@ -24,7 +24,7 @@
 // ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
 
-export { AdapterUnavailableError } from "./errors.js";
+export { AdapterUnavailableError, LLMCapabilityNotSupportedError } from "./errors.js";
 export * from "./error-envelope/index.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -83,17 +83,34 @@ export type {
   LLMToolCallResponse,
   LLMRequestMetadata,
 } from "./adapters/llm.js";
+export { getLLMRouterMetadata } from './adapters/llm-router-metadata.js';
 
 // LLM Types (tiers, capabilities, routing)
 export type {
   LLMTier,
   LLMCapability,
+  LLMCapabilityCategory,
+  LLMCapabilityDefinition,
+  LLMModelEntry,
+  LLMTierMapping,
+  LLMRouterMetadata,
+  LLMContent,
+  LLMContentPart,
   UseLLMOptions,
   LLMResolution,
   LLMAdapterBinding,
   ILLMRouter,
 } from "./adapters/llm-types.js";
-export { TIER_ORDER, isTierHigher, isTierLower } from "./adapters/llm-types.js";
+export {
+  LLM_CAPABILITIES,
+  LLM_CONTRACT,
+  LLMContentValidationError,
+  validateLLMContent,
+  getLLMContentText,
+  TIER_ORDER,
+  isTierHigher,
+  isTierLower,
+} from "./adapters/llm-types.js";
 
 // PII wrapper
 export {

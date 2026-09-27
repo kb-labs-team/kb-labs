@@ -75,7 +75,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "ulid": "^2.3.0"
+    "ulid": "^2.3.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

@@ -18,7 +18,7 @@
  *   const llm = useLLM({ tier: 'large' });   // Complex tasks
  *
  *   // Request capabilities
- *   const llm = useLLM({ tier: 'medium', capabilities: ['coding'] });
+ *   const llm = useLLM({ tier: 'medium', capabilities: ['code'] });
  *
  *   if (llm) {
  *     const result = await llm.complete('Explain this code');
@@ -43,7 +43,9 @@ import type {
   LLMExecutionPolicy,
   LLMProtocolCapabilities,
   LLMCacheDecisionTrace,
+  LLMCapability,
 } from '@kb-labs/core-platform';
+import { LLMContentValidationError, validateLLMContent } from '@kb-labs/core-platform';
 
 /**
  * Access global LLM adapter with tier-based selection.
@@ -72,7 +74,7 @@ import type {
  * const llm = useLLM({ tier: 'large' });   // Complex tasks
  *
  * // Request capabilities
- * const llm = useLLM({ tier: 'medium', capabilities: ['coding'] });
+ * const llm = useLLM({ tier: 'medium', capabilities: ['code'] });
  * const llm = useLLM({ capabilities: ['vision'] });
  *
  * if (llm) {
@@ -104,18 +106,22 @@ export function useLLM(options?: UseLLMOptions): ILLM | undefined {
  * overwritten by useLLM({ tier: 'small' }) from SmartSummarizer.
  */
 class LazyBoundLLM implements ILLM {
-  private _resolved: Promise<LLMAdapterBinding> | null = null;
+  private readonly _resolved = new Map<string, Promise<LLMAdapterBinding>>();
 
   constructor(
     private readonly router: ILLM & ILLMRouter,
     private readonly options: UseLLMOptions,
   ) {}
 
-  private resolve(): Promise<LLMAdapterBinding> {
-    if (!this._resolved) {
-      this._resolved = this.router.resolveAdapter(this.options);
+  private resolve(additionalCapabilities: LLMCapability[] = []): Promise<LLMAdapterBinding> {
+    const capabilities = [...new Set([...(this.options.capabilities ?? []), ...additionalCapabilities])].sort();
+    const key = `${this.options.tier ?? ''}:${capabilities.join(',')}`;
+    let resolved = this._resolved.get(key);
+    if (!resolved) {
+      resolved = this.router.resolveAdapter({ ...this.options, capabilities });
+      this._resolved.set(key, resolved);
     }
-    return this._resolved;
+    return resolved;
   }
 
   private mergeExecutionPolicy(callOptions?: LLMOptions): LLMExecutionPolicy | undefined {
@@ -183,13 +189,13 @@ class LazyBoundLLM implements ILLM {
       return { metadata: { cacheDecisionTrace: trace } };
     }
 
-    return {
+    return preserveAbortSignal(options, {
       ...options,
       metadata: {
         ...options.metadata,
         cacheDecisionTrace: trace,
       },
-    };
+    });
   }
 
   async complete(prompt: string, options?: LLMOptions): Promise<LLMResponse> {
@@ -199,7 +205,7 @@ class LazyBoundLLM implements ILLM {
     this.enforceCachePolicy(caps, execution);
     const trace = this.buildDecisionTrace(caps, execution, 'off');
     const optionsWithTrace = this.withDecisionMetadata(options, trace);
-    return adapter.complete(prompt, { ...optionsWithTrace, model, execution });
+    return adapter.complete(prompt, preserveAbortSignal(optionsWithTrace, { ...optionsWithTrace, model, execution }));
   }
 
   async *stream(prompt: string, options?: LLMOptions): AsyncIterable<string> {
@@ -219,7 +225,10 @@ class LazyBoundLLM implements ILLM {
           : 'STREAM_UNSUPPORTED_FALLBACK_TO_COMPLETE';
       const trace = this.buildDecisionTrace(caps, execution, 'off', 'complete', fallbackReason);
       const optionsWithTrace = this.withDecisionMetadata(options, trace);
-      const response = await adapter.complete(prompt, { ...optionsWithTrace, model, execution });
+      const response = await adapter.complete(
+        prompt,
+        preserveAbortSignal(optionsWithTrace, { ...optionsWithTrace, model, execution }),
+      );
       if (response.content) {
         yield response.content;
       }
@@ -232,14 +241,23 @@ class LazyBoundLLM implements ILLM {
 
     const trace = this.buildDecisionTrace(caps, execution, streamMode);
     const optionsWithTrace = this.withDecisionMetadata(options, trace);
-    yield* adapter.stream(prompt, { ...optionsWithTrace, model, execution });
+    yield* adapter.stream(
+      prompt,
+      preserveAbortSignal(optionsWithTrace, { ...optionsWithTrace, model, execution }),
+    );
   }
 
   async chatWithTools(
     messages: LLMMessage[],
     options: LLMToolCallOptions,
   ): Promise<LLMToolCallResponse> {
-    const { adapter, model, tier } = await this.resolve();
+    const requiredCapabilities = new Set<LLMCapability>();
+    const validatedMessages = messages.map((message) => {
+      const validated = validateLLMContent(message.role, message.content);
+      validated.requiredCapabilities.forEach((capability) => requiredCapabilities.add(capability));
+      return { ...message, content: validated.content };
+    });
+    const { adapter, model, tier } = await this.resolve([...requiredCapabilities]);
     const execution = this.mergeExecutionPolicy(options);
     const caps = await this.resolveProtocolCapabilities(adapter);
     this.enforceCachePolicy(caps, execution);
@@ -248,13 +266,20 @@ class LazyBoundLLM implements ILLM {
     }
     const trace = this.buildDecisionTrace(caps, execution, 'off');
     const optionsWithTrace = this.withDecisionMetadata(options, trace) as LLMToolCallOptions;
-    return adapter.chatWithTools(messages, {
+    return adapter.chatWithTools(validatedMessages, preserveAbortSignal(optionsWithTrace, {
       ...optionsWithTrace,
       model,
       execution,
       metadata: { ...optionsWithTrace.metadata, tier },
-    });
+    }));
   }
+}
+
+function preserveAbortSignal<T extends object>(source: LLMOptions | undefined, target: T): T {
+  if (source?.signal) {
+    Object.defineProperty(target, 'signal', { value: source.signal, enumerable: false });
+  }
+  return target;
 }
 
 /**
@@ -276,6 +301,45 @@ class LazyBoundLLM implements ILLM {
 export function isLLMAvailable(): boolean {
   const llm = useLLM();
   return !!llm;
+}
+
+/**
+ * Check whether an LLM is configured with one model satisfying every
+ * requested capability in the effective tier. Text-only requests need no
+ * capability declaration.
+ */
+export function canUseLLM(options?: UseLLMOptions): boolean {
+  const llm = usePlatform().llm;
+  if (!llm) {
+    return false;
+  }
+  if (!options?.capabilities?.length) {
+    return true;
+  }
+  if (!isLLMRouter(llm) || typeof llm.supportsCapabilities !== 'function') {
+    return false;
+  }
+  return llm.supportsCapabilities(options);
+}
+
+/** Preflight LLM availability and capabilities inferred from message content. */
+export function canUseLLMForMessages(
+  messages: Array<Pick<LLMMessage, 'role' | 'content'>>,
+  options?: UseLLMOptions,
+): boolean {
+  const capabilities = new Set(options?.capabilities ?? []);
+  try {
+    for (const message of messages) {
+      validateLLMContent(message.role, message.content).requiredCapabilities
+        .forEach((capability) => capabilities.add(capability));
+    }
+  } catch (error) {
+    if (error instanceof LLMContentValidationError) {
+      return false;
+    }
+    throw error;
+  }
+  return canUseLLM({ ...options, capabilities: [...capabilities] });
 }
 
 /**
@@ -313,4 +377,19 @@ function isLLMRouter(llm: ILLM): llm is ILLM & ILLMRouter {
 }
 
 // Re-export types for convenience
-export type { LLMTier, UseLLMOptions } from '@kb-labs/core-platform';
+export {
+  LLM_CAPABILITIES,
+  LLM_CONTRACT,
+  LLMContentValidationError,
+  validateLLMContent,
+  getLLMContentText,
+} from '@kb-labs/core-platform';
+export type {
+  LLMTier,
+  LLMCapability,
+  LLMCapabilityCategory,
+  LLMCapabilityDefinition,
+  LLMContent,
+  LLMContentPart,
+  UseLLMOptions,
+} from '@kb-labs/core-platform';

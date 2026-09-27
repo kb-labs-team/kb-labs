@@ -60,6 +60,20 @@ describe('callTool', () => {
     expect(result.output).toContain('hello from uiProvider');
   });
 
+  it('captures worker stdout and structured logger output', async () => {
+    executeCommandV3.mockImplementation(async (options: {
+      onLog?: (entry: { message: string }) => void;
+      onLoggerLog?: (entry: { level: string; message: string }) => void;
+    }) => {
+      options.onLog?.({ message: 'stdout line' });
+      options.onLoggerLog?.({ level: 'info', message: 'logger line' });
+      return 0;
+    });
+    const result = await callTool(tool, {}, 'tenant1', resolvePlatform);
+    expect(result.output).toContain('stdout line');
+    expect(result.output).toContain('[info] logger line');
+  });
+
   it('activates the per-call AsyncLocalStorage context', async () => {
     let storeInsideCall: string[] | undefined;
     executeCommandV3.mockImplementation(async () => {

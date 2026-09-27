@@ -30,7 +30,12 @@ export function actionForOperation(operationType: string | undefined): string {
 }
 
 /** Predicate: may this identity use a command of the given operationType on the given plugin? */
-export type Permits = (operationType: string | undefined, resource: string) => boolean;
+export type Permits = (
+  operationType: string | undefined,
+  resource: string,
+  toolName?: string,
+  input?: Record<string, unknown>,
+) => boolean;
 
 /**
  * Build a permits predicate bound to a resolved policy and identity. This is the

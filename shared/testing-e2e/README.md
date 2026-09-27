@@ -53,3 +53,12 @@ pnpm --filter @kb-labs/shared-testing-e2e test
 ```
 
 The default test suite is hermetic (no kb-dev spawn, no docker). Full boot-cycle tests are gated behind `KB_E2E_BOOT=1` because `state-daemon` depends on `redis` which requires Docker.
+
+## Deep Agents scenarios
+
+Slower end-to-end user scenarios for Agents (real REST/WS flow, long sessions,
+mode and escalation behavior) share one opt-in flag: `KB_AGENTS_E2E_DEEP=1` in
+the workspace `.env`, or the same process environment variable. A process env
+value takes precedence over `.env`. Tests should use
+`isDeepAgentE2EEnabled()` from this package with Vitest's `describe.skipIf` or
+`it.skipIf`; keep deterministic, fast regression tests ungated.

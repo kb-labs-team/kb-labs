@@ -20,7 +20,12 @@ import type {
   SummarizationResultEvent,
   SummarizationLLMCallEvent,
 } from '@kb-labs/agent-contracts';
-import type { LLMMessage, LLMToolCall, LLMToolCallResponse } from '@kb-labs/sdk';
+import { getLLMContentText, type LLMMessage, type LLMToolCall, type LLMToolCallResponse } from '@kb-labs/sdk';
+
+function contentPreview(content: LLMMessage['content'] | undefined): string {
+  const text = content ? getLLMContentText(content) : '';
+  return text.substring(0, 100);
+}
 
 /**
  * Create iteration:detail event
@@ -51,7 +56,7 @@ export function createIterationDetailEvent(params: {
       totalTokens: params.totalTokens,
       conversationSummary: params.messages
         .slice(-2)
-        .map((m) => `${m.role}: ${m.content?.substring(0, 100) || ''}`)
+        .map((m) => `${m.role}: ${contentPreview(m.content)}`)
         .join(' | '),
     },
   };
@@ -295,7 +300,7 @@ export function createErrorCapturedEvent(params: {
       lastToolCall: params.lastToolCall as { name: string; input: Record<string, unknown>; output?: unknown; error?: string } | undefined,
       currentMessages: params.currentMessages.slice(-5).map((m) => ({
         role: (m.role === 'tool' ? 'assistant' : m.role) as 'system' | 'user' | 'assistant',
-        contentPreview: m.content?.substring(0, 100) || '',
+        contentPreview: contentPreview(m.content),
       })),
       memoryState: params.memoryState,
       availableTools: params.availableTools,

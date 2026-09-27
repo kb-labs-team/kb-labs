@@ -25,6 +25,15 @@ function createMockLLM(overrides: Partial<ILLM> = {}): ILLM {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe('PIIRedactionLLM', () => {
+  it('preserves router capability preflight through the wrapper', () => {
+    const supportsCapabilities = vi.fn(() => true);
+    const mockLLM = Object.assign(createMockLLM(), { supportsCapabilities });
+    const wrapper = new PIIRedactionLLM(mockLLM);
+
+    expect(wrapper.supportsCapabilities({ tier: 'small', capabilities: ['vision'] })).toBe(true);
+    expect(supportsCapabilities).toHaveBeenCalledWith({ tier: 'small', capabilities: ['vision'] });
+  });
+
   describe('complete()', () => {
     it('should redact PII from prompt before sending to LLM', async () => {
       const mockLLM = createMockLLM();
@@ -59,6 +68,20 @@ describe('PIIRedactionLLM', () => {
 
       const calledPrompt = (mockLLM.complete as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(calledPrompt).toBe('Hello world');
+    });
+
+    it('preserves a non-enumerable cancellation signal when redacting the system prompt', async () => {
+      const mockLLM = createMockLLM();
+      const wrapper = new PIIRedactionLLM(mockLLM);
+      const controller = new AbortController();
+      const options = { systemPrompt: 'Verify the answer.' };
+      Object.defineProperty(options, 'signal', { value: controller.signal, enumerable: false });
+
+      await wrapper.complete('Check this answer.', options);
+
+      const passedOptions = (mockLLM.complete as ReturnType<typeof vi.fn>).mock.calls[0]![1];
+      expect(passedOptions?.signal).toBe(controller.signal);
+      expect(Object.keys(passedOptions ?? {})).not.toContain('signal');
     });
 
     it('should not restore in one-way mode', async () => {

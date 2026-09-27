@@ -13,13 +13,11 @@
 }
 
 /*
- * SVG icons (lucide-react, custom SVG)
- * Use currentColor to inherit from parent color
+ * SVG icons inherit their color from the wrapper. Leave fill/stroke alone:
+ * icon libraries encode their own drawing style (filled paths vs strokes).
  */
 .uiIcon svg {
   color: currentColor;
-  stroke: currentColor;
-  fill: none; /* Most icon libraries use stroke, not fill */
   display: block; /* Remove inline spacing */
 }
 

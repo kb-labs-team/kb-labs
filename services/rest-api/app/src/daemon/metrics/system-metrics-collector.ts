@@ -9,6 +9,7 @@
 import { platform } from '@kb-labs/core-runtime';
 import * as os from 'node:os';
 import * as process from 'node:process';
+import { getHeapStatistics } from 'node:v8';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { updateRuntimeObservabilityMetrics } from '../../observability/prometheus-registry.js';
 
@@ -46,10 +47,14 @@ export interface SystemMetrics {
     external: number;
     /** Array buffers (bytes) */
     arrayBuffers: number;
+    /** V8 heap limit (bytes) */
+    heapLimit: number;
     /** RSS usage percentage (0-100) */
     rssPercentage: number;
     /** Heap usage percentage (0-100) */
     heapPercentage: number;
+    /** Heap used as a percentage of the V8 heap limit (0-100) */
+    heapLimitPercentage: number;
   };
 
   /** Process uptime (seconds) */
@@ -116,6 +121,7 @@ export class SystemMetricsCollector {
    */
   private collectMetrics(): SystemMetrics {
     const memoryUsage = process.memoryUsage();
+    const heapLimit = getHeapStatistics().heap_size_limit;
     const totalMemory = os.totalmem();
     const heapPercentageRaw =
       memoryUsage.heapTotal > 0 ? (memoryUsage.heapUsed / memoryUsage.heapTotal) * 100 : 0;
@@ -136,8 +142,10 @@ export class SystemMetricsCollector {
         heapUsed: memoryUsage.heapUsed,
         external: memoryUsage.external,
         arrayBuffers: memoryUsage.arrayBuffers,
+        heapLimit,
         rssPercentage: toFiniteNumber((memoryUsage.rss / totalMemory) * 100),
         heapPercentage: toFiniteNumber(heapPercentageRaw),
+        heapLimitPercentage: toFiniteNumber((memoryUsage.heapUsed / heapLimit) * 100),
       },
       uptime: process.uptime(),
       eventLoopLagMs,

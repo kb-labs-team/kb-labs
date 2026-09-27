@@ -17,6 +17,7 @@
  */
 
 import { vi } from 'vitest';
+import { getLLMContentText } from '@kb-labs/core-platform';
 import type {
   ILLM,
   LLMOptions,
@@ -180,7 +181,7 @@ class MockLLMBuilder {
       if (errorToThrow) {throw errorToThrow;}
 
       const lastUserMsg = messages.filter(m => m.role === 'user').pop();
-      const prompt = lastUserMsg?.content ?? '';
+      const prompt = lastUserMsg ? getLLMContentText(lastUserMsg.content) : '';
       const baseResponse = resolveResponse(prompt);
 
       const response: LLMToolCallResponse = {

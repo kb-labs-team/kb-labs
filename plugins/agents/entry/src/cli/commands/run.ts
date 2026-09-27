@@ -4,7 +4,7 @@
  * Uses event-driven UI rendering instead of simple loaders.
  */
 
-import { defineCommand, useAnalytics, useCache, useConfig, type CommandResult, type PluginContextV3 } from '@kb-labs/sdk';
+import { canUseLLMForMessages, defineCommand, useAnalytics, useCache, useConfig, type CommandResult, type PluginContextV3 } from '@kb-labs/sdk';
 import {
   SessionManager,
   PlanDocumentService,
@@ -14,12 +14,14 @@ import {
   createCoreToolPack,
 } from '@kb-labs/agent-core';
 import { AgentSDK } from '@kb-labs/agent-sdk';
-import { createDefaultResponseRequirementsSelector } from '@kb-labs/agent-runtime';
+import { AgentAttachmentError, createDefaultResponseRequirementsSelector, prepareAgentAttachments } from '@kb-labs/agent-runtime';
 import { IncrementalTraceWriter } from '@kb-labs/agent-tracing';
 import { createToolRegistry } from '@kb-labs/agent-tools';
 import type { AgentConfig, ModeConfig, AgentMode, AgentEvent, AgentsPluginConfig, KernelState, DetailedTraceEntry } from '@kb-labs/agent-contracts';
 import type { TaskPlan } from '@kb-labs/agent-contracts';
+import type { AgentAttachmentUpload } from '@kb-labs/agent-contracts';
 import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { createEventRenderer, createMinimalRenderer, createDetailedRenderer, createDebugRenderer } from '../ui/index.js';
 
 // Register SDKAgentRunner as the RunnerFactory (idempotent — runs once per process)
@@ -39,6 +41,7 @@ type RunInput = {
   mode?: AgentMode;
   complexity?: 'simple' | 'medium' | 'complex';
   files?: string[];
+  attachments?: string[];
   trace?: string;
   approve?: boolean;
   execute?: boolean;
@@ -55,6 +58,48 @@ type RunInput = {
 };
 
 type RunResult = CommandResult<unknown>;
+
+export function normalizeFiles(value: unknown): string[] {
+  if (typeof value === 'string') {
+    return [value];
+  }
+  if (Array.isArray(value)) {
+    return value.filter((file): file is string => typeof file === 'string');
+  }
+  return [];
+}
+
+function mediaTypeForPath(filePath: string): string {
+  const extension = path.extname(filePath).toLowerCase();
+  switch (extension) {
+    case '.pdf': return 'application/pdf';
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg';
+    case '.png': return 'image/png';
+    case '.webp': return 'image/webp';
+    case '.gif': return 'image/gif';
+    default: return 'application/octet-stream';
+  }
+}
+
+export function parsePositiveNumber(value: unknown): number | undefined {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim().length > 0
+      ? Number(value)
+      : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+export function resolveTokenBudgetOverride<T extends { enabled?: boolean; maxTokens?: number }>(
+  configured: T | undefined,
+  override: unknown,
+): T | { enabled: true; maxTokens: number } | undefined {
+  const budgetTokens = parsePositiveNumber(override);
+  return budgetTokens !== undefined
+    ? { ...(configured ?? {}), enabled: true, maxTokens: budgetTokens }
+    : configured;
+}
 
 function parseBooleanFlag(value: unknown, defaultValue: boolean): boolean {
   if (typeof value === 'boolean') {
@@ -94,7 +139,8 @@ export default defineCommand({
         tier = 'medium',
         mode = 'execute',
         complexity,
-        files,
+        files: filesRaw,
+        attachments: attachmentPathsRaw,
         trace,
         approve: approveRaw = false,
         execute: executeRaw = false,
@@ -114,12 +160,12 @@ export default defineCommand({
       const spec = parseBooleanFlag(specRaw, false);
       const dryRun = parseBooleanFlag(dryRunRaw, false);
       const debug = parseBooleanFlag(debugRaw, false);
+      const files = normalizeFiles(filesRaw);
+      const attachmentPaths = normalizeFiles(attachmentPathsRaw);
 
       // Build an AbortController when --timeout is specified.
       // The signal is passed into AgentConfig so the runner can honour it.
-      const timeoutSecs = typeof timeoutSeconds === 'number' && timeoutSeconds > 0
-        ? timeoutSeconds
-        : undefined;
+      const timeoutSecs = parsePositiveNumber(timeoutSeconds);
 
       const abortController = timeoutSecs !== undefined ? new AbortController() : undefined;
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -218,6 +264,25 @@ export default defineCommand({
       }
 
       try {
+        const uploads = await Promise.all(attachmentPaths.map(async (filePath): Promise<AgentAttachmentUpload> => {
+          const bytes = await fs.readFile(filePath);
+          return {
+            name: path.basename(filePath),
+            mediaType: mediaTypeForPath(filePath),
+            data: bytes.toString('base64'),
+          };
+        }));
+        const preparedAttachments = await prepareAgentAttachments(uploads);
+        if (preparedAttachments.requiredCapabilities.length > 0 && !canUseLLMForMessages([{
+          role: 'user',
+          content: [{ type: 'text', text: task }, ...preparedAttachments.contentParts],
+        }], { tier })) {
+          throw new AgentAttachmentError(
+            'AGENT_ATTACHMENT_MODEL_UNSUPPORTED',
+            `No configured LLM in tier "${tier}" supports required capabilities: ${preparedAttachments.requiredCapabilities.join(', ')}. Configure a compatible model or choose another tier.`,
+          );
+        }
+
         const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const sessionManager = new SessionManager(workingDir);
         let effectiveSessionId = sessionId as string | undefined;
@@ -244,11 +309,12 @@ export default defineCommand({
         }
 
         // Persist user turn first so timeline ordering is deterministic.
-        await sessionManager.createUserTurn(effectiveSessionId, task, runId);
+        await sessionManager.createUserTurn(effectiveSessionId, task, runId, undefined, preparedAttachments.references);
 
         // Create shared file tracking (for edit protection)
         const filesRead = new Set<string>();
         const filesReadHash = new Map<string, string>();
+        const filesWritten = new Set<string>();
         const sessionMemory = createSessionMemoryBridge(workingDir, effectiveSessionId);
         const responseRequirementsSelector = createDefaultResponseRequirementsSelector();
 
@@ -261,6 +327,8 @@ export default defineCommand({
           cache: useCache(),
           filesRead,
           filesReadHash,
+          filesWritten,
+          abortSignal: abortController?.signal,
           sessionMemory,
           responseRequirementsResolver: async ({ task: activeTask, kernel }: {
             task?: string;
@@ -274,9 +342,7 @@ export default defineCommand({
             }),
         });
         const agentsConfig = await useConfig<AgentsPluginConfig>();
-        const effectiveBudget = typeof budgetOverride === 'number' && budgetOverride > 0
-          ? { ...(agentsConfig?.tokenBudget ?? {}), enabled: true, maxTokens: budgetOverride }
-          : agentsConfig?.tokenBudget;
+        const effectiveBudget = resolveTokenBudgetOverride(agentsConfig?.tokenBudget, budgetOverride);
         const analytics = useAnalytics() ?? null;
         const taskId = `task-${Date.now()}`;
         const tracer = new IncrementalTraceWriter(taskId);
@@ -313,12 +379,15 @@ export default defineCommand({
               };
               const specConfig: AgentConfig = {
                 workingDir,
+                initialInputContentParts: preparedAttachments.contentParts,
+                inputAttachments: preparedAttachments.references,
                 maxIterations: 40,
                 temperature: 0.1,
                 sessionId: effectiveSessionId,
                 tier,
                 analytics,
                 tokenBudget: effectiveBudget,
+                platformMcp: agentsConfig?.platformMcp,
                 onEvent: specEventCallback,
                 abortSignal: abortController?.signal,
               };
@@ -393,12 +462,15 @@ export default defineCommand({
         // Create agent config with event callback
         const config: AgentConfig = {
           workingDir,
+          initialInputContentParts: preparedAttachments.contentParts,
+          inputAttachments: preparedAttachments.references,
           maxIterations,
           temperature,
           sessionId: effectiveSessionId,
           tier,
           analytics,
-          tokenBudget: agentsConfig?.tokenBudget,
+          tokenBudget: effectiveBudget,
+          platformMcp: agentsConfig?.platformMcp,
           mode: modeConfig,
           onEvent: compositeEventCallback,
           debug,
@@ -547,6 +619,11 @@ export default defineCommand({
         // Just return the structured result
 
         const runSucceeded = result.success;
+        const timeoutMessage = abortController?.signal.aborted
+          ? abortController.signal.reason instanceof Error
+            ? abortController.signal.reason.message
+            : `Agent execution timed out after ${timeoutSecs ?? 'unknown'}s`
+          : undefined;
         const structuredResult = runSucceeded
           ? { ok: true as const, result: {
             sessionId: effectiveSessionId,
@@ -559,7 +636,9 @@ export default defineCommand({
             tokensUsed: result.tokensUsed,
             hasPlan: mode === 'plan' && !!result.plan,
           } }
-          : { ok: false as const, error: 'Command failed', result: {
+          : { ok: false as const, error: timeoutMessage
+            ? { code: 'TIMEOUT', message: timeoutMessage }
+            : 'Command failed', result: {
             sessionId: effectiveSessionId,
             success: runSucceeded,
             summary: result.summary,

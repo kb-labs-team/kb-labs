@@ -91,6 +91,13 @@ export interface TurnDeltaMessage {
   timestamp: number;
 }
 
+/** Advance the session event cursor when a persisted event changes no turn. */
+export interface SessionCursorMessage {
+  type: 'session:cursor';
+  payload: { seq: number };
+  timestamp: number;
+}
+
 /**
  * Conversation snapshot message (server → client)
  * Sent on initial WebSocket connection (or reconnect without a resume
@@ -123,6 +130,7 @@ export type ServerMessage =
   | ErrorMessage
   | CorrectionAckMessage
   | TurnDeltaMessage
+  | SessionCursorMessage
   | ConversationSnapshotMessage;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -184,6 +192,8 @@ export type ClientMessage =
 export interface RunRequest {
   /** Task description */
   task: string;
+  /** Files attached to this run, encoded as base64 without a data-URL prefix. */
+  attachments?: AgentAttachmentUpload[];
   /** Agent ID to use (optional, defaults to orchestrator) */
   agentId?: string;
   /** Session ID to continue (optional, creates new session if not provided) */
@@ -200,12 +210,32 @@ export interface RunRequest {
   smartTiering?: AgentSmartTieringConfig;
   /** Answer style depth (auto/brief/deep) */
   responseMode?: AgentResponseMode;
+  /** Select plan drafting or direct execution, as exposed by the Studio composer. */
+  mode?: 'execute' | 'plan';
+  /** Optional planning complexity hint. */
+  complexity?: 'simple' | 'medium' | 'complex';
   /**
    * Client-generated id for the optimistic user message this run represents.
    * Echoed back on `RunResponse.userTurn.metadata.clientId` so the frontend
    * can reconcile its optimistic turn by id instead of text-matching.
    */
   clientId?: string;
+}
+
+/** Upload payload accepted by the Agents run endpoint (PDF and supported images). */
+export interface AgentAttachmentUpload {
+  name: string;
+  mediaType: string;
+  data: string;
+}
+
+/** Safe attachment metadata stored on the user turn; never contains file bytes. */
+export interface AgentAttachmentReference {
+  /** Opaque server-side attachment identifier; bytes are stored outside turn history. */
+  attachmentId?: string;
+  name: string;
+  mediaType: string;
+  sizeBytes: number;
 }
 
 /**
@@ -284,7 +314,7 @@ export interface RunStatusResponse {
   /** Run ID */
   runId: string;
   /** Current status */
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'stopped';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
   /** Task description */
   task: string;
   /** Start time */

@@ -47,6 +47,9 @@ export const AGENTS_ROUTES = {
   /** GET /sessions/:sessionId/turns - Get session turns (turn-based UI) */
   SESSION_TURNS: '/sessions/:sessionId/turns',
 
+  /** GET /sessions/:sessionId/attachments/:attachmentId - Read attachment bytes as base64 */
+  SESSION_ATTACHMENT: '/sessions/:sessionId/attachments/:attachmentId',
+
   /** GET /sessions/:sessionId/changes - List file changes for session */
   SESSION_CHANGES: '/sessions/:sessionId/changes',
 

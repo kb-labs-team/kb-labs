@@ -29,7 +29,8 @@
     "@kb-labs/agent-kernel": "workspace:*",
     "@kb-labs/agent-sdk": "workspace:*",
     "@kb-labs/agent-store": "workspace:*",
-    "@kb-labs/sdk": "workspace:*"
+    "@kb-labs/sdk": "workspace:*",
+    "pdfjs-dist": "6.3.289"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

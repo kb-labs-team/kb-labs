@@ -23,7 +23,7 @@ import type {
   UIPromptResultMessage,
 } from './types.js';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
-import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
+import { IPCTransport, LLMProxy, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
 import type { ITransport } from '@kb-labs/core-ipc';
 import type { LoadedMiddleware } from '@kb-labs/plugin-runtime';
 import { createBaseStdoutUI, setJsonMode, type UIPrompts } from '@kb-labs/shared-cli-ui';
@@ -145,6 +145,15 @@ function createStdoutUI(currentRequestId?: string): UIFacade {
  */
 async function handleExecute(message: ExecuteMessage): Promise<void> {
   const { requestId, request, timeoutMs: _timeoutMs } = message;
+  if (rawProxyPlatform.llm instanceof LLMProxy && request.descriptor.llmRouting) {
+    rawProxyPlatform.llm.setRoutingMetadata(request.descriptor.llmRouting);
+    rawProxyPlatform.logger.debug('[worker-pool] Applied LLM routing metadata', {
+      requestId,
+      defaultTier: request.descriptor.llmRouting.defaultTier,
+      tiers: Object.keys(request.descriptor.llmRouting.tierMapping ?? {}),
+      capabilities: request.descriptor.llmRouting.capabilities,
+    });
+  }
   const startMs = Date.now();
   try {
     // Dynamic import to avoid loading at startup

@@ -11,6 +11,7 @@
 import type { ITransport } from '../transport/transport.js';
 import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import type { ILogger } from '@kb-labs/core-platform/adapters';
+import type { LLMRouterMetadata } from '@kb-labs/core-platform';
 import { LLMProxy } from './llm-proxy.js';
 import { EmbeddingsProxy } from './embeddings-proxy.js';
 import { StorageProxy } from './storage-proxy.js';
@@ -32,6 +33,8 @@ export interface CreateProxyPlatformOptions {
    * correlation fields. Override only for tests or specialized embedders.
    */
   logger?: ILogger;
+  /** Non-secret routing metadata used for worker-side LLM preflight. */
+  llmRouting?: LLMRouterMetadata;
 }
 
 /**
@@ -46,13 +49,13 @@ export interface CreateProxyPlatformOptions {
 export function createProxyPlatform(
   options: CreateProxyPlatformOptions
 ): IPlatformAdapters {
-  const { transport } = options;
+  const { transport, llmRouting } = options;
   const logger = options.logger ?? new LoggerProxy(transport);
   const processExecutor = new ProcessExecutorProxy(transport);
 
   // Proxy adapters — forward all calls via transport
   const cache = platformAdapterTransportPolicy.cache.proxy(transport);
-  const llm = new LLMProxy(transport);
+  const llm = new LLMProxy(transport, llmRouting);
   const embeddings = new EmbeddingsProxy(transport);
   const vectorStore = platformAdapterTransportPolicy.vectorStore.proxy(transport);
   const storage = new StorageProxy(transport);

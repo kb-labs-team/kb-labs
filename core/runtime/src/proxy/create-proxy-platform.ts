@@ -18,7 +18,7 @@ import { VectorStoreProxy } from './vector-store-proxy.js';
 import { StorageProxy } from './storage-proxy.js';
 import { DocumentDatabaseProxy } from './document-database-proxy.js';
 import { KVStoreProxy } from './kv-store-proxy.js';
-import type { ILogger, IEventBus, IAnalytics } from '@kb-labs/core-platform';
+import type { ILogger, IEventBus, IAnalytics, LLMRouterMetadata } from '@kb-labs/core-platform';
 import { ProcessExecutorProxy } from './process-executor-proxy.js';
 
 export interface CreateProxyPlatformOptions {
@@ -40,6 +40,8 @@ export interface CreateProxyPlatformOptions {
    * If not provided, UnixSocketTransport will be created.
    */
   transport?: ITransport;
+  /** Non-secret capability/tier metadata for worker-side LLM preflight. */
+  llmRouting?: LLMRouterMetadata;
 }
 
 /**
@@ -104,7 +106,7 @@ export async function createProxyPlatform(
 
   // Create proxy adapters
   const cache = new CacheProxy(transport);
-  const llm = new LLMProxy(transport);
+  const llm = new LLMProxy(transport, options.llmRouting);
   const embeddings = new EmbeddingsProxy(transport);
   const vectorStore = new VectorStoreProxy(transport);
   const storage = new StorageProxy(transport);

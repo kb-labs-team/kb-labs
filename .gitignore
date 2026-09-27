@@ -128,6 +128,7 @@ e2e/*/test-results/
 # Claude Code — local settings and session state (per-developer).
 # Project skills are shared instructions and must be versioned.
 .claude/*
+!.claude/agents.md
 !.claude/skills/
 !.claude/skills/**
 

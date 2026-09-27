@@ -10,6 +10,7 @@ import type {
   AsyncTask,
   ToolResultArtifact,
   EvidenceRequirements,
+  EvidenceRecord,
   KernelState,
   RepositoryModel,
   ToolCapability,
@@ -83,6 +84,8 @@ export interface ToolContext {
   cache?: ICache;
   /** Files that were read in this session (for edit protection) */
   filesRead?: Set<string>;
+  /** Files created or changed in this run; used to scope artifact verification. */
+  filesWritten?: Set<string>;
   /** File content hashes from when files were read (for change detection) */
   filesReadHash?: Map<string, string>;
   /** Agent ID for attribution */
@@ -112,6 +115,10 @@ export interface ToolContext {
   workspaceProvider?: IWorkspaceProvider;
   /** Canonical session memory bridge backed by kernel/store artifacts. */
   sessionMemory?: SessionMemoryBridge;
+  /** Bounded evidence collected during the current execution (not durable session state). */
+  runEvidence?: EvidenceRecord[];
+  /** Cancels bounded in-flight work started by tools in this execution. */
+  abortSignal?: AbortSignal;
   /** Optional resolver for answer-time evidence requirements. */
   responseRequirementsResolver?: (input: {
     task?: string;

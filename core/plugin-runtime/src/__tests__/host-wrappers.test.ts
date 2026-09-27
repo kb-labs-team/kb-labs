@@ -77,6 +77,21 @@ describe('Host Wrappers', () => {
       expect(result.result).toEqual({ error: 'failed' });
     });
 
+    it('uses exit code 124 for explicit timeout failures', () => {
+      const runResult: RunResult<{ ok: false; error: { code: string; message: string } }> = {
+        ok: true,
+        data: {
+          ok: false,
+          error: { code: 'TIMEOUT', message: 'Agent execution timed out after 1s' },
+        },
+        executionMeta: mockExecutionMeta,
+      };
+
+      const result = wrapCliResult(runResult, mockDescriptor);
+
+      expect(result.exitCode).toBe(124);
+    });
+
     it('should wrap raw data as exitCode 0', () => {
       const runResult: RunResult<{ message: string }> = {
         ok: true,

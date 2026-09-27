@@ -1,7 +1,7 @@
 ---
 title: "LLM Tiers"
 description: "Small / Medium / Large — how plugins pick LLMs without binding to specific models."
-updatedAt: "2026-04-07"
+updatedAt: "2026-09-27"
 order: 6
 ---
 
@@ -31,7 +31,7 @@ const llmMedium = useLLM({ tier: 'medium' });
 const llmLarge  = useLLM({ tier: 'large' });
 
 // With capability constraints:
-const llmForCode   = useLLM({ tier: 'medium', capabilities: ['coding'] });
+const llmForCode   = useLLM({ tier: 'medium', capabilities: ['code'] });
 const llmForVision = useLLM({ tier: 'large', capabilities: ['vision', 'reasoning'] });
 
 // Default tier (what the user configured as default):
@@ -70,13 +70,13 @@ Tiers are mapped to models in `kb.config.json` under `platform.adapterOptions.ll
               "adapter": "@kb-labs/adapters-vibeproxy",
               "model": "claude-sonnet-4-6",
               "priority": 1,
-              "capabilities": ["coding", "reasoning", "vision"]
+              "capabilities": ["code", "reasoning", "vision"]
             },
             {
               "adapter": "@kb-labs/adapters-vibeproxy",
               "model": "gpt-5-codex",
               "priority": 2,
-              "capabilities": ["coding"]
+              "capabilities": ["code"]
             }
           ],
           "large": [
@@ -84,13 +84,13 @@ Tiers are mapped to models in `kb.config.json` under `platform.adapterOptions.ll
               "adapter": "@kb-labs/adapters-vibeproxy",
               "model": "gpt-5.1-codex-max",
               "priority": 1,
-              "capabilities": ["reasoning", "coding"]
+              "capabilities": ["reasoning", "code"]
             },
             {
               "adapter": "@kb-labs/adapters-vibeproxy",
               "model": "claude-opus-4-6",
               "priority": 2,
-              "capabilities": ["reasoning", "coding", "vision"]
+              "capabilities": ["reasoning", "code", "vision"]
             }
           ]
         }
@@ -111,33 +111,83 @@ interface TierModelEntry {
 }
 ```
 
-When a plugin asks for a tier, the router picks the highest-priority entry in that tier that satisfies any `capabilities` constraint the plugin passed. If the plugin doesn't specify capabilities, the first entry by priority wins.
+When a plugin asks for a tier, the router selects the highest-priority entry in that tier that declares **every** requested capability. If none match, it throws `LLM_CAPABILITY_NOT_SUPPORTED`; it never routes to a partially matching or untagged model. If the requested tier has no models, it falls back to the configured default tier and applies the same capability check there.
 
 See [Configuration → kb.config.json](/configuration/kb-config#platformadapteroptions-llm) for the full schema.
 
 ## Capabilities
 
+The platform owns and publishes the shared vocabulary from `@kb-labs/sdk`:
+
 ```ts
-type LLMCapability = 'reasoning' | 'coding' | 'vision' | 'fast';
+import { LLM_CAPABILITIES, type LLMCapability } from '@kb-labs/sdk';
+
+const required: LLMCapability[] = ['vision'];
+console.log(LLM_CAPABILITIES.vision.description);
 ```
 
-- **`reasoning`** — complex reasoning chains, multi-step thinking.
-- **`coding`** — code generation, understanding, review.
-- **`vision`** — image input support.
-- **`fast`** — low latency, real-time responses.
+| ID | Category | Meaning |
+|---|---|---|
+| `reasoning` | task | Advanced multi-step reasoning and analysis |
+| `code` | task | Code generation, editing, and review |
+| `fast` | latency | Low-latency responses |
+| `vision` | input | Understanding image input |
+| `document.input` | input | Native document input supported by the provider/model |
+| `audio.input` | input | Understanding audio input |
+| `audio.transcription` | input | Transcribing speech from audio into text |
+| `audio.output` | output | Generating audio output |
+| `video.input` | input | Understanding video input |
+
+Capabilities describe model abilities, not uploaded file extensions. Text is the implicit baseline and has no capability ID. A consumer that extracts text from a PDF needs no document capability; if it rasterizes PDF pages into image parts, `vision` is inferred from the content registry; if it passes the PDF natively in a future supported part, that part will infer `document.input`. No model capabilities are assumed when configuration omits them.
+
+> **Important:** Capabilities are conjunctive: a model configured with only `video.input` does **not** satisfy `['fast', 'video.input']`; one model must declare both. The router fails closed instead of selecting a partial match. For registered message content parts, required input capabilities are inferred and combined with any explicit requirements.
+
+Use `canUseLLM()` as the ergonomic preflight check so the normal path does not need exception-driven configuration validation:
+
+```ts
+import { canUseLLM, useLLM } from '@kb-labs/sdk';
+
+const request = { tier: 'large' as const, capabilities: ['fast', 'video.input'] as const };
+if (!canUseLLM(request)) {
+  // Show a fallback or explain that no configured model meets both requirements.
+} else {
+  const llm = useLLM(request);
+  await llm?.complete('Analyze the video input');
+}
+```
+
+`canUseLLM()` checks that one model in the effective tier declares the complete requirement set. The request remains fail-closed: if configuration changes between checking and use, the first LLM call throws the typed `LLMCapabilityNotSupportedError` (`code: 'LLM_CAPABILITY_NOT_SUPPORTED'`).
+
+The `LLM_CONTRACT` catalog is the single source of truth for capability definitions and content-part schemas. `LLMMessage.content` accepts either a text string or ordered typed content parts. In the first iteration, text and image input are supported; image parts require `vision`, and only user messages can contain parts. Consumers still own file loading and preparation. Use `canUseLLMForMessages(messages, options)` to preflight model availability from the actual content.
 
 A plugin declares what the task requires:
 
 ```ts
 const llm = useLLM({
   tier: 'medium',
-  capabilities: ['coding'],
+  capabilities: ['code'],
 });
 ```
 
-The router filters the tier's entries by required capabilities (**all** must be present) and picks the highest-priority match. If nothing in the tier matches, it escalates (see below).
+The router selects a tier entry tagged with all requested capabilities. If none match, `useLLM()` returns a lazy binding and the first call to it throws `LLM_CAPABILITY_NOT_SUPPORTED` with the requested tier, requirements, and configured candidates. Capability tags are operator-provided metadata and are not verified against the provider.
 
-Capabilities are **advisory** — users can mis-tag models in config, and the router trusts the declared tags. Don't use capabilities as a hard filter for correctness; use them as a hint about intent.
+```ts
+import { LLMCapabilityNotSupportedError, useLLM } from '@kb-labs/sdk';
+
+const llm = useLLM({ tier: 'large', capabilities: ['fast', 'video.input'] });
+if (llm) {
+  try {
+    await llm.complete('Summarize this video: …');
+  } catch (error) {
+    if (error instanceof LLMCapabilityNotSupportedError) {
+      // Offer a supported fallback or explain which model configuration is needed.
+      console.warn(error.message, error.candidates);
+    } else {
+      throw error;
+    }
+  }
+}
+```
 
 ## Mismatch behavior
 
@@ -153,7 +203,7 @@ Picks `medium`, emits a **warning** through the platform logger. Plugin still ge
 
 ### Capability filter empty
 
-Plugin asks for `{ tier: 'medium', capabilities: ['vision'] }`, nothing in `medium` has `vision`. Router escalates to `large` and retries; if nothing in `large` has `vision` either, the request falls back to whichever entry has the highest priority overall, with a warning.
+Plugin asks for `{ tier: 'medium', capabilities: ['fast', 'vision'] }`, but the only entry in `medium` declares `vision`. Resolution throws `LLM_CAPABILITY_NOT_SUPPORTED`; it does not select the partial match. Configure one model with both capabilities or request a tier whose model has both.
 
 The full resolution algorithm lives in the `ILLMRouter` implementation in `@kb-labs/core-platform` — see [`llm-types.ts`](core/platform/src/adapters/llm-types.ts) for the contract types.
 

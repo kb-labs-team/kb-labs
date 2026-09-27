@@ -109,6 +109,7 @@ export function useWebSocket<TSend = unknown, TReceive = unknown>(
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedByUser = useRef(false);
+  const connectionGeneration = useRef(0);
 
   // Stable refs for callbacks
   const onMessageRef = useRef(onMessage);
@@ -138,6 +139,7 @@ export function useWebSocket<TSend = unknown, TReceive = unknown>(
   const doConnect = useCallback(() => {
     if (!url) { return; }
 
+    const generation = ++connectionGeneration.current;
     cleanup();
     closedByUser.current = false;
     setStatus('connecting');
@@ -146,11 +148,13 @@ export function useWebSocket<TSend = unknown, TReceive = unknown>(
     let attempt = 0;
 
     function open() {
+      if (generation !== connectionGeneration.current) { return; }
       const resolvedUrl = resolveWsUrl(url!);
       const ws = protocols ? new WebSocket(resolvedUrl, protocols) : new WebSocket(resolvedUrl);
       wsRef.current = ws;
 
       ws.onopen = (e) => {
+        if (generation !== connectionGeneration.current) { return; }
         attempt = 0;
         setReconnectCount(0);
         setStatus('connected');
@@ -159,6 +163,7 @@ export function useWebSocket<TSend = unknown, TReceive = unknown>(
       };
 
       ws.onmessage = (e: MessageEvent) => {
+        if (generation !== connectionGeneration.current) { return; }
         try {
           const data = parseRef.current(e.data as string) as TReceive;
           setLatest(data);
@@ -173,6 +178,7 @@ export function useWebSocket<TSend = unknown, TReceive = unknown>(
       };
 
       ws.onclose = (e) => {
+        if (generation !== connectionGeneration.current) { return; }
         wsRef.current = null;
         setStatus('disconnected');
         onCloseRef.current?.(e);
@@ -189,6 +195,7 @@ export function useWebSocket<TSend = unknown, TReceive = unknown>(
       };
 
       ws.onerror = (e) => {
+        if (generation !== connectionGeneration.current) { return; }
         setStatus('error');
         setError(e);
         onErrorRef.current?.(e);
@@ -200,6 +207,7 @@ export function useWebSocket<TSend = unknown, TReceive = unknown>(
 
   const disconnect = useCallback((code?: number, reason?: string) => {
     closedByUser.current = true;
+    connectionGeneration.current += 1;
     if (reconnectTimer.current) {
       clearTimeout(reconnectTimer.current);
       reconnectTimer.current = null;
@@ -231,6 +239,8 @@ export function useWebSocket<TSend = unknown, TReceive = unknown>(
   // Auto-connect on mount / url change
   useEffect(() => {
     if (!url || !enabled) {
+      connectionGeneration.current += 1;
+      closedByUser.current = true;
       cleanup();
       setStatus('disconnected');
       return;
@@ -242,6 +252,7 @@ export function useWebSocket<TSend = unknown, TReceive = unknown>(
 
     return () => {
       closedByUser.current = true;
+      connectionGeneration.current += 1;
       cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

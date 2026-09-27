@@ -18,11 +18,14 @@ import type {
 } from '@kb-labs/agent-sdk';
 import type { AsyncTask } from '@kb-labs/agent-contracts';
 import type { SpawnAgentRequest, SpawnAgentResult } from '@kb-labs/agent-contracts';
+import type { AgentEventCallback } from '@kb-labs/agent-contracts';
 import { randomUUID } from 'node:crypto';
 
 export interface TaskMiddlewareConfig {
   /** Max concurrent async tasks (default: 3) */
   maxConcurrent?: number;
+  onEvent?: AgentEventCallback;
+  agentId?: string;
 }
 
 export type SpawnFn = (request: SpawnAgentRequest) => Promise<SpawnAgentResult>;
@@ -36,9 +39,13 @@ export class TaskMiddleware {
   private readonly promises = new Map<string, Promise<SpawnAgentResult>>();
   private readonly maxConcurrent: number;
   private spawnFn: SpawnFn | null = null;
+  private readonly onEvent?: AgentEventCallback;
+  private readonly agentId?: string;
 
   constructor(config: TaskMiddlewareConfig = {}) {
     this.maxConcurrent = config.maxConcurrent ?? 3;
+    this.onEvent = config.onEvent;
+    this.agentId = config.agentId;
   }
 
   /** Set the spawn function (called by runner during setup) */
@@ -78,28 +85,40 @@ export class TaskMiddleware {
       preset: request.preset ?? 'research',
     };
     this.tasks.set(id, task);
+    this.emitStart(id, description, request.harness);
 
     // Fire-and-forget: spawn sub-agent, update task on completion
-    const promise = this.spawnFn(request).then(
+    const promise = this.spawnFn({ ...request, subagentId: id }).then(
       (result) => {
-        task.status = 'completed';
+        task.status = result.success ? 'completed' : 'failed';
         task.completedAt = new Date().toISOString();
         task.result = result.summary;
+        if (!result.success && result.error) { task.error = result.error; }
         task.tokensUsed = result.tokensUsed;
         task.filesRead = result.filesRead;
         task.filesModified = result.filesModified;
+        this.emitEnd(id, result.success ? 'completed' : 'failed', result.success ? result.summary : result.error ?? result.summary);
         return result;
       },
       (err) => {
         task.status = 'failed';
         task.completedAt = new Date().toISOString();
         task.error = err instanceof Error ? err.message : String(err);
+        this.emitEnd(id, 'failed', task.error);
         throw err;
       },
     );
     this.promises.set(id, promise);
 
     return task;
+  }
+
+  private emitStart(subagentId: string, description: string, harness?: string): void {
+    this.onEvent?.({ type: 'subagent:start', timestamp: new Date().toISOString(), agentId: this.agentId, data: { subagentId, description, harness } });
+  }
+
+  private emitEnd(subagentId: string, status: 'completed' | 'failed', summary: string): void {
+    this.onEvent?.({ type: 'subagent:end', timestamp: new Date().toISOString(), agentId: this.agentId, data: { subagentId, status, summary } });
   }
 
   /**
@@ -143,20 +162,21 @@ export class TaskMiddleware {
     ctx.run.meta.set('tasks', 'total', tasks.length);
 
     // Build a compact summary for newly completed tasks
-    const newlyCompleted = completed.filter(t => {
+    const newlyResolved = tasks.filter(t => t.status === 'completed' || t.status === 'failed').filter(t => {
       const key = `tasks:notified:${t.id}`;
       if (ctx.run.meta.get('tasks', key)) { return false; }
       ctx.run.meta.set('tasks', key, true);
       return true;
     });
 
-    if (newlyCompleted.length === 0) { return undefined; }
+    if (newlyResolved.length === 0) { return undefined; }
 
-    // Inject notification about completed tasks as user message
-    const notifications = newlyCompleted.map(t => {
+    // Inject both successes and failures so the orchestrator can react without
+    // having to remember to poll/collect every task explicitly.
+    const notifications = newlyResolved.map(t => {
       const status = t.status === 'completed' ? '✅' : '❌';
-      const detail = t.result ?? t.error ?? 'no details';
-      return `${status} Task "${t.description}" (${t.id}): ${detail}`;
+      const detail = (t.status === 'failed' ? t.error ?? t.result : t.result ?? t.error) ?? 'no details';
+      return `${status} Task "${t.description}" (${t.id}) ${t.status}: ${detail}`;
     });
 
     const notifMsg = {

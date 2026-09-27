@@ -58,6 +58,8 @@ export async function bootstrap(): Promise<void> {
         platformRoot,
         jwtConfig: loadJwtConfig(),
         policy,
+        developmentPdpStub: process.env.NODE_ENV !== 'production'
+          && process.env.KB_MCP_AGENT_LEASE_PDP_STUB === 'allow-all',
       });
 
       await server.start();

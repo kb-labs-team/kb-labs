@@ -51,7 +51,10 @@
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
+    "@kb-labs/plugin-execution": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",
+    "@kb-labs/shared-testing-e2e": "workspace:*",
+    "fastify": "^5.12.1",
     "@kb-labs/studio-plugin-tools": "workspace:*",
     "@rspack/cli": "latest",
     "@rspack/core": "latest",

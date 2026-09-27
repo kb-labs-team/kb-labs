@@ -7,7 +7,7 @@
  *
  * Delta-based, not read-derived: the session listener registered here receives
  * the exact TurnDelta[] that SessionManager.processEventAndUpdateTurn computed
- * at persist time (via RunManager.broadcastSessionDeltas), not re-derived by
+ * at persist time and published over the platform event bus, not re-derived by
  * re-reading turns.json off disk on every event. That re-read (the previous
  * resolveTurnForEvent) was the actual root cause of the WS stream lagging one
  * event behind persisted state — see run-handler.ts's onEvent for the other
@@ -28,16 +28,23 @@ import type {
   TurnDeltaMessage,
   ConversationSnapshotMessage,
 } from '@kb-labs/agent-contracts';
-import { RunManager, type SessionBroadcastPayload } from '../rest/run-manager.js';
+import { getAgentsSessionEventTopic, type AgentsSessionEvent } from '@kb-labs/agent-contracts';
 import { SessionManager } from '@kb-labs/agent-core';
+import { RunManager } from '../rest/run-manager.js';
 
 interface SessionConnectionState {
   sessionId: string;
-  callback: (payload: SessionBroadcastPayload) => void;
+  unsubscribe: () => void;
+  connectedAt: number;
 }
 
-/** Per-connection state keyed by the opaque ctx object — avoids mutating ctx */
-const connectionState = new WeakMap<object, SessionConnectionState>();
+/** Backend invocations use fresh contexts, so cleanup is keyed by transport connection ID. */
+const connectionState = new Map<string, SessionConnectionState>();
+
+function getConnectionId(ctx: PluginContextV3, sender?: TypedSender<ServerMessage>): string | undefined {
+  const hostContext = ctx.hostContext as { connectionId?: string } | undefined;
+  return hostContext?.connectionId ?? sender?.getConnectionId();
+}
 
 export default defineWebSocket<unknown, ClientMessage, ServerMessage>({
   path: '/session/:sessionId',
@@ -64,11 +71,14 @@ export default defineWebSocket<unknown, ClientMessage, ServerMessage>({
         return;
       }
 
-      ctx.platform.logger.info(
-        afterSeq != null
-          ? `[session-ws] Client connected to session ${sessionId} (resume after seq ${afterSeq})`
-          : `[session-ws] Client connected to session ${sessionId}`
-      );
+      const connectionId = getConnectionId(ctx, sender);
+      const connectedAt = Date.now();
+      ctx.platform.logger.info('[session-ws] Client connected to session', {
+        event: 'agent.session.websocket.connected',
+        sessionId,
+        connectionId,
+        ...(afterSeq != null ? { afterSeq } : {}),
+      });
 
       const sessionManager = new SessionManager(ctx.cwd);
 
@@ -84,10 +94,71 @@ export default defineWebSocket<unknown, ClientMessage, ServerMessage>({
         throw err;
       }
 
-      // Send conversation:snapshot (full current projection) as the baseline —
-      // both for a cold connect AND a resume/gap-recovery reconnect alike.
+      // Subscribe before reading the baseline to avoid losing an event between
+      // snapshot creation and subscription. Buffer until the snapshot is sent.
+      let snapshotSent = false;
+      const pendingEvents: AgentsSessionEvent[] = [];
+      const sendSessionEvent = async (payload: AgentsSessionEvent, afterSeq?: number): Promise<void> => {
+        if (payload.kind === 'cursor') {
+          await sender.send({
+            type: 'session:cursor',
+            payload: { seq: payload.seq },
+            timestamp: Date.now(),
+          });
+          return;
+        }
+
+        if (payload.kind === 'deltas') {
+          for (const delta of payload.deltas) {
+            if (afterSeq != null && delta.seq <= afterSeq) {
+              continue;
+            }
+            await sender.send({
+              type: 'turn:delta',
+              payload: { sessionId, delta },
+              timestamp: Date.now(),
+            } satisfies TurnDeltaMessage).catch((err) => {
+              ctx.platform.logger.error('[session-ws] Failed to send turn:delta', err instanceof Error ? err : new Error(String(err)), {
+                event: 'agent.session.websocket.send_failed', sessionId, connectionId, messageType: 'turn:delta',
+              });
+            });
+          }
+          return;
+        }
+
+        await sender.send({
+          type: 'run:completed',
+          payload: {
+            runId: payload.runId,
+            success: payload.success,
+            summary: payload.summary,
+            durationMs: payload.durationMs,
+            seq: payload.seq,
+            turn: payload.turn,
+          },
+          timestamp: Date.now(),
+        } satisfies RunCompletedMessage).catch((err) => {
+          ctx.platform.logger.error('[session-ws] Failed to send run:completed', err instanceof Error ? err : new Error(String(err)), {
+            event: 'agent.session.websocket.send_failed', sessionId, connectionId, messageType: 'run:completed', runId: payload.runId,
+          });
+        });
+      };
+
+      const unsubscribe = ctx.platform.eventBus.subscribe<AgentsSessionEvent>(
+        getAgentsSessionEventTopic(sessionId),
+        async (payload) => {
+          if (!snapshotSent) {
+            pendingEvents.push(payload);
+            return;
+          }
+          await sendSessionEvent(payload);
+        },
+      );
+
       try {
-        const { turns, seq } = await sessionManager.getProjection(sessionId);
+        await unsubscribe.ready;
+        const { turns: projectionTurns, seq } = await sessionManager.getProjection(sessionId);
+        const turns = await RunManager.reconcileSessionTurns(sessionManager, sessionId, projectionTurns);
         const completedTurns = turns.filter((t) => t.status !== 'streaming');
         const activeTurns = turns.filter((t) => t.status === 'streaming');
         await sender.send({
@@ -102,62 +173,42 @@ export default defineWebSocket<unknown, ClientMessage, ServerMessage>({
           },
           timestamp: Date.now(),
         } satisfies ConversationSnapshotMessage);
-        ctx.platform.logger.info(
-          `[session-ws] Sent snapshot: ${completedTurns.length} completed + ${activeTurns.length} active turns at seq ${seq}`
-        );
-      } catch (err) {
-        ctx.platform.logger.error(`[session-ws] Failed to send snapshot: ${err}`);
-      }
-
-      // Session-level listener — receives turn deltas and run:completed
-      // notifications from ALL runs in this session, already computed at
-      // persist time (see module doc comment above).
-      const callback = (payload: SessionBroadcastPayload) => {
-        if (payload.kind === 'deltas') {
-          for (const delta of payload.deltas) {
-            void sender.send({
-              type: 'turn:delta',
-              payload: { sessionId, delta },
-              timestamp: Date.now(),
-            } satisfies TurnDeltaMessage).catch((err) => {
-              ctx.platform.logger.error(`[session-ws] Failed to send turn:delta: ${err}`);
-            });
+        snapshotSent = true;
+        for (const pending of pendingEvents.splice(0)) {
+          if (pending.kind === 'deltas') {
+            if (pending.deltas.some((delta) => delta.seq > seq)) {
+              await sendSessionEvent(pending, seq);
+            }
+          } else if (pending.seq > seq) {
+            await sendSessionEvent(pending, seq);
           }
-          return;
         }
-
-        void sender.send({
-          type: 'run:completed',
-          payload: {
-            runId: payload.runId,
-            success: payload.success,
-            summary: payload.summary,
-            durationMs: payload.durationMs,
-            seq: payload.seq,
-            turn: payload.turn,
-          },
-          timestamp: Date.now(),
-        } satisfies RunCompletedMessage).catch((err) => {
-          ctx.platform.logger.error(`[session-ws] Failed to send run:completed: ${err}`);
+        if (connectionId) {
+          connectionState.set(connectionId, { sessionId, unsubscribe, connectedAt });
+        } else {
+          unsubscribe();
+        }
+        ctx.platform.logger.info('[session-ws] Session event subscription registered', {
+          event: 'agent.session.websocket.subscribed',
+          sessionId,
+          connectionId,
+          completedTurns: completedTurns.length,
+          activeTurns: activeTurns.length,
+          seq,
         });
-      };
-
-      // Store callback for cleanup in a WeakMap keyed by ctx — no ctx mutation
-      connectionState.set(ctx as object, { sessionId, callback });
-
-      try {
-        RunManager.addSessionListener(sessionId, callback);
-      } catch (err) {
-        ctx.platform.logger.error(`[session-ws] Failed to register session listener: ${String(err)}`);
-        throw err;
+      } catch (error) {
+        unsubscribe();
+        ctx.platform.logger.error('[session-ws] Failed to send conversation snapshot', error instanceof Error ? error : new Error(String(error)), {
+          event: 'agent.session.websocket.snapshot_failed', sessionId, connectionId,
+        });
+        throw error;
       }
-      ctx.platform.logger.info(`[session-ws] Session listener registered for session ${sessionId}`);
     },
 
     async onMessage(ctx: PluginContextV3, message: ClientMessage, sender: TypedSender<ServerMessage>) {
       // Handle ping or corrections here if needed
       if (message.type === 'ping') {
-        const sessionId = connectionState.get(ctx as object)?.sessionId ?? '';
+        const sessionId = connectionState.get(getConnectionId(ctx, sender) ?? '')?.sessionId ?? '';
         await sender.send({
           type: 'connection:ready',
           payload: { runId: sessionId ?? '', connectedAt: new Date().toISOString() },
@@ -166,18 +217,31 @@ export default defineWebSocket<unknown, ClientMessage, ServerMessage>({
       }
     },
 
-    async onDisconnect(ctx: PluginContextV3) {
-      const state = connectionState.get(ctx as object);
+    async onDisconnect(ctx: PluginContextV3, code: number, reason: string) {
+      const connectionId = getConnectionId(ctx);
+      const state = connectionId ? connectionState.get(connectionId) : undefined;
       if (state) {
-        RunManager.removeSessionListener(state.sessionId, state.callback);
-        connectionState.delete(ctx as object);
+        state.unsubscribe();
+        connectionState.delete(connectionId!);
       }
 
-      ctx.platform.logger.info(`[session-ws] Client disconnected from session ${state?.sessionId}`);
+      ctx.platform.logger.info('[session-ws] Client disconnected from session', {
+        event: 'agent.session.websocket.disconnected',
+        sessionId: state?.sessionId,
+        connectionId,
+        closeCode: code,
+        closeReason: reason,
+        durationMs: state ? Date.now() - state.connectedAt : undefined,
+        subscriptionFound: Boolean(state),
+      });
     },
 
     async onError(ctx: PluginContextV3, error: Error, sender: TypedSender<ServerMessage>) {
-      ctx.platform.logger.error(`[session-ws] WebSocket error: ${error.message}`);
+      ctx.platform.logger.error('[session-ws] WebSocket error', error, {
+        event: 'agent.session.websocket.error',
+        connectionId: getConnectionId(ctx, sender),
+        sessionId: (ctx.hostContext as { params?: { sessionId?: string } } | undefined)?.params?.sessionId,
+      });
       await sender.send({
         type: 'error',
         payload: { code: 'INTERNAL_ERROR', message: error.message },

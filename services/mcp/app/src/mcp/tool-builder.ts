@@ -38,6 +38,24 @@ export interface McpTool {
   permissions: PermissionSpec;
 }
 
+/** MCP-facing effect hints derived from the command declaration. The daemon
+ * still enforces authorization independently; clients must not treat hints as
+ * a security boundary. Unknown operation types are conservative by default. */
+export function toMcpToolDescriptor(tool: McpTool) {
+  const readOnly = tool.operationType === 'read' || tool.operationType === 'analyze';
+  const knownEffect = ['read', 'analyze', 'mutate', 'execute'].includes(tool.operationType ?? '');
+  return {
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema as { type: 'object' },
+    annotations: {
+      readOnlyHint: readOnly,
+      destructiveHint: !readOnly,
+      openWorldHint: tool.operationType === 'execute' || !knownEffect,
+    },
+  };
+}
+
 /** A command that failed to become an MCP tool — malformed manifest, never a fatal error. */
 export interface ToolBuildDiagnostic {
   pluginId: string;
@@ -153,7 +171,11 @@ export function filterTools(
   const tools: McpTool[] = [];
   for (const entry of snapshot.manifests) {
     for (const decl of entry.manifest.cli?.commands ?? []) {
-      if (!permits(decl.operationType, entry.pluginId)) {
+      if (typeof decl.path !== 'string' || decl.path.trim().length === 0) {
+        continue;
+      }
+      const name = toolName(entry.pluginId, decl.path);
+      if (!permits(decl.operationType, entry.pluginId, name)) {
         continue;
       }
       try {

@@ -262,8 +262,17 @@ describe('UnixSocketServer', () => {
         client.on('connect', resolve);
       });
 
-      // Mock cache.get to throw error
-      vi.mocked(mockPlatform.cache.get).mockRejectedValue(new Error('Cache is down'));
+      // Mock an upstream error with safe diagnostic fields.
+      const upstreamError = Object.assign(new Error('Could not reach VibeProxy'), {
+        code: 'LLM_UPSTREAM_UNAVAILABLE',
+        transportCode: 'ECONNREFUSED',
+        httpStatus: 503,
+        retryAfter: '2',
+        provider: 'vibeproxy',
+        model: 'gpt-6-luna',
+        endpointOrigin: 'http://localhost:8317',
+      });
+      vi.mocked(mockPlatform.cache.get).mockRejectedValue(upstreamError);
 
       const call = {
         type: 'adapter:call',
@@ -291,6 +300,21 @@ describe('UnixSocketServer', () => {
       expect(response.type).toBe('adapter:response');
       expect(response.requestId).toBe('error-789');
       expect(response.error).toBeDefined();
+      expect(mockPlatform.logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('Could not reach VibeProxy'),
+        upstreamError,
+        expect.objectContaining({
+          adapter: 'cache',
+          method: 'get',
+          'error.code': 'LLM_UPSTREAM_UNAVAILABLE',
+          'error.transport_code': 'ECONNREFUSED',
+          'http.status_code': 503,
+          'http.retry_after': '2',
+          'llm.provider': 'vibeproxy',
+          'llm.model': 'gpt-6-luna',
+          'llm.endpoint_origin': 'http://localhost:8317',
+        }),
+      );
 
       client.end();
     });

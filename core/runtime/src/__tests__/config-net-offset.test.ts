@@ -31,4 +31,21 @@ describe('applyLocalNetworkOffset', () => {
     const config = { adapterOptions: { cache: { url: 'redis://localhost:6379' } } }
     expect(applyLocalNetworkOffset(config, {})).toBe(config)
   })
+
+  it('leaves explicitly exempt host-service URLs on their configured ports', () => {
+    const result = applyLocalNetworkOffset({
+      networkOffsetExemptions: ['adapterOptions.llm'],
+      adapterOptions: {
+        llm: { baseURL: 'http://localhost:8317' },
+        cache: { url: 'redis://localhost:6379' },
+      },
+    }, { KB_NET_OFFSET: '400' })
+
+    expect(result).toEqual({
+      adapterOptions: {
+        llm: { baseURL: 'http://localhost:8317' },
+        cache: { url: 'redis://localhost:6779' },
+      },
+    })
+  })
 })

@@ -31,34 +31,66 @@ const VERIFY_REPORT_CLAIMS_PROMPT = [
   'If evidence is partial, prefer warn instead of block unless the answer states unsupported details as facts.',
   'Return strict JSON only.',
 ].join(' ');
+const REPORT_VERIFICATION_TIMEOUT_MS = 8_000;
 
 async function verifyReportClaims(
   context: ToolContext,
   answer: string,
 ): Promise<ClaimVerificationResult> {
+  // Verification is for artifacts produced by this run, not a serial preamble
+  // to every conversational response. Read-only evidence alone is not a
+  // deliverable to verify.
+  if (!context.filesWritten?.size) {
+    return {
+      verdict: 'allow',
+      rationale: 'No work artifact or execution evidence was produced in this run.',
+      requirements: {
+        allowsMemoryOnlyRecall: true,
+        needsDirectToolEvidence: false,
+        needsFileBackedClaims: false,
+        allowsInference: true,
+        maxUnsupportedClaims: 0,
+      },
+      supportedClaims: [],
+      unsupportedClaims: [],
+    };
+  }
   const kernel = await context.sessionMemory?.loadKernelState();
   const requirements = await resolveResponseRequirements(context, answer, kernel);
-  const evidence = kernel?.memory.evidence ?? [];
-  const recallFastPath = verifyEvidenceBackedRecall(answer, kernel, requirements);
+  const evidence = [...(kernel?.memory.evidence ?? []), ...(context.runEvidence ?? [])];
+  const recallFastPath = verifyEvidenceBackedRecall(answer, kernel, requirements, evidence);
   if (recallFastPath) {
     return recallFastPath;
   }
-  const fallback = deterministicVerification(answer, kernel, requirements);
+  const fallback = deterministicVerification(answer, kernel, requirements, evidence);
   const llm = useLLM({ tier: 'small' });
 
   if (!llm?.complete) {
     return fallback;
   }
 
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(
+    () => timeoutController.abort(new Error('Report verification timed out')),
+    REPORT_VERIFICATION_TIMEOUT_MS,
+  );
+  const signal = context.abortSignal
+    ? AbortSignal.any([context.abortSignal, timeoutController.signal])
+    : timeoutController.signal;
+
   try {
-    const response = await llm.complete(buildClaimVerificationPrompt(answer, kernel, context), {
+    const options = {
       systemPrompt: VERIFY_REPORT_CLAIMS_PROMPT,
       temperature: 0,
       maxTokens: 350,
-    });
+    };
+    Object.defineProperty(options, 'signal', { value: signal, enumerable: false });
+    const response = await llm.complete(buildClaimVerificationPrompt(answer, kernel, context), options);
     return normalizeClaimVerification(response.content, fallback, evidence);
   } catch {
     return fallback;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -86,7 +118,7 @@ function buildClaimVerificationPrompt(
   kernel: KernelState | null | undefined,
   context: ToolContext,
 ): string {
-  const recentEvidence = (kernel?.memory.evidence ?? [])
+  const recentEvidence = [...(kernel?.memory.evidence ?? []), ...(context.runEvidence ?? [])]
     .slice(-6)
     .map((item) => ({
       toolName: item.toolName ?? item.source,
@@ -170,8 +202,8 @@ function deterministicVerification(
   answer: string,
   kernel: KernelState | null | undefined,
   responseRequirements?: ToolResponseRequirements | null,
+  evidence: EvidenceRecord[] = kernel?.memory.evidence ?? [],
 ): ClaimVerificationResult {
-  const evidence = kernel?.memory.evidence ?? [];
   const shellRecall = /shell command|previous shell command|used in this session|latest shell command/i.test(answer);
   const fileLikeClaims = /RuntimeEngine|projectKernelPrompt|compactKernelState|plugins\/|packages\/|\.ts\b|line \d+/i.test(answer);
   const hasFileEvidence = evidence.some((item) => item.toolName === 'fs_read');
@@ -229,12 +261,12 @@ function verifyEvidenceBackedRecall(
   answer: string,
   kernel: KernelState | null | undefined,
   responseRequirements: ToolResponseRequirements | null,
+  evidence: EvidenceRecord[] = kernel?.memory.evidence ?? [],
 ): ClaimVerificationResult | null {
   if (!responseRequirements?.requirements.allowsMemoryOnlyRecall) {
     return null;
   }
 
-  const evidence = kernel?.memory.evidence ?? [];
   const fileEvidence = evidence
     .filter((item) => item.toolName === 'fs_read' && item.toolInputSummary)
     .map((item) => item.toolInputSummary as string);

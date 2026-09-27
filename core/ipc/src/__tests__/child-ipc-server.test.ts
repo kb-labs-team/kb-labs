@@ -140,6 +140,25 @@ describe('ChildIPCServer', () => {
       expect(mockPlatform.llm.complete).toHaveBeenCalledWith('hello world', { temperature: 0.5 });
     });
 
+    it('attaches a host AbortSignal to an in-flight LLM call and aborts it on adapter:cancel', async () => {
+      let capturedSignal: AbortSignal | undefined;
+      let finishCall!: (value: unknown) => void;
+      (mockPlatform.llm.complete as ReturnType<typeof vi.fn>).mockImplementation(
+        (_prompt: string, options: { signal?: AbortSignal }) => {
+          capturedSignal = options.signal;
+          return new Promise((resolve) => { finishCall = resolve; });
+        },
+      );
+      const call = createAdapterCall('llm', 'complete', ['hello', { temperature: 0.2 }]);
+      mockChild.emit('message', call);
+      await vi.waitFor(() => expect(capturedSignal).toBeInstanceOf(AbortSignal));
+
+      mockChild.emit('message', { type: 'adapter:cancel', requestId: call.requestId });
+      expect(capturedSignal?.aborted).toBe(true);
+      finishCall({ content: '', usage: { promptTokens: 0, completionTokens: 0 }, model: 'test' });
+      await vi.waitFor(() => expect(mockChild.send).toHaveBeenCalled());
+    });
+
     it('should dispatch vectorStore.search', async () => {
       const call = createAdapterCall('vectorStore', 'search', [[0.1, 0.2], 10]);
       mockChild.emit('message', call);
@@ -299,6 +318,7 @@ describe('ChildIPCServer', () => {
       await vi.waitFor(() => {
         expect(mockPlatform.eventBus.subscribe).toHaveBeenCalledWith('workflow.done', expect.any(Function));
       });
+      expect(mockChild.send).toHaveBeenCalledWith({ type: 'eventbus:subscribed', subscriptionId: 'sub-1' });
     });
 
     it('eventbus:subscribe — sends eventbus:push to child when event fires', async () => {
@@ -334,6 +354,8 @@ describe('ChildIPCServer', () => {
       mockChild.emit('message', { type: 'eventbus:subscribe', subscriptionId: 'sub-3', topic: 'events.y' });
       await vi.waitFor(() => capturedHandler !== null);
 
+      // The subscribe acknowledgement is expected; only event pushes should be suppressed.
+      mockChild.send.mockClear();
       mockChild.connected = false;
       await capturedHandler!({ value: 1 });
       expect(mockChild.send).not.toHaveBeenCalled();
@@ -383,6 +405,7 @@ describe('ChildIPCServer', () => {
       expect(() => {
         mockChild.emit('message', { type: 'eventbus:subscribe', subscriptionId: 's', topic: 't' });
       }).not.toThrow();
+      expect(mockChild.send).toHaveBeenCalledWith({ type: 'eventbus:subscribed', subscriptionId: 's' });
       srv.stop();
     });
   });

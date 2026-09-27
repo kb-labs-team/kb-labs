@@ -45,7 +45,7 @@ import {
   type LLMMessage,
   type LLMTool,
 } from '@kb-labs/sdk';
-import { AGENT_ANALYTICS_EVENTS } from '@kb-labs/agent-contracts';
+import { AGENT_ANALYTICS_EVENTS, resolveSubAgentToolPolicy } from '@kb-labs/agent-contracts';
 import type { AgentConfig, AgentEvent, LLMTier, TaskResult, SpawnAgentRequest, SpawnAgentResult, SubAgentPreset } from '@kb-labs/agent-contracts';
 import type { Turn } from '@kb-labs/agent-contracts';
 import type { AgentSDK, IAgentRunner } from '@kb-labs/agent-sdk';
@@ -55,7 +55,7 @@ import { LinearExecutionLoop } from '../execution/linear-execution-loop.js';
 import { createDefaultRunEvaluator } from '../execution/default-run-evaluator.js';
 import { MiddlewarePipeline } from '../middleware/pipeline.js';
 import { ToolManager } from '../tools/tool-manager.js';
-import { SystemPromptBuilder } from '../prompt/system-prompt-builder.js';
+import { loadProjectInstructions, SystemPromptBuilder } from '../prompt/system-prompt-builder.js';
 
 import { createRunContext } from './run-context.js';
 import { ToolExecutor } from './tool-executor.js';
@@ -75,6 +75,8 @@ import { SessionManager } from '../planning/session-manager.js';
 import { RunMetricsEmitter, getKpiBaselineKey } from '../analytics/index.js';
 import type { RunKpiPayload } from '../analytics/index.js';
 import { createSessionMemoryBridge } from './session-memory-bridge.js';
+import { runExternalHarness } from '../agents/external-harness.js';
+import { issuePlatformMcpLease } from '../agents/platform-mcp-lease.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tier escalation order
@@ -300,7 +302,7 @@ export class SDKAgentRunner implements IAgentRunner {
     }
 
     // Register async task tools (only for parent agents that can spawn sub-agents)
-    const taskMw = new TaskMiddleware({ maxConcurrent: 5 });
+    const taskMw = new TaskMiddleware({ maxConcurrent: 5, onEvent: this.config.onEvent, agentId: this.agentId });
     if (!this.config.parentAgentId) {
       taskMw.setSpawnFn((req) => this.spawnChildAgent(req));
       toolManager.register(createAsyncTaskToolPack(taskMw));
@@ -464,7 +466,7 @@ export class SDKAgentRunner implements IAgentRunner {
         task,
       });
     }
-    const directAnswer = runtimeEngine
+    const directAnswer = runtimeEngine && !this.config.initialInputContentParts?.length
       ? await runtimeEngine.tryResolveDirectAnswer([])
       : null;
     if (runtimeEngine && directAnswer && this.config.sessionId) {
@@ -521,7 +523,13 @@ export class SDKAgentRunner implements IAgentRunner {
     const historyMessages = continuityEnabled ? await this.loadConversationMessages(task) : [];
     messages.push(...historyMessages);
 
-    messages.push({ role: 'user', content: task });
+    const initialParts = !this.config.parentAgentId ? this.config.initialInputContentParts : undefined;
+    messages.push({
+      role: 'user',
+      content: initialParts?.length
+        ? [{ type: 'text', text: task }, ...initialParts]
+        : task,
+    });
 
     // Inject any queued user context (from injectUserContext() calls)
     for (const msg of this.injectedMessages) {
@@ -561,6 +569,7 @@ export class SDKAgentRunner implements IAgentRunner {
 
     // Enrich observability with budget + workspace for agent:start trace event
     observabilityMw.startMeta = {
+      startedAt: tierStartedAt,
       budget: {
         maxTokens: budgetMw['policy'].maxTokens,
         softLimitRatio: budgetMw['policy'].softLimitRatio,
@@ -765,7 +774,7 @@ export class SDKAgentRunner implements IAgentRunner {
       // If CLI already pre-created a user turn for current task, avoid duplicate.
       while (messages.length > 0) {
         const tail = messages[messages.length - 1];
-        if (tail?.role === 'user' && tail.content.trim() === currentTask.trim()) {
+        if (tail?.role === 'user' && typeof tail.content === 'string' && tail.content.trim() === currentTask.trim()) {
           messages.pop();
           continue;
         }
@@ -797,6 +806,29 @@ export class SDKAgentRunner implements IAgentRunner {
    */
   private async spawnChildAgent(request: SpawnAgentRequest): Promise<SpawnAgentResult> {
     const startedAt = Date.now();
+    const logger = useLogger();
+    const preset: SubAgentPreset = request.preset ?? 'research';
+    const policy = resolveSubAgentToolPolicy(preset);
+    if (!policy) {
+      return {
+        success: false, summary: '', filesRead: [], filesModified: [], filesCreated: [],
+        iterations: 0, tokensUsed: 0, durationMs: 0, error: `Unknown sub-agent preset: ${String(preset)}`, preset,
+      };
+    }
+    if ((request.mcpTools?.length || request.mcpInputEquals) && !request.harness) {
+      return {
+        success: false, summary: '', filesRead: [], filesModified: [], filesCreated: [],
+        iterations: 0, tokensUsed: 0, durationMs: 0,
+        error: 'Platform MCP tools can only be delegated to an external harness.', preset,
+      };
+    }
+    if (request.mcpInputEquals && (!request.mcpTools?.length || request.mcpTools.includes('*'))) {
+      return {
+        success: false, summary: '', filesRead: [], filesModified: [], filesCreated: [],
+        iterations: 0, tokensUsed: 0, durationMs: 0,
+        error: 'MCP input constraints require an explicit tool allowlist.', preset,
+      };
+    }
 
     // Budget cap: compute child token budget from parent's remaining budget
     const parentBudget = this.config.tokenBudget;
@@ -809,10 +841,33 @@ export class SDKAgentRunner implements IAgentRunner {
       ...this.config,
       agentId: randomUUID(),
       parentAgentId: this.agentId,
-      maxIterations: request.maxIterations ?? 100,
+      maxIterations: Math.min(request.maxIterations ?? policy.maxIterations, policy.maxIterations),
       workingDir: request.workingDir ?? this.config.workingDir,
       abortSignal: this.abortController.signal,
-      allowedTools: request.allowedTools,
+      onEvent: (event) => {
+        const activityType = event.type.startsWith('tool:') ? 'tool'
+          : event.type.startsWith('thinking:') ? 'thinking'
+            : event.type === 'llm:end' ? 'message'
+              : event.type === 'progress:update' || event.type === 'status:change' ? 'progress' : undefined;
+        if (!activityType || !request.subagentId) { return; }
+        const action = event.type.startsWith('tool:') ? String((event.data as { toolName?: string } | undefined)?.toolName ?? 'Tool activity')
+          : activityType === 'message' ? 'Assistant response'
+            : activityType === 'thinking' ? 'Reasoning'
+              : String((event.data as { message?: string; status?: string } | undefined)?.message ?? event.type);
+        const detail = activityType === 'message'
+          ? String((event.data as { content?: string } | undefined)?.content ?? '').slice(0, 4_000)
+          : activityType === 'tool'
+            ? String((event.data as { output?: string; error?: string } | undefined)?.output ?? (event.data as { error?: string } | undefined)?.error ?? '').slice(0, 2_000)
+            : undefined;
+        this.config.onEvent?.({
+          type: 'subagent:activity', timestamp: event.timestamp, agentId: this.agentId,
+          taskId: request.subagentId,
+          data: { subagentId: request.subagentId, activityType, action, ...(detail ? { detail } : {}), toolCallId: event.toolCallId },
+        });
+      },
+      allowedTools: request.allowedTools
+        ? request.allowedTools.filter((toolId) => policy.allowedToolIds.includes(toolId))
+        : [...policy.allowedToolIds],
       // Child budget: capped at fraction of parent's remaining budget
       tokenBudget: childMaxTokens > 0
         ? {
@@ -828,9 +883,57 @@ export class SDKAgentRunner implements IAgentRunner {
 
     const childSDK = this.sdk.extend();
     const childRunner = new SDKAgentRunner(childConfig, childSDK);
-    const preset: SubAgentPreset = request.preset ?? 'research';
-
     try {
+      if (request.harness) {
+        const mcpLease = request.mcpTools?.length
+          ? await issuePlatformMcpLease(this.config.platformMcp, request, fetch, this.abortController.signal)
+          : undefined;
+        let external;
+        try {
+          external = await runExternalHarness({
+            harness: request.harness,
+            task: request.task,
+            workingDir: childConfig.workingDir,
+            preset,
+            maxIterations: childConfig.maxIterations,
+            projectInstructions: loadProjectInstructions(childConfig.workingDir),
+            signal: this.abortController.signal,
+            ...(mcpLease ? {
+              mcpAccess: { url: mcpLease.endpoint, accessToken: mcpLease.accessToken },
+              mcpTools: mcpLease.allowedTools,
+            } : {}),
+            onActivity: (activity) => this.config.onEvent?.({
+              type: 'subagent:activity', timestamp: new Date().toISOString(), agentId: this.agentId,
+              taskId: request.subagentId,
+              data: { subagentId: request.subagentId!, activityType: activity.type, action: activity.action, detail: activity.detail },
+            }),
+          });
+        } finally {
+          if (mcpLease) {
+            try {
+              await mcpLease.revoke();
+            } catch (error) {
+              logger.warn('[SDKAgentRunner] Failed to revoke child MCP lease; it will expire automatically', {
+                subagentId: request.subagentId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        }
+        return {
+          success: true,
+          summary: external.summary,
+          filesRead: [],
+          filesModified: [],
+          filesCreated: [],
+          iterations: external.iterations,
+          tokensUsed: external.tokensUsed,
+          durationMs: Date.now() - startedAt,
+          preset,
+          harness: request.harness,
+        };
+      }
+
       const result = await childRunner.execute(request.task);
       return {
         success: result.success,
@@ -856,6 +959,7 @@ export class SDKAgentRunner implements IAgentRunner {
         durationMs: Date.now() - startedAt,
         error: error instanceof Error ? error.message : String(error),
         preset,
+        harness: request.harness,
       };
     }
   }
@@ -867,7 +971,9 @@ export class SDKAgentRunner implements IAgentRunner {
     const toolRegistry = createToolRegistry({
       workingDir: this.config.workingDir,
       sessionId: this.config.sessionId,
+      filesWritten: new Set<string>(),
       verbose: false,
+      abortSignal: this.abortController.signal,
       sessionMemory: createSessionMemoryBridge(this.config.workingDir, this.config.sessionId),
     });
 

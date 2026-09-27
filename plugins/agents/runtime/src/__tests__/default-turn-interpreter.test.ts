@@ -53,6 +53,18 @@ describe('createDefaultTurnInterpreter', () => {
     expect(chatWithTools).toHaveBeenCalledTimes(1);
   });
 
+  it('uses the deterministic follow-up path for ordinary pings without a classifier call', async () => {
+    const interpreter = createDefaultTurnInterpreter();
+    const result = await interpreter.interpret({
+      mode: 'assistant',
+      message: 'пинг',
+      kernel: null,
+    });
+
+    expect(result).toMatchObject({ kind: 'follow_up', shouldPersist: false });
+    expect(chatWithTools).not.toHaveBeenCalled();
+  });
+
   it('preserves explicit persist strategy from the LLM response', async () => {
     chatWithTools.mockResolvedValue({
       content: '',

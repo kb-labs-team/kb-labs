@@ -11,7 +11,7 @@ export type EventHandler<T> = (event: T) => Promise<void>;
 /**
  * Unsubscribe function returned by subscribe.
  */
-export type Unsubscribe = () => void;
+export type Unsubscribe = (() => void) & { ready?: Promise<void> };
 
 /**
  * Event bus adapter interface.

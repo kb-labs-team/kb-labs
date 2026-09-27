@@ -128,61 +128,59 @@ describe('TierResolver', () => {
 
 describe('CapabilityResolver', () => {
   describe('simple config (no capabilities set)', () => {
-    it('should report all capabilities as available', () => {
+    it('should report no optional capabilities; text remains implicit', () => {
       const resolver = new CapabilityResolver();
 
-      expect(resolver.hasCapability('reasoning')).toBe(true);
-      expect(resolver.hasCapability('coding')).toBe(true);
-      expect(resolver.hasCapability('vision')).toBe(true);
-      expect(resolver.hasCapability('fast')).toBe(true);
+      expect(resolver.hasCapability('reasoning')).toBe(false);
+      expect(resolver.hasCapability('code')).toBe(false);
+      expect(resolver.hasCapability('vision')).toBe(false);
+      expect(resolver.hasCapability('fast')).toBe(false);
+      expect(resolver.hasCapability('audio.input')).toBe(false);
+      expect(resolver.hasCapability('document.input')).toBe(false);
     });
 
-    it('should return all capabilities from getCapabilities', () => {
+    it('should return an empty list from getCapabilities', () => {
       const resolver = new CapabilityResolver();
-      const caps = resolver.getCapabilities();
 
-      expect(caps).toContain('reasoning');
-      expect(caps).toContain('coding');
-      expect(caps).toContain('vision');
-      expect(caps).toContain('fast');
-      expect(caps).toHaveLength(4);
+      expect(resolver.getCapabilities()).toEqual([]);
     });
 
-    it('should return true for hasAllCapabilities with any set', () => {
+    it('should accept no optional requirements and reject undeclared ones', () => {
       const resolver = new CapabilityResolver();
 
-      expect(resolver.hasAllCapabilities(['reasoning', 'coding'])).toBe(true);
-      expect(resolver.hasAllCapabilities(['vision', 'fast'])).toBe(true);
-      expect(resolver.hasAllCapabilities(['reasoning', 'coding', 'vision', 'fast'])).toBe(true);
+      expect(resolver.hasAllCapabilities([])).toBe(true);
+      expect(resolver.hasAllCapabilities(['reasoning'])).toBe(false);
+      expect(resolver.hasAllCapabilities(['vision', 'fast'])).toBe(false);
+      expect(resolver.hasAllCapabilities(['audio.input'])).toBe(false);
     });
   });
 
   describe('advanced config (specific capabilities)', () => {
     it('should only report configured capabilities as available', () => {
-      const resolver = new CapabilityResolver(new Set(['coding', 'fast']));
+      const resolver = new CapabilityResolver(new Set(['code', 'fast']));
 
-      expect(resolver.hasCapability('coding')).toBe(true);
+      expect(resolver.hasCapability('code')).toBe(true);
       expect(resolver.hasCapability('fast')).toBe(true);
       expect(resolver.hasCapability('reasoning')).toBe(false);
       expect(resolver.hasCapability('vision')).toBe(false);
     });
 
     it('should return only configured capabilities', () => {
-      const caps: LLMCapability[] = ['coding', 'fast'];
+      const caps: LLMCapability[] = ['code', 'fast'];
       const resolver = new CapabilityResolver(new Set(caps));
       const result = resolver.getCapabilities();
 
       expect(result).toHaveLength(2);
-      expect(result).toContain('coding');
+      expect(result).toContain('code');
       expect(result).toContain('fast');
     });
 
     it('should correctly check multiple capabilities', () => {
-      const resolver = new CapabilityResolver(new Set(['coding', 'fast']));
+      const resolver = new CapabilityResolver(new Set(['code', 'fast']));
 
-      expect(resolver.hasAllCapabilities(['coding'])).toBe(true);
-      expect(resolver.hasAllCapabilities(['coding', 'fast'])).toBe(true);
-      expect(resolver.hasAllCapabilities(['coding', 'reasoning'])).toBe(false);
+      expect(resolver.hasAllCapabilities(['code'])).toBe(true);
+      expect(resolver.hasAllCapabilities(['code', 'fast'])).toBe(true);
+      expect(resolver.hasAllCapabilities(['code', 'reasoning'])).toBe(false);
       expect(resolver.hasAllCapabilities(['vision'])).toBe(false);
     });
 
@@ -190,24 +188,24 @@ describe('CapabilityResolver', () => {
       const resolver = new CapabilityResolver(new Set(['vision']));
 
       expect(resolver.hasCapability('vision')).toBe(true);
-      expect(resolver.hasCapability('coding')).toBe(false);
+      expect(resolver.hasCapability('code')).toBe(false);
       expect(resolver.getCapabilities()).toEqual(['vision']);
     });
   });
 
   describe('empty array vs undefined', () => {
-    it('should treat empty set as "all available"', () => {
+    it('should treat empty set as no declared capabilities', () => {
       const resolver = new CapabilityResolver(new Set());
 
-      expect(resolver.hasCapability('reasoning')).toBe(true);
-      expect(resolver.getCapabilities()).toHaveLength(4);
+      expect(resolver.hasCapability('reasoning')).toBe(false);
+      expect(resolver.getCapabilities()).toEqual([]);
     });
 
-    it('should treat undefined as "all available"', () => {
+    it('should treat undefined as no declared capabilities', () => {
       const resolver = new CapabilityResolver(undefined);
 
-      expect(resolver.hasCapability('reasoning')).toBe(true);
-      expect(resolver.getCapabilities()).toHaveLength(4);
+      expect(resolver.hasCapability('reasoning')).toBe(false);
+      expect(resolver.getCapabilities()).toEqual([]);
     });
   });
 });

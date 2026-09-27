@@ -101,7 +101,7 @@ describe('LLMRouter', () => {
     it('should extract capabilities from tierMapping', () => {
       const tierMapping: TierMapping = {
         small: [{ model: 'gpt-4o-mini', priority: 1, capabilities: ['fast'] }],
-        medium: [{ model: 'claude-sonnet', priority: 1, capabilities: ['coding', 'reasoning'] }],
+        medium: [{ model: 'claude-sonnet', priority: 1, capabilities: ['code', 'reasoning'] }],
         large: [{ model: 'claude-opus', priority: 1, capabilities: ['vision'] }],
       };
 
@@ -112,7 +112,7 @@ describe('LLMRouter', () => {
       );
 
       expect(router.hasCapability('fast')).toBe(true);
-      expect(router.hasCapability('coding')).toBe(true);
+      expect(router.hasCapability('code')).toBe(true);
       expect(router.hasCapability('reasoning')).toBe(true);
       expect(router.hasCapability('vision')).toBe(true);
     });
@@ -122,12 +122,12 @@ describe('LLMRouter', () => {
     const tierMapping: TierMapping = {
       small: [{ model: 'gpt-4o-mini', priority: 1, capabilities: ['fast'] }],
       medium: [
-        { model: 'claude-sonnet-4-5', priority: 1, capabilities: ['coding', 'reasoning', 'vision'] },
-        { model: 'gpt-5-codex', priority: 2, capabilities: ['coding'] },
+        { model: 'claude-sonnet-4-5', priority: 1, capabilities: ['code', 'reasoning', 'vision'] },
+        { model: 'gpt-5-codex', priority: 2, capabilities: ['code'] },
       ],
       large: [
-        { model: 'claude-opus-4-5', priority: 1, capabilities: ['reasoning', 'coding', 'vision'] },
-        { model: 'gpt-5.1-codex-max', priority: 2, capabilities: ['reasoning', 'coding'] },
+        { model: 'claude-opus-4-5', priority: 1, capabilities: ['reasoning', 'code', 'vision'] },
+        { model: 'gpt-5.1-codex-max', priority: 2, capabilities: ['reasoning', 'code'] },
       ],
     };
 
@@ -176,8 +176,8 @@ describe('LLMRouter', () => {
         mockLogger
       );
 
-      // Request medium with 'coding' capability - both have it, so first wins
-      let resolution = router.resolve({ tier: 'medium', capabilities: ['coding'] });
+      // Request medium with 'code' capability - both have it, so first wins
+      let resolution = router.resolve({ tier: 'medium', capabilities: ['code'] });
       expect(resolution.model).toBe('claude-sonnet-4-5');
 
       // Request large with 'vision' capability - only claude-opus has it
@@ -185,16 +185,55 @@ describe('LLMRouter', () => {
       expect(resolution.model).toBe('claude-opus-4-5');
     });
 
-    it('should fall back to first model if no model matches capabilities', () => {
+    it('should throw when no model declares every requested capability', () => {
       const router = new LLMRouter(
         mockAdapter,
         { defaultTier: 'medium', tierMapping },
         mockLogger
       );
 
-      // Request small with 'vision' - gpt-4o-mini doesn't have it, but it's the only option
-      const resolution = router.resolve({ tier: 'small', capabilities: ['vision'] });
-      expect(resolution.model).toBe('gpt-4o-mini'); // Falls back to first
+      // small declares only fast, so it cannot satisfy fast + vision.
+      expect(() => router.resolve({ tier: 'small', capabilities: ['fast', 'vision'] }))
+        .toThrowError(/LLM_CAPABILITY_NOT_SUPPORTED.*fast, vision/s);
+    });
+
+    it('should reject a partial capability match instead of selecting the model', async () => {
+      const router = new LLMRouter(
+        mockAdapter,
+        {
+          defaultTier: 'large',
+          tierMapping: {
+            large: [{ model: 'video-only', priority: 1, capabilities: ['video.input'] }],
+          },
+        },
+        mockLogger
+      );
+
+      await expect(
+        router.resolveAdapter({ tier: 'large', capabilities: ['fast', 'video.input'] })
+      ).rejects.toMatchObject({
+        name: 'LLMCapabilityNotSupportedError',
+        code: 'LLM_CAPABILITY_NOT_SUPPORTED',
+        tier: 'large',
+        requiredCapabilities: ['fast', 'video.input'],
+        candidates: [{ model: 'video-only', capabilities: ['video.input'] }],
+      });
+    });
+
+    it('should preflight the complete capability set on one model', () => {
+      const router = new LLMRouter(
+        mockAdapter,
+        {
+          defaultTier: 'large',
+          tierMapping: {
+            large: [{ model: 'video-only', priority: 1, capabilities: ['video.input'] }],
+          },
+        },
+        mockLogger
+      );
+
+      expect(router.supportsCapabilities({ tier: 'large', capabilities: ['video.input'] })).toBe(true);
+      expect(router.supportsCapabilities({ tier: 'large', capabilities: ['fast', 'video.input'] })).toBe(false);
     });
   });
 
@@ -406,6 +445,28 @@ describe('LLMRouter', () => {
           metadata: expect.objectContaining({ tier: 'medium' }),
         })
       );
+    });
+
+    it('preserves a non-enumerable cancellation signal while adding routing metadata', async () => {
+      const adapterWithTools: ILLM = {
+        ...mockAdapter,
+        chatWithTools: vi.fn().mockResolvedValue({
+          content: 'response',
+          toolCalls: [],
+          model: 'test',
+          usage: { promptTokens: 1, completionTokens: 1 },
+        }),
+      };
+      const router = new LLMRouter(adapterWithTools, { defaultTier: 'medium' }, mockLogger);
+      const controller = new AbortController();
+      const options = { tools: [] };
+      Object.defineProperty(options, 'signal', { value: controller.signal, enumerable: false });
+
+      await router.chatWithTools([{ role: 'user', content: 'Hello' }], options);
+
+      const passedOptions = (adapterWithTools.chatWithTools as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+      expect(passedOptions?.signal).toBe(controller.signal);
+      expect(Object.keys(passedOptions ?? {})).not.toContain('signal');
     });
   });
 

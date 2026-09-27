@@ -14,6 +14,7 @@ import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { filterTools, type McpTool } from './tool-builder.js';
 import { callTool, type PlatformResolver } from './tool-router.js';
 import type { Permits } from './authz.js';
+import { isAgentLeaseCallAllowed, type AgentLeaseRecord } from './agent-leases.js';
 import type { McpObservabilityCollector } from '../observability/collector.js';
 
 /** How long a per-identity tool listing stays cached. */
@@ -39,6 +40,8 @@ export function toolsCacheKey(authHeader: string | null | undefined): string {
 export interface ResolveVisibleToolsArgs {
   /** Identity-bound authorization predicate, or null for anonymous callers. */
   permits: Permits | null;
+  /** Optional narrowed authority; null means this is a user-level caller. */
+  lease?: AgentLeaseRecord | null;
   /** Raw Authorization header — only used to derive the per-token cache key. */
   authHeader: string | null | undefined;
   registry: IEntityRegistry;
@@ -58,7 +61,7 @@ export interface ResolveVisibleToolsArgs {
  * always get an empty list and never touch the registry.
  */
 export async function resolveVisibleTools(args: ResolveVisibleToolsArgs): Promise<McpTool[]> {
-  const { permits, authHeader, registry, cache, analytics, collector, tenantId = 'anonymous' } =
+  const { permits, lease = null, authHeader, registry, cache, analytics, collector, tenantId = 'anonymous' } =
     args;
   const t0 = Date.now();
 
@@ -78,7 +81,11 @@ export async function resolveVisibleTools(args: ResolveVisibleToolsArgs): Promis
     return cached;
   }
 
-  const tools = permits ? filterTools(registry.snapshot(), permits) : [];
+  const tools = permits
+    ? filterTools(registry.snapshot(), (operationType, resource, toolName) =>
+      permits(operationType, resource, toolName)
+      && (!lease || lease.allowedTools.includes(toolName ?? '')))
+    : [];
   await cache.set(cacheKey, tools, TOOLS_CACHE_TTL_MS).catch(() => {});
 
   const durationMs = Date.now() - t0;
@@ -99,6 +106,7 @@ export interface ExecuteToolCallArgs {
   visibleTools: McpTool[];
   /** Identity-bound predicate, or null for anonymous. */
   permits: Permits | null;
+  lease?: AgentLeaseRecord | null;
   tenantId: string;
   resolvePlatform: PlatformResolver;
   /** Platform analytics — emits mcp.tool.call events. Optional for tests. */
@@ -115,7 +123,7 @@ export interface ExecuteToolCallArgs {
  * Only then is the command run via executeCommandV3.
  */
 export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallToolResult> {
-  const { name, visibleTools, permits, tenantId, resolvePlatform, analytics, collector } = args;
+  const { name, visibleTools, permits, lease = null, tenantId, resolvePlatform, analytics, collector } = args;
   const t0 = Date.now();
 
   const tool = visibleTools.find((t) => t.name === name);
@@ -126,8 +134,11 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
   // Authoritative gate — independent of the cached visibility list. When the
   // platform supplies a real policy, a tool that became forbidden after it was
   // cached is rejected here with no server code change.
-  if (!permits || !permits(tool.operationType, tool.pluginId)) {
+  if (!permits || !permits(tool.operationType, tool.pluginId, tool.name, args.args)) {
     return textResult(`Not authorized: ${name}`, true);
+  }
+  if (lease && !isAgentLeaseCallAllowed(lease, tool.name, args.args)) {
+    return textResult(`Not authorized by agent lease: ${name}`, true);
   }
 
   analytics?.track('mcp.tool.call.started', {

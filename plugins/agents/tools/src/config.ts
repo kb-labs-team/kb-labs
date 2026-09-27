@@ -5,6 +5,8 @@
  * import from this module instead of defining inline constants.
  */
 
+import { resolveSubAgentToolPolicy, type SubAgentCapability } from '@kb-labs/agent-contracts';
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Filesystem tool config
 // ═══════════════════════════════════════════════════════════════════════════
@@ -87,64 +89,22 @@ export const DELEGATION_CONFIG = {
 // Sub-agent presets
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Sub-agent tool allowlists and iteration defaults per preset.
- *
- * Single source of truth: lives in agent-tools because it knows tool names.
- * agent-core receives these as `allowedTools: string[]` data via SpawnAgentRequest
- * (no import from agent-tools needed — correct dependency direction).
- */
+/** Capability policies live in contracts; this package resolves them to KB tool IDs. */
+function resolvePreset(name: string) {
+  const policy = resolveSubAgentToolPolicy(name);
+  if (!policy) { throw new Error(`Unknown sub-agent preset: ${name}`); }
+  return {
+    tools: new Set<string>(policy.allowedToolIds),
+    capabilities: new Set<SubAgentCapability>(policy.capabilities),
+    maxIterations: policy.maxIterations,
+  };
+}
+
 export const SUB_AGENT_PRESETS = {
-  /** Read-only exploration and evidence gathering. */
-  research: {
-    tools: new Set<string>([
-      'fs_read', 'fs_list',
-      'glob_search', 'grep_search', 'find_definition', 'code_stats',
-      'memory_get', 'memory_finding', 'archive_recall',
-      'todo_get',
-      'report',
-    ]),
-    maxIterations: 50,
-  },
-  /** Full read/write capabilities for implementation tasks. */
-  execute: {
-    tools: new Set<string>([
-      'fs_read', 'fs_write', 'fs_patch', 'fs_replace', 'fs_list', 'mass_replace',
-      'glob_search', 'grep_search', 'find_definition', 'code_stats',
-      'shell_exec',
-      'memory_get', 'memory_finding', 'memory_blocker', 'memory_correction',
-      'todo_create', 'todo_update', 'todo_get',
-      'plan_write',
-      'ask_user', 'report',
-    ]),
-    maxIterations: 100,
-  },
-  /** Code review and verification: read + shell (linters, tests). */
-  review: {
-    tools: new Set<string>([
-      'fs_read', 'fs_list',
-      'glob_search', 'grep_search', 'find_definition', 'code_stats',
-      'shell_exec',
-      'memory_get', 'memory_finding', 'archive_recall',
-      'todo_get',
-      'report',
-    ]),
-    maxIterations: 50,
-  },
-  /**
-   * Adversarial verification: independent agent that checks another agent's work.
-   * Has read + shell access to run tests, check imports, verify builds.
-   * Reports PASS/FAIL verdict with evidence.
-   */
-  verification: {
-    tools: new Set<string>([
-      'fs_read', 'fs_list',
-      'glob_search', 'grep_search', 'find_definition', 'code_stats',
-      'shell_exec',
-      'report',
-    ]),
-    maxIterations: 25,
-  },
+  research: resolvePreset('research'),
+  execute: resolvePreset('execute'),
+  review: resolvePreset('review'),
+  verification: resolvePreset('verification'),
 } as const;
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -564,7 +564,12 @@ export async function initPlatform(
     platform.logger.debug('initPlatform created ConfigProxy');
 
     // LLM proxy is ALWAYS created (parent may have real LLM even if not in child config)
-    platform.setAdapter('llm', new LLMProxy(transport));
+    const llmOptions = (adapterOptions.llm ?? {}) as LLMAdapterOptions;
+    platform.setAdapter('llm', new LLMProxy(transport, {
+      defaultTier: llmOptions.defaultTier ?? llmOptions.tier ?? 'small',
+      tierMapping: llmOptions.tierMapping,
+      capabilities: llmOptions.capabilities,
+    }));
     platform.logger.debug('initPlatform created LLMProxy');
 
     if (adapters.embeddings) {

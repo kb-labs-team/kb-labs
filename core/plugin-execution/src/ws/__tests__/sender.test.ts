@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { createWSSender } from '../sender.js';
 import { connectionRegistry } from '../connection-registry.js';
 import type { WebSocket } from 'ws';
@@ -21,11 +22,11 @@ describe('createWSSender', () => {
   const channelPath = '/test-channel';
 
   beforeEach(() => {
-    mockWebSocket = {
+    mockWebSocket = Object.assign(new EventEmitter(), {
       readyState: 1, // WebSocket.OPEN
       send: vi.fn(),
       close: vi.fn(),
-    } as unknown as WebSocket;
+    }) as unknown as WebSocket;
 
     vi.clearAllMocks();
   });
@@ -40,8 +41,25 @@ describe('createWSSender', () => {
       expect(mockWebSocket.send).toHaveBeenCalledWith(JSON.stringify(message));
     });
 
-    it('should not send message when socket is not OPEN', async () => {
-      (mockWebSocket as any).readyState = 3; // WebSocket.CLOSED
+    it('queues messages while the socket is connecting and flushes them in order on open', async () => {
+      Object.defineProperty(mockWebSocket, 'readyState', { value: 0, writable: true });
+      const sender = createWSSender(mockWebSocket, connectionId, channelPath);
+      const first = { type: 'ready', timestamp: 1 };
+      const second = { type: 'snapshot', timestamp: 2 };
+
+      await sender.send(first);
+      await sender.send(second);
+      expect(mockWebSocket.send).not.toHaveBeenCalled();
+
+      Object.defineProperty(mockWebSocket, 'readyState', { value: 1, writable: true });
+      mockWebSocket.emit('open');
+
+      expect(mockWebSocket.send).toHaveBeenNthCalledWith(1, JSON.stringify(first));
+      expect(mockWebSocket.send).toHaveBeenNthCalledWith(2, JSON.stringify(second));
+    });
+
+    it('drops messages when socket is already closed', async () => {
+      Object.defineProperty(mockWebSocket, 'readyState', { value: 3, writable: true }); // WebSocket.CLOSED
 
       const sender = createWSSender(mockWebSocket, connectionId, channelPath);
       const message = { type: 'test', payload: {}, timestamp: Date.now() };
@@ -72,13 +90,13 @@ describe('createWSSender', () => {
       );
     });
 
-    it('records structured telemetry for sent and dropped messages', async () => {
+    it('records sent messages and tracks post-disconnect sends without a warning', async () => {
       const logger = { info: vi.fn(), warn: vi.fn() };
       const stats = { outboundMessages: 0, outboundBytes: 0, droppedMessages: 0 };
       const sender = createWSSender(mockWebSocket, connectionId, channelPath, { logger, stats });
 
       await sender.send({ type: 'ready', timestamp: 1 });
-      (mockWebSocket as any).readyState = 3;
+      Object.defineProperty(mockWebSocket, 'readyState', { value: 3, writable: true });
       await sender.send({ type: 'late', timestamp: 2 });
 
       expect(stats.outboundMessages).toBe(1);
@@ -88,10 +106,11 @@ describe('createWSSender', () => {
         event: 'websocket.message.sent',
         'messaging.message_type': 'ready',
       }), expect.any(String));
-      expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({
+      expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({
         event: 'websocket.message.dropped',
-        reason: 'socket_not_open',
-      }), expect.any(String));
+        reason: 'socket_closed',
+      }), '[ws] message skipped after connection closed');
+      expect(logger.warn).not.toHaveBeenCalled();
     });
   });
 

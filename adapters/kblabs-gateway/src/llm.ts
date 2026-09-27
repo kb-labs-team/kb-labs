@@ -22,7 +22,9 @@ import type {
   LLMTool,
   LLMToolCall,
   LLMProtocolCapabilities,
+  LLMContentPart,
 } from "@kb-labs/sdk/adapters";
+import { LLMContentValidationError, validateLLMContent } from "@kb-labs/sdk/adapters";
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -239,7 +241,10 @@ export class KBLabsGatewayLLM implements ILLM {
     await this.ensureToken();
     const model = options?.model ?? this.defaultModel;
 
-    const openaiMessages = messages.map((m) => this.toOpenAIMessage(m));
+    const openaiMessages = messages.map((m) => this.toOpenAIMessage({
+      ...m,
+      content: validateLLMContent(m.role, m.content).content,
+    }));
 
     const tools: OpenAI.Chat.ChatCompletionTool[] = options.tools.map((t: LLMTool) => ({
       type: "function" as const,
@@ -294,6 +299,9 @@ export class KBLabsGatewayLLM implements ILLM {
 
   private toOpenAIMessage(m: LLMMessage): OpenAI.Chat.ChatCompletionMessageParam {
     if (m.role === "tool") {
+      if (typeof m.content !== "string") {
+        throw new LLMContentValidationError("tool messages must contain plain text");
+      }
       return {
         role: "tool",
         tool_call_id: m.toolCallId ?? "",
@@ -303,7 +311,7 @@ export class KBLabsGatewayLLM implements ILLM {
     if (m.role === "assistant" && m.toolCalls?.length) {
       return {
         role: "assistant",
-        content: m.content ?? null,
+        content: typeof m.content === "string" ? m.content || null : null,
         tool_calls: m.toolCalls.map((tc: LLMToolCall) => ({
           id: tc.id,
           type: "function" as const,
@@ -314,9 +322,24 @@ export class KBLabsGatewayLLM implements ILLM {
         })),
       };
     }
+    if (m.role === "user") {
+      return {
+        role: "user",
+        content: typeof m.content === "string"
+          ? m.content
+          : m.content.map((part) => this.toOpenAIContentPart(part)),
+      };
+    }
+    return { role: m.role, content: typeof m.content === "string" ? m.content : "" };
+  }
+
+  private toOpenAIContentPart(part: LLMContentPart): OpenAI.ChatCompletionContentPart {
+    if (part.type === "text") {
+      return { type: "text", text: part.text };
+    }
     return {
-      role: m.role as "user" | "assistant" | "system",
-      content: m.content,
+      type: "image_url",
+      image_url: { url: `data:${part.mediaType};base64,${part.data}` },
     };
   }
 }

@@ -82,8 +82,9 @@ export class TierResolver {
 /**
  * Capability resolver.
  *
- * For simple config: assumes all capabilities available.
- * For advanced config: checks against capability mapping.
+ * Text input is implicit. All optional capabilities must be explicitly
+ * declared by model configuration; an empty set means no such capability is
+ * known to be available.
  */
 export class CapabilityResolver {
   constructor(private availableCapabilities: Set<LLMCapability> = new Set()) {}
@@ -92,10 +93,6 @@ export class CapabilityResolver {
    * Check if capability is available.
    */
   hasCapability(capability: LLMCapability): boolean {
-    // If no capabilities configured, assume all available (simple config)
-    if (this.availableCapabilities.size === 0) {
-      return true;
-    }
     return this.availableCapabilities.has(capability);
   }
 
@@ -110,10 +107,6 @@ export class CapabilityResolver {
    * Get available capabilities.
    */
   getCapabilities(): LLMCapability[] {
-    // If no capabilities configured, return all (simple config)
-    if (this.availableCapabilities.size === 0) {
-      return ['reasoning', 'coding', 'vision', 'fast'];
-    }
     return Array.from(this.availableCapabilities);
   }
 }

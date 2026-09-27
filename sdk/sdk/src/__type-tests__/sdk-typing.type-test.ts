@@ -10,13 +10,17 @@ import type {
 } from '../contracts/index.js';
 import type {
   ILLM,
+  LLMContentPart,
   MonitoringSnapshot,
 } from '../types/index.js';
 
 import {
   defineCommand,
   defineManifest,
+  LLM_CAPABILITIES,
+  getLLMContentText,
 } from '../index.js';
+import type { LLMCapability } from '../index.js';
 
 type Equals<A, B> =
   (<T>() => T extends A ? 1 : 2) extends
@@ -68,6 +72,18 @@ void permissions;
 
 const llm = {} as ILLM;
 void llm;
+
+const requiredCapability: LLMCapability = 'audio.input';
+const capabilityDescription: string = LLM_CAPABILITIES[requiredCapability].description;
+void capabilityDescription;
+const imagePart: LLMContentPart = { type: 'image', mediaType: 'image/png', data: 'aGVsbG8=' };
+void imagePart;
+const projectedContent: string = getLLMContentText([imagePart]);
+void projectedContent;
+
+// @ts-expect-error unknown capability IDs must not silently enter the shared vocabulary
+const unsupportedCapability: LLMCapability = 'pdf';
+void unsupportedCapability;
 
 const monitoring = {} as MonitoringSnapshot;
 void monitoring;

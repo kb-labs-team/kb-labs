@@ -78,8 +78,6 @@ kb workspace list --gateway https://gateway.kblabs.dev
 | `kb workspace status` | Show connection status |
 | `kb workspace list` | List all connected agents |
 
-`kb agent register / status` are legacy aliases for the same commands.
-
 **`workspace register` flags**
 
 | Flag | Description |

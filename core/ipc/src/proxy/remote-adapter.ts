@@ -109,7 +109,10 @@ export abstract class RemoteAdapter<T, TOperation extends string = string> {
    * return this.callRemote('upsert', [vectors], 120000); // 2 min timeout
    * ```
    */
-  protected async callRemote(method: TOperation, args: unknown[], timeout?: number): Promise<unknown> {
+  protected async callRemote(method: TOperation, args: unknown[], timeout?: number, signal?: AbortSignal): Promise<unknown> {
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error('Adapter call aborted');
+    }
     // Generate unique request ID
     const requestId = randomUUID();
 
@@ -125,26 +128,29 @@ export abstract class RemoteAdapter<T, TOperation extends string = string> {
       context: this.context, // Include execution context for tracing/debugging
     };
 
-    // Send via transport and await response
-    const response = await this.transport.send(call);
+    const onAbort = () => this.transport.sendMessage({ type: 'adapter:cancel', requestId });
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      // Cancellation is a separate control message so the host can abort the
+      // real adapter request while this transport call waits for its response.
+      const response = await this.transport.send(call);
 
-    // Check for error in response
-    if (response.error) {
-      // Deserialize and throw error from parent
-      throw deserialize(response.error);
-    }
+      if (response.error) {
+        throw deserialize(response.error);
+      }
 
-    // Deserialize and return result (or undefined for void methods)
-    if (response.result === undefined) {
-      return undefined;
+      if (response.result === undefined) {
+        return undefined;
+      }
+      const result = deserialize(response.result);
+      // Server sends large results via BulkTransfer (temp file) to avoid IPC size limits.
+      if (BulkTransferHelper.isBulkTransfer(result)) {
+        return BulkTransferHelper.deserialize(result);
+      }
+      return result;
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
     }
-    const result = deserialize(response.result);
-    // Server sends large results via BulkTransfer (temp file) to avoid IPC size limits.
-    // Transparently read the file and return the actual data.
-    if (BulkTransferHelper.isBulkTransfer(result)) {
-      return BulkTransferHelper.deserialize(result);
-    }
-    return result;
   }
 
   /**

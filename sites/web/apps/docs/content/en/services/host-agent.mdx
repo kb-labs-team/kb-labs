@@ -66,7 +66,7 @@ Stored at `~/.kb/agent.json` after a one-time registration:
 ## Registration
 
 ```bash
-kb agent register --gateway https://gateway.example.com
+kb workspace register --gateway https://gateway.example.com
 ```
 
 One-time setup. Generates a new keypair, registers with the gateway, writes `~/.kb/agent.json`. You do this once per machine per gateway.
@@ -86,13 +86,13 @@ On startup:
 
 ## Running the daemon
 
+Use the configured development-service workflow to start and stop the host-agent daemon. Check its connection with:
+
 ```bash
-kb agent start                 # start in background
-kb agent status                # check connection
-kb agent stop                  # stop the daemon
+kb workspace status
 ```
 
-`kb agent status` output:
+`kb workspace status` output:
 
 ```json
 { "connected": true, "hostId": "host_...", "gatewayUrl": "https://..." }
@@ -185,7 +185,7 @@ When a workflow materializes a workspace, the adapter asks the gateway to find a
 - **One gateway per machine.** The config at `~/.kb/agent.json` binds the agent to a single gateway. Switching gateways means re-registering.
 - **Single namespace.** The agent joins one namespace at connection time. Multi-namespace access would require multiple agent instances.
 - **Not managed by `kb-dev`.** The host agent is meant to run as a user-level daemon on end-user machines, not as part of a platform deployment. There's no service manifest, no `kb-dev start host-agent` command. Use `kb agent start` instead.
-- **Stale sockets possible.** Repeatedly killing and restarting the daemon without cleanup can leave stale sockets in `~/.kb/`. If `kb agent status` hangs, check for `agent.sock` and remove it.
+- **Stale sockets possible.** Repeatedly killing and restarting the daemon without cleanup can leave stale sockets in `~/.kb/`. If `kb workspace status` hangs, check for `agent.sock` and remove it.
 
 ## What to read next
 

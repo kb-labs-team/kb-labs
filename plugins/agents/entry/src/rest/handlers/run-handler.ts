@@ -4,9 +4,9 @@
  * Starts a new agent run via Orchestrator
  */
 
-import { defineHandler, rethrowForRest, useAnalytics, useCache, useConfig, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { canUseLLMForMessages, defineHandler, rethrowForRest, useAnalytics, useCache, useConfig, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import { SessionManager, createCoreToolPack, bootstrapAgentSDK, createSessionMemoryBridge } from '@kb-labs/agent-core';
-import { createDefaultResponseRequirementsSelector } from '@kb-labs/agent-runtime';
+import { AgentAttachmentError, createDefaultResponseRequirementsSelector, prepareAgentAttachments } from '@kb-labs/agent-runtime';
 import { IncrementalTraceWriter, resolveTraceDir } from '@kb-labs/agent-tracing';
 
 // Register SDKAgentRunner as the RunnerFactory (idempotent — runs once per process)
@@ -20,8 +20,10 @@ import {
   AGENTS_WS_BASE_PATH,
   AGENTS_WS_CHANNELS,
   AGENT_ANALYTICS_EVENTS,
+  getAgentsSessionEventTopic,
 } from '@kb-labs/agent-contracts';
 import { RunManager } from '../run-manager.js';
+import { persistAgentAttachments } from '../attachment-storage.js';
 
 const FOLLOW_UP_SCOPE_RE = /\b(глубже|подробнее|детал|слишком поверхност|deeper|more depth|details?)\b/i;
 
@@ -122,6 +124,19 @@ export default defineHandler({
       throw new Error('Task is required');
     }
 
+    const preparedAttachments = await prepareAgentAttachments(body.attachments);
+    const tier = body.tier ?? 'medium';
+    const mode = body.mode ?? 'execute';
+    if (preparedAttachments.requiredCapabilities.length > 0 && !canUseLLMForMessages([{
+      role: 'user',
+      content: [{ type: 'text', text: body.task }, ...preparedAttachments.contentParts],
+    }], { tier })) {
+      throw new AgentAttachmentError(
+        'AGENT_ATTACHMENT_MODEL_UNSUPPORTED',
+        `No configured LLM in tier "${tier}" supports required capabilities: ${preparedAttachments.requiredCapabilities.join(', ')}. Configure a compatible model or choose another tier.`,
+      );
+    }
+
     const analytics = useAnalytics();
     const runId = RunManager.generateRunId();
     const startTime = Date.now();
@@ -133,7 +148,7 @@ export default defineHandler({
     if (!sessionId) {
       // Create new session
       const session = await sessionManager.createSession({
-        mode: 'execute',
+        mode,
         task: body.task,
         agentId: body.agentId ?? 'orchestrator',
       });
@@ -175,10 +190,17 @@ export default defineHandler({
       ctx.platform.logger.info(`[run-handler] Continuing session ${sessionId} (workingDir=${workingDir})`);
     }
 
+    // Keep uploaded bytes in the platform's configured durable storage, not in
+    // browser state or turn JSON. Fail before launching the run if persistence
+    // fails so the history never contains dangling attachment references.
+    if (preparedAttachments.files.length > 0) {
+      await persistAgentAttachments(ctx.platform.storage, sessionId, preparedAttachments.files);
+    }
+
     ctx.platform.logger.info(`[run-handler] Starting run ${runId} for task: ${body.task}`);
 
     // Create user turn with task/question
-    const userTurn = await sessionManager.createUserTurn(sessionId, body.task, runId, body.clientId);
+    const userTurn = await sessionManager.createUserTurn(sessionId, body.task, runId, body.clientId, preparedAttachments.references);
 
     // Track run started
     await analytics?.track(AGENT_ANALYTICS_EVENTS.RUN_STARTED, {
@@ -198,6 +220,7 @@ export default defineHandler({
       workingDir,
       currentTask: body.task,
       sessionId,
+      filesWritten: new Set<string>(),
       verbose: body.verbose,
       cache: useCache(),
       sessionMemory,
@@ -217,6 +240,7 @@ export default defineHandler({
     const finalSessionId = sessionId; // Capture for closure
     const traceDir = resolveTraceDir(workingDir);
     const traceWriter = new IncrementalTraceWriter(runId, {}, traceDir);
+    let sessionEventQueue: Promise<void> = Promise.resolve();
 
     // Create agent with event broadcasting and session persistence
     const agent = new AgentSDK()
@@ -224,10 +248,16 @@ export default defineHandler({
       .createRunner({
         sessionId: finalSessionId,
         workingDir,
+        initialInputContentParts: preparedAttachments.contentParts,
+        inputAttachments: preparedAttachments.references,
         maxIterations: 50,
         temperature: 0.1,
-        tier: body.tier ?? 'medium',
+        tier,
+        mode: mode === 'plan'
+          ? { mode: 'plan', context: { mode: 'plan', task: body.task, complexity: body.complexity } }
+          : { mode: 'execute', context: { mode: 'execute', task: body.task } },
         tokenBudget: agentsConfig?.tokenBudget,
+        platformMcp: agentsConfig?.platformMcp,
         onEvent: (event) => {
           // Persist FIRST, broadcast only once that's confirmed — deltas are
           // computed from what was actually written, so a WS listener can
@@ -235,18 +265,35 @@ export default defineHandler({
           // ordering (previously reversed: broadcast raced ahead of persist)
           // was the root cause of the WS stream silently lagging one event
           // behind the true state.
-          void sessionManager.addEvent(finalSessionId, {
-            ...event,
-            sessionId: finalSessionId,
-            runId,
-            metadata: {
-              ...event.metadata,
+          sessionEventQueue = sessionEventQueue.then(async () => {
+            const deltas = await sessionManager.addEvent(finalSessionId, {
+              ...event,
               sessionId: finalSessionId,
               runId,
-              workingDir,
-            },
-          }).then((deltas) => {
-            RunManager.broadcastSessionDeltas(finalSessionId, deltas);
+              metadata: {
+                ...event.metadata,
+                sessionId: finalSessionId,
+                runId,
+                workingDir,
+              },
+            });
+            if (deltas.length > 0) {
+              await ctx.platform.eventBus.publish(getAgentsSessionEventTopic(finalSessionId), {
+                kind: 'deltas',
+                deltas,
+              });
+            } else {
+              await ctx.platform.eventBus.publish(getAgentsSessionEventTopic(finalSessionId), {
+                kind: 'cursor',
+                seq: await sessionManager.getCurrentSessionSeq(finalSessionId),
+              });
+            }
+          }).catch((error: unknown) => {
+            ctx.platform.logger.error('[run-handler] Failed to persist or broadcast session event', error instanceof Error ? error : new Error(String(error)), {
+              event: 'agent.session.event_failed',
+              sessionId: finalSessionId,
+              runId,
+            });
           });
         },
       });
@@ -259,6 +306,7 @@ export default defineHandler({
     void (async () => {
       try {
         const result = await agent.execute(body.task);
+        await sessionEventQueue;
         const durationMs = Date.now() - startTime;
         const detailedTrace = traceWriter.getEntries() as unknown as Array<Record<string, unknown>>;
         await traceWriter.finalize?.();
@@ -289,14 +337,21 @@ export default defineHandler({
         const finalTurns = await sessionManager.getTurns(finalSessionId);
         const finalTurn = finalTurns.find((t) => t.type === 'assistant' && t.metadata.runId === runId);
         const seq = await sessionManager.getCurrentSessionSeq(finalSessionId);
-        RunManager.broadcastRunCompleted(finalSessionId, {
-          runId,
-          success: result.success,
-          summary: result.summary,
-          durationMs,
-          seq,
-          turn: finalTurn,
-        });
+        try {
+          await ctx.platform.eventBus.publish(getAgentsSessionEventTopic(finalSessionId), {
+            kind: 'run:completed',
+            runId,
+            success: result.success,
+            summary: result.summary,
+            durationMs,
+            seq,
+            turn: finalTurn,
+          });
+        } catch (error) {
+          ctx.platform.logger.error('[run-handler] Failed to publish run completion', error instanceof Error ? error : new Error(String(error)), {
+            event: 'agent.session.event_failed', sessionId: finalSessionId, runId, eventKind: 'run:completed',
+          });
+        }
 
         // Track completion
         await analytics?.track(
@@ -311,6 +366,7 @@ export default defineHandler({
 
         ctx.platform.logger.info(`[run-handler] Run ${runId} completed: ${result.success}`);
       } catch (error) {
+        await sessionEventQueue;
         const errorMsg = error instanceof Error ? error.message : String(error);
         const durationMs = Date.now() - startTime;
         const detailedTrace = traceWriter.getEntries() as unknown as Array<Record<string, unknown>>;
@@ -326,13 +382,20 @@ export default defineHandler({
         });
 
         const seq = await sessionManager.getCurrentSessionSeq(finalSessionId);
-        RunManager.broadcastRunCompleted(finalSessionId, {
-          runId,
-          success: false,
-          summary: errorMsg,
-          durationMs,
-          seq,
-        });
+        try {
+          await ctx.platform.eventBus.publish(getAgentsSessionEventTopic(finalSessionId), {
+            kind: 'run:completed',
+            runId,
+            success: false,
+            summary: errorMsg,
+            durationMs,
+            seq,
+          });
+        } catch (publishError) {
+          ctx.platform.logger.error('[run-handler] Failed to publish run failure', publishError instanceof Error ? publishError : new Error(String(publishError)), {
+            event: 'agent.session.event_failed', sessionId: finalSessionId, runId, eventKind: 'run:completed',
+          });
+        }
 
         // Track failure
         await analytics?.track(AGENT_ANALYTICS_EVENTS.RUN_FAILED, {

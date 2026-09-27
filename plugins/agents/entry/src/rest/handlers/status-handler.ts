@@ -21,7 +21,7 @@ export default defineHandler({
 
       if (!run) {
         // If not in memory, check cache for completed runs
-        const state = await RunManager.getState(runId);
+        const state = await RunManager.reconcileState(runId);
 
         if (!state) {
           // Return 404-like response

@@ -7,6 +7,7 @@ import {
   type PlatformUiProvider,
 } from "@kb-labs/core-runtime";
 import type { IContextLogger, IServiceTransport } from "@kb-labs/core-platform";
+import { ProcessMemoryMonitor } from "./process-memory-monitor.js";
 
 export interface ServiceContext {
   platform: PlatformContainer;
@@ -178,6 +179,10 @@ export async function runHost(config: HostConfig): Promise<void> {
   });
 
   const logger = runtime.logger.forComponent("service-bootstrap");
+  const memoryMonitor = new ProcessMemoryMonitor(
+    runtime.logger.forComponent("process-memory"),
+  );
+  memoryMonitor.start();
   const netOffset = Number(process.env.KB_NET_OFFSET) || 0;
   const multi = config.modules.length > 1;
   const started: StartedModule[] = [];
@@ -215,6 +220,7 @@ export async function runHost(config: HostConfig): Promise<void> {
         },
       );
       await teardownModules(started, logger, multi);
+      memoryMonitor.stop();
       await runtime.shutdown("service.setup-failed");
       throw error;
     }
@@ -236,6 +242,7 @@ export async function runHost(config: HostConfig): Promise<void> {
       });
 
       let shutdownError = await teardownModules(started, logger, multi);
+      memoryMonitor.stop();
 
       try {
         await runtime.shutdown(`signal:${signal}`);

@@ -26,8 +26,9 @@
 
 import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import type { AdapterResponse, SerializableError } from '@kb-labs/core-platform/serializable';
-import { isAdapterCall, serialize, deserialize, IPC_PROTOCOL_VERSION } from '@kb-labs/core-platform/serializable';
+import { isAdapterCall, isAdapterCancel, serialize, deserialize, IPC_PROTOCOL_VERSION } from '@kb-labs/core-platform/serializable';
 import { resolveIPCAdapter } from './adapter-route.js';
+import { attachLlmCallAbortSignal } from './llm-call-signal.js';
 
 /**
  * IPC server for handling adapter calls from child processes.
@@ -42,6 +43,7 @@ import { resolveIPCAdapter } from './adapter-route.js';
 export class IPCServer {
   private messageHandler: (msg: unknown, sendHandle: unknown) => void;
   private started = false;
+  private activeLlmCalls = new Map<string, AbortController>();
 
   /**
    * Create an IPC server.
@@ -91,6 +93,8 @@ export class IPCServer {
 
     process.off('message', this.messageHandler);
     this.started = false;
+    for (const controller of this.activeLlmCalls.values()) { controller.abort(new Error('IPC server stopped')); }
+    this.activeLlmCalls.clear();
 
     this.platform.logger.debug('IPCServer stopped listening for adapter calls');
   }
@@ -101,6 +105,10 @@ export class IPCServer {
    * Validates message format, executes adapter call, and sends response.
    */
   private async handleMessage(msg: unknown, sendHandle: unknown): Promise<void> {
+    if (isAdapterCancel(msg)) {
+      this.activeLlmCalls.get(msg.requestId)?.abort(new Error('LLM request cancelled by caller'));
+      return;
+    }
     // Ignore non-adapter-call messages
     if (!isAdapterCall(msg)) {
       return;
@@ -130,6 +138,7 @@ export class IPCServer {
       });
     }
 
+    let activeRequestId: string | undefined;
     try {
       // Get the adapter from platform
       const adapter = resolveIPCAdapter(this.platform, msg.adapter);
@@ -146,6 +155,11 @@ export class IPCServer {
 
       // Deserialize arguments
       const args = msg.args.map((arg) => deserialize(arg));
+      const controller = new AbortController();
+      if (attachLlmCallAbortSignal(msg.adapter, msg.method, args, controller.signal)) {
+        activeRequestId = msg.requestId;
+        this.activeLlmCalls.set(msg.requestId, controller);
+      }
 
       // Execute method on adapter
       const result = await method.apply(adapter, args);
@@ -178,6 +192,8 @@ export class IPCServer {
         error instanceof Error ? error : new Error(String(error)),
         { adapter: msg.adapter, method: msg.method },
       );
+    } finally {
+      if (activeRequestId) { this.activeLlmCalls.delete(activeRequestId); }
     }
   }
 

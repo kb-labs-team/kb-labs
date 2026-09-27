@@ -1,7 +1,7 @@
 /**
  * Agent configuration types for kb.config.json
  */
-import type { AgentSmartTieringConfig, AgentTokenBudgetConfig } from './types.js';
+import type { AgentPlatformMcpConfig, AgentSmartTieringConfig, AgentTokenBudgetConfig } from './types.js';
 
 /**
  * Storage configuration for file history snapshots
@@ -87,6 +87,8 @@ export interface AgentsPluginConfig {
   smartTiering?: AgentSmartTieringConfig;
   /** Token budget policy for long-running tasks */
   tokenBudget?: AgentTokenBudgetConfig;
+  /** Platform MCP endpoint used to issue scoped leases to external sub-agents. */
+  platformMcp?: AgentPlatformMcpConfig;
   /** File history tracking configuration */
   fileHistory: FileHistoryConfig;
 }
