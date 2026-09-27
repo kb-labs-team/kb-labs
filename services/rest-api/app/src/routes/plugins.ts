@@ -21,6 +21,7 @@ import { platform } from "@kb-labs/core-runtime";
 import {
   logDiagnosticEvent,
   type DiagnosticLogLevel,
+  getLLMRouterMetadata,
 } from "@kb-labs/core-platform";
 import type { DiagnosticReasonCode } from "@kb-labs/core-contracts";
 import * as path from "node:path";
@@ -161,7 +162,8 @@ export async function registerPluginRoutes(
     // Worker-pool serialization strips its methods (close/getConnectionId
     // become undefined in the worker), so defineWebSocket's createTypedSender
     // crashes with "Cannot read properties of undefined (reading 'bind')".
-    const wsBackend = new InProcessBackend({ platform });
+  const wsBackend = new InProcessBackend({ platform });
+  const llmRouting = await getLLMRouterMetadata(platform.llm, platform.logger);
 
     // Filter plugins that have routes, realtime streams or channels to mount
     const mountableManifests = manifests.filter(
@@ -448,6 +450,7 @@ export async function registerPluginRoutes(
           workspaceRoot,
           basePath: pluginBasePath,
           defaultTimeoutMs: gatewayTimeoutMs,
+          llmRouting,
         });
 
         let streamsCount = 0;

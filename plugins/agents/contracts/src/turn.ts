@@ -6,6 +6,8 @@
  * Backend assembles Turns from raw AgentEvents, frontend simply renders.
  */
 
+import type { AgentAttachmentReference } from './ws-messages.js';
+
 /**
  * Lightweight summary of a file change for Turn.metadata.
  * Does not include before/after content to keep turn history compact.
@@ -84,6 +86,8 @@ export interface Turn {
      * reconcile its optimistic message by id instead of fuzzy text-matching.
      */
     clientId?: string;
+    /** Safe names and media types for user-uploaded files; never file contents. */
+    attachments?: AgentAttachmentReference[];
   };
 }
 
@@ -217,7 +221,20 @@ export interface SubAgentStep {
   agentName: string;
   task: string;
   /** Status of sub-agent execution */
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  /** Native or external execution backend, when known. */
+  harness?: string;
+  /** Recent normalized actions, shown expanded in the sub-agent UI. */
+  activities?: Array<{
+    id: string;
+    timestamp: string;
+    type: 'message' | 'tool' | 'progress' | 'thinking' | 'status' | 'error';
+    action: string;
+    detail?: string;
+    toolCallId?: string;
+  }>;
+  lastAction?: string;
+  activitySequence?: number;
   /** Summary of sub-agent result (once completed) */
   summary?: string;
 }

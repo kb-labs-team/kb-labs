@@ -7,7 +7,7 @@
 
 import type { IAgentRunner } from '@kb-labs/agent-sdk';
 import type { SessionManager } from '@kb-labs/agent-core';
-import type { Turn, TurnDelta } from '@kb-labs/agent-contracts';
+import type { Turn } from '@kb-labs/agent-contracts';
 import { useCache } from '@kb-labs/sdk';
 
 const CACHE_PREFIX = 'agent:run:';
@@ -16,7 +16,7 @@ const CACHE_TTL = 3600000; // 1 hour
 /**
  * Run status
  */
-export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'stopped';
+export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
 
 /**
  * Serializable run state (stored in cache)
@@ -41,35 +41,11 @@ export interface ActiveRun extends RunState {
 }
 
 /**
- * Payload delivered to session-level listeners — the sole live-update
- * channel for a session's WS connection(s). `deltas` carries incremental
- * turn changes (see TurnDelta); `run:completed` is a terminal signal
- * carrying the finished run's outcome and, when available, the final
- * state of the assistant turn it produced.
- */
-export type SessionBroadcastPayload =
-  | { kind: 'deltas'; deltas: TurnDelta[] }
-  | {
-      kind: 'run:completed';
-      runId: string;
-      success: boolean;
-      summary: string;
-      durationMs: number;
-      seq: number;
-      turn?: Turn;
-    };
-
-type SessionListenerCallback = (payload: SessionBroadcastPayload) => void;
-
-/**
  * Run Manager implementation
  */
 class RunManagerImpl {
   /** Live agents (not cacheable) */
   private activeRuns: Map<string, ActiveRun> = new Map();
-
-  /** Session-level listeners: sessionId → Set<callback> — receive updates from ALL runs in session */
-  private sessionListeners: Map<string, Set<SessionListenerCallback>> = new Map();
 
   /**
    * Generate unique run ID
@@ -138,6 +114,77 @@ class RunManagerImpl {
   }
 
   /**
+   * Resolve a run from this process or the shared cache. A cached pending/running
+   * run without a live AgentRunner was interrupted by a process restart/crash.
+   */
+  async reconcileState(runId: string): Promise<RunState | null> {
+    const liveRun = this.activeRuns.get(runId);
+    if (liveRun) {
+      return this.toRunState(liveRun);
+    }
+
+    const state = await this.getState(runId);
+    if (!state || (state.status !== 'pending' && state.status !== 'running')) {
+      return state;
+    }
+
+    const interrupted: RunState = {
+      ...state,
+      status: 'interrupted',
+      completedAt: new Date().toISOString(),
+      error: 'The agent process stopped before this run completed. Conversation history and memory are preserved; send a follow-up to continue.',
+    };
+    await this.writeRunState(interrupted);
+    return interrupted;
+  }
+
+  /** Mark persisted streaming turns as terminal when their owning run is gone. */
+  async reconcileSessionTurns(
+    sessionManager: Pick<SessionManager, 'getTurns' | 'storeTurnSnapshot'>,
+    sessionId: string,
+    sourceTurns?: Turn[],
+  ): Promise<Turn[]> {
+    const turns = sourceTurns ?? await sessionManager.getTurns(sessionId);
+    const reconciled: Turn[] = [];
+
+    for (const turn of turns) {
+      if (turn.type !== 'assistant' || turn.status !== 'streaming' || !turn.metadata.runId) {
+        reconciled.push(turn);
+        continue;
+      }
+
+      const state = await this.reconcileState(turn.metadata.runId);
+      if (state?.status === 'pending' || state?.status === 'running') {
+        reconciled.push(turn);
+        continue;
+      }
+
+      const status: Turn['status'] = state?.status === 'completed'
+        ? 'completed'
+        : state?.status === 'failed' ? 'failed' : 'cancelled';
+      const errorMessage = state?.error ?? (state?.status === 'stopped'
+        ? 'Agent run was stopped before it returned a response.'
+        : 'The agent process stopped before this run completed. Conversation history and memory are preserved; send a follow-up to continue.');
+      const recovered: Turn = {
+        ...turn,
+        status,
+        completedAt: state?.completedAt ?? new Date().toISOString(),
+        ...(status === 'completed' ? {} : {
+          error: {
+            code: state?.status === 'failed' ? 'RUN_FAILED' : state?.status === 'stopped' ? 'RUN_STOPPED' : 'RUN_INTERRUPTED',
+            message: errorMessage,
+          },
+        }),
+      };
+
+      await sessionManager.storeTurnSnapshot(sessionId, recovered);
+      reconciled.push(recovered);
+    }
+
+    return reconciled;
+  }
+
+  /**
    * Update run status
    */
   async updateStatus(runId: string, status: RunStatus, extra?: Partial<RunState>): Promise<void> {
@@ -155,10 +202,11 @@ class RunManagerImpl {
    * Save run state to cache
    */
   private async saveToCache(run: ActiveRun): Promise<void> {
-    const cache = useCache();
-    if (!cache) {return;}
+    await this.writeRunState(this.toRunState(run));
+  }
 
-    const state: RunState = {
+  private toRunState(run: ActiveRun): RunState {
+    return {
       runId: run.runId,
       task: run.task,
       status: run.status,
@@ -168,65 +216,12 @@ class RunManagerImpl {
       summary: run.summary,
       error: run.error,
     };
-
-    await cache.set(`${CACHE_PREFIX}${run.runId}`, state, CACHE_TTL);
   }
 
-  /**
-   * Broadcast turn deltas to all session-level listeners. Callers MUST await
-   * persistence (sessionManager.addEvent) before calling this, so listeners
-   * never observe a delta whose underlying turn state isn't on disk yet —
-   * that ordering is what makes gap-recovery / reconnect resume correct.
-   */
-  broadcastSessionDeltas(sessionId: string, deltas: TurnDelta[]): void {
-    if (deltas.length === 0) { return; }
-    this.notifySessionListeners(sessionId, { kind: 'deltas', deltas });
-  }
-
-  /**
-   * Broadcast a run's terminal outcome to session-level listeners. Called
-   * directly from the run's own completion handler (after `agent.execute()`
-   * resolves) rather than derived reactively from an `agent:end` event —
-   * the completion handler already has definitive success/summary/duration,
-   * and this guarantees the message fires exactly once, deterministically.
-   */
-  broadcastRunCompleted(sessionId: string, payload: Omit<Extract<SessionBroadcastPayload, { kind: 'run:completed' }>, 'kind'>): void {
-    this.notifySessionListeners(sessionId, { kind: 'run:completed', ...payload });
-  }
-
-  private notifySessionListeners(sessionId: string, payload: SessionBroadcastPayload): void {
-    const listeners = this.sessionListeners.get(sessionId);
-    if (!listeners) { return; }
-    for (const listener of listeners) {
-      try {
-        listener(payload);
-      } catch {
-        // Ignore listener errors — one bad WS connection shouldn't affect others
-      }
-    }
-  }
-
-  /**
-   * Add a session-level listener — receives updates from ALL runs in this session.
-   */
-  addSessionListener(sessionId: string, callback: SessionListenerCallback): void {
-    if (!this.sessionListeners.has(sessionId)) {
-      this.sessionListeners.set(sessionId, new Set());
-    }
-    this.sessionListeners.get(sessionId)!.add(callback);
-  }
-
-  /**
-   * Remove a session-level listener.
-   */
-  removeSessionListener(sessionId: string, callback: SessionListenerCallback): void {
-    const listeners = this.sessionListeners.get(sessionId);
-    if (listeners) {
-      listeners.delete(callback);
-      if (listeners.size === 0) {
-        this.sessionListeners.delete(sessionId);
-      }
-    }
+  private async writeRunState(state: RunState): Promise<void> {
+    const cache = useCache();
+    if (!cache) {return;}
+    await cache.set(`${CACHE_PREFIX}${state.runId}`, state, CACHE_TTL);
   }
 
   /**

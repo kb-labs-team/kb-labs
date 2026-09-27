@@ -25,6 +25,7 @@ import { createContextLogger } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
 import { createCLIUIFacade } from "./ui-facade";
+import { getLLMRouterMetadata } from "@kb-labs/core-platform";
 
 export interface PluginExecutionOptions {
   context: SystemContext;
@@ -128,6 +129,7 @@ export async function executePlugin(
         permissions,
         quotas,
         configSection: pluginManifest.configSection,
+        llmRouting: await getLLMRouterMetadata(platform.llm, platform.logger),
       });
 
       context.logger?.debug(
@@ -157,6 +159,7 @@ export async function executePlugin(
   }
 }
 
+/** Expose only routing metadata to workers; provider credentials/config stay in the parent. */
 /**
  * Return a UIFacade that suppresses all output except json().
  * Used when --json flag is active to keep stdout clean for machine parsing.

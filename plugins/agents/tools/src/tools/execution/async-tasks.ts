@@ -7,7 +7,7 @@
  */
 
 import type { ToolContext, Tool } from '../../types.js';
-import type { SubAgentPreset } from '@kb-labs/agent-contracts';
+import { EXTERNAL_HARNESS_IDS, type ExternalHarnessId, type SubAgentPreset } from '@kb-labs/agent-contracts';
 import { SUB_AGENT_PRESETS } from '../../config.js';
 
 /**
@@ -39,9 +39,14 @@ export function createTaskSubmitTool(context: ToolContext): Tool {
               enum: ['research', 'execute', 'review'],
               description: 'Sub-agent preset (default: "research").',
             },
+            harness: {
+              type: 'string',
+              enum: [...EXTERNAL_HARNESS_IDS],
+              description: 'Optional locally installed external agent harness. Omit to use a KB-native sub-agent. Choose only when the user request or project instructions call for an external harness; the orchestrator may also keep the work internal.',
+            },
             budgetPercent: {
               type: 'number',
-              description: 'Percent of remaining budget to allocate (1-100, default: 20).',
+              description: 'Percent of remaining KB-native token budget to allocate (1-100, default: 20). External harness token limits may not be available or enforceable.',
             },
           },
           required: ['description', 'task'],
@@ -59,6 +64,11 @@ export function createTaskSubmitTool(context: ToolContext): Tool {
       const description = input.description as string;
       const task = input.task as string;
       const presetId = (input.preset as SubAgentPreset) ?? 'research';
+      const harnessValue = input.harness;
+      if (harnessValue !== undefined && !EXTERNAL_HARNESS_IDS.some((harnessId) => harnessId === harnessValue)) {
+        return { success: false, error: `Unknown external harness: "${String(harnessValue)}".` };
+      }
+      const harness = harnessValue as ExternalHarnessId | undefined;
       const preset = SUB_AGENT_PRESETS[presetId];
       if (!preset) {
         return { success: false, error: `Unknown preset: "${presetId}".` };
@@ -70,15 +80,17 @@ export function createTaskSubmitTool(context: ToolContext): Tool {
       try {
         const asyncTask = await context.taskManager.submit(description, {
           task,
+          ...(harness ? { harness } : {}),
           preset: presetId,
           allowedTools: Array.from(preset.tools),
+          requestedCapabilities: Array.from(preset.capabilities),
           maxIterations: preset.maxIterations,
           budgetFraction,
         });
 
         return {
           success: true,
-          output: `Task submitted: ${asyncTask.id}\nDescription: ${description}\nPreset: ${presetId}\nStatus: ${asyncTask.status}\n\nUse task_status("${asyncTask.id}") to check progress or task_collect("${asyncTask.id}") to wait for results.`,
+          output: `Task submitted: ${asyncTask.id}\nDescription: ${description}\nPreset: ${presetId}\nHarness: ${harness ?? 'KB-native'}\nStatus: ${asyncTask.status}\n\nUse task_status("${asyncTask.id}") to check progress or task_collect("${asyncTask.id}") to wait for results.`,
         };
       } catch (error) {
         return {
@@ -182,7 +194,7 @@ export function createTaskCollectTool(context: ToolContext): Tool {
         const result = await context.taskManager.collect(taskId);
         const status = result.success ? 'completed successfully' : 'failed';
         const lines = [
-          `Task ${taskId} ${status} [preset=${result.preset}, ${result.iterations} iters, ${result.tokensUsed.toLocaleString()} tokens, ${(result.durationMs / 1000).toFixed(1)}s]`,
+          `Task ${taskId} ${status} [preset=${result.preset}, harness=${result.harness ?? 'KB-native'}, ${result.iterations} iters, ${result.tokensUsed.toLocaleString()} tokens, ${(result.durationMs / 1000).toFixed(1)}s]`,
         ];
 
         if (result.filesRead.length > 0) { lines.push(`Files read: ${result.filesRead.length}`); }

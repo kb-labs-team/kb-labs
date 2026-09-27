@@ -111,6 +111,7 @@ export class ObservabilityMiddleware {
 
   /** Extra metadata injected before onStart — set by runner after workspace discovery. */
   startMeta?: {
+    startedAt?: number;
     budget?: { maxTokens: number; softLimitRatio: number; hardLimitRatio: number };
     workspaceTopology?: string[];
     workingDir?: string;
@@ -126,7 +127,7 @@ export class ObservabilityMiddleware {
   // ── Lifecycle ──────────────────────────────────────────────────────────
 
   onStart(ctx: RunContext): void {
-    this._startedAt = Date.now();
+    this._startedAt = this.startMeta?.startedAt ?? Date.now();
 
     // Subscribe to bus — translate infrastructure events to UI AgentEvent stream
     ctx.eventBus.on('llm:end', (d) => {

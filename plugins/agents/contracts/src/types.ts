@@ -2,6 +2,8 @@
  * Core types and interfaces for agents
  */
 
+import type { LLMContentPart } from '@kb-labs/sdk';
+
 /* eslint-disable @typescript-eslint/consistent-type-imports */
 // Using import() in type signatures to avoid circular dependencies
 
@@ -301,6 +303,10 @@ export interface TwoTierMemoryConfig {
  */
 export interface AgentConfig {
   workingDir: string;
+  /** Prepared user content (text/image parts) for the initial task only. */
+  initialInputContentParts?: LLMContentPart[];
+  /** Safe display metadata for the uploaded files; contains no file bytes. */
+  inputAttachments?: import('./ws-messages.js').AgentAttachmentReference[];
   maxIterations: number;
   temperature: number;
   sessionId?: string;
@@ -309,6 +315,8 @@ export interface AgentConfig {
   analytics?: { track(event: string, payload: unknown): Promise<void> } | null;
   /** Token budget policy (usually loaded from kb.config.json -> agents.tokenBudget). */
   tokenBudget?: AgentTokenBudgetConfig;
+  /** Platform MCP lease issuer configuration for external sub-agents. */
+  platformMcp?: AgentPlatformMcpConfig;
   /** Mode configuration (execute/plan/edit/debug) */
   mode?: ModeConfig;
   /** Event callback for streaming agent execution events to UI (optional) */
@@ -328,6 +336,13 @@ export interface AgentConfig {
   abortSignal?: AbortSignal;
   /** Tool filter for sub-agents: only these tools will be registered in child's ToolContext. */
   allowedTools?: string[];
+}
+
+export interface AgentPlatformMcpConfig {
+  /** Streamable HTTP endpoint, ending in /api/v1/mcp. */
+  endpoint: string;
+  /** Explicit local-only PDP stub mode. Requires the MCP daemon's matching opt-in. */
+  developmentPdpStub?: boolean;
 }
 
 /**

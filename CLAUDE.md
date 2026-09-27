@@ -44,3 +44,7 @@ The `kb-labs-*` folders are managed by KB Labs and are intentionally not maintai
 ## Logging
 
 Platform-backed processes use `IContextLogger` from `@kb-labs/core-platform`. Create root context in the launcher, derive scopes with `forComponent`, `forOperation`, or `forPlugin`, and keep diagnostics structured and secret-free. See `docs/adr/0036-platform-log-context-contract.md` for the full contract.
+
+## Frequent problems
+
+Before broad runtime or environment investigation, check the categorized [FAQ](docs/faq/README.md). Add a stable FAQ entry when a problem yields a reusable diagnosis or prevention step.

@@ -3,6 +3,8 @@
  * LLM (Large Language Model) abstraction for text generation.
  */
 
+import type { LLMContent } from './llm-types.js';
+
 /**
  * Metadata for LLM request tracking and analytics.
  * Passed through the chain from LLMRouter to AnalyticsLLM.
@@ -110,6 +112,8 @@ export interface LLMCacheDecisionTrace {
  * Options for LLM completion.
  */
 export interface LLMOptions {
+  /** Cancel an in-flight provider request. */
+  signal?: AbortSignal;
   /** Model identifier (e.g., 'gpt-4', 'claude-3-opus') */
   model?: string;
   /** Sampling temperature (0-2) */
@@ -190,8 +194,8 @@ export interface LLMToolCall {
 export interface LLMMessage {
   /** Message role */
   role: "system" | "user" | "assistant" | "tool";
-  /** Message content (text or tool results) */
-  content: string;
+  /** Plain text shorthand or ordered, platform-validated content parts. */
+  content: LLMContent;
   /** Tool call ID (for tool role - identifies which tool call this result belongs to) */
   toolCallId?: string;
   /** Tool calls made by assistant (for assistant role - when LLM requests tool execution) */

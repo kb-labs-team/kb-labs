@@ -32,6 +32,9 @@ export type AgentEventType =
   // Sub-agent lifecycle
   | 'subtask:start'
   | 'subtask:end'
+  | 'subagent:start'
+  | 'subagent:activity'
+  | 'subagent:end'
   // Synthesis (forced on last iteration)
   | 'synthesis:forced'
   | 'synthesis:start'
@@ -388,6 +391,28 @@ export interface SubtaskEndEvent extends AgentEventBase {
   };
 }
 
+/** Unified lifecycle/activity stream for native and external sub-agents. */
+export interface SubAgentStartEvent extends AgentEventBase {
+  type: 'subagent:start';
+  data: { subagentId: string; description?: string; harness?: string };
+}
+
+export interface SubAgentActivityEvent extends AgentEventBase {
+  type: 'subagent:activity';
+  data: {
+    subagentId: string;
+    activityType: 'message' | 'tool' | 'progress' | 'thinking' | 'status' | 'error';
+    action: string;
+    detail?: string;
+    toolCallId?: string;
+  };
+}
+
+export interface SubAgentEndEvent extends AgentEventBase {
+  type: 'subagent:end';
+  data: { subagentId: string; status: 'completed' | 'failed' | 'cancelled'; summary?: string };
+}
+
 /**
  * Synthesis events (forced answer synthesis on last iteration)
  */
@@ -557,6 +582,9 @@ export type AgentEvent =
   | ToolErrorEvent
   | SubtaskStartEvent
   | SubtaskEndEvent
+  | SubAgentStartEvent
+  | SubAgentActivityEvent
+  | SubAgentEndEvent
   | SynthesisForcedEvent
   | SynthesisStartEvent
   | SynthesisCompleteEvent

@@ -76,6 +76,7 @@ export type { IsolatedProjectRoot, IsolatedProjectRootOptions } from './isolated
 export { makeTestNamespace } from './namespace.js';
 
 export { findWorkspaceRoot, resolveWorkspaceRoot } from './workspace-root.js';
+export { isDeepAgentE2EEnabled } from './deep-e2e.js';
 
 // --- SSE helpers ---
 export { collectSseEvents, waitForSseEvent, expectSseTerminates } from './sse/collect.js';

@@ -1,11 +1,13 @@
 ---
 title: "ILLM"
 description: "Language model interface: completion, streaming, tool calling, and protocol capabilities."
-updatedAt: "2026-04-07"
+updatedAt: "2026-09-27"
 order: 1
 ---
 
 `ILLM` is the interface every language-model adapter implements. Plugins consume it through `useLLM()`, which returns either the raw adapter or a tier-routed binding.
+
+`ILLM` is the model-call transport; consumers own file loading and preparation. The shared capability vocabulary and content-part schemas are defined together in the platform-owned `LLM_CONTRACT` registry and exported by `@kb-labs/sdk`. Text remains the implicit baseline. The first multimodal part is `image`, which requires `vision`; the registry drives both runtime validation and inferred routing requirements. The agent or other consumer is responsible for preparing files (for example, extracting PDF text or rasterizing pages into images).
 
 Source of truth: [core/platform/src/adapters/llm.ts](core/platform/src/adapters/llm.ts).
 
@@ -47,7 +49,7 @@ interface LLMOptions {
 
 ```ts
 interface LLMResponse {
-  content: string;
+  content: LLMContent; // string shorthand or ordered LLMContentPart[]
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -123,7 +125,7 @@ Native tool-calling / function-calling.
 ```ts
 interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  content: LLMContent; // text string shorthand or ordered typed content parts
   toolCallId?: string;        // for role='tool' — which call this result belongs to
   toolCalls?: LLMToolCall[];  // for role='assistant' — calls the LLM requested
   metadata?: Record<string, unknown>;
@@ -232,7 +234,7 @@ Plugins don't pick models directly — they pick a **tier** (`'small' | 'medium'
 ```ts
 interface UseLLMOptions {
   tier?: 'small' | 'medium' | 'large';
-  capabilities?: ('reasoning' | 'coding' | 'vision' | 'fast')[];
+  capabilities?: LLMCapability[]; // from the platform catalog exported by @kb-labs/sdk
   execution?: LLMExecutionPolicy;
 }
 ```
@@ -241,7 +243,24 @@ Resolution rules (from [llm-types.ts](core/platform/src/adapters/llm-types.ts)):
 
 - **Escalation.** If the plugin asks for `small` but only `medium` is configured, the router silently uses `medium`.
 - **Degradation.** If the plugin asks for `large` but only `medium` is configured, the router uses `medium` and emits a warning.
-- **Capability filtering.** The router picks the highest-priority model in the requested tier that supports **all** requested capabilities.
+- **Capability requirements.** The router selects the highest-priority model in the effective tier that declares **all** explicit and content-inferred capabilities. For example, an image part adds `vision`. If none match, it throws `LLM_CAPABILITY_NOT_SUPPORTED`; it never falls back to a partial match. Tags are operator-provided and are not verified against the provider. Use `canUseLLMForMessages(messages, options)` to preflight the exact message content.
+
+`LLM_CONTRACT` is the single registry for capability definitions and content-part schemas. A part entry owns its validator, allowed roles, and required capabilities, so adding a modality means extending that registry rather than maintaining a separate capability check. `validateLLMContent(role, content)` exposes the same validation and inferred requirements for consumers that need to prepare requests themselves.
+
+```ts
+const messages: LLMMessage[] = [{
+  role: 'user',
+  content: [
+    { type: 'text', text: 'What is in this image?' },
+    { type: 'image', mediaType: 'image/png', data: imageBase64 },
+  ],
+}];
+
+if (!canUseLLMForMessages(messages, { tier: 'large' })) {
+  throw new Error('No configured model supports this message');
+}
+await llm.chatWithTools(messages, { tools: [] }); // image automatically requires `vision`
+```
 - **Per-model adapter override.** Each entry in `tierMapping[tier]` can specify `adapter: '@kb-labs/adapters-xxx'` — the router will use that specific adapter for that model, even if a different one is primary.
 
 See [Configuration → kb.config.json](/configuration/kb-config#platformadapteroptions) for the full `tierMapping` schema, and [LLM Tiers](/sdk/llm-tiers) for the plugin-facing view.

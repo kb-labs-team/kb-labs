@@ -9,6 +9,7 @@
 
 import type { HostType, HostContext } from './host-context.js';
 import type { PermissionSpec } from './permissions.js';
+import type { LLMRouterMetadata } from '@kb-labs/core-platform';
 
 /**
  * Plugin context descriptor.
@@ -26,4 +27,6 @@ export interface PluginContextDescriptor {
   tenantId?: string;
   /** Config section from manifest (for useConfig auto-detection) */
   configSection?: string;
+  /** Non-secret LLM routing metadata needed for worker-side capability checks. */
+  llmRouting?: LLMRouterMetadata;
 }

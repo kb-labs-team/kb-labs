@@ -97,6 +97,8 @@ export async function callTool(
       socketPath: container.getSocketPath(),
       permissions: tool.permissions,
       quotas: tool.permissions?.quotas,
+      onLog: (entry) => lines.push(entry.message),
+      onLoggerLog: (entry) => lines.push(`[${entry.level}] ${entry.message}`),
     }),
   );
 

@@ -43,6 +43,7 @@ import {
   ArrowDownOutlined,
   ArrowLeftOutlined,
   ArrowRightOutlined,
+  PaperClipOutlined,
 
   // Status & Alerts
   CheckCircleOutlined,
@@ -196,6 +197,7 @@ export const AVAILABLE_ICONS: Record<string, React.ComponentType<any>> = {
   ArrowDownOutlined,
   ArrowLeftOutlined,
   ArrowRightOutlined,
+  PaperClipOutlined,
 
   // Status & Alerts
   CheckCircleOutlined,
@@ -403,6 +405,7 @@ export {
   ArrowDownOutlined,
   ArrowLeftOutlined,
   ArrowRightOutlined,
+  PaperClipOutlined,
 
   // Status & Alerts
   CheckCircleOutlined,

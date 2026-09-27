@@ -11,6 +11,7 @@ import type {
   ToolUseStep,
   TextStep,
   ErrorStep,
+  SubAgentStep,
 } from '@kb-labs/agent-contracts';
 
 /**
@@ -174,6 +175,13 @@ export class TurnAssembler {
         const activeTurnIds = Array.from(this.activeTurns.keys());
         return activeTurnIds[activeTurnIds.length - 1] ?? null;
 
+      case 'subagent:start':
+      case 'subagent:activity':
+      case 'subagent:end': {
+        const parentTurn = [...this.activeTurns.entries()].find(([, turn]) => turn.metadata.agentId === event.agentId);
+        return parentTurn?.[0] ?? null;
+      }
+
       default:
         return null;
     }
@@ -240,6 +248,44 @@ export class TurnAssembler {
    */
   private updateTurn(turn: Turn, event: AgentEvent, turnId: string): boolean {
     switch (event.type) {
+      case 'subagent:start': {
+        const step: SubAgentStep = {
+          type: 'subagent', id: `subagent-${event.data.subagentId}`, timestamp: event.timestamp,
+          turnId: event.data.subagentId, agentName: event.data.harness ?? 'KB-native',
+          task: event.data.description ?? 'Sub-agent task', status: 'running', harness: event.data.harness,
+          activities: [], lastAction: 'Started',
+        };
+        const existing = turn.steps.find((candidate) => candidate.type === 'subagent' && candidate.turnId === step.turnId);
+        if (existing) { return false; }
+        turn.steps.push(step);
+        return true;
+      }
+
+      case 'subagent:activity': {
+        const step = turn.steps.find((candidate): candidate is SubAgentStep => candidate.type === 'subagent' && candidate.turnId === event.data.subagentId);
+        if (!step) { return false; }
+        const action = event.data.action ?? event.data.activityType ?? 'Working';
+        step.lastAction = action;
+        step.activities ??= [];
+        step.activitySequence = (step.activitySequence ?? 0) + 1;
+        step.activities.push({
+          id: `activity-${step.activitySequence}`, timestamp: event.timestamp,
+          type: event.data.activityType ?? 'status', action, detail: event.data.detail,
+          toolCallId: event.data.toolCallId,
+        });
+        if (step.activities.length > 100) { step.activities.shift(); }
+        return true;
+      }
+
+      case 'subagent:end': {
+        const step = turn.steps.find((candidate): candidate is SubAgentStep => candidate.type === 'subagent' && candidate.turnId === event.data.subagentId);
+        if (!step) { return false; }
+        step.status = event.data.status === 'cancelled' ? 'cancelled' : event.data.status === 'failed' ? 'failed' : 'completed';
+        step.summary = event.data.summary;
+        step.lastAction = step.status === 'completed' ? 'Completed' : step.status === 'cancelled' ? 'Cancelled' : 'Failed';
+        return true;
+      }
+
       case 'thinking:start':
       case 'thinking:chunk': {
         // Find or create thinking step

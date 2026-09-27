@@ -75,6 +75,7 @@ import {
   useLogger,             // Structured logger
   useLoggerWithContext,  // Logger with persistent context
   useLLM,               // LLM adapter
+  LLM_CAPABILITIES,     // platform-owned capability catalog for model routing
   isLLMAvailable,
   getLLMTier,
   useEmbeddings,

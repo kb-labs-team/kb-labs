@@ -59,7 +59,7 @@ process.on('message', async (msg: ParentMessage) => {
   });
 
   // Connect to platform services via RPC (Unix socket to parent process)
-  const platform = await connectToPlatform(socketPath);
+  const platform = await connectToPlatform(socketPath, descriptor.llmRouting);
 
   // Detect --json mode from flags (V3: always { flags, argv })
   const inputFlags = 'flags' in (input as object) ? (input as { flags: Record<string, unknown> }).flags : {};

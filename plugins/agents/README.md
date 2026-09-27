@@ -64,6 +64,8 @@ kb agent run --task="Add auth" --mode=plan --approve   # generate + auto-approve
 kb agent run --task="Add auth" --mode=plan --approve --execute  # plan + execute in one step
 kb agent run --task="Fix bug" --mode=edit --files src/auth.ts   # edit specific files
 kb agent run --task="Why crash?" --mode=debug --trace .kb/traces/trace-123.json
+kb agent run --task="Explain this diagram" --attachments ./architecture.png
+kb agent run --task="Summarize this report" --attachments ./report.pdf
 kb agent run --task="Heavy refactor" --timeout=300 --budget=500000
 kb agent run --task="..." --session-id=abc --verbose   # resume session
 ```
@@ -108,6 +110,7 @@ kb agent rollback --after="2026-05-01T00:00:00Z"
 | `--approve` | `boolean` | `false` | Auto-approve generated plan |
 | `--execute` | `boolean` | `false` | Execute plan immediately after approval |
 | `--files` | `string[]` | — | Target files (edit mode) |
+| `--attachments` | `string[]` | — | Input PDFs/images (repeat the flag for multiple files) |
 | `--trace` | `string` | — | Trace file path (debug mode) |
 | `--complexity` | `simple \| medium \| complex` | — | Task complexity hint (plan mode) |
 | `--timeout` | `number` | — | Abort after N seconds (exit 124) |
@@ -116,6 +119,15 @@ kb agent rollback --after="2026-05-01T00:00:00Z"
 | `--verbose` | `boolean` | `false` | Verbose output |
 | `--debug` | `boolean` | `false` | Emit full prompts/responses as events |
 | `--json` | `boolean` | `false` | Structured JSON output |
+
+Attachments can also be added in the Studio Agent page. The first iteration
+accepts PDF and JPEG/PNG/WebP/GIF images, up to 10 files and 7 MiB total (with
+an individual file limit of 7 MiB). PDF pages are converted to text before the
+LLM call; scanned/image-only PDFs are rejected with a request to attach the
+relevant pages as images. Images are sent as image content and therefore require
+the selected LLM tier to declare the `vision` capability. Unsupported tiers are
+rejected before an agent session starts. Session history stores attachment
+metadata only, not file contents.
 
 ---
 
@@ -178,6 +190,11 @@ Access via **Studio → Agent** in the sidebar.
 | Path | Description |
 |------|-------------|
 | `.agent-memory/memory.json` | Persistent agent memory (facts, project context) |
+
+## Architecture
+
+- [Multi-agent orchestration design](./docs/architecture/multi-agent-orchestration.md) — working C1/C2 design for policies, safety checks, budgets, tools/MCP, worktrees, and future orchestrator collaboration.
+- [External harness sub-agents](./docs/adr/0022-external-harness-subagents.md) — harness adapter and sub-agent lifecycle decision.
 
 ---
 

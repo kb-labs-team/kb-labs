@@ -62,7 +62,17 @@ export function SessionSelector({
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <UIDropdown menu={{ items }} trigger={['click']} placement="bottomRight">
+      <UIDropdown
+        menu={{
+          items,
+          style: {
+            maxHeight: 'min(60vh, 480px)',
+            overflowY: 'auto',
+          },
+        }}
+        trigger={['click']}
+        placement="bottomRight"
+      >
         <button
           style={{
             display: 'inline-flex',

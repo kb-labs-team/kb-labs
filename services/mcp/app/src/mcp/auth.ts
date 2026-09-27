@@ -7,6 +7,7 @@
 import { AuthService, type JwtConfig } from '@kb-labs/gateway-auth';
 import type { ICache } from '@kb-labs/core-platform';
 import type { AuthContext } from '@kb-labs/gateway-contracts';
+import { resolveAgentLease, type AgentLeaseRecord } from './agent-leases.js';
 
 /**
  * Insecure development fallback. Must never be used in production — loadJwtConfig
@@ -60,4 +61,25 @@ export async function resolveAuthContext(
     return null;
   }
   return new AuthService(cache, jwtConfig).verify(token);
+}
+
+export interface McpCallerContext {
+  auth: AuthContext;
+  lease: AgentLeaseRecord | null;
+}
+
+/** Resolve either a user JWT or an opaque, scoped agent lease bearer. */
+export async function resolveMcpCallerContext(
+  header: string | undefined,
+  cache: ICache,
+  jwtConfig: JwtConfig,
+): Promise<McpCallerContext | null> {
+  const token = extractBearer(header);
+  if (!token) { return null; }
+
+  const auth = await new AuthService(cache, jwtConfig).verify(token).catch(() => null);
+  if (auth) { return { auth, lease: null }; }
+
+  const lease = await resolveAgentLease(cache, token);
+  return lease ? { auth: lease.identity, lease } : null;
 }

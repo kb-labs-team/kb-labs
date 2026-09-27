@@ -195,6 +195,14 @@ export class PIIRedactionLLM implements ILLM {
     return [];
   }
 
+  supportsCapabilities(options?: UseLLMOptions): boolean {
+    const router = this.realLLM as unknown as ILLMRouter;
+    if (typeof router.supportsCapabilities === 'function') {
+      return router.supportsCapabilities(options);
+    }
+    return false;
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────
 
   private redactText(text: string): { text: string; map: Map<string, string> } {
@@ -251,17 +259,36 @@ export class PIIRedactionLLM implements ILLM {
     }
 
     const redacted = this.redactTextShared(options.systemPrompt, map);
-    return { ...options, systemPrompt: redacted };
+    const redactedOptions = { ...options, systemPrompt: redacted };
+    if (options.signal) {
+      Object.defineProperty(redactedOptions, 'signal', {
+        value: options.signal,
+        enumerable: false,
+      });
+    }
+    return redactedOptions;
   }
 
   private redactMessage(msg: LLMMessage, sharedMap: Map<string, string>): LLMMessage {
-    const redactedContent = this.redactTextShared(msg.content, sharedMap);
-
-    if (redactedContent === msg.content) {
-      return msg;
+    if (typeof msg.content === 'string') {
+      const redactedContent = this.redactTextShared(msg.content, sharedMap);
+      return redactedContent === msg.content ? msg : { ...msg, content: redactedContent };
     }
 
-    return { ...msg, content: redactedContent };
+    let changed = false;
+    const redactedContent = msg.content.map((part) => {
+      if (part.type !== 'text') {
+        return part;
+      }
+      const redactedText = this.redactTextShared(part.text, sharedMap);
+      if (redactedText === part.text) {
+        return part;
+      }
+      changed = true;
+      return { ...part, text: redactedText };
+    });
+
+    return changed ? { ...msg, content: redactedContent } : msg;
   }
 
   private restoreToolResponse(

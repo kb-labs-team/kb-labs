@@ -7,3 +7,4 @@
 export * from './UIMarkdownViewer';
 export * from './UIJsonViewer';
 export * from './UIDiffViewer';
+export * from './UIImagePreview';

@@ -102,6 +102,17 @@ describe('loadProjectInstructions', () => {
     expect(loadProjectInstructions('/tmp')).toBe('# Agent instructions');
   });
 
+  it('includes AGENTS.md as ordinary project prompt instructions', async () => {
+    vi.mocked(fs.existsSync).mockImplementation((p) => String(p).endsWith('AGENTS.md'));
+    vi.mocked(fs.readFileSync).mockReturnValue('# Prefer Codex for implementation');
+
+    const instructions = loadProjectInstructions('/tmp/project');
+    const prompt = await new SystemPromptBuilder().build(makeInput({ workingDir: '/tmp/project' }));
+
+    expect(instructions).toBe('# Prefer Codex for implementation');
+    expect(prompt).toContain(`# Project Instructions\n${instructions}`);
+  });
+
   it('skips empty files', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(fs.readFileSync).mockReturnValueOnce('   ').mockReturnValueOnce('real content');

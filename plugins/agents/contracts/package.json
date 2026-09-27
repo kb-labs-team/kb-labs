@@ -29,6 +29,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/sdk": "workspace:*",
     "zod": "^3.25.76"
   },
   "devDependencies": {

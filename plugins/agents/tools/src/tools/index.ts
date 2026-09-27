@@ -79,6 +79,7 @@ import { createAskParentTool, createReportTool } from './interaction/reporting.j
  * Create and register all tools
  */
 export function createToolRegistry(context: ToolContext): ToolRegistry {
+  context.runEvidence ??= [];
   const allowed = context.allowedTools;
   const allow = (name: string) => !allowed || allowed.has(name);
   const registry = new ToolRegistry(context);

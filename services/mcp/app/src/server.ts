@@ -35,14 +35,34 @@ import type { ICache, ILogger } from '@kb-labs/core-platform';
 import type { JwtConfig } from '@kb-labs/gateway-auth';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { AuthContext } from '@kb-labs/gateway-contracts';
 import { createDaemonServer, getListenOptions, type ObservabilityCollectorLike } from '@kb-labs/shared-http';
-import { resolveAuthContext } from './mcp/auth.js';
+import { extractBearer, resolveMcpCallerContext } from './mcp/auth.js';
 import { toIdentity, actionForOperation, type Permits } from './mcp/authz.js';
-import { createToolRegistry, validateManifests } from './mcp/tool-builder.js';
+import { createToolRegistry, filterTools, toMcpToolDescriptor, validateManifests } from './mcp/tool-builder.js';
 import { type PlatformResolver } from './mcp/tool-router.js';
 import { resolveVisibleTools, executeToolCall } from './mcp/request-handler.js';
+import { issueAgentLease, revokeAgentLease, AgentLeaseError, type AgentLeaseInputConstraints, type AgentLeaseRecord } from './mcp/agent-leases.js';
 import { McpObservabilityCollector } from './observability/collector.js';
 import type { ToolBuildDiagnostic } from './mcp/tool-builder.js';
+
+function createAuthorizedToolNameSet(
+  registry: IEntityRegistry,
+  permits: Permits,
+  lease: AgentLeaseRecord | null,
+): Set<string> {
+  const parentTools = lease ? new Set(lease.allowedTools) : null;
+  return new Set(
+    filterTools(registry.snapshot(), (operationType, resource, toolName) =>
+      permits(operationType, resource, toolName)
+      && (!parentTools || parentTools.has(toolName ?? '')),
+    ).map((tool) => tool.name),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 /** Built-in diagnostic tool: always visible to authenticated callers, never
  * derived from a plugin manifest — reports which plugin commands failed to
@@ -52,6 +72,11 @@ const DIAGNOSTICS_TOOL = {
   description:
     'List plugin commands that failed to load as MCP tools (malformed manifests), with the reason for each.',
   inputSchema: { type: 'object' as const, properties: {} },
+};
+
+const DEVELOPMENT_PDP_STUB_IDENTITY: AuthContext = {
+  type: 'user', userId: 'local-development-pdp-stub', namespaceId: 'local-development',
+  tier: 'pro', permissions: ['*'],
 };
 
 function renderManifestDiagnostics(diagnostics: ToolBuildDiagnostic[]): string {
@@ -77,6 +102,8 @@ export interface McpDaemonServerOptions {
   jwtConfig: JwtConfig;
   /** Authorization policy. Permit-all default until the platform supplies a real one. */
   policy: Policy;
+  /** Explicit local-only anonymous lease issuer; must never be enabled in production. */
+  developmentPdpStub?: boolean;
 }
 
 export class McpDaemonServer {
@@ -94,6 +121,9 @@ export class McpDaemonServer {
 
   /** Build a per-request permits predicate bound to the identity (PDP seam). */
   private permitsFor(identity: Identity): Permits {
+    if (this.opts.developmentPdpStub && identity.user === DEVELOPMENT_PDP_STUB_IDENTITY.userId) {
+      return () => true;
+    }
     return (operationType, resource) =>
       can(this.opts.policy, identity, actionForOperation(operationType), resource);
   }
@@ -120,6 +150,9 @@ export class McpDaemonServer {
     // access to the offending plugin happens to call tools/list.
     const manifestDiagnostics = validateManifests(this.registry.snapshot());
     this.collector.setManifestDiagnostics(manifestDiagnostics);
+    if (this.opts.developmentPdpStub) {
+      this.opts.logger.warn('MCP anonymous agent lease PDP stub is enabled; this mode grants all MCP commands and is for local testing only');
+    }
     for (const diag of manifestDiagnostics) {
       this.opts.logger.warn('MCP tool skipped — invalid manifest command', {
         pluginId: diag.pluginId,
@@ -161,6 +194,106 @@ export class McpDaemonServer {
   private async registerMcpRoutes(server: FastifyInstance): Promise<void> {
     const { cache, logger, jwtConfig } = this.opts;
 
+    // ── Scoped agent leases ──────────────────────────────────────────────
+    // A user (or parent lease) may delegate only a subset of currently
+    // authorized commands. The returned opaque bearer is all the child needs.
+    server.delete('/api/v1/mcp/leases/current', async (request, reply) => {
+      const caller = await resolveMcpCallerContext(request.headers.authorization, cache, jwtConfig);
+      if (!caller) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      if (!caller.lease) {
+        return reply.code(400).send({ error: 'only an agent lease can revoke itself' });
+      }
+      const token = extractBearer(request.headers.authorization);
+      if (token) { await revokeAgentLease(cache, token); }
+      return reply.code(204).send();
+    });
+
+    server.post('/api/v1/mcp/leases', async (request, reply) => {
+      const caller = await resolveMcpCallerContext(request.headers.authorization, cache, jwtConfig);
+      const stubIdentity = !caller && this.opts.developmentPdpStub
+        ? DEVELOPMENT_PDP_STUB_IDENTITY
+        : null;
+      const identity = caller?.auth ?? stubIdentity;
+      if (!identity) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      if (!this.registry) {
+        return reply.code(503).send({ error: 'MCP registry is not ready' });
+      }
+
+      const body = request.body as Record<string, unknown> | null;
+      const executionId = body?.['executionId'];
+      const allowedTools = body?.['allowedTools'];
+      const allAuthorizedTools = body?.['allAuthorizedTools'] === true;
+      const ttlSeconds = body?.['ttlSeconds'];
+      const inputEquals = body?.['inputEquals'];
+      if (typeof executionId !== 'string'
+        || (body?.['allAuthorizedTools'] !== undefined && typeof body['allAuthorizedTools'] !== 'boolean')
+        || (allAuthorizedTools
+          ? (allowedTools !== undefined && (!Array.isArray(allowedTools) || allowedTools.length > 0))
+          : (!Array.isArray(allowedTools) || allowedTools.length === 0 || allowedTools.some((item) => typeof item !== 'string')))) {
+        return reply.code(400).send({ error: 'executionId and either allowedTools[] or allAuthorizedTools=true are required' });
+      }
+      if (ttlSeconds !== undefined && typeof ttlSeconds !== 'number') {
+        return reply.code(400).send({ error: 'ttlSeconds must be a number' });
+      }
+
+      if (inputEquals !== undefined && (!isRecord(inputEquals)
+        || Object.values(inputEquals).some((constraints) => !isRecord(constraints)))) {
+        return reply.code(400).send({ error: 'inputEquals must be an object' });
+      }
+      const leaseParent = caller?.lease ?? null;
+      const basePermits = this.permitsFor(toIdentity(identity));
+      const authorizedTools = createAuthorizedToolNameSet(this.registry, basePermits, leaseParent);
+      const requestedTools = allAuthorizedTools ? [...authorizedTools] : allowedTools as string[];
+      if (requestedTools.length === 0) {
+        return reply.code(403).send({ error: 'caller has no authorized MCP tools' });
+      }
+      const unavailable = requestedTools.filter((name) => !authorizedTools.has(name));
+      if (unavailable.length > 0) {
+        return reply.code(403).send({ error: 'requested tools exceed caller authority', unavailable });
+      }
+
+      try {
+        const requestedConstraints = (inputEquals ?? {}) as AgentLeaseInputConstraints;
+        const effectiveConstraints: AgentLeaseInputConstraints = { ...requestedConstraints };
+        if (leaseParent) {
+          for (const toolName of requestedTools) {
+            const inherited = leaseParent.inputEquals[toolName];
+            if (inherited) {
+              effectiveConstraints[toolName] = {
+                ...inherited,
+                ...(effectiveConstraints[toolName] ?? {}),
+              };
+            }
+          }
+        }
+        const issued = await issueAgentLease(cache, {
+          executionId,
+          identity,
+          allowedTools: requestedTools,
+          inputEquals: effectiveConstraints,
+          ttlSeconds: ttlSeconds as number | undefined,
+          parent: leaseParent ?? undefined,
+        });
+        return reply.code(201).send({
+          tokenType: 'Bearer',
+          accessToken: issued.token,
+          executionId: issued.record.executionId,
+          allowedTools: issued.record.allowedTools,
+          expiresAt: new Date(issued.record.expiresAt).toISOString(),
+        });
+      } catch (error) {
+        if (error instanceof AgentLeaseError) {
+          return reply.code(400).send({ error: error.message, code: error.code });
+        }
+        request.kbLogger?.error('Agent lease creation failed', error as Error);
+        return reply.code(500).send({ error: 'failed to create agent lease' });
+      }
+    });
+
     // ── Diagnostics ──────────────────────────────────────────────────────
     // Same visibility as /health — no per-tenant data, just which manifest
     // commands failed to load. Mirrors the kb-labs__mcp_diagnostics MCP tool.
@@ -188,9 +321,10 @@ export class McpDaemonServer {
 
       // 1. Authenticate. Invalid/absent token → anonymous (no throw, no 401).
       const authHeader = request.headers.authorization;
-      const authCtx = await resolveAuthContext(authHeader, cache, jwtConfig).catch(
+      const caller = await resolveMcpCallerContext(authHeader, cache, jwtConfig).catch(
         () => null,
       );
+      const authCtx = caller?.auth ?? null;
       const tenantId = authCtx?.namespaceId ?? 'anonymous';
 
       // Bind the authorization predicate to the identity once per request.
@@ -201,6 +335,7 @@ export class McpDaemonServer {
       //    listing optimization ONLY — executeToolCall re-checks the live policy.
       const visibleTools = await resolveVisibleTools({
         permits,
+        lease: caller?.lease,
         authHeader,
         registry: this.registry!,
         cache,
@@ -217,19 +352,15 @@ export class McpDaemonServer {
 
       mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         tools: [
-          ...visibleTools.map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: t.inputSchema as { type: 'object' },
-          })),
+          ...visibleTools.map(toMcpToolDescriptor),
           // Authenticated callers only — mirrors the visibility gate above.
-          ...(permits ? [DIAGNOSTICS_TOOL] : []),
+          ...(permits && !caller?.lease ? [DIAGNOSTICS_TOOL] : []),
         ],
       }));
 
       mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
         if (params.name === DIAGNOSTICS_TOOL.name) {
-          if (!permits) {
+          if (!permits || caller?.lease) {
             return { content: [{ type: 'text' as const, text: `Not authorized: ${params.name}` }], isError: true };
           }
           return { content: [{ type: 'text' as const, text: renderManifestDiagnostics(this.collector.getManifestDiagnostics()) }], isError: false };
@@ -239,6 +370,7 @@ export class McpDaemonServer {
           args: (params.arguments ?? {}) as Record<string, unknown>,
           visibleTools,
           permits,
+          lease: caller?.lease,
           tenantId,
           resolvePlatform: this.resolvePlatform,
           analytics: this.opts.platform.analytics,

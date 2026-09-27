@@ -193,6 +193,31 @@ export function createEventRenderer(options: {
         break;
       }
 
+      case 'subagent:start': {
+        const harness = event.data.harness ?? 'KB-native';
+        console.log(color.accent(`${symbols.subtask} Sub-agent ${harness} started: ${event.data.description ?? event.data.subagentId}`));
+        break;
+      }
+
+      case 'subagent:activity': {
+        if (!verbose) { break; }
+        const label = event.data.action;
+        console.log(color.dim(`  ↳ [${event.data.subagentId}] ${label}`));
+        if (event.data.detail) {
+          for (const line of event.data.detail.split('\n').slice(0, 3)) {
+            console.log(color.dim(`      ${line.slice(0, 240)}`));
+          }
+        }
+        break;
+      }
+
+      case 'subagent:end': {
+        const completed = event.data.status === 'completed';
+        const label = completed ? color.success(`${symbols.success} completed`) : color.error(`${symbols.error} ${event.data.status}`);
+        console.log(color.dim(`  ↳ [${event.data.subagentId}] ${label}${event.data.summary ? `: ${event.data.summary.slice(0, 240)}` : ''}`));
+        break;
+      }
+
       // ═══════════════════════════════════════════════════════════════════
       // AGENT LEVEL (nested under subtask or standalone)
       // ═══════════════════════════════════════════════════════════════════

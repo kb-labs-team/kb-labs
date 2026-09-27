@@ -16,6 +16,10 @@
  */
 export type SubAgentPreset = 'research' | 'execute' | 'review';
 
+/** Local external agent runtimes available as sub-agent execution targets. */
+export const EXTERNAL_HARNESS_IDS = ['codex-cli', 'claude-code'] as const;
+export type ExternalHarnessId = typeof EXTERNAL_HARNESS_IDS[number];
+
 // ── Spawn request ────────────────────────────────────────────────────────────
 
 /**
@@ -26,15 +30,25 @@ export type SubAgentPreset = 'research' | 'execute' | 'review';
  * `{ task: "..." }` works as before (preset='research', budgetFraction=0.5).
  */
 export interface SpawnAgentRequest {
+  /** Internal correlation ID assigned by the async task manager. */
+  subagentId?: string;
   /** Clear task description — the sub-agent has no context about parent's work. */
   task: string;
   /** Preset determines which tools the child gets. Default: 'research'. */
   preset?: SubAgentPreset;
+  /** Optional local external harness. Omit to run a KB-native child agent. */
+  harness?: ExternalHarnessId;
   /**
    * Explicit tool allowlist — resolved from preset by the tool layer.
    * Core layer passes this to child's ToolContext.allowedTools.
    */
   allowedTools?: string[];
+  /** Requested semantic capabilities; transports must enforce them before claiming they are granted. */
+  requestedCapabilities?: import('./subagent-tool-policy.js').SubAgentCapability[];
+  /** Exact platform MCP tool IDs, or ['*'] for every tool authorized by the issuer. */
+  mcpTools?: string[];
+  /** Exact input constraints keyed by platform MCP tool ID. */
+  mcpInputEquals?: Record<string, Record<string, string | number | boolean | null>>;
   /** Max iterations for the child. Default: from preset. */
   maxIterations?: number;
   /** Working directory relative to project root. */
@@ -70,4 +84,6 @@ export interface SpawnAgentResult {
   error?: string;
   /** Preset that was used. */
   preset: SubAgentPreset;
+  /** External harness used for this child, when not KB-native. */
+  harness?: ExternalHarnessId;
 }

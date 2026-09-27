@@ -5,7 +5,7 @@
  * from previous iterations when the default sliding window shows truncated data.
  */
 
-import type { LLMMessage, LLMTool } from '@kb-labs/sdk';
+import { getLLMContentText, type LLMMessage, type LLMTool } from '@kb-labs/sdk';
 
 /**
  * Extended message fields added at runtime by the agent (not part of the base LLMMessage type).
@@ -129,7 +129,7 @@ export async function executeContextRetrieve(
   // Filter by topic (search in content)
   if (input.topic) {
     filtered = filtered.filter((msg) => {
-      const content = msg.content || '';
+      const content = getLLMContentText(msg.content);
       return content.toLowerCase().includes(input.topic!.toLowerCase());
     });
   }

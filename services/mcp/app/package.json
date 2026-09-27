@@ -10,7 +10,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/copy-worker-script.mjs",
     "clean": "rimraf dist",
     "dev": "tsx watch src/index.ts",
     "lint": "eslint .",
@@ -24,6 +24,7 @@
     "@kb-labs/cli-commands": "workspace:*",
     "@kb-labs/cli-runtime": "workspace:*",
     "@kb-labs/core-contracts": "workspace:*",
+    "@kb-labs/core-ipc": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/core-policy": "workspace:*",
     "@kb-labs/core-registry": "workspace:*",
@@ -32,9 +33,11 @@
     "@kb-labs/gateway-auth": "workspace:*",
     "@kb-labs/gateway-contracts": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
+    "@kb-labs/plugin-execution-factory": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",
     "@kb-labs/shared-daemon": "workspace:*",
     "@kb-labs/shared-http": "workspace:*",
+    "@kb-labs/shared-cli-ui": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "fastify": "^5.12.1"
   },

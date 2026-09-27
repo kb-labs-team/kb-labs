@@ -15,7 +15,7 @@
  * to extract structured facts from recent agent reasoning and tool results.
  */
 
-import { useLLM, type ILLM, type LLMMessage, type LLMTool } from '@kb-labs/sdk';
+import { getLLMContentText, useLLM, type ILLM, type LLMMessage, type LLMTool } from '@kb-labs/sdk';
 import type {
   AgentMiddleware,
   RunContext,
@@ -448,14 +448,15 @@ function compressMessages(messages: LLMMessage[]): string | null {
   const lines = messages
     .map(msg => {
       if (msg.role === 'tool') {
-        const content = msg.content || '';
+        const content = getLLMContentText(msg.content);
         const preview = content.slice(0, 2000);
         return `Tool result: ${preview}${content.length > 2000 ? '...' : ''}`;
       }
       if (msg.role === 'assistant') {
         const parts: string[] = [];
-        if (msg.content?.trim()) {
-          parts.push(`Agent: ${msg.content.slice(0, 600)}${(msg.content.length > 600) ? '...' : ''}`);
+        const content = getLLMContentText(msg.content);
+        if (content.trim()) {
+          parts.push(`Agent: ${content.slice(0, 600)}${content.length > 600 ? '...' : ''}`);
         }
         if (msg.toolCalls?.length) {
           parts.push(`Calls: ${msg.toolCalls.map(tc => tc.name ?? (tc as { function?: { name?: string } }).function?.name).join(', ')}`);

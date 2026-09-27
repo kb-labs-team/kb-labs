@@ -13,19 +13,40 @@ export function applyLocalNetworkOffset<T>(
   env: NodeJS.ProcessEnv = process.env,
 ): T {
   const offset = Number(env.KB_NET_OFFSET) || 0;
-  if (offset === 0) {
+  if (value === null || typeof value !== "object") {
     return value;
   }
 
-  return shiftConfigUrls(value, offset) as T;
+  const config = value as Record<string, unknown>;
+  if (offset === 0 && !Array.isArray(config.networkOffsetExemptions)) {
+    return value;
+  }
+  const exemptions = new Set(
+    Array.isArray(config.networkOffsetExemptions)
+      ? config.networkOffsetExemptions.filter((item): item is string => typeof item === "string")
+      : [],
+  );
+  const { networkOffsetExemptions: _exemptions, ...configWithoutExemptions } = config;
+  if (offset === 0) {
+    return configWithoutExemptions as T;
+  }
+  return shiftConfigUrls(configWithoutExemptions, offset, "", exemptions) as T;
 }
 
-function shiftConfigUrls(value: unknown, offset: number): unknown {
+function shiftConfigUrls(
+  value: unknown,
+  offset: number,
+  path: string,
+  exemptions: ReadonlySet<string>,
+): unknown {
+  if (path && exemptions.has(path)) {
+    return value;
+  }
   if (typeof value === "string") {
     return shiftLoopbackUrl(value, offset);
   }
   if (Array.isArray(value)) {
-    return value.map((item) => shiftConfigUrls(item, offset));
+    return value.map((item, index) => shiftConfigUrls(item, offset, `${path}.${index}`, exemptions));
   }
   if (value === null || typeof value !== "object") {
     return value;
@@ -35,9 +56,10 @@ function shiftConfigUrls(value: unknown, offset: number): unknown {
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
     // service-transport-http already applies KB_NET_OFFSET itself. Shifting
     // its configured routes here as well would add the offset twice.
+    const childPath = path ? `${path}.${key}` : key;
     result[key] = key === "serviceTransport"
       ? child
-      : shiftConfigUrls(child, offset);
+      : shiftConfigUrls(child, offset, childPath, exemptions);
   }
   return result;
 }

@@ -24,7 +24,7 @@ Plugins in KB Labs needed to use LLM capabilities, but the existing approach had
 2. **Model Name Passthrough**: Let plugins specify exact model names
    - ❌ Rejected: Still ties plugins to specific models
 
-3. **Capability-Only System**: Route purely by capabilities (vision, coding, etc.)
+3. **Capability-Only System**: Route purely by capabilities (vision, code, etc.)
    - ⚠️ Partial: Good idea, but doesn't address cost/quality tradeoffs
 
 4. **Tier-Based System with User Slots**: Abstract tiers that users configure
@@ -48,7 +48,7 @@ large  → "When I need maximum quality" (user decides)
 
 Plugins ONLY specify:
 - `tier`: 'small' | 'medium' | 'large'
-- `capabilities`: 'reasoning' | 'coding' | 'vision' | 'fast'
+- `capabilities`: platform-defined LLM capability IDs (see `LLM_CAPABILITIES`)
 
 Plugins NEVER know about:
 - Providers (openai, anthropic, google)
@@ -90,7 +90,7 @@ await llm.complete('Simple task');
 **New Types** (`@kb-labs/core-platform`):
 ```typescript
 type LLMTier = 'small' | 'medium' | 'large';
-type LLMCapability = 'reasoning' | 'coding' | 'vision' | 'fast';
+type LLMCapability = 'reasoning' | 'code' | 'fast' | 'vision' | 'document.input' | 'audio.input' | 'audio.transcription' | 'audio.output' | 'video.input';
 
 interface UseLLMOptions {
   tier?: LLMTier;
@@ -118,7 +118,7 @@ const llm = useLLM();
 // After (backward compatible)
 const llm = useLLM();                           // Default tier
 const llm = useLLM({ tier: 'small' });          // Specific tier
-const llm = useLLM({ capabilities: ['coding'] }); // With capabilities
+const llm = useLLM({ capabilities: ['code'] }); // With capabilities
 ```
 
 ## Consequences

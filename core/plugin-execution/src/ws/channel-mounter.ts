@@ -132,10 +132,10 @@ export async function mountWebSocketChannels(
           if (!idleTimeoutMs || idleTimeoutMs <= 0) { return; }
           if (idleTimer) { clearTimeout(idleTimer); }
           idleTimer = setTimeout(() => {
-            connectionLogger.warn({
+            connectionLogger.info({
               event: 'websocket.connection.idle_timeout',
               idleTimeoutMs,
-            }, '[ws] idle timeout');
+            }, '[ws] idle connection closed');
             ws.close(1001, 'Idle timeout');
           }, idleTimeoutMs);
         };

@@ -18,6 +18,20 @@ function expectRequiredExports(
 }
 
 describe("SDK Entrypoint Contracts", () => {
+  it("publishes the platform LLM capability catalog", () => {
+    expect(Object.keys(SDK.LLM_CAPABILITIES)).toEqual([
+      "reasoning",
+      "code",
+      "fast",
+      "vision",
+      "document.input",
+      "audio.input",
+      "audio.transcription",
+      "audio.output",
+      "video.input",
+    ]);
+  });
+
   it("keeps required root exports", () => {
     expectRequiredExports("@kb-labs/sdk", SDK, [
       "defineCommand",
@@ -37,6 +51,7 @@ describe("SDK Entrypoint Contracts", () => {
       "combinePermissions",
       "getMonitoringSnapshot",
       "findRepoRoot",
+      "LLM_CAPABILITIES",
     ]);
   });
 
@@ -75,6 +90,7 @@ describe("SDK Entrypoint Contracts", () => {
       "useLLM",
       "isLLMAvailable",
       "getLLMTier",
+      "LLM_CAPABILITIES",
       "useEmbeddings",
       "isEmbeddingsAvailable",
       "useVectorStore",

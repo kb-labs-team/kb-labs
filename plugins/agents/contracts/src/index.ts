@@ -9,6 +9,7 @@ export type * from './events.js';
 export type * from './ws-messages.js';
 export type * from './verification.js';
 export type * from './turn.js';
+export * from './session-events.js';
 export * from './schemas.js';
 export * from './routes.js';
 export * from './analytics.js';
@@ -73,3 +74,11 @@ export type {
 // ═══════════════════════════════════════════════════════════════════════
 
 export type * from './spawn.js';
+export { EXTERNAL_HARNESS_IDS } from './spawn.js';
+export type * from './subagent-tool-policy.js';
+export {
+  AGENT_TOOL_CAPABILITIES,
+  SUB_AGENT_CAPABILITIES,
+  SUB_AGENT_PRESET_POLICIES,
+  resolveSubAgentToolPolicy,
+} from './subagent-tool-policy.js';

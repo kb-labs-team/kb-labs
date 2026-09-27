@@ -129,7 +129,12 @@ export class WorkerPoolBackend implements ExecutionBackend {
 
     // Log pool events
     this.pool.on('workerSpawned', (worker) => {
-      this.platform.logger.debug('Worker spawned', { workerId: worker.id });
+      this.platform.logger.debug('Worker spawned', {
+        workerId: worker.id,
+        pid: worker.info.pid,
+        workerScript: this.workerScript,
+        transport: this.platformTransport.type,
+      });
     });
 
     this.pool.on('workerExited', (worker, code) => {

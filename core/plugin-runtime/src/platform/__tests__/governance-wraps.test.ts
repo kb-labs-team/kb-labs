@@ -9,6 +9,7 @@ import {
   createDeniedService,
 } from '../adapter-registry';
 import { PermissionError } from '@kb-labs/plugin-contracts';
+import type { ILLM, ILLMRouter } from '@kb-labs/core-platform';
 import type { MiddlewareContext } from '../middleware';
 
 function makeCtx(platform: Record<string, unknown> = {}): MiddlewareContext {
@@ -74,6 +75,32 @@ describe('wrapLlm', () => {
     const adapter = { ...baseLlm, complete: vi.fn(async () => ({ content: '', usage: { promptTokens: 1, completionTokens: 1 }, model: 'x' })) };
     const wrapped = wrapLlm(adapter, makeCtx({ llm: { models: ['gpt-4o-mini'] } }));
     await expect(wrapped.complete('p', { model: 'gpt-4o-mini' } as never)).resolves.toBeDefined();
+  });
+
+  it('preserves capability preflight and tier bindings through the permission wrapper', async () => {
+    const adapter = {
+      ...baseLlm,
+      getConfiguredTier: () => 'small',
+      resolve: vi.fn(() => ({ model: 'vision-model', actualTier: 'small' })),
+      resolveAdapter: vi.fn(async () => ({
+        model: 'vision-model',
+        tier: 'small',
+        adapter: underlyingAdapter,
+      })),
+      hasCapability: vi.fn(() => true),
+      getCapabilities: vi.fn(() => ['vision']),
+      supportsCapabilities: vi.fn(() => true),
+    };
+    const underlyingAdapter = { ...baseLlm };
+    const wrapped = wrapLlm(adapter, makeCtx({ llm: true })) as ILLM & ILLMRouter;
+
+    expect(wrapped.getConfiguredTier()).toBe('small');
+    expect(wrapped.supportsCapabilities({ tier: 'small', capabilities: ['vision'] })).toBe(true);
+    expect(wrapped.getCapabilities()).toEqual(['vision']);
+    const binding = await wrapped.resolveAdapter({ tier: 'small', capabilities: ['vision'] });
+    expect(binding.model).toBe('vision-model');
+    expect(binding.adapter).not.toBe(underlyingAdapter);
+    expect(adapter.supportsCapabilities).toHaveBeenCalledWith({ tier: 'small', capabilities: ['vision'] });
   });
 
   it('stream also enforces model allowlist', async () => {

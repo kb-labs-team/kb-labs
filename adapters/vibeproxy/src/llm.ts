@@ -15,7 +15,9 @@ import type {
   LLMToolCall,
   LLMProtocolCapabilities,
   LLMExecutionPolicy,
+  LLMContentPart,
 } from "@kb-labs/sdk/adapters";
+import { LLMContentValidationError, validateLLMContent } from "@kb-labs/sdk/adapters";
 
 /**
  * Configuration for VibeProxy LLM adapter.
@@ -36,6 +38,55 @@ export interface VibeProxyLLMConfig {
 /** Default max output tokens — avoids hitting the 4096 hardcoded limit mid-response. */
 const DEFAULT_MAX_TOKENS = 16_384;
 
+class VibeProxyRequestError extends Error {
+  readonly code: string;
+  readonly transportCode?: string;
+  readonly httpStatus?: number;
+  readonly retryAfter?: string;
+  readonly provider = 'vibeproxy';
+  readonly model?: string;
+  readonly endpointOrigin?: string;
+
+  constructor(
+    message: string,
+    details: {
+      code: string;
+      transportCode?: string;
+      httpStatus?: number;
+      retryAfter?: string;
+      model?: string;
+      endpointOrigin?: string;
+    },
+  ) {
+    super(message);
+    this.name = 'VibeProxyRequestError';
+    this.code = details.code;
+    this.transportCode = details.transportCode;
+    this.httpStatus = details.httpStatus;
+    this.retryAfter = details.retryAfter;
+    this.model = details.model;
+    this.endpointOrigin = details.endpointOrigin;
+  }
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object' || !('code' in error)) return undefined;
+  return typeof error.code === 'string' ? error.code : undefined;
+}
+
+function getEndpointOrigin(baseURL: string): string {
+  try {
+    return new URL(baseURL).origin;
+  } catch {
+    return 'the configured endpoint';
+  }
+}
+
+function getRequestModel(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object' || !('model' in body)) return undefined;
+  return typeof body.model === 'string' ? body.model : undefined;
+}
+
 /**
  * VibeProxy Messages API request format.
  */
@@ -48,6 +99,7 @@ interface VibeProxyMessagesRequest {
       | string
       | Array<
           | { type: "text"; text: string }
+          | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
           | { type: "tool_use"; id: string; name: string; input: unknown }
           | { type: "tool_result"; tool_use_id: string; content: string }
         >;
@@ -131,9 +183,22 @@ export class VibeProxyLLM implements ILLM {
     endpoint: string,
     body: unknown,
     headers?: Record<string, string>,
+    signal?: AbortSignal,
   ): Promise<T> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    const abortFromCaller = () => controller.abort(signal?.reason);
+    if (signal?.aborted) {
+      abortFromCaller();
+    } else {
+      signal?.addEventListener("abort", abortFromCaller, { once: true });
+    }
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.timeout);
+    const endpointOrigin = getEndpointOrigin(this.baseURL);
+    const model = getRequestModel(body);
 
     try {
       const response = await fetch(`${this.baseURL}${endpoint}`, {
@@ -148,19 +213,53 @@ export class VibeProxyLLM implements ILLM {
       });
 
       if (!response.ok) {
+        const retryAfter = response.headers.get('retry-after') ?? undefined;
         const errorBody = (await response
           .json()
           .catch(() => ({ error: { message: response.statusText } }))) as {
           error?: { message?: string };
         };
-        throw new Error(
-          `VibeProxy error: ${errorBody.error?.message ?? response.statusText}`,
+        const statusMessage = response.status === 429
+          ? `VibeProxy rate limit reached for ${model ?? 'the requested model'} at ${endpointOrigin} (HTTP 429)${retryAfter ? `; Retry-After: ${retryAfter}` : ''}. Wait before retrying.`
+          : `VibeProxy at ${endpointOrigin} returned HTTP ${response.status}: ${errorBody.error?.message ?? response.statusText}`;
+        throw new VibeProxyRequestError(
+          statusMessage,
+          {
+            code: response.status === 429 ? 'LLM_UPSTREAM_RATE_LIMITED' : 'LLM_UPSTREAM_HTTP_ERROR',
+            httpStatus: response.status,
+            retryAfter,
+            model,
+            endpointOrigin,
+          },
         );
       }
 
       return response.json() as Promise<T>;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+
+      if (timedOut) {
+        throw new VibeProxyRequestError(
+          `VibeProxy request timed out after ${this.timeout}ms at ${endpointOrigin}. Check that the proxy is responsive.`,
+          { code: 'LLM_UPSTREAM_TIMEOUT', model, endpointOrigin },
+        );
+      }
+
+      const transportCode = error && typeof error === 'object' && 'cause' in error
+        ? getErrorCode(error.cause)
+        : undefined;
+      if (error instanceof TypeError && (error.message === 'fetch failed' || transportCode !== undefined)) {
+        const causeLabel = transportCode ? ` (${transportCode})` : '';
+        throw new VibeProxyRequestError(
+          `Could not reach VibeProxy at ${endpointOrigin}${causeLabel}. Confirm the proxy is running and reachable.`,
+          { code: 'LLM_UPSTREAM_UNAVAILABLE', transportCode, model, endpointOrigin },
+        );
+      }
+
+      throw error;
     } finally {
       clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", abortFromCaller);
     }
   }
 
@@ -212,18 +311,25 @@ export class VibeProxyLLM implements ILLM {
     let systemPrompt: string | undefined;
 
     for (const msg of messages) {
+      const content = validateLLMContent(msg.role, msg.content).content;
       if (msg.role === "system") {
-        systemPrompt = msg.content;
+        if (typeof content !== "string") {
+          throw new LLMContentValidationError("system messages must contain plain text");
+        }
+        systemPrompt = content;
         continue;
       }
       if (msg.role === "tool") {
+        if (typeof content !== "string") {
+          throw new LLMContentValidationError("tool messages must contain plain text");
+        }
         vibeProxyMessages.push({
           role: "user",
           content: [
             {
               type: "tool_result",
               tool_use_id: msg.toolCallId || "",
-              content: msg.content,
+              content,
             },
           ],
         });
@@ -232,17 +338,29 @@ export class VibeProxyLLM implements ILLM {
       if (msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0) {
         vibeProxyMessages.push({
           role: "assistant",
-          content: this.toAssistantToolContent(msg),
+          content: this.toAssistantToolContent({ ...msg, content }),
         });
         continue;
       }
       vibeProxyMessages.push({
         role: msg.role as "user" | "assistant",
-        content: msg.content,
+        content: typeof content === "string" ? content : content.map((part) => this.toVibeProxyContentPart(part)),
       });
     }
 
     return { messages: vibeProxyMessages, systemPrompt };
+  }
+
+  private toVibeProxyContentPart(part: LLMContentPart):
+    | { type: "text"; text: string }
+    | { type: "image"; source: { type: "base64"; media_type: string; data: string } } {
+    if (part.type === "text") {
+      return { type: "text", text: part.text };
+    }
+    return {
+      type: "image",
+      source: { type: "base64", media_type: part.mediaType, data: part.data },
+    };
   }
 
   private toAssistantToolContent(
@@ -256,6 +374,9 @@ export class VibeProxyLLM implements ILLM {
       | { type: "tool_use"; id: string; name: string; input: unknown }
     > = [];
 
+    if (typeof message.content !== "string") {
+      throw new LLMContentValidationError("assistant tool-call messages must contain plain text");
+    }
     if (message.content && message.content.trim()) {
       contentBlocks.push({
         type: "text",
@@ -334,6 +455,7 @@ export class VibeProxyLLM implements ILLM {
         ...this.buildExecutionHeaders(options?.execution),
         ...this.buildTraceHeaders(options),
       },
+      options?.signal,
     );
 
     return {
@@ -403,6 +525,7 @@ export class VibeProxyLLM implements ILLM {
         ...this.buildExecutionHeaders(options?.execution),
         ...this.buildTraceHeaders(options),
       },
+      options?.signal,
     );
     const textContent = this.extractTextContent(response);
     const toolCalls = this.extractToolCalls(response);

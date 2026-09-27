@@ -33,7 +33,7 @@ const llm = useLLM({ tier: 'small' });   // Simple tasks
 const llm = useLLM({ tier: 'large' });   // Complex tasks
 
 // Request capabilities
-const llm = useLLM({ tier: 'medium', capabilities: ['coding'] });
+const llm = useLLM({ tier: 'medium', capabilities: ['code'] });
 
 // Use LLM
 if (llm) {
@@ -209,12 +209,19 @@ Capabilities describe task-specific requirements:
 |------------|-------------|----------------|
 | `fast` | Lowest latency | gpt-4o-mini, haiku, flash |
 | `reasoning` | Complex reasoning | o1, claude-opus |
-| `coding` | Code-optimized | claude-sonnet, gpt-4o |
+| `code` | Code generation, editing, and review | claude-sonnet, gpt-4o |
 | `vision` | Image support | gpt-4o, claude-sonnet, gemini |
+| `document.input` | Native document input | Provider/model dependent |
+| `audio.input` | Audio understanding | Provider/model dependent |
+| `audio.transcription` | Speech-to-text | Provider/model dependent |
+| `audio.output` | Audio generation | Provider/model dependent |
+| `video.input` | Video understanding | Provider/model dependent |
+
+The canonical catalog is exported as `LLM_CAPABILITIES` from `@kb-labs/sdk`. Text input is the implicit baseline and has no capability ID; a model entry with no declared capabilities is treated as text-only, with no optional capabilities assumed. Requested capabilities are conjunctive: `['fast', 'video.input']` requires one model declaring both. If no model in the resolved tier declares every requested capability, resolution throws `LLM_CAPABILITY_NOT_SUPPORTED` rather than falling back to a partial match. These tags do not add non-text payload support to the current `LLMMessage` contract.
 
 ```typescript
 // Request with capabilities
-const llm = useLLM({ tier: 'medium', capabilities: ['coding'] });
+const llm = useLLM({ tier: 'medium', capabilities: ['code'] });
 const llm = useLLM({ capabilities: ['vision'] });
 ```
 
@@ -227,7 +234,7 @@ const llm = useLLM({ capabilities: ['vision'] });
 type LLMTier = 'small' | 'medium' | 'large';
 
 // Capability (task-specific requirements)
-type LLMCapability = 'reasoning' | 'coding' | 'vision' | 'fast';
+type LLMCapability = 'reasoning' | 'code' | 'fast' | 'vision' | 'document.input' | 'audio.input' | 'audio.transcription' | 'audio.output' | 'video.input';
 
 // Options for useLLM()
 interface UseLLMOptions {
@@ -268,7 +275,7 @@ interface ILLMRouter {
 │  ┌───────────────────────────────────────────────────────┐ │
 │  │  Plugins see ONLY:                                     │ │
 │  │  • tier: 'small' | 'medium' | 'large'                  │ │
-│  │  • capabilities: 'reasoning' | 'coding' | ...          │ │
+│  │  • capabilities: platform-defined LLMCapability IDs    │ │
 │  │                                                        │ │
 │  │  Plugins DON'T KNOW:                                   │ │
 │  │  ✗ Providers (openai, anthropic, google)               │ │

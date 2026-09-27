@@ -21,7 +21,7 @@ import type {
   StorageAdapter,
 } from '@kb-labs/plugin-contracts';
 import { PermissionError } from '@kb-labs/plugin-contracts';
-import type { INotifier, ILLM, IEmbeddings, IVectorStore, IAnalytics, ILogger, PIIRedactionConfig } from '@kb-labs/core-platform';
+import type { INotifier, ILLM, ILLMRouter, IEmbeddings, IVectorStore, IAnalytics, ILogger, PIIRedactionConfig, UseLLMOptions } from '@kb-labs/core-platform';
 import {
   AnalyticsLLM,
   AnalyticsEmbeddings,
@@ -85,7 +85,7 @@ const wrapLlm: AdapterMiddlewareFn<LLMAdapter> = (adapter, ctx) => {
     }
   };
 
-  return {
+  const wrapped: LLMAdapter = {
     complete: async (prompt, options) => {
       checkModel(options?.model);
       return adapter.complete(prompt, options);
@@ -98,6 +98,29 @@ const wrapLlm: AdapterMiddlewareFn<LLMAdapter> = (adapter, ctx) => {
       ? { chatWithTools: (messages, options) => adapter.chatWithTools!(messages, options) }
       : {}),
   };
+
+  // Preserve the router contract across the plugin permission boundary. Without
+  // this, consumers cannot preflight capabilities or bind a tier; `useLLM()`
+  // silently degrades to the default model. Resolved bindings stay wrapped so
+  // model allowlists are still enforced on the concrete adapter call.
+  const router = adapter as unknown as ILLMRouter;
+  if (typeof router.getConfiguredTier === 'function') {
+    Object.assign(wrapped, {
+      getConfiguredTier: () => router.getConfiguredTier(),
+      resolve: (options?: UseLLMOptions) => router.resolve(options),
+      resolveAdapter: async (options?: UseLLMOptions) => {
+        const binding = await router.resolveAdapter(options);
+        checkModel(binding.model);
+        return { ...binding, adapter: wrapLlm(binding.adapter, ctx) };
+      },
+      hasCapability: (capability: Parameters<ILLMRouter['hasCapability']>[0]) =>
+        router.hasCapability(capability),
+      getCapabilities: () => router.getCapabilities(),
+      supportsCapabilities: (options?: UseLLMOptions) => router.supportsCapabilities(options),
+    });
+  }
+
+  return wrapped;
 };
 
 const wrapEmbeddings: AdapterMiddlewareFn<EmbeddingsAdapter> = (adapter, ctx) => {

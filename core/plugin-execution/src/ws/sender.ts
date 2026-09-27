@@ -32,31 +32,79 @@ export function createWSSender(
   channelPath: string,
   telemetry?: { logger: WebSocketTelemetryLogger; stats: WebSocketTransportStats },
 ): WSSender {
-  return {
-    async send(message: WSMessage) {
-      const payload = JSON.stringify(message);
-      // Only send if socket is open (readyState === 1)
-      if (ws.readyState === 1) {
-        ws.send(payload);
-        if (telemetry) {
-          telemetry.stats.outboundMessages += 1;
-          telemetry.stats.outboundBytes += Buffer.byteLength(payload);
-          telemetry.logger.info({
-            event: 'websocket.message.sent',
-            'messaging.direction': 'outbound',
-            'messaging.message_type': message.type,
-            'messaging.message_id': message.messageId,
-            payloadBytes: Buffer.byteLength(payload),
-          }, '[ws] message sent');
-        }
-      } else if (telemetry) {
+  const pendingMessages: Array<{ payload: string; message: WSMessage }> = [];
+  let openListenerAttached = false;
+
+  const recordSent = (payload: string, message: WSMessage) => {
+    ws.send(payload);
+    if (telemetry) {
+      telemetry.stats.outboundMessages += 1;
+      telemetry.stats.outboundBytes += Buffer.byteLength(payload);
+      telemetry.logger.info({
+        event: 'websocket.message.sent',
+        'messaging.direction': 'outbound',
+        'messaging.message_type': message.type,
+        'messaging.message_id': message.messageId,
+        payloadBytes: Buffer.byteLength(payload),
+      }, '[ws] message sent');
+    }
+  };
+
+  const flushPending = () => {
+    if (ws.readyState !== 1) { return; }
+    openListenerAttached = false;
+    while (pendingMessages.length > 0 && ws.readyState === 1) {
+      const pending = pendingMessages.shift()!;
+      recordSent(pending.payload, pending.message);
+    }
+  };
+
+  const dropPending = () => {
+    while (pendingMessages.length > 0) {
+      const { message } = pendingMessages.shift()!;
+      if (telemetry) {
         telemetry.stats.droppedMessages += 1;
         telemetry.logger.warn({
           event: 'websocket.message.dropped',
           'messaging.direction': 'outbound',
           'messaging.message_type': message.type,
-          reason: 'socket_not_open',
-        }, '[ws] message dropped');
+          reason: 'socket_closed_before_open',
+        }, '[ws] queued message dropped after socket closed');
+      }
+    }
+  };
+
+  return {
+    async send(message: WSMessage) {
+      const payload = JSON.stringify(message);
+      if (ws.readyState === 1) {
+        recordSent(payload, message);
+      } else if (ws.readyState === 0) {
+        pendingMessages.push({ payload, message });
+        if (!openListenerAttached) {
+          openListenerAttached = true;
+          ws.once('open', flushPending);
+          ws.once('close', dropPending);
+        }
+        // Recheck in case the handshake completed while listeners were attached.
+        flushPending();
+        telemetry?.logger.info({
+          event: 'websocket.message.queued',
+          'messaging.direction': 'outbound',
+          'messaging.message_type': message.type,
+          queueDepth: pendingMessages.length,
+        }, '[ws] message queued until socket opens');
+      } else if (telemetry) {
+        telemetry.stats.droppedMessages += 1;
+        // A peer closing while async handler work is still finishing is a normal
+        // WebSocket lifecycle race. Keep it observable without raising a user-facing
+        // warning for every send attempted after disconnect.
+        telemetry.logger.info({
+          event: 'websocket.message.dropped',
+          'messaging.direction': 'outbound',
+          'messaging.message_type': message.type,
+          reason: ws.readyState === 2 ? 'socket_closing' : 'socket_closed',
+        }, '[ws] message skipped after connection closed');
       }
     },
 

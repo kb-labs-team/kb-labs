@@ -16,6 +16,7 @@
  */
 
 import type { ILLM, LLMExecutionPolicy } from './llm.js';
+import { z } from 'zod';
 
 /**
  * Model quality tier - user-defined slots.
@@ -32,15 +33,186 @@ import type { ILLM, LLMExecutionPolicy } from './llm.js';
  */
 export type LLMTier = "small" | "medium" | "large";
 
+/** Canonical tier model metadata shared with subprocess LLM proxies. */
+export interface LLMModelEntry {
+  model: string;
+  priority: number;
+  capabilities?: LLMCapability[];
+  provider?: string;
+  adapter?: string;
+}
+
+export type LLMTierMapping = Partial<Record<LLMTier, LLMModelEntry[]>>;
+
+/** Non-secret router configuration required for capability preflight in workers. */
+export interface LLMRouterMetadata {
+  defaultTier?: LLMTier;
+  tierMapping?: LLMTierMapping;
+  capabilities?: LLMCapability[];
+}
+
+/** Categories used to describe a model capability in the platform catalog. */
+export type LLMCapabilityCategory = "task" | "latency" | "input" | "output";
+
+/** Human-readable definition of one platform-owned LLM capability. */
+export interface LLMCapabilityDefinition {
+  readonly category: LLMCapabilityCategory;
+  readonly description: string;
+}
+
+const base64DataSchema = z.string().min(1).regex(
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
+  'Expected base64-encoded content',
+);
+
+const textContentPartSchema = z.object({
+  type: z.literal('text'),
+  text: z.string(),
+}).strict();
+
+const imageContentPartSchema = z.object({
+  type: z.literal('image'),
+  mediaType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/gif']),
+  data: base64DataSchema,
+}).strict();
+
 /**
- * Model capabilities - task-optimized features.
+ * The canonical LLM contract registry. Capability definitions and supported
+ * content part schemas live together here; types, runtime validation, and
+ * inferred routing requirements are derived from this registry.
  *
- * - `fast`      - Lowest latency (for real-time responses)
- * - `reasoning` - Complex reasoning (o1, opus-level thinking)
- * - `coding`    - Code-optimized (better at code generation/review)
- * - `vision`    - Image input support
+ * Text is the implicit baseline. The first multimodal transport part is image;
+ * consumers may turn PDFs into extracted text or rasterized image parts.
  */
-export type LLMCapability = "reasoning" | "coding" | "vision" | "fast";
+export const LLM_CONTRACT = Object.freeze({
+  capabilities: Object.freeze({
+    reasoning: {
+      category: 'task',
+      description: 'Advanced multi-step reasoning and analysis.',
+    },
+    code: {
+      category: 'task',
+      description: 'Code generation, editing, and review.',
+    },
+    fast: {
+      category: 'latency',
+      description: 'Low-latency responses for time-sensitive tasks.',
+    },
+    vision: {
+      category: 'input',
+      description: 'Understanding image input.',
+    },
+    'document.input': {
+      category: 'input',
+      description: 'Native document input, when the provider accepts documents directly.',
+    },
+    'audio.input': {
+      category: 'input',
+      description: 'Understanding audio input.',
+    },
+    'audio.transcription': {
+      category: 'input',
+      description: 'Transcribing speech from audio into text.',
+    },
+    'audio.output': {
+      category: 'output',
+      description: 'Generating audio output.',
+    },
+    'video.input': {
+      category: 'input',
+      description: 'Understanding video input.',
+    },
+  } as const satisfies Record<string, LLMCapabilityDefinition>),
+  contentParts: Object.freeze({
+    text: Object.freeze({
+      schema: textContentPartSchema,
+      requiredCapabilities: [] as const,
+      allowedRoles: ['user'] as const,
+    }),
+    image: Object.freeze({
+      schema: imageContentPartSchema,
+      requiredCapabilities: ['vision'] as const,
+      allowedRoles: ['user'] as const,
+    }),
+  }),
+});
+
+/**
+ * Platform-owned vocabulary for model capabilities.
+ *
+ * These IDs describe model capabilities, not uploaded-file types. Consumers
+ * prepare their content and request the capabilities needed by the resulting
+ * LLM input. For example, a PDF converted to text needs no document capability;
+ * rasterized PDF pages require `vision`.
+ */
+export const LLM_CAPABILITIES = LLM_CONTRACT.capabilities;
+
+/** Canonical capability IDs declared by model entries and requested by plugins. */
+export type LLMCapability = keyof typeof LLM_CAPABILITIES;
+
+type LLMContentPartSchema = (typeof LLM_CONTRACT.contentParts)[keyof typeof LLM_CONTRACT.contentParts]['schema'];
+
+/** Type-safe ordered content blocks supported by the current LLM contract. */
+export type LLMContentPart = z.infer<LLMContentPartSchema>;
+
+/** String shorthand for text, or ordered typed multimodal parts. */
+export type LLMContent = string | LLMContentPart[];
+
+/** Render the text projection of message content without exposing binary payloads. */
+export function getLLMContentText(content: LLMContent): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+  return content.map((part) => part.type === 'text' ? part.text : '[image input]').join('\n');
+}
+
+export class LLMContentValidationError extends Error {
+  public readonly code = 'LLM_CONTENT_INVALID';
+
+  constructor(message: string) {
+    super(`LLM_CONTENT_INVALID: ${message}`);
+    this.name = 'LLMContentValidationError';
+    Object.setPrototypeOf(this, LLMContentValidationError.prototype);
+  }
+}
+
+/** Validate message content and derive its required input capabilities. */
+export function validateLLMContent(
+  role: 'system' | 'user' | 'assistant' | 'tool',
+  content: unknown,
+): { content: LLMContent; requiredCapabilities: LLMCapability[] } {
+  if (typeof content === 'string') {
+    return { content, requiredCapabilities: [] };
+  }
+  if (!Array.isArray(content) || content.length === 0) {
+    throw new LLMContentValidationError('content must be a string or a non-empty array of content parts');
+  }
+
+  const parsedParts: LLMContentPart[] = [];
+  const requiredCapabilities = new Set<LLMCapability>();
+
+  for (const [index, value] of content.entries()) {
+    let matched = false;
+    for (const partDefinition of Object.values(LLM_CONTRACT.contentParts)) {
+      const parsed = partDefinition.schema.safeParse(value);
+      if (!parsed.success) {
+        continue;
+      }
+      if (!partDefinition.allowedRoles.some((allowedRole) => allowedRole === role)) {
+        throw new LLMContentValidationError(`content part at index ${index} is not allowed for role "${role}"`);
+      }
+      parsedParts.push(parsed.data);
+      partDefinition.requiredCapabilities.forEach((capability) => requiredCapabilities.add(capability));
+      matched = true;
+      break;
+    }
+    if (!matched) {
+      throw new LLMContentValidationError(`content part at index ${index} does not match any registered content schema`);
+    }
+  }
+
+  return { content: parsedParts, requiredCapabilities: [...requiredCapabilities] };
+}
 
 /**
  * Options for useLLM() - plugin-facing API.
@@ -58,8 +230,8 @@ export interface UseLLMOptions {
   tier?: LLMTier;
 
   /**
-   * Required capabilities.
-   * Platform selects model that supports ALL requested capabilities.
+   * Additional capabilities required by this consumer's task. Input
+   * capabilities are also derived automatically from validated content parts.
    */
   capabilities?: LLMCapability[];
 
@@ -126,6 +298,9 @@ export interface ILLMRouter {
 
   /** Get available capabilities */
   getCapabilities(): LLMCapability[];
+
+  /** Check whether one model in the resolved tier declares every requirement. */
+  supportsCapabilities(options?: UseLLMOptions): boolean;
 }
 
 /**

@@ -34,7 +34,25 @@ export { useConfig } from './use-config';
 
 // Core services
 export { useLogger, useLoggerWithContext } from './use-logger.js';
-export { useLLM, isLLMAvailable, getLLMTier, type LLMTier, type UseLLMOptions } from './use-llm.js';
+export {
+  useLLM,
+  canUseLLM,
+  canUseLLMForMessages,
+  isLLMAvailable,
+  getLLMTier,
+  LLM_CAPABILITIES,
+  LLM_CONTRACT,
+  LLMContentValidationError,
+  validateLLMContent,
+  getLLMContentText,
+  type LLMContent,
+  type LLMContentPart,
+  type LLMTier,
+  type LLMCapability,
+  type LLMCapabilityCategory,
+  type LLMCapabilityDefinition,
+  type UseLLMOptions,
+} from './use-llm.js';
 export { useEmbeddings, isEmbeddingsAvailable } from './use-embeddings.js';
 export { useVectorStore, isVectorStoreAvailable } from './use-vector-store.js';
 export { useAnalytics, trackAnalyticsEvent } from './use-analytics.js';

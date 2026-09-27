@@ -13,6 +13,8 @@ import type {
   LLMToolCallResponse,
   LLMTier,
   LLMCapability,
+  LLMModelEntry,
+  LLMTierMapping,
   UseLLMOptions,
   LLMResolution,
   LLMAdapterBinding,
@@ -21,30 +23,14 @@ import type {
   LLMRequestMetadata,
   LLMProtocolCapabilities,
 } from '@kb-labs/core-platform';
+import { LLMCapabilityNotSupportedError } from '@kb-labs/core-platform';
 import { TierResolver, CapabilityResolver } from './resolver.js';
 
 /**
  * Model entry in tier mapping.
  * Can optionally specify a different adapter per model.
  */
-export interface TierModelEntry {
-  /** Model identifier */
-  model: string;
-  /** Priority (lower = higher priority) */
-  priority: number;
-  /** Model capabilities */
-  capabilities?: LLMCapability[];
-  /**
-   * Provider identifier (e.g., 'openai', 'anthropic', 'vibeproxy').
-   * Used to construct resource name: `llm:${provider}`
-   */
-  provider?: string;
-  /**
-   * @deprecated Use `provider` instead. Adapter package to use for this model.
-   * Will be removed in future versions.
-   */
-  adapter?: string;
-}
+export type TierModelEntry = LLMModelEntry;
 
 /**
  * Helper to extract provider from entry (supports both new `provider` and legacy `adapter`).
@@ -72,11 +58,7 @@ function getProviderFromEntry(entry: TierModelEntry): string {
 /**
  * Tier mapping configuration.
  */
-export interface TierMapping {
-  small?: TierModelEntry[];
-  medium?: TierModelEntry[];
-  large?: TierModelEntry[];
-}
+export type TierMapping = LLMTierMapping;
 
 /**
  * Function to load an adapter by package name.
@@ -244,8 +226,34 @@ export class LLMRouter implements ILLM, ILLMRouter {
       }
     }
 
-    // Return first entry (highest priority)
-    return sorted[0];
+    // Capability requirements are conjunctive. Never fall back to a model
+    // that only satisfies part (or none) of the requested set.
+    return requiredCapabilities && requiredCapabilities.length > 0 ? undefined : sorted[0];
+  }
+
+  private assertCapabilitiesSupported(tier: LLMTier, requiredCapabilities?: LLMCapability[]): void {
+    if (!requiredCapabilities?.length) {
+      return;
+    }
+
+    const entryMatches = this.config.tierMapping
+      ? Boolean(this.getEntryForTier(tier, requiredCapabilities))
+      : requiredCapabilities.every((capability) => this.config.capabilities?.includes(capability));
+    if (entryMatches) {
+      return;
+    }
+
+    const candidates = this.config.tierMapping
+      ? (this.config.tierMapping[tier] ?? []).map((candidate) => ({
+          model: candidate.model,
+          capabilities: candidate.capabilities ?? [],
+        }))
+      : [{
+          model: this.currentModel ?? 'default',
+          capabilities: this.config.capabilities ?? [],
+        }];
+
+    throw new LLMCapabilityNotSupportedError(tier, requiredCapabilities, candidates);
   }
 
   /**
@@ -345,6 +353,7 @@ export class LLMRouter implements ILLM, ILLMRouter {
     }
 
     // Get entry for the actual tier
+    this.assertCapabilitiesSupported(actualTier, options?.capabilities);
     const entry = this.getEntryForTier(actualTier, options?.capabilities);
     const model = entry?.model;
     const adapterPackage = entry?.adapter;
@@ -361,19 +370,6 @@ export class LLMRouter implements ILLM, ILLMRouter {
       if (this.logger) {
         this.logger.debug(
           `LLMRouter resolved: tier=${actualTier}, model=${model}, provider=${provider}, resource=${resource}`
-        );
-      }
-    }
-
-    // Check capabilities if requested
-    if (options?.capabilities && options.capabilities.length > 0) {
-      const missingCaps = options.capabilities.filter(
-        (cap) => !this.capabilityResolver.hasCapability(cap)
-      );
-
-      if (missingCaps.length > 0 && this.logger) {
-        this.logger.warn(
-          `Requested capabilities [${missingCaps.join(', ')}] may not be available`
         );
       }
     }
@@ -401,6 +397,28 @@ export class LLMRouter implements ILLM, ILLMRouter {
    */
   getCapabilities(): LLMCapability[] {
     return this.capabilityResolver.getCapabilities();
+  }
+
+  /** Check one model in the effective tier against all requested capabilities. */
+  supportsCapabilities(options?: UseLLMOptions): boolean {
+    const requiredCapabilities = options?.capabilities ?? [];
+    if (requiredCapabilities.length === 0) {
+      return true;
+    }
+
+    if (!this.config.tierMapping) {
+      return requiredCapabilities.every((capability) =>
+        this.config.capabilities?.includes(capability)
+      );
+    }
+
+    const requestedTier = options?.tier ?? this.getConfiguredTier();
+    const tier = (this.config.tierMapping[requestedTier]?.length ?? 0) > 0
+      ? requestedTier
+      : this.getConfiguredTier();
+    return (this.config.tierMapping[tier] ?? []).some((entry) =>
+      requiredCapabilities.every((capability) => entry.capabilities?.includes(capability))
+    );
   }
 
   /**
@@ -434,6 +452,7 @@ export class LLMRouter implements ILLM, ILLMRouter {
       }
     }
 
+    this.assertCapabilitiesSupported(actualTier, options?.capabilities);
     const entry = this.getEntryForTier(actualTier, options?.capabilities);
     const model = entry?.model ?? this.currentModel ?? 'default';
     const adapterPackage = entry?.adapter;
@@ -474,7 +493,7 @@ export class LLMRouter implements ILLM, ILLMRouter {
       resource: this.currentResource,
     };
 
-    return {
+    const routedOptions = {
       ...options,
       model: options?.model ?? this.currentModel,
       metadata: {
@@ -482,6 +501,13 @@ export class LLMRouter implements ILLM, ILLMRouter {
         ...options?.metadata, // Allow override if needed
       },
     };
+    if (options?.signal) {
+      Object.defineProperty(routedOptions, 'signal', {
+        value: options.signal,
+        enumerable: false,
+      });
+    }
+    return routedOptions;
   }
 
   /**

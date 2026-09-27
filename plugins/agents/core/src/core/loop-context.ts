@@ -75,11 +75,17 @@ export class LoopContextImpl implements LoopContext {
     // Call LLM
     let rawResponse: Awaited<ReturnType<NonNullable<ILLM['chatWithTools']>>>;
     try {
-      rawResponse = await this.llm.chatWithTools!(messages, {
+      const llmOptions = {
         tools,
         ...(temperature !== undefined ? { temperature } : {}),
         ...(toolChoice !== undefined ? { toolChoice } : {}),
+      };
+      // Keep the process-local signal out of serialized request/event payloads.
+      Object.defineProperty(llmOptions, "signal", {
+        value: this.run.abortSignal,
+        enumerable: false,
       });
+      rawResponse = await this.llm.chatWithTools!(messages, llmOptions);
     } catch (err) {
       throw err;
     }

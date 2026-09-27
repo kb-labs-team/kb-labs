@@ -36,10 +36,6 @@ export const manifest = {
         path: 'workspace',
         describe: 'Workspace management',
       },
-      {
-        path: 'agent',
-        describe: 'Agent management',
-      },
     ],
     commands: [
       // Primary commands: workspace:*
@@ -94,34 +90,6 @@ export const manifest = {
           'kb workspace:list',
           'kb workspace:list --json',
           'kb workspace:list --gateway https://gateway.kblabs.dev',
-        ],
-      },
-
-      // Legacy aliases: agent:* (backwards compatible)
-      {
-        path: 'agent register',
-        describe: '[Alias for workspace:register] Register this machine with a Platform Gateway.',
-
-        handler: './commands/register.js#default',
-
-        flags: defineCommandFlags(registerFlags),
-
-        examples: [
-          'kb agent:register --gateway http://localhost:4000',
-        ],
-      },
-
-      {
-        path: 'agent status',
-        describe: '[Alias for workspace:status] Show Workspace Agent connection status.',
-
-        handler: './commands/status.js#default',
-
-        flags: defineCommandFlags(statusFlags),
-
-        examples: [
-          'kb agent:status',
-          'kb agent:status --json',
         ],
       },
     ],

@@ -261,7 +261,7 @@ export class UnixSocketServer {
       this.platform.logger.error(
         `UnixSocketServer: ${call.adapter}.${call.method} failed — ${cause}`,
         error instanceof Error ? error : new Error(String(error)),
-        { adapter: call.adapter, method: call.method },
+        { adapter: call.adapter, method: call.method, ...getSafeErrorLogFields(error) },
       );
     }
   }
@@ -305,6 +305,41 @@ export class UnixSocketServer {
   isStarted(): boolean {
     return this.started;
   }
+}
+
+function getSafeErrorLogFields(error: unknown): Record<string, unknown> {
+  if (!error || typeof error !== 'object') return {};
+
+  const fields: Record<string, unknown> = {};
+  if ('code' in error && typeof error.code === 'string') {
+    fields['error.code'] = error.code;
+  }
+  if ('transportCode' in error && typeof error.transportCode === 'string' && /^[A-Z0-9_]+$/.test(error.transportCode)) {
+    fields['error.transport_code'] = error.transportCode;
+  }
+  if ('httpStatus' in error && typeof error.httpStatus === 'number') {
+    fields['http.status_code'] = error.httpStatus;
+  }
+  if ('provider' in error && typeof error.provider === 'string' && /^[a-z0-9_-]+$/i.test(error.provider)) {
+    fields['llm.provider'] = error.provider;
+  }
+  if ('model' in error && typeof error.model === 'string' && /^[a-z0-9_.:/-]+$/i.test(error.model)) {
+    fields['llm.model'] = error.model;
+  }
+  if ('endpointOrigin' in error && typeof error.endpointOrigin === 'string') {
+    try {
+      const endpoint = new URL(error.endpointOrigin);
+      if (endpoint.origin === error.endpointOrigin && (endpoint.protocol === 'http:' || endpoint.protocol === 'https:')) {
+        fields['llm.endpoint_origin'] = endpoint.origin;
+      }
+    } catch {
+      // Ignore malformed/untrusted endpoint metadata.
+    }
+  }
+  if ('retryAfter' in error && typeof error.retryAfter === 'string' && error.retryAfter.length <= 64 && !/[\r\n]/.test(error.retryAfter)) {
+    fields['http.retry_after'] = error.retryAfter;
+  }
+  return fields;
 }
 
 function toSerializableError(error: unknown): SerializableError {

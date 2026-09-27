@@ -64,6 +64,9 @@ export interface MountRoutesOptions {
 
   /** Default timeout in ms (optional, default: 30000) */
   defaultTimeoutMs?: number;
+
+  /** Sanitized model routing metadata for isolated REST plugin workers. */
+  llmRouting?: PluginContextDescriptor['llmRouting'];
 }
 
 /**
@@ -154,6 +157,7 @@ export async function mountRoutes(
             permissions: manifest.permissions ?? DEFAULT_PERMISSIONS,
             hostContext,
             configSection: manifest.configSection,
+            llmRouting: options.llmRouting,
           };
           Object.assign(descriptor as unknown as Record<string, unknown>, {
             traceId,

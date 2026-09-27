@@ -11,11 +11,12 @@ import {
   createProxyPlatform,
   UnixSocketTransport,
 } from '@kb-labs/core-ipc';
+import type { LLMRouterMetadata } from '@kb-labs/core-platform';
 
 let transport: UnixSocketTransport | null = null;
 
 /** Connect a sandbox worker to the parent platform through canonical IPC proxies. */
-export async function connectToPlatform(socketPath?: string): Promise<PlatformServices> {
+export async function connectToPlatform(socketPath?: string, llmRouting?: LLMRouterMetadata): Promise<PlatformServices> {
   if (!socketPath) {
     throw new Error('Socket path is required for platform RPC connection');
   }
@@ -26,7 +27,7 @@ export async function connectToPlatform(socketPath?: string): Promise<PlatformSe
   });
   await transport.connect();
 
-  return createProxyPlatform({ transport });
+  return createProxyPlatform({ transport, llmRouting });
 }
 
 /** Disconnect the current sandbox worker from its parent platform. */

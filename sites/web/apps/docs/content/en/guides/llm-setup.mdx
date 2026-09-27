@@ -1,7 +1,7 @@
 ---
 title: "LLM Setup"
 description: "What LLM adapter runs by default, why it's there, and how to switch to your own key."
-updatedAt: "2026-04-15"
+updatedAt: "2026-09-27"
 order: 2
 ---
 
@@ -137,6 +137,37 @@ The `llm` key accepts an array for fallback chains:
 ```
 
 The first entry is primary — that's what `useLLM()` returns by default. Subsequent entries are loaded and registered with the adapter loader; the ILLM reference documents how plugins can request a specific adapter via options. See [ILLM Reference](/adapters/interfaces/llm).
+
+## Declaring model capabilities
+
+With tier-based routing, each model entry can declare the platform capabilities assigned to it. These are operator-provided metadata; KB Labs does not infer support from a provider or model name.
+
+```jsonc
+{
+  "platform": {
+    "adapterOptions": {
+      "llm": {
+        "tierMapping": {
+          "medium": [
+            {
+              "adapter": "@kb-labs/adapters-openai",
+              "model": "your-vision-model",
+              "priority": 1,
+              "capabilities": ["vision", "code", "reasoning"]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+The platform publishes the shared vocabulary as `LLM_CAPABILITIES` and `LLMCapability` from `@kb-labs/sdk`. Plugins request requirements with `useLLM({ tier, capabilities })`; model entries declare the capabilities operators have assigned to them. Every requested capability is required on the same model. If none matches, resolution throws `LLM_CAPABILITY_NOT_SUPPORTED` rather than selecting an incompatible model. See [LLM tiers and capabilities](/sdk/llm-tiers) for the full list and semantics.
+
+Capability declarations are routing metadata only. They do not yet make the text-only `LLMMessage` contract carry image, document, audio, or video payloads; that transport support is designed separately. Text is the implicit baseline and needs no tag. With no capability declarations, the platform reports no optional capabilities as available; explicitly tag model entries before relying on reasoning, code, latency, or modality-based routing.
+
+> **Plugin authors:** For every non-text LLM request, preflight with `canUseLLM({ tier, capabilities })` and provide a fallback or clear user-facing message when it returns `false`. Requirements are conjunctive: `['fast', 'video.input']` needs one model declaring both; a model marked only `video.input` is not sufficient. Resolution also fails closed with `LLM_CAPABILITY_NOT_SUPPORTED` if no configured model in the resolved tier satisfies the complete set.
 
 ## What to read next
 

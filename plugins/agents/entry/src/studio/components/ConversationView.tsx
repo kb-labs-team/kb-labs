@@ -12,6 +12,8 @@ import {
   UIFlex,
   UIIcon,
   UIButton,
+  UIImagePreview,
+  UIImagePreviewGroup,
 } from '@kb-labs/sdk/studio';
 
 const { useToken } = theme;
@@ -24,9 +26,16 @@ interface ConversationViewProps {
   isError?: boolean;
   onRetry?: () => void;
   sessionId?: string | null;
+  attachmentPreviews?: ReadonlyMap<string, AgentImagePreview[]>;
 }
 
-export function ConversationView({ turns, isLoading, isError, onRetry, sessionId }: ConversationViewProps) {
+export interface AgentImagePreview {
+  name: string;
+  mediaType: string;
+  data: string;
+}
+
+export function ConversationView({ turns, isLoading, isError, onRetry, sessionId, attachmentPreviews }: ConversationViewProps) {
   const { token } = useToken();
 
   if (isLoading) {
@@ -67,7 +76,7 @@ export function ConversationView({ turns, isLoading, isError, onRetry, sessionId
   return (
     <div style={{ display: 'flex', flexDirection: 'column', padding: '16px 16px 40px', gap: 24 }}>
       {turns.map((turn) => (
-        <TurnView key={turn.id} turn={turn} sessionId={sessionId} token={token} />
+        <TurnView key={turn.id} turn={turn} sessionId={sessionId} token={token} attachmentPreviews={attachmentPreviews} />
       ))}
     </div>
   );
@@ -75,12 +84,22 @@ export function ConversationView({ turns, isLoading, isError, onRetry, sessionId
 
 // ---------- TurnView ----------
 
-function TurnView({ turn, sessionId, token }: { turn: Turn; sessionId?: string | null; token: Token }) {
+function TurnView({ turn, sessionId, token, attachmentPreviews }: {
+  turn: Turn;
+  sessionId?: string | null;
+  token: Token;
+  attachmentPreviews?: ReadonlyMap<string, AgentImagePreview[]>;
+}) {
   if (turn.type === 'user') {
     const text = turn.steps.find((s) => s.type === 'text');
+    const localPreviews = turn.metadata.clientId
+      ? attachmentPreviews?.get(turn.metadata.clientId)?.filter((attachment) => attachment.mediaType.startsWith('image/')) ?? []
+      : [];
+    const imageAttachments = turn.metadata.attachments?.filter((attachment) => attachment.mediaType.startsWith('image/')) ?? [];
+    const attachmentChips = turn.metadata.attachments?.filter((attachment) => attachment.mediaType === 'application/pdf') ?? [];
     return (
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <span style={{
+        <div style={{
           maxWidth: '70%',
           background: token.colorFillTertiary,
           borderRadius: token.borderRadiusLG,
@@ -90,9 +109,29 @@ function TurnView({ turn, sessionId, token }: { turn: Turn; sessionId?: string |
           color: token.colorText,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
-        }}>
-          {text?.type === 'text' ? text.content : ''}
-        </span>
+          }}>
+          <div>{text?.type === 'text' ? text.content : ''}</div>
+          {imageAttachments.length > 0 && (
+            <UIImagePreviewGroup>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 9 }}>
+                {imageAttachments.map((attachment, index) => (
+                  <AttachmentImage key={attachment.attachmentId ?? `${attachment.name}-${index}`} attachment={attachment}
+                    localPreview={localPreviews.find((preview) => preview.name === attachment.name)} sessionId={sessionId} token={token} />
+                ))}
+              </div>
+            </UIImagePreviewGroup>
+          )}
+          {!!attachmentChips.length && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {attachmentChips.map((attachment, index) => (
+                <span key={`${attachment.name}-${index}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 7px', borderRadius: 7, background: token.colorBgContainer, fontSize: 11, color: token.colorTextSecondary }}>
+                  <UIIcon name={attachment.mediaType === 'application/pdf' ? 'FilePdfOutlined' : 'FileImageOutlined'} style={{ fontSize: 12 }} />
+                  <span>{attachment.name}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -126,7 +165,9 @@ function TurnView({ turn, sessionId, token }: { turn: Turn; sessionId?: string |
     flexDirection: 'column',
   };
 
-  const statusLabel = isStreaming ? 'Running' : turn.status === 'failed' ? 'Failed' : null;
+  const statusLabel = isStreaming
+    ? 'Running'
+    : turn.status === 'failed' ? 'Failed' : turn.status === 'cancelled' ? 'Interrupted' : null;
   const statusColor = isStreaming ? token.colorPrimary : token.colorError;
 
   return (
@@ -138,7 +179,14 @@ function TurnView({ turn, sessionId, token }: { turn: Turn; sessionId?: string |
         {statusLabel && (
           <UITypographyText style={{ fontSize: 11, color: statusColor }}>· {statusLabel}</UITypographyText>
         )}
+        {(isStreaming || turn.completedAt) && <TurnDuration turn={turn} isStreaming={isStreaming} />}
       </div>
+
+      {(turn.status === 'cancelled' || turn.status === 'failed') && turn.error?.message && (
+        <UITypographyText type="secondary" style={{ fontSize: 12 }}>
+          {turn.error.message}
+        </UITypographyText>
+      )}
 
       {/* Actions group */}
       {hasActions && (
@@ -175,6 +223,74 @@ function TurnView({ turn, sessionId, token }: { turn: Turn; sessionId?: string |
       )}
     </div>
   );
+}
+
+function AttachmentImage({ attachment, localPreview, sessionId, token }: {
+  attachment: NonNullable<Turn['metadata']['attachments']>[number];
+  localPreview?: AgentImagePreview;
+  sessionId?: string | null;
+  token: Token;
+}) {
+  const endpoint = sessionId && attachment.attachmentId
+    ? `/v1/plugins/agents/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachment.attachmentId)}`
+    : '';
+  const { data } = useData<{ mediaType: string; data: string }>(endpoint, { enabled: !!endpoint });
+  const preview = localPreview ?? data;
+  if (!preview) {
+    return <AttachmentChip name={attachment.name} token={token} />;
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <UIImagePreview
+        src={`data:${preview.mediaType};base64,${preview.data}`}
+        alt={attachment.name}
+        title={`${attachment.name} — click to view full size`}
+        width={220}
+        height={150}
+        style={{ display: 'block', width: 220, height: 150, objectFit: 'contain', borderRadius: 8, background: token.colorBgContainer, cursor: 'zoom-in' }}
+      />
+      <span style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: token.colorTextSecondary }}>{attachment.name}</span>
+    </div>
+  );
+}
+
+function AttachmentChip({ name, token }: { name: string; token: Token }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 7px', borderRadius: 7, background: token.colorBgContainer, fontSize: 11, color: token.colorTextSecondary }}>
+      <UIIcon name="FileImageOutlined" style={{ fontSize: 12 }} />
+      <span>{name}</span>
+    </span>
+  );
+}
+
+function TurnDuration({ turn, isStreaming }: { turn: Turn; isStreaming: boolean }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!isStreaming) { return; }
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isStreaming]);
+
+  const durationMs = isStreaming
+    ? Math.max(0, now - new Date(turn.startedAt).getTime())
+    : turn.metadata.totalDurationMs ?? Math.max(0, new Date(turn.completedAt!).getTime() - new Date(turn.startedAt).getTime());
+
+  return (
+    <UITypographyText type="secondary" style={{ fontSize: 11 }} title={isStreaming ? 'Elapsed time' : 'Total run time'}>
+      · {formatDuration(durationMs)}
+    </UITypographyText>
+  );
+}
+
+function formatDuration(durationMs: number): string {
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 // ---------- ToolGroup ----------
@@ -322,15 +438,7 @@ function StepRow({ step, isStreaming, token }: { step: TurnStep; isLast: boolean
       );
 
     case 'subagent':
-      return (
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          <UIIcon name="RobotOutlined" style={{ fontSize: 13, marginTop: 2, color: token.colorPrimary }} />
-          <span style={{ fontSize: 13, color: token.colorTextSecondary }}>
-            <span style={{ fontWeight: 500, color: token.colorText }}>Agent: {step.agentName}</span>
-            <span style={{ marginLeft: 6 }}>— {step.task?.slice(0, 60)}{(step.task?.length ?? 0) > 60 ? '...' : ''}</span>
-          </span>
-        </div>
-      );
+      return <SubAgentRow step={step} token={token} />;
 
     case 'error':
       return (
@@ -346,6 +454,41 @@ function StepRow({ step, isStreaming, token }: { step: TurnStep; isLast: boolean
     default:
       return null;
   }
+}
+
+function SubAgentRow({ step, token }: { step: Extract<TurnStep, { type: 'subagent' }>; token: Token }) {
+  const [expanded, setExpanded] = useState(false);
+  const activities = step.activities ?? [];
+  const status = step.status === 'running' ? 'Working' : step.status === 'completed' ? 'Completed' : step.status === 'cancelled' ? 'Cancelled' : 'Failed';
+  return (
+    <div style={{ borderLeft: `2px solid ${token.colorPrimary}`, paddingLeft: 10, margin: '4px 0' }}>
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        style={{ display: 'flex', width: '100%', alignItems: 'flex-start', gap: 8, border: 0, padding: 0, background: 'transparent', color: token.colorTextSecondary, textAlign: 'left', cursor: 'pointer' }}
+      >
+        <UIIcon name={expanded ? 'DownOutlined' : 'RightOutlined'} style={{ fontSize: 10, marginTop: 3 }} />
+        <UIIcon name="RobotOutlined" style={{ fontSize: 13, marginTop: 1, color: token.colorPrimary }} />
+        <span style={{ flex: 1, fontSize: 13 }}>
+          <span style={{ fontWeight: 500, color: token.colorText }}>{step.agentName} · {status}</span>
+          <span style={{ display: 'block', marginTop: 2 }}>{step.lastAction ?? step.task}</span>
+        </span>
+      </button>
+      {expanded && (
+        <div style={{ margin: '8px 0 4px 31px', display: 'grid', gap: 7 }}>
+          <div style={{ fontSize: 12, color: token.colorTextTertiary }}>{step.task}</div>
+          {activities.map((activity) => (
+            <div key={activity.id} style={{ fontSize: 12, color: token.colorTextSecondary }}>
+              <div style={{ fontWeight: 500 }}>{activity.action}</div>
+              {activity.detail && <div style={{ whiteSpace: 'pre-wrap', marginTop: 2 }}>{activity.detail}</div>}
+            </div>
+          ))}
+          {step.summary && <div style={{ fontSize: 12, color: token.colorText }}>{step.summary}</div>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------- ToolRow ----------

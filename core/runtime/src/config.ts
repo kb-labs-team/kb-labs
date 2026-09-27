@@ -7,6 +7,8 @@ import type {
   TenantQuotas,
   LLMTier,
   LLMCapability,
+  LLMModelEntry,
+  LLMTierMapping,
   LLMExecutionPolicy,
   PIIRedactionConfig,
 } from "@kb-labs/core-platform";
@@ -19,25 +21,12 @@ import type {
  * Model entry in tier mapping.
  * Can optionally specify a different adapter per model.
  */
-export interface TierModelEntry {
-  /** Model identifier */
-  model: string;
-  /** Priority (lower = higher priority) */
-  priority: number;
-  /** Model capabilities */
-  capabilities?: LLMCapability[];
-  /** Optional: adapter package to use for this model (e.g., "@kb-labs/adapters-openai") */
-  adapter?: string;
-}
+export type TierModelEntry = LLMModelEntry;
 
 /**
  * Tier mapping configuration.
  */
-export interface TierMapping {
-  small?: TierModelEntry[];
-  medium?: TierModelEntry[];
-  large?: TierModelEntry[];
-}
+export type TierMapping = LLMTierMapping;
 
 /**
  * LLM adapter options with tier support.
@@ -355,6 +344,12 @@ export interface NotifierAdapterOptions {
 export interface PlatformConfig {
   /** Platform-root hint (only honored when set in project config). */
   platform?: PlatformDirConfig;
+  /**
+   * Config paths whose loopback URLs must stay on their configured ports when
+   * kb-dev applies KB_NET_OFFSET (for host services outside the managed stack).
+   * Entries use dotted paths, e.g. `adapterOptions.llm`.
+   */
+  networkOffsetExemptions?: string[];
   /** Adapter packages configuration */
   adapters?: AdaptersConfig;
   /** Optional adapter-specific configuration passed to createAdapter(config) */
@@ -380,6 +375,7 @@ export const CONFIG_FIELD_SCOPE: Record<
   ConfigFieldScope
 > = {
   platform: "project-only",
+  networkOffsetExemptions: "mergeable",
   adapters: "mergeable",
   adapterOptions: "mergeable",
   core: "platform-only",

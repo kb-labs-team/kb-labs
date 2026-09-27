@@ -909,7 +909,13 @@ export class SessionManager {
    * Create user turn with task/question
    * Called when user submits a task to agent
    */
-  async createUserTurn(sessionId: string, task: string, runId: string, clientId?: string): Promise<Turn> {
+  async createUserTurn(
+    sessionId: string,
+    task: string,
+    runId: string,
+    clientId?: string,
+    attachments?: Turn['metadata']['attachments'],
+  ): Promise<Turn> {
     const sequence = await this.reserveNextTurnSequence(sessionId);
     const timestamp = new Date().toISOString();
 
@@ -932,6 +938,7 @@ export class SessionManager {
       metadata: {
         agentId: 'user',
         ...(clientId ? { clientId } : {}),
+        ...(attachments?.length ? { attachments } : {}),
       },
     };
 
