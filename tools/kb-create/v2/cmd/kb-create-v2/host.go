@@ -204,7 +204,7 @@ func supervisorFailure(state host.State) error {
 }
 
 func (c hostCommand) supervise(ctx context.Context, runner host.Runner, state host.State) int {
-	if err := (&supervisor.Supervisor{Runner: runner, State: state, Version: c.Version}).Run(ctx); err != nil {
+	if err := (&supervisor.Supervisor{Runner: runner, State: state, Version: c.Version, PlatformRoot: c.PlatformRoot}).Run(ctx); err != nil {
 		return c.fail(1, asLauncherError(err))
 	}
 	return 0

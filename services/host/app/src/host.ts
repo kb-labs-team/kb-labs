@@ -21,6 +21,7 @@ import {
   isLoopbackHost,
   loadGatewayConfig,
   startGateway,
+  type HostRoutes,
 } from "@kb-labs/gateway-app";
 import { setup as setupMarketplace } from "@kb-labs/marketplace-app";
 import { setup as setupState } from "@kb-labs/core-state-daemon";
@@ -37,6 +38,7 @@ import {
   type HostModule,
   type ServiceContext,
 } from "@kb-labs/shared-daemon";
+import { createHealthRoutes } from "./health-routes.js";
 import { applyHostGatewayPolicy, type GatewayUpstreams } from "./policy.js";
 import { createChildProcessLauncher } from "./project-runtime/launcher.js";
 import {
@@ -105,6 +107,19 @@ interface PreparedHost {
 
 function isSelected(settings: HostSettings, id: HostModuleId): boolean {
   return settings.modules.includes(id);
+}
+
+/**
+ * The gateway accepts one `hostRoutes` plugin; this registers several,
+ * preserving Fastify's own encapsulation for each (a route collision between
+ * them is still caught, just at `app.register` time instead of earlier).
+ */
+function combineHostRoutes(...plugins: readonly HostRoutes[]): HostRoutes {
+  return async function combinedHostRoutes(app) {
+    for (const plugin of plugins) {
+      await app.register(plugin);
+    }
+  };
 }
 
 /**
@@ -365,7 +380,10 @@ export async function createHostConfig(
           configure: (config) =>
             applyHostGatewayPolicy(config, { auth: settings.auth, upstreams }),
           projectRouting: createProjectRouting({ registry, manager, logger }),
-          hostRoutes: createProjectsRoutes({ registry, manager }),
+          hostRoutes: combineHostRoutes(
+            createProjectsRoutes({ registry, manager }),
+            createHealthRoutes(),
+          ),
         },
       );
       return async () => {

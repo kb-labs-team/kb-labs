@@ -20,6 +20,7 @@ import (
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/receipt"
 )
 
 // fixturesDir is shared with the future TS client; see its README.
@@ -136,7 +137,7 @@ func TestTokenRejection(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			for _, endpoint := range []struct{ method, path string }{{"GET", "/v1/status"}, {"POST", "/v1/host/restart"}, {"POST", "/v1/update-request"}, {"GET", "/nope"}} {
+			for _, endpoint := range []struct{ method, path string }{{"GET", "/v1/status"}, {"GET", "/v1/doctor"}, {"POST", "/v1/host/restart"}, {"POST", "/v1/update-request"}, {"GET", "/nope"}} {
 				status, body, _ := call(t, server, endpoint.method, endpoint.path, tc.token, nil, tc.headers)
 				if status != http.StatusUnauthorized || !strings.Contains(string(body), "KB_HOST_CONTROL_UNAUTHORIZED") {
 					t.Fatalf("%s %s: status %d body %s", endpoint.method, endpoint.path, status, body)
@@ -243,6 +244,79 @@ func TestUpdateRequestQueuePersistsDedupesAndBounds(t *testing.T) {
 	}
 }
 
+func TestDoctorWithoutPlatformRootReportsInstallationUnavailable(t *testing.T) {
+	server, _, _ := startServer(t)
+	status, body, _ := call(t, server, http.MethodGet, "/v1/doctor", server.Token(), nil, nil)
+	if status != http.StatusOK {
+		t.Fatalf("status %d body %s", status, body)
+	}
+	var out DoctorResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.OK || out.Installation.OK {
+		t.Fatalf("installation must be reported unavailable: %+v", out)
+	}
+	if len(out.Installation.Checks) != 1 || out.Installation.Checks[0].ID != "receipt" {
+		t.Fatalf("installation checks: %+v", out.Installation.Checks)
+	}
+}
+
+func TestDoctorWithPlatformRootReusesInstallationInspection(t *testing.T) {
+	root := t.TempDir()
+	plan := contracts.ResolvedInstallPlan{
+		Schema:       contracts.ResolvedPlanSchema,
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.5.0"},
+		Host:         &contracts.HostSpec{Command: mustExecutable(t), HealthURL: "http://127.0.0.1:1/health"},
+	}
+	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".kb"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	state := host.State{Dir: filepath.Join(t.TempDir(), "state")}
+	server := &Server{Runner: runner, State: state, Version: "9.9.9-test", PlatformRoot: root}
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+
+	status, body, _ := call(t, server, http.MethodGet, "/v1/doctor", server.Token(), nil, nil)
+	if status != http.StatusOK {
+		t.Fatalf("status %d body %s", status, body)
+	}
+	var out DoctorResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Installation.OK {
+		t.Fatalf("installation section should be healthy: %+v", out.Installation)
+	}
+	found := false
+	for _, item := range out.Installation.Checks {
+		if item.ID == "receipt" && item.OK && strings.Contains(item.Detail, "2.5.0") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a receipt check naming the installed version: %+v", out.Installation.Checks)
+	}
+}
+
+func mustExecutable(t *testing.T) string {
+	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return executable
+}
+
 func TestClientRoundTrip(t *testing.T) {
 	server, _, state := startServer(t)
 	client, err := Connect(state)
@@ -256,6 +330,10 @@ func TestClientRoundTrip(t *testing.T) {
 	restart, err := client.Restart(context.Background())
 	if err != nil || restart.Host.PID != 4243 {
 		t.Fatalf("restart: %+v %v", restart, err)
+	}
+	diagnosis, err := client.Doctor(context.Background())
+	if err != nil || diagnosis.Installation.Checks[0].ID != "receipt" {
+		t.Fatalf("doctor: %+v %v", diagnosis, err)
 	}
 	accepted, err := client.RequestUpdate(context.Background(), UpdateRequestInput{Channel: "canary"})
 	if err != nil || accepted.Request.Channel != "canary" {

@@ -1,0 +1,34 @@
+{
+  "description": "GET /v1/doctor with a valid token. This fixture harness starts the control server without a platform root, so the installation section reports itself unavailable rather than reading a receipt, and the platform section's health check fails because the fixture host's healthUrl is unreachable — both are exactly what doctor.InspectInstallation/InspectPlatform report given that input, reused unchanged by the control channel.",
+  "request": { "method": "GET", "path": "/v1/doctor", "auth": "valid" },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": false,
+      "protocol": 1,
+      "installation": {
+        "ok": false,
+        "checks": [
+          {
+            "id": "receipt",
+            "ok": false,
+            "detail": "The control channel was started without a platform root.",
+            "hint": "Restart the launcher through \"kb-create start\"."
+          }
+        ]
+      },
+      "platform": {
+        "ok": false,
+        "checks": [
+          { "id": "host-process", "ok": true, "detail": "pid 4242" },
+          {
+            "id": "health",
+            "ok": false,
+            "detail": "The health document cannot be read.",
+            "hint": "Run \"kb-create restart\"; read the host log if it persists."
+          }
+        ]
+      }
+    }
+  }
+}

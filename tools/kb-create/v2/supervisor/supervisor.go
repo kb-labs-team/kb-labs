@@ -19,6 +19,9 @@ type Supervisor struct {
 	Runner  host.Runner
 	State   host.State
 	Version string
+	// PlatformRoot is passed through to the control server so GET /v1/doctor
+	// can report the installation section; empty is valid (see control.Server).
+	PlatformRoot string
 }
 
 // Run starts the host, publishes the control channel and blocks until ctx is
@@ -40,7 +43,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if _, err := s.Runner.Start(ctx); err != nil {
 		return err
 	}
-	server := &control.Server{Runner: s.Runner, State: s.State, Version: s.Version}
+	server := &control.Server{Runner: s.Runner, State: s.State, Version: s.Version, PlatformRoot: s.PlatformRoot}
 	if err := server.Start(); err != nil {
 		_, _ = s.Runner.Stop(context.Background())
 		return contracts.NewLauncherError("KB_HOST_CONTROL_UNAVAILABLE", "The launcher control channel is unavailable.", "Start the launcher or the desktop shell.", err)

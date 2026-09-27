@@ -78,6 +78,12 @@ export const qk = {
     list: () => [...qk.projects.all, 'list'] as const,
     byId: (id: string) => [...qk.projects.all, 'detail', id] as const,
   },
+
+  // Host health/status queries (stage 6, final slice: launcher control channel)
+  health: {
+    all: ['host-health'] as const,
+    report: () => [...qk.health.all, 'report'] as const,
+  },
   workflows: {
     all: ['workflows'] as const,
     list: (filters?: WorkflowRunsFilters) => [...qk.workflows.all, 'list', filters ?? {}] as const,

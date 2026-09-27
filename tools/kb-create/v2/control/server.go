@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/host"
 )
 
@@ -28,6 +29,11 @@ type Server struct {
 	Runner  host.Runner
 	State   host.State
 	Version string
+	// PlatformRoot is the installation this launcher supervises. Empty when the
+	// control channel was started without one (tests, and fixture harnesses);
+	// GET /v1/doctor then reports the installation section as unavailable
+	// rather than guessing a root.
+	PlatformRoot string
 
 	token     string
 	address   string
@@ -104,10 +110,11 @@ func writeControlFile(path string, file File) error {
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", s.status)
+	mux.HandleFunc("GET /v1/doctor", s.doctor)
 	mux.HandleFunc("POST /v1/host/restart", s.restart)
 	mux.HandleFunc("POST /v1/update-request", s.updateRequest)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		s.fail(w, http.StatusNotFound, contracts.NewLauncherError("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request.", nil))
+		s.fail(w, http.StatusNotFound, contracts.NewLauncherError("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", "Use GET /v1/status, GET /v1/doctor, POST /v1/host/restart or POST /v1/update-request.", nil))
 	})
 	return s.guard(mux)
 }
@@ -151,6 +158,38 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.write(w, http.StatusOK, StatusResponse{OK: true, Protocol: ProtocolVersion, Launcher: LauncherInfo{Version: s.Version, PID: os.Getpid(), StartedAt: s.startedAt}, Host: hostStatus, UpdateRequests: QueueSummary{Pending: s.queue.Pending()}})
+}
+
+// doctor answers GET /v1/doctor by reusing the same doctor package functions
+// `kb-create doctor` calls, never recomputing the diagnosis itself: the
+// installation section from the platform root this launcher was started
+// with, and the platform section from the host status this server already
+// tracks via its Runner.
+func (s *Server) doctor(w http.ResponseWriter, r *http.Request) {
+	installation := s.installationSection()
+	hostStatus, err := s.Runner.Status(r.Context())
+	if err != nil {
+		s.failWith(w, err)
+		return
+	}
+	platform := doctor.InspectPlatform(r.Context(), hostStatus, nil)
+	s.write(w, http.StatusOK, DoctorResponse{
+		OK:           installation.OK && platform.OK,
+		Protocol:     ProtocolVersion,
+		Installation: installation,
+		Platform:     platform,
+	})
+}
+
+func (s *Server) installationSection() doctor.Section {
+	if s.PlatformRoot == "" {
+		return doctor.NewSection([]doctor.Check{{
+			ID:     "receipt",
+			Detail: "The control channel was started without a platform root.",
+			Hint:   "Restart the launcher through \"kb-create start\".",
+		}})
+	}
+	return doctor.InspectInstallation(s.PlatformRoot, s.State)
 }
 
 func (s *Server) restart(w http.ResponseWriter, r *http.Request) {

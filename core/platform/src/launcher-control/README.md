@@ -8,7 +8,12 @@ port) so that the host, and Studio through it, can ask for lifecycle operations
   `{protocol, address, token, pid, version}`. The launcher removes it on exit.
 - Auth: `Authorization: Bearer <token>` on every request. Requests with an
   `Origin` header or a `Host` other than `address` are rejected. There is no CORS.
-- Endpoints: `GET /v1/status`, `POST /v1/host/restart`, `POST /v1/update-request`.
+- Endpoints: `GET /v1/status`, `GET /v1/doctor`, `POST /v1/host/restart`, `POST /v1/update-request`.
+  `GET /v1/doctor` reuses the same `doctor.InspectInstallation`/`doctor.InspectPlatform`
+  functions `kb-create doctor` calls — it does not recompute the diagnosis — and
+  returns `{ok, protocol, installation, platform}` (each section is
+  `{ok, checks: [{id, ok, detail?, hint?}]}`). The installation section reports
+  itself unavailable when the launcher was started without a platform root.
 - Errors: HTTP status plus `{ "ok": false, "error": <error envelope> }`, codes from
   `../error-envelope/errors.catalog.json` (`KB_HOST_CONTROL_UNAUTHORIZED`,
   `KB_RUNTIME_INPUT_INVALID`, ...).

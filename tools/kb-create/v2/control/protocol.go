@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/host"
 )
 
@@ -77,6 +78,18 @@ type UpdateRequestResponse struct {
 	OK       bool          `json:"ok"`
 	Protocol int           `json:"protocol"`
 	Request  UpdateRequest `json:"request"`
+}
+
+// DoctorResponse is the body of GET /v1/doctor: the same installation and
+// platform sections `kb-create doctor` reports (doctor.InspectInstallation,
+// doctor.InspectPlatform), reused rather than recomputed, so a caller through
+// the control channel (the host, and Studio through it) sees exactly what the
+// CLI would report for this launcher.
+type DoctorResponse struct {
+	OK           bool           `json:"ok"`
+	Protocol     int            `json:"protocol"`
+	Installation doctor.Section `json:"installation"`
+	Platform     doctor.Section `json:"platform"`
 }
 
 // ErrorResponse wraps the unified error envelope.

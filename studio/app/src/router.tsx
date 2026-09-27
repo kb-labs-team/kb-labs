@@ -32,6 +32,7 @@ import { projectsRoutes, projectsNavigation } from './modules/projects/routes';
 import { pluginsRoutes, pluginsNavigation } from './modules/plugins/routes';
 import { analyticsRoutes, analyticsNavigation } from './modules/analytics/routes';
 import { observabilityRoutes, observabilityNavigation } from './modules/observability/routes';
+import { healthRoutes, healthNavigation } from './modules/health/routes';
 import { settingsRoutes, settingsNavigation } from './modules/settings/routes';
 // authRoutes removed — the old fake role-select login was replaced by the real LoginPage above.
 
@@ -71,6 +72,7 @@ const systemNavigation: NavigationItem[] = [
   pluginsNavigation,
   analyticsNavigation,
   observabilityNavigation,
+  healthNavigation,
 ];
 
 function LayoutContent() {
@@ -258,6 +260,7 @@ export const router = createBrowserRouter([
       ...pluginsRoutes,
       ...analyticsRoutes,
       ...observabilityRoutes,
+      ...healthRoutes,
       ...settingsRoutes,
       // Account pages
       {
