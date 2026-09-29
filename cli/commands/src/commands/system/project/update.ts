@@ -42,7 +42,11 @@ export const projectUpdate = defineSystemCommand<UpdateFlags, ProjectUpdateResul
     const json = Boolean(flags.json);
     const ui: PluginContextV3['ui'] | undefined = ctx.ui;
     try {
-      if (flags.path === undefined && flags.title === undefined && flags.description === undefined) {
+      if (
+        flags.path === undefined &&
+        flags.title === undefined &&
+        flags.description === undefined
+      ) {
         throw new ProjectRegistryError('KB_RUNTIME_INPUT_INVALID', 'Provide at least one of --path, --title, or --description.');
       }
       const cwd = getContextCwd(ctx);
@@ -52,8 +56,9 @@ export const projectUpdate = defineSystemCommand<UpdateFlags, ProjectUpdateResul
         ...(flags.title !== undefined ? { title: flags.title } : {}),
         ...(flags.description !== undefined ? { description: flags.description } : {}),
       });
-      if (json) ui?.json({ ok: true, project });
-      else {
+      if (json) {
+        ui?.json({ ok: true, project });
+      } else {
         ui?.success(`Updated ${project.title} (${project.id})`);
         ui?.write(`  path: ${project.path}\n`);
       }
