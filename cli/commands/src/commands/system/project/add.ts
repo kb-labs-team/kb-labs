@@ -72,6 +72,8 @@ type AddFlags = {
   'dry-run': { type: 'boolean'; description?: string };
   init: { type: 'boolean'; description?: string };
   name: { type: 'string'; description?: string };
+  title: { type: 'string'; description?: string };
+  description: { type: 'string'; description?: string };
 };
 
 export type ProjectAddResult = CommandResult & {
@@ -104,6 +106,8 @@ export const projectAdd = defineSystemCommand<AddFlags, ProjectAddResult>({
     'dry-run': { type: 'boolean', description: 'Show what would happen without changing anything' },
     init: { type: 'boolean', description: 'Create the minimal .kb/ when the folder has none' },
     name: { type: 'string', description: 'Alias for the project (default: folder name)' },
+    title: { type: 'string', description: 'User-facing project title' },
+    description: { type: 'string', description: 'Project description' },
   },
   analytics: {
     command: 'project.add',
@@ -121,6 +125,8 @@ export const projectAdd = defineSystemCommand<AddFlags, ProjectAddResult>({
         path: argv[0] ?? '.',
         cwd: getContextCwd(ctx),
         name: flags.name,
+        title: flags.title,
+        description: flags.description,
         init,
         dryRun,
       });

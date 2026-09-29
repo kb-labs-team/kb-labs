@@ -74,7 +74,21 @@ mv kb-create-darwin-arm64 /usr/local/bin/kb-create
 
 ## Bootstrap a workspace
 
-Once `kb-create` is installed, create your first workspace:
+Once `kb-create` is installed, you can install the platform alone and register projects later, or install the platform and a project together.
+
+### Platform only
+
+Pass the platform root and omit `--project-root`. The platform starts with an empty project registry; add a project later in Studio or with `kb project add`.
+
+```bash
+kb-create apply --index ./release-index.json \
+  --request-platform-root ./kb-platform \
+  --plugins=studio
+```
+
+### Platform and project together
+
+For local work and CI, pass both roots. This combined flow remains supported:
 
 ```bash
 kb-create my-project

@@ -1,4 +1,5 @@
 {
   "title": "Guides",
-  "order": 20
+  "order": 20,
+  "projects": { "title": "Manage Projects", "type": "page" }
 }

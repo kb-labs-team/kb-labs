@@ -1,9 +1,9 @@
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createProjectRegistry } from '../registry.js';
-import { addProject, listProjects, showProject } from '../operations.js';
+import { addProject, createProject, listProjects, showProject } from '../operations.js';
 import { ProjectRegistryError } from '../errors.js';
 
 let sandbox: string;
@@ -104,6 +104,43 @@ describe('addProject', () => {
     await expect(addProject(registry, { path: dir })).rejects.toMatchObject({
       code: 'KB_PROJECT_ALREADY_REGISTERED',
     });
+  });
+});
+
+describe('createProject', () => {
+  it('creates a new directory, initializes it, and registers metadata', async () => {
+    const registry = createProjectRegistry({ root });
+    const parentPath = join(sandbox, 'new-projects');
+    mkdirSync(parentPath);
+
+    const project = await createProject(registry, {
+      parentPath,
+      directoryName: 'new-app',
+      title: 'New app',
+      description: 'Created through shared operation',
+    });
+
+    expect(project).toMatchObject({ title: 'New app', description: 'Created through shared operation' });
+    expect(existsSync(join(parentPath, 'new-app', '.kb'))).toBe(true);
+    expect((await registry.get(project.id)).project.path).toBe(join(parentPath, 'new-app'));
+  });
+
+  it('does not modify an existing folder when creation collides', async () => {
+    const registry = createProjectRegistry({ root });
+    const parentPath = join(sandbox, 'collision-parent');
+    const existingPath = join(parentPath, 'existing');
+    mkdirSync(existingPath, { recursive: true });
+    const marker = join(existingPath, 'keep.txt');
+    writeFileSync(marker, 'keep');
+
+    await expect(createProject(registry, {
+      parentPath,
+      directoryName: 'existing',
+      title: 'Collision',
+    })).rejects.toMatchObject({ code: 'KB_RUNTIME_INPUT_INVALID' });
+
+    expect(readFileSync(marker, 'utf8')).toBe('keep');
+    expect(await registry.list()).toEqual([]);
   });
 });
 

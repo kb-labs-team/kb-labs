@@ -11,13 +11,14 @@ import type {
   ProjectRecord,
   ProjectRegistryFile,
   ProjectStatus,
+  UpdateProjectOptions,
   ProjectView,
 } from '@kb-labs/core-contracts';
 import { ProjectRegistryError } from './errors.js';
 import { withFileLock, type FileLockOptions } from './file-lock.js';
-import { canonicalizeProjectPath, deriveProjectId, isProjectId } from './project-id.js';
+import { canonicalizeProjectPath, createProjectId, isProjectId } from './project-id.js';
 
-export const PROJECT_REGISTRY_SCHEMA_VERSION = 1;
+export const PROJECT_REGISTRY_SCHEMA_VERSION = 2;
 export const PROJECT_REGISTRY_FILE = 'projects.json';
 
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -59,7 +60,7 @@ function parseRecord(value: unknown, file: string, index: number): ProjectRecord
   if (!isObject(value)) {
     throw corrupt(file, `${at} is not an object`);
   }
-  const { id, path, name, status, addedAt, lastUsedAt } = value;
+  const { id, path, title, description, name, status, addedAt, lastUsedAt } = value;
   if (typeof id !== 'string' || !isProjectId(id)) {
     throw corrupt(file, `${at}.id is not a project id`);
   }
@@ -78,10 +79,22 @@ function parseRecord(value: unknown, file: string, index: number): ProjectRecord
   if (lastUsedAt !== null && (typeof lastUsedAt !== 'string' || Number.isNaN(Date.parse(lastUsedAt)))) {
     throw corrupt(file, `${at}.lastUsedAt is not a timestamp or null`);
   }
-  if (deriveProjectId(path) !== id) {
-    throw corrupt(file, `${at}.id does not match its path`);
+  if (typeof title !== 'string' || title.trim() === '') {
+    throw corrupt(file, `${at}.title must be a non-empty string`);
   }
-  return { id, path, name, status: status as ProjectStatus, addedAt, lastUsedAt };
+  if (typeof description !== 'string') {
+    throw corrupt(file, `${at}.description must be a string`);
+  }
+  return {
+    id,
+    path,
+    title,
+    description,
+    name,
+    status: status as ProjectStatus,
+    addedAt,
+    lastUsedAt,
+  };
 }
 
 /** Validates the raw file content. Never repairs: a bad file is reported, not rewritten. */
@@ -210,19 +223,19 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
     );
   };
 
-  /** Symlink/alias of a live folder: the id its canonical path would get, if it resolves. */
-  const aliasId = async (ref: string): Promise<ProjectId | undefined> => {
+  /** Canonical path for resolving symlink aliases of a live project folder. */
+  const canonicalPathAlias = async (ref: string): Promise<string | undefined> => {
     try {
-      return deriveProjectId(await canonicalizeProjectPath(ref));
+      return await canonicalizeProjectPath(ref);
     } catch {
       return undefined;
     }
   };
 
-  const find = (file: ProjectRegistryFile, ref: string, alias?: ProjectId): ProjectRecord | undefined => {
+  const find = (file: ProjectRegistryFile, ref: string, aliasPath?: string): ProjectRecord | undefined => {
     const asPath = resolve(ref);
     return file.projects.find(
-      (p) => p.id === ref || p.name === ref || p.path === asPath || (alias !== undefined && p.id === alias),
+      (p) => p.id === ref || p.name === ref || p.path === asPath || (aliasPath !== undefined && p.path === aliasPath),
     );
   };
 
@@ -246,6 +259,8 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
     async add(input: string, addOptions: AddProjectOptions = {}): Promise<AddProjectResult> {
       const canonical = await canonicalizeProjectPath(input);
       const requestedName = addOptions.name?.trim();
+      const requestedTitle = addOptions.title?.trim();
+      const requestedDescription = addOptions.description?.trim();
       if (requestedName !== undefined && !NAME_PATTERN.test(requestedName)) {
         throw new ProjectRegistryError(
           'KB_RUNTIME_INPUT_INVALID',
@@ -253,10 +268,16 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
           { name: requestedName },
         );
       }
-      const id = deriveProjectId(canonical);
+      if (requestedTitle !== undefined && requestedTitle.length === 0) {
+        throw new ProjectRegistryError('KB_RUNTIME_INPUT_INVALID', 'Project title must not be empty.');
+      }
+      if (requestedDescription !== undefined && requestedDescription.length > 2000) {
+        throw new ProjectRegistryError('KB_RUNTIME_INPUT_INVALID', 'Project description must be at most 2000 characters.');
+      }
+      const id = createProjectId();
       const apply = addOptions.dryRun ? preview : mutate;
       const project = await apply((file) => {
-        if (file.projects.some((p) => p.id === id)) {
+        if (file.projects.some((p) => p.path === canonical)) {
           throw new ProjectRegistryError('KB_PROJECT_ALREADY_REGISTERED', `Project already registered: ${canonical}`, {
             path: canonical,
           });
@@ -270,6 +291,8 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
         const record: ProjectRecord = {
           id,
           path: canonical,
+          title: requestedTitle ?? requestedName ?? basename(canonical),
+          description: requestedDescription ?? '',
           name: requestedName ?? uniqueName(basename(canonical), taken),
           status: 'active',
           addedAt: now().toISOString(),
@@ -288,7 +311,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
 
     async get(ref: string): Promise<ProjectView> {
       const file = await readFile();
-      const record = find(file, ref, await aliasId(ref));
+      const record = find(file, ref, await canonicalPathAlias(ref));
       if (!record) {
         throw unknown(ref);
       }
@@ -296,7 +319,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
     },
 
     async remove(ref: string): Promise<ProjectRecord> {
-      const alias = await aliasId(ref);
+      const alias = await canonicalPathAlias(ref);
       return mutate((file) => {
         const record = find(file, ref, alias);
         if (!record) {
@@ -307,8 +330,39 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
       });
     },
 
+    async update(ref: string, changes: UpdateProjectOptions): Promise<ProjectRecord> {
+      const canonical = changes.path === undefined ? undefined : await canonicalizeProjectPath(changes.path);
+      const title = changes.title?.trim();
+      const description = changes.description?.trim();
+      if (title !== undefined && title.length === 0) {
+        throw new ProjectRegistryError('KB_RUNTIME_INPUT_INVALID', 'Project title must not be empty.');
+      }
+      if (description !== undefined && description.length > 2000) {
+        throw new ProjectRegistryError('KB_RUNTIME_INPUT_INVALID', 'Project description must be at most 2000 characters.');
+      }
+      if (canonical === undefined && title === undefined && description === undefined) {
+        throw new ProjectRegistryError('KB_RUNTIME_INPUT_INVALID', 'At least one project field must be updated.');
+      }
+      const alias = await canonicalPathAlias(ref);
+      return mutate((file) => {
+        const record = find(file, ref, alias);
+        if (!record) {
+          throw unknown(ref);
+        }
+        if (canonical !== undefined && file.projects.some((candidate) => candidate.id !== record.id && candidate.path === canonical)) {
+          throw new ProjectRegistryError('KB_PROJECT_ALREADY_REGISTERED', `Project path is already registered: ${canonical}`, {
+            path: canonical,
+          });
+        }
+        if (canonical !== undefined) {record.path = canonical;}
+        if (title !== undefined) {record.title = title;}
+        if (description !== undefined) {record.description = description;}
+        return { ...record };
+      });
+    },
+
     async touch(ref: string): Promise<ProjectRecord> {
-      const alias = await aliasId(ref);
+      const alias = await canonicalPathAlias(ref);
       return mutate((file) => {
         const record = find(file, ref, alias);
         if (!record) {

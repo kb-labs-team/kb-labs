@@ -22,7 +22,9 @@ import { ErrorBoundary } from './components/error-boundary';
 import { useSettings } from './providers/settings-provider';
 import type { StudioRegistryV2 } from '@kb-labs/studio-federation';
 import { NavigationItemsProvider } from './providers/navigation-items-provider';
+import { ActiveProjectProvider } from './providers/active-project-provider';
 import { applyNavigationCategories } from './utils/apply-navigation-categories';
+import { ActiveProjectSwitcher } from './components/active-project-switcher';
 import { AVAILABLE_ICONS, KBPageLayout, KBStatusBar, type NavigationItem, StatusBarItem, StatusBarPresets } from '@/components/ui';
 
 // Module routes
@@ -182,6 +184,7 @@ function LayoutContent() {
           onLogout: () => { void handleLogout(); },
           userName: auth.status === 'authenticated' ? auth.user.email : '',
           onOpenSearch: commandPalette.open,
+          projectSwitcher: (collapsed) => <ActiveProjectSwitcher collapsed={collapsed} />,
           notifications,
           unreadNotificationsCount: unreadCount,
           onMarkNotificationAsRead: markAsRead,
@@ -234,9 +237,11 @@ function LayoutContent() {
 
 function Layout() {
   return (
-    <CommandPaletteProvider>
-      <LayoutContent />
-    </CommandPaletteProvider>
+    <ActiveProjectProvider>
+      <CommandPaletteProvider>
+        <LayoutContent />
+      </CommandPaletteProvider>
+    </ActiveProjectProvider>
   );
 }
 

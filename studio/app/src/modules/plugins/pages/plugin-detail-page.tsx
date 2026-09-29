@@ -19,11 +19,14 @@ import { CapabilitiesTab } from '../components/plugin-detail/capabilities-tab';
 import { PermissionsView } from '../components/plugin-detail/permissions-view';
 import { ChangelogTab } from '../components/plugin-detail/changelog-tab';
 import { RawManifestDrawer } from '../components/plugin-detail/raw-manifest-drawer';
+import { useActiveProject } from '@/providers/active-project-provider';
 
 export function PluginDetailPage() {
   const { pluginId: encodedPluginId } = useParams<{ pluginId: string }>();
   const navigate = useNavigate();
   const { plugins: pluginsSource } = useDataSources();
+  const { activeProjectId, projects } = useActiveProject();
+  const activeProject = projects?.find((project) => project.id === activeProjectId);
   const [loading, setLoading] = useState(true);
   const [plugin, setPlugin] = useState<PluginManifestEntry | null>(null);
   const [apiBasePath, setApiBasePath] = useState<string>('');
@@ -214,6 +217,9 @@ export function PluginDetailPage() {
               variant="primary"
             >
               AI Assistant
+            </UIButton>
+            <UIButton variant="default" disabled={!activeProjectId} onClick={() => navigate('/plugins')}>
+              {activeProject ? `Manage in ${activeProject.title}` : 'Select a project'}
             </UIButton>
           </>
         }

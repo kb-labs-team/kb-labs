@@ -125,4 +125,3 @@ export const qk = {
 
 // Backward compatibility
 export const queryKeys = qk;
-

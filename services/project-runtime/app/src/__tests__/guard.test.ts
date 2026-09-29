@@ -69,7 +69,7 @@ describe("runtime guard", () => {
     }
     guard = createRuntimeGuard({
       token: TOKEN,
-      projectId: "prj_0123456789abcdef",
+      projectId: "prj_0123456789abcdef0123456789abcdef",
       projectRoot: "/some/project",
       modules: {
         rest: { host: HOST, port: restPort! },
@@ -123,7 +123,7 @@ describe("runtime guard", () => {
       body: '{"a":1}',
     });
     expect(seen[0]?.headers[RUNTIME_TOKEN_HEADER]).toBeUndefined();
-    expect(seen[0]?.headers[RUNTIME_PROJECT_HEADER]).toBe("prj_0123456789abcdef");
+    expect(seen[0]?.headers[RUNTIME_PROJECT_HEADER]).toBe("prj_0123456789abcdef0123456789abcdef");
     expect(seen[0]?.headers["x-custom"]).toBe("kept");
   });
 
@@ -152,7 +152,7 @@ describe("runtime guard", () => {
     const body = (await response.json()) as RuntimeHealth;
     expect(body).toMatchObject({
       status: "degraded",
-      projectId: "prj_0123456789abcdef",
+      projectId: "prj_0123456789abcdef0123456789abcdef",
       projectRoot: "/some/project",
       pid: process.pid,
       modules: { rest: "up", workflow: "down" },

@@ -46,6 +46,7 @@ const STRIPPED_ENV = [
   "WORKFLOW_HOST",
   "WORKFLOW_PORT",
   "KB_PROJECT_ROOT",
+  "KB_PROJECT_ID",
 ] as const;
 
 export interface ChildProcessLauncherOptions {
@@ -195,6 +196,7 @@ export function createChildProcessLauncher(
       }
       Object.assign(env, options.env, {
         KB_PROJECT_ROOT: project.root,
+        KB_PROJECT_ID: project.id,
         [RUNTIME_TOKEN_ENV]: token,
       });
 

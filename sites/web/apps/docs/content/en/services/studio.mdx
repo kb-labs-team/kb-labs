@@ -1,7 +1,7 @@
 ---
 title: "Studio"
 description: "The KB Labs web UI — a React app that hosts plugin pages via Module Federation."
-updatedAt: "2026-04-07"
+updatedAt: "2026-09-29"
 order: 3
 ---
 
@@ -15,6 +15,7 @@ Source lives in [studio/](studio/).
 - **Plugin pages** — every plugin that declares a `studio` block in its manifest gets its own page or menu entry. Studio loads those pages dynamically as Module Federation remotes.
 - **System status** — health of services, adapter registration, log streams, metrics dashboards.
 - **Marketplace** — browse installed entities, install new ones, enable/disable plugins.
+- **Projects** — create a project or connect an existing folder, edit its title and description, update its path after a move, and select the project Studio should use. The active project appears in the sidebar and remains selected after reload.
 - **Analytics dashboards** — charts and time-series views over the analytics adapter (events per day, LLM cost trends, cache hit rates, etc.).
 
 ## Stack
@@ -136,6 +137,14 @@ Studio doesn't talk to the REST API, workflow daemon, and marketplace directly �
 This is important for plugin pages too: when a plugin page calls `useData('/api/v1/plugins/mind/search')`, it's calling the gateway, which routes to the REST API, which executes the plugin's REST handler. Everything stays behind one origin from the browser's perspective.
 
 See [Gateway](/gateway) for the routing rules.
+
+## Projects and active context
+
+Studio reads and changes machine-level project records through the platform REST API. New platform installs can have no projects; use **Projects** to create or connect one. Project identity is stable when its path changes, so **Update path** restores a moved project and keeps its runtime state directory.
+
+Create, connect, and path-repair dialogs ask Host to open the operating system's native folder chooser on the Host machine. It returns only the selected absolute path (or cancellation); directory listings and file contents are not sent to Studio. Host needs a desktop session, and Linux hosts need `zenity` or `kdialog` installed.
+
+The sidebar selector is the shared project context. Project plugins, adapter configuration, and project extension management use the selected project ID. The marketplace catalogue is platform-wide; project enablement is scoped to the selected project and can be managed from **Project Plugins**.
 
 ## What to read next
 

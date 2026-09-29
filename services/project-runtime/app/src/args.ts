@@ -10,7 +10,7 @@ import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import {
   canonicalizeProjectPath,
-  deriveProjectId,
+  isProjectId,
 } from "@kb-labs/core-project-registry";
 import { RUNTIME_ARGS, RUNTIME_TOKEN_ENV } from "./protocol.js";
 
@@ -95,9 +95,8 @@ export function parseListen(value: string): RuntimeListenAddress {
 }
 
 /**
- * Parses and validates the runtime's input. The project id must be the one
- * derived from the project root (ADR-0044), so a runtime can never be started
- * for a folder under another project's id.
+ * Parses the runtime's input. The host supplies an opaque stable project ID;
+ * path changes do not change project identity or its state directory.
  */
 export async function parseRuntimeArgs(
   argv: readonly string[],
@@ -118,10 +117,9 @@ export async function parseRuntimeArgs(
   const projectRoot = await canonicalizeProjectPath(rawRoot);
 
   const projectId = requireFlag(argv, RUNTIME_ARGS.projectId);
-  const expectedId = deriveProjectId(projectRoot);
-  if (projectId !== expectedId) {
+  if (!isProjectId(projectId)) {
     throw new RuntimeArgsError(
-      `${RUNTIME_ARGS.projectId} ${projectId} does not match the project root (expected ${expectedId})`,
+      `${RUNTIME_ARGS.projectId} must be a valid project id, got "${projectId}"`,
     );
   }
 

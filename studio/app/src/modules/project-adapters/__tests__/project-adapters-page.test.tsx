@@ -13,12 +13,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ProjectEntry } from '@kb-labs/core-contracts';
 import type { DataSources, ProjectAdapterEntry } from '@kb-labs/studio-data-client';
 import { DataSourcesContext } from '../../../providers/data-sources-provider';
+import { ActiveProjectProvider } from '../../../providers/active-project-provider';
 import { ProjectAdaptersPage } from '../pages/project-adapters-page';
 
 function makeProject(overrides: Partial<ProjectEntry> = {}): ProjectEntry {
   return {
     id: 'prj_1',
     name: 'demo',
+    title: 'Demo',
+    description: '',
     status: 'active',
     declaration: 'present',
     pathExists: true,
@@ -46,7 +49,7 @@ function renderPage(sources: Partial<DataSources>) {
   return render(
     <QueryClientProvider client={queryClient}>
       <DataSourcesContext.Provider value={sources as DataSources}>
-        <ProjectAdaptersPage />
+        <ActiveProjectProvider><ProjectAdaptersPage /></ActiveProjectProvider>
       </DataSourcesContext.Provider>
     </QueryClientProvider>,
   );

@@ -7,7 +7,7 @@
 import { mkdtemp, mkdir, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
@@ -46,9 +46,9 @@ describe("createProjectsRoutes", () => {
     await rm(kbHome, { recursive: true, force: true });
   });
 
-  async function setup(manager: ProjectRuntimeManager = stubManager(EMPTY_SNAPSHOT)) {
+  async function setup(manager: ProjectRuntimeManager = stubManager(EMPTY_SNAPSHOT), pickFolder?: () => Promise<string | null>) {
     app = Fastify();
-    await app.register(createProjectsRoutes({ registry, manager }));
+    await app.register(createProjectsRoutes({ registry, manager, pickFolder }));
     await app.ready();
     return app;
   }
@@ -66,6 +66,40 @@ describe("createProjectsRoutes", () => {
     expect(body.ok).toBe(true);
     expect(body.data).toHaveLength(1);
     expect(body.data[0]).toMatchObject({ id: project.id, runtime: { state: "stopped" } });
+  });
+
+  it("returns the absolute folder selected by the Host native picker", async () => {
+    const selectedPath = await realpath(kbHome);
+    const picker = vi.fn().mockResolvedValue(selectedPath);
+    const instance = await setup(stubManager(EMPTY_SNAPSHOT), picker);
+
+    const res = await instance.inject({ method: "POST", url: "/api/v1/projects/pick-folder" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, data: { path: selectedPath } });
+    expect(picker).toHaveBeenCalledOnce();
+  });
+
+  it("returns a successful null result when the native picker is cancelled", async () => {
+    const instance = await setup(stubManager(EMPTY_SNAPSHOT), async () => null);
+    const res = await instance.inject({ method: "POST", url: "/api/v1/projects/pick-folder" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, data: { path: null } });
+  });
+
+  it("reports native picker availability failures with a dedicated host error", async () => {
+    const instance = await setup(stubManager(EMPTY_SNAPSHOT), async () => {
+      throw new Error("No desktop session");
+    });
+    const res = await instance.inject({ method: "POST", url: "/api/v1/projects/pick-folder" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "KB_HOST_FOLDER_PICKER_UNAVAILABLE",
+        cause: "No desktop session",
+      },
+    });
   });
 
   it("reports runtime state from the manager snapshot", async () => {
@@ -120,6 +154,75 @@ describe("createProjectsRoutes", () => {
     expect(body.data.path).toBe(dir);
     expect(body.data.runtime.state).toBe("stopped");
     expect(await registry.list()).toHaveLength(1);
+  });
+
+  it("POST initializes the exact selected folder with metadata", async () => {
+    const selectedFolder = join(kbHome, "workspaces", "new-workspace");
+    await mkdir(selectedFolder, { recursive: true });
+    const instance = await setup();
+
+    const res = await instance.inject({
+      method: "POST",
+      url: "/api/v1/projects",
+      payload: {
+        path: selectedFolder,
+        init: true,
+        title: "New workspace",
+        description: "Created from Studio",
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as DataBody<{ id: string; path: string; title: string; description: string }>;
+    expect(body.data).toMatchObject({
+      path: await realpath(selectedFolder),
+      title: "New workspace",
+      description: "Created from Studio",
+    });
+    await expect(mkdir(join(selectedFolder, ".kb"))).rejects.toMatchObject({ code: "EEXIST" });
+    expect((await registry.get(body.data.id)).project.path).toBe(body.data.path);
+  });
+
+  it("PATCH updates project metadata and path without changing the project id", async () => {
+    const originalPath = join(kbHome, "before");
+    const updatedPath = join(kbHome, "after");
+    await mkdir(originalPath);
+    await mkdir(updatedPath);
+    await mkdir(join(originalPath, ".kb"));
+    await mkdir(join(updatedPath, ".kb"));
+    const { project } = await registry.add(originalPath, { title: "Original title" });
+    const instance = await setup();
+
+    const res = await instance.inject({
+      method: "PATCH",
+      url: `/api/v1/projects/${project.id}`,
+      payload: { path: updatedPath, title: "Current title", description: "Relocated" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as DataBody<{ id: string; path: string; title: string; description: string }>;
+    expect(body.data).toMatchObject({
+      id: project.id,
+      path: await realpath(updatedPath),
+      title: "Current title",
+      description: "Relocated",
+    });
+  });
+
+  it("PATCH rejects an empty replacement path", async () => {
+    const projectPath = join(kbHome, "project");
+    await mkdir(join(projectPath, ".kb"), { recursive: true });
+    const { project } = await registry.add(projectPath);
+    const instance = await setup();
+
+    const res = await instance.inject({
+      method: "PATCH",
+      url: `/api/v1/projects/${project.id}`,
+      payload: { path: " " },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as ErrorBody).error.code).toBe("KB_RUNTIME_INPUT_INVALID");
   });
 
   it("POST without init reports KB_PROJECT_INIT_REQUIRED and registers nothing", async () => {

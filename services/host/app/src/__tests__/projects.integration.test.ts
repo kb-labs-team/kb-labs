@@ -61,8 +61,8 @@ describe("kb-host project routing", () => {
   ): Promise<TestProject> {
     const project = await makeProject(behavior);
     projects.push(project);
-    await registry.add(project.root);
-    return project;
+    const registeredProject = await registry.add(project.root);
+    return { ...project, id: registeredProject.project.id };
   }
 
   async function host(
@@ -151,7 +151,7 @@ describe("kb-host project routing", () => {
     const subject = await host();
 
     const response = await subject.fetchGateway(
-      "/api/v1/projects/prj_0000000000000000/rest/whoami",
+      "/api/v1/projects/prj_00000000000000000000000000000000/rest/whoami",
     );
 
     expect(response.status).toBe(404);

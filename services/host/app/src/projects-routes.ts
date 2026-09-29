@@ -38,10 +38,13 @@ import {
 import type { HostRoutes } from "@kb-labs/gateway-app";
 import { invalidBody, sendData, sendEnvelope } from "./envelope.js";
 import type { ProjectRuntimeManager } from "./project-runtime/manager.js";
+import { pickNativeFolder } from "./native-folder-picker.js";
 
 export interface ProjectsRoutesOptions {
   registry: IProjectRegistry;
   manager: ProjectRuntimeManager;
+  /** Injectable for tests; production opens a native dialog on the Host machine. */
+  pickFolder?: () => Promise<string | null>;
 }
 
 /** `stopped` for a registered project the manager has no entry for. */
@@ -72,7 +75,15 @@ function toEntry(
 interface AddProjectBody {
   path?: unknown;
   name?: unknown;
+  title?: unknown;
+  description?: unknown;
   init?: unknown;
+}
+
+interface UpdateProjectBody {
+  path?: unknown;
+  title?: unknown;
+  description?: unknown;
 }
 
 /**
@@ -83,8 +94,21 @@ export function createProjectsRoutes(
   options: ProjectsRoutesOptions,
 ): HostRoutes {
   const { registry, manager } = options;
+  const pickFolder = options.pickFolder ?? pickNativeFolder;
 
   return async function projectsRoutes(app: FastifyInstance) {
+    app.post("/api/v1/projects/pick-folder", async (_request, reply) => {
+      try {
+        return sendData(reply, { path: await pickFolder() });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Native folder picker failed.";
+        return reply.code(503).send({
+          ok: false,
+          error: createErrorEnvelope("KB_HOST_FOLDER_PICKER_UNAVAILABLE", { cause: message }),
+        });
+      }
+    });
+
     app.get("/api/v1/projects", async (_request, reply) => {
       const summaries = await listProjects(registry);
       return sendData(reply, summaries.map((summary) => toEntry(manager, summary)));
@@ -105,19 +129,31 @@ export function createProjectsRoutes(
     app.post<{ Body: AddProjectBody }>(
       "/api/v1/projects",
       async (request, reply) => {
-        const { path, name, init } = request.body ?? {};
+        const { path, name, title, description, init } = request.body ?? {};
         if (typeof path !== "string" || path.trim() === "") {
           return sendEnvelope(reply, invalidBody("path", "must be a non-empty string"));
         }
         if (name !== undefined && typeof name !== "string") {
           return sendEnvelope(reply, invalidBody("name", "must be a string"));
         }
+        if (title !== undefined && typeof title !== "string") {
+          return sendEnvelope(reply, invalidBody("title", "must be a string"));
+        }
+        if (description !== undefined && typeof description !== "string") {
+          return sendEnvelope(reply, invalidBody("description", "must be a string"));
+        }
         if (init !== undefined && typeof init !== "boolean") {
           return sendEnvelope(reply, invalidBody("init", "must be a boolean"));
         }
 
         try {
-          const outcome = await addProject(registry, { path, name, init: init === true });
+          const outcome = await addProject(registry, {
+            path,
+            name,
+            title: title as string | undefined,
+            description: description as string | undefined,
+            init: init === true,
+          });
           if (outcome.status === "initialization-required") {
             return sendEnvelope(
               reply,
@@ -129,6 +165,36 @@ export function createProjectsRoutes(
           // `status === "planned"` cannot happen: this route never passes `dryRun`.
           const summary = await showProject(registry, outcome.project.id);
           return sendData(reply, toEntry(manager, summary), 201);
+        } catch (error) {
+          return sendEnvelope(reply, projectErrorEnvelope(error));
+        }
+      },
+    );
+
+    app.patch<{ Params: { id: string }; Body: UpdateProjectBody }>(
+      "/api/v1/projects/:id",
+      async (request, reply) => {
+        const { path, title, description } = request.body ?? {};
+        if (path !== undefined && typeof path !== "string") {
+          return sendEnvelope(reply, invalidBody("path", "must be a string"));
+        }
+        if (typeof path === "string" && path.trim() === "") {
+          return sendEnvelope(reply, invalidBody("path", "must not be empty"));
+        }
+        if (title !== undefined && typeof title !== "string") {
+          return sendEnvelope(reply, invalidBody("title", "must be a string"));
+        }
+        if (description !== undefined && typeof description !== "string") {
+          return sendEnvelope(reply, invalidBody("description", "must be a string"));
+        }
+        try {
+          await registry.update(request.params.id, {
+            ...(path !== undefined ? { path: path as string } : {}),
+            ...(title !== undefined ? { title: title as string } : {}),
+            ...(description !== undefined ? { description: description as string } : {}),
+          });
+          const summary = await showProject(registry, request.params.id);
+          return sendData(reply, toEntry(manager, summary));
         } catch (error) {
           return sendEnvelope(reply, projectErrorEnvelope(error));
         }

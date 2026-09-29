@@ -11,13 +11,23 @@ export interface AddProjectParams {
   path: string;
   /** Alias; defaults to the folder name. */
   name?: string;
+  title?: string;
+  description?: string;
   /** Create the minimal `.kb/` when the folder has none. */
   init?: boolean;
 }
 
+export interface UpdateProjectParams {
+  path?: string;
+  title?: string;
+  description?: string;
+}
+
 export interface ProjectsDataSource {
+  pickFolder(): Promise<string | null>;
   listProjects(): Promise<ProjectEntry[]>;
   getProject(id: string): Promise<ProjectEntry>;
   addProject(params: AddProjectParams): Promise<ProjectEntry>;
+  updateProject(id: string, params: UpdateProjectParams): Promise<ProjectEntry>;
   removeProject(id: string): Promise<{ id: string }>;
 }

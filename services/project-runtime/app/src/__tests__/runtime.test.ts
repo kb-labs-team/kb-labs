@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetPlatformRuntime } from "@kb-labs/core-runtime";
 import {
   canonicalizeProjectPath,
-  deriveProjectId,
+  createProjectId,
 } from "@kb-labs/core-project-registry";
 import { reserveLoopbackPorts, runHost } from "@kb-labs/shared-daemon";
 import { createProjectRuntimeConfig, type ProjectRuntimeModule } from "../runtime.js";
@@ -132,7 +132,7 @@ async function startRuntime(options: {
     await runHost(
       await createProjectRuntimeConfig({
         projectRoot: root,
-        projectId: deriveProjectId(root),
+        projectId: createProjectId(),
         listen: { host: "127.0.0.1", port: guardPort! },
         token: TOKEN,
         modules: [echoModule("rest"), echoModule("workflow")],
@@ -148,7 +148,7 @@ async function startRuntime(options: {
   const running: Running = {
     base: `http://127.0.0.1:${guardPort}`,
     root,
-    projectId: deriveProjectId(root),
+    projectId: createProjectId(),
     stop() {
       stopped ??= (async () => {
         for (const handler of handlers) {

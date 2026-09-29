@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { promises as fs, realpath } from 'node:fs';
 import { promisify } from 'node:util';
-import { isAbsolute, parse, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import type { ProjectId } from '@kb-labs/core-contracts';
 import { ProjectRegistryError } from './errors.js';
 
@@ -12,31 +12,11 @@ import { ProjectRegistryError } from './errors.js';
 const realpathNative = (path: string): Promise<string> => promisify(realpath.native)(path);
 
 export const PROJECT_ID_PREFIX = 'prj_';
-const ID_HEX_LENGTH = 16;
+const ID_HEX_LENGTH = 32;
 
-/**
- * Normalizes an already-canonical absolute path for hashing: NFC, no trailing
- * separator, and lower-cased on Windows (case-insensitive file system).
- */
-function normalizeForHash(canonicalPath: string): string {
-  let value = canonicalPath.normalize('NFC');
-  const root = parse(value).root;
-  while (value.length > root.length && (value.endsWith('/') || value.endsWith('\\'))) {
-    value = value.slice(0, -1);
-  }
-  return process.platform === 'win32' ? value.toLowerCase() : value;
-}
-
-/** Pure derivation from a canonical absolute path. The same path always yields the same id. */
-export function deriveProjectId(canonicalPath: string): ProjectId {
-  if (!isAbsolute(canonicalPath)) {
-    throw new ProjectRegistryError(
-      'KB_RUNTIME_INPUT_INVALID',
-      `Project id can only be derived from an absolute path, got "${canonicalPath}".`,
-    );
-  }
-  const digest = createHash('sha256').update(normalizeForHash(canonicalPath), 'utf8').digest('hex');
-  return `${PROJECT_ID_PREFIX}${digest.slice(0, ID_HEX_LENGTH)}`;
+/** Creates an opaque project identity independent of its name and filesystem path. */
+export function createProjectId(): ProjectId {
+  return `${PROJECT_ID_PREFIX}${randomUUID().replaceAll('-', '')}`;
 }
 
 export function isProjectId(value: string): boolean {
@@ -46,7 +26,8 @@ export function isProjectId(value: string): boolean {
 /**
  * Resolves a user-supplied folder to its canonical absolute path: relative
  * paths are resolved against the cwd, symlinks are followed and the on-disk
- * spelling is used (`realpath.native`), so aliases of one folder map to one id.
+ * spelling is used (`realpath.native`), so aliases of one folder cannot be
+ * registered twice.
  * Throws typed errors for a missing, non-directory or unreadable path.
  */
 export async function canonicalizeProjectPath(input: string): Promise<string> {

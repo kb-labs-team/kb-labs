@@ -13,12 +13,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ProjectEntry } from '@kb-labs/core-contracts';
 import type { DataSources } from '@kb-labs/studio-data-client';
 import { DataSourcesContext } from '../../../providers/data-sources-provider';
+import { ActiveProjectProvider } from '../../../providers/active-project-provider';
 import { ProjectsPage } from '../pages/projects-page';
 
 function makeEntry(overrides: Partial<ProjectEntry>): ProjectEntry {
   return {
     id: 'prj_1',
     name: 'demo',
+    title: 'Demo',
+    description: '',
     status: 'active',
     declaration: 'present',
     pathExists: true,
@@ -36,7 +39,7 @@ function renderPage(sources: Partial<DataSources>) {
   return render(
     <QueryClientProvider client={queryClient}>
       <DataSourcesContext.Provider value={sources as DataSources}>
-        <ProjectsPage />
+        <ActiveProjectProvider><ProjectsPage /></ActiveProjectProvider>
       </DataSourcesContext.Provider>
     </QueryClientProvider>,
   );
@@ -96,16 +99,86 @@ describe('ProjectsPage', () => {
     await waitFor(() => expect(screen.getByText(/no projects registered/i)).toBeDefined());
 
     fireEvent.click(screen.getAllByRole('button', { name: /add project/i })[0]!);
-    await waitFor(() => expect(screen.getByLabelText(/folder path/i)).toBeDefined());
+    fireEvent.click(screen.getByRole('button', { name: /connect existing/i }));
+    await waitFor(() => expect(screen.getByLabelText(/project folder/i)).toBeDefined());
 
-    fireEvent.change(screen.getByLabelText(/folder path/i), { target: { value: '/workspace/demo' } });
+    fireEvent.change(screen.getByLabelText(/project folder/i), { target: { value: '/workspace/demo' } });
+    fireEvent.change(screen.getByLabelText(/project title/i), { target: { value: 'Demo project' } });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /^register$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /connect project/i }));
     });
 
     await waitFor(() =>
-      expect(addProject).toHaveBeenCalledWith({ path: '/workspace/demo', name: undefined, init: false }),
+      expect(addProject).toHaveBeenCalledWith({ path: '/workspace/demo', title: 'Demo project', description: '', init: false }),
     );
+  });
+
+  it('creates a new project and selects it as the active Studio project', async () => {
+    const entry = makeEntry({ id: 'prj_1234567890abcdef1234567890abcdef', title: 'New app', path: '/workspace/new-app' });
+    let listed: ProjectEntry[] = [];
+    const listProjects = vi.fn().mockImplementation(async () => listed);
+    const addProject = vi.fn().mockImplementation(async () => {
+      listed = [entry];
+      return entry;
+    });
+    renderPage({ projects: { listProjects, addProject } as never });
+
+    await waitFor(() => expect(screen.getByText(/no projects registered/i)).toBeDefined());
+    fireEvent.click(screen.getAllByRole('button', { name: /add project/i })[0]!);
+    fireEvent.change(screen.getByLabelText(/project title/i), { target: { value: 'New app' } });
+    fireEvent.change(screen.getByLabelText(/project folder/i), { target: { value: '/workspace/new-app' } });
+
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: /create project/i })));
+
+    await waitFor(() => expect(addProject).toHaveBeenCalledWith({
+      path: '/workspace/new-app', title: 'New app', description: '', init: true,
+    }));
+    await waitFor(() => expect(window.localStorage.getItem('kb-studio-active-project-id')).toBe(entry.id));
+  });
+
+  it('uses the Host native folder chooser and selects the exact folder', async () => {
+    const listProjects = vi.fn().mockResolvedValue([]);
+    const pickFolder = vi.fn().mockResolvedValue('/workspace/demo');
+    renderPage({ projects: { listProjects, pickFolder } as never });
+
+    await waitFor(() => expect(screen.getByText(/no projects registered/i)).toBeDefined());
+    fireEvent.click(screen.getAllByRole('button', { name: /add project/i })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: /choose project folder/i }));
+
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledOnce());
+    await waitFor(() => expect((screen.getByLabelText(/project folder/i) as HTMLInputElement).value).toBe('/workspace/demo'));
+  });
+
+  it('keeps the entered path when the Host native folder chooser is cancelled', async () => {
+    const listProjects = vi.fn().mockResolvedValue([]);
+    const pickFolder = vi.fn().mockResolvedValue(null);
+    renderPage({ projects: { listProjects, pickFolder } as never });
+
+    await waitFor(() => expect(screen.getByText(/no projects registered/i)).toBeDefined());
+    fireEvent.click(screen.getAllByRole('button', { name: /add project/i })[0]!);
+    fireEvent.change(screen.getByLabelText(/project folder/i), { target: { value: '/workspace/typed-path' } });
+    fireEvent.click(screen.getByRole('button', { name: /choose project folder/i }));
+
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledOnce());
+    await waitFor(() => expect((screen.getByLabelText(/project folder/i) as HTMLInputElement).value).toBe('/workspace/typed-path'));
+  });
+
+  it('repairs an unavailable project path using the folder picker', async () => {
+    const unavailable = makeEntry({ pathExists: false, path: '/missing/demo' });
+    const listProjects = vi.fn().mockResolvedValue([unavailable]);
+    const updateProject = vi.fn().mockResolvedValue(makeEntry({ path: '/workspace/recovered' }));
+    const pickFolder = vi.fn().mockResolvedValue('/workspace/recovered');
+    renderPage({ projects: { listProjects, updateProject, pickFolder } as never });
+
+    await waitFor(() => expect(screen.getByText('Folder unavailable')).toBeDefined());
+    fireEvent.click(screen.getByRole('button', { name: /update path/i }));
+    fireEvent.click(screen.getByRole('button', { name: /choose project folder/i }));
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledOnce());
+    await waitFor(() => expect((screen.getByLabelText(/project folder path/i) as HTMLInputElement).value).toBe('/workspace/recovered'));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^save$/i }).hasAttribute('disabled')).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(updateProject).toHaveBeenCalledWith('prj_1', { path: '/workspace/recovered', title: 'Demo', description: '' }));
   });
 });

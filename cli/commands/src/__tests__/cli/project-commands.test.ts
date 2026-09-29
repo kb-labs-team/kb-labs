@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
-import { projectAdd, projectList, projectRemove, projectShow } from '../../commands/system/project/index.js';
+import { projectAdd, projectList, projectRemove, projectShow, projectUpdate } from '../../commands/system/project/index.js';
 
 let sandbox: string;
 let kbHome: string;
@@ -233,6 +233,23 @@ describe('project show', () => {
     expect(res.code).toBe(1);
     expect(res.json[0]?.error?.code).toBe('KB_PROJECT_UNKNOWN');
     expect(res.json[0]?.error?.hint).toContain('kb project add');
+  });
+});
+
+describe('project update', () => {
+  it("updates a moved project's path and metadata while preserving its id and cwd resolution", async () => {
+    const before = makeProject('before', true);
+    const after = makeProject('after', true);
+    const added = await run(projectAdd, [before], { title: 'Before', description: 'Original' });
+    const id = added.json[0]?.project?.id ?? '';
+
+    const updated = await run(projectUpdate, [id], { path: after, title: 'After', description: 'Relocated' });
+
+    expect(updated.code).toBe(0);
+    expect(updated.json[0]?.project).toMatchObject({ id, path: after, title: 'After', description: 'Relocated' });
+    cwd = after;
+    const shown = await run(projectShow, []);
+    expect(shown.json[0]?.project).toMatchObject({ id, path: after });
   });
 });
 

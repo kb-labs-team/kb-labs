@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { qk } from '../query-keys';
-import type { AddProjectParams, ProjectsDataSource } from '../sources/projects-source';
+import type { AddProjectParams, ProjectsDataSource, UpdateProjectParams } from '../sources/projects-source';
 
 export function useProjects(source: ProjectsDataSource) {
   return useQuery({
@@ -25,6 +25,17 @@ export function useAddProject(source: ProjectsDataSource) {
     mutationFn: (params: AddProjectParams) => source.addProject(params),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: qk.projects.all });
+    },
+  });
+}
+
+export function useUpdateProject(source: ProjectsDataSource) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...params }: UpdateProjectParams & { id: string }) => source.updateProject(id, params),
+    onSuccess: (_project, variables) => {
+      void queryClient.invalidateQueries({ queryKey: qk.projects.all });
+      void queryClient.invalidateQueries({ queryKey: qk.projects.byId(variables.id) });
     },
   });
 }

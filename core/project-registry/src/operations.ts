@@ -13,7 +13,7 @@
  */
 
 import { promises as fs } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { initWorkspaceConfig } from '@kb-labs/core-config';
 import type { IProjectRegistry, ProjectRecord, ProjectSummary, ProjectView } from '@kb-labs/core-contracts';
 import { ProjectRegistryError } from './errors.js';
@@ -25,6 +25,8 @@ export function toProjectSummary(view: ProjectView): ProjectSummary {
   return {
     id: project.id,
     name: project.name,
+    title: project.title,
+    description: project.description,
     status: project.status,
     declaration: view.declaration,
     pathExists: view.pathExists,
@@ -51,6 +53,8 @@ export interface AddProjectRequest {
   cwd?: string;
   /** Alias; defaults to the folder name. */
   name?: string;
+  title?: string;
+  description?: string;
   /** Create the minimal `.kb/` when the folder has none. */
   init?: boolean;
   /** Validate and report what would happen; write nothing. */
@@ -85,7 +89,12 @@ export async function addProject(registry: IProjectRegistry, request: AddProject
   }
 
   // Validate the registration (duplicate, name) before touching the folder.
-  const planned = await registry.add(canonical, { name: request.name, dryRun: true });
+  const planned = await registry.add(canonical, {
+    name: request.name,
+    title: request.title,
+    description: request.description,
+    dryRun: true,
+  });
   const needsInit = !declared;
 
   let created: string[] = [];
@@ -111,6 +120,90 @@ export async function addProject(registry: IProjectRegistry, request: AddProject
     return { status: 'planned', project: planned.project, wouldInitialize: needsInit };
   }
 
-  const { project } = await registry.add(canonical, { name: request.name });
+  const { project } = await registry.add(canonical, {
+    name: request.name,
+    title: request.title,
+    description: request.description,
+  });
   return { status: 'added', project, initialized: needsInit, created };
+}
+
+export interface CreateProjectRequest {
+  /** Existing parent directory chosen by the user. */
+  parentPath: string;
+  /** New single-segment directory name. */
+  directoryName: string;
+  title: string;
+  description?: string;
+  cwd?: string;
+}
+
+/** Creates and initializes a new project folder, then registers it. */
+export async function createProject(
+  registry: IProjectRegistry,
+  request: CreateProjectRequest,
+): Promise<ProjectRecord> {
+  const parentPath = await canonicalizeProjectPath(resolve(request.cwd ?? process.cwd(), request.parentPath));
+  const directoryName = request.directoryName.trim();
+  if (
+    directoryName.length === 0 ||
+    directoryName === '.' ||
+    directoryName === '..' ||
+    basename(directoryName) !== directoryName ||
+    directoryName.includes('\\') ||
+    directoryName.includes('/') ||
+    directoryName.includes('\0')
+  ) {
+    throw new ProjectRegistryError('KB_RUNTIME_INPUT_INVALID', 'Project directory name must be one path segment.');
+  }
+  if (request.title.trim().length === 0) {
+    throw new ProjectRegistryError('KB_RUNTIME_INPUT_INVALID', 'Project title must not be empty.');
+  }
+
+  const projectPath = join(parentPath, directoryName);
+  try {
+    await fs.mkdir(projectPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new ProjectRegistryError('KB_RUNTIME_INPUT_INVALID', `Project folder already exists: ${projectPath}`, {
+        path: projectPath,
+      });
+    }
+    throw error;
+  }
+
+  let created: string[] = [];
+  try {
+    const preview = await initWorkspaceConfig({ cwd: projectPath, dryRun: true });
+    const kbRoot = join(projectPath, '.kb');
+    const escapes = preview.actions.some((action) => {
+      const rel = relative(kbRoot, resolve(action.path));
+      return rel.startsWith('..') || isAbsolute(rel);
+    });
+    if (escapes) {
+      throw new ProjectRegistryError(
+        'KB_RUNTIME_INPUT_INVALID',
+        'The selected parent has an enclosing .kb/ configuration; create the project outside that workspace.',
+      );
+    }
+
+    created = (await initWorkspaceConfig({ cwd: projectPath })).created;
+    const { project } = await registry.add(projectPath, {
+      title: request.title,
+      description: request.description,
+    });
+    return project;
+  } catch (error) {
+    // Remove only files reported as created by this operation; rmdir is
+    // deliberately non-recursive so concurrent/user-created content survives.
+    for (const file of [...created].reverse()) {
+      const rel = relative(projectPath, resolve(file));
+      if (!rel.startsWith('..') && !isAbsolute(rel)) {
+        await fs.unlink(file).catch(() => undefined);
+      }
+    }
+    await fs.rmdir(join(projectPath, '.kb')).catch(() => undefined);
+    await fs.rmdir(projectPath).catch(() => undefined);
+    throw error;
+  }
 }

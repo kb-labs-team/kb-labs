@@ -10,6 +10,7 @@ async function main(): Promise<void> {
   // The platform resolves its roots from the environment first; make the
   // environment agree with the project this runtime was started for.
   process.env.KB_PROJECT_ROOT = args.projectRoot;
+  process.env.KB_PROJECT_ID = args.projectId;
 
   await runHost(
     await createProjectRuntimeConfig({

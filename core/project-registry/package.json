@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/core-project-registry",
-  "description": "Machine-level registry of KB Labs projects (projects.json), projectId derivation and per-project state paths",
+  "description": "Machine-level KB Labs project registry (projects.json) with stable project IDs and per-project state paths",
   "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",

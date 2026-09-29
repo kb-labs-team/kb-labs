@@ -15,7 +15,7 @@ inputs:
     description: 'Path to the sealed kb.create.release-index/v2 JSON.'
     required: true
   project-dir:
-    description: 'Project root receiving the user-owned V2 config pointer.'
+    description: 'Project root receiving the user-owned V2 config pointer; set to an empty string for platform-only installation.'
     required: false
     default: '${{ github.workspace }}'
   adapters:
@@ -118,7 +118,10 @@ runs:
       run: |
         set -euo pipefail
         bin="${RUNNER_TEMP}/kb-create${EXT}"
-        args=(apply --index "$RELEASE_INDEX" --request-platform-root "$PLATFORM_DIR" --project-root "$PROJECT_DIR")
+        args=(apply --index "$RELEASE_INDEX" --request-platform-root "$PLATFORM_DIR")
+        if [[ -n "$PROJECT_DIR" ]]; then
+          args+=(--project-root "$PROJECT_DIR")
+        fi
         [ -n "$PLUGINS" ] && args+=(--plugins "$PLUGINS")
         [ -n "$ADAPTERS" ] && args+=(--adapters "$ADAPTERS")
         [ -n "$REGISTRY" ] && args+=(--registry "$REGISTRY")
