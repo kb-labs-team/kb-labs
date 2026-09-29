@@ -142,7 +142,7 @@ See [Gateway](/gateway) for the routing rules.
 
 Studio reads and changes machine-level project records through the platform REST API. New platform installs can have no projects; use **Projects** to create or connect one. Project identity is stable when its path changes, so **Update path** restores a moved project and keeps its runtime state directory.
 
-Create, connect, and path-repair dialogs use a Host-backed folder picker. It lists directory names and absolute paths for the Host machine and does not expose file contents to Studio.
+Create, connect, and path-repair dialogs ask Host to open the operating system's native folder chooser on the Host machine. It returns only the selected absolute path (or cancellation); directory listings and file contents are not sent to Studio. Host needs a desktop session, and Linux hosts need `zenity` or `kdialog` installed.
 
 The sidebar selector is the shared project context. Project plugins, adapter configuration, and project extension management use the selected project ID. The marketplace catalogue is platform-wide; project enablement is scoped to the selected project and can be managed from **Project Plugins**.
 

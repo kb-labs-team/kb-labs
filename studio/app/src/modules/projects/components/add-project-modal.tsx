@@ -2,10 +2,9 @@
 
 import * as React from 'react';
 import { UIButton, UIInput, UIInputTextArea, UIMessage, UIModal, UIText } from '@kb-labs/studio-ui-kit';
-import { KBError, useAddProject, useCreateProject } from '@kb-labs/studio-data-client';
+import { KBError, useAddProject } from '@kb-labs/studio-data-client';
 import { useDataSources } from '@/providers/data-sources-provider';
 import { useActiveProject } from '@/providers/active-project-provider';
-import { ProjectDirectoryPicker } from './project-directory-picker';
 
 function errorCode(error: unknown): string | undefined {
   if (!(error instanceof KBError)) return undefined;
@@ -29,19 +28,16 @@ export function AddProjectModal({ open, onClose, onAdded }: AddProjectModalProps
   const { projects: source } = useDataSources();
   const { setActiveProjectId } = useActiveProject();
   const addProject = useAddProject(source);
-  const createProject = useCreateProject(source);
   const [mode, setMode] = React.useState<ProjectMode>('create');
   const [title, setTitle] = React.useState('');
   const [description, setDescription] = React.useState('');
   const [path, setPath] = React.useState('');
-  const [directoryName, setDirectoryName] = React.useState('');
   const [needsInit, setNeedsInit] = React.useState(false);
   const [pending, setPending] = React.useState(false);
-  const [folderPickerOpen, setFolderPickerOpen] = React.useState(false);
-  const busy = pending || addProject.isPending || createProject.isPending;
+  const busy = pending || addProject.isPending;
 
   const reset = React.useCallback(() => {
-    setTitle(''); setDescription(''); setPath(''); setDirectoryName(''); setNeedsInit(false); setMode('create'); setFolderPickerOpen(false);
+    setTitle(''); setDescription(''); setPath(''); setNeedsInit(false); setMode('create');
   }, []);
   const close = React.useCallback(() => { reset(); onClose(); }, [onClose, reset]);
 
@@ -49,9 +45,12 @@ export function AddProjectModal({ open, onClose, onAdded }: AddProjectModalProps
     if (!title.trim()) { UIMessage.error('Enter a project title'); return; }
     setPending(true);
     try {
-      const project = mode === 'create'
-        ? await createProject.mutateAsync({ parentPath: path, directoryName, title: title.trim(), description })
-        : await addProject.mutateAsync({ path, title: title.trim(), description, init: initialize });
+      const project = await addProject.mutateAsync({
+        path,
+        title: title.trim(),
+        description,
+        init: mode === 'create' || initialize,
+      });
       setActiveProjectId(project.id);
       UIMessage.success(`Project “${project.title}” is ready`);
       reset();
@@ -65,13 +64,25 @@ export function AddProjectModal({ open, onClose, onAdded }: AddProjectModalProps
     } finally {
       setPending(false);
     }
-  }, [addProject, createProject, description, directoryName, mode, onAdded, path, reset, setActiveProjectId, title]);
+  }, [addProject, description, mode, onAdded, path, reset, setActiveProjectId, title]);
 
-  const canSubmit = mode === 'create' ? path.trim() && directoryName.trim() : path.trim();
+  const chooseFolder = React.useCallback(async () => {
+    setPending(true);
+    try {
+      const selected = await source.pickFolder();
+      if (selected) setPath(selected);
+    } catch (error) {
+      UIMessage.error(error instanceof Error ? error.message : 'Could not open the native folder chooser');
+    } finally {
+      setPending(false);
+    }
+  }, [source]);
+
+  const canSubmit = path.trim();
   return (
     <>
     <UIModal
-      open={open && !folderPickerOpen}
+      open={open}
       title={needsInit ? 'Initialize project?' : mode === 'create' ? 'Create project' : 'Connect existing project'}
       onCancel={needsInit ? () => setNeedsInit(false) : close}
       confirmLoading={busy}
@@ -96,28 +107,18 @@ export function AddProjectModal({ open, onClose, onAdded }: AddProjectModalProps
           <label style={{ display: 'grid', gap: 6 }}>Description<UIInputTextArea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="What is this project for?" /></label>
           {mode === 'create' ? (
             <>
-              <label style={{ display: 'grid', gap: 6 }}>Parent folder<UIInput value={path} onChange={setPath} placeholder="/path/to/parent-folder" /></label>
-              <UIButton onClick={() => setFolderPickerOpen(true)}>Choose parent folder</UIButton>
-              <label style={{ display: 'grid', gap: 6 }}>New folder name<UIInput value={directoryName} onChange={setDirectoryName} placeholder="project-folder" /></label>
+              <label style={{ display: 'grid', gap: 6 }}>Project folder<UIInput value={path} onChange={setPath} placeholder="/path/to/project-folder" /></label>
+              <UIButton disabled={busy} onClick={() => void chooseFolder()}>Choose project folder</UIButton>
             </>
           ) : (
             <>
               <label style={{ display: 'grid', gap: 6 }}>Project folder<UIInput value={path} onChange={setPath} placeholder="/path/to/project-folder" /></label>
-              <UIButton onClick={() => setFolderPickerOpen(true)}>Choose project folder</UIButton>
+              <UIButton disabled={busy} onClick={() => void chooseFolder()}>Choose project folder</UIButton>
             </>
           )}
         </div>
       )}
     </UIModal>
-    <ProjectDirectoryPicker
-      open={open && folderPickerOpen}
-      title={mode === 'create' ? 'Choose parent folder' : 'Choose project folder'}
-      onCancel={() => setFolderPickerOpen(false)}
-      onSelect={(selectedPath) => {
-        setPath(selectedPath);
-        setFolderPickerOpen(false);
-      }}
-    />
     </>
   );
 }

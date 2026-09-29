@@ -20,13 +20,9 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import { promises as fs } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
 import { createErrorEnvelope } from "@kb-labs/core-platform";
 import type {
   IProjectRegistry,
-  ProjectDirectoryListing,
   ProjectEntry,
   ProjectRuntimeInfo,
   ProjectRuntimeState,
@@ -34,21 +30,21 @@ import type {
 } from "@kb-labs/core-contracts";
 import {
   addProject,
-  canonicalizeProjectPath,
-  createProject,
   isProjectRegistryError,
   listProjects,
   projectErrorEnvelope,
-  ProjectRegistryError,
   showProject,
 } from "@kb-labs/core-project-registry";
 import type { HostRoutes } from "@kb-labs/gateway-app";
 import { invalidBody, sendData, sendEnvelope } from "./envelope.js";
 import type { ProjectRuntimeManager } from "./project-runtime/manager.js";
+import { pickNativeFolder } from "./native-folder-picker.js";
 
 export interface ProjectsRoutesOptions {
   registry: IProjectRegistry;
   manager: ProjectRuntimeManager;
+  /** Injectable for tests; production opens a native dialog on the Host machine. */
+  pickFolder?: () => Promise<string | null>;
 }
 
 /** `stopped` for a registered project the manager has no entry for. */
@@ -76,47 +72,6 @@ function toEntry(
   return { ...summary, runtime: runtimeInfoFor(manager, summary.id) };
 }
 
-/**
- * This endpoint is intentionally limited to the project-folder picker. It
- * returns child directory names and paths only: no files, contents or
- * metadata. The Gateway's existing authentication protects access to it.
- */
-async function listProjectDirectories(path?: string): Promise<ProjectDirectoryListing> {
-  if (path === undefined) {
-    const candidates = [process.cwd(), homedir()];
-    const directories = await Promise.all(candidates.map(async (candidate) => {
-      try {
-        const canonicalPath = await canonicalizeProjectPath(candidate);
-        return { name: canonicalPath, path: canonicalPath };
-      } catch {
-        return null;
-      }
-    }));
-    const unique = new Map(directories.filter((entry) => entry !== null).map((entry) => [entry.path, entry]));
-    return { currentPath: null, parentPath: null, directories: [...unique.values()] };
-  }
-
-  const currentPath = await canonicalizeProjectPath(path);
-  let entries;
-  try {
-    entries = await fs.readdir(currentPath, { withFileTypes: true });
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EACCES" || code === "EPERM") {
-      throw new ProjectRegistryError("KB_PROJECT_NO_ACCESS", `No permission to read: ${currentPath}`, { path: currentPath });
-    }
-    throw error;
-  }
-
-  const parent = dirname(currentPath);
-  const directories = entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => ({ name: entry.name, path: join(currentPath, entry.name) }))
-    .sort((left, right) => left.name.localeCompare(right.name));
-
-  return { currentPath, parentPath: parent === currentPath ? null : parent, directories };
-}
-
 interface AddProjectBody {
   path?: unknown;
   name?: unknown;
@@ -131,13 +86,6 @@ interface UpdateProjectBody {
   description?: unknown;
 }
 
-interface CreateProjectBody {
-  parentPath?: unknown;
-  directoryName?: unknown;
-  title?: unknown;
-  description?: unknown;
-}
-
 /**
  * Builds the `/api/v1/projects` Fastify plugin. The gateway mounts it as
  * {@link HostRoutes} via `GatewayEmbedOptions.hostRoutes`.
@@ -146,14 +94,18 @@ export function createProjectsRoutes(
   options: ProjectsRoutesOptions,
 ): HostRoutes {
   const { registry, manager } = options;
+  const pickFolder = options.pickFolder ?? pickNativeFolder;
 
   return async function projectsRoutes(app: FastifyInstance) {
-    app.get<{ Querystring: { path?: string } }>("/api/v1/projects/directories", async (request, reply) => {
+    app.post("/api/v1/projects/pick-folder", async (_request, reply) => {
       try {
-        const listing = await listProjectDirectories(request.query.path);
-        return sendData(reply, listing);
+        return sendData(reply, { path: await pickFolder() });
       } catch (error) {
-        return sendEnvelope(reply, projectErrorEnvelope(error));
+        const message = error instanceof Error ? error.message : "Native folder picker failed.";
+        return reply.code(503).send({
+          ok: false,
+          error: createErrorEnvelope("KB_HOST_FOLDER_PICKER_UNAVAILABLE", { cause: message }),
+        });
       }
     });
 
@@ -212,37 +164,6 @@ export function createProjectsRoutes(
           }
           // `status === "planned"` cannot happen: this route never passes `dryRun`.
           const summary = await showProject(registry, outcome.project.id);
-          return sendData(reply, toEntry(manager, summary), 201);
-        } catch (error) {
-          return sendEnvelope(reply, projectErrorEnvelope(error));
-        }
-      },
-    );
-
-    app.post<{ Body: CreateProjectBody }>(
-      "/api/v1/projects/create",
-      async (request, reply) => {
-        const { parentPath, directoryName, title, description } = request.body ?? {};
-        if (typeof parentPath !== "string" || parentPath.trim() === "") {
-          return sendEnvelope(reply, invalidBody("parentPath", "must be a non-empty string"));
-        }
-        if (typeof directoryName !== "string" || directoryName.trim() === "") {
-          return sendEnvelope(reply, invalidBody("directoryName", "must be a non-empty string"));
-        }
-        if (typeof title !== "string" || title.trim() === "") {
-          return sendEnvelope(reply, invalidBody("title", "must be a non-empty string"));
-        }
-        if (description !== undefined && typeof description !== "string") {
-          return sendEnvelope(reply, invalidBody("description", "must be a string"));
-        }
-        try {
-          const project = await createProject(registry, {
-            parentPath,
-            directoryName,
-            title,
-            description: description as string | undefined,
-          });
-          const summary = await showProject(registry, project.id);
           return sendData(reply, toEntry(manager, summary), 201);
         } catch (error) {
           return sendEnvelope(reply, projectErrorEnvelope(error));

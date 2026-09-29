@@ -140,16 +140,3 @@ export interface ProjectRuntimeInfo {
 export interface ProjectEntry extends ProjectSummary {
   runtime: ProjectRuntimeInfo;
 }
-
-/** One child directory returned by the authenticated project-folder picker. */
-export interface ProjectDirectoryEntry {
-  name: string;
-  path: string;
-}
-
-/** Directories visible at the current picker location; file names and contents are never returned. */
-export interface ProjectDirectoryListing {
-  currentPath: string | null;
-  parentPath: string | null;
-  directories: ProjectDirectoryEntry[];
-}

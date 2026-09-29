@@ -4,10 +4,10 @@
  * manager (only `status()` is exercised by this module).
  */
 
-import { mkdtemp, mkdir, rm, realpath, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
@@ -46,9 +46,9 @@ describe("createProjectsRoutes", () => {
     await rm(kbHome, { recursive: true, force: true });
   });
 
-  async function setup(manager: ProjectRuntimeManager = stubManager(EMPTY_SNAPSHOT)) {
+  async function setup(manager: ProjectRuntimeManager = stubManager(EMPTY_SNAPSHOT), pickFolder?: () => Promise<string | null>) {
     app = Fastify();
-    await app.register(createProjectsRoutes({ registry, manager }));
+    await app.register(createProjectsRoutes({ registry, manager, pickFolder }));
     await app.ready();
     return app;
   }
@@ -68,22 +68,36 @@ describe("createProjectsRoutes", () => {
     expect(body.data[0]).toMatchObject({ id: project.id, runtime: { state: "stopped" } });
   });
 
-  it("lists only child directories for the authenticated project folder picker", async () => {
-    const parent = join(kbHome, "picker");
-    const child = join(parent, "child");
-    await mkdir(child, { recursive: true });
-    await writeFile(join(parent, "file.txt"), "not exposed by the picker");
-    const instance = await setup();
+  it("returns the absolute folder selected by the Host native picker", async () => {
+    const selectedPath = await realpath(kbHome);
+    const picker = vi.fn().mockResolvedValue(selectedPath);
+    const instance = await setup(stubManager(EMPTY_SNAPSHOT), picker);
 
-    const res = await instance.inject({ method: "GET", url: `/api/v1/projects/directories?path=${encodeURIComponent(parent)}` });
+    const res = await instance.inject({ method: "POST", url: "/api/v1/projects/pick-folder" });
 
     expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, data: { path: selectedPath } });
+    expect(picker).toHaveBeenCalledOnce();
+  });
+
+  it("returns a successful null result when the native picker is cancelled", async () => {
+    const instance = await setup(stubManager(EMPTY_SNAPSHOT), async () => null);
+    const res = await instance.inject({ method: "POST", url: "/api/v1/projects/pick-folder" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, data: { path: null } });
+  });
+
+  it("reports native picker availability failures with a dedicated host error", async () => {
+    const instance = await setup(stubManager(EMPTY_SNAPSHOT), async () => {
+      throw new Error("No desktop session");
+    });
+    const res = await instance.inject({ method: "POST", url: "/api/v1/projects/pick-folder" });
+    expect(res.statusCode).toBe(503);
     expect(res.json()).toMatchObject({
-      ok: true,
-      data: {
-        currentPath: await realpath(parent),
-        parentPath: await realpath(kbHome),
-          directories: [{ name: "child", path: join(await realpath(parent), "child") }],
+      ok: false,
+      error: {
+        code: "KB_HOST_FOLDER_PICKER_UNAVAILABLE",
+        cause: "No desktop session",
       },
     });
   });
@@ -142,17 +156,17 @@ describe("createProjectsRoutes", () => {
     expect(await registry.list()).toHaveLength(1);
   });
 
-  it("POST /create creates an initialized project folder with metadata", async () => {
-    const parent = join(kbHome, "workspaces");
-    await mkdir(parent);
+  it("POST initializes the exact selected folder with metadata", async () => {
+    const selectedFolder = join(kbHome, "workspaces", "new-workspace");
+    await mkdir(selectedFolder, { recursive: true });
     const instance = await setup();
 
     const res = await instance.inject({
       method: "POST",
-      url: "/api/v1/projects/create",
+      url: "/api/v1/projects",
       payload: {
-        parentPath: parent,
-        directoryName: "new-workspace",
+        path: selectedFolder,
+        init: true,
         title: "New workspace",
         description: "Created from Studio",
       },
@@ -161,11 +175,11 @@ describe("createProjectsRoutes", () => {
     expect(res.statusCode).toBe(201);
     const body = res.json() as DataBody<{ id: string; path: string; title: string; description: string }>;
     expect(body.data).toMatchObject({
-      path: await realpath(join(parent, "new-workspace")),
+      path: await realpath(selectedFolder),
       title: "New workspace",
       description: "Created from Studio",
     });
-    await expect(mkdir(join(parent, "new-workspace", ".kb"))).rejects.toMatchObject({ code: "EEXIST" });
+    await expect(mkdir(join(selectedFolder, ".kb"))).rejects.toMatchObject({ code: "EEXIST" });
     expect((await registry.get(body.data.id)).project.path).toBe(body.data.path);
   });
 

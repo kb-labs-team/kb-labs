@@ -27,7 +27,6 @@ import { useProjects, useRemoveProject, useUpdateProject } from '@kb-labs/studio
 import type { ProjectEntry, ProjectRuntimeState } from '@kb-labs/core-contracts';
 import { AddProjectModal } from '../components/add-project-modal';
 import { useActiveProject } from '@/providers/active-project-provider';
-import { ProjectDirectoryPicker } from '../components/project-directory-picker';
 
 const RUNTIME_TAG: Record<ProjectRuntimeState, { label: string; variant: 'success' | 'warning' | 'error' | 'info' | 'default' }> = {
   ready: { label: 'Running', variant: 'success' },
@@ -140,6 +139,7 @@ export function ProjectsPage() {
       {editProject && (
         <EditProjectModal
           project={editProject}
+          pickFolder={() => projectsSource.pickFolder()}
           onClose={() => setEditProject(null)}
           onSave={async (changes) => {
             await updateProject.mutateAsync({ id: editProject.id, ...changes });
@@ -151,8 +151,9 @@ export function ProjectsPage() {
   );
 }
 
-function EditProjectModal({ project, onClose, onSave }: {
+function EditProjectModal({ project, pickFolder, onClose, onSave }: {
   project: ProjectEntry;
+  pickFolder: () => Promise<string | null>;
   onClose: () => void;
   onSave: (changes: { title: string; description: string; path: string }) => Promise<void>;
 }) {
@@ -160,27 +161,23 @@ function EditProjectModal({ project, onClose, onSave }: {
   const [description, setDescription] = React.useState(project.description);
   const [path, setPath] = React.useState(project.path);
   const [saving, setSaving] = React.useState(false);
-  const [folderPickerOpen, setFolderPickerOpen] = React.useState(false);
+  const [choosingFolder, setChoosingFolder] = React.useState(false);
   return (
     <>
-    <UIModal open={!folderPickerOpen} title="Project settings" okText="Save" onCancel={onClose} confirmLoading={saving} onOk={() => {
+    <UIModal open title="Project settings" okText="Save" onCancel={onClose} confirmLoading={saving || choosingFolder} onOk={() => {
       setSaving(true);
       void onSave({ title, description, path }).catch((error) => UIMessage.error(error instanceof Error ? error.message : 'Failed to update project')).finally(() => setSaving(false));
     }}>
       <label style={{ display: 'grid', gap: 6, marginBottom: 16 }}>Title<UIInput value={title} onChange={setTitle} /></label>
       <label style={{ display: 'grid', gap: 6, marginBottom: 16 }}>Description<UIInputTextArea value={description} rows={3} onChange={(event) => setDescription(event.target.value)} /></label>
       <label style={{ display: 'grid', gap: 6 }}>Project folder path<UIInput value={path} onChange={setPath} /></label>
-      <UIButton style={{ marginTop: 8 }} onClick={() => setFolderPickerOpen(true)}>Choose project folder</UIButton>
+      <UIButton style={{ marginTop: 8 }} disabled={choosingFolder} onClick={() => {
+        setChoosingFolder(true);
+        void pickFolder().then((selected) => { if (selected) setPath(selected); })
+          .catch((error: unknown) => UIMessage.error(error instanceof Error ? error.message : 'Could not open the native folder chooser'))
+          .finally(() => setChoosingFolder(false));
+      }}>Choose project folder</UIButton>
     </UIModal>
-    <ProjectDirectoryPicker
-      open={folderPickerOpen}
-      title="Choose project folder"
-      onCancel={() => setFolderPickerOpen(false)}
-      onSelect={(selectedPath) => {
-        setPath(selectedPath);
-        setFolderPickerOpen(false);
-      }}
-    />
     </>
   );
 }

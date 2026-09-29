@@ -4,7 +4,7 @@
  * operations as `kb project *` (ADR-0044).
  */
 
-import type { ProjectDirectoryListing, ProjectEntry } from '@kb-labs/core-contracts';
+import type { ProjectEntry } from '@kb-labs/core-contracts';
 
 export interface AddProjectParams {
   /** Absolute (or host-cwd-relative) folder path. */
@@ -17,13 +17,6 @@ export interface AddProjectParams {
   init?: boolean;
 }
 
-export interface CreateProjectParams {
-  parentPath: string;
-  directoryName: string;
-  title: string;
-  description?: string;
-}
-
 export interface UpdateProjectParams {
   path?: string;
   title?: string;
@@ -31,11 +24,10 @@ export interface UpdateProjectParams {
 }
 
 export interface ProjectsDataSource {
-  listDirectories(path?: string): Promise<ProjectDirectoryListing>;
+  pickFolder(): Promise<string | null>;
   listProjects(): Promise<ProjectEntry[]>;
   getProject(id: string): Promise<ProjectEntry>;
   addProject(params: AddProjectParams): Promise<ProjectEntry>;
-  createProject(params: CreateProjectParams): Promise<ProjectEntry>;
   updateProject(id: string, params: UpdateProjectParams): Promise<ProjectEntry>;
   removeProject(id: string): Promise<{ id: string }>;
 }

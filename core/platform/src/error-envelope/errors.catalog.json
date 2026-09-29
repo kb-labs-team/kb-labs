@@ -309,6 +309,15 @@
       "hint": "Run \"kb-create start\", or \"kb-create doctor\" if the host should already be running."
     },
     {
+      "code": "KB_HOST_FOLDER_PICKER_UNAVAILABLE",
+      "area": "host",
+      "stage": "add-project",
+      "severity": "error",
+      "retryable": false,
+      "message": "The Host could not open a native folder chooser.",
+      "hint": "Run Host in a desktop session. On Linux, install zenity or kdialog."
+    },
+    {
       "code": "KB_HOST_ALREADY_RUNNING",
       "area": "host",
       "stage": "start",

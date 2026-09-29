@@ -11,12 +11,14 @@ A KB Labs platform can be installed before you choose a project. Projects are st
 
 Open **Projects** in Studio and choose **Add project**.
 
-- **Create new** makes a new folder below the selected parent, initializes its `.kb/` declaration, and registers it.
+- **Create new** lets you choose or create the project folder in the Host machine's native folder dialog, initializes its `.kb/` declaration, and registers it.
 - **Connect existing** registers a folder already on disk. If it has no `.kb/` declaration, Studio asks before initializing it.
 
 Set a title and description so the project is recognizable in the sidebar. The project path must be reachable by the machine running the platform Host.
 
-The folder picker lists directories on the Host machine. It shows directory names and paths only; it does not read or upload project files. Use the same picker when you update the path of a moved project.
+**Choose project folder** opens the operating system's native folder dialog on the machine running Host. It returns the selected absolute folder path to Studio; it does not send a directory listing or project files through the API. Use the same chooser when you connect an existing folder or update the path of a moved project. Cancelling the dialog leaves the current path unchanged.
+
+Host must run in a desktop session where it can open native dialogs. On Linux, install `zenity` or `kdialog` on the Host machine.
 
 ## Select the active project
 

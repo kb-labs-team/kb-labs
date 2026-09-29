@@ -2,9 +2,9 @@
  * Mock implementation of ProjectsDataSource, for Studio's mock data-source mode.
  */
 
-import type { ProjectDirectoryListing, ProjectEntry } from '@kb-labs/core-contracts';
+import type { ProjectEntry } from '@kb-labs/core-contracts';
 import { KBError, errorCodes } from '../errors/kb-error';
-import type { AddProjectParams, CreateProjectParams, ProjectsDataSource, UpdateProjectParams } from '../sources/projects-source';
+import type { AddProjectParams, ProjectsDataSource, UpdateProjectParams } from '../sources/projects-source';
 
 function makeEntry(overrides: Partial<ProjectEntry>): ProjectEntry {
   const now = new Date().toISOString();
@@ -51,19 +51,8 @@ export class MockProjectsSource implements ProjectsDataSource {
     return [...this.projects];
   }
 
-  async listDirectories(path?: string): Promise<ProjectDirectoryListing> {
-    if (!path) {
-      return {
-        currentPath: null,
-        parentPath: null,
-        directories: [{ name: '/workspace', path: '/workspace' }, { name: '/home/user', path: '/home/user' }],
-      };
-    }
-    const childDirectories = path === '/workspace'
-      ? [{ name: 'kb-labs-site', path: '/workspace/kb-labs-site' }, { name: 'kb-labs-workspace', path: '/workspace/kb-labs-workspace' }]
-      : [];
-    const parentPath = path === '/' ? null : path.split('/').slice(0, -1).join('/') || '/';
-    return { currentPath: path, parentPath, directories: childDirectories };
+  async pickFolder(): Promise<string | null> {
+    return '/workspace/sample-project';
   }
 
   async getProject(id: string): Promise<ProjectEntry> {
@@ -89,11 +78,6 @@ export class MockProjectsSource implements ProjectsDataSource {
     });
     this.projects = [...this.projects, entry];
     return entry;
-  }
-
-  async createProject(params: CreateProjectParams): Promise<ProjectEntry> {
-    const path = `${params.parentPath.replace(/\/$/, '')}/${params.directoryName}`;
-    return this.addProject({ path, title: params.title, description: params.description, init: true });
   }
 
   async updateProject(id: string, params: UpdateProjectParams): Promise<ProjectEntry> {

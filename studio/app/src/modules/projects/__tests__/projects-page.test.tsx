@@ -118,66 +118,65 @@ describe('ProjectsPage', () => {
     const entry = makeEntry({ id: 'prj_1234567890abcdef1234567890abcdef', title: 'New app', path: '/workspace/new-app' });
     let listed: ProjectEntry[] = [];
     const listProjects = vi.fn().mockImplementation(async () => listed);
-    const createProject = vi.fn().mockImplementation(async () => {
+    const addProject = vi.fn().mockImplementation(async () => {
       listed = [entry];
       return entry;
     });
-    renderPage({ projects: { listProjects, createProject } as never });
+    renderPage({ projects: { listProjects, addProject } as never });
 
     await waitFor(() => expect(screen.getByText(/no projects registered/i)).toBeDefined());
     fireEvent.click(screen.getAllByRole('button', { name: /add project/i })[0]!);
     fireEvent.change(screen.getByLabelText(/project title/i), { target: { value: 'New app' } });
-    fireEvent.change(screen.getByLabelText(/parent folder/i), { target: { value: '/workspace' } });
-    fireEvent.change(screen.getByLabelText(/new folder name/i), { target: { value: 'new-app' } });
+    fireEvent.change(screen.getByLabelText(/project folder/i), { target: { value: '/workspace/new-app' } });
 
     await act(async () => fireEvent.click(screen.getByRole('button', { name: /create project/i })));
 
-    await waitFor(() => expect(createProject).toHaveBeenCalledWith({
-      parentPath: '/workspace', directoryName: 'new-app', title: 'New app', description: '',
+    await waitFor(() => expect(addProject).toHaveBeenCalledWith({
+      path: '/workspace/new-app', title: 'New app', description: '', init: true,
     }));
     await waitFor(() => expect(window.localStorage.getItem('kb-studio-active-project-id')).toBe(entry.id));
   });
 
-  it('chooses a Host folder for project creation through the directory picker', async () => {
+  it('uses the Host native folder chooser and selects the exact folder', async () => {
     const listProjects = vi.fn().mockResolvedValue([]);
-    const listDirectories = vi.fn().mockImplementation(async (path?: string) => {
-      if (path === '/workspace') return { currentPath: path, parentPath: '/', directories: [{ name: 'demo', path: '/workspace/demo' }] };
-      if (path === '/workspace/demo') return { currentPath: path, parentPath: '/workspace', directories: [] };
-      return { currentPath: null, parentPath: null, directories: [{ name: '/workspace', path: '/workspace' }] };
-    });
-    renderPage({ projects: { listProjects, listDirectories } as never });
+    const pickFolder = vi.fn().mockResolvedValue('/workspace/demo');
+    renderPage({ projects: { listProjects, pickFolder } as never });
 
     await waitFor(() => expect(screen.getByText(/no projects registered/i)).toBeDefined());
     fireEvent.click(screen.getAllByRole('button', { name: /add project/i })[0]!);
-    fireEvent.click(screen.getByRole('button', { name: /choose parent folder/i }));
+    fireEvent.click(screen.getByRole('button', { name: /choose project folder/i }));
 
-    await waitFor(() => expect(listDirectories).toHaveBeenCalledWith(undefined));
-    fireEvent.click(await screen.findByRole('button', { name: '/workspace' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'demo' }));
-    await waitFor(() => expect(listDirectories).toHaveBeenCalledWith('/workspace/demo'));
-    fireEvent.click(await screen.findByRole('button', { name: /choose this folder/i }));
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledOnce());
+    await waitFor(() => expect((screen.getByLabelText(/project folder/i) as HTMLInputElement).value).toBe('/workspace/demo'));
+  });
 
-    await waitFor(() => expect((screen.getByLabelText(/parent folder/i) as HTMLInputElement).value).toBe('/workspace/demo'));
+  it('keeps the entered path when the Host native folder chooser is cancelled', async () => {
+    const listProjects = vi.fn().mockResolvedValue([]);
+    const pickFolder = vi.fn().mockResolvedValue(null);
+    renderPage({ projects: { listProjects, pickFolder } as never });
+
+    await waitFor(() => expect(screen.getByText(/no projects registered/i)).toBeDefined());
+    fireEvent.click(screen.getAllByRole('button', { name: /add project/i })[0]!);
+    fireEvent.change(screen.getByLabelText(/project folder/i), { target: { value: '/workspace/typed-path' } });
+    fireEvent.click(screen.getByRole('button', { name: /choose project folder/i }));
+
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledOnce());
+    await waitFor(() => expect((screen.getByLabelText(/project folder/i) as HTMLInputElement).value).toBe('/workspace/typed-path'));
   });
 
   it('repairs an unavailable project path using the folder picker', async () => {
     const unavailable = makeEntry({ pathExists: false, path: '/missing/demo' });
     const listProjects = vi.fn().mockResolvedValue([unavailable]);
     const updateProject = vi.fn().mockResolvedValue(makeEntry({ path: '/workspace/recovered' }));
-    const listDirectories = vi.fn().mockImplementation(async (path?: string) => {
-      if (path === '/workspace') return { currentPath: path, parentPath: '/', directories: [{ name: 'recovered', path: '/workspace/recovered' }] };
-      if (path === '/workspace/recovered') return { currentPath: path, parentPath: '/workspace', directories: [] };
-      return { currentPath: null, parentPath: null, directories: [{ name: '/workspace', path: '/workspace' }] };
-    });
-    renderPage({ projects: { listProjects, updateProject, listDirectories } as never });
+    const pickFolder = vi.fn().mockResolvedValue('/workspace/recovered');
+    renderPage({ projects: { listProjects, updateProject, pickFolder } as never });
 
     await waitFor(() => expect(screen.getByText('Folder unavailable')).toBeDefined());
     fireEvent.click(screen.getByRole('button', { name: /update path/i }));
     fireEvent.click(screen.getByRole('button', { name: /choose project folder/i }));
-    fireEvent.click(await screen.findByRole('button', { name: '/workspace' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'recovered' }));
-    await waitFor(() => expect(listDirectories).toHaveBeenCalledWith('/workspace/recovered'));
-    fireEvent.click(await screen.findByRole('button', { name: /choose this folder/i }));
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledOnce());
+    await waitFor(() => expect((screen.getByLabelText(/project folder path/i) as HTMLInputElement).value).toBe('/workspace/recovered'));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^save$/i }).hasAttribute('disabled')).toBe(false));
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
     await waitFor(() => expect(updateProject).toHaveBeenCalledWith('prj_1', { path: '/workspace/recovered', title: 'Demo', description: '' }));

@@ -17,12 +17,6 @@ test('PM-E2E-01: register a project, move its path, and unregister it', async ({
 
   let projectId: string | undefined
   try {
-    const folders = await request.get(`${GATEWAY}/api/v1/projects/directories?path=${encodeURIComponent(await realpath(sandbox))}`, { headers })
-    expect(folders.status()).toBe(200)
-    expect((await folders.json()).data.directories).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'first', path: canonicalFirstPath }),
-    ]))
-
     const created = await request.post(`${GATEWAY}/api/v1/projects`, {
       headers,
       data: { path: canonicalFirstPath, title: 'Project management E2E', description: 'Host REST lifecycle' },
@@ -43,11 +37,6 @@ test('PM-E2E-01: register a project, move its path, and unregister it', async ({
     const unavailable = await request.get(`${GATEWAY}/api/v1/projects/${projectId}`, { headers })
     expect(unavailable.status()).toBe(200)
     expect((await unavailable.json()).data).toMatchObject({ id: projectId, path: canonicalFirstPath, pathExists: false })
-    const movedFolders = await request.get(`${GATEWAY}/api/v1/projects/directories?path=${encodeURIComponent(await realpath(sandbox))}`, { headers })
-    expect((await movedFolders.json()).data.directories).toEqual([
-      expect.objectContaining({ name: 'moved', path: await realpath(movedPath) }),
-    ])
-
     const canonicalMovedPath = await realpath(movedPath)
     const moved = await request.patch(`${GATEWAY}/api/v1/projects/${projectId}`, { headers, data: { path: canonicalMovedPath } })
     expect(moved.status()).toBe(200)
@@ -126,15 +115,14 @@ test('PM-E2E-02: create and initialize a project without deleting it on unregist
   const token = await getAccessToken(request)
   const headers = { Authorization: `Bearer ${token}` }
   const sandbox = await mkdtemp(join(tmpdir(), 'kb-project-create-e2e-'))
-  const parentPath = await realpath(sandbox)
-  const directoryName = 'new-project'
-  const projectPath = join(parentPath, directoryName)
+  const projectPath = join(await realpath(sandbox), 'new-project')
 
   let projectId: string | undefined
   try {
-    const response = await request.post(`${GATEWAY}/api/v1/projects/create`, {
+    await mkdir(projectPath)
+    const response = await request.post(`${GATEWAY}/api/v1/projects`, {
       headers,
-      data: { parentPath, directoryName, title: 'Created project', description: 'Initialized through Host REST' },
+      data: { path: projectPath, init: true, title: 'Created project', description: 'Initialized through Host REST' },
     })
     expect(response.status()).toBe(201)
     const body = await response.json()
@@ -153,6 +141,46 @@ test('PM-E2E-02: create and initialize a project without deleting it on unregist
     expect(removed.status()).toBe(200)
     projectId = undefined
     await access(join(projectPath, '.kb', 'kb.config.yaml'))
+  } finally {
+    if (projectId) await request.delete(`${GATEWAY}/api/v1/projects/${projectId}`, { headers }).catch(() => undefined)
+    await rm(sandbox, { recursive: true, force: true })
+  }
+})
+
+test('PM-E2E-04: Studio uses the Host folder chooser result for creation', async ({ request, page }) => {
+  const token = await getAccessToken(request)
+  const headers = { Authorization: `Bearer ${token}` }
+  const sandbox = await mkdtemp(join(tmpdir(), 'kb-project-picker-e2e-'))
+  const selectedPath = join(await realpath(sandbox), 'selected-project')
+  await mkdir(selectedPath)
+  let projectId: string | undefined
+
+  try {
+    await page.route('**/api/v1/**', async (route) => {
+      if (route.request().url().endsWith('/projects/pick-folder')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ ok: true, data: { path: selectedPath } }),
+        })
+        return
+      }
+      await route.continue({ headers: { ...route.request().headers(), authorization: `Bearer ${token}` } })
+    })
+    await page.goto(`${GATEWAY}/projects`)
+    await page.getByRole('button', { name: /add project/i }).first().click()
+    await page.getByLabel(/project title/i).fill('Native picker E2E')
+    await page.getByRole('button', { name: /choose project folder/i }).click()
+    await expect(page.getByLabel(/project folder/i)).toHaveValue(selectedPath)
+    await page.getByRole('button', { name: /create project/i }).click()
+
+    const card = page.getByRole('article', { name: 'Native picker E2E project' })
+    await expect(card).toBeVisible()
+    await expect(card.getByText(selectedPath)).toBeVisible()
+    const projects = await request.get(`${GATEWAY}/api/v1/projects`, { headers })
+    const project = (await projects.json()).data.find((entry: { title: string }) => entry.title === 'Native picker E2E')
+    projectId = project?.id
+    expect(project?.path).toBe(selectedPath)
   } finally {
     if (projectId) await request.delete(`${GATEWAY}/api/v1/projects/${projectId}`, { headers }).catch(() => undefined)
     await rm(sandbox, { recursive: true, force: true })

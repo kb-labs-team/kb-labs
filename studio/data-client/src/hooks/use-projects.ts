@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { qk } from '../query-keys';
-import type { AddProjectParams, CreateProjectParams, ProjectsDataSource, UpdateProjectParams } from '../sources/projects-source';
+import type { AddProjectParams, ProjectsDataSource, UpdateProjectParams } from '../sources/projects-source';
 
 export function useProjects(source: ProjectsDataSource) {
   return useQuery({
@@ -8,15 +8,6 @@ export function useProjects(source: ProjectsDataSource) {
     queryFn: () => source.listProjects(),
     refetchInterval: 10_000,
     staleTime: 5_000,
-  });
-}
-
-export function useProjectDirectories(source: ProjectsDataSource, path?: string, enabled = true) {
-  return useQuery({
-    queryKey: qk.projects.directories(path),
-    queryFn: () => source.listDirectories(path),
-    enabled,
-    staleTime: 0,
   });
 }
 
@@ -35,14 +26,6 @@ export function useAddProject(source: ProjectsDataSource) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: qk.projects.all });
     },
-  });
-}
-
-export function useCreateProject(source: ProjectsDataSource) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (params: CreateProjectParams) => source.createProject(params),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.projects.all }),
   });
 }
 

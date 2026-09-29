@@ -77,7 +77,6 @@ export const qk = {
     all: ['projects'] as const,
     list: () => [...qk.projects.all, 'list'] as const,
     byId: (id: string) => [...qk.projects.all, 'detail', id] as const,
-    directories: (path?: string) => [...qk.projects.all, 'directories', path ?? null] as const,
   },
 
   // Per-project plugin enable/disable (stage 6, second slice).
