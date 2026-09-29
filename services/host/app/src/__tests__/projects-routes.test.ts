@@ -4,7 +4,7 @@
  * manager (only `status()` is exercised by this module).
  */
 
-import { mkdtemp, mkdir, rm, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -68,6 +68,26 @@ describe("createProjectsRoutes", () => {
     expect(body.data[0]).toMatchObject({ id: project.id, runtime: { state: "stopped" } });
   });
 
+  it("lists only child directories for the authenticated project folder picker", async () => {
+    const parent = join(kbHome, "picker");
+    const child = join(parent, "child");
+    await mkdir(child, { recursive: true });
+    await writeFile(join(parent, "file.txt"), "not exposed by the picker");
+    const instance = await setup();
+
+    const res = await instance.inject({ method: "GET", url: `/api/v1/projects/directories?path=${encodeURIComponent(parent)}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      ok: true,
+      data: {
+        currentPath: await realpath(parent),
+        parentPath: await realpath(kbHome),
+          directories: [{ name: "child", path: join(await realpath(parent), "child") }],
+      },
+    });
+  });
+
   it("reports runtime state from the manager snapshot", async () => {
     const dir = await mkdtemp(join(tmpdir(), "kb-proj-"));
     await mkdir(join(dir, ".kb"));
@@ -120,6 +140,75 @@ describe("createProjectsRoutes", () => {
     expect(body.data.path).toBe(dir);
     expect(body.data.runtime.state).toBe("stopped");
     expect(await registry.list()).toHaveLength(1);
+  });
+
+  it("POST /create creates an initialized project folder with metadata", async () => {
+    const parent = join(kbHome, "workspaces");
+    await mkdir(parent);
+    const instance = await setup();
+
+    const res = await instance.inject({
+      method: "POST",
+      url: "/api/v1/projects/create",
+      payload: {
+        parentPath: parent,
+        directoryName: "new-workspace",
+        title: "New workspace",
+        description: "Created from Studio",
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as DataBody<{ id: string; path: string; title: string; description: string }>;
+    expect(body.data).toMatchObject({
+      path: await realpath(join(parent, "new-workspace")),
+      title: "New workspace",
+      description: "Created from Studio",
+    });
+    await expect(mkdir(join(parent, "new-workspace", ".kb"))).rejects.toMatchObject({ code: "EEXIST" });
+    expect((await registry.get(body.data.id)).project.path).toBe(body.data.path);
+  });
+
+  it("PATCH updates project metadata and path without changing the project id", async () => {
+    const originalPath = join(kbHome, "before");
+    const updatedPath = join(kbHome, "after");
+    await mkdir(originalPath);
+    await mkdir(updatedPath);
+    await mkdir(join(originalPath, ".kb"));
+    await mkdir(join(updatedPath, ".kb"));
+    const { project } = await registry.add(originalPath, { title: "Original title" });
+    const instance = await setup();
+
+    const res = await instance.inject({
+      method: "PATCH",
+      url: `/api/v1/projects/${project.id}`,
+      payload: { path: updatedPath, title: "Current title", description: "Relocated" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as DataBody<{ id: string; path: string; title: string; description: string }>;
+    expect(body.data).toMatchObject({
+      id: project.id,
+      path: await realpath(updatedPath),
+      title: "Current title",
+      description: "Relocated",
+    });
+  });
+
+  it("PATCH rejects an empty replacement path", async () => {
+    const projectPath = join(kbHome, "project");
+    await mkdir(join(projectPath, ".kb"), { recursive: true });
+    const { project } = await registry.add(projectPath);
+    const instance = await setup();
+
+    const res = await instance.inject({
+      method: "PATCH",
+      url: `/api/v1/projects/${project.id}`,
+      payload: { path: " " },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as ErrorBody).error.code).toBe("KB_RUNTIME_INPUT_INVALID");
   });
 
   it("POST without init reports KB_PROJECT_INIT_REQUIRED and registers nothing", async () => {

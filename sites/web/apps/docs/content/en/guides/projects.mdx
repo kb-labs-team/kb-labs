@@ -1,0 +1,60 @@
+---
+title: "Manage Projects in KB Labs"
+description: "Create and connect projects, switch Studio context, and restore a moved project path."
+updatedAt: "2026-09-29"
+order: 9
+---
+
+A KB Labs platform can be installed before you choose a project. Projects are stored in a machine-level registry; the project folder keeps its own `.kb/` declaration and configuration.
+
+## Create or connect a project in Studio
+
+Open **Projects** in Studio and choose **Add project**.
+
+- **Create new** makes a new folder below the selected parent, initializes its `.kb/` declaration, and registers it.
+- **Connect existing** registers a folder already on disk. If it has no `.kb/` declaration, Studio asks before initializing it.
+
+Set a title and description so the project is recognizable in the sidebar. The project path must be reachable by the machine running the platform Host.
+
+The folder picker lists directories on the Host machine. It shows directory names and paths only; it does not read or upload project files. Use the same picker when you update the path of a moved project.
+
+## Select the active project
+
+Use **Active project** in the Studio sidebar. The selection applies to project plugins, adapter configuration, and project extension management, and remains selected after a reload. The Marketplace catalogue is shared across the platform; project enablement uses the selected project's registry ID.
+
+## Update a moved project
+
+A project keeps its ID when its folder moves. Open **Projects**, choose **Update path**, and point the record to the existing folder. The registry, project metadata, and runtime state directory stay attached to that ID.
+
+You can also update it from a terminal:
+
+```bash
+kb project update prj_0123456789abcdef0123456789abcdef \
+  --path /work/moved-project \
+  --title "Current project title"
+```
+
+The replacement folder must already exist. The CLI resolves a relative path against the command's current working directory.
+
+## Use the project registry from the CLI
+
+Project commands default to the current directory where a project reference is omitted. This works from the project root and its nested directories:
+
+```bash
+cd /work/my-project
+kb project show
+kb project list
+```
+
+Connect a folder that already has its project declaration, or explicitly initialize a bare folder:
+
+```bash
+kb project add /work/my-project --title "My project" --description "Main workspace"
+kb project add /work/new-project --init --title "New project"
+```
+
+`kb project remove` unregisters the record. It does not delete the folder, `.kb/`, or project runtime state.
+
+## Keep CI setup explicit
+
+The installer supports both platform-only and combined platform + project setup. For a platform-only CI install, omit `--project-root`. To configure the checkout as a project during the same install, pass `--project-root "$GITHUB_WORKSPACE"`. See [V2 Installs in CI](/guides/ci-install) for full examples.

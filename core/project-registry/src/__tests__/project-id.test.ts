@@ -2,8 +2,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ProjectRegistryError } from '../errors.js';
-import { canonicalizeProjectPath, deriveProjectId, isProjectId } from '../project-id.js';
+import { canonicalizeProjectPath, createProjectId, isProjectId } from '../project-id.js';
 
 let sandbox: string;
 
@@ -26,24 +25,12 @@ function isCaseInsensitiveFs(dir: string): boolean {
   }
 }
 
-describe('deriveProjectId', () => {
-  it('is deterministic and has the documented shape', () => {
-    const id = deriveProjectId('/work/app');
-    expect(id).toBe(deriveProjectId('/work/app'));
+describe('createProjectId', () => {
+  it('creates a unique opaque id with the documented shape', () => {
+    const id = createProjectId();
     expect(isProjectId(id)).toBe(true);
-    expect(id).toMatch(/^prj_[0-9a-f]{16}$/);
-  });
-
-  it('ignores a trailing slash', () => {
-    expect(deriveProjectId('/work/app/')).toBe(deriveProjectId('/work/app'));
-  });
-
-  it('differs for different paths (a moved folder is a new project)', () => {
-    expect(deriveProjectId('/work/app')).not.toBe(deriveProjectId('/elsewhere/app'));
-  });
-
-  it('rejects relative input', () => {
-    expect(() => deriveProjectId('work/app')).toThrow(ProjectRegistryError);
+    expect(id).toMatch(/^prj_[0-9a-f]{32}$/);
+    expect(createProjectId()).not.toBe(id);
   });
 });
 
@@ -57,7 +44,7 @@ describe('canonicalizeProjectPath', () => {
     const viaLink = await canonicalizeProjectPath(link);
     const direct = await canonicalizeProjectPath(target);
     expect(viaLink).toBe(direct);
-    expect(deriveProjectId(viaLink)).toBe(deriveProjectId(direct));
+    expect(viaLink).toBe(direct);
   });
 
   it('accepts a trailing slash and dot segments', async () => {
@@ -78,7 +65,7 @@ describe('canonicalizeProjectPath', () => {
     const upper = await canonicalizeProjectPath(join(dir, 'CaseProbe'));
     const lower = await canonicalizeProjectPath(join(dir, 'caseprobe'));
     expect(lower).toBe(upper);
-    expect(deriveProjectId(lower)).toBe(deriveProjectId(upper));
+    expect(lower).toBe(upper);
   });
 
   it('reports a missing path with a typed error', async () => {

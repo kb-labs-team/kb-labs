@@ -24,7 +24,7 @@
       "pages": [
         { "slug": "index",       "type": "manual", "static": true },
         { "slug": "quick-start", "type": "hybrid", "owners": ["cli/**", "plugins/marketplace/**"] },
-        { "slug": "installation","type": "hybrid", "owners": ["tools/kb-create/**", "cli/**"] },
+        { "slug": "installation","type": "hybrid", "owners": ["tools/kb-create/**", "cli/**", "core/project-registry/**"] },
         { "slug": "privacy",     "type": "manual", "static": true }
       ]
     },
@@ -105,7 +105,8 @@
         { "slug": "guides/testing",              "type": "manual", "owners": ["shared/testing/**", "shared/testing-e2e/**"] },
         { "slug": "guides/production-readiness", "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "guides/troubleshooting",      "type": "manual", "owners": ["tools/kb-dev/**", "tools/kb-devkit/**"] },
-        { "slug": "guides/ci-install",            "type": "manual", "owners": ["tools/kb-create/**", ".github/actions/kb-create-install/**"] }
+        { "slug": "guides/ci-install",            "type": "manual", "owners": ["tools/kb-create/**", ".github/actions/kb-create-install/**"] },
+        { "slug": "guides/projects",              "type": "manual", "owners": ["core/project-registry/**", "cli/commands/src/commands/system/project/**", "services/host/app/src/projects-routes.ts", "studio/app/src/modules/projects/**", "studio/app/src/providers/active-project-provider.tsx"] }
       ]
     },
 
@@ -218,14 +219,14 @@
       "note": "Platform tools and daemons. Not individual plugins.",
       "pages": [
         { "slug": "services/index",           "type": "manual", "owners": ["tools/**"] },
-        { "slug": "services/cli",             "type": "hybrid", "owners": ["cli/**"] },
+        { "slug": "services/cli",             "type": "hybrid", "owners": ["cli/**", "core/project-registry/**"] },
         { "slug": "services/kb-dev",          "type": "manual", "owners": ["tools/kb-dev/**"] },
         { "slug": "services/kb-devkit",       "type": "manual", "owners": ["infra/devkit/**", "tools/kb-devkit/**"] },
         { "slug": "services/kb-deploy",       "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "services/kb-monitor",      "type": "manual", "owners": ["tools/kb-monitor/**"] },
-        { "slug": "services/marketplace",     "type": "manual", "owners": ["plugins/marketplace/**"] },
+        { "slug": "services/marketplace",     "type": "manual", "owners": ["plugins/marketplace/**", "studio/app/src/modules/plugins/**", "studio/app/src/modules/project-plugins/**"] },
         { "slug": "services/rest-api",        "type": "hybrid", "owners": ["plugins/rest-api/**"] },
-        { "slug": "services/studio",          "type": "manual", "owners": ["studio/app/**"] },
+        { "slug": "services/studio",          "type": "manual", "owners": ["studio/app/**", "studio/data-client/src/sources/projects-source.ts", "studio/data-client/src/sources/http-projects-source.ts", "services/host/app/src/projects-routes.ts"] },
         { "slug": "services/host-agent",      "type": "manual", "owners": ["plugins/host-agent/**"] },
         { "slug": "services/workflow-daemon", "type": "manual", "owners": ["plugins/workflow/daemon/**"] }
       ]

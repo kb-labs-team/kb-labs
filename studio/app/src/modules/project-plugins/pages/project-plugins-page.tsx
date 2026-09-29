@@ -21,10 +21,11 @@ import {
 import { useDataSources } from '@/providers/data-sources-provider';
 import { useProjectPlugins, useSetProjectPluginEnabled } from '@kb-labs/studio-data-client';
 import type { ProjectPluginEntry } from '@kb-labs/studio-data-client';
-import { ProjectPicker } from '@/components/project-picker';
+import { useActiveProject } from '@/providers/active-project-provider';
 
 export function ProjectPluginsPage() {
-  const [projectId, setProjectId] = React.useState<string | null>(null);
+  const { activeProjectId: projectId, projects } = useActiveProject();
+  const activeProject = projects?.find((project) => project.id === projectId);
   const { projectPlugins: source } = useDataSources();
   const { data: plugins, isLoading } = useProjectPlugins(source, projectId);
   const setEnabled = useSetProjectPluginEnabled(source, projectId);
@@ -82,8 +83,7 @@ export function ProjectPluginsPage() {
     <UIPage>
       <UIPageHeader
         title="Plugins"
-        description="Enable or disable plugins for the selected project."
-        actions={<ProjectPicker value={projectId} onChange={setProjectId} />}
+        description={activeProject ? `Project: ${activeProject.title} · enable or disable its plugins.` : 'Select a project in the sidebar to manage its plugins.'}
       />
       {!projectId ? null : isLoading ? (
         <UISpin />

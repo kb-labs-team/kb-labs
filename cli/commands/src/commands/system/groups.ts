@@ -17,7 +17,7 @@ import { authLogin, authLogout, authStatus, authRegister } from './auth';
 import { platformSyncCommand } from './platform/sync';
 import { webhookProvision, webhookList, webhookRevoke } from './webhook';
 import { configShow, configGet, configSet } from './config';
-import { projectAdd, projectList, projectShow, projectRemove } from './project';
+import { projectAdd, projectList, projectShow, projectUpdate, projectRemove } from './project';
 
 /**
  * Info Commands Group
@@ -113,5 +113,6 @@ export const projectGroup = defineSystemCommandGroup('project', 'Project registr
   projectAdd,
   projectList,
   projectShow,
+  projectUpdate,
   projectRemove,
 ]);

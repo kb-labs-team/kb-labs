@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ProjectRegistryError } from '../errors.js';
 import { withFileLock } from '../file-lock.js';
-import { deriveProjectId } from '../project-id.js';
 import {
   PROJECT_REGISTRY_SCHEMA_VERSION,
   createProjectRegistry,
@@ -55,9 +54,12 @@ describe('add / list / get / remove', () => {
     const { project, declaration } = await registry.add(dir);
 
     expect(declaration).toBe('present');
+    expect(project.id).toMatch(/^prj_[0-9a-f]{32}$/);
     expect(project).toEqual({
-      id: deriveProjectId(dir),
+      id: project.id,
       path: dir,
+      title: 'alpha',
+      description: '',
       name: 'alpha',
       status: 'active',
       addedAt: '2026-09-26T10:00:00.000Z',
@@ -175,16 +177,6 @@ describe('add / list / get / remove', () => {
     expect((await registry.get(project.id)).project.lastUsedAt).toBe(touched.lastUsedAt);
   });
 
-  it('treats a moved folder as a different, unknown project', async () => {
-    const dir = makeProject('before-move');
-    const registry = createProjectRegistry({ root });
-    const { project } = await registry.add(dir);
-    const moved = join(sandbox, 'projects', 'after-move');
-    mkdirSync(moved);
-    const { project: second } = await registry.add(moved);
-    expect(second.id).not.toBe(project.id);
-  });
-
   it('starts empty when the registry file does not exist, without creating it on read', async () => {
     const registry = createProjectRegistry({ root });
     expect(await registry.list()).toEqual([]);
@@ -278,34 +270,38 @@ describe('unreadable registry file', () => {
     mkdirSync(root, { recursive: true });
     writeFileSync(
       join(root, 'projects.json'),
-      JSON.stringify({ schemaVersion: 1, projects: [{ id: 'prj_0000000000000000', path: '/x' }] }),
+      JSON.stringify({ schemaVersion: PROJECT_REGISTRY_SCHEMA_VERSION, projects: [{ id: 'prj_0000000000000000', path: '/x' }] }),
     );
     await expect(createProjectRegistry({ root }).list()).rejects.toMatchObject({
       code: 'KB_PROJECT_REGISTRY_CORRUPT',
     });
   });
 
-  it('rejects a record whose id does not match its path', async () => {
+  it('rejects an older registry schema without attempting an implicit migration', async () => {
     mkdirSync(root, { recursive: true });
-    writeFileSync(
-      join(root, 'projects.json'),
-      JSON.stringify({
-        schemaVersion: 1,
-        projects: [
-          {
-            id: 'prj_0000000000000000',
-            path: '/some/where',
-            name: 'x',
-            status: 'active',
-            addedAt: '2026-09-26T00:00:00.000Z',
-            lastUsedAt: null,
-          },
-        ],
-      }),
-    );
+    writeFileSync(join(root, 'projects.json'), JSON.stringify({ schemaVersion: 1, projects: [] }));
     await expect(createProjectRegistry({ root }).list()).rejects.toMatchObject({
-      code: 'KB_PROJECT_REGISTRY_CORRUPT',
+      code: 'KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED',
     });
+  });
+
+  it('keeps project identity and state directory when its path changes', async () => {
+    const originalPath = makeProject('before', true);
+    const replacementPath = makeProject('after', true);
+    const registry = createProjectRegistry({ root });
+    const { project } = await registry.add(originalPath, { title: 'Workspace', description: 'Main app' });
+
+    const moved = await registry.update(project.id, { path: replacementPath });
+
+    expect(moved).toMatchObject({
+      id: project.id,
+      path: replacementPath,
+      title: 'Workspace',
+      description: 'Main app',
+    });
+    expect(moved.id).toBe(project.id);
+    expect(registry.stateDir(moved.id)).toBe(registry.stateDir(project.id));
+    await expect(registry.add(replacementPath)).rejects.toMatchObject({ code: 'KB_PROJECT_ALREADY_REGISTERED' });
   });
 
   it('reports an unknown schema version distinctly and does not rewrite the file', async () => {
@@ -319,7 +315,7 @@ describe('unreadable registry file', () => {
     expect(error).toBeInstanceOf(ProjectRegistryError);
     expect(error).toMatchObject({
       code: 'KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED',
-      details: { found: '99', supported: '1' },
+      details: { found: '99', supported: '2' },
     });
     expect(readFileSync(file, 'utf8')).toBe(content);
   });

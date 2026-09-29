@@ -8,14 +8,16 @@
 export { projectErrorEnvelope } from './envelope.js';
 export { ProjectRegistryError, isProjectRegistryError } from './errors.js';
 export { withFileLock, type FileLockOptions } from './file-lock.js';
-export { PROJECT_ID_PREFIX, canonicalizeProjectPath, deriveProjectId, isProjectId } from './project-id.js';
+export { PROJECT_ID_PREFIX, canonicalizeProjectPath, createProjectId, isProjectId } from './project-id.js';
 export {
   addProject,
+  createProject,
   listProjects,
   showProject,
   toProjectSummary,
   type AddProjectOutcome,
   type AddProjectRequest,
+  type CreateProjectRequest,
 } from './operations.js';
 export {
   PROJECT_REGISTRY_FILE,

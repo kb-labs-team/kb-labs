@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   canonicalizeProjectPath,
-  deriveProjectId,
+  createProjectId,
 } from "@kb-labs/core-project-registry";
 import {
   parseListen,
@@ -47,7 +47,7 @@ describe("parseRuntimeArgs", () => {
   async function project(): Promise<{ root: string; id: string }> {
     dir = await mkdtemp(join(tmpdir(), "kb-runtime-args-"));
     const root = await canonicalizeProjectPath(dir);
-    return { root, id: deriveProjectId(root) };
+    return { root, id: createProjectId() };
   }
 
   it("parses a complete command line", async () => {
@@ -83,15 +83,15 @@ describe("parseRuntimeArgs", () => {
     expect(args.projectRoot).toBe(root);
   });
 
-  it("refuses a project id that does not belong to the root", async () => {
+  it("refuses an invalid project id", async () => {
     const { root } = await project();
 
     await expect(
       parseRuntimeArgs(
-        ["--project-root", root, "--project-id", "prj_0000000000000000", "--listen", "127.0.0.1:5123"],
+        ["--project-root", root, "--project-id", "prj_invalid", "--listen", "127.0.0.1:5123"],
         { [RUNTIME_TOKEN_ENV]: TOKEN },
       ),
-    ).rejects.toThrow(/does not match the project root/);
+    ).rejects.toThrow(/must be a valid project id/);
   });
 
   it("requires an absolute existing directory", async () => {

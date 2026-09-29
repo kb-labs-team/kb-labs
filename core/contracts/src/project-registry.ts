@@ -6,7 +6,7 @@
  * `@kb-labs/core-project-registry`.
  */
 
-/** Deterministic id derived from the canonical absolute project path, e.g. `prj_0123456789abcdef`. */
+/** Opaque machine-local project identity, e.g. `prj_0123456789abcdef0123456789abcdef`. */
 export type ProjectId = string;
 
 /**
@@ -23,6 +23,10 @@ export interface ProjectRecord {
   id: ProjectId;
   /** Canonical absolute path (symlinks resolved). */
   path: string;
+  /** User-facing title, shown in Studio. */
+  title: string;
+  /** User-provided project description. */
+  description: string;
   /** Human alias, unique within the registry. */
   name: string;
   status: ProjectStatus;
@@ -34,7 +38,7 @@ export interface ProjectRecord {
 
 /** On-disk shape of `projects.json`. */
 export interface ProjectRegistryFile {
-  /** Format version; bumped only together with a migration. */
+  /** Exact on-disk format version; unsupported versions are rejected without rewriting. */
   schemaVersion: number;
   projects: ProjectRecord[];
 }
@@ -55,8 +59,16 @@ export type ProjectRegistryErrorCode =
 export interface AddProjectOptions {
   /** Alias; defaults to the folder name (deduplicated with a numeric suffix). */
   name?: string;
+  title?: string;
+  description?: string;
   /** Validate and compute the record exactly as `add` would, but persist nothing. */
   dryRun?: boolean;
+}
+
+export interface UpdateProjectOptions {
+  path?: string;
+  title?: string;
+  description?: string;
 }
 
 export interface AddProjectResult {
@@ -86,6 +98,8 @@ export interface IProjectRegistry {
   get(ref: string): Promise<ProjectView>;
   /** Unregisters a project. Never touches the project folder or its runtime state. */
   remove(ref: string): Promise<ProjectRecord>;
+  /** Atomically updates metadata and/or path while preserving identity and state directory. */
+  update(ref: string, changes: UpdateProjectOptions): Promise<ProjectRecord>;
   /** Sets `lastUsedAt`. */
   touch(ref: string): Promise<ProjectRecord>;
   /** Path helper only; the directory is created by whoever writes runtime state. */
@@ -100,6 +114,8 @@ export interface IProjectRegistry {
 export interface ProjectSummary {
   id: ProjectId;
   name: string;
+  title: string;
+  description: string;
   status: ProjectStatus;
   declaration: ProjectDeclarationState;
   pathExists: boolean;
@@ -123,4 +139,17 @@ export interface ProjectRuntimeInfo {
 /** One entry of the host's project list: registry facts plus runtime state. */
 export interface ProjectEntry extends ProjectSummary {
   runtime: ProjectRuntimeInfo;
+}
+
+/** One child directory returned by the authenticated project-folder picker. */
+export interface ProjectDirectoryEntry {
+  name: string;
+  path: string;
+}
+
+/** Directories visible at the current picker location; file names and contents are never returned. */
+export interface ProjectDirectoryListing {
+  currentPath: string | null;
+  parentPath: string | null;
+  directories: ProjectDirectoryEntry[];
 }

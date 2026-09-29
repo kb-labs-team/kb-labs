@@ -222,6 +222,8 @@ kb-dev doctor                   # environment diagnostics
 
 ### Status output
 
+`kb-dev projects` and `kb-dev projects switch` select the local service/port workspace for `kb-dev`; they do not change Studio's active project or the platform project registry. Use `kb project` for registered project records and the Studio sidebar for the project used by the UI.
+
 The current working directory is the default project scope. To inspect another
 registered worktree from anywhere, pass `--project <alias-or-path>`:
 

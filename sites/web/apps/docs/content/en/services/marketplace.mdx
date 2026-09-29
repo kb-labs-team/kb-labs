@@ -5,7 +5,7 @@ updatedAt: "2026-04-07"
 order: 4
 ---
 
-The marketplace service is how plugins, adapters, and other entities get installed into a KB Labs workspace. It wraps npm (today — a native registry is on the roadmap) behind a unified HTTP API and writes the resolved installations into `.kb/marketplace.lock`, which is then read by the discovery layer at CLI and service startup.
+The marketplace service provides a platform-wide catalogue and package operations. Installed packages are available to projects through their own `.kb/marketplace.lock` and project configuration. In Studio, the catalogue is shared, while enablement and project configuration use the active project selected in the sidebar.
 
 It's a small Fastify service. Source: [plugins/marketplace/daemon/](plugins/marketplace/daemon/).
 

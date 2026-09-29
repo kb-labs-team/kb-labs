@@ -1,11 +1,11 @@
 ---
 title: "V2 Installs in CI"
 description: "Apply a sealed KB Labs release index non-interactively with kb-create and the reusable GitHub Action."
-updatedAt: "2026-08-22"
+updatedAt: "2026-09-29"
 order: 8
 ---
 
-Most workflows only need a thin slice of the platform — a release job needs the `release` plugin, not the gateway, workflow engine, or marketplace. V2 `kb-create apply` and the `kb-create-install` GitHub Action make that slice explicit while using the same release-index contract as the human wizard and agent protocol.
+Most workflows only need a thin slice of the platform — a release job needs the `release` plugin, not the gateway, workflow engine, or marketplace. V2 `kb-create apply` and the `kb-create-install` GitHub Action make that slice explicit while using the same release-index contract as the human wizard and agent protocol. Install the platform alone by omitting `--project-root`; keep the combined form when the runner should also configure the checkout as a project.
 
 ## `kb-create apply`
 
@@ -22,6 +22,27 @@ The index digest and compatibility matrix are validated before any package is
 written. An unknown plugin, missing provider, incompatible version, or missing
 platform/SDK/binary relation fails during planning with structured diagnostics.
 The same request can be passed unchanged by CI, an agent, or the wizard.
+
+For a platform-only install, omit the project root:
+
+```bash
+kb-create apply --index ./release-index.json \
+  --request-platform-root ./ci-platform --plugins=studio
+```
+
+The platform is then ready with no registered project. For a combined install,
+pass `--project-root "$GITHUB_WORKSPACE"` as in the first example. The reusable
+GitHub Action keeps combined setup as its default; set `project-dir` to an empty
+string for platform-only setup:
+
+```yaml
+- uses: kb-labs-team/kb-labs/.github/actions/kb-create-install@main
+  with:
+    release-index: ./.kb/release/release-index.json
+    plugins: studio
+    platform-dir: ${{ runner.temp }}/kb-platform
+    project-dir: ''
+```
 
 ### Pin versions
 
@@ -114,6 +135,7 @@ For GitHub Actions workflows, `.github/actions/kb-create-install` wraps the bina
 | `services`     | Comma-separated service IDs, each optionally `@version`                |
 | `adapters`     | Comma-separated `role=pkg[@version]` pairs                             |
 | `platform-dir` | Where the platform installs to (default: a runner temp dir)            |
+| `project-dir`  | Project root receiving the config pointer (default: checkout); set to `''` for platform-only setup |
 | `registry`     | Override the npm registry (e.g. a local Verdaccio for testing)         |
 | `release-index` | Required sealed `kb.create.release-index/v2` file for the release train |
 | `version`      | Pin the `kb-create` binary release; use an exact tag in production |

@@ -147,6 +147,18 @@ pnpm kb <command> --json --debug
 
 The CLI writes its own logs through the platform logger, so they land in the same log store as REST API and workflow daemon logs. In a full deployment you can correlate a CLI run with downstream service activity by `traceId`.
 
+## Project scope in the CLI
+
+Project registry commands use the current working directory when no project reference is passed. Run them from a project root or nested directory to show or update that registered project:
+
+```bash
+kb project show
+kb project add . --title "My project" --description "Workspace description" --init
+kb project update <project-id> --path /work/moved-project
+```
+
+`kb project update` preserves the stable ID and runtime state directory. Its replacement path must already exist. Paths passed to `kb project add` are resolved against the process `cwd`. Platform install may be separate from project registration; combined platform + project installation remains available for CI.
+
 ## What to read next
 
 - [Plugins → CLI Commands](/plugins/cli-commands) — how to declare CLI commands in a plugin.

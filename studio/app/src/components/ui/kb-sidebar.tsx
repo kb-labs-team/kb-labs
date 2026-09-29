@@ -33,6 +33,7 @@ export interface KBSidebarProps {
 
   // Search
   onOpenSearch?: () => void;
+  projectSwitcher?: (collapsed: boolean) => React.ReactNode;
 
   // Notifications
   notifications?: KBNotificationBellProps['notifications'];
@@ -57,6 +58,7 @@ export function KBSidebar({
   userAvatar,
   userName = 'User',
   onOpenSearch,
+  projectSwitcher,
   notifications = [],
   unreadNotificationsCount = 0,
   onMarkNotificationAsRead,
@@ -247,6 +249,12 @@ export function KBSidebar({
             </>
           )}
         </button>
+      )}
+
+      {projectSwitcher && (
+        <div className={[styles.projectSwitcher, collapsed && styles.projectSwitcherCollapsed].filter(Boolean).join(' ')}>
+          {projectSwitcher(collapsed)}
+        </div>
       )}
 
       <div className={styles.scrollArea}>

@@ -17,6 +17,7 @@ import {
 import { useDataSources } from '@/providers/data-sources-provider';
 import type { PluginManifestEntry } from '@kb-labs/studio-data-client';
 import { MarketplaceCard } from '../components/marketplace-card';
+import { useActiveProject } from '@/providers/active-project-provider';
 
 type KindFilter = 'all' | 'plugins' | 'adapters';
 type SurfaceFilter = 'all' | 'cli' | 'studio' | 'rest';
@@ -24,6 +25,8 @@ type SurfaceFilter = 'all' | 'cli' | 'studio' | 'rest';
 export function PluginsPage() {
   const navigate = useNavigate();
   const { plugins: pluginsSource } = useDataSources();
+  const { activeProjectId, projects } = useActiveProject();
+  const activeProject = projects?.find((project) => project.id === activeProjectId);
 
   const [loading, setLoading] = useState(true);
   const [plugins, setPlugins] = useState<PluginManifestEntry[]>([]);
@@ -102,10 +105,12 @@ export function PluginsPage() {
     <UIPage width="full">
       <UIPageHeader
         title="Marketplace"
-        description={`${counts.all} extension${counts.all !== 1 ? 's' : ''} installed`}
+        description={activeProject
+          ? `${counts.all} extensions available · project target: ${activeProject.title}`
+          : `${counts.all} extensions available · choose a project in the sidebar to manage project extensions`}
         actions={
-          <UIButton variant="primary" icon={<UIIcon name="PlusOutlined" />}>
-            Install Extension
+          <UIButton variant="primary" onClick={() => navigate('/plugins')} disabled={!activeProjectId}>
+            Manage project extensions
           </UIButton>
         }
       />

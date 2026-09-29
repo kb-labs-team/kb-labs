@@ -9,9 +9,9 @@ workflows, overlays) stays in `.kb/`. See ADR-0044 and `03-domain-model.md` (thr
 `resolveProjectStateDir(projectRoot, { root?, env? })` and `resolveRuntimeStatePath(projectRoot, segments)` in
 `@kb-labs/core-project-registry` (`core/project-registry/src/state-dir.ts`).
 
-- The id is `deriveProjectId(canonical path)`. A registered project's id is by definition the same value
-  (ADR-0044, the entry id must match its path), so registered and unregistered projects share one directory and
-  registering later does not orphan state. The registry file is not read.
+- A registered project's stable `projectId` is read from the machine registry, or passed explicitly by a
+  managed runtime / CLI `cwd` resolver. Changing the registered path preserves its state directory. Unregistered
+  development workspaces use a deterministic private fallback ID until registered.
 - Symlinks and trailing separators are canonicalized; a folder that does not exist yet is canonicalized through its
   nearest existing ancestor.
 - `KB_HOME` is respected. Nothing is created by the resolver; writers create the directories they need.

@@ -20,11 +20,12 @@ import {
 import { useDataSources } from '@/providers/data-sources-provider';
 import { useProjectAdapters } from '@kb-labs/studio-data-client';
 import type { ProjectAdapterEntry } from '@kb-labs/studio-data-client';
-import { ProjectPicker } from '@/components/project-picker';
+import { useActiveProject } from '@/providers/active-project-provider';
 import { AdapterConfigModal } from '../components/adapter-config-modal';
 
 export function ProjectAdaptersPage() {
-  const [projectId, setProjectId] = React.useState<string | null>(null);
+  const { activeProjectId: projectId, projects } = useActiveProject();
+  const activeProject = projects?.find((project) => project.id === projectId);
   const { projectAdapters: source } = useDataSources();
   const { data: adapters, isLoading } = useProjectAdapters(source, projectId);
   const [editing, setEditing] = React.useState<ProjectAdapterEntry | null>(null);
@@ -62,8 +63,7 @@ export function ProjectAdaptersPage() {
     <UIPage>
       <UIPageHeader
         title="Adapters"
-        description="Configure the adapters bound to the selected project."
-        actions={<ProjectPicker value={projectId} onChange={setProjectId} />}
+        description={activeProject ? `Project: ${activeProject.title} · configure its adapters.` : 'Select a project in the sidebar to manage its adapters.'}
       />
       {!projectId ? null : isLoading ? (
         <UISpin />

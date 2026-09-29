@@ -20,7 +20,7 @@ export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
   description: 'Show one registered project',
   longDescription:
     'Shows a project by id, name or path. Without an argument the current folder is looked up. ' +
-    'A folder that was moved is a different, unknown project and must be added again.',
+    'A moved project keeps its ID; update its path with `kb project update <id> --path <new-path>`.',
   category: 'project',
   examples: generateExamples('project show', 'kb', [{ flags: {} }, { flags: { json: true } }]),
   flags: {
@@ -40,6 +40,8 @@ export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
       } else {
         ctx.ui?.write(`${project.name} (${project.id})\n`);
         ctx.ui?.write(`  path:        ${project.path}${project.pathExists ? '' : '  (folder missing)'}\n`);
+        ctx.ui?.write(`  title:       ${project.title}\n`);
+        ctx.ui?.write(`  description: ${project.description || '—'}\n`);
         ctx.ui?.write(`  status:      ${project.status}\n`);
         ctx.ui?.write(`  .kb/:        ${project.declaration}\n`);
         ctx.ui?.write(`  added:       ${project.addedAt}\n`);

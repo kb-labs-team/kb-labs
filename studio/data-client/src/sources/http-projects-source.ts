@@ -4,14 +4,20 @@
  */
 
 import type { HttpClient } from '../client/http-client';
-import type { ProjectEntry } from '@kb-labs/core-contracts';
-import type { AddProjectParams, ProjectsDataSource } from './projects-source';
+import type { ProjectDirectoryListing, ProjectEntry } from '@kb-labs/core-contracts';
+import type { AddProjectParams, CreateProjectParams, ProjectsDataSource, UpdateProjectParams } from './projects-source';
 
 export class HttpProjectsSource implements ProjectsDataSource {
   constructor(private readonly client: HttpClient) {}
 
   async listProjects(): Promise<ProjectEntry[]> {
     return this.client.fetch<ProjectEntry[]>('/projects');
+  }
+
+  async listDirectories(path?: string): Promise<ProjectDirectoryListing> {
+    return this.client.fetch<ProjectDirectoryListing>('/projects/directories', {
+      params: path ? { path } : undefined,
+    });
   }
 
   async getProject(id: string): Promise<ProjectEntry> {
@@ -21,6 +27,20 @@ export class HttpProjectsSource implements ProjectsDataSource {
   async addProject(params: AddProjectParams): Promise<ProjectEntry> {
     return this.client.fetch<ProjectEntry>('/projects', {
       method: 'POST',
+      data: params,
+    });
+  }
+
+  async createProject(params: CreateProjectParams): Promise<ProjectEntry> {
+    return this.client.fetch<ProjectEntry>('/projects/create', {
+      method: 'POST',
+      data: params,
+    });
+  }
+
+  async updateProject(id: string, params: UpdateProjectParams): Promise<ProjectEntry> {
+    return this.client.fetch<ProjectEntry>(`/projects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
       data: params,
     });
   }

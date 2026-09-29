@@ -37,6 +37,28 @@
   padding: 4px 0 4px;
 }
 
+.projectSwitcher {
+  flex-shrink: 0;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.projectSwitcherCollapsed {
+  padding: 4px 0;
+  border-bottom: 0;
+}
+
+.projectSwitcher {
+  flex-shrink: 0;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.projectSwitcherCollapsed {
+  padding: 4px 0;
+  border-bottom: 0;
+}
+
 .profileCard {
   flex: 1;
   min-width: 0;

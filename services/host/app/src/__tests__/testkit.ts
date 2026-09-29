@@ -12,7 +12,7 @@ import { createContextLogger, type IContextLogger } from "@kb-labs/core-platform
 import { NoOpLogger } from "@kb-labs/core-platform/noop";
 import {
   canonicalizeProjectPath,
-  deriveProjectId,
+  createProjectId,
 } from "@kb-labs/core-project-registry";
 import { RUNTIME_TOKEN_HEADER } from "@kb-labs/project-runtime-app/protocol";
 import type { RuntimeLease, RuntimeProject } from "../project-runtime/manager.js";
@@ -54,7 +54,7 @@ export async function makeProject(
   const behaviorFile = join(root, "fake-runtime.json");
   await writeFile(behaviorFile, JSON.stringify(behavior));
   return {
-    id: deriveProjectId(root),
+    id: createProjectId(),
     root,
     behave: (next) => writeFile(behaviorFile, JSON.stringify(next)),
     cleanup: () => rm(dir, { recursive: true, force: true }),
