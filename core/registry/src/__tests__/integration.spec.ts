@@ -268,6 +268,9 @@ describe('Registry Integration', () => {
     expect(enabledLock).not.toBeNull();
     enabledLock!.plugins['@kb-labs/commit']!.enabled = true;
     await writeMarketplaceLock(platformRoot, enabledLock!);
+    const lockPath = path.join(platformRoot, '.kb', 'marketplace.lock');
+    const changedAt = new Date(disabled.snapshot().ts + 1_000);
+    await fs.utimes(lockPath, changedAt, changedAt);
 
     const enabled = await openCatalog({ platformRoot, projectRoot });
     expect(enabled.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId))
