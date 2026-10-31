@@ -127,13 +127,14 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
     assert.equal(workflow.env.DEFAULT_BRANCH, '${{ github.event.repository.default_branch }}');
     assert.equal(prepare.env.VERIFICATION_PROFILE, "${{ github.event.inputs.profile || 'stream' }}");
   assert.equal(prepare.env.REMOTE_BASE_REF, "${{ github.event.inputs.base_ref || '' }}");
+  assert.equal(prepare.env.REMOTE_REF_NAME, '${{ github.ref_name }}');
     mkdirSync(home);
     const goPaths = execFileSync('go', ['env', 'GOPATH', 'GOMODCACHE', 'GOCACHE'], { encoding: 'utf8' }).trim().split('\n');
     const controlledGoEnv = { PATH: process.env.PATH, HOME: home, GOPATH: goPaths[0], GOMODCACHE: goPaths[1], GOCACHE: goPaths[2], GOTOOLCHAIN: 'local', GOWORK: 'off', GOFLAGS: '', GOENV: 'off' };
     execFileSync('go', ['build', '-o', binary, '.'], { cwd: path.join(root, 'tools/kb-devkit'), env: controlledGoEnv, stdio: 'pipe' });
     const affectedPath = path.join(temporaryRoot, 'affected.json');
     const selectionRun = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', affectedPath, binary], {
-      cwd: root, encoding: 'utf8', env: { ...controlledGoEnv, VERIFICATION_PROFILE: 'candidate' },
+      cwd: root, encoding: 'utf8', env: { ...controlledGoEnv, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: 'master' },
     });
     assert.equal(selectionRun.status, 0, `real candidate selection failed: ${selectionRun.stderr}`);
     const affected = readFileSync(affectedPath, 'utf8');
@@ -175,18 +176,211 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
   }
 });
 
+test('candidate selector forces full package checks for every non-stream ref despite base_ref input', () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-ref-policy-'));
+  const selectionPath = path.join(temporaryRoot, 'selection.json');
+  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  try {
+    const home = path.join(temporaryRoot, 'home');
+    mkdirSync(home);
+    const goPaths = execFileSync('go', ['env', 'GOPATH', 'GOMODCACHE', 'GOCACHE'], { encoding: 'utf8' }).trim().split('\n');
+    const controlledGoEnv = { PATH: process.env.PATH, HOME: home, GOPATH: goPaths[0], GOMODCACHE: goPaths[1], GOCACHE: goPaths[2], GOTOOLCHAIN: 'local', GOWORK: 'off', GOFLAGS: '', GOENV: 'off' };
+    execFileSync('go', ['build', '-o', fakeDevkit, '.'], { cwd: path.join(root, 'tools/kb-devkit'), env: controlledGoEnv, stdio: 'pipe' });
+    const workflow = readYaml('.github/workflows/remote-verify.yml');
+    const prepareEnv = workflow.jobs.prepare.env;
+    assert.equal(prepareEnv.REMOTE_REF_NAME, '${{ github.ref_name }}');
+    let fullPackages;
+    for (const branch of ['agent/j90-integration', 'master', 'release/1.0', 'feature/other']) {
+      const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...controlledGoEnv, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: branch, REMOTE_BASE_REF: 'HEAD' },
+      });
+      assert.equal(producer.status, 0, `${branch} selector failed: ${producer.stderr}`);
+      const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
+      assert.equal(selection.mode, 'full', `${branch} must run full regardless of base_ref`);
+      assert.match(selection.selectionReason, /full:.*(ref|branch)/i);
+      assert.ok(selection.packages.length > 0, `${branch} must not return an empty workspace selection`);
+      if (!fullPackages) fullPackages = selection.packages;
+      assert.deepEqual(selection.packages, fullPackages, `${branch} must select the complete workspace package set`);
+    }
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('candidate selector detects a candidate base that resolves to HEAD and explains the full fallback', () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-head-base-'));
+  const selectionPath = path.join(temporaryRoot, 'selection.json');
+  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  const gitShim = path.join(temporaryRoot, 'git-shim');
+  try {
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    mkdirSync(gitShim);
+    writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "origin/agent/j90-integration" ]; then exec '${realGit}' rev-parse HEAD; fi\nexec '${realGit}' "$@"\n`);
+    chmodSync(path.join(gitShim, 'git'), 0o755);
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    chmodSync(fakeDevkit, 0o755);
+    const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
+      cwd: root, encoding: 'utf8', env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: 'agent/x231-test-strategy', REMOTE_BASE_REF: 'origin/agent/j90-integration' },
+    });
+    assert.equal(producer.status, 0, `HEAD-equal candidate selector failed: ${producer.stderr}`);
+    const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
+    assert.equal(selection.mode, 'full');
+    assert.match(selection.selectionReason, /full: candidate base resolves to HEAD/i);
+    assert.deepEqual(selection.packages, ['@kb-labs/core-platform']);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('eligible agent stream can select affected packages against the integration base', () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-eligible-stream-'));
+  const selectionPath = path.join(temporaryRoot, 'selection.json');
+  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  const gitShim = path.join(temporaryRoot, 'git-shim');
+  try {
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    mkdirSync(gitShim);
+    writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "origin/agent/j90-integration" ]; then exec '${realGit}' rev-parse HEAD^; fi\nif [ "$1" = "cat-file" ] && [ "$3" = "origin/agent/j90-integration" ]; then exec '${realGit}' cat-file -t HEAD^; fi\nif [ "$1" = "merge-base" ] && [ "$2" = "origin/agent/j90-integration" ]; then exec '${realGit}' merge-base HEAD^ "$3"; fi\nif [ "$1" = "diff" ]; then printf '%s\\n' 'core/plugin-contracts/src/color-policy.mjs'; exit 0; fi\nexec '${realGit}' "$@"\n`);
+    chmodSync(path.join(gitShim, 'git'), 0o755);
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    chmodSync(fakeDevkit, 0o755);
+    const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: 'agent/x231-test-strategy', REMOTE_BASE_REF: 'origin/agent/j90-integration' },
+    });
+    assert.equal(producer.status, 0, `eligible agent selection failed: ${producer.stderr}`);
+    const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
+    assert.equal(selection.mode, 'affected');
+    assert.equal(selection.selectionReason, 'affected');
+    assert.match(selection.baseSha, /^[0-9a-f]{40}$/);
+    assert.equal(selection.changedPathCount, 1);
+    assert.deepEqual(selection.packages, ['@kb-labs/core-platform']);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('candidate selector converts an empty diff to a full selection with a reason', () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-empty-diff-'));
+  const selectionPath = path.join(temporaryRoot, 'selection.json');
+  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  const gitShim = path.join(temporaryRoot, 'git-shim');
+  try {
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    mkdirSync(gitShim);
+    writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "origin/agent/j90-integration" ]; then exec '${realGit}' rev-parse HEAD^; fi\nif [ "$1" = "cat-file" ] && [ "$3" = "origin/agent/j90-integration" ]; then exec '${realGit}' cat-file -t HEAD^; fi\nif [ "$1" = "merge-base" ] && [ "$2" = "origin/agent/j90-integration" ]; then exec '${realGit}' merge-base HEAD^ "$3"; fi\nif [ "$1" = "diff" ]; then exit 0; fi\nexec '${realGit}' "$@"\n`);
+    chmodSync(path.join(gitShim, 'git'), 0o755);
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    chmodSync(fakeDevkit, 0o755);
+    const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
+      cwd: root, encoding: 'utf8', env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: 'agent/x231-test-strategy', REMOTE_BASE_REF: 'origin/agent/j90-integration' },
+    });
+    assert.equal(producer.status, 0, `empty-diff selector failed: ${producer.stderr}`);
+    const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
+    assert.equal(selection.mode, 'full');
+    assert.equal(selection.changedPathCount, 0);
+    assert.match(selection.selectionReason, /full: candidate diff is empty/);
+    assert.deepEqual(selection.packages, ['@kb-labs/core-platform']);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('candidate selector retries an empty result for a non-empty diff using the complete selection', () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-empty-result-'));
+  const selectionPath = path.join(temporaryRoot, 'selection.json');
+  const callsPath = path.join(temporaryRoot, 'calls');
+  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  const gitShim = path.join(temporaryRoot, 'git-shim');
+  try {
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    mkdirSync(gitShim);
+    writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "origin/agent/j90-integration" ]; then exec '${realGit}' rev-parse HEAD^; fi\nif [ "$1" = "cat-file" ] && [ "$3" = "origin/agent/j90-integration" ]; then exec '${realGit}' cat-file -t HEAD^; fi\nif [ "$1" = "merge-base" ] && [ "$2" = "origin/agent/j90-integration" ]; then exec '${realGit}' merge-base HEAD^ "$3"; fi\nexec '${realGit}' "$@"\n`);
+    chmodSync(path.join(gitShim, 'git'), 0o755);
+    writeFileSync(fakeDevkit, `#!/bin/sh\ncalls=0\n[ ! -f "$REMOTE_SELECTION_CALLS" ] || calls=$(cat "$REMOTE_SELECTION_CALLS")\ncalls=$((calls + 1))\nprintf '%s' "$calls" > "$REMOTE_SELECTION_CALLS"\nif [ "$calls" -eq 1 ]; then printf '%s\\n' '{"ok":true,"data":{"packages":[],"internalToolPackages":[],"selectionReason":"affected"}}'; else printf '%s\\n' '{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"full: complete workspace"}}'; fi\n`);
+    chmodSync(fakeDevkit, 0o755);
+    const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: 'agent/x231-test-strategy', REMOTE_BASE_REF: 'origin/agent/j90-integration', REMOTE_SELECTION_CALLS: callsPath },
+    });
+    assert.equal(producer.status, 0, `empty affected selection did not fall back: ${producer.stderr}`);
+    const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
+    assert.equal(readFileSync(callsPath, 'utf8'), '2');
+    assert.equal(selection.mode, 'full');
+    assert.match(selection.selectionReason, /full: empty affected selection for a non-empty diff/);
+    assert.deepEqual(selection.packages, ['@kb-labs/core-platform']);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('candidate workflow dispatch cannot use a forged base on a protected ref', () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-forged-dispatch-'));
+  const selectionPath = path.join(temporaryRoot, 'selection.json');
+  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  try {
+    const workflow = readYaml('.github/workflows/remote-verify.yml');
+    const prepareEnv = workflow.jobs.prepare.env;
+    assert.equal(prepareEnv.REMOTE_REF_NAME, '${{ github.ref_name }}');
+    assert.equal(prepareEnv.REMOTE_BASE_REF, "${{ github.event.inputs.base_ref || '' }}");
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    chmodSync(fakeDevkit, 0o755);
+    const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
+      cwd: root, encoding: 'utf8', env: { ...process.env, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: 'master', REMOTE_BASE_REF: 'HEAD' },
+    });
+    assert.equal(producer.status, 0, `forged dispatch selector failed: ${producer.stderr}`);
+    const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
+    assert.equal(selection.mode, 'full');
+    assert.match(selection.selectionReason, /full:.*(ref|branch)/i);
+    assert.deepEqual(selection.packages, ['@kb-labs/core-platform']);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('stream profile cannot run affected checks on a protected ref with a supplied integration base', () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-protected-stream-'));
+  const selectionPath = path.join(temporaryRoot, 'selection.json');
+  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  try {
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    chmodSync(fakeDevkit, 0o755);
+    const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'stream', selectionPath, fakeDevkit], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, VERIFICATION_PROFILE: 'stream', DEFAULT_BRANCH: 'master', REMOTE_REF_NAME: 'master', REMOTE_BASE_REF: 'origin/agent/j90-integration' },
+    });
+    assert.equal(producer.status, 0, `protected stream selection failed: ${producer.stderr}`);
+    const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
+    assert.equal(selection.mode, 'full');
+    assert.match(selection.selectionReason, /full: ref master is not an eligible agent stream ref/);
+    assert.deepEqual(selection.packages, ['@kb-labs/core-platform']);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test('candidate retries a malformed affected selection against the full workspace', () => {
   const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-fallback-'));
   const selectionPath = path.join(temporaryRoot, 'selection.json');
   const callsPath = path.join(temporaryRoot, 'calls');
   const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  const gitShim = path.join(temporaryRoot, 'git-shim');
   try {
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    mkdirSync(gitShim);
+    writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "origin/agent/j90-integration" ]; then exec '${realGit}' rev-parse HEAD^; fi\nif [ "$1" = "cat-file" ] && [ "$3" = "origin/agent/j90-integration" ]; then exec '${realGit}' cat-file -t HEAD^; fi\nif [ "$1" = "merge-base" ] && [ "$2" = "origin/agent/j90-integration" ]; then exec '${realGit}' merge-base HEAD^ "$3"; fi\nexec '${realGit}' "$@"\n`);
+    chmodSync(path.join(gitShim, 'git'), 0o755);
     writeFileSync(fakeDevkit, `#!/bin/sh\ncalls=0\n[ ! -f "$REMOTE_SELECTION_CALLS" ] || calls=$(cat "$REMOTE_SELECTION_CALLS")\ncalls=$((calls + 1))\nprintf '%s' "$calls" > "$REMOTE_SELECTION_CALLS"\nif [ "$calls" -eq 1 ]; then printf 'not-json\n'; else printf '%s\n' '{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}'; fi\n`);
     chmodSync(fakeDevkit, 0o755);
     const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, VERIFICATION_PROFILE: 'candidate', REMOTE_BASE_REF: 'HEAD', REMOTE_SELECTION_CALLS: callsPath },
+      env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: 'agent/x231-test-strategy', REMOTE_BASE_REF: 'origin/agent/j90-integration', REMOTE_SELECTION_CALLS: callsPath },
     });
     assert.equal(producer.status, 0, `candidate selection did not fall back to full: ${producer.stderr}`);
     const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
