@@ -173,7 +173,7 @@ func TestAffectedPackagesSelectsFullGraphForUnownedPaths(t *testing.T) {
 		t.Fatalf("workspace.New error: %v", err)
 	}
 	t.Run("mixed package and root configuration", func(t *testing.T) {
-		selection, err := selectAffectedPackages(ws, []string{filepath.Join(core.Dir, "src", "index.ts"), filepath.Join(root, "tsconfig.base.json")})
+		selection, err := selectAffectedPackages(ws, []string{filepath.Join(core.Dir, "src", "index.ts"), filepath.Join(root, "tsconfig.base.json")}, cfg.Affected.FullInputs)
 		if err != nil {
 			t.Fatalf("AffectedPackages error: %v", err)
 		}
@@ -183,7 +183,7 @@ func TestAffectedPackagesSelectsFullGraphForUnownedPaths(t *testing.T) {
 	})
 
 	t.Run("root only", func(t *testing.T) {
-		selection, err := selectAffectedPackages(ws, []string{filepath.Join(root, "pnpm-workspace.yaml")})
+		selection, err := selectAffectedPackages(ws, []string{filepath.Join(root, "pnpm-workspace.yaml")}, cfg.Affected.FullInputs)
 		if err != nil {
 			t.Fatalf("AffectedPackages error: %v", err)
 		}
@@ -193,12 +193,35 @@ func TestAffectedPackagesSelectsFullGraphForUnownedPaths(t *testing.T) {
 	})
 
 	t.Run("package only", func(t *testing.T) {
-		selection, err := selectAffectedPackages(ws, []string{filepath.Join(core.Dir, "src", "index.ts")})
+		selection, err := selectAffectedPackages(ws, []string{filepath.Join(core.Dir, "src", "index.ts")}, cfg.Affected.FullInputs)
 		if err != nil {
 			t.Fatalf("AffectedPackages error: %v", err)
 		}
 		if len(selection.Packages) != 2 || selection.Reason != "" {
 			t.Fatalf("selection = (%v, %q), want changed package and dependent without full-selection reason", packageNames(selection.Packages), selection.Reason)
+		}
+	})
+	t.Run("configured shared package input", func(t *testing.T) {
+		sharedInput := "packages/core/shared-catalog.json"
+		selection, err := selectAffectedPackages(ws, []string{filepath.Join(root, filepath.FromSlash(sharedInput))}, []string{sharedInput})
+		if err != nil {
+			t.Fatalf("AffectedPackages error: %v", err)
+		}
+		if len(selection.Packages) != len(ws.Packages) || selection.Reason != "full: configured shared input "+sharedInput {
+			t.Fatalf("selection = (%v, %q), want full graph and configured-input reason", packageNames(selection.Packages), selection.Reason)
+		}
+	})
+	t.Run("workspace policy files select the full graph", func(t *testing.T) {
+		for _, relative := range []string{"pnpm-lock.yaml", "package.json", "pnpm-workspace.yaml", "devkit.yaml", "tsconfig.base.json", "scripts/ci/remote-verify.mjs"} {
+			t.Run(relative, func(t *testing.T) {
+				selection, err := selectAffectedPackages(ws, []string{filepath.Join(root, filepath.FromSlash(relative))}, cfg.Affected.FullInputs)
+				if err != nil {
+					t.Fatalf("AffectedPackages error: %v", err)
+				}
+				if len(selection.Packages) != len(ws.Packages) || selection.Reason != "full: unowned path "+relative {
+					t.Fatalf("selection = (%v, %q), want full graph for %s", packageNames(selection.Packages), selection.Reason, relative)
+				}
+			})
 		}
 	})
 	_ = app
@@ -217,14 +240,14 @@ func TestAffectedPackagesFromFilesUsesWorkspaceOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selection, err := AffectedPackagesFromFiles(ws, []string{"packages/core/src/index.ts"})
+	selection, err := AffectedPackagesFromFiles(ws, []string{"packages/core/src/index.ts"}, cfg.Affected.FullInputs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(selection.Packages) != 2 || selection.Reason != "" {
 		t.Fatalf("selection = (%v, %q), want core and dependent app", packageNames(selection.Packages), selection.Reason)
 	}
-	if _, err := AffectedPackagesFromFiles(ws, []string{""}); err == nil {
+	if _, err := AffectedPackagesFromFiles(ws, []string{""}, cfg.Affected.FullInputs); err == nil {
 		t.Fatal("empty changed-file path was accepted")
 	}
 	_ = core

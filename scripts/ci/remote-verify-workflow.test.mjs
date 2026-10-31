@@ -126,6 +126,7 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
     assert.equal(prepare.steps.find((step) => step.uses?.startsWith('actions/checkout@')).with['fetch-depth'], 0);
     assert.equal(workflow.env.DEFAULT_BRANCH, '${{ github.event.repository.default_branch }}');
     assert.equal(prepare.env.VERIFICATION_PROFILE, "${{ github.event.inputs.profile || 'stream' }}");
+  assert.equal(prepare.env.REMOTE_BASE_REF, "${{ github.event.inputs.base_ref || '' }}");
     mkdirSync(home);
     const goPaths = execFileSync('go', ['env', 'GOPATH', 'GOMODCACHE', 'GOCACHE'], { encoding: 'utf8' }).trim().split('\n');
     const controlledGoEnv = { PATH: process.env.PATH, HOME: home, GOPATH: goPaths[0], GOMODCACHE: goPaths[1], GOCACHE: goPaths[2], GOTOOLCHAIN: 'local', GOWORK: 'off', GOFLAGS: '', GOENV: 'off' };
@@ -136,12 +137,28 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
     });
     assert.equal(selectionRun.status, 0, `real candidate selection failed: ${selectionRun.stderr}`);
     const affected = readFileSync(affectedPath, 'utf8');
+    const selectionEvidence = JSON.parse(affected).data;
     const selection = parseAffectedSelection(affected, 'candidate');
+    assert.equal(selectionEvidence.mode, 'full');
+    assert.match(selectionEvidence.baseSha, /^[0-9a-f]{40}$/);
+    const sharedInputPath = path.join(temporaryRoot, 'shared-inputs.json');
+    writeFileSync(sharedInputPath, JSON.stringify(['core/plugin-contracts/src/color-policy.mjs']));
+    const sharedSelection = spawnSync(binary, ['--config', path.join(root, 'devkit.yaml'), 'affected', '--changed-files-file', sharedInputPath, '--json'], {
+      cwd: root, encoding: 'utf8', env: controlledGoEnv,
+    });
+    assert.equal(sharedSelection.status, 0, `real shared-input selection failed: ${sharedSelection.stderr}`);
+    const sharedData = JSON.parse(sharedSelection.stdout).data;
+    assert.equal(sharedData.selectionReason, 'full: configured shared input core/plugin-contracts/src/color-policy.mjs');
+    assert.equal(sharedData.packages.length, selectionEvidence.packages.length);
     const planPath = path.join(temporaryRoot, 'plan.json');
     const githubOutput = path.join(temporaryRoot, 'github-output');
     const planRun = spawnSync(process.execPath, ['scripts/ci/remote-verify-plan.mjs', 'candidate', affectedPath, planPath, githubOutput], { cwd: root, encoding: 'utf8' });
     assert.equal(planRun.status, 0, `real candidate plan failed: ${planRun.stderr}`);
     const matrix = JSON.parse(readFileSync(planPath, 'utf8'));
+    const outputs = readFileSync(githubOutput, 'utf8');
+    assert.match(outputs, /selection_mode=full/);
+    assert.match(outputs, /selection_base_sha=[0-9a-f]{40}/);
+    assert.match(outputs, /selected_packages=\[/);
     const gatedPackages = matrix.dependent.include.filter(({ stage }) => stage === profile.packageTestStage).flatMap(({ packages = [] }) => packages);
     const kbRunnerModule = 'github.com/kb-labs/kb-runner';
     assert.ok(selection.internalToolPackages.includes(kbRunnerModule));
@@ -153,6 +170,29 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
     assert.deepEqual(matrix.dependent.include.find(({ stage }) => stage === 'kb-create-go-suite'), {
       stage: 'kb-create-go-suite', shard: 1, packages: ['kb-create'],
     });
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('candidate retries a malformed affected selection against the full workspace', () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-fallback-'));
+  const selectionPath = path.join(temporaryRoot, 'selection.json');
+  const callsPath = path.join(temporaryRoot, 'calls');
+  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  try {
+    writeFileSync(fakeDevkit, `#!/bin/sh\ncalls=0\n[ ! -f "$REMOTE_SELECTION_CALLS" ] || calls=$(cat "$REMOTE_SELECTION_CALLS")\ncalls=$((calls + 1))\nprintf '%s' "$calls" > "$REMOTE_SELECTION_CALLS"\nif [ "$calls" -eq 1 ]; then printf 'not-json\n'; else printf '%s\n' '{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}'; fi\n`);
+    chmodSync(fakeDevkit, 0o755);
+    const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, VERIFICATION_PROFILE: 'candidate', REMOTE_BASE_REF: 'HEAD', REMOTE_SELECTION_CALLS: callsPath },
+    });
+    assert.equal(producer.status, 0, `candidate selection did not fall back to full: ${producer.stderr}`);
+    const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
+    assert.equal(readFileSync(callsPath, 'utf8'), '2');
+    assert.equal(selection.mode, 'full');
+    assert.equal(selection.selectionReason, 'full: affected computation failed; selected the complete workspace');
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }

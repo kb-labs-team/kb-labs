@@ -192,11 +192,19 @@ test('aggregates the prepare stage and fails with its named cause', () => {
 
 // case: S-262.7
 test('selection reason is preserved in prepare verdict evidence', () => {
-  const prepare = { ...passingPrepare(), selectionReason: 'full: unowned path tsconfig.base.json' };
+  const prepare = {
+    ...passingPrepare(), selectionReason: 'full: configured shared input core/plugin-contracts/src/color-policy.mjs',
+    selectionMode: 'full', selectionBaseSha: 'd'.repeat(40), selectedPackages: ['@kb-labs/core-platform', '@kb-labs/cli'],
+  };
   const verdict = aggregateVerdict({
     sha: 'f'.repeat(40), prepare, prepareJobResult: 'success', build: undefined, buildJobResult: 'success', matrix: { include: [] }, results: [], selectedPackageCount: 41,
   });
-  assert.equal(verdict.jobs[0].selectionReason, 'full: unowned path tsconfig.base.json');
+  assert.equal(verdict.jobs[0].selectionReason, 'full: configured shared input core/plugin-contracts/src/color-policy.mjs');
+  assert.deepEqual(verdict.selection, {
+    mode: 'full', baseSha: 'd'.repeat(40),
+    reason: 'full: configured shared input core/plugin-contracts/src/color-policy.mjs',
+    packages: ['@kb-labs/core-platform', '@kb-labs/cli'],
+  });
 });
 
 // case: S-262.7

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -142,7 +143,7 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 			},
 		},
 		Run:      yamlRun{Concurrency: 3},
-		Affected: yamlAffected{Strategy: "command", Command: "./changed.sh"},
+		Affected: yamlAffected{Strategy: "command", Command: "./changed.sh", FullInputs: []string{"core/shared.json"}},
 		Sync: yamlSync{
 			Sources: map[string]yamlSyncSource{
 				"templates": {Type: "local", Path: "./templates"},
@@ -192,6 +193,9 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 	cfg := mapYAML(raw)
 	if cfg.Version != 2 || cfg.Run.Concurrency != 3 || cfg.Affected.Command != "./changed.sh" {
 		t.Fatalf("mapped config basics = %+v", cfg)
+	}
+	if len(cfg.Affected.FullInputs) != 1 || cfg.Affected.FullInputs[0] != "core/shared.json" {
+		t.Fatalf("affected full inputs = %v, want [core/shared.json]", cfg.Affected.FullInputs)
 	}
 	if len(cfg.Workspace.Categories) != 1 || cfg.Workspace.Categories[0].Name != "libs" {
 		t.Fatalf("mapped categories = %#v", cfg.Workspace.Categories)
@@ -256,5 +260,27 @@ func TestPresetConfigAndYamlTaskObjectFallback(t *testing.T) {
 	}
 	if len(task) != 1 || task[0].Command != "pnpm build" {
 		t.Fatalf("yamlTask single object = %#v", task)
+	}
+}
+
+func TestLoadAffectedFullInputs(t *testing.T) {
+	cfg, err := parseYAMLBytes([]byte("version: 2\naffected:\n  fullInputs:\n    - core/plugin-contracts/src/color-policy.mjs\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Affected.FullInputs) != 1 || cfg.Affected.FullInputs[0] != "core/plugin-contracts/src/color-policy.mjs" {
+		t.Fatalf("affected full inputs = %v", cfg.Affected.FullInputs)
+	}
+}
+
+func TestWorkspaceAffectedFullInputs(t *testing.T) {
+	_, sourceFile, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "../../../.."))
+	cfg, err := LoadFile(filepath.Join(root, "devkit.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Affected.FullInputs) != 2 {
+		t.Fatalf("workspace affected full inputs = %v", cfg.Affected.FullInputs)
 	}
 }
