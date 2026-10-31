@@ -45,6 +45,7 @@ jobs:
     env:
       GOTOOLCHAIN: local
       VERIFICATION_PROFILE: ${{ github.event.inputs.profile || 'stream' }}
+      REMOTE_REF_NAME: ${{ github.ref_name }}
       REMOTE_BASE_REF: ${{ github.event.inputs.base_ref || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
