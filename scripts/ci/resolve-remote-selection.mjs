@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { candidateBaseRef } from './remote-selection-base.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const verificationProfile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
@@ -15,34 +16,50 @@ if (!['stream', 'candidate'].includes(profile) || !outputPath || !executable || 
   throw new Error('A supported profile, output path, and kb-devkit executable are required; stream selection also requires DEFAULT_BRANCH.');
 }
 let baseRef;
+let selectionBaseSha;
+let fullSelection = false;
+let emptyTreeSha = '';
 if (profile === 'stream') {
-  baseRef = `origin/${defaultBranch}...HEAD`;
+  baseRef = candidateBaseRef({ profile, baseRef: `origin/${defaultBranch}...HEAD` });
+  const resolved = spawnSync('git', ['rev-parse', `origin/${defaultBranch}`], { cwd: root, encoding: 'utf8' });
+  if (resolved.error || resolved.status !== 0) throw new Error(`Could not resolve stream verification base origin/${defaultBranch}: ${resolved.stderr || resolved.error?.message}`);
+  selectionBaseSha = resolved.stdout.trim();
 } else {
   const emptyTree = spawnSync('git', ['hash-object', '-t', 'tree', '--stdin'], { cwd: root, input: '', encoding: 'utf8' });
   if (emptyTree.error || emptyTree.status !== 0) {
     throw new Error(`Could not resolve the candidate empty-tree base ref; run git hash-object -t tree --stdin. ${emptyTree.error?.message || emptyTree.stderr}`);
   }
-  baseRef = emptyTree.stdout.trim();
+  emptyTreeSha = emptyTree.stdout.trim();
+  baseRef = candidateBaseRef({ profile, baseRef: process.env.REMOTE_BASE_REF || '', emptyTreeRef: emptyTreeSha });
+  const resolved = spawnSync('git', ['rev-parse', baseRef], { cwd: root, encoding: 'utf8' });
+  fullSelection = baseRef === emptyTreeSha || resolved.error !== undefined || resolved.status !== 0;
+  const mergeBase = fullSelection ? undefined : spawnSync('git', ['merge-base', baseRef, 'HEAD'], { cwd: root, encoding: 'utf8' });
+  fullSelection ||= Boolean(mergeBase && (mergeBase.error || mergeBase.status !== 0));
+  selectionBaseSha = fullSelection ? emptyTreeSha : mergeBase.stdout.trim();
+  if (fullSelection) baseRef = emptyTreeSha;
 }
 
 const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'kb-remote-selection-'));
 const changedFilesPath = path.join(temporaryRoot, 'changed-files.json');
-try {
-  const changed = spawnSync(process.execPath, ['scripts/ci/remote-changed-files.mjs'], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, VERIFICATION_PROFILE: profile, KB_DEVKIT_BASE_REF: baseRef, KB_REMOTE_CHANGED_FILES_PATH: changedFilesPath },
-  });
-  if (changed.error) throw changed.error;
-  if (changed.status !== 0) throw new Error(`Remote changed-path selection failed (exit ${changed.status}): ${changed.stderr || changed.stdout}`);
-  const result = spawnSync(executable, ['--config', path.join(root, 'devkit.yaml'), 'affected', '--changed-files-file', changedFilesPath, '--json'], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, VERIFICATION_PROFILE: profile, KB_DEVKIT_BASE_REF: baseRef, KB_REMOTE_CHANGED_FILES_PATH: changedFilesPath },
-  });
+const runChangedFiles = () => spawnSync(process.execPath, ['scripts/ci/remote-changed-files.mjs'], {
+  cwd: root,
+  encoding: 'utf8',
+  env: { ...process.env, VERIFICATION_PROFILE: profile, KB_DEVKIT_BASE_REF: baseRef, KB_REMOTE_CHANGED_FILES_PATH: changedFilesPath },
+});
+const runAffected = () => spawnSync(executable, ['--config', path.join(root, 'devkit.yaml'), 'affected', '--changed-files-file', changedFilesPath, '--json'], {
+  cwd: root,
+  encoding: 'utf8',
+  env: { ...process.env, VERIFICATION_PROFILE: profile, KB_DEVKIT_BASE_REF: baseRef, KB_REMOTE_CHANGED_FILES_PATH: changedFilesPath },
+});
+const readAffectedSelection = (result) => {
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`kb-devkit affected selection failed (exit ${result.status}): ${result.stderr || result.stdout}`);
-  const envelope = JSON.parse(result.stdout);
+  let envelope;
+  try {
+    envelope = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`kb-devkit affected --json returned invalid JSON: ${error.message}`);
+  }
   const packages = envelope?.data?.packages;
   const internalToolPackages = envelope?.data?.internalToolPackages;
   const selectionReason = envelope?.data?.selectionReason;
@@ -51,6 +68,36 @@ try {
   }
   if (typeof selectionReason !== 'string') throw new Error('kb-devkit affected --json returned an invalid selection reason. Rerun the remote verification prepare job.');
   if (!Array.isArray(internalToolPackages)) throw new Error('kb-devkit affected --json returned no internal-tool package selection. Rerun the remote verification prepare job.');
+  return { packages, internalToolPackages, selectionReason };
+};
+try {
+  let forcedFullReason = '';
+  let changed = runChangedFiles();
+  if ((changed.error || changed.status !== 0) && profile === 'candidate' && !fullSelection) {
+    forcedFullReason = 'full: candidate diff computation failed; selected the complete workspace';
+    fullSelection = true;
+    baseRef = emptyTreeSha;
+    selectionBaseSha = emptyTreeSha;
+    changed = runChangedFiles();
+  }
+  if (changed.error) throw changed.error;
+  if (changed.status !== 0) throw new Error(`Remote changed-path selection failed (exit ${changed.status}): ${changed.stderr || changed.stdout}`);
+  let result = runAffected();
+  let selection;
+  try {
+    selection = readAffectedSelection(result);
+  } catch (error) {
+    if (profile !== 'candidate' || fullSelection) throw error;
+    forcedFullReason = 'full: affected computation failed; selected the complete workspace';
+    fullSelection = true;
+    baseRef = emptyTreeSha;
+    selectionBaseSha = emptyTreeSha;
+    changed = runChangedFiles();
+    if (changed.error || changed.status !== 0) throw new Error(`Full changed-path selection failed (exit ${changed.status}): ${changed.stderr || changed.stdout || changed.error?.message}`);
+    result = runAffected();
+    selection = readAffectedSelection(result);
+  }
+  const { packages, internalToolPackages, selectionReason } = selection;
   const stages = [...verificationProfile.independentTestStages[profile], ...verificationProfile.buildDependentTestStages[profile]];
   const stagePackages = {};
   for (const stage of stages) {
@@ -62,7 +109,9 @@ try {
     stagePackages[stage] = [manifest.name];
   }
   const changedPaths = JSON.parse(readFileSync(changedFilesPath, 'utf8'));
-  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, internalToolPackages, stagePackages, changedPathCount: changedPaths.length, selectionReason }, selectedPackageCount: packages.length })}\n`);
+  const mode = fullSelection || selectionReason.startsWith('full:') ? 'full' : 'affected';
+  const reason = forcedFullReason || (mode === 'full' && !selectionReason ? 'full: candidate has no integration base ref' : selectionReason);
+  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, internalToolPackages, stagePackages, changedPathCount: changedPaths.length, selectionReason: reason, mode, baseSha: selectionBaseSha }, selectedPackageCount: packages.length })}\n`);
   process.stdout.write(`Resolved ${packages.length} package(s) from ${changedPaths.length} path(s) using kb-devkit.\n`);
 } catch (error) {
   process.stderr.write(`${error.message}\n`);

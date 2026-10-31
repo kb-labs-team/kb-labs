@@ -22,6 +22,7 @@ function execute(command, args, { retryable = false, maxBuffer = 16 * 1024 * 102
 function createExecutors(scratch) {
   const git = {
     headSha: async () => execute('git', ['rev-parse', 'HEAD']),
+    currentBranch: async () => execute('git', ['branch', '--show-current']),
     backupRemote: async () => execute('git', ['remote', 'get-url', 'backup']),
     pushRef: async (ref, sha) => execute('git', ['push', 'backup', `${sha}:refs/heads/${ref}`], { retryable: true }),
     resolveRef: async (remote, ref) => {
@@ -35,7 +36,7 @@ function createExecutors(scratch) {
 
   const gh = {
     listRuns: async (repo, branch, event) => JSON.parse(execute('gh', ['api', `repos/${repo}/actions/runs?branch=${encodeURIComponent(branch)}&event=${event}&per_page=100`], { retryable: true } )).workflow_runs ?? [],
-    dispatchRun: async (repo, ref, profile) => execute('gh', ['workflow', 'run', 'remote-verify.yml', '--repo', repo, '--ref', ref, '-f', `profile=${profile}`], { retryable: true }),
+    dispatchRun: async (repo, ref, profile, baseRef) => execute('gh', ['workflow', 'run', 'remote-verify.yml', '--repo', repo, '--ref', ref, '-f', `profile=${profile}`, ...(baseRef ? ['-f', `base_ref=${baseRef}`] : [])], { retryable: true }),
     getRun: async (repo, runId) => JSON.parse(execute('gh', ['api', `repos/${repo}/actions/runs/${runId}`], { retryable: true })),
     downloadVerdict: async (repo, runId) => {
       const dir = path.join(scratch, String(runId));

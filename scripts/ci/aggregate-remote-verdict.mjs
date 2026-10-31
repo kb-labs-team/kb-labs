@@ -256,6 +256,12 @@ export function aggregateVerdict({
     schemaVersion: 1,
     sha,
     profile: verificationProfile,
+    selection: {
+      mode: prepareStageResult.selectionMode ?? 'full',
+      baseSha: prepareStageResult.selectionBaseSha ?? '',
+      reason: prepareStageResult.selectionReason ?? 'full: package selection did not complete',
+      packages: prepareStageResult.selectedPackages ?? [],
+    },
     status: jobs.every((job) => job.status === 'pass') ? 'pass' : 'fail',
     jobs,
     internalToolResults: {
