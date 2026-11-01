@@ -308,6 +308,19 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
   private buildSnapshot(): RegistrySnapshot {
     const generatedAt = new Date().toISOString();
     const ttlMs = this.opts.cache?.ttlMs ?? 60_000;
+    const manifests = this.plugins
+      .filter(p => this.manifests.has(p.id))
+      .map(p => ({
+        pluginId: p.id,
+        manifest: this.manifests.get(p.id)!,
+        pluginRoot: p.packageRoot,
+        source: p.source,
+        packageName: p.packageName,
+        scope: p.scope,
+        origin: p.origin,
+        manifestPath: p.manifestPath,
+        manifestKind: p.manifestKind,
+      }));
 
     return {
       schema: 'kb.registry/1',
@@ -327,20 +340,9 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
         version: p.version,
         source: p.source,
       })),
-      manifests: this.plugins
-        .filter(p => this.manifests.has(p.id))
-        .map(p => ({
-          pluginId: p.id,
-          manifest: this.manifests.get(p.id)!,
-          pluginRoot: p.packageRoot,
-          source: p.source,
-          packageName: p.packageName,
-          scope: p.scope,
-          origin: p.origin,
-          manifestPath: p.manifestPath,
-          manifestKind: p.manifestKind,
-        })),
+      manifests,
       diagnostics: this.diagnosticEvents,
+      inputFingerprint: this.snapshotMgr.computeInputFingerprint(manifests),
       ts: Date.now(),
     };
   }

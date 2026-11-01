@@ -4998,8 +4998,8 @@
 **`core/registry/src/__tests__/snapshot-manager.spec.ts`**
 
 - **SnapshotManager — manifest staleness (#23)**
-  - keeps a snapshot fresh when the manifest artifact predates it
-  - marks the snapshot stale when the manifest artifact was rebuilt after it
+  - keeps a snapshot fresh when the manifest content is unchanged despite a later mtime
+  - marks the snapshot stale when manifest contents change at the same mtime
   - honours the package.json kbLabs.manifest pointer for staleness
   - does not flag staleness when there is no locatable manifest artifact
 - **SnapshotManager — runtime state location**

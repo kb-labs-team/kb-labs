@@ -6,12 +6,12 @@
  * replaced with platform ICache abstraction.
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import { getDiscoveryInputPaths } from '@kb-labs/core-discovery';
 import { promises as fsPromises } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type { ICache } from '@kb-labs/core-platform/adapters';
 import type { RegistrySnapshot, RegistrySnapshotManifestEntry, SnapshotWithoutIntegrity } from '@kb-labs/plugin-contracts';
@@ -105,7 +105,10 @@ export class SnapshotManager {
   }
 
   private async doPersist(snapshot: RegistrySnapshot): Promise<void> {
-    const finalized = this.ensureIntegrity(snapshot);
+    const finalized = this.ensureIntegrity({
+      ...snapshot,
+      inputFingerprint: this.computeInputFingerprint(snapshot.manifests),
+    });
 
     // Atomic write to disk (tmp → rename)
     try {
@@ -143,6 +146,7 @@ export class SnapshotManager {
       source: { platformVersion: this.platformVersion, cwd: this.root },
       plugins: [],
       manifests: [],
+      inputFingerprint: this.computeInputFingerprint([]),
       ts: Date.parse(generatedAt),
     };
     return this.ensureIntegrity(base as RegistrySnapshot);
@@ -167,42 +171,35 @@ export class SnapshotManager {
 
   private markStaleness(snapshot: RegistrySnapshot): RegistrySnapshot {
     const expired = snapshot.expiresAt ? Date.now() > Date.parse(snapshot.expiresAt) : false;
-    const discoveryInputsChanged = this.isDiscoveryInputNewerThanSnapshot(snapshot);
-    const manifestChanged = this.isAnyManifestNewerThanSnapshot(snapshot);
-    const stale = expired || discoveryInputsChanged || manifestChanged;
+    const inputsChanged = snapshot.inputFingerprint !== this.computeInputFingerprint(snapshot.manifests);
+    const stale = expired || inputsChanged;
     if (snapshot.stale === stale) {return snapshot;}
     return { ...snapshot, stale, partial: snapshot.partial || stale };
   }
 
-  private isDiscoveryInputNewerThanSnapshot(snapshot: RegistrySnapshot): boolean {
-    const snapshotTs = snapshot.ts ?? Date.parse(snapshot.generatedAt);
-    if (!Number.isFinite(snapshotTs)) {return true;}
-
-    return getDiscoveryInputPaths(this.discoveryRoots).some((inputPath) =>
-      existsSync(inputPath) && statSync(inputPath).mtimeMs > snapshotTs,
-    );
-  }
-
-  /**
-   * Detect a rebuilt plugin whose manifest artifact changed on disk after the
-   * snapshot was written. Installing/removing a plugin bumps marketplace.lock
-   * (covered by discovery input invalidation), but rebuilding an *already-installed*
-   * plugin (e.g. fixing handler paths in its manifest and re-running the build)
-   * leaves the lock untouched — so without this check a stale registry.json
-   * keeps serving the old handler paths until it is manually deleted (#23).
-   */
-  private isAnyManifestNewerThanSnapshot(snapshot: RegistrySnapshot): boolean {
-    const snapshotTs = snapshot.ts ?? Date.parse(snapshot.generatedAt);
-    if (!Number.isFinite(snapshotTs)) {return false;}
-
-    for (const entry of snapshot.manifests) {
-      const manifestFile = this.resolveManifestFile(entry.pluginRoot);
-      if (!manifestFile) {continue;}
-      try {
-        if (statSync(manifestFile).mtimeMs > snapshotTs) {return true;}
-      } catch { /* manifest file removed — let discovery re-resolve it */ }
+  /** Hash every root input used by core-discovery and each loaded manifest artifact. */
+  computeInputFingerprint(manifests: readonly RegistrySnapshotManifestEntry[]): string {
+    const paths = new Set(getDiscoveryInputPaths(this.discoveryRoots));
+    for (const entry of manifests) {
+      const manifestPath = this.resolveManifestFile(entry.pluginRoot);
+      if (manifestPath) paths.add(manifestPath);
     }
-    return false;
+
+    const hash = createHash('sha256');
+    for (const inputPath of [...paths].sort()) {
+      hash.update(inputPath).update('\0');
+      try {
+        hash.update(readFileSync(inputPath));
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+          hash.update('<missing>');
+        } else {
+          throw error;
+        }
+      }
+      hash.update('\0');
+    }
+    return hash.digest('hex');
   }
 
   /**
@@ -276,6 +273,7 @@ export class SnapshotManager {
       corrupted: !schemaValid || raw.corrupted === true,
       plugins: Array.isArray(raw.plugins) ? raw.plugins : [],
       manifests,
+      inputFingerprint: typeof raw.inputFingerprint === 'string' ? raw.inputFingerprint : '',
       ts,
     };
 

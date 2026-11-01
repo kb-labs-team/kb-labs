@@ -166,6 +166,7 @@ export interface RegistrySnapshot {
   plugins: Array<{ id: string; version: string; source: { kind: 'marketplace' | 'local'; path: string } }>;
   manifests: RegistrySnapshotManifestEntry[];
   diagnostics?: DiagnosticEvent[];
+  inputFingerprint: string;
   ts: number;
 }
 
