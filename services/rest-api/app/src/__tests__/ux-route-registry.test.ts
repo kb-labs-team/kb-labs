@@ -19,6 +19,7 @@ const snapshot: RegistrySnapshot = {
   source: { cwd: process.cwd(), platformVersion: 'test' },
   plugins: [],
   manifests: [],
+  inputFingerprint: '',
   ts: 0,
 };
 

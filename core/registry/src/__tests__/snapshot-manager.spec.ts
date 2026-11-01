@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,7 +9,7 @@ import type { RegistrySnapshot } from '@kb-labs/plugin-contracts';
 /**
  * Regression for #23: a rebuilt (already-installed) plugin must invalidate the
  * cached registry snapshot even though marketplace.lock is untouched. Staleness
- * is driven by the on-disk manifest artifact's mtime vs the snapshot timestamp.
+ * is driven by the on-disk manifest artifact's content fingerprint.
  */
 describe('SnapshotManager — manifest staleness (#23)', () => {
   let root: string;
@@ -43,6 +43,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
           manifestKind: 'static',
         },
       ],
+      inputFingerprint: '',
       ts: T,
     };
   }
@@ -66,22 +67,24 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
     rmSync(kbHome, { recursive: true, force: true });
   });
 
-  it('keeps a snapshot fresh when the manifest artifact predates it', async () => {
+  it('keeps a snapshot fresh when the manifest content is unchanged despite a later mtime', async () => {
     const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test' });
     await mgr.persist(makeSnapshot());
 
-    setManifestMtime(T - 10_000); // built before the snapshot
+    setManifestMtime(T + 10_000); // mtime alone does not invalidate content
     const loaded = await mgr.load();
 
     expect(loaded).not.toBeNull();
     expect(loaded!.stale).toBe(false);
   });
 
-  it('marks the snapshot stale when the manifest artifact was rebuilt after it', async () => {
+  it('marks the snapshot stale when manifest contents change at the same mtime', async () => {
     const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test' });
     await mgr.persist(makeSnapshot());
 
-    setManifestMtime(T + 10_000); // rebuilt after the snapshot — the #23 case
+    writeFileSync(join(pluginRoot, 'dist', 'index.js'), 'export const manifest = { changed: true };');
+    setManifestMtime(T); // same mtime as the persisted snapshot
+    expect(statSync(join(pluginRoot, 'dist', 'index.js')).mtimeMs).toBe(T);
     const loaded = await mgr.load();
 
     expect(loaded).not.toBeNull();
@@ -100,8 +103,9 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
     const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test' });
     await mgr.persist(makeSnapshot());
 
-    const future = new Date(T + 10_000);
-    utimesSync(manifestArtifact, future, future);
+    writeFileSync(manifestArtifact, 'export const manifest = { changed: true };');
+    const same = new Date(T);
+    utimesSync(manifestArtifact, same, same);
     const loaded = await mgr.load();
 
     expect(loaded!.stale).toBe(true);
@@ -139,6 +143,7 @@ describe('SnapshotManager — runtime state location', () => {
     source: { cwd: root, platformVersion: 'test' },
     plugins: [],
     manifests: [],
+    inputFingerprint: '',
     ts: T,
   });
 

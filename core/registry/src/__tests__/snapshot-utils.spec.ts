@@ -54,6 +54,7 @@ describe('snapshot-utils', () => {
         source: { cwd: '/tmp', platformVersion: '1.0.0' },
         plugins: [],
         manifests: [],
+        inputFingerprint: '',
         ts: 1000,
       };
 
@@ -69,7 +70,7 @@ describe('snapshot-utils', () => {
         rev: 1, version: '1', generatedAt: '2026-01-01T00:00:00Z',
         ttlMs: 60000, partial: false, stale: false,
         source: { cwd: '/tmp', platformVersion: '1.0.0' },
-        plugins: [], manifests: [], ts: 1000,
+        plugins: [], manifests: [], inputFingerprint: '', ts: 1000,
       };
 
       const modified = { ...base, rev: 2 };

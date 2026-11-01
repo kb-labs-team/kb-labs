@@ -29,7 +29,8 @@ from pathlib import Path
 
 args = sys.argv[1:]
 root = Path.cwd()
-if args[-1:] == ["--help"] and args[:1] in (["commit"], ["review"]):
+declared_plugin_commands = {("commit", "commit"), ("review", "run")}
+if args[-1:] == ["--help"] and tuple(args[:-1]) in declared_plugin_commands:
     print("Registered plugin command help")
     raise SystemExit(0)
 log = Path(os.environ["FAKE_JOURNEY_LOG"])
@@ -226,6 +227,11 @@ class PluginAuthorJourneyTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_fake_cli_rejects_unregistered_nested_plugin_routes(self):
+        result = subprocess.run([str(self.kb), "commit", "bogus", "--help"],
+                                cwd=self.project, env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
 
     def run_flow(self, *, mode="local", fail_build=False):
         if fail_build:

@@ -244,38 +244,49 @@ describe('Registry Integration', () => {
   it('refreshes a cached CLI capability when the platform marketplace lock changes', async () => {
     const platformRoot = path.join(root, 'platform');
     const projectRoot = path.join(root, 'project');
-    await fs.mkdir(platformRoot, { recursive: true });
-    await fs.mkdir(projectRoot, { recursive: true });
-    const commit = await createFakePlugin(platformRoot, '@kb-labs/commit', {
-      commands: [{ path: 'commit plan show', describe: 'Show the Commit plan' }],
-    });
-    const unrelated = await createFakePlugin(platformRoot, '@kb-labs/unrelated', {
-      workflows: [{ id: 'unrelated-workflow' }],
-    });
-    await registerPlugin(platformRoot, '@kb-labs/commit', commit.dir, commit.integrity, ['plugin', 'cli-command']);
-    await registerPlugin(platformRoot, '@kb-labs/unrelated', unrelated.dir, unrelated.integrity, ['plugin', 'workflow']);
+    const kbHome = path.join(root, 'kb-home');
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = kbHome;
+    try {
+      await fs.mkdir(platformRoot, { recursive: true });
+      await fs.mkdir(projectRoot, { recursive: true });
+      const commit = await createFakePlugin(platformRoot, '@kb-labs/commit', {
+        commands: [{ path: 'commit plan show', describe: 'Show the Commit plan' }],
+      });
+      const unrelated = await createFakePlugin(platformRoot, '@kb-labs/unrelated', {
+        workflows: [{ id: 'unrelated-workflow' }],
+      });
+      await registerPlugin(platformRoot, '@kb-labs/commit', commit.dir, commit.integrity, ['plugin', 'cli-command']);
+      await registerPlugin(platformRoot, '@kb-labs/unrelated', unrelated.dir, unrelated.integrity, ['plugin', 'workflow']);
 
-    const lock = await readMarketplaceLock(platformRoot, new DiagnosticCollector());
-    expect(lock).not.toBeNull();
-    lock!.plugins['@kb-labs/commit']!.enabled = false;
-    await writeMarketplaceLock(platformRoot, lock!);
+      const lock = await readMarketplaceLock(platformRoot, new DiagnosticCollector());
+      expect(lock).not.toBeNull();
+      lock!.plugins['@kb-labs/commit']!.enabled = false;
+      await writeMarketplaceLock(platformRoot, lock!);
 
-    const disabled = await openCatalog({ platformRoot, projectRoot });
-    expect(disabled.queryEntities({ kind: 'cli-command' })).toHaveLength(0);
-    await disabled.dispose();
+      const disabled = await openCatalog({ platformRoot, projectRoot });
+      expect(disabled.queryEntities({ kind: 'cli-command' })).toHaveLength(0);
+      await disabled.dispose();
+      const snapshotPath = resolveRuntimeStatePath(projectRoot, ['cache', 'registry.json'], { root: kbHome });
+      const persistedSnapshot = JSON.parse(await fs.readFile(snapshotPath, 'utf8')) as { ts: number };
 
-    const enabledLock = await readMarketplaceLock(platformRoot, new DiagnosticCollector());
-    expect(enabledLock).not.toBeNull();
-    enabledLock!.plugins['@kb-labs/commit']!.enabled = true;
-    await writeMarketplaceLock(platformRoot, enabledLock!);
-    const lockPath = path.join(platformRoot, '.kb', 'marketplace.lock');
-    const changedAt = new Date(disabled.snapshot().ts + 1_000);
-    await fs.utimes(lockPath, changedAt, changedAt);
+      const enabledLock = await readMarketplaceLock(platformRoot, new DiagnosticCollector());
+      expect(enabledLock).not.toBeNull();
+      enabledLock!.plugins['@kb-labs/commit']!.enabled = true;
+      await writeMarketplaceLock(platformRoot, enabledLock!);
+      const lockPath = path.join(platformRoot, '.kb', 'marketplace.lock');
+      const changedAt = new Date(persistedSnapshot.ts);
+      await fs.utimes(lockPath, changedAt, changedAt);
+      expect((await fs.stat(lockPath)).mtimeMs).toBe(persistedSnapshot.ts);
 
-    const enabled = await openCatalog({ platformRoot, projectRoot });
-    expect(enabled.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId))
-      .toContain('commit plan show');
-    await enabled.dispose();
+      const enabled = await openCatalog({ platformRoot, projectRoot });
+      expect(enabled.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId))
+        .toContain('commit plan show');
+      await enabled.dispose();
+    } finally {
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
   });
 
   it('snapshot persistence and reload', async () => {

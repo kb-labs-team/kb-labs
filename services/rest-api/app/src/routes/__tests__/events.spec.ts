@@ -47,6 +47,7 @@ function createMockSnapshot(): RegistrySnapshot {
     corrupted: false,
     plugins: [],
     manifests: [],
+    inputFingerprint: '',
     ts: Date.now(),
     checksum: 'abc123',
     checksumAlgorithm: 'sha256',

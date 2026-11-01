@@ -40,6 +40,7 @@ function createMockSnapshot(rev: number): RegistrySnapshot {
     corrupted: false,
     plugins: [],
     manifests: [],
+    inputFingerprint: '',
     ts: Date.now(),
   };
 }
