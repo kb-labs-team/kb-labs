@@ -289,6 +289,59 @@ describe('Registry Integration', () => {
     }
   });
 
+  it('does not persist a fresh snapshot when the marketplace lock changes during discovery', async () => {
+    const platformRoot = path.join(root, 'platform-race');
+    const projectRoot = path.join(root, 'project-race');
+    const kbHome = path.join(root, 'kb-home-race');
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = kbHome;
+    try {
+      await fs.mkdir(platformRoot, { recursive: true });
+      await fs.mkdir(projectRoot, { recursive: true });
+      const commit = await createFakePlugin(platformRoot, '@kb-labs/commit', {
+        commands: [{ path: 'commit plan show', describe: 'Show the Commit plan' }],
+      });
+      const trigger = await createFakePlugin(platformRoot, '@kb-labs/fingerprint-trigger', {
+        workflows: [{ id: 'fingerprint-trigger' }],
+      });
+      await registerPlugin(platformRoot, '@kb-labs/commit', commit.dir, commit.integrity, ['plugin', 'cli-command']);
+      await registerPlugin(platformRoot, '@kb-labs/fingerprint-trigger', trigger.dir, trigger.integrity, ['plugin', 'workflow']);
+
+      const lockPath = path.join(platformRoot, '.kb', 'marketplace.lock');
+      const lock = await readMarketplaceLock(platformRoot, new DiagnosticCollector());
+      expect(lock).not.toBeNull();
+      lock!.plugins['@kb-labs/commit']!.enabled = false;
+      await writeMarketplaceLock(platformRoot, lock!);
+      const enabledLock = structuredClone(lock!);
+      enabledLock.plugins['@kb-labs/commit']!.enabled = true;
+      const triggerManifest = JSON.parse(await fs.readFile(path.join(trigger.dir, 'kb.plugin.json'), 'utf8'));
+      await fs.writeFile(path.join(trigger.dir, 'package.json'), JSON.stringify({
+        name: '@kb-labs/fingerprint-trigger',
+        version: '1.0.0',
+        kb: { manifest: 'manifest.mjs' },
+      }));
+      await fs.writeFile(path.join(trigger.dir, 'manifest.mjs'), [
+        "import { writeFile } from 'node:fs/promises';",
+        `await writeFile(${JSON.stringify(lockPath)}, ${JSON.stringify(JSON.stringify(enabledLock))});`,
+        `export const manifest = ${JSON.stringify(triggerManifest)};`,
+      ].join('\n'));
+
+      const discoveredBeforeEnable = await openCatalog({ platformRoot, projectRoot });
+      expect(discoveredBeforeEnable.queryEntities({ kind: 'cli-command' })).toHaveLength(0);
+      await discoveredBeforeEnable.dispose();
+      expect((await readMarketplaceLock(platformRoot, new DiagnosticCollector()))?.plugins['@kb-labs/commit']?.enabled)
+        .toBe(true);
+
+      const reopened = await openCatalog({ platformRoot, projectRoot });
+      expect(reopened.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId))
+        .toContain('commit plan show');
+      await reopened.dispose();
+    } finally {
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
+  });
+
   it('snapshot persistence and reload', async () => {
     const { dir, integrity } = await createFakePlugin(root, '@kb-labs/persistent', {
       commands: [{ path: 'persist-cmd', describe: 'Test persistence' }],

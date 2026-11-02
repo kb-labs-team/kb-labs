@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
-from plugin_author_steps import run_commit_case_steps, run_plugin_author_flow
+from plugin_author_steps import _validate_plugin_route_help, run_commit_case_steps, run_plugin_author_flow
 from service_steps import Journey
 from invocations import open_http
 from marketplace_sync_fixture import (
@@ -30,7 +30,9 @@ from pathlib import Path
 args = sys.argv[1:]
 root = Path.cwd()
 declared_plugin_commands = {("commit", "commit"), ("review", "run")}
-if args[-1:] == ["--help"] and tuple(args[:-1]) in declared_plugin_commands:
+help_args = args[:-2] if args[-2:] == ["--help", "--json"] else args[:-1]
+is_help = args[-2:] == ["--help", "--json"] or args[-1:] == ["--help"]
+if is_help and tuple(help_args) in declared_plugin_commands:
     print("Registered plugin command help")
     raise SystemExit(0)
 log = Path(os.environ["FAKE_JOURNEY_LOG"])
@@ -232,6 +234,36 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         result = subprocess.run([str(self.kb), "commit", "bogus", "--help"],
                                 cwd=self.project, env=self.env, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
+
+    def test_nonzero_route_help_reports_preflight_failure_and_actual_output(self):
+        result = subprocess.CompletedProcess(
+            [str(self.kb), "commit", "commit", "--help", "--json"],
+            1,
+            "",
+            "plugin startup failed while loading configuration",
+        )
+
+        with self.assertRaises(RuntimeError) as raised:
+            _validate_plugin_route_help(["commit", "commit"], result)
+
+        self.assertEqual(str(raised.exception),
+                         "journey command 'commit commit' help preflight failed (exit 1): "
+                         "plugin startup failed while loading configuration")
+
+    def test_only_unknown_command_result_reports_route_absent(self):
+        result = subprocess.CompletedProcess(
+            [str(self.kb), "commit", "bogus", "--help", "--json"],
+            2,
+            json.dumps({"ok": False, "error": {"code": "KB_RUNTIME_UNKNOWN_COMMAND"}}),
+            "",
+        )
+
+        with self.assertRaises(RuntimeError) as raised:
+            _validate_plugin_route_help(["commit", "bogus"], result)
+
+        self.assertEqual(str(raised.exception),
+                         "journey command 'commit bogus' is absent from the live CLI registry: "
+                         '{"ok": false, "error": {"code": "KB_RUNTIME_UNKNOWN_COMMAND"}}')
 
     def run_flow(self, *, mode="local", fail_build=False):
         if fail_build:

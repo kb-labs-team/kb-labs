@@ -18,8 +18,8 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
 
   const T = Date.now(); // snapshot timestamp (must be "now" so TTL is not already expired)
 
-  function makeSnapshot(): RegistrySnapshot {
-    return {
+  function makeSnapshot(mgr: SnapshotManager): RegistrySnapshot {
+    const snapshot: RegistrySnapshot = {
       schema: 'kb.registry/1',
       rev: 1,
       version: '1',
@@ -46,6 +46,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
       inputFingerprint: '',
       ts: T,
     };
+    return { ...snapshot, inputFingerprint: mgr.computeInputFingerprint(snapshot.manifests) };
   }
 
   function setManifestMtime(ms: number): void {
@@ -69,7 +70,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
 
   it('keeps a snapshot fresh when the manifest content is unchanged despite a later mtime', async () => {
     const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test' });
-    await mgr.persist(makeSnapshot());
+    await mgr.persist(makeSnapshot(mgr));
 
     setManifestMtime(T + 10_000); // mtime alone does not invalidate content
     const loaded = await mgr.load();
@@ -80,7 +81,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
 
   it('marks the snapshot stale when manifest contents change at the same mtime', async () => {
     const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test' });
-    await mgr.persist(makeSnapshot());
+    await mgr.persist(makeSnapshot(mgr));
 
     writeFileSync(join(pluginRoot, 'dist', 'index.js'), 'export const manifest = { changed: true };');
     setManifestMtime(T); // same mtime as the persisted snapshot
@@ -101,7 +102,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
     writeFileSync(manifestArtifact, 'export const manifest = {};');
 
     const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test' });
-    await mgr.persist(makeSnapshot());
+    await mgr.persist(makeSnapshot(mgr));
 
     writeFileSync(manifestArtifact, 'export const manifest = { changed: true };');
     const same = new Date(T);
@@ -115,7 +116,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
     rmSync(join(pluginRoot, 'dist'), { recursive: true, force: true });
 
     const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test' });
-    await mgr.persist(makeSnapshot());
+    await mgr.persist(makeSnapshot(mgr));
 
     const loaded = await mgr.load();
     expect(loaded!.stale).toBe(false);
