@@ -12,7 +12,7 @@ import { createExtensionStore } from '@kb-labs/core-extension-store';
 import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import type {
   DiscoveryResult, DiscoveryFailure, DiscoveredPlugin, DiscoveryOrigin, DiscoveryScope, DiagnosticEvent, EntityKind,
-  MarketplaceEntry, MarketplaceLock, DiscoveryInput,
+  MarketplaceEntry, MarketplaceLock, DiscoveryInput, DiscoveryCandidateMembership,
 } from '@kb-labs/plugin-contracts';
 import { DiagnosticCollector } from './diagnostics.js';
 import { resolveCliHandlerPath } from '@kb-labs/core-platform';
@@ -21,7 +21,7 @@ import { isPortableRelativePath, isUserOwnedLinkPath, readMarketplaceLock } from
 import { resolveMarketplaceLockScope, type MarketplaceLockRoots } from './marketplace-lock-scope.js';
 import { loadManifestFile } from './manifest-loader.js';
 import { computePackageIntegrity } from './integrity.js';
-import { findWorkspaceCandidates } from './workspace-source.js';
+import { findWorkspaceCandidates, findWorkspacePackageRoots } from './workspace-source.js';
 import { readPluginPolicy, checkPluginPolicy, isFirstPartyPluginSource, type PluginPolicy, type PluginPolicyResult } from './plugin-policy.js';
 import { readDiscoveryInputs } from './discovery-inputs.js';
 
@@ -51,6 +51,8 @@ export interface DiscoveryOptions {
    * A root without `pnpm-workspace.yaml` contributes only its own package.
    */
   workspace?: boolean;
+  /** Additional workspace roots whose matched packages are selected by another registry source. */
+  additionalWorkspaceRoots?: readonly string[];
   /** Machine-local extension store used to resolve project version pins. */
   extensionStore?: IExtensionStore;
   /** Observe root input reads; used to verify discovery and fingerprint inputs stay aligned. */
@@ -140,6 +142,7 @@ export class DiscoveryManager {
   private readonly importTimeoutMs: number;
   private readonly verifyIntegrity: boolean;
   private readonly workspace: boolean;
+  private readonly additionalWorkspaceRoots: readonly string[];
   private readonly extensionStore: IExtensionStore;
   private readonly onInputRead?: (filePath: string, bytes?: Buffer) => void;
   private consumedInputDigests = new Map<string, string>();
@@ -161,6 +164,7 @@ export class DiscoveryManager {
     this.importTimeoutMs = opts.importTimeoutMs ?? 5_000;
     this.verifyIntegrity = opts.verifyIntegrity ?? true;
     this.workspace = opts.workspace ?? true;
+    this.additionalWorkspaceRoots = [...new Set((opts.additionalWorkspaceRoots ?? []).map(root => path.resolve(root)))];
     this.extensionStore = opts.extensionStore ?? createExtensionStore();
     this.onInputRead = opts.onInputRead;
   }
@@ -175,6 +179,8 @@ export class DiscoveryManager {
    */
   async discover(): Promise<DiscoveryResult> {
     const roots = this.scopes.map(({ root }) => root);
+    const inputRoots = [...new Set([...roots, ...this.additionalWorkspaceRoots])];
+    const candidateMemberships: DiscoveryCandidateMembership[] = [];
     this.consumedInputDigests.clear();
     this.marketplaceLocks.clear();
     this.marketplaceLocksLoaded = false;
@@ -190,7 +196,12 @@ export class DiscoveryManager {
         });
       }
     }
-    const candidates = await this.collectCandidates(diag);
+    const candidates = await this.collectCandidates(diag, candidateMemberships);
+    for (const root of this.additionalWorkspaceRoots) {
+      if (candidateMemberships.some(membership => membership.root === root)) continue;
+      candidateMemberships.push({ source: 'workspace', root, packageRoots: await findWorkspacePackageRoots(root) });
+    }
+    candidateMemberships.sort((left, right) => left.source.localeCompare(right.source) || left.root.localeCompare(right.root));
 
     const outcomes = await Promise.all(candidates.map(c => this.processCandidate(c)));
 
@@ -210,13 +221,14 @@ export class DiscoveryManager {
     }
     const manifestInputs = [...winners.values()].flatMap(({ inputs }) => inputs);
     const consumedRootInputs = [...this.consumedInputDigests].map(([inputPath, digest]) => ({ path: inputPath, digest }));
-    const { inputs, fingerprint } = await readDiscoveryInputs(roots, [...manifestInputs, ...consumedRootInputs]);
+    const { inputs, fingerprint } = await readDiscoveryInputs(inputRoots, [...manifestInputs, ...consumedRootInputs], candidateMemberships);
     return {
       plugins,
       manifests,
       failures,
       diagnostics: diag.getEvents(),
       inputs,
+      candidateMemberships,
       fingerprint,
     };
   }
@@ -251,7 +263,7 @@ export class DiscoveryManager {
   // Candidates
   // -------------------------------------------------------------------------
 
-  private async collectCandidates(diag: DiagnosticCollector): Promise<Candidate[]> {
+  private async collectCandidates(diag: DiagnosticCollector, candidateMemberships: DiscoveryCandidateMembership[]): Promise<Candidate[]> {
     await this.loadMarketplaceLocks(diag);
     // Lock entries. Project scope is read last so it overwrites a platform entry
     // with the same lock key (project overrides platform).
@@ -308,7 +320,11 @@ export class DiscoveryManager {
 
     if (this.workspace) {
       for (const { scope, root } of this.scopes) {
-        for (const found of await findWorkspaceCandidates(root, (filePath, bytes) => this.recordInputRead(filePath, bytes))) {
+        for (const found of await findWorkspaceCandidates(
+          root,
+          (filePath, bytes) => this.recordInputRead(filePath, bytes),
+          (packageRoots) => candidateMemberships.push({ source: 'workspace', root: path.resolve(root), packageRoots: [...packageRoots] }),
+        )) {
           candidates.push({
             id: found.packageName,
             scope,

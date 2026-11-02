@@ -105,6 +105,14 @@ async function workspacePackageRoots(
   return [...roots].sort();
 }
 
+/** Return the exact sorted package-root membership selected by the workspace globs. */
+export async function findWorkspacePackageRoots(
+  root: string,
+  onInputRead?: (filePath: string, bytes?: Buffer) => void,
+): Promise<string[]> {
+  return workspacePackageRoots(root, onInputRead);
+}
+
 /** Enumerate every package matched by a workspace, whether built or not. */
 export async function findWorkspacePackages(root: string): Promise<WorkspaceCandidate[]> {
   const packages = await Promise.all((await workspacePackageRoots(root)).map(async packageRoot => {
@@ -127,8 +135,11 @@ export async function findWorkspacePackages(root: string): Promise<WorkspaceCand
 export async function findWorkspaceCandidates(
   root: string,
   onInputRead?: (filePath: string, bytes?: Buffer) => void,
+  onPackageRoots?: (packageRoots: readonly string[]) => void,
 ): Promise<WorkspaceCandidate[]> {
-  const candidates = await Promise.all((await workspacePackageRoots(root, onInputRead)).map(async (packageRoot) => {
+  const packageRoots = await workspacePackageRoots(root, onInputRead);
+  onPackageRoots?.(packageRoots);
+  const candidates = await Promise.all(packageRoots.map(async (packageRoot) => {
     return toCandidate(packageRoot, onInputRead);
   }));
   return candidates.filter((c): c is WorkspaceCandidate => c !== null);

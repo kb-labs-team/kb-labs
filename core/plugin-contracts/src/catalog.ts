@@ -100,12 +100,19 @@ export interface DiscoveryResult {
   failures: DiscoveryFailure[];
   diagnostics: DiagnosticEvent[];
   inputs: DiscoveryInput[];
+  candidateMemberships: DiscoveryCandidateMembership[];
   fingerprint: string;
 }
 
 export interface DiscoveryInput {
   path: string;
   digest: string;
+}
+
+export interface DiscoveryCandidateMembership {
+  source: 'workspace';
+  root: string;
+  packageRoots: string[];
 }
 
 export interface EntityRef {
@@ -173,6 +180,7 @@ export interface RegistrySnapshot {
   plugins: Array<{ id: string; version: string; source: { kind: 'marketplace' | 'local'; path: string } }>;
   manifests: RegistrySnapshotManifestEntry[];
   inputs: DiscoveryInput[];
+  candidateMemberships: DiscoveryCandidateMembership[];
   diagnostics?: DiagnosticEvent[];
   inputFingerprint: string;
   ts: number;

@@ -8,7 +8,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
-import { fingerprintDiscoveryInputs } from '@kb-labs/core-discovery';
+import { isDiscoverySnapshotStale } from '@kb-labs/core-discovery';
 import { promises as fsPromises } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -144,6 +144,7 @@ export class SnapshotManager {
       plugins: [],
       manifests: [],
       inputs: [],
+      candidateMemberships: [],
       inputFingerprint: '',
       ts: Date.parse(generatedAt),
     };
@@ -169,8 +170,12 @@ export class SnapshotManager {
 
   private async markStaleness(snapshot: RegistrySnapshot): Promise<RegistrySnapshot> {
     const expired = snapshot.expiresAt ? Date.now() > Date.parse(snapshot.expiresAt) : false;
-    const currentFingerprint = await fingerprintDiscoveryInputs(snapshot.inputs, this.discoveryRoots);
-    const inputsChanged = snapshot.inputFingerprint !== currentFingerprint;
+    const inputsChanged = await isDiscoverySnapshotStale(
+      snapshot.inputs,
+      snapshot.inputFingerprint,
+      snapshot.candidateMemberships,
+      this.discoveryRoots,
+    );
     const stale = expired || inputsChanged;
     if (snapshot.stale === stale) {return snapshot;}
     return { ...snapshot, stale, partial: snapshot.partial || stale };
@@ -213,10 +218,11 @@ export class SnapshotManager {
       partial: raw.partial ?? true,
       stale: raw.stale ?? (expiresAt ? Date.now() > Date.parse(expiresAt) : false),
       source: raw.source ?? { platformVersion: this.platformVersion, cwd: this.root },
-      corrupted: !schemaValid || raw.corrupted === true || !Array.isArray(raw.inputs),
+      corrupted: !schemaValid || raw.corrupted === true || !Array.isArray(raw.inputs) || !Array.isArray(raw.candidateMemberships),
       plugins: Array.isArray(raw.plugins) ? raw.plugins : [],
       manifests,
       inputs: Array.isArray(raw.inputs) ? raw.inputs : [],
+      candidateMemberships: Array.isArray(raw.candidateMemberships) ? raw.candidateMemberships : [],
       inputFingerprint: typeof raw.inputFingerprint === 'string' ? raw.inputFingerprint : '',
       ts,
     };

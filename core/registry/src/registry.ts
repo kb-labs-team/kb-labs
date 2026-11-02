@@ -60,6 +60,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
   private attemptedPluginCount = 0;
   private snapshotInputFingerprint = '';
   private snapshotInputs: RegistrySnapshot['inputs'] = [];
+  private snapshotCandidateMemberships: RegistrySnapshot['candidateMemberships'] = [];
   private discoveryInputsChangedDuringRefresh = false;
   private changeListeners: Array<(diff: RegistryDiff) => void> = [];
   private rev = 0;
@@ -71,13 +72,18 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
     this.discoveryManager = new DiscoveryManager({
       root: this.root,
       platformRoot: opts.platformRoot,
+      additionalWorkspaceRoots: opts.workspaceAdapters?.development ? [opts.workspaceAdapters.workspaceRoot] : [],
       importTimeoutMs: opts.importTimeoutMs,
       verifyIntegrity: opts.verifyIntegrity,
     });
 
     this.snapshotMgr = new SnapshotManager({
       root: this.root,
-      discoveryRoots: [this.root, ...(opts.platformRoot ? [opts.platformRoot] : [])],
+      discoveryRoots: [
+        this.root,
+        ...(opts.platformRoot ? [opts.platformRoot] : []),
+        ...(opts.workspaceAdapters?.development ? [opts.workspaceAdapters.workspaceRoot] : []),
+      ],
       ttlMs: opts.cache?.ttlMs,
       platformVersion: opts.platformVersion ?? PLATFORM_VERSION,
       cache: opts.cache?.adapter,
@@ -125,6 +131,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
         failures: [],
         diagnostics: cached.diagnostics ?? [],
         inputs: cached.inputs,
+        candidateMemberships: cached.candidateMemberships,
         fingerprint: cached.inputFingerprint,
       };
       this.adapterEntries = await resolveCatalogAdapters(this.discoveryManager, this.opts.platformRoot ?? this.root, {
@@ -178,6 +185,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
     this.discoveryInputsChangedDuringRefresh = false;
     this.snapshotInputFingerprint = result.fingerprint;
     this.snapshotInputs = result.inputs;
+    this.snapshotCandidateMemberships = result.candidateMemberships;
     await this.snapshotMgr.persist(this.buildSnapshot());
 
     // Notify listeners
@@ -336,6 +344,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
       })),
       manifests,
       inputs: this.snapshotInputs,
+      candidateMemberships: this.snapshotCandidateMemberships,
       diagnostics: this.diagnosticEvents,
       inputFingerprint: this.snapshotInputFingerprint,
       ts: Date.now(),
@@ -362,6 +371,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
     this.rev = snap.rev;
     this.snapshotInputFingerprint = snap.inputFingerprint;
     this.snapshotInputs = snap.inputs;
+    this.snapshotCandidateMemberships = snap.candidateMemberships;
     this.discoveryInputsChangedDuringRefresh = snap.stale;
     this.manifests.clear();
     this.plugins = [];

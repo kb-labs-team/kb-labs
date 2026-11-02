@@ -19,8 +19,10 @@ export {
   getDiscoveryInputPaths,
   readDiscoveryInputs,
   fingerprintDiscoveryInputs,
+  isDiscoverySnapshotStale,
   createDiscoveryInputFingerprinter,
 } from './discovery-inputs.js';
+export type { DiscoveryCandidateMembership } from '@kb-labs/plugin-contracts';
 export type {
   DiscoveryInputStat,
   DiscoveryInputFileSystem,
