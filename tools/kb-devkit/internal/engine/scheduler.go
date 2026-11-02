@@ -1132,11 +1132,11 @@ func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) (Affect
 	if err != nil {
 		return AffectedSelection{}, fmt.Errorf("affected: collect changed files: %w", err)
 	}
-	return selectAffectedPackages(ws, changedFiles)
+	return selectAffectedPackages(ws, changedFiles, cfg.Affected.FullInputs)
 }
 
 // AffectedPackagesFromFiles selects workspace packages from a produced changed-file manifest.
-func AffectedPackagesFromFiles(ws *workspace.Workspace, files []string) (AffectedSelection, error) {
+func AffectedPackagesFromFiles(ws *workspace.Workspace, files []string, fullInputs []string) (AffectedSelection, error) {
 	changedFiles := make([]string, 0, len(files))
 	for _, file := range files {
 		if file == "" {
@@ -1147,26 +1147,39 @@ func AffectedPackagesFromFiles(ws *workspace.Workspace, files []string) (Affecte
 		}
 		changedFiles = append(changedFiles, filepath.Clean(file))
 	}
-	return selectAffectedPackages(ws, changedFiles)
+	return selectAffectedPackages(ws, changedFiles, fullInputs)
 }
 
-func selectAffectedPackages(ws *workspace.Workspace, changedFiles []string) (AffectedSelection, error) {
+func selectAffectedPackages(ws *workspace.Workspace, changedFiles []string, fullInputs []string) (AffectedSelection, error) {
 	directlyChanged := make(map[string]bool)
 	unowned := make([]string, 0)
+	fullInputSet := make(map[string]struct{}, len(fullInputs))
+	for _, input := range fullInputs {
+		fullInputSet[filepath.ToSlash(filepath.Clean(input))] = struct{}{}
+	}
+	sharedChanges := make([]string, 0)
 	for _, absFile := range changedFiles {
+		relative, err := filepath.Rel(ws.Root, absFile)
+		if err != nil {
+			return AffectedSelection{}, fmt.Errorf("affected: make changed path relative: %w", err)
+		}
+		relative = filepath.ToSlash(relative)
+		if _, ok := fullInputSet[relative]; ok {
+			sharedChanges = append(sharedChanges, relative)
+		}
 		if pkg, ok := ws.PackageByPath(absFile); ok {
 			directlyChanged[pkg.Name] = true
 		} else {
-			relative, err := filepath.Rel(ws.Root, absFile)
-			if err != nil {
-				return AffectedSelection{}, fmt.Errorf("affected: make changed path relative: %w", err)
-			}
-			unowned = append(unowned, filepath.ToSlash(relative))
+			unowned = append(unowned, relative)
 		}
 	}
 	if len(unowned) > 0 {
 		sort.Strings(unowned)
 		return AffectedSelection{Packages: append([]workspace.Package(nil), ws.Packages...), Reason: "full: unowned path " + unowned[0]}, nil
+	}
+	if len(sharedChanges) > 0 {
+		sort.Strings(sharedChanges)
+		return AffectedSelection{Packages: append([]workspace.Package(nil), ws.Packages...), Reason: "full: configured shared input " + sharedChanges[0]}, nil
 	}
 
 	if len(directlyChanged) == 0 {

@@ -500,6 +500,10 @@ affected:
   # falls through to the same behaviour as the built-in git strategy.
   strategy: command
   command: .devkit/affected.sh
+  # These generated-contract sources affect consumers beyond their owning package.
+  fullInputs:
+    - core/platform/src/error-envelope/errors.catalog.json
+    - core/plugin-contracts/src/color-policy.mjs
 
 # ──────────────────────────────────────────────────────────────────────────────
 # BUILD

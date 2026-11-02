@@ -32,6 +32,9 @@ type AffectedConfig struct {
 	// Executed in workspace root. Output: one absolute or workspace-relative path per line.
 	// Example: "./scripts/changed-files.sh"
 	Command string `yaml:"command"`
+
+	// FullInputs are tracked paths whose change invalidates package-level selection.
+	FullInputs []string `yaml:"fullInputs"`
 }
 
 // TaskVariant is one implementation of a named task.

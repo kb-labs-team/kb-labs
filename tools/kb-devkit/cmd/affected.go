@@ -30,7 +30,7 @@ var affectedCmd = &cobra.Command{
 			if unmarshalErr := json.Unmarshal(data, &files); unmarshalErr != nil {
 				return fmt.Errorf("parse changed-file manifest %s: %w", affectedChangedFilesPath, unmarshalErr)
 			}
-			selection, err = engine.AffectedPackagesFromFiles(ws, files)
+			selection, err = engine.AffectedPackagesFromFiles(ws, files, cfg.Affected.FullInputs)
 		} else {
 			selection, err = engine.AffectedPackages(ws, cfg)
 		}

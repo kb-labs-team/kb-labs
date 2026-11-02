@@ -44,6 +44,9 @@ func mergeConfigs(base, child *DevkitConfig) *DevkitConfig {
 	if child.Affected.Command != "" {
 		out.Affected.Command = child.Affected.Command
 	}
+	if len(child.Affected.FullInputs) > 0 {
+		out.Affected.FullInputs = append(out.Affected.FullInputs, child.Affected.FullInputs...)
+	}
 	if child.Fix.DefaultMode != "" {
 		out.Fix.DefaultMode = child.Fix.DefaultMode
 	}

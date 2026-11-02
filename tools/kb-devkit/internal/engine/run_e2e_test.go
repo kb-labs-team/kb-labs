@@ -152,7 +152,7 @@ func TestAffectedSelectionAndTaskKeysShareTrackedFileOwnership(t *testing.T) {
 		if err := os.WriteFile(file, append(append([]byte(nil), original...), '\n'), 0o644); err != nil {
 			t.Fatalf("mutate tracked fixture %s: %v", file, err)
 		}
-		selection, err := selectAffectedPackages(ws, []string{file})
+		selection, err := selectAffectedPackages(ws, []string{file}, nil)
 		if err != nil {
 			t.Fatalf("select for %s: %v", file, err)
 		}
@@ -208,7 +208,7 @@ func TestAffectedSelectionAndTaskKeysShareTrackedFileOwnership(t *testing.T) {
 	if after, err := os.ReadFile(modeOnlyPath); err != nil || string(after) != string(modeOnlyContents) {
 		t.Fatalf("mode-only fixture content changed: got %q, err %v", after, err)
 	}
-	selection, err := selectAffectedPackages(ws, []string{modeOnlyPath})
+	selection, err := selectAffectedPackages(ws, []string{modeOnlyPath}, nil)
 	if err != nil {
 		t.Fatalf("select mode-only change: %v", err)
 	}

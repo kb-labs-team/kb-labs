@@ -23,6 +23,7 @@ function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteR
   };
   const git = {
     headSha: async () => sha,
+    currentBranch: async () => 'agent/x231-test-strategy',
     backupRemote: async () => 'git@github-kb-backup:owner/repo.git',
     pushRef: async (ref, pushedSha) => { recordGitRemote(); calls.pushes.push({ ref, sha: pushedSha }); },
     resolveRef: async (...args) => { recordGitRemote(); return resolveRef(...args); },
@@ -56,7 +57,7 @@ test('candidate requests one dispatch run on its isolated ref and records the pr
     downloadVerdict: async () => candidatePass,
     listRuns: async (_repo, branch, event) => { assert.equal(event, 'workflow_dispatch'); return [candidateRun(branch)]; },
   });
-  h.executors.gh.dispatchRun = async (_repo, ref, profile) => { dispatched += 1; assert.match(ref, /^verify-candidate\//); assert.equal(profile, 'candidate'); };
+  h.executors.gh.dispatchRun = async (_repo, ref, profile, baseRef) => { dispatched += 1; assert.match(ref, /^verify-candidate\//); assert.equal(profile, 'candidate'); assert.equal(baseRef, 'origin/agent/j90-integration'); };
   const verdict = await runRemoteVerification({ stream: 'release', profile: 'candidate', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
   assert.equal(verdict.status, 'pass');
   assert.equal(verdict.profile, 'candidate');

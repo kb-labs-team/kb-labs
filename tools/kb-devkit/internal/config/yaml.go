@@ -112,8 +112,9 @@ func (t *yamlTask) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 type yamlAffected struct {
-	Strategy string `yaml:"strategy"`
-	Command  string `yaml:"command"`
+	Strategy   string   `yaml:"strategy"`
+	Command    string   `yaml:"command"`
+	FullInputs []string `yaml:"fullInputs"`
 }
 
 type yamlWorkspace struct {
@@ -376,8 +377,9 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 			Concurrency: raw.Run.Concurrency,
 		},
 		Affected: AffectedConfig{
-			Strategy: raw.Affected.Strategy,
-			Command:  raw.Affected.Command,
+			Strategy:   raw.Affected.Strategy,
+			Command:    raw.Affected.Command,
+			FullInputs: raw.Affected.FullInputs,
 		},
 		Fix: FixConfig{
 			DefaultMode: raw.Fix.DefaultMode,

@@ -16,6 +16,9 @@ export function runPrepareStage({ env = process.env, runCommand = defaultRunComm
   const started = now();
   let selectedPackageCount = 0;
   let selectionReason = '';
+  let selectionMode = 'full';
+  let selectionBaseSha = '';
+  let selectedPackages = [];
   const operations = [];
   const failures = [];
 
@@ -55,11 +58,14 @@ export function runPrepareStage({ env = process.env, runCommand = defaultRunComm
     if (succeeded && item.name === 'resolve-package-selection') {
       try {
         const selection = JSON.parse(readFileSync(affectedPath, 'utf8'));
-        if (!Number.isSafeInteger(selection.selectedPackageCount) || selection.selectedPackageCount < 0 || typeof selection.data?.selectionReason !== 'string') {
-          throw new Error('selection result is missing its selected package count or reason');
+        if (!Number.isSafeInteger(selection.selectedPackageCount) || selection.selectedPackageCount < 0 || typeof selection.data?.selectionReason !== 'string' || !['affected', 'full'].includes(selection.data?.mode) || !/^[0-9a-f]{40}$/.test(selection.data?.baseSha ?? '') || !Array.isArray(selection.data?.packages)) {
+          throw new Error('selection result is missing its package list, mode, base SHA, or reason');
         }
         selectedPackageCount = selection.selectedPackageCount;
         selectionReason = selection.data.selectionReason;
+        selectionMode = selection.data.mode;
+        selectionBaseSha = selection.data.baseSha;
+        selectedPackages = selection.data.packages;
       } catch (error) {
         operation.status = 'fail';
         operation.logTail = error.message;
@@ -80,6 +86,9 @@ export function runPrepareStage({ env = process.env, runCommand = defaultRunComm
     status: failures.length === 0 ? 'pass' : 'fail',
     selectedPackageCount,
     selectionReason,
+    selectionMode,
+    selectionBaseSha,
+    selectedPackages,
     failures,
     logTail: boundedTail(operations.map((operation) => operation.logTail).filter(Boolean).join('\n')),
     operations,

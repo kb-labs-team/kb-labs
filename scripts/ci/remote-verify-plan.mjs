@@ -96,7 +96,8 @@ function main() {
   if (!independentStages || !buildDependentStages) throw new Error(`Unknown verification profile ${profileName}; use stream or candidate.`);
   const matrix = createTestMatrix({ packages, internalToolPackages, stagePackages }, independentStages, buildDependentStages, profile.packageTestStage, profile.maxParallel);
   writeFileSync(planPath, `${JSON.stringify(matrix)}\n`);
-  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\ninternal_tool_matrix=${JSON.stringify(matrix.internalTool)}\ninternal_tool_packages=${internalToolPackages.join(',')}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_package_count=${packages.length}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\nshard_timeout_minutes=${profile.shardTimeoutMinutes}\n`);
+  const selection = JSON.parse(readFileSync(affectedPath, 'utf8')).data;
+  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\ninternal_tool_matrix=${JSON.stringify(matrix.internalTool)}\ninternal_tool_packages=${internalToolPackages.join(',')}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_packages=${JSON.stringify(packages)}\nselected_package_count=${packages.length}\nselection_mode=${selection.mode ?? 'full'}\nselection_base_sha=${selection.baseSha ?? ''}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\nshard_timeout_minutes=${profile.shardTimeoutMinutes}\n`);
   process.stdout.write(`Planned ${matrix.include.length} test shard(s) from ${packages.length} kb-devkit-selected package(s).\n`);
 }
 
