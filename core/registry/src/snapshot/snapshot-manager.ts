@@ -105,10 +105,7 @@ export class SnapshotManager {
   }
 
   private async doPersist(snapshot: RegistrySnapshot): Promise<void> {
-    const finalized = this.ensureIntegrity({
-      ...snapshot,
-      inputFingerprint: this.computeInputFingerprint(snapshot.manifests),
-    });
+    const finalized = this.ensureIntegrity(snapshot);
 
     // Atomic write to disk (tmp → rename)
     try {
@@ -185,6 +182,15 @@ export class SnapshotManager {
       if (manifestPath) paths.add(manifestPath);
     }
 
+    return this.fingerprintPaths([...paths]);
+  }
+
+  /** Fingerprint the root inputs before and after discovery to detect a mid-refresh change. */
+  computeDiscoveryRootFingerprint(): string {
+    return this.fingerprintPaths(getDiscoveryInputPaths(this.discoveryRoots));
+  }
+
+  private fingerprintPaths(paths: readonly string[]): string {
     const hash = createHash('sha256');
     for (const inputPath of [...paths].sort()) {
       hash.update(inputPath).update('\0');

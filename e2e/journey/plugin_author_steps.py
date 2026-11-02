@@ -161,6 +161,34 @@ def _stage_case_file(project: Path, env: dict[str, str], label: str) -> Path:
     return path
 
 
+def _validate_plugin_route_help(route: list[str], result: CompletedProcess[str]) -> None:
+    if result.returncode == 0:
+        return
+
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    error_code = None
+    for part in (result.stdout, result.stderr):
+        try:
+            envelope = json.loads(part)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        error = envelope.get("error") if isinstance(envelope, dict) else None
+        if isinstance(error, dict) and isinstance(error.get("code"), str):
+            error_code = error["code"]
+            break
+
+    if error_code == "KB_RUNTIME_UNKNOWN_COMMAND":
+        raise RuntimeError(
+            f"journey command {' '.join(route)!r} is absent from the live CLI registry: "
+            f"{output or 'no output'}"
+        )
+
+    raise RuntimeError(
+        f"journey command {' '.join(route)!r} help preflight failed "
+        f"(exit {result.returncode}): {output or 'no output'}"
+    )
+
+
 def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, registry: str,
                           command_runner: Callable[..., CompletedProcess[str]],
                           env: dict[str, str]) -> None:
@@ -173,12 +201,10 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         command = [str(kb_path), *args]
         if args[0] in {"commit", "review"}:
             route = args[:next((index for index, token in enumerate(args) if token.startswith("-")), len(args))]
-            help_command = [str(kb_path), *route, "--help"]
+            help_command = [str(kb_path), *route, "--help", "--json"]
             with invocation_context():
                 declared = run_with_runner(command_runner, help_command, cwd=project, env=env, timeout=120)
-            if declared.returncode != 0:
-                detail = " ".join(((declared.stderr or "") + " " + (declared.stdout or "")).split())
-                raise RuntimeError(f"journey command {' '.join(route)!r} is absent from the live CLI registry: {detail or 'no output'}")
+            _validate_plugin_route_help(route, declared)
         context = invocation_context(step_id=step_id) if step_id else invocation_context()
         with context:
             return run_with_runner(command_runner, command, cwd=project, env=env, timeout=180)

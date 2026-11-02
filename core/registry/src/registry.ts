@@ -58,6 +58,8 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
   private discoveryResultValue!: DiscoveryResult;
   private adapterEntries = new Map<string, CatalogAdapter>();
   private attemptedPluginCount = 0;
+  private snapshotInputFingerprint = '';
+  private discoveryInputsChangedDuringRefresh = false;
   private changeListeners: Array<(diff: RegistryDiff) => void> = [];
   private rev = 0;
   private initialized = false;
@@ -137,6 +139,8 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
   async refresh(): Promise<void> {
     const oldPlugins = new Map(this.plugins.map(p => [p.id, p]));
 
+    const fingerprintBeforeDiscovery = this.snapshotMgr.computeDiscoveryRootFingerprint();
+    this.snapshotInputFingerprint = fingerprintBeforeDiscovery;
     const result = await this.discoveryManager.discover();
     this.discoveryResultValue = result;
     this.adapterEntries = await resolveCatalogAdapters(this.discoveryManager, this.opts.platformRoot ?? this.root, {
@@ -170,9 +174,19 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
     // Rebuild entity catalog
     this.catalog.rebuild(this.plugins, this.manifests);
 
-    // Persist snapshot
-    const snap = this.buildSnapshot();
-    await this.snapshotMgr.persist(snap);
+    const fingerprintAfterDiscovery = this.snapshotMgr.computeDiscoveryRootFingerprint();
+    const discoveryInputsStable = fingerprintBeforeDiscovery === fingerprintAfterDiscovery;
+    this.discoveryInputsChangedDuringRefresh = !discoveryInputsStable;
+    if (discoveryInputsStable) {
+      const snapshotFingerprint = this.snapshotMgr.computeInputFingerprint(this.snapshotManifests());
+      // Catch a root input update while the manifest artifacts were fingerprinted too.
+      this.discoveryInputsChangedDuringRefresh =
+        fingerprintAfterDiscovery !== this.snapshotMgr.computeDiscoveryRootFingerprint();
+      if (!this.discoveryInputsChangedDuringRefresh) {
+        this.snapshotInputFingerprint = snapshotFingerprint;
+        await this.snapshotMgr.persist(this.buildSnapshot());
+      }
+    }
 
     // Notify listeners
     const diff = this.computeDiff(oldPlugins);
@@ -308,7 +322,35 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
   private buildSnapshot(): RegistrySnapshot {
     const generatedAt = new Date().toISOString();
     const ttlMs = this.opts.cache?.ttlMs ?? 60_000;
-    const manifests = this.plugins
+    const manifests = this.snapshotManifests();
+
+    return {
+      schema: 'kb.registry/1',
+      rev: this.rev,
+      version: String(this.rev),
+      generatedAt,
+      expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+      ttlMs,
+      partial: this.discoveryInputsChangedDuringRefresh,
+      stale: this.discoveryInputsChangedDuringRefresh,
+      source: {
+        cwd: this.root,
+        platformVersion: this.opts.platformVersion ?? PLATFORM_VERSION,
+      },
+      plugins: this.plugins.map(p => ({
+        id: p.id,
+        version: p.version,
+        source: p.source,
+      })),
+      manifests,
+      diagnostics: this.diagnosticEvents,
+      inputFingerprint: this.snapshotInputFingerprint,
+      ts: Date.now(),
+    };
+  }
+
+  private snapshotManifests(): RegistrySnapshot['manifests'] {
+    return this.plugins
       .filter(p => this.manifests.has(p.id))
       .map(p => ({
         pluginId: p.id,
@@ -321,34 +363,12 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
         manifestPath: p.manifestPath,
         manifestKind: p.manifestKind,
       }));
-
-    return {
-      schema: 'kb.registry/1',
-      rev: this.rev,
-      version: String(this.rev),
-      generatedAt,
-      expiresAt: new Date(Date.now() + ttlMs).toISOString(),
-      ttlMs,
-      partial: false,
-      stale: false,
-      source: {
-        cwd: this.root,
-        platformVersion: this.opts.platformVersion ?? PLATFORM_VERSION,
-      },
-      plugins: this.plugins.map(p => ({
-        id: p.id,
-        version: p.version,
-        source: p.source,
-      })),
-      manifests,
-      diagnostics: this.diagnosticEvents,
-      inputFingerprint: this.snapshotMgr.computeInputFingerprint(manifests),
-      ts: Date.now(),
-    };
   }
 
   private applySnapshot(snap: RegistrySnapshot): void {
     this.rev = snap.rev;
+    this.snapshotInputFingerprint = snap.inputFingerprint;
+    this.discoveryInputsChangedDuringRefresh = snap.stale;
     this.manifests.clear();
     this.plugins = [];
 
