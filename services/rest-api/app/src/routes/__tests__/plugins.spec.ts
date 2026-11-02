@@ -167,6 +167,7 @@ function createMockSnapshot(manifests: Array<{
     source: { platformVersion: 'test', cwd: process.cwd() },
     corrupted: false,
     plugins: [],
+    inputs: [],
     inputFingerprint: '',
     ts: Date.now(),
     manifests: manifests.map((entry) => ({

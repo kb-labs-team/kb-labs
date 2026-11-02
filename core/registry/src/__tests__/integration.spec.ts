@@ -342,6 +342,59 @@ describe('Registry Integration', () => {
     }
   });
 
+  it('rediscovers when a loaded manifest artifact changes before snapshot persistence', async () => {
+    const platformRoot = path.join(root, 'manifest-race-platform');
+    const projectRoot = path.join(root, 'manifest-race-project');
+    const kbHome = path.join(root, 'manifest-race-kb-home');
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = kbHome;
+    try {
+      await fs.mkdir(platformRoot, { recursive: true });
+      await fs.mkdir(projectRoot, { recursive: true });
+      const target = await createFakePlugin(platformRoot, '@kb-labs/target', {
+        commands: [{ path: 'target old', describe: 'Old command' }],
+      });
+      const trigger = await createFakePlugin(platformRoot, '@kb-labs/manifest-trigger', {
+        workflows: [{ id: 'manifest-trigger' }],
+      });
+      await registerPlugin(platformRoot, '@kb-labs/target', target.dir, target.integrity, ['plugin', 'cli-command']);
+      await registerPlugin(platformRoot, '@kb-labs/manifest-trigger', trigger.dir, trigger.integrity, ['plugin', 'workflow']);
+
+      const targetManifestPath = path.join(target.dir, 'kb.plugin.json');
+      const updatedManifest = JSON.parse(await fs.readFile(targetManifestPath, 'utf8')) as Record<string, unknown>;
+      updatedManifest.cli = {
+        commands: [{ path: 'target new', describe: 'New command', handler: './dist/target-new.js' }],
+      };
+      await fs.writeFile(path.join(trigger.dir, 'package.json'), JSON.stringify({
+        name: '@kb-labs/manifest-trigger',
+        version: '1.0.0',
+        kb: { manifest: 'manifest.mjs' },
+      }));
+      await fs.writeFile(path.join(trigger.dir, 'manifest.mjs'), [
+        "import { writeFile } from 'node:fs/promises';",
+        'await new Promise((resolve) => setTimeout(resolve, 100));',
+        `await writeFile(${JSON.stringify(targetManifestPath)}, ${JSON.stringify(JSON.stringify(updatedManifest))});`,
+        `export const manifest = ${JSON.stringify({
+          schema: 'kb.plugin/3', id: '@kb-labs/manifest-trigger', version: '1.0.0',
+          workflows: { handlers: [{ id: 'manifest-trigger', handler: './dist/manifest-trigger.js' }] },
+        })};`,
+      ].join('\n'));
+
+      const first = await openCatalog({ platformRoot, projectRoot });
+      expect(first.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('target old');
+      await first.dispose();
+
+      const reopened = await openCatalog({ platformRoot, projectRoot });
+      const commandIds = reopened.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId);
+      expect(commandIds).toContain('target new');
+      expect(commandIds).not.toContain('target old');
+      await reopened.dispose();
+    } finally {
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
+  });
+
   it('snapshot persistence and reload', async () => {
     const { dir, integrity } = await createFakePlugin(root, '@kb-labs/persistent', {
       commands: [{ path: 'persist-cmd', describe: 'Test persistence' }],

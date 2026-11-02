@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readDiscoveryInputs } from '@kb-labs/core-discovery';
 
 import { SnapshotManager } from '../snapshot/snapshot-manager.js';
 import type { RegistrySnapshot } from '@kb-labs/plugin-contracts';
@@ -18,7 +20,17 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
 
   const T = Date.now(); // snapshot timestamp (must be "now" so TTL is not already expired)
 
-  function makeSnapshot(mgr: SnapshotManager): RegistrySnapshot {
+  async function makeSnapshot(): Promise<RegistrySnapshot> {
+    const packagePath = join(pluginRoot, 'package.json');
+    const packageBytes = readFileSync(packagePath);
+    const packageJson = JSON.parse(packageBytes.toString('utf8')) as { kb?: { manifest?: string } };
+    const declaredPath = packageJson.kb?.manifest;
+    const manifestPath = declaredPath ? join(pluginRoot, declaredPath) : join(pluginRoot, 'dist', 'index.js');
+    const additional = [{ path: packagePath, digest: createHash('sha256').update(packageBytes).digest('hex') }];
+    if (existsSync(manifestPath)) {
+      additional.push({ path: manifestPath, digest: createHash('sha256').update(readFileSync(manifestPath)).digest('hex') });
+    }
+    const { inputs, fingerprint } = await readDiscoveryInputs([root], additional);
     const snapshot: RegistrySnapshot = {
       schema: 'kb.registry/1',
       rev: 1,
@@ -43,10 +55,11 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
           manifestKind: 'static',
         },
       ],
-      inputFingerprint: '',
+      inputs,
+      inputFingerprint: fingerprint,
       ts: T,
     };
-    return { ...snapshot, inputFingerprint: mgr.computeInputFingerprint(snapshot.manifests) };
+    return snapshot;
   }
 
   function setManifestMtime(ms: number): void {
@@ -70,7 +83,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
 
   it('keeps a snapshot fresh when the manifest content is unchanged despite a later mtime', async () => {
     const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test' });
-    await mgr.persist(makeSnapshot(mgr));
+    await mgr.persist(await makeSnapshot());
 
     setManifestMtime(T + 10_000); // mtime alone does not invalidate content
     const loaded = await mgr.load();
@@ -79,13 +92,11 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
     expect(loaded!.stale).toBe(false);
   });
 
-  it('marks the snapshot stale when manifest contents change at the same mtime', async () => {
+  it('marks the snapshot stale when manifest contents change', async () => {
     const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test' });
-    await mgr.persist(makeSnapshot(mgr));
+    await mgr.persist(await makeSnapshot());
 
     writeFileSync(join(pluginRoot, 'dist', 'index.js'), 'export const manifest = { changed: true };');
-    setManifestMtime(T); // same mtime as the persisted snapshot
-    expect(statSync(join(pluginRoot, 'dist', 'index.js')).mtimeMs).toBe(T);
     const loaded = await mgr.load();
 
     expect(loaded).not.toBeNull();
@@ -102,7 +113,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
     writeFileSync(manifestArtifact, 'export const manifest = {};');
 
     const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test' });
-    await mgr.persist(makeSnapshot(mgr));
+    await mgr.persist(await makeSnapshot());
 
     writeFileSync(manifestArtifact, 'export const manifest = { changed: true };');
     const same = new Date(T);
@@ -116,7 +127,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
     rmSync(join(pluginRoot, 'dist'), { recursive: true, force: true });
 
     const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test' });
-    await mgr.persist(makeSnapshot(mgr));
+    await mgr.persist(await makeSnapshot());
 
     const loaded = await mgr.load();
     expect(loaded!.stale).toBe(false);
@@ -144,6 +155,7 @@ describe('SnapshotManager — runtime state location', () => {
     source: { cwd: root, platformVersion: 'test' },
     plugins: [],
     manifests: [],
+    inputs: [],
     inputFingerprint: '',
     ts: T,
   });

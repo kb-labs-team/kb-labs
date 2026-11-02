@@ -113,6 +113,8 @@ describe('failed enabled plugins', () => {
       plugins: [],
       manifests: new Map(),
       diagnostics: [],
+      inputs: [],
+      fingerprint: '',
       failures: [{
         id: '@kb-labs/release',
         packageName: '@kb-labs/release',
@@ -176,6 +178,8 @@ describe('failed enabled plugins', () => {
       manifests: new Map([[plugin.id, manifest]]),
       failures: [],
       diagnostics: [diagnostic],
+      inputs: [],
+      fingerprint: '',
     });
     const registry = createRegistry();
     await registerManifests([discoveryResult!], registry);
