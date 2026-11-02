@@ -241,6 +241,55 @@ describe('Registry Integration', () => {
     await registry.dispose();
   });
 
+  // case: S-282.1 S-282.2
+  it('refreshes workspace CLI commands when matched package membership changes', async () => {
+    const platformRoot = path.join(root, 'workspace-platform');
+    const projectRoot = path.join(root, 'workspace-project');
+    const kbHome = path.join(root, 'workspace-kb-home');
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = kbHome;
+    try {
+      await fs.mkdir(platformRoot, { recursive: true });
+      await fs.mkdir(projectRoot, { recursive: true });
+      await fs.writeFile(path.join(platformRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "plugins/*"\n');
+
+      const addWorkspacePlugin = async (shortName: string, command: string) => {
+        const plugin = await createFakePlugin(platformRoot, `@kb-labs/${shortName}`, {
+          commands: [{ path: command, describe: `Run ${command}` }],
+        });
+        const packageJsonPath = path.join(plugin.dir, 'package.json');
+        const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf8')) as Record<string, unknown>;
+        packageJson.kb = { manifest: 'kb.plugin.json' };
+        await fs.writeFile(packageJsonPath, JSON.stringify(packageJson));
+        return plugin.dir;
+      };
+
+      const packageA = await addWorkspacePlugin('a', 'sample from-a');
+      const first = await openCatalog({ platformRoot, projectRoot });
+      expect(first.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('sample from-a');
+      await first.dispose();
+
+      const packageB = await addWorkspacePlugin('b', 'sample from-b');
+      const afterAdd = await openCatalog({ platformRoot, projectRoot });
+      const afterAddCommands = afterAdd.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId);
+      expect(afterAddCommands).toContain('sample from-a');
+      expect(afterAddCommands).toContain('sample from-b');
+      await afterAdd.dispose();
+
+      await fs.rm(packageA, { recursive: true, force: true });
+      const afterRemoval = await openCatalog({ platformRoot, projectRoot });
+      const afterRemovalCommands = afterRemoval.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId);
+      expect(afterRemovalCommands).not.toContain('sample from-a');
+      expect(afterRemovalCommands).toContain('sample from-b');
+      await afterRemoval.dispose();
+
+      await fs.rm(packageB, { recursive: true, force: true });
+    } finally {
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
+  });
+
   it('refreshes a cached CLI capability when the platform marketplace lock changes', async () => {
     const platformRoot = path.join(root, 'platform');
     const projectRoot = path.join(root, 'project');

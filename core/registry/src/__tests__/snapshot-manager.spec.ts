@@ -56,6 +56,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
         },
       ],
       inputs,
+      candidateMemberships: [],
       inputFingerprint: fingerprint,
       ts: T,
     };
@@ -156,6 +157,7 @@ describe('SnapshotManager — runtime state location', () => {
     plugins: [],
     manifests: [],
     inputs: [],
+    candidateMemberships: [],
     inputFingerprint: '',
     ts: T,
   });

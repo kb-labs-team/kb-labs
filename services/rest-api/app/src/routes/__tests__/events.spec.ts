@@ -48,6 +48,7 @@ function createMockSnapshot(): RegistrySnapshot {
     plugins: [],
     manifests: [],
     inputs: [],
+    candidateMemberships: [],
     inputFingerprint: '',
     ts: Date.now(),
     checksum: 'abc123',

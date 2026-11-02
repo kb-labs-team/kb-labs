@@ -20,6 +20,7 @@ const snapshot: RegistrySnapshot = {
   plugins: [],
   manifests: [],
   inputs: [],
+  candidateMemberships: [],
   inputFingerprint: '',
   ts: 0,
 };

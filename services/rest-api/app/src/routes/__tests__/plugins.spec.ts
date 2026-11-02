@@ -168,6 +168,7 @@ function createMockSnapshot(manifests: Array<{
     corrupted: false,
     plugins: [],
     inputs: [],
+    candidateMemberships: [],
     inputFingerprint: '',
     ts: Date.now(),
     manifests: manifests.map((entry) => ({
