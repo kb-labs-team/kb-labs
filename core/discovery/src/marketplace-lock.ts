@@ -45,15 +45,15 @@ export async function readMarketplaceLock(
   root: string,
   diag: DiagnosticCollector,
   scope: MarketplaceLockScope = 'platform',
-  onInputRead?: (filePath: string) => void,
+  onInputRead?: (filePath: string, bytes?: Buffer) => void,
 ): Promise<MarketplaceLock | null> {
   const lockPath = path.join(root, DISCOVERY_MARKETPLACE_LOCK);
-  onInputRead?.(lockPath);
 
-  let raw: string;
+  let bytes: Buffer;
   try {
-    raw = await fs.readFile(lockPath, 'utf-8');
+    bytes = await fs.readFile(lockPath);
   } catch (err) {
+    onInputRead?.(lockPath);
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       diag.info('LOCK_NOT_FOUND', `No marketplace lock file found at ${lockPath}`, {
         filePath: lockPath,
@@ -66,6 +66,8 @@ export async function readMarketplaceLock(
     });
     return null;
   }
+  onInputRead?.(lockPath, bytes);
+  const raw = bytes.toString('utf-8');
 
   let parsed: unknown;
   try {

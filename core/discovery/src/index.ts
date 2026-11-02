@@ -17,6 +17,8 @@ export {
   DISCOVERY_PACKAGE_MANIFEST,
   DISCOVERY_ROOT_INPUT_PATHS,
   getDiscoveryInputPaths,
+  readDiscoveryInputs,
+  fingerprintDiscoveryInputs,
   createDiscoveryInputFingerprinter,
 } from './discovery-inputs.js';
 export type {

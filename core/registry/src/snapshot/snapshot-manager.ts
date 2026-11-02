@@ -8,10 +8,10 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
-import { getDiscoveryInputPaths } from '@kb-labs/core-discovery';
+import { fingerprintDiscoveryInputs } from '@kb-labs/core-discovery';
 import { promises as fsPromises } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import type { ICache } from '@kb-labs/core-platform/adapters';
 import type { RegistrySnapshot, RegistrySnapshotManifestEntry, SnapshotWithoutIntegrity } from '@kb-labs/plugin-contracts';
@@ -73,7 +73,7 @@ export class SnapshotManager {
           const parsed = JSON.parse(raw) as Partial<RegistrySnapshot>;
           const normalized = this.normalize(parsed);
           if (!normalized.corrupted) {
-            return this.markStaleness(normalized);
+            return await this.markStaleness(normalized);
           }
         }
       } catch { /* cache miss — fall through */ }
@@ -83,14 +83,14 @@ export class SnapshotManager {
     const primary = this.readDisk(this.snapshotPath);
     if (primary && !primary.corrupted) {
       this.lastChecksum = primary.checksum ?? null;
-      return this.markStaleness(primary);
+      return await this.markStaleness(primary);
     }
 
     // Disk backup
     const backup = this.readDisk(this.backupPath);
     if (backup && !backup.corrupted) {
       this.lastChecksum = backup.checksum ?? null;
-      return this.markStaleness(backup);
+      return await this.markStaleness(backup);
     }
 
     return null;
@@ -143,7 +143,8 @@ export class SnapshotManager {
       source: { platformVersion: this.platformVersion, cwd: this.root },
       plugins: [],
       manifests: [],
-      inputFingerprint: this.computeInputFingerprint([]),
+      inputs: [],
+      inputFingerprint: '',
       ts: Date.parse(generatedAt),
     };
     return this.ensureIntegrity(base as RegistrySnapshot);
@@ -166,77 +167,13 @@ export class SnapshotManager {
     }
   }
 
-  private markStaleness(snapshot: RegistrySnapshot): RegistrySnapshot {
+  private async markStaleness(snapshot: RegistrySnapshot): Promise<RegistrySnapshot> {
     const expired = snapshot.expiresAt ? Date.now() > Date.parse(snapshot.expiresAt) : false;
-    const inputsChanged = snapshot.inputFingerprint !== this.computeInputFingerprint(snapshot.manifests);
+    const currentFingerprint = await fingerprintDiscoveryInputs(snapshot.inputs, this.discoveryRoots);
+    const inputsChanged = snapshot.inputFingerprint !== currentFingerprint;
     const stale = expired || inputsChanged;
     if (snapshot.stale === stale) {return snapshot;}
     return { ...snapshot, stale, partial: snapshot.partial || stale };
-  }
-
-  /** Hash every root input used by core-discovery and each loaded manifest artifact. */
-  computeInputFingerprint(manifests: readonly RegistrySnapshotManifestEntry[]): string {
-    const paths = new Set(getDiscoveryInputPaths(this.discoveryRoots));
-    for (const entry of manifests) {
-      const manifestPath = this.resolveManifestFile(entry.pluginRoot);
-      if (manifestPath) paths.add(manifestPath);
-    }
-
-    return this.fingerprintPaths([...paths]);
-  }
-
-  /** Fingerprint the root inputs before and after discovery to detect a mid-refresh change. */
-  computeDiscoveryRootFingerprint(): string {
-    return this.fingerprintPaths(getDiscoveryInputPaths(this.discoveryRoots));
-  }
-
-  private fingerprintPaths(paths: readonly string[]): string {
-    const hash = createHash('sha256');
-    for (const inputPath of [...paths].sort()) {
-      hash.update(inputPath).update('\0');
-      try {
-        hash.update(readFileSync(inputPath));
-      } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-          hash.update('<missing>');
-        } else {
-          throw error;
-        }
-      }
-      hash.update('\0');
-    }
-    return hash.digest('hex');
-  }
-
-  /**
-   * Resolve the on-disk manifest artifact for a plugin root, mirroring the
-   * precedence used by core-discovery's loadManifest:
-   *   1. package.json `kbLabs.manifest` / `kb.manifest` pointer
-   *   2. kb.plugin.json
-   *   3. dist/index.js
-   * Returns null when none can be located.
-   */
-  private resolveManifestFile(pluginRoot: string): string | null {
-    if (!pluginRoot) {return null;}
-
-    try {
-      const pkg = JSON.parse(readFileSync(join(pluginRoot, 'package.json'), 'utf8')) as {
-        kbLabs?: { manifest?: unknown };
-        kb?: { manifest?: unknown };
-      };
-      const pointer = pkg.kbLabs?.manifest ?? pkg.kb?.manifest;
-      if (typeof pointer === 'string' && pointer.length > 0) {
-        return resolve(pluginRoot, pointer);
-      }
-    } catch { /* no/invalid package.json — fall through */ }
-
-    const kbPluginJson = join(pluginRoot, 'kb.plugin.json');
-    if (existsSync(kbPluginJson)) {return kbPluginJson;}
-
-    const distIndex = join(pluginRoot, 'dist', 'index.js');
-    if (existsSync(distIndex)) {return distIndex;}
-
-    return null;
   }
 
   private normalize(raw: Partial<RegistrySnapshot>): RegistrySnapshot {
@@ -276,9 +213,10 @@ export class SnapshotManager {
       partial: raw.partial ?? true,
       stale: raw.stale ?? (expiresAt ? Date.now() > Date.parse(expiresAt) : false),
       source: raw.source ?? { platformVersion: this.platformVersion, cwd: this.root },
-      corrupted: !schemaValid || raw.corrupted === true,
+      corrupted: !schemaValid || raw.corrupted === true || !Array.isArray(raw.inputs),
       plugins: Array.isArray(raw.plugins) ? raw.plugins : [],
       manifests,
+      inputs: Array.isArray(raw.inputs) ? raw.inputs : [],
       inputFingerprint: typeof raw.inputFingerprint === 'string' ? raw.inputFingerprint : '',
       ts,
     };

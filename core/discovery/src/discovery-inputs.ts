@@ -35,6 +35,44 @@ export interface DiscoveryInputFileSystem {
 
 export type DiscoveryInputFingerprinter = (roots: readonly string[]) => Promise<string>;
 
+export async function readDiscoveryInputs(roots: readonly string[], additional: readonly { path: string; digest: string }[] = []): Promise<{ inputs: { path: string; digest: string }[]; fingerprint: string }> {
+  const byPath = new Map(additional.map((input) => [path.resolve(input.path), input.digest]));
+  for (const inputPath of getDiscoveryInputPaths(roots)) {
+    if (byPath.has(inputPath)) continue;
+    try {
+      byPath.set(inputPath, createHash('sha256').update(await fs.readFile(inputPath)).digest('hex'));
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        byPath.set(inputPath, createHash('sha256').update('<missing>').digest('hex'));
+      } else {
+        throw error;
+      }
+    }
+  }
+  const inputs = [...byPath].sort(([left], [right]) => left.localeCompare(right)).map(([inputPath, digest]) => ({ path: inputPath, digest }));
+  const hash = createHash('sha256');
+  for (const input of inputs) hash.update(input.path).update('\0').update(input.digest).update('\0');
+  return { inputs, fingerprint: hash.digest('hex') };
+}
+
+export async function fingerprintDiscoveryInputs(inputs: readonly { path: string; digest: string }[], roots: readonly string[]): Promise<string> {
+  const persistedPaths = new Set([...inputs.map((input) => path.resolve(input.path)), ...getDiscoveryInputPaths(roots)]);
+  const current: { path: string; digest: string }[] = [];
+  for (const inputPath of [...persistedPaths].sort()) {
+    let digest: string;
+    try {
+      digest = createHash('sha256').update(await fs.readFile(inputPath)).digest('hex');
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') digest = createHash('sha256').update('<missing>').digest('hex');
+      else throw error;
+    }
+    current.push({ path: inputPath, digest });
+  }
+  const hash = createHash('sha256');
+  for (const input of current) hash.update(input.path).update('\0').update(input.digest).update('\0');
+  return hash.digest('hex');
+}
+
 /**
  * Create a cached digest function for the root files discovery consumes.
  * Every call stats inputs; file contents are read only after the stat tuple

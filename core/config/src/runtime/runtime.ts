@@ -65,10 +65,12 @@ function stripJsonComments(src: string): string {
     return out.replace(/,(\s*[}\]])/g, '$1');
 }
 
-export async function readJsonWithDiagnostics<T = unknown>(p: string): Promise<JsonReadResult<T>> {
+export async function readJsonWithDiagnostics<T = unknown>(p: string, onInputRead?: (filePath: string, bytes: Buffer) => void): Promise<JsonReadResult<T>> {
     const diagnostics: Diagnostic[] = [];
     try {
-        const raw = await fsp.readFile(p, "utf8");
+        const bytes = await fsp.readFile(p);
+        onInputRead?.(p, bytes);
+        const raw = bytes.toString("utf8");
         try {
             const stripped = p.endsWith('.jsonc') ? stripJsonComments(raw) : raw;
             const data = JSON.parse(stripped) as T;

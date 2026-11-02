@@ -99,6 +99,13 @@ export interface DiscoveryResult {
   manifests: Map<string, ManifestV3>;
   failures: DiscoveryFailure[];
   diagnostics: DiagnosticEvent[];
+  inputs: DiscoveryInput[];
+  fingerprint: string;
+}
+
+export interface DiscoveryInput {
+  path: string;
+  digest: string;
 }
 
 export interface EntityRef {
@@ -165,6 +172,7 @@ export interface RegistrySnapshot {
   previousChecksum?: string | null;
   plugins: Array<{ id: string; version: string; source: { kind: 'marketplace' | 'local'; path: string } }>;
   manifests: RegistrySnapshotManifestEntry[];
+  inputs: DiscoveryInput[];
   diagnostics?: DiagnosticEvent[];
   inputFingerprint: string;
   ts: number;

@@ -6,12 +6,13 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { CliCommandDeclSchema, resolvePluginBasePath, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import { createExtensionStore } from '@kb-labs/core-extension-store';
 import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import type {
   DiscoveryResult, DiscoveryFailure, DiscoveredPlugin, DiscoveryOrigin, DiscoveryScope, DiagnosticEvent, EntityKind,
-  MarketplaceEntry, MarketplaceLock,
+  MarketplaceEntry, MarketplaceLock, DiscoveryInput,
 } from '@kb-labs/plugin-contracts';
 import { DiagnosticCollector } from './diagnostics.js';
 import { resolveCliHandlerPath } from '@kb-labs/core-platform';
@@ -22,6 +23,7 @@ import { loadManifestFile } from './manifest-loader.js';
 import { computePackageIntegrity } from './integrity.js';
 import { findWorkspaceCandidates } from './workspace-source.js';
 import { readPluginPolicy, checkPluginPolicy, isFirstPartyPluginSource, type PluginPolicy, type PluginPolicyResult } from './plugin-policy.js';
+import { readDiscoveryInputs } from './discovery-inputs.js';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -52,7 +54,7 @@ export interface DiscoveryOptions {
   /** Machine-local extension store used to resolve project version pins. */
   extensionStore?: IExtensionStore;
   /** Observe root input reads; used to verify discovery and fingerprint inputs stay aligned. */
-  onInputRead?: (filePath: string) => void;
+  onInputRead?: (filePath: string, bytes?: Buffer) => void;
 }
 
 /** Shadowing priority within one scope: workspace > linked > node_modules. */
@@ -88,6 +90,7 @@ interface Candidate {
 interface LoadedPlugin {
   plugin: DiscoveredPlugin;
   manifest: ManifestV3;
+  inputs: DiscoveryInput[];
 }
 
 interface CandidateOutcome {
@@ -138,7 +141,8 @@ export class DiscoveryManager {
   private readonly verifyIntegrity: boolean;
   private readonly workspace: boolean;
   private readonly extensionStore: IExtensionStore;
-  private readonly onInputRead?: (filePath: string) => void;
+  private readonly onInputRead?: (filePath: string, bytes?: Buffer) => void;
+  private consumedInputDigests = new Map<string, string>();
   private marketplaceLocks = new Map<string, MarketplaceLock>();
   private marketplaceLocksLoaded = false;
   /** plugins.allow/block/linked per scope root, read at the start of discover() */
@@ -170,10 +174,12 @@ export class DiscoveryManager {
    *   4. Return aggregated result with diagnostics
    */
   async discover(): Promise<DiscoveryResult> {
+    const roots = this.scopes.map(({ root }) => root);
+    this.consumedInputDigests.clear();
     this.marketplaceLocks.clear();
     this.marketplaceLocksLoaded = false;
     const diag = new DiagnosticCollector();
-    const policyResults = await Promise.all(this.scopes.map(async ({ scope, root }) => [scope, root, await readPluginPolicy(root, this.onInputRead)] as const));
+    const policyResults = await Promise.all(this.scopes.map(async ({ scope, root }) => [scope, root, await readPluginPolicy(root, (filePath, bytes) => this.recordInputRead(filePath, bytes))] as const));
     this.policies = new Map(policyResults.map(([, root, result]) => [root, result]));
     for (const [scope, , result] of policyResults) {
       if (result.kind !== 'invalid') continue;
@@ -202,7 +208,17 @@ export class DiscoveryManager {
       plugins.push(plugin);
       manifests.set(id, manifest);
     }
-    return { plugins, manifests, failures, diagnostics: diag.getEvents() };
+    const manifestInputs = [...winners.values()].flatMap(({ inputs }) => inputs);
+    const consumedRootInputs = [...this.consumedInputDigests].map(([inputPath, digest]) => ({ path: inputPath, digest }));
+    const { inputs, fingerprint } = await readDiscoveryInputs(roots, [...manifestInputs, ...consumedRootInputs]);
+    return {
+      plugins,
+      manifests,
+      failures,
+      diagnostics: diag.getEvents(),
+      inputs,
+      fingerprint,
+    };
   }
 
   /** The exact lock objects read for the latest resolved view, keyed by scope root. */
@@ -292,7 +308,7 @@ export class DiscoveryManager {
 
     if (this.workspace) {
       for (const { scope, root } of this.scopes) {
-        for (const found of await findWorkspaceCandidates(root, this.onInputRead)) {
+        for (const found of await findWorkspaceCandidates(root, (filePath, bytes) => this.recordInputRead(filePath, bytes))) {
           candidates.push({
             id: found.packageName,
             scope,
@@ -311,7 +327,7 @@ export class DiscoveryManager {
     if (this.marketplaceLocksLoaded) return;
     for (const { root } of this.scopes) {
       const lockScope = await resolveMarketplaceLockScope(this.lockRoots, root);
-      const lock = await readMarketplaceLock(root, diag, lockScope, this.onInputRead);
+      const lock = await readMarketplaceLock(root, diag, lockScope, (filePath, bytes) => this.recordInputRead(filePath, bytes));
       if (lock) this.marketplaceLocks.set(root, lock);
     }
     this.marketplaceLocksLoaded = true;
@@ -541,7 +557,7 @@ export class DiscoveryManager {
       signature: entry?.signature,
       provides: extractEntityKinds(manifest),
     };
-    return { events: diag.getEvents(), loaded: { plugin, manifest } };
+    return { events: diag.getEvents(), loaded: { plugin, manifest, inputs: loaded.loaded.inputs } };
   }
 
   /** Apply plugins.allow/block/linked; records a diagnostic and returns false when the package is gated out. */
@@ -639,6 +655,11 @@ export class DiscoveryManager {
       // Non-blocking — proceed without integrity verification
       return true;
     }
+  }
+
+  private recordInputRead(filePath: string, bytes?: Buffer): void {
+    this.onInputRead?.(filePath, bytes);
+    if (bytes) this.consumedInputDigests.set(path.resolve(filePath), createHash('sha256').update(bytes).digest('hex'));
   }
 }
 

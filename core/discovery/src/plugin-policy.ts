@@ -54,7 +54,7 @@ function readNames(value: unknown, field: 'allow' | 'block' | 'linked', configPa
 /** Read policy with missing optional config distinct from every present-file failure. */
 export async function readPluginPolicy(
   root: string,
-  onInputRead?: (filePath: string) => void,
+  onInputRead?: (filePath: string, bytes?: Buffer) => void,
 ): Promise<PluginPolicyResult> {
   let configPath: string;
   try {
@@ -63,7 +63,6 @@ export async function readPluginPolicy(
     const fallback = `${root}/.kb/kb.config.jsonc`;
     return { kind: 'invalid', configPath: fallback, diagnostics: [diagnostic('CONFIG_PATH_RESOLUTION_FAILED', `Could not resolve plugin policy config path: ${String(error)}`, fallback, error)] };
   }
-  onInputRead?.(configPath);
   try {
     await fs.access(configPath);
   } catch (error) {
@@ -71,7 +70,7 @@ export async function readPluginPolicy(
     return { kind: 'invalid', configPath, diagnostics: [diagnostic('FILE_READ_FAILED', `Failed to access config file: ${configPath}`, configPath, error)] };
   }
 
-  const result = await readJsonWithDiagnostics<{ plugins?: unknown }>(configPath);
+  const result = await readJsonWithDiagnostics<{ plugins?: unknown }>(configPath, onInputRead);
   if (!result.ok) return { kind: 'invalid', configPath, diagnostics: result.diagnostics };
 
   const diagnostics: Diagnostic[] = [];

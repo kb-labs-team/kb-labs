@@ -28,9 +28,11 @@ function isMissingFile(error: unknown): boolean {
   return error !== null && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
 }
 
-async function readPackageJson(file: string): Promise<Record<string, unknown> | null> {
+async function readPackageJson(file: string, onInputRead?: (filePath: string, bytes?: Buffer) => void): Promise<Record<string, unknown> | null> {
   try {
-    return JSON.parse(await fs.readFile(file, 'utf-8')) as Record<string, unknown>;
+    const bytes = await fs.readFile(file);
+    onInputRead?.(file, bytes);
+    return JSON.parse(bytes.toString('utf-8')) as Record<string, unknown>;
   } catch (error) {
     if (isMissingFile(error)) return null;
     throw error;
@@ -52,8 +54,8 @@ async function exists(file: string): Promise<boolean> {
  * static JSON sibling) has been built. Unbuilt packages are skipped silently:
  * a fresh checkout has hundreds of them and none is an error.
  */
-async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | null> {
-  const pkg = await readPackageJson(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST));
+async function toCandidate(packageRoot: string, onInputRead?: (filePath: string, bytes?: Buffer) => void): Promise<WorkspaceCandidate | null> {
+  const pkg = await readPackageJson(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST), onInputRead);
   if (!pkg || typeof pkg.name !== 'string') {return null;}
   const manifestField = declaredManifestPath(pkg);
   if (!manifestField) {return null;}
@@ -65,15 +67,16 @@ async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | nu
 
 async function workspacePackageRoots(
   root: string,
-  onInputRead?: (filePath: string) => void,
+  onInputRead?: (filePath: string, bytes?: Buffer) => void,
 ): Promise<string[]> {
   const absRoot = path.resolve(root);
 
   let patterns: string[] | null = null;
   try {
     const workspaceFile = path.join(absRoot, DISCOVERY_WORKSPACE_FILE);
-    onInputRead?.(workspaceFile);
-    const parsed = parseYaml(await fs.readFile(workspaceFile, 'utf-8')) as
+    const workspaceBytes = await fs.readFile(workspaceFile);
+    onInputRead?.(workspaceFile, workspaceBytes);
+    const parsed = parseYaml(workspaceBytes.toString('utf-8')) as
       | { packages?: unknown }
       | null;
     if (Array.isArray(parsed?.packages)) {
@@ -123,12 +126,10 @@ export async function findWorkspacePackages(root: string): Promise<WorkspaceCand
  */
 export async function findWorkspaceCandidates(
   root: string,
-  onInputRead?: (filePath: string) => void,
+  onInputRead?: (filePath: string, bytes?: Buffer) => void,
 ): Promise<WorkspaceCandidate[]> {
   const candidates = await Promise.all((await workspacePackageRoots(root, onInputRead)).map(async (packageRoot) => {
-    const packagePath = path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST);
-    onInputRead?.(packagePath);
-    return toCandidate(packageRoot);
+    return toCandidate(packageRoot, onInputRead);
   }));
   return candidates.filter((c): c is WorkspaceCandidate => c !== null);
 }

@@ -59,6 +59,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
   private adapterEntries = new Map<string, CatalogAdapter>();
   private attemptedPluginCount = 0;
   private snapshotInputFingerprint = '';
+  private snapshotInputs: RegistrySnapshot['inputs'] = [];
   private discoveryInputsChangedDuringRefresh = false;
   private changeListeners: Array<(diff: RegistryDiff) => void> = [];
   private rev = 0;
@@ -123,6 +124,8 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
         manifests: new Map(cached.manifests.map((entry) => [entry.pluginId, entry.manifest])),
         failures: [],
         diagnostics: cached.diagnostics ?? [],
+        inputs: cached.inputs,
+        fingerprint: cached.inputFingerprint,
       };
       this.adapterEntries = await resolveCatalogAdapters(this.discoveryManager, this.opts.platformRoot ?? this.root, {
         workspaceAdapters: this.opts.workspaceAdapters,
@@ -139,8 +142,6 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
   async refresh(): Promise<void> {
     const oldPlugins = new Map(this.plugins.map(p => [p.id, p]));
 
-    const fingerprintBeforeDiscovery = this.snapshotMgr.computeDiscoveryRootFingerprint();
-    this.snapshotInputFingerprint = fingerprintBeforeDiscovery;
     const result = await this.discoveryManager.discover();
     this.discoveryResultValue = result;
     this.adapterEntries = await resolveCatalogAdapters(this.discoveryManager, this.opts.platformRoot ?? this.root, {
@@ -174,19 +175,10 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
     // Rebuild entity catalog
     this.catalog.rebuild(this.plugins, this.manifests);
 
-    const fingerprintAfterDiscovery = this.snapshotMgr.computeDiscoveryRootFingerprint();
-    const discoveryInputsStable = fingerprintBeforeDiscovery === fingerprintAfterDiscovery;
-    this.discoveryInputsChangedDuringRefresh = !discoveryInputsStable;
-    if (discoveryInputsStable) {
-      const snapshotFingerprint = this.snapshotMgr.computeInputFingerprint(this.snapshotManifests());
-      // Catch a root input update while the manifest artifacts were fingerprinted too.
-      this.discoveryInputsChangedDuringRefresh =
-        fingerprintAfterDiscovery !== this.snapshotMgr.computeDiscoveryRootFingerprint();
-      if (!this.discoveryInputsChangedDuringRefresh) {
-        this.snapshotInputFingerprint = snapshotFingerprint;
-        await this.snapshotMgr.persist(this.buildSnapshot());
-      }
-    }
+    this.discoveryInputsChangedDuringRefresh = false;
+    this.snapshotInputFingerprint = result.fingerprint;
+    this.snapshotInputs = result.inputs;
+    await this.snapshotMgr.persist(this.buildSnapshot());
 
     // Notify listeners
     const diff = this.computeDiff(oldPlugins);
@@ -343,6 +335,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
         source: p.source,
       })),
       manifests,
+      inputs: this.snapshotInputs,
       diagnostics: this.diagnosticEvents,
       inputFingerprint: this.snapshotInputFingerprint,
       ts: Date.now(),
@@ -368,6 +361,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
   private applySnapshot(snap: RegistrySnapshot): void {
     this.rev = snap.rev;
     this.snapshotInputFingerprint = snap.inputFingerprint;
+    this.snapshotInputs = snap.inputs;
     this.discoveryInputsChangedDuringRefresh = snap.stale;
     this.manifests.clear();
     this.plugins = [];

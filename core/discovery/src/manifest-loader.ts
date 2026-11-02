@@ -5,6 +5,7 @@ import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { DiagnosticCollector } from './diagnostics.js';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 const RECOGNIZED_SCHEMAS = Object.keys(ENTITY_MANIFEST_KINDS).join(', ');
@@ -22,6 +23,7 @@ export interface LoadedManifest {
   manifestPath: string;
   kind: 'static' | 'module';
   packageName?: string;
+  inputs: { path: string; digest: string }[];
 }
 
 export type ManifestLoadResult =
@@ -85,13 +87,14 @@ async function readManifestJson(
   diag: DiagnosticCollector,
   required: boolean,
 ): Promise<ManifestLoadResult | undefined> {
-  let raw: string;
+  let bytes: Buffer;
   try {
-    raw = await fs.readFile(filePath, 'utf8');
+    bytes = await fs.readFile(filePath);
   } catch (error) {
     if (isMissingFile(error) && !required) return undefined;
     return failed(diag, pluginId, filePath, 'MANIFEST_PARSE_ERROR', `Failed to read manifest ${filePath}: ${errorMessage(error)}`, error);
   }
+  const raw = bytes.toString('utf8');
   let candidate: unknown;
   try {
     candidate = JSON.parse(raw);
@@ -117,7 +120,7 @@ async function readManifestJson(
     });
     return { kind: 'failed', cause: message, manifestPath: filePath };
   }
-  return { kind: 'manifest', loaded: { manifest: candidate, manifestPath: filePath, kind: 'static', packageName } };
+  return { kind: 'manifest', loaded: { manifest: candidate, manifestPath: filePath, kind: 'static', packageName, inputs: [{ path: filePath, digest: createHash('sha256').update(bytes).digest('hex') }] } };
 }
 
 async function loadDeclaredModule(
@@ -133,6 +136,7 @@ async function loadDeclaredModule(
     if (staticResult) return staticResult;
   }
   try {
+    const bytes = await fs.readFile(filePath);
     const mod = await safeImport(filePath, timeoutMs);
     const candidate = mod.manifest;
     if (candidate === undefined) {
@@ -148,7 +152,7 @@ async function loadDeclaredModule(
       return { kind: 'not-plugin', packageName };
     }
     if (kind === 'plugin' && isManifestV3(candidate)) {
-      return { kind: 'manifest', loaded: { manifest: candidate, manifestPath: filePath, kind: 'module', packageName } };
+      return { kind: 'manifest', loaded: { manifest: candidate, manifestPath: filePath, kind: 'module', packageName, inputs: [{ path: filePath, digest: createHash('sha256').update(bytes).digest('hex') }] } };
     }
     const message = kind === undefined
       ? `Declared manifest module ${filePath} must declare a recognized schema (${RECOGNIZED_SCHEMAS})`
@@ -172,8 +176,11 @@ export async function loadManifestFile(
   const pkgJsonPath = path.join(root, 'package.json');
   let packageName: string | undefined;
   let manifestField: string | undefined;
+  let packageInput: { path: string; digest: string } | undefined;
   try {
-    const pkg = JSON.parse(await fs.readFile(pkgJsonPath, 'utf8')) as Record<string, unknown>;
+    const packageBytes = await fs.readFile(pkgJsonPath);
+    packageInput = { path: pkgJsonPath, digest: createHash('sha256').update(packageBytes).digest('hex') };
+    const pkg = JSON.parse(packageBytes.toString('utf8')) as Record<string, unknown>;
     packageName = typeof pkg.name === 'string' ? pkg.name : undefined;
     manifestField = declaredManifestPath(pkg);
   } catch (error) {
@@ -190,14 +197,20 @@ export async function loadManifestFile(
     const manifestPath = resolved.manifestPath;
     if (manifestPath.endsWith('.json')) {
       const result = await readManifestJson(manifestPath, pluginId, packageName, diag, true);
+      if (result?.kind === 'manifest' && packageInput) result.loaded.inputs.unshift(packageInput);
       return result!;
     }
-    return loadDeclaredModule(manifestPath, pluginId, packageName, diag, timeoutMs);
+    const result = await loadDeclaredModule(manifestPath, pluginId, packageName, diag, timeoutMs);
+    if (result.kind === 'manifest' && packageInput) result.loaded.inputs.unshift(packageInput);
+    return result;
   }
 
   const kbPluginJsonPath = path.join(root, 'kb.plugin.json');
   const staticResult = await readManifestJson(kbPluginJsonPath, pluginId, packageName, diag, false);
-  if (staticResult) return staticResult;
+  if (staticResult) {
+    if (staticResult.kind === 'manifest' && packageInput) staticResult.loaded.inputs.unshift(packageInput);
+    return staticResult;
+  }
 
   diag.info('MANIFEST_NOT_PLUGIN', `Package ${root} does not declare kb.manifest or kb.plugin.json — skipping`, {
     pluginId,
