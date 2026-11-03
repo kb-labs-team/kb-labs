@@ -25,7 +25,6 @@ const DEFAULT_TTL_MS = 60_000;
 
 export interface SnapshotManagerOptions {
   root: string;
-  discoveryRoots?: readonly string[];
   ttlMs?: number;
   platformVersion: string;
   cache?: ICache;
@@ -45,13 +44,11 @@ export class SnapshotManager {
   private readonly cacheKey?: string;
   private readonly persistSnapshot: boolean;
   private readonly root: string;
-  private readonly discoveryRoots: readonly string[];
   private lastChecksum: string | null = null;
   private persistLock: Promise<void> = Promise.resolve();
 
   constructor(opts: SnapshotManagerOptions) {
     this.root = resolve(opts.root);
-    this.discoveryRoots = [...new Set((opts.discoveryRoots ?? [this.root]).map(root => resolve(root)))];
     const stateOptions = { root: opts.kbHome };
     this.snapshotPath = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_FILE], stateOptions);
     this.backupPath = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_BACKUP], stateOptions);
@@ -132,7 +129,7 @@ export class SnapshotManager {
   createEmpty(): RegistrySnapshot {
     const generatedAt = new Date().toISOString();
     const base: SnapshotWithoutIntegrity = {
-      schema: 'kb.registry/1',
+      schema: 'kb.registry/2',
       rev: 0,
       version: '0',
       generatedAt,
@@ -143,8 +140,7 @@ export class SnapshotManager {
       source: { platformVersion: this.platformVersion, cwd: this.root },
       plugins: [],
       manifests: [],
-      inputs: [],
-      candidateMemberships: [],
+      observations: [],
       inputFingerprint: '',
       ts: Date.parse(generatedAt),
     };
@@ -170,19 +166,14 @@ export class SnapshotManager {
 
   private async markStaleness(snapshot: RegistrySnapshot): Promise<RegistrySnapshot> {
     const expired = snapshot.expiresAt ? Date.now() > Date.parse(snapshot.expiresAt) : false;
-    const inputsChanged = await isDiscoverySnapshotStale(
-      snapshot.inputs,
-      snapshot.inputFingerprint,
-      snapshot.candidateMemberships,
-      this.discoveryRoots,
-    );
+    const inputsChanged = await isDiscoverySnapshotStale(snapshot.observations, snapshot.inputFingerprint);
     const stale = expired || inputsChanged;
     if (snapshot.stale === stale) {return snapshot;}
     return { ...snapshot, stale, partial: snapshot.partial || stale };
   }
 
   private normalize(raw: Partial<RegistrySnapshot>): RegistrySnapshot {
-    const schemaValid = raw.schema === 'kb.registry/1';
+    const schemaValid = raw.schema === 'kb.registry/2';
     const generatedAt = typeof raw.generatedAt === 'string' ? raw.generatedAt : new Date().toISOString();
     const ttlMs = typeof raw.ttlMs === 'number' && Number.isFinite(raw.ttlMs)
       ? Math.max(1_000, Math.floor(raw.ttlMs))
@@ -209,7 +200,7 @@ export class SnapshotManager {
       : [];
 
     const base: SnapshotWithoutIntegrity = {
-      schema: 'kb.registry/1',
+      schema: 'kb.registry/2',
       rev,
       version,
       generatedAt,
@@ -218,11 +209,10 @@ export class SnapshotManager {
       partial: raw.partial ?? true,
       stale: raw.stale ?? (expiresAt ? Date.now() > Date.parse(expiresAt) : false),
       source: raw.source ?? { platformVersion: this.platformVersion, cwd: this.root },
-      corrupted: !schemaValid || raw.corrupted === true || !Array.isArray(raw.inputs) || !Array.isArray(raw.candidateMemberships),
+      corrupted: !schemaValid || raw.corrupted === true || !Array.isArray(raw.observations),
       plugins: Array.isArray(raw.plugins) ? raw.plugins : [],
       manifests,
-      inputs: Array.isArray(raw.inputs) ? raw.inputs : [],
-      candidateMemberships: Array.isArray(raw.candidateMemberships) ? raw.candidateMemberships : [],
+      observations: Array.isArray(raw.observations) ? raw.observations : [],
       inputFingerprint: typeof raw.inputFingerprint === 'string' ? raw.inputFingerprint : '',
       ts,
     };

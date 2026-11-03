@@ -2,7 +2,7 @@
 
 import { readJsonWithDiagnostics, resolveUserConfigFile } from '@kb-labs/core-config';
 import type { Diagnostic } from '@kb-labs/core-config';
-import * as fs from 'node:fs/promises';
+import { fs, readFile } from './recording-filesystem.js';
 
 export interface PluginPolicy {
   allow?: string[];
@@ -54,11 +54,10 @@ function readNames(value: unknown, field: 'allow' | 'block' | 'linked', configPa
 /** Read policy with missing optional config distinct from every present-file failure. */
 export async function readPluginPolicy(
   root: string,
-  onInputRead?: (filePath: string, bytes?: Buffer) => void,
 ): Promise<PluginPolicyResult> {
   let configPath: string;
   try {
-    configPath = await resolveUserConfigFile(root);
+    configPath = await resolveUserConfigFile(root, fs.access);
   } catch (error) {
     const fallback = `${root}/.kb/kb.config.jsonc`;
     return { kind: 'invalid', configPath: fallback, diagnostics: [diagnostic('CONFIG_PATH_RESOLUTION_FAILED', `Could not resolve plugin policy config path: ${String(error)}`, fallback, error)] };
@@ -70,7 +69,7 @@ export async function readPluginPolicy(
     return { kind: 'invalid', configPath, diagnostics: [diagnostic('FILE_READ_FAILED', `Failed to access config file: ${configPath}`, configPath, error)] };
   }
 
-  const result = await readJsonWithDiagnostics<{ plugins?: unknown }>(configPath, onInputRead);
+  const result = await readJsonWithDiagnostics<{ plugins?: unknown }>(configPath, undefined, readFile);
   if (!result.ok) return { kind: 'invalid', configPath, diagnostics: result.diagnostics };
 
   const diagnostics: Diagnostic[] = [];

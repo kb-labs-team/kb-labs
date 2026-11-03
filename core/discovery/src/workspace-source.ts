@@ -7,13 +7,14 @@
  * through the same manifest loading, validation and shadowing as a lock entry.
  */
 
-import * as fs from 'node:fs/promises';
+import { fs, glob } from './recording-filesystem.js';
 import * as path from 'node:path';
-import { glob } from 'glob';
 import { parse as parseYaml } from 'yaml';
 import { declaredManifestPath } from '@kb-labs/core-platform';
-import { DISCOVERY_PACKAGE_MANIFEST, DISCOVERY_WORKSPACE_FILE } from './discovery-inputs.js';
 import { resolveDeclaredManifestPath } from './manifest-loader.js';
+
+const DISCOVERY_PACKAGE_MANIFEST = 'package.json';
+const DISCOVERY_WORKSPACE_FILE = 'pnpm-workspace.yaml';
 
 export interface WorkspaceCandidate {
   /** `name` from package.json */
@@ -28,10 +29,9 @@ function isMissingFile(error: unknown): boolean {
   return error !== null && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
 }
 
-async function readPackageJson(file: string, onInputRead?: (filePath: string, bytes?: Buffer) => void): Promise<Record<string, unknown> | null> {
+async function readPackageJson(file: string): Promise<Record<string, unknown> | null> {
   try {
     const bytes = await fs.readFile(file);
-    onInputRead?.(file, bytes);
     return JSON.parse(bytes.toString('utf-8')) as Record<string, unknown>;
   } catch (error) {
     if (isMissingFile(error)) return null;
@@ -54,8 +54,8 @@ async function exists(file: string): Promise<boolean> {
  * static JSON sibling) has been built. Unbuilt packages are skipped silently:
  * a fresh checkout has hundreds of them and none is an error.
  */
-async function toCandidate(packageRoot: string, onInputRead?: (filePath: string, bytes?: Buffer) => void): Promise<WorkspaceCandidate | null> {
-  const pkg = await readPackageJson(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST), onInputRead);
+async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | null> {
+  const pkg = await readPackageJson(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST));
   if (!pkg || typeof pkg.name !== 'string') {return null;}
   const manifestField = declaredManifestPath(pkg);
   if (!manifestField) {return null;}
@@ -67,7 +67,6 @@ async function toCandidate(packageRoot: string, onInputRead?: (filePath: string,
 
 async function workspacePackageRoots(
   root: string,
-  onInputRead?: (filePath: string, bytes?: Buffer) => void,
 ): Promise<string[]> {
   const absRoot = path.resolve(root);
 
@@ -75,7 +74,6 @@ async function workspacePackageRoots(
   try {
     const workspaceFile = path.join(absRoot, DISCOVERY_WORKSPACE_FILE);
     const workspaceBytes = await fs.readFile(workspaceFile);
-    onInputRead?.(workspaceFile, workspaceBytes);
     const parsed = parseYaml(workspaceBytes.toString('utf-8')) as
       | { packages?: unknown }
       | null;
@@ -105,14 +103,6 @@ async function workspacePackageRoots(
   return [...roots].sort();
 }
 
-/** Return the exact sorted package-root membership selected by the workspace globs. */
-export async function findWorkspacePackageRoots(
-  root: string,
-  onInputRead?: (filePath: string, bytes?: Buffer) => void,
-): Promise<string[]> {
-  return workspacePackageRoots(root, onInputRead);
-}
-
 /** Enumerate every package matched by a workspace, whether built or not. */
 export async function findWorkspacePackages(root: string): Promise<WorkspaceCandidate[]> {
   const packages = await Promise.all((await workspacePackageRoots(root)).map(async packageRoot => {
@@ -134,13 +124,10 @@ export async function findWorkspacePackages(root: string): Promise<WorkspaceCand
  */
 export async function findWorkspaceCandidates(
   root: string,
-  onInputRead?: (filePath: string, bytes?: Buffer) => void,
-  onPackageRoots?: (packageRoots: readonly string[]) => void,
 ): Promise<WorkspaceCandidate[]> {
-  const packageRoots = await workspacePackageRoots(root, onInputRead);
-  onPackageRoots?.(packageRoots);
+  const packageRoots = await workspacePackageRoots(root);
   const candidates = await Promise.all(packageRoots.map(async (packageRoot) => {
-    return toCandidate(packageRoot, onInputRead);
+    return toCandidate(packageRoot);
   }));
   return candidates.filter((c): c is WorkspaceCandidate => c !== null);
 }

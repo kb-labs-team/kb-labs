@@ -3,10 +3,10 @@
  * Read / write / validate .kb/marketplace.lock
  */
 
-import * as fs from 'node:fs/promises';
+import { fs } from './recording-filesystem.js';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { DISCOVERY_MARKETPLACE_LOCK } from './discovery-inputs.js';
+const DISCOVERY_MARKETPLACE_LOCK = path.join('.kb', 'marketplace.lock');
 import type {
   EntityKind, EntitySignature, MarketplaceLock, MarketplaceEntry,
   MarketplaceAdapterEntry, UserOwnedLinkPath, InstallOwnedRelativePath,
@@ -45,7 +45,6 @@ export async function readMarketplaceLock(
   root: string,
   diag: DiagnosticCollector,
   scope: MarketplaceLockScope = 'platform',
-  onInputRead?: (filePath: string, bytes?: Buffer) => void,
 ): Promise<MarketplaceLock | null> {
   const lockPath = path.join(root, DISCOVERY_MARKETPLACE_LOCK);
 
@@ -53,7 +52,6 @@ export async function readMarketplaceLock(
   try {
     bytes = await fs.readFile(lockPath);
   } catch (err) {
-    onInputRead?.(lockPath);
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       diag.info('LOCK_NOT_FOUND', `No marketplace lock file found at ${lockPath}`, {
         filePath: lockPath,
@@ -66,7 +64,6 @@ export async function readMarketplaceLock(
     });
     return null;
   }
-  onInputRead?.(lockPath, bytes);
   const raw = bytes.toString('utf-8');
 
   let parsed: unknown;

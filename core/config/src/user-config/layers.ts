@@ -41,11 +41,11 @@ export const USER_CONFIG_CANDIDATES = [
 ] as const;
 
 /** Absolute path of the user config file `config set` writes for a root. */
-export async function resolveUserConfigFile(root: string): Promise<string> {
+export async function resolveUserConfigFile(root: string, access: (filePath: string) => Promise<void> = (filePath) => fsp.access(filePath)): Promise<string> {
   for (const candidate of USER_CONFIG_CANDIDATES) {
     const full = path.join(root, candidate);
     try {
-      await fsp.access(full);
+      await access(full);
       return full;
     } catch {
       // try the next candidate

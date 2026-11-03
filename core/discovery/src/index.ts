@@ -12,22 +12,12 @@
 export { DiscoveryManager, extractEntityKinds } from './discovery-manager.js';
 export type { DiscoveryOptions } from './discovery-manager.js';
 export {
-  DISCOVERY_MARKETPLACE_LOCK,
-  DISCOVERY_WORKSPACE_FILE,
-  DISCOVERY_PACKAGE_MANIFEST,
-  DISCOVERY_ROOT_INPUT_PATHS,
-  getDiscoveryInputPaths,
-  readDiscoveryInputs,
-  fingerprintDiscoveryInputs,
   isDiscoverySnapshotStale,
-  createDiscoveryInputFingerprinter,
+  createDiscoveryObservationFingerprinter,
 } from './discovery-inputs.js';
-export type { DiscoveryCandidateMembership } from '@kb-labs/plugin-contracts';
-export type {
-  DiscoveryInputStat,
-  DiscoveryInputFileSystem,
-  DiscoveryInputFingerprinter,
-} from './discovery-inputs.js';
+export type { DiscoveryObservationFingerprinter } from './discovery-inputs.js';
+export { captureFilesystemObservations, hashFilesystemObservations, readFile, exists, access, stat, listDirectory, glob, replayFilesystemObservations } from './recording-filesystem.js';
+export type { FilesystemObservation } from './recording-filesystem.js';
 
 // Marketplace lock CRUD
 export {

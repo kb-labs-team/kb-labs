@@ -392,7 +392,7 @@ export async function createHostConfig(
             ? { stopTimeoutMs: overrides.stopTimeoutMs }
             : {}),
         });
-      const fingerprintDiscoveryInputs = ctx.runtime.catalog.discoveryInputFingerprinter();
+      const fingerprintDiscoveryObservations = ctx.runtime.catalog.discoveryObservationFingerprinter();
       const manager = new ProjectRuntimeManager({
         launcher,
         logger,
@@ -414,7 +414,7 @@ export async function createHostConfig(
           ? { sweepIntervalMs: overrides.sweepIntervalMs }
           : {}),
         ...(overrides.restart ? { restart: overrides.restart } : {}),
-        getPluginSetDigest: (project) => fingerprintDiscoveryInputs([ctx.platformRoot, project.root]),
+        getPluginSetDigest: (project) => fingerprintDiscoveryObservations([ctx.platformRoot, project.root]),
         onStarted: (project) => {
           const write = registry.touch(project.id)
             .then(() => undefined)
