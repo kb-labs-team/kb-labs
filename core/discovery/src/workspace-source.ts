@@ -7,7 +7,7 @@
  * through the same manifest loading, validation and shadowing as a lock entry.
  */
 
-import { fs, glob } from './recording-filesystem.js';
+import { fs, globMany } from './recording-filesystem.js';
 import * as path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { declaredManifestPath } from '@kb-labs/core-platform';
@@ -90,15 +90,13 @@ async function workspacePackageRoots(
 
   const include = patterns.filter(p => !p.startsWith('!'));
   const exclude = patterns.filter(p => p.startsWith('!')).map(p => `${p.slice(1).replace(/\/$/, '')}/**`);
+  const files = await globMany(include.map(pattern => path.posix.join(pattern.replace(/\/$/, ''), DISCOVERY_PACKAGE_MANIFEST)), {
+    cwd: absRoot,
+    ignore: [...IGNORED_DIRS, ...exclude],
+  });
   const roots = new Set<string>();
-  for (const pattern of include) {
-    const files = await glob(path.posix.join(pattern.replace(/\/$/, ''), DISCOVERY_PACKAGE_MANIFEST), {
-      cwd: absRoot,
-      ignore: [...IGNORED_DIRS, ...exclude],
-    });
-    for (const file of files) {
-      roots.add(path.dirname(path.join(absRoot, file)));
-    }
+  for (const file of files) {
+    roots.add(path.dirname(path.join(absRoot, file)));
   }
   return [...roots].sort();
 }

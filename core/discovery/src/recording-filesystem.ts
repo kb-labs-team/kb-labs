@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import * as nativeFs from 'node:fs/promises';
 import path from 'node:path';
-import { Glob, glob as nativeGlob, type GlobOptionsWithFileTypesFalse } from 'glob';
+import { Glob, type GlobOptionsWithFileTypesFalse } from 'glob';
 
 export type FilesystemObservation = {
   path: string;
@@ -22,6 +22,14 @@ const missing = (error: unknown): boolean => error !== null && typeof error === 
 const failure = (error: unknown): string => error instanceof Error && 'code' in error
   ? `${String(error.code)}:${error.message}`
   : String(error);
+
+function uniqueObservations(observations: readonly FilesystemObservation[]): FilesystemObservation[] {
+  const unique = new Map<string, FilesystemObservation>();
+  for (const observation of observations) {
+    unique.set(`${observation.path}\0${observation.kind}\0${observation.digest}`, observation);
+  }
+  return [...unique.values()].sort((a, b) => a.path.localeCompare(b.path) || a.kind.localeCompare(b.kind) || a.digest.localeCompare(b.digest));
+}
 
 function record(filePath: string, kind: FilesystemObservation['kind'], value: string | Buffer): void {
   let session = sessions.getStore();
@@ -110,13 +118,13 @@ export async function listDirectory(directoryPath: string): Promise<string[]> {
   }
 }
 
-export async function glob(pattern: string, options: GlobOptionsWithFileTypesFalse & { cwd: string }): Promise<string[]> {
+async function walkGlob(pattern: string | string[], options: GlobOptionsWithFileTypesFalse & { cwd: string }): Promise<string[]> {
   const runtime = sessions.getStore()?.globRuntime;
   const cacheKey = JSON.stringify({ cwd: path.resolve(options.cwd), ignore: options.ignore ?? [] });
   let values: string[];
   try {
     if (!runtime) {
-      values = await nativeGlob(pattern, options);
+      values = await new Glob(pattern, options).walk();
     } else {
       const previous = runtime.tails.get(cacheKey) ?? Promise.resolve();
       let release: () => void = () => undefined;
@@ -152,6 +160,14 @@ export async function glob(pattern: string, options: GlobOptionsWithFileTypesFal
   return values;
 }
 
+export async function glob(pattern: string, options: GlobOptionsWithFileTypesFalse & { cwd: string }): Promise<string[]> {
+  return walkGlob(pattern, options);
+}
+
+export async function globMany(patterns: readonly string[], options: GlobOptionsWithFileTypesFalse & { cwd: string }): Promise<string[]> {
+  return walkGlob([...patterns], options);
+}
+
 export async function captureFilesystemObservations<T>(run: () => Promise<T>): Promise<{ result: T; observations: FilesystemObservation[] }> {
   const parent = sessions.getStore();
   const session: ObservationSession = {
@@ -160,21 +176,16 @@ export async function captureFilesystemObservations<T>(run: () => Promise<T>): P
     globRuntime: parent?.globRuntime ?? { instances: new Map(), tails: new Map() },
   };
   const result = await sessions.run(session, run);
-  return { result, observations: [...session.values].sort((a, b) => a.path.localeCompare(b.path) || a.kind.localeCompare(b.kind) || a.digest.localeCompare(b.digest)) };
+  return { result, observations: uniqueObservations(session.values) };
 }
 
 export async function replayFilesystemObservations(observations: readonly FilesystemObservation[]): Promise<string> {
+  const currentInputs = uniqueObservations(observations);
   const values = await captureFilesystemObservations(async () => {
-    const contentPaths = new Set(observations.filter((observation) => observation.kind === 'content').map((observation) => observation.path));
-    const contentExists = new Set<string>();
-    await Promise.all(observations.filter((observation) => observation.kind === 'content').map(async (observation) => {
-      try {
-        await readFile(observation.path);
-        contentExists.add(observation.path);
-      } catch { /* the facade records the current read failure as absent or present */ }
-    }));
-    await Promise.all(observations.map(async (observation) => {
+    const contentPaths = new Set(currentInputs.filter((observation) => observation.kind === 'content').map((observation) => observation.path));
+    await Promise.all(currentInputs.map(async (observation) => {
       if (observation.kind === 'content') {
+        try { await readFile(observation.path); } catch { /* the facade recorded the current read failure */ }
         return;
       } else if (observation.kind === 'present' || observation.kind === 'absent') {
         if (observation.path.startsWith('read:')) {
@@ -193,7 +204,7 @@ export async function replayFilesystemObservations(observations: readonly Filesy
           try { await realpath(observation.path.slice('realpath:'.length)); } catch { /* the facade recorded the failed resolution */ }
           return;
         }
-        if (contentPaths.has(observation.path) && contentExists.has(observation.path) && observation.kind === 'present') {
+        if (contentPaths.has(observation.path) && observation.kind === 'present') {
           record(observation.path, 'present', 'present');
           return;
         }
@@ -206,8 +217,8 @@ export async function replayFilesystemObservations(observations: readonly Filesy
         if (observation.path.startsWith('directory:')) {
           try { await listDirectory(observation.path.slice('directory:'.length)); } catch { /* the facade recorded the failed listing */ }
         } else {
-          const request = JSON.parse(observation.path.slice('glob:'.length)) as { cwd: string; pattern: string; ignore: string[] };
-          try { await glob(request.pattern, { cwd: request.cwd, ignore: request.ignore }); } catch { /* the facade recorded the failed glob */ }
+          const request = JSON.parse(observation.path.slice('glob:'.length)) as { cwd: string; pattern: string | string[]; ignore: string[] };
+          try { await walkGlob(request.pattern, { cwd: request.cwd, ignore: request.ignore }); } catch { /* the facade recorded the failed glob */ }
         }
       }
     }));
@@ -221,14 +232,14 @@ export const fs = {
   listDirectory,
   readFile,
   realpath,
-  mkdir: nativeFs.mkdir.bind(nativeFs),
-  rename: nativeFs.rename.bind(nativeFs),
-  writeFile: nativeFs.writeFile.bind(nativeFs),
+  mkdir: (...args: Parameters<typeof nativeFs.mkdir>) => nativeFs.mkdir(...args),
+  rename: (...args: Parameters<typeof nativeFs.rename>) => nativeFs.rename(...args),
+  writeFile: (...args: Parameters<typeof nativeFs.writeFile>) => nativeFs.writeFile(...args),
 };
 
 export function hashFilesystemObservations(observations: readonly FilesystemObservation[]): string {
   const hash = createHash('sha256');
-  for (const observation of observations) hash.update(observation.path).update('\0').update(observation.kind).update('\0').update(observation.digest).update('\0');
+  for (const observation of uniqueObservations(observations)) hash.update(observation.path).update('\0').update(observation.kind).update('\0').update(observation.digest).update('\0');
   return hash.digest('hex');
 }
 
