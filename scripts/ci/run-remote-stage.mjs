@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { runStage } from './remote-verify-stage.mjs';
 import { measureBuildLimits } from './remote-build-resources.mjs';
+import { mirrorStreamsToFile } from './remote-stage-output.mjs';
 
 if (process.argv[2] === '--journey-batch-prepare') {
   const [output, baseline] = process.argv.slice(3);
@@ -16,6 +17,8 @@ if (process.argv[2] === '--journey-batch-prepare') {
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const stage = process.env.REMOTE_STAGE;
+const stageLogPath = process.env.REMOTE_STAGE_LOG;
+if (stageLogPath) mirrorStreamsToFile(stageLogPath, [process.stdout, process.stderr]);
 const packageNames = process.env.REMOTE_PACKAGES ? process.env.REMOTE_PACKAGES.split(',') : undefined;
 const shard = process.env.REMOTE_SHARD ? Number(process.env.REMOTE_SHARD) : undefined;
 const packages = process.env.AFFECTED_PACKAGES ? process.env.AFFECTED_PACKAGES.split(',').filter(Boolean) : [];

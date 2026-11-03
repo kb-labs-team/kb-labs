@@ -58,12 +58,13 @@ if ! (
     REMOTE_STAGE=workspace-build \
     REMOTE_STAGE_RESULT="$OUT/workspace-build-stage.json" \
     REMOTE_RESOURCE_SAMPLES="$OUT/resource-samples.jsonl" \
+    REMOTE_STAGE_LOG="$OUT/build.log" \
     REMOTE_SELECTED_PACKAGE_COUNT=0 \
     REMOTE_AFFECTED_BUILD=1 \
     REMOTE_DEVKIT_EXECUTABLE="$work/kb-devkit" \
     KB_DEVKIT_BASE_REF="$BUILD_BASE" \
     node scripts/ci/run-remote-stage.mjs
-) 2>&1 | tee -a "$OUT/build.log"; then
+); then
   build_seconds=$(( $(date +%s) - stage_started ))
   echo "devkit affected build failed; see $OUT/build.log; next: KB_DEVKIT_BASE_REF='$BUILD_BASE' REMOTE_STAGE=workspace-build REMOTE_STAGE_RESULT='$OUT/workspace-build-stage.json' REMOTE_RESOURCE_SAMPLES='$OUT/resource-samples.jsonl' REMOTE_SELECTED_PACKAGE_COUNT=0 REMOTE_AFFECTED_BUILD=1 REMOTE_DEVKIT_EXECUTABLE='$work/kb-devkit' node scripts/ci/run-remote-stage.mjs" >&2
   exit 1
