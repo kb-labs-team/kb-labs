@@ -21,6 +21,10 @@ auditConfig:
   ignoreCves:
     - CVE-2026-14257
 
+minimumReleaseAge: 10080
+strictDepBuilds: true
+blockExoticSubdeps: true
+
 allowBuilds:
   '@parcel/watcher': true
   '@swc/core': true
