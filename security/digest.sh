@@ -5,6 +5,8 @@ readonly state_dir="$HOME/Library/Application Support/kb-security-digest"
 readonly previous="$state_dir/current.snapshot"
 readonly next="$state_dir/next.snapshot"
 readonly log_file="$state_dir/changes.log"
+readonly monitored_path="${KB_DIGEST_MONITORED_PATH:-}"
+readonly node_binary="${KB_DIGEST_NODE:-}"
 mkdir -p "$state_dir"
 : > "$next"
 
@@ -72,15 +74,15 @@ package_manifests() {
     return
   fi
   while IFS= read -r -d '' file; do
-    read -r package version < <(node -e 'const p=require(process.argv[1]); console.log(`${p.name || "<unnamed>"} ${p.version || "<no-version>"}`)' "$file" 2>/dev/null || printf '<unreadable> <unreadable>\n')
+    read -r package version < <("$node_binary" -e 'const p=require(process.argv[1]); console.log(`${p.name || "<unnamed>"} ${p.version || "<no-version>"}`)' "$file" 2>/dev/null || printf '<unreadable> <unreadable>\n')
     digest="$(shasum -a 256 "$file" | awk '{print substr($1, 1, 12)}')"
     printf 'package\t%s\t%s@%s\t%s\n' "$label" "$package" "$version" "$digest" >> "$next"
   done < <(find "$root" -mindepth 2 -maxdepth 8 -name package.json -type f -print0 | sort -z)
 }
 
 path_executables() {
-  local dir file name digest
-  IFS=: read -r -a path_dirs <<< "${PATH:-}"
+  local path_value="$1" dir file name digest
+  IFS=: read -r -a path_dirs <<< "$path_value"
   for dir in "${path_dirs[@]}"; do
     [[ -d "$dir" ]] || continue
     printf 'path-dir\t%s\n' "$dir" >> "$next"
@@ -124,12 +126,12 @@ for file in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/config"; do
   hash_file "ssh:$file" "$file"
 done
 
-path_executables
+path_executables "$monitored_path"
 
 # Inspect conventional global package roots directly: no package-manager
 # command is run, so this digest does not load npm/pnpm authentication config.
-if command -v node >/dev/null 2>&1; then
-  node_prefix="$(cd "$(dirname "$(command -v node)")/.." && pwd)"
+if [[ -n "$node_binary" && -x "$node_binary" ]]; then
+  node_prefix="$(cd "$(dirname "$node_binary")/.." && pwd)"
   package_manifests npm-global "$node_prefix/lib/node_modules"
   package_manifests pnpm-global "$HOME/.local/share/pnpm/global"
   package_manifests pnpm-global-alt "$HOME/Library/pnpm/global"

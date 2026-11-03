@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly security_dir="$(cd "$(dirname "$0")" && pwd)"
-readonly test_root="$(mktemp -d "${TMPDIR:-/tmp}/x233-security-round3.XXXXXX")"
+readonly test_root="$(mktemp -d "${TMPDIR:-/tmp}/x233-security-round5.XXXXXX")"
 readonly original_home="$HOME"
 readonly node_bin="$(command -v node)"
 readonly pnpm_cli="$original_home/.cache/node/corepack/v1/pnpm/11.4.0/bin/pnpm.cjs"
@@ -16,6 +16,7 @@ readonly pnpm_dir="$original_home/Library/pnpm"
 readonly vscode_dir="/Applications/Visual Studio Code.app/Contents/Resources/app/bin"
 readonly worktree_dir="$security_dir"
 readonly modules_dir="$test_root/project/node_modules/.bin"
+readonly trusted_test_path="$shim_dir:/usr/bin:/bin:/usr/sbin:/sbin"
 resolver_server_pid=""
 trap 'if [[ -n "$resolver_server_pid" ]]; then kill "$resolver_server_pid" 2>/dev/null || true; wait "$resolver_server_pid" 2>/dev/null || true; fi; rm -rf "$test_root"' EXIT
 mkdir -p "$test_home" "$shim_dir" "$test_home/.local/bin" "$nvm_node_dir" \
@@ -46,7 +47,7 @@ exec "$node_bin" "$pnpm_cli" "\$@"
 SH
 chmod 700 "$shim_dir/corepack"
 
-login_path="$mimic_dir:$cargo_dir:$go_dir:$pnpm_dir:$vscode_dir:$original_home/.local/bin:$original_home/.bun/bin:$original_home/.nvm/versions/node/v24.18.1/bin:$worktree_dir:$modules_dir:/tmp:/private/tmp:relative/path:$test_home/missing:$mimic_dir"
+login_path="$test_home/.local/bin:$mimic_dir:$cargo_dir:$go_dir:$pnpm_dir:$vscode_dir:$original_home/.local/bin:$original_home/.bun/bin:$nvm_node_dir:$original_home/.nvm/versions/node/v24.18.1/bin:$worktree_dir:$modules_dir:/tmp:/private/tmp:relative/path:$test_home/missing:$mimic_dir"
 printf 'export PATH=%q\n' "$login_path" > "$test_home/.zprofile"
 printf 'export PATH=%q\n' "$login_path" > "$test_home/.zshrc"
 test_path="$shim_dir:$test_home/.local/bin:$nvm_node_dir:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -194,6 +195,9 @@ find "$resolver/project-false/node_modules/.pnpm" -maxdepth 1 \
 installed="$test_home/Library/Application Support/kb-security-digest/bin/digest.sh"
 plist="$test_home/Library/LaunchAgents/com.kblabs.security-digest.plist"
 installed_path="$(plutil -extract EnvironmentVariables.PATH raw -o - "$plist")"
+monitored_path="$(plutil -extract EnvironmentVariables.KB_DIGEST_MONITORED_PATH raw -o - "$plist")"
+execution_path="$installed_path"
+digest_node="$(plutil -extract EnvironmentVariables.KB_DIGEST_NODE raw -o - "$plist")"
 plist_script="$(plutil -extract ProgramArguments.1 raw -o - "$plist")"
 run_at_load="$(plutil -extract RunAtLoad raw -o - "$plist")"
 if [[ "$run_at_load" != true ]]; then
@@ -203,20 +207,26 @@ fi
 [[ "$(plutil -extract StartCalendarInterval.Hour raw -o - "$plist")" == 9 ]]
 [[ "$(plutil -extract StartCalendarInterval.Minute raw -o - "$plist")" == 0 ]]
 [[ "$(stat -f '%Lp' "$test_home/Library/Application Support/kb-security-digest/bin")" == 700 ]]
-expected_path="$mimic_dir:$cargo_dir:$go_dir:$pnpm_dir:$vscode_dir:$original_home/.local/bin:$original_home/.bun/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-if [[ "$installed_path" != "$expected_path" ]]; then
-  printf 'Expected generated PATH %s, got %s\n' "$expected_path" "$installed_path" >&2
+expected_path='/usr/bin:/bin:/usr/sbin:/sbin'
+if [[ "$execution_path" != "$expected_path" ]]; then
+  printf 'Expected trusted execution PATH %s, got %s\n' "$expected_path" "$execution_path" >&2
   exit 1
 fi
+expected_monitored_path="$mimic_dir:$cargo_dir:$go_dir:$pnpm_dir:$vscode_dir:$original_home/.local/bin:$original_home/.bun/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+if [[ "$monitored_path" != "$expected_monitored_path" ]]; then
+  printf 'Expected monitored PATH %s, got %s\n' "$expected_monitored_path" "$monitored_path" >&2
+  exit 1
+fi
+[[ "$digest_node" == "$node_bin" ]]
 [[ "$plist_script" == "$installed" ]]
 [[ "$plist_script" == "$test_home/Library/Application Support/kb-security-digest/bin/digest.sh" ]]
 cmp -s "$security_dir/digest.sh" "$installed"
 mutated_plist="$test_root/mutated.plist"
 cp "$plist" "$mutated_plist"
-plutil -replace EnvironmentVariables.PATH -string '/usr/bin:/bin:/usr/sbin:/sbin' "$mutated_plist"
-mutated_path="$(plutil -extract EnvironmentVariables.PATH raw -o - "$mutated_plist")"
-if [[ "$mutated_path" == "$installed_path" ]]; then
-  echo 'The PATH assertion accepted a plist with generated directories removed.' >&2
+plutil -replace EnvironmentVariables.KB_DIGEST_MONITORED_PATH -string '/usr/bin:/bin:/usr/sbin:/sbin' "$mutated_plist"
+mutated_monitored_path="$(plutil -extract EnvironmentVariables.KB_DIGEST_MONITORED_PATH raw -o - "$mutated_plist")"
+if [[ "$mutated_monitored_path" == "$monitored_path" ]]; then
+  echo 'The monitored PATH assertion accepted a plist with generated directories removed.' >&2
   exit 1
 fi
 plutil -replace ProgramArguments.1 -string "$security_dir/digest.sh" "$mutated_plist"
@@ -232,9 +242,13 @@ snapshot_before="$(shasum -a 256 "$test_home/Library/Application Support/kb-secu
 snapshot_after="$(shasum -a 256 "$test_home/Library/Application Support/kb-security-digest/current.snapshot" | awk '{print $1}')"
 [[ "$snapshot_before" == "$snapshot_after" ]]
 
+printf '#!/bin/sh\nprintf cmp-shadowed >> %q\n' "$test_home/shadowed-tools.log" > "$test_home/.local/bin/cmp"
+printf '#!/bin/sh\nprintf osascript-shadowed >> %q\n' "$test_home/shadowed-tools.log" > "$test_home/.local/bin/osascript"
+chmod 700 "$test_home/.local/bin/cmp" "$test_home/.local/bin/osascript"
+attack_monitored_path="$test_home/.local/bin:$monitored_path"
 printf 'planted\n' > "$test_home/.zshrc"
-env -i HOME="$test_home" PATH="$installed_path" "$installed"
-IFS=: read -r -a generated_dirs <<< "$installed_path"
+env -i HOME="$test_home" PATH="$trusted_test_path" KB_DIGEST_MONITORED_PATH="$attack_monitored_path" KB_DIGEST_NODE="$digest_node" "$installed"
+IFS=: read -r -a generated_dirs <<< "$attack_monitored_path"
 for directory in "${generated_dirs[@]}"; do
   if ! awk -F '\t' -v path="$directory" '$1 == "path-dir" && $2 == path { found=1 } END { exit !found }' \
     "$test_home/Library/Application Support/kb-security-digest/current.snapshot"; then
@@ -251,8 +265,10 @@ for directory in "${generated_dirs[@]}"; do
   fi
 done
 grep -E 'added shell .*\.zshrc sha256:[[:xdigit:]]{12}$' "$test_home/Library/Application Support/kb-security-digest/changes.log" >/dev/null
+grep -E 'Changed: .*shell' "$test_home/notifications.log" >/dev/null
+[[ ! -e "$test_home/shadowed-tools.log" ]]
 printf 'notification probe\n' >> "$test_home/.profile"
-env -i HOME="$test_home" PATH="$shim_dir:$installed_path" "$installed"
+env -i HOME="$test_home" PATH="$trusted_test_path" KB_DIGEST_MONITORED_PATH="$attack_monitored_path" KB_DIGEST_NODE="$digest_node" "$installed"
 grep -E 'Changed: .*shell' "$test_home/notifications.log" >/dev/null
 grep -E 'added shell .*\.profile sha256:[[:xdigit:]]{12}$' "$test_home/Library/Application Support/kb-security-digest/changes.log" >/dev/null
 grep -E 'changed categories: .*shell$' "$test_home/Library/Application Support/kb-security-digest/changes.log" >/dev/null
