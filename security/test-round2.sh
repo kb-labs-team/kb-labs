@@ -2,11 +2,11 @@
 set -euo pipefail
 
 readonly security_dir="$(cd "$(dirname "$0")" && pwd)"
-readonly test_root="$(mktemp -d "${TMPDIR:-/tmp}/x233-security-round5.XXXXXX")"
+readonly test_root="$(mktemp -d "${TMPDIR:-/tmp}/x233-security-round6.XXXXXX")"
 readonly original_home="$HOME"
 readonly node_bin="$(command -v node)"
 readonly pnpm_cli="$original_home/.cache/node/corepack/v1/pnpm/11.4.0/bin/pnpm.cjs"
-readonly test_home="$test_root/home"
+readonly test_home="$(cd "$(mktemp -d "$security_dir/../.x233-security-home-round6.XXXXXX")" && pwd -P)"
 readonly nvm_node_dir="$test_home/.nvm/versions/node/v24.18.1/bin"
 readonly shim_dir="$test_root/shims"
 readonly mimic_dir="$original_home/.mimocode/bin"
@@ -14,13 +14,17 @@ readonly cargo_dir="$original_home/.cargo/bin"
 readonly go_dir="$original_home/go/bin"
 readonly pnpm_dir="$original_home/Library/pnpm"
 readonly vscode_dir="/Applications/Visual Studio Code.app/Contents/Resources/app/bin"
-readonly worktree_dir="$security_dir"
 readonly modules_dir="$test_root/project/node_modules/.bin"
+readonly unrelated_repo="$test_home/unrelated-repository"
+readonly unrelated_repo_bin="$unrelated_repo/bin"
+readonly configured_worktrees_root="$test_home/configured-worktrees"
+readonly configured_worktree_bin="$configured_worktrees_root/agent/bin"
 readonly trusted_test_path="$shim_dir:/usr/bin:/bin:/usr/sbin:/sbin"
 resolver_server_pid=""
-trap 'if [[ -n "$resolver_server_pid" ]]; then kill "$resolver_server_pid" 2>/dev/null || true; wait "$resolver_server_pid" 2>/dev/null || true; fi; rm -rf "$test_root"' EXIT
+trap 'if [[ -n "$resolver_server_pid" ]]; then kill "$resolver_server_pid" 2>/dev/null || true; wait "$resolver_server_pid" 2>/dev/null || true; fi; rm -rf "$test_root" "$test_home"' EXIT
 mkdir -p "$test_home" "$shim_dir" "$test_home/.local/bin" "$nvm_node_dir" \
-  "$modules_dir"
+  "$modules_dir" "$unrelated_repo_bin" "$configured_worktree_bin"
+git -C "$unrelated_repo" init --quiet
 ln -s "$node_bin" "$nvm_node_dir/node"
 
 cat > "$shim_dir/launchctl" <<'SH'
@@ -47,7 +51,7 @@ exec "$node_bin" "$pnpm_cli" "\$@"
 SH
 chmod 700 "$shim_dir/corepack"
 
-login_path="$test_home/.local/bin:$mimic_dir:$cargo_dir:$go_dir:$pnpm_dir:$vscode_dir:$original_home/.local/bin:$original_home/.bun/bin:$nvm_node_dir:$original_home/.nvm/versions/node/v24.18.1/bin:$worktree_dir:$modules_dir:/tmp:/private/tmp:relative/path:$test_home/missing:$mimic_dir"
+login_path="$test_home/.local/bin:$unrelated_repo_bin:$configured_worktree_bin:$mimic_dir:$cargo_dir:$go_dir:$pnpm_dir:$vscode_dir:$original_home/.local/bin:$original_home/.bun/bin:$nvm_node_dir:$modules_dir:/tmp:/private/tmp:relative/path:$test_home/missing:$mimic_dir"
 printf 'export PATH=%q\n' "$login_path" > "$test_home/.zprofile"
 printf 'export PATH=%q\n' "$login_path" > "$test_home/.zshrc"
 test_path="$shim_dir:$test_home/.local/bin:$nvm_node_dir:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -191,7 +195,8 @@ fi
 find "$resolver/project-false/node_modules/.pnpm" -maxdepth 1 \
   -type d -name 'x233-exotic-leaf@*' -print -quit | grep -Fq x233-exotic-leaf@
 
-"$security_dir/install-digest.sh"
+KB_SECURITY_WORKTREES_ROOT="$configured_worktrees_root" \
+  "$security_dir/install-digest.sh"
 installed="$test_home/Library/Application Support/kb-security-digest/bin/digest.sh"
 plist="$test_home/Library/LaunchAgents/com.kblabs.security-digest.plist"
 installed_path="$(plutil -extract EnvironmentVariables.PATH raw -o - "$plist")"
@@ -212,11 +217,19 @@ if [[ "$execution_path" != "$expected_path" ]]; then
   printf 'Expected trusted execution PATH %s, got %s\n' "$expected_path" "$execution_path" >&2
   exit 1
 fi
-expected_monitored_path="$mimic_dir:$cargo_dir:$go_dir:$pnpm_dir:$vscode_dir:$original_home/.local/bin:$original_home/.bun/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+expected_monitored_path="$test_home/.local/bin:$unrelated_repo_bin:$mimic_dir:$cargo_dir:$go_dir:$pnpm_dir:$vscode_dir:$original_home/.local/bin:$original_home/.bun/bin:$nvm_node_dir:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 if [[ "$monitored_path" != "$expected_monitored_path" ]]; then
   printf 'Expected monitored PATH %s, got %s\n' "$expected_monitored_path" "$monitored_path" >&2
   exit 1
 fi
+case ":$monitored_path:" in
+  *":$unrelated_repo_bin:"*) ;;
+  *) printf 'Unrelated Git repository PATH directory was not monitored: %s\n' "$unrelated_repo_bin" >&2; exit 1 ;;
+esac
+case ":$monitored_path:" in
+  *":$configured_worktree_bin:"*) printf 'Configured KB worktree PATH directory was monitored: %s\n' "$configured_worktree_bin" >&2; exit 1 ;;
+  *) ;;
+esac
 [[ "$digest_node" == "$node_bin" ]]
 [[ "$plist_script" == "$installed" ]]
 [[ "$plist_script" == "$test_home/Library/Application Support/kb-security-digest/bin/digest.sh" ]]
@@ -238,7 +251,8 @@ fi
 grep -F "gui/$(id -u)" "$test_home/launchctl.calls" >/dev/null
 [[ -s "$test_home/Library/Application Support/kb-security-digest/current.snapshot" ]]
 snapshot_before="$(shasum -a 256 "$test_home/Library/Application Support/kb-security-digest/current.snapshot" | awk '{print $1}')"
-"$security_dir/install-digest.sh" >/dev/null
+KB_SECURITY_WORKTREES_ROOT="$configured_worktrees_root" \
+  "$security_dir/install-digest.sh" >/dev/null
 snapshot_after="$(shasum -a 256 "$test_home/Library/Application Support/kb-security-digest/current.snapshot" | awk '{print $1}')"
 [[ "$snapshot_before" == "$snapshot_after" ]]
 
