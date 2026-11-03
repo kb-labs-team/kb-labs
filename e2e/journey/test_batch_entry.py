@@ -101,6 +101,14 @@ exit 0
 ''')
         self._script(self.bin / "node", '''#!/bin/sh
 case "$*" in
+  *scripts/ci/run-remote-stage.mjs*)
+    "$REMOTE_DEVKIT_EXECUTABLE" > "$REMOTE_STAGE_LOG" 2>&1
+    result=$?
+    cat "$REMOTE_STAGE_LOG"
+    exit "$result"
+    ;;
+esac
+case "$*" in
   *build-pack-extras.mjs*) exit 0 ;;
 esac
 case "$*" in
@@ -823,8 +831,11 @@ exec "$REAL_TAR" "$@"
         producer_steps = jobs["producer"]["steps"]
         selection_step = next(step for step in producer_steps if step.get("id") == "selection")
         self.assertIn('GITHUB_REF_NAME##*/cases/', selection_step["run"])
-        producer_entry = next(step for step in producer_steps if "batch.sh" in step.get("run", ""))
-        self.assertEqual(producer_entry["run"], 'e2e/journey/batch.sh prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"')
+        producer_entry = next(step for step in producer_steps if step.get("name") == "Produce shared build and candidate")
+        self.assertEqual(
+            producer_entry["run"],
+            'node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"',
+        )
         self.assertEqual(jobs["producer"]["timeout-minutes"], 60)
         self.assertEqual(jobs["local"]["needs"], "producer")
         self.assertEqual(jobs["secured"]["needs"], "producer")
