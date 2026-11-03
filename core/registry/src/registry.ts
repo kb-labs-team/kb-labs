@@ -26,7 +26,7 @@ import type {
   CatalogAdapter,
   DiscoveryResult,
 } from '@kb-labs/plugin-contracts';
-import { DiscoveryManager, extractEntityKinds, computePackageIntegrity, captureFilesystemObservations, hashFilesystemObservations } from '@kb-labs/core-discovery';
+import { DiscoveryManager, extractEntityKinds, computePackageIntegrity, captureFilesystemObservations, hashDiscoveryFingerprint } from '@kb-labs/core-discovery';
 import type { DiscoveredPlugin } from '@kb-labs/plugin-contracts';
 import { EntityCatalog } from './catalog/entity-catalog.js';
 import { resolveCatalogAdapters } from './adapters.js';
@@ -70,12 +70,12 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
     this.discoveryManager = new DiscoveryManager({
       root: this.root,
       platformRoot: opts.platformRoot,
-      importTimeoutMs: opts.importTimeoutMs,
       verifyIntegrity: opts.verifyIntegrity,
     });
 
     this.snapshotMgr = new SnapshotManager({
       root: this.root,
+      requestIdentity: this.discoveryManager.requestIdentity,
       ttlMs: opts.cache?.ttlMs,
       platformVersion: opts.platformVersion ?? PLATFORM_VERSION,
       cache: opts.cache?.adapter,
@@ -108,33 +108,30 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
       const captured = await captureFilesystemObservations(() => resolveCatalogAdapters(this.discoveryManager, this.opts.platformRoot ?? this.root, {
         workspaceAdapters: this.opts.workspaceAdapters,
       }));
-      const knownObservations = new Map(cached.observations.map((observation) => [`${observation.path}\0${observation.kind}`, observation.digest]));
-      const adapterInputsMatch = captured.observations.every((observation) => knownObservations.get(`${observation.path}\0${observation.kind}`) === observation.digest);
-      if (adapterInputsMatch) {
-        this.applySnapshot(cached);
-        this.discoveryResultValue = {
-          plugins: cached.manifests.map((entry) => ({
-            id: entry.pluginId,
-            version: entry.manifest.version,
-            packageRoot: entry.pluginRoot,
-            packageName: entry.packageName,
-            scope: entry.scope,
-            origin: entry.origin,
-            manifestPath: entry.manifestPath,
-            manifestKind: entry.manifestKind,
-            source: entry.source,
-            provides: extractEntityKinds(entry.manifest),
-          })),
-          manifests: new Map(cached.manifests.map((entry) => [entry.pluginId, entry.manifest])),
-          failures: [],
-          diagnostics: cached.diagnostics ?? [],
-          observations: cached.observations,
-          fingerprint: cached.inputFingerprint,
-        };
-        this.adapterEntries = captured.result;
-        this.initialized = true;
-        return;
-      }
+      this.applySnapshot(cached);
+      this.discoveryResultValue = {
+        plugins: cached.manifests.map((entry) => ({
+          id: entry.pluginId,
+          version: entry.manifest.version,
+          packageRoot: entry.pluginRoot,
+          packageName: entry.packageName,
+          scope: entry.scope,
+          origin: entry.origin,
+          manifestPath: entry.manifestPath,
+          manifestKind: entry.manifestKind,
+          source: entry.source,
+          provides: extractEntityKinds(entry.manifest),
+        })),
+        manifests: new Map(cached.manifests.map((entry) => [entry.pluginId, entry.manifest])),
+        failures: [],
+        diagnostics: cached.diagnostics ?? [],
+        observations: cached.observations,
+        requestIdentity: cached.requestIdentity,
+        fingerprint: cached.inputFingerprint,
+      };
+      this.adapterEntries = captured.result;
+      this.initialized = true;
+      return;
     }
 
     // Full discovery
@@ -155,7 +152,8 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
     const result = {
       ...captured.result.result,
       observations: captured.observations,
-      fingerprint: hashFilesystemObservations(captured.observations),
+      requestIdentity: this.discoveryManager.requestIdentity,
+      fingerprint: hashDiscoveryFingerprint(this.discoveryManager.requestIdentity, captured.observations),
     };
     this.discoveryResultValue = result;
     this.adapterEntries = captured.result.adapterEntries;
@@ -350,6 +348,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
       })),
       manifests,
       observations: this.snapshotObservations,
+      requestIdentity: this.discoveryManager.requestIdentity,
       diagnostics: this.diagnosticEvents,
       inputFingerprint: this.snapshotObservationFingerprint,
       ts: Date.now(),

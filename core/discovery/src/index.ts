@@ -16,7 +16,7 @@ export {
   createDiscoveryObservationFingerprinter,
 } from './discovery-inputs.js';
 export type { DiscoveryObservationFingerprinter } from './discovery-inputs.js';
-export { captureFilesystemObservations, hashFilesystemObservations, readFile, exists, access, stat, listDirectory, glob, replayFilesystemObservations } from './recording-filesystem.js';
+export { captureFilesystemObservations, hashFilesystemObservations, hashDiscoveryFingerprint, filesystemObservationsEqual, readFile, exists, access, stat, listDirectory, replayFilesystemObservationSet, replayFilesystemObservations } from './recording-filesystem.js';
 export type { FilesystemObservation } from './recording-filesystem.js';
 
 // Marketplace lock CRUD

@@ -73,7 +73,7 @@ export interface DiscoveredPlugin {
   scope: DiscoveryScope;
   origin: DiscoveryOrigin;
   manifestPath: string;
-  manifestKind: 'static' | 'module';
+  manifestKind: 'static';
   source: { kind: 'marketplace' | 'local'; path: string };
   display?: { name?: string; description?: string };
   integrity?: string;
@@ -100,6 +100,7 @@ export interface DiscoveryResult {
   failures: DiscoveryFailure[];
   diagnostics: DiagnosticEvent[];
   observations: DiscoveryObservation[];
+  requestIdentity: string;
   fingerprint: string;
 }
 
@@ -174,6 +175,7 @@ export interface RegistrySnapshot {
   plugins: Array<{ id: string; version: string; source: { kind: 'marketplace' | 'local'; path: string } }>;
   manifests: RegistrySnapshotManifestEntry[];
   observations: DiscoveryObservation[];
+  requestIdentity: string;
   diagnostics?: DiagnosticEvent[];
   inputFingerprint: string;
   ts: number;
@@ -272,7 +274,7 @@ export interface CatalogOpenOptions {
 }
 
 export interface CatalogScope {
-  platformRoot: string;
+  platformRoot?: string;
   projectRoot?: string;
 }
 

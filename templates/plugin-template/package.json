@@ -102,6 +102,9 @@
       "import": "./dist/lifecycle/index.js"
     }
   },
+  "kb": {
+    "manifest": "./dist/manifest.v3.js"
+  },
   "dependencies": {
     "zod": "^3.25.76"
   },

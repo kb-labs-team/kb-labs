@@ -20,7 +20,7 @@ export async function openCatalog(
 ): Promise<IEntityRegistry> {
   const registry = new EntityRegistry({
     ...opts,
-    root: scope.projectRoot ?? scope.platformRoot,
+    root: scope.projectRoot ?? scope.platformRoot ?? process.cwd(),
     platformRoot: scope.platformRoot,
   });
   await registry.initialize();

@@ -179,7 +179,7 @@ export async function captureFilesystemObservations<T>(run: () => Promise<T>): P
   return { result, observations: uniqueObservations(session.values) };
 }
 
-export async function replayFilesystemObservations(observations: readonly FilesystemObservation[]): Promise<string> {
+export async function replayFilesystemObservationSet(observations: readonly FilesystemObservation[]): Promise<FilesystemObservation[]> {
   const currentInputs = uniqueObservations(observations);
   const values = await captureFilesystemObservations(async () => {
     const contentPaths = new Set(currentInputs.filter((observation) => observation.kind === 'content').map((observation) => observation.path));
@@ -223,7 +223,26 @@ export async function replayFilesystemObservations(observations: readonly Filesy
       }
     }));
   });
-  return hashFilesystemObservations(values.observations);
+  return values.observations;
+}
+
+export async function replayFilesystemObservations(observations: readonly FilesystemObservation[]): Promise<string> {
+  return hashFilesystemObservations(await replayFilesystemObservationSet(observations));
+}
+
+export function filesystemObservationsEqual(
+  left: readonly FilesystemObservation[],
+  right: readonly FilesystemObservation[],
+): boolean {
+  const leftValues = uniqueObservations(left);
+  const rightValues = uniqueObservations(right);
+  return leftValues.length === rightValues.length && leftValues.every((value, index) => {
+    const expected = rightValues[index];
+    return expected !== undefined
+      && value.path === expected.path
+      && value.kind === expected.kind
+      && value.digest === expected.digest;
+  });
 }
 
 export const fs = {
@@ -241,6 +260,10 @@ export function hashFilesystemObservations(observations: readonly FilesystemObse
   const hash = createHash('sha256');
   for (const observation of uniqueObservations(observations)) hash.update(observation.path).update('\0').update(observation.kind).update('\0').update(observation.digest).update('\0');
   return hash.digest('hex');
+}
+
+export function hashDiscoveryFingerprint(requestIdentity: string, observations: readonly FilesystemObservation[]): string {
+  return createHash('sha256').update(requestIdentity).update('\0').update(hashFilesystemObservations(observations)).digest('hex');
 }
 
 

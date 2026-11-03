@@ -1,6 +1,6 @@
 import type { DiscoveryObservation } from '@kb-labs/plugin-contracts';
 import { DiscoveryManager } from './discovery-manager.js';
-import { replayFilesystemObservations } from './recording-filesystem.js';
+import { filesystemObservationsEqual, hashDiscoveryFingerprint, replayFilesystemObservationSet } from './recording-filesystem.js';
 
 export type DiscoveryObservationFingerprinter = (roots: readonly string[]) => Promise<string>;
 
@@ -8,8 +8,11 @@ export type DiscoveryObservationFingerprinter = (roots: readonly string[]) => Pr
 export async function isDiscoverySnapshotStale(
   observations: readonly DiscoveryObservation[],
   fingerprint: string,
+  requestIdentity: string,
 ): Promise<boolean> {
-  return await replayFilesystemObservations(observations) !== fingerprint;
+  const currentObservations = await replayFilesystemObservationSet(observations);
+  return !filesystemObservationsEqual(currentObservations, observations)
+    || hashDiscoveryFingerprint(requestIdentity, currentObservations) !== fingerprint;
 }
 
 /** Use the discovery pipeline itself when a consumer needs a current plugin-set digest. */

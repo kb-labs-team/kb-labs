@@ -25,6 +25,7 @@ const DEFAULT_TTL_MS = 60_000;
 
 export interface SnapshotManagerOptions {
   root: string;
+  requestIdentity: string;
   ttlMs?: number;
   platformVersion: string;
   cache?: ICache;
@@ -44,11 +45,13 @@ export class SnapshotManager {
   private readonly cacheKey?: string;
   private readonly persistSnapshot: boolean;
   private readonly root: string;
+  private readonly requestIdentity: string;
   private lastChecksum: string | null = null;
   private persistLock: Promise<void> = Promise.resolve();
 
   constructor(opts: SnapshotManagerOptions) {
     this.root = resolve(opts.root);
+    this.requestIdentity = opts.requestIdentity;
     const stateOptions = { root: opts.kbHome };
     this.snapshotPath = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_FILE], stateOptions);
     this.backupPath = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_BACKUP], stateOptions);
@@ -142,6 +145,7 @@ export class SnapshotManager {
       manifests: [],
       observations: [],
       inputFingerprint: '',
+      requestIdentity: this.requestIdentity,
       ts: Date.parse(generatedAt),
     };
     return this.ensureIntegrity(base as RegistrySnapshot);
@@ -166,7 +170,9 @@ export class SnapshotManager {
 
   private async markStaleness(snapshot: RegistrySnapshot): Promise<RegistrySnapshot> {
     const expired = snapshot.expiresAt ? Date.now() > Date.parse(snapshot.expiresAt) : false;
-    const inputsChanged = await isDiscoverySnapshotStale(snapshot.observations, snapshot.inputFingerprint);
+    const inputsChanged = typeof snapshot.requestIdentity !== 'string'
+      || snapshot.requestIdentity !== this.requestIdentity
+      || await isDiscoverySnapshotStale(snapshot.observations, snapshot.inputFingerprint, this.requestIdentity);
     const stale = expired || inputsChanged;
     if (snapshot.stale === stale) {return snapshot;}
     return { ...snapshot, stale, partial: snapshot.partial || stale };
@@ -213,6 +219,7 @@ export class SnapshotManager {
       plugins: Array.isArray(raw.plugins) ? raw.plugins : [],
       manifests,
       observations: Array.isArray(raw.observations) ? raw.observations : [],
+      requestIdentity: typeof raw.requestIdentity === 'string' ? raw.requestIdentity : '',
       inputFingerprint: typeof raw.inputFingerprint === 'string' ? raw.inputFingerprint : '',
       ts,
     };

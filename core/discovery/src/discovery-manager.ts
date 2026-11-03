@@ -22,7 +22,7 @@ import { loadManifestFile } from './manifest-loader.js';
 import { computePackageIntegrity } from './integrity.js';
 import { findWorkspaceCandidates } from './workspace-source.js';
 import { readPluginPolicy, checkPluginPolicy, isFirstPartyPluginSource, type PluginPolicy, type PluginPolicyResult } from './plugin-policy.js';
-import { captureFilesystemObservations, hashFilesystemObservations } from './recording-filesystem.js';
+import { captureFilesystemObservations, hashDiscoveryFingerprint } from './recording-filesystem.js';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -40,8 +40,6 @@ export interface DiscoveryOptions {
   platformRoot?: string;
   /** Scope assigned when discovering one root without a separate platform root. Defaults to platform. */
   scope?: 'platform' | 'project';
-  /** Timeout for each manifest import in milliseconds (default: 5000) */
-  importTimeoutMs?: number;
   /** Whether to verify integrity hashes (default: true) */
   verifyIntegrity?: boolean;
   /**
@@ -122,8 +120,7 @@ async function hasFile(filePath: string): Promise<boolean> {
  *   2. pnpm workspace packages under each scope root (`workspace` origin),
  *      the monorepo development source.
  *
- * Every candidate is loaded the same way (static `dist/manifest.json` when
- * built, compiled module otherwise), validated, integrity-checked when locked,
+ * Every candidate is loaded from static manifest JSON, validated, integrity-checked when locked,
  * and then shadowed by plugin id: project scope beats platform scope, and inside
  * one scope workspace > linked > node_modules.
  *
@@ -133,10 +130,10 @@ async function hasFile(filePath: string): Promise<boolean> {
 export class DiscoveryManager {
   private readonly scopes: ScopeRoot[];
   private readonly lockRoots: MarketplaceLockRoots;
-  private readonly importTimeoutMs: number;
   private readonly verifyIntegrity: boolean;
   private readonly workspace: boolean;
   private readonly extensionStore: IExtensionStore;
+  readonly requestIdentity: string;
   private marketplaceLocks = new Map<string, MarketplaceLock>();
   private marketplaceLocksLoaded = false;
   /** plugins.allow/block/linked per scope root, read at the start of discover() */
@@ -152,10 +149,14 @@ export class DiscoveryManager {
     this.scopes = opts.platformRoot && opts.platformRoot !== root
       ? [{ scope: 'platform', root: opts.platformRoot }, { scope: 'project', root }]
       : [{ scope: opts.scope ?? 'platform', root }];
-    this.importTimeoutMs = opts.importTimeoutMs ?? 5_000;
     this.verifyIntegrity = opts.verifyIntegrity ?? true;
     this.workspace = opts.workspace ?? true;
     this.extensionStore = opts.extensionStore ?? createExtensionStore();
+    this.requestIdentity = JSON.stringify({
+      roots: this.scopes.map(({ scope, root: scopeRoot }) => ({ scope, root: path.resolve(scopeRoot) })),
+      workspace: this.workspace,
+      verifyIntegrity: this.verifyIntegrity,
+    });
   }
 
   /**
@@ -168,7 +169,12 @@ export class DiscoveryManager {
    */
   async discover(): Promise<DiscoveryResult> {
     const captured = await captureFilesystemObservations(() => this.performDiscovery());
-    return { ...captured.result, observations: captured.observations, fingerprint: hashFilesystemObservations(captured.observations) };
+    return {
+      ...captured.result,
+      observations: captured.observations,
+      requestIdentity: this.requestIdentity,
+      fingerprint: hashDiscoveryFingerprint(this.requestIdentity, captured.observations),
+    };
   }
 
   private async performDiscovery(): Promise<DiscoveryResult> {
@@ -210,6 +216,7 @@ export class DiscoveryManager {
       failures,
       diagnostics: diag.getEvents(),
       observations: [],
+      requestIdentity: this.requestIdentity,
       fingerprint: '',
     };
   }
@@ -422,7 +429,7 @@ export class DiscoveryManager {
     }
 
     // Load manifest
-    const loaded = await loadManifestFile(packageRoot, diag, this.importTimeoutMs);
+    const loaded = await loadManifestFile(packageRoot, diag);
     if (loaded.kind === 'failed') {
       const events = diag.getEvents();
       if (events.some(e => e.code === 'MANIFEST_NOT_PLUGIN')) {
