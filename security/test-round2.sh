@@ -3,7 +3,6 @@ set -euo pipefail
 
 readonly security_dir="$(cd "$(dirname "$0")" && pwd)"
 readonly test_root="$(mktemp -d "${TMPDIR:-/tmp}/x233-security-round3.XXXXXX")"
-trap 'rm -rf "$test_root"' EXIT
 readonly original_home="$HOME"
 readonly node_bin="$(command -v node)"
 readonly pnpm_cli="$original_home/.cache/node/corepack/v1/pnpm/11.4.0/bin/pnpm.cjs"
@@ -17,6 +16,8 @@ readonly pnpm_dir="$original_home/Library/pnpm"
 readonly vscode_dir="/Applications/Visual Studio Code.app/Contents/Resources/app/bin"
 readonly worktree_dir="$security_dir"
 readonly modules_dir="$test_root/project/node_modules/.bin"
+resolver_server_pid=""
+trap 'if [[ -n "$resolver_server_pid" ]]; then kill "$resolver_server_pid" 2>/dev/null || true; wait "$resolver_server_pid" 2>/dev/null || true; fi; rm -rf "$test_root"' EXIT
 mkdir -p "$test_home" "$shim_dir" "$test_home/.local/bin" "$nvm_node_dir" \
   "$modules_dir"
 ln -s "$node_bin" "$nvm_node_dir/node"
@@ -80,6 +81,114 @@ if "$security_dir/apply-intake.sh" --check >/dev/null 2>&1; then
   exit 1
 fi
 "$security_dir/apply-intake.sh" >/dev/null
+
+# Exercise pnpm's fresh resolver against a transitive tarball URL served only
+# from loopback. Each arm gets a fresh HOME, project and store.
+resolver="$test_root/exotic-subdep"
+mkdir -p "$resolver/direct/package" "$resolver/leaf/package" \
+  "$resolver/home-true" "$resolver/home-false" \
+  "$resolver/store-true" "$resolver/store-false" \
+  "$resolver/project-true" "$resolver/project-false"
+printf '{"name":"x233-exotic-leaf","version":"1.0.0"}\n' \
+  > "$resolver/leaf/package/package.json"
+tar -czf "$resolver/exotic-leaf.tgz" -C "$resolver/leaf" package
+cat > "$resolver/server.py" <<'PY'
+import http.server
+import pathlib
+import socketserver
+import sys
+
+tarball = pathlib.Path(sys.argv[1]).read_bytes()
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        self.reply(send_body=False)
+
+    def do_GET(self):
+        self.reply(send_body=True)
+
+    def reply(self, send_body):
+        if self.path != "/x233-exotic-leaf.tgz":
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(tarball)))
+        self.end_headers()
+        if send_body:
+            self.wfile.write(tarball)
+
+    def log_message(self, *_args):
+        pass
+
+server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+print(server.server_address[1], flush=True)
+server.serve_forever()
+PY
+python3 "$resolver/server.py" "$resolver/exotic-leaf.tgz" \
+  > "$resolver/port" 2> "$resolver/server.err" &
+resolver_server_pid=$!
+for _ in {1..100}; do
+  [[ -s "$resolver/port" ]] && break
+  sleep 0.05
+done
+if [[ ! -s "$resolver/port" ]]; then
+  cat "$resolver/server.err" >&2
+  echo 'The loopback tarball server did not start.' >&2
+  exit 1
+fi
+resolver_port="$(cat "$resolver/port")"
+cat > "$resolver/direct/package/package.json" <<EOF
+{"name":"x233-direct-fixture","version":"1.0.0","dependencies":{"x233-exotic-leaf":"http://127.0.0.1:$resolver_port/x233-exotic-leaf.tgz"}}
+EOF
+tar -czf "$resolver/direct-fixture.tgz" -C "$resolver/direct" package
+for setting in true false; do
+  printf '{"name":"x233-resolver-fixture-%s","version":"1.0.0","dependencies":{"x233-direct-fixture":"file:%s"}}\n' \
+    "$setting" "$resolver/direct-fixture.tgz" \
+    > "$resolver/project-$setting/package.json"
+  mkdir -p "$resolver/corepack-$setting"
+  HOME="$resolver/home-$setting" COREPACK_HOME="$resolver/corepack-$setting" \
+    PNPM_CONFIG_UPDATE_NOTIFIER=false \
+    "$node_bin" "$pnpm_cli" config set block-exotic-subdeps "$setting" --location global
+  HOME="$resolver/home-$setting" COREPACK_HOME="$resolver/corepack-$setting" \
+    PNPM_CONFIG_UPDATE_NOTIFIER=false \
+    "$node_bin" "$pnpm_cli" config set update-notifier false --location global
+done
+
+[[ ! -e "$resolver/project-true/pnpm-lock.yaml" ]]
+if (cd "$resolver/project-true" && HOME="$resolver/home-true" \
+  COREPACK_HOME="$resolver/corepack-true" \
+  PNPM_CONFIG_UPDATE_NOTIFIER=false \
+  "$node_bin" "$pnpm_cli" install --store-dir "$resolver/store-true" \
+    --registry="http://127.0.0.1:$resolver_port/registry/" --reporter append-only) \
+    > "$resolver/enabled.out" 2>&1; then
+  cat "$resolver/enabled.out" >&2
+  echo 'Fresh resolution accepted an exotic transitive tarball with block-exotic-subdeps=true.' >&2
+  exit 1
+fi
+if ! grep -Fq '[ERR_PNPM_EXOTIC_SUBDEP]' "$resolver/enabled.out"; then
+  cat "$resolver/enabled.out" >&2
+  echo 'Fresh resolution failed without pnpm error code ERR_PNPM_EXOTIC_SUBDEP.' >&2
+  exit 1
+fi
+if [[ -e "$resolver/project-true/pnpm-lock.yaml" ]]; then
+  echo 'The enabled resolver probe unexpectedly reused or wrote a lockfile.' >&2
+  exit 1
+fi
+
+(cd "$resolver/project-false" && HOME="$resolver/home-false" \
+  COREPACK_HOME="$resolver/corepack-false" \
+  PNPM_CONFIG_UPDATE_NOTIFIER=false \
+  "$node_bin" "$pnpm_cli" install --store-dir "$resolver/store-false" \
+    --registry="http://127.0.0.1:$resolver_port/registry/" --reporter append-only) \
+    > "$resolver/disabled.out" 2>&1
+if grep -Fq '[ERR_PNPM_EXOTIC_SUBDEP]' "$resolver/disabled.out"; then
+  cat "$resolver/disabled.out" >&2
+  echo 'The false-setting control unexpectedly raised ERR_PNPM_EXOTIC_SUBDEP.' >&2
+  exit 1
+fi
+[[ -d "$resolver/project-false/node_modules/x233-direct-fixture" ]]
+find "$resolver/project-false/node_modules/.pnpm" -maxdepth 1 \
+  -type d -name 'x233-exotic-leaf@*' -print -quit | grep -Fq x233-exotic-leaf@
 
 "$security_dir/install-digest.sh"
 installed="$test_home/Library/Application Support/kb-security-digest/bin/digest.sh"
@@ -153,4 +262,4 @@ if grep -E 'changed categories: .*shell$' "$test_root/mutated-changes.log" >/dev
   exit 1
 fi
 
-printf 'Round 3 security checks passed.\n'
+printf 'Round 4 security checks passed.\n'
