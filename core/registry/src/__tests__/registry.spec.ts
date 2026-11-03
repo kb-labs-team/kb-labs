@@ -175,7 +175,7 @@ describe('EntityRegistry', () => {
     await registry.initialize();
 
     const snap = registry.snapshot();
-    expect(snap.schema).toBe('kb.registry/1');
+    expect(snap.schema).toBe('kb.registry/2');
     expect(snap.plugins).toHaveLength(1);
     expect(snap.manifests).toHaveLength(1);
     expect(snap.partial).toBe(false);

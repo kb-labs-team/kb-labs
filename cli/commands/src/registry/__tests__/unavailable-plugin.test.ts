@@ -113,8 +113,7 @@ describe('failed enabled plugins', () => {
       plugins: [],
       manifests: new Map(),
       diagnostics: [],
-      inputs: [],
-      candidateMemberships: [],
+      observations: [],
       fingerprint: '',
       failures: [{
         id: '@kb-labs/release',
@@ -179,8 +178,7 @@ describe('failed enabled plugins', () => {
       manifests: new Map([[plugin.id, manifest]]),
       failures: [],
       diagnostics: [diagnostic],
-      inputs: [],
-      candidateMemberships: [],
+      observations: [],
       fingerprint: '',
     });
     const registry = createRegistry();

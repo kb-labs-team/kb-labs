@@ -35,7 +35,7 @@ const BASE_CONFIG: RestApiConfig = {
 
 function createMockSnapshot(): RegistrySnapshot {
   return {
-    schema: 'kb.registry/1',
+    schema: 'kb.registry/2',
     rev: 42,
     version: '1.0.0',
     generatedAt: new Date().toISOString(),
@@ -47,8 +47,7 @@ function createMockSnapshot(): RegistrySnapshot {
     corrupted: false,
     plugins: [],
     manifests: [],
-    inputs: [],
-    candidateMemberships: [],
+    observations: [],
     inputFingerprint: '',
     ts: Date.now(),
     checksum: 'abc123',

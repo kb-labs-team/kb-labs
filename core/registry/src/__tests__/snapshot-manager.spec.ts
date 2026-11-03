@@ -2,8 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
-import { readDiscoveryInputs } from '@kb-labs/core-discovery';
+import { captureFilesystemObservations, hashFilesystemObservations, readFile } from '@kb-labs/core-discovery';
 
 import { SnapshotManager } from '../snapshot/snapshot-manager.js';
 import type { RegistrySnapshot } from '@kb-labs/plugin-contracts';
@@ -26,13 +25,16 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
     const packageJson = JSON.parse(packageBytes.toString('utf8')) as { kb?: { manifest?: string } };
     const declaredPath = packageJson.kb?.manifest;
     const manifestPath = declaredPath ? join(pluginRoot, declaredPath) : join(pluginRoot, 'dist', 'index.js');
-    const additional = [{ path: packagePath, digest: createHash('sha256').update(packageBytes).digest('hex') }];
-    if (existsSync(manifestPath)) {
-      additional.push({ path: manifestPath, digest: createHash('sha256').update(readFileSync(manifestPath)).digest('hex') });
-    }
-    const { inputs, fingerprint } = await readDiscoveryInputs([root], additional);
+    const captured = await captureFilesystemObservations(async () => {
+      await readFile(packagePath);
+      try { await readFile(manifestPath); } catch (error) {
+        if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error;
+      }
+    });
+    const observations = captured.observations;
+    const fingerprint = hashFilesystemObservations(observations);
     const snapshot: RegistrySnapshot = {
-      schema: 'kb.registry/1',
+      schema: 'kb.registry/2',
       rev: 1,
       version: '1',
       generatedAt: new Date(T).toISOString(),
@@ -55,8 +57,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
           manifestKind: 'static',
         },
       ],
-      inputs,
-      candidateMemberships: [],
+      observations,
       inputFingerprint: fingerprint,
       ts: T,
     };
@@ -145,7 +146,7 @@ describe('SnapshotManager — runtime state location', () => {
 
   const T = Date.now();
   const snapshot = (): RegistrySnapshot => ({
-    schema: 'kb.registry/1',
+    schema: 'kb.registry/2',
     rev: 1,
     version: '1',
     generatedAt: new Date(T).toISOString(),
@@ -156,8 +157,7 @@ describe('SnapshotManager — runtime state location', () => {
     source: { cwd: root, platformVersion: 'test' },
     plugins: [],
     manifests: [],
-    inputs: [],
-    candidateMemberships: [],
+    observations: [],
     inputFingerprint: '',
     ts: T,
   });

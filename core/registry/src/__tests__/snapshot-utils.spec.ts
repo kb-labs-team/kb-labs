@@ -44,7 +44,7 @@ describe('snapshot-utils', () => {
   describe('computeSnapshotChecksum', () => {
     it('returns consistent sha256 hex for same input', () => {
       const snap = {
-        schema: 'kb.registry/1' as const,
+        schema: 'kb.registry/2' as const,
         rev: 1,
         version: '1',
         generatedAt: '2026-01-01T00:00:00Z',
@@ -54,8 +54,7 @@ describe('snapshot-utils', () => {
         source: { cwd: '/tmp', platformVersion: '1.0.0' },
         plugins: [],
         manifests: [],
-        inputs: [],
-        candidateMemberships: [],
+        observations: [],
         inputFingerprint: '',
         ts: 1000,
       };
@@ -68,11 +67,11 @@ describe('snapshot-utils', () => {
 
     it('changes when data changes', () => {
       const base = {
-        schema: 'kb.registry/1' as const,
+        schema: 'kb.registry/2' as const,
         rev: 1, version: '1', generatedAt: '2026-01-01T00:00:00Z',
         ttlMs: 60000, partial: false, stale: false,
         source: { cwd: '/tmp', platformVersion: '1.0.0' },
-        plugins: [], manifests: [], inputs: [], candidateMemberships: [], inputFingerprint: '', ts: 1000,
+        plugins: [], manifests: [], observations: [], inputFingerprint: '', ts: 1000,
       };
 
       const modified = { ...base, rev: 2 };

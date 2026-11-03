@@ -290,6 +290,49 @@ describe('Registry Integration', () => {
     }
   });
 
+  it('refreshes workspace commands when a declared manifest artifact is built', async () => {
+    const platformRoot = path.join(root, 'artifact-platform');
+    const projectRoot = path.join(root, 'artifact-project');
+    const kbHome = path.join(root, 'artifact-kb-home');
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = kbHome;
+    try {
+      await fs.mkdir(platformRoot, { recursive: true });
+      await fs.mkdir(projectRoot, { recursive: true });
+      await fs.writeFile(path.join(platformRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "plugins/*"\n');
+      const existing = await createFakePlugin(platformRoot, '@kb-labs/existing', {
+        commands: [{ path: 'sample already-built', describe: 'Already available' }],
+      });
+      const existingPackageJsonPath = path.join(existing.dir, 'package.json');
+      const existingPackageJson = JSON.parse(await fs.readFile(existingPackageJsonPath, 'utf8')) as Record<string, unknown>;
+      existingPackageJson.kb = { manifest: 'kb.plugin.json' };
+      await fs.writeFile(existingPackageJsonPath, JSON.stringify(existingPackageJson));
+
+      const plugin = await createFakePlugin(platformRoot, '@kb-labs/artifact', {
+        commands: [{ path: 'sample after-build', describe: 'Available after build' }],
+      });
+      const packageJsonPath = path.join(plugin.dir, 'package.json');
+      const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf8')) as Record<string, unknown>;
+      packageJson.kb = { manifest: 'dist/manifest.json' };
+      await fs.writeFile(packageJsonPath, JSON.stringify(packageJson));
+
+      const beforeBuild = await openCatalog({ platformRoot, projectRoot });
+      expect(beforeBuild.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('sample after-build');
+      await beforeBuild.dispose();
+
+      const manifest = await fs.readFile(path.join(plugin.dir, 'kb.plugin.json'), 'utf8');
+      await fs.mkdir(path.join(plugin.dir, 'dist'), { recursive: true });
+      await fs.writeFile(path.join(plugin.dir, 'dist', 'manifest.json'), manifest);
+
+      const afterBuild = await openCatalog({ platformRoot, projectRoot });
+      expect(afterBuild.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('sample after-build');
+      await afterBuild.dispose();
+    } finally {
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
+  });
+
   it('refreshes a cached CLI capability when the platform marketplace lock changes', async () => {
     const platformRoot = path.join(root, 'platform');
     const projectRoot = path.join(root, 'project');
@@ -454,7 +497,7 @@ describe('Registry Integration', () => {
     const reg1 = await openCatalog({ platformRoot: root, projectRoot: root });
     expect(reg1.listPlugins()).toHaveLength(1);
     const snap1 = reg1.snapshot();
-    expect(snap1.schema).toBe('kb.registry/1');
+    expect(snap1.schema).toBe('kb.registry/2');
     expect(snap1.manifests).toHaveLength(1);
     await reg1.dispose();
 
