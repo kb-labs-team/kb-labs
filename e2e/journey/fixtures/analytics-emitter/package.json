@@ -8,7 +8,7 @@
     ".": "./manifest.js"
   },
   "files": ["manifest.js", "dist/commands/*.js", "dist/manifest.json"],
-  "kb": { "manifest": "./manifest.js", "requiredOutputs": ["./dist/manifest.json", "./dist/commands/*.js"] },
+  "kb": { "manifest": "./dist/manifest.json", "requiredOutputs": ["./dist/manifest.json", "./dist/commands/*.js"] },
   "peerDependencies": { "@kb-labs/sdk": "^2.120.1" },
   "scripts": { "build": "node ./build.mjs" },
   "license": "UNLICENSED"

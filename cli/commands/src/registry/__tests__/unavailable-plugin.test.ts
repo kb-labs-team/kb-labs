@@ -78,12 +78,12 @@ describe('failed enabled plugins', () => {
       const fixture = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../e2e/journey/fixtures/analytics-emitter');
       const pluginDir = path.join(tmpDir, 'analytics-emitter');
       await copyAnalyticsFixture(fixture, pluginDir);
-      const manifestPath = path.join(pluginDir, 'manifest.js');
-      const source = await fs.readFile(manifestPath, 'utf8');
-      await fs.writeFile(manifestPath, source.replace(
-        "flags: [{ name: 'marker', type: 'string', description: 'Unique event marker', required: true }]",
-        "flags: { marker: { type: 'string', description: 'Unique event marker', required: true } }",
-      ));
+      const manifestPath = path.join(pluginDir, 'dist', 'manifest.json');
+      const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as {
+        cli: { commands: Array<{ flags: unknown }> };
+      };
+      manifest.cli.commands[0]!.flags = { marker: { type: 'string', description: 'Unique event marker', required: true } };
+      await fs.writeFile(manifestPath, JSON.stringify(manifest));
       const lock = createEmptyLock();
       lock.plugins['@kb-labs/e2e-analytics-emitter'] = createMarketplaceEntry({
         version: '1.0.0', integrity: 'sha256-test', source: 'local', resolvedPath: './analytics-emitter',

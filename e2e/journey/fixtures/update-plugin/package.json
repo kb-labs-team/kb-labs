@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./manifest.js",
   "files": ["manifest.js", "dist/manifest.json"],
-  "kb": { "manifest": "./manifest.js", "requiredOutputs": ["./dist/manifest.json"] },
+  "kb": { "manifest": "./dist/manifest.json", "requiredOutputs": ["./dist/manifest.json"] },
   "peerDependencies": { "@kb-labs/sdk": "^2.120.0" },
   "license": "UNLICENSED"
 }

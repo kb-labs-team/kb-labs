@@ -173,22 +173,10 @@ test('rejects the packed pre-fix plugin layout through product handler resolutio
     cpSync(fixture, source, { recursive: true });
     cpSync(join(source, 'dist/commands'), join(source, 'commands'), { recursive: true });
     rmSync(join(source, 'dist/commands'), { recursive: true });
-    const oldLayoutPackage = {
-      name: '@kb-labs/e2e-analytics-emitter',
-      version: '1.0.0',
-      type: 'module',
-      main: './manifest.js',
-      files: ['manifest.js', 'commands/*.js', 'dist/manifest.json'],
-      kb: { manifest: './manifest.js' },
-    };
-    writeFileSync(join(source, 'package.json'), JSON.stringify({
-      ...oldLayoutPackage,
-    }));
-    execFileSync('mkdir', ['-p', join(source, 'dist')]);
-    execFileSync('node', [
-      new URL('../../infra/devkit/tsup/emit-manifest-json.mjs', import.meta.url).pathname,
-      '--module', join(source, 'manifest.js'), '--output', join(source, 'dist/manifest.json'),
-    ], { stdio: 'ignore' });
+    const oldLayoutPackage = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'));
+    oldLayoutPackage.files = ['manifest.js', 'commands/*.js', 'dist/manifest.json'];
+    oldLayoutPackage.kb = { manifest: oldLayoutPackage.kb.manifest };
+    writeFileSync(join(source, 'package.json'), JSON.stringify(oldLayoutPackage));
     execFileSync('pnpm', ['pack', '--pack-destination', output, '--silent'], { cwd: source, stdio: 'ignore' });
     const [archiveName] = readdirSync(output).filter((filename) => filename.endsWith('.tgz'));
     assert.ok(archiveName, 'pnpm pack produced the pre-fix fixture tarball');
