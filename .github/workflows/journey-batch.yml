@@ -76,7 +76,7 @@ jobs:
         run: corepack pnpm install --frozen-lockfile
       - id: batch
         name: Produce shared build and candidate
-        run: e2e/journey/batch.sh prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"
+        run: node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
