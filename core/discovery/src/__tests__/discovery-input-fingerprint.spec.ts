@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { isDiscoverySnapshotStale } from '../discovery-inputs.js';
-import { captureFilesystemObservations, exists, glob, globMany, hashFilesystemObservations, listDirectory, readFile, stat } from '../recording-filesystem.js';
+import { captureFilesystemObservations, exists, glob, globMany, hashDiscoveryFingerprint, listDirectory, readFile, stat } from '../recording-filesystem.js';
 
 describe('discovery filesystem observations', () => {
   let root: string;
@@ -27,11 +27,12 @@ describe('discovery filesystem observations', () => {
       await glob('**/package.json', { cwd: root });
     });
     expect(captured.observations.map(({ kind }) => kind)).toEqual(expect.arrayContaining(['content', 'absent', 'present', 'listing']));
-    const fingerprint = hashFilesystemObservations(captured.observations);
-    expect(await isDiscoverySnapshotStale(captured.observations, fingerprint)).toBe(false);
+    const requestIdentity = 'test-request';
+    const fingerprint = hashDiscoveryFingerprint(requestIdentity, captured.observations);
+    expect(await isDiscoverySnapshotStale(captured.observations, fingerprint, requestIdentity)).toBe(false);
 
     await fs.writeFile(artifact, '{"schema":"kb.plugin/3"}');
-    expect(await isDiscoverySnapshotStale(captured.observations, fingerprint)).toBe(true);
+    expect(await isDiscoverySnapshotStale(captured.observations, fingerprint, requestIdentity)).toBe(true);
   });
 
   it('stores repeated identical reads once in the content-addressed observation set', async () => {

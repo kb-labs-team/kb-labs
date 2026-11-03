@@ -381,7 +381,7 @@ describe('Registry Integration', () => {
     }
   });
 
-  it('does not persist a fresh snapshot when the marketplace lock changes during discovery', async () => {
+  it('does not execute a declared module while discovering other plugins', async () => {
     const platformRoot = path.join(root, 'platform-race');
     const projectRoot = path.join(root, 'project-race');
     const kbHome = path.join(root, 'kb-home-race');
@@ -422,11 +422,11 @@ describe('Registry Integration', () => {
       expect(discoveredBeforeEnable.queryEntities({ kind: 'cli-command' })).toHaveLength(0);
       await discoveredBeforeEnable.dispose();
       expect((await readMarketplaceLock(platformRoot, new DiagnosticCollector()))?.plugins['@kb-labs/commit']?.enabled)
-        .toBe(true);
+        .toBe(false);
 
       const reopened = await openCatalog({ platformRoot, projectRoot });
       expect(reopened.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId))
-        .toContain('commit plan show');
+        .not.toContain('commit plan show');
       await reopened.dispose();
     } finally {
       if (previousKbHome === undefined) delete process.env.KB_HOME;
@@ -434,7 +434,7 @@ describe('Registry Integration', () => {
     }
   });
 
-  it('rediscovers when a loaded manifest artifact changes before snapshot persistence', async () => {
+  it('rediscovers when a loaded static manifest artifact changes before reopen', async () => {
     const platformRoot = path.join(root, 'manifest-race-platform');
     const projectRoot = path.join(root, 'manifest-race-project');
     const kbHome = path.join(root, 'manifest-race-kb-home');
@@ -446,41 +446,116 @@ describe('Registry Integration', () => {
       const target = await createFakePlugin(platformRoot, '@kb-labs/target', {
         commands: [{ path: 'target old', describe: 'Old command' }],
       });
-      const trigger = await createFakePlugin(platformRoot, '@kb-labs/manifest-trigger', {
-        workflows: [{ id: 'manifest-trigger' }],
-      });
       await registerPlugin(platformRoot, '@kb-labs/target', target.dir, target.integrity, ['plugin', 'cli-command']);
-      await registerPlugin(platformRoot, '@kb-labs/manifest-trigger', trigger.dir, trigger.integrity, ['plugin', 'workflow']);
 
       const targetManifestPath = path.join(target.dir, 'kb.plugin.json');
       const updatedManifest = JSON.parse(await fs.readFile(targetManifestPath, 'utf8')) as Record<string, unknown>;
       updatedManifest.cli = {
         commands: [{ path: 'target new', describe: 'New command', handler: './dist/target-new.js' }],
       };
-      await fs.writeFile(path.join(trigger.dir, 'package.json'), JSON.stringify({
-        name: '@kb-labs/manifest-trigger',
-        version: '1.0.0',
-        kb: { manifest: 'manifest.mjs' },
-      }));
-      await fs.writeFile(path.join(trigger.dir, 'manifest.mjs'), [
-        "import { writeFile } from 'node:fs/promises';",
-        'await new Promise((resolve) => setTimeout(resolve, 100));',
-        `await writeFile(${JSON.stringify(targetManifestPath)}, ${JSON.stringify(JSON.stringify(updatedManifest))});`,
-        `export const manifest = ${JSON.stringify({
-          schema: 'kb.plugin/3', id: '@kb-labs/manifest-trigger', version: '1.0.0',
-          workflows: { handlers: [{ id: 'manifest-trigger', handler: './dist/manifest-trigger.js' }] },
-        })};`,
-      ].join('\n'));
-
       const first = await openCatalog({ platformRoot, projectRoot });
       expect(first.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('target old');
       await first.dispose();
+
+      await fs.writeFile(targetManifestPath, JSON.stringify(updatedManifest));
 
       const reopened = await openCatalog({ platformRoot, projectRoot });
       const commandIds = reopened.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId);
       expect(commandIds).toContain('target new');
       expect(commandIds).not.toContain('target old');
       await reopened.dispose();
+    } finally {
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
+  });
+
+  // case: S-283.1
+  it('does not replay a snapshot when its canonical discovery roots change', async () => {
+    const platformRoot = path.join(root, 'exact-platform');
+    const projectRoot = path.join(root, 'exact-project');
+    const kbHome = path.join(root, 'exact-kb-home');
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = kbHome;
+    try {
+      await fs.mkdir(platformRoot, { recursive: true });
+      await fs.mkdir(projectRoot, { recursive: true });
+      const plugin = await createFakePlugin(platformRoot, '@kb-labs/platform-only', {
+        commands: [{ path: 'platform only', describe: 'Platform command' }],
+      });
+      await registerPlugin(platformRoot, '@kb-labs/platform-only', plugin.dir, plugin.integrity, ['plugin', 'cli-command']);
+
+      const withPlatform = await openCatalog({ platformRoot, projectRoot });
+      expect(withPlatform.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('platform only');
+      await withPlatform.dispose();
+
+      const withoutPlatform = await openCatalog({ platformRoot: undefined, projectRoot });
+      expect(withoutPlatform.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('platform only');
+      await withoutPlatform.dispose();
+    } finally {
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
+  });
+
+  // case: S-283.2
+  it('uses only the adjacent JSON artifact for a declared module manifest', async () => {
+    const platformRoot = path.join(root, 'static-manifest-platform');
+    const projectRoot = path.join(root, 'static-manifest-project');
+    const kbHome = path.join(root, 'static-manifest-kb-home');
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = kbHome;
+    try {
+      await fs.mkdir(platformRoot, { recursive: true });
+      await fs.mkdir(projectRoot, { recursive: true });
+      const plugin = await createFakePlugin(platformRoot, '@kb-labs/static-manifest', {
+        commands: [{ path: 'old command', describe: 'Old command' }],
+      });
+      const pkgPath = path.join(plugin.dir, 'package.json');
+      await fs.writeFile(pkgPath, JSON.stringify({ name: '@kb-labs/static-manifest', kb: { manifest: './dist/manifest.mjs' } }));
+      await fs.mkdir(path.join(plugin.dir, 'dist'), { recursive: true });
+      const modulePath = path.join(plugin.dir, 'dist/manifest.mjs');
+      const helperPath = path.join(plugin.dir, 'dist/helper.mjs');
+      const jsonPath = path.join(plugin.dir, 'dist/manifest.json');
+      await fs.writeFile(helperPath, "export const command = 'module command';\n");
+      await fs.writeFile(modulePath, [
+        "import { command } from './helper.mjs';",
+        "export const manifest = { schema: 'kb.plugin/3', id: '@kb-labs/static-manifest', version: '1.0.0', cli: { commands: [{ path: command, describe: 'Module command', handler: './dist/module-command.js' }] } };",
+      ].join('\n'));
+      const jsonManifest = (command: string) => JSON.stringify({
+        schema: 'kb.plugin/3', id: '@kb-labs/static-manifest', version: '1.0.0',
+        cli: { commands: [{ path: command, describe: command, handler: `./dist/${command.replace(/ /g, '-')}.js` }] },
+      });
+      const integrity = `sha256-${crypto.createHash('sha256').update(await fs.readFile(pkgPath)).digest('base64')}`;
+      await registerPlugin(platformRoot, '@kb-labs/static-manifest', plugin.dir, integrity, ['plugin', 'cli-command']);
+
+      const first = await openCatalog({ platformRoot, projectRoot });
+      expect(first.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('module command');
+      expect(first.getDiagnostics().events.map(event => event.code)).toContain('MANIFEST_PARSE_ERROR');
+      await first.dispose();
+
+      await fs.writeFile(helperPath, "export const command = 'helper changed';\n");
+      const helperChanged = await openCatalog({ platformRoot, projectRoot });
+      expect(helperChanged.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('helper changed');
+      expect(helperChanged.getDiagnostics().events.map(event => event.code)).toContain('MANIFEST_PARSE_ERROR');
+      await helperChanged.dispose();
+
+      await fs.writeFile(jsonPath, jsonManifest('json old'));
+      const built = await openCatalog({ platformRoot, projectRoot });
+      expect(built.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('json old');
+      await built.dispose();
+
+      await fs.writeFile(helperPath, "export const command = 'helper changed again';\n");
+      const helperChangedAfterBuild = await openCatalog({ platformRoot, projectRoot });
+      expect(helperChangedAfterBuild.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('json old');
+      expect(helperChangedAfterBuild.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('helper changed again');
+      await helperChangedAfterBuild.dispose();
+
+      await fs.writeFile(jsonPath, jsonManifest('json new'));
+      const jsonChanged = await openCatalog({ platformRoot, projectRoot });
+      expect(jsonChanged.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('json new');
+      expect(jsonChanged.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('json old');
+      await jsonChanged.dispose();
     } finally {
       if (previousKbHome === undefined) delete process.env.KB_HOME;
       else process.env.KB_HOME = previousKbHome;

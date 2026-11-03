@@ -42,6 +42,7 @@ function createMockSnapshot(rev: number): RegistrySnapshot {
     manifests: [],
     observations: [],
     inputFingerprint: '',
+    requestIdentity: 'test-request',
     ts: Date.now(),
   };
 }

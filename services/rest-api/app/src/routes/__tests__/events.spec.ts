@@ -49,6 +49,7 @@ function createMockSnapshot(): RegistrySnapshot {
     manifests: [],
     observations: [],
     inputFingerprint: '',
+    requestIdentity: 'test-request',
     ts: Date.now(),
     checksum: 'abc123',
     checksumAlgorithm: 'sha256',

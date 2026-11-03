@@ -133,14 +133,14 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
     expect(result.failures).toEqual([]);
   });
 
-  it('falls back to importing the compiled module when there is no static manifest', async () => {
+  it('rejects a declared module when its static JSON artifact is missing', async () => {
     const dir = await makePlugin({ dir: path.join(project, 'node_modules', 'js'), id: '@x/js', staticJson: false, workingModule: true });
     await writeLock(project, { '@x/js': await lockEntry(project, dir, 'platform') });
 
     const result = await new DiscoveryManager({ root: project }).discover();
 
-    expect(result.plugins.map(p => p.id)).toEqual(['@x/js']);
-    expect(result.plugins[0]!.manifestKind).toBe('module');
+    expect(result.plugins.map(p => p.id)).toEqual([]);
+    expect(result.diagnostics.map(event => event.code)).toContain('MANIFEST_PARSE_ERROR');
   });
 
   it('does not find a package that is in node_modules but in no lock', async () => {
@@ -209,7 +209,7 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
       packageName: '@x/broken',
       reason: 'manifest',
       origin: 'workspace',
-      manifestPath: path.join(broken, 'dist', 'manifest.js'),
+      manifestPath: path.join(broken, 'dist', 'manifest.json'),
     });
     expect(result.diagnostics.find(d => d.code === 'MANIFEST_NOT_PLUGIN')?.severity).toBe('info');
   });

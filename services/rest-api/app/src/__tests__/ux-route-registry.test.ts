@@ -21,6 +21,7 @@ const snapshot: RegistrySnapshot = {
   manifests: [],
   observations: [],
   inputFingerprint: '',
+  requestIdentity: 'test-request',
   ts: 0,
 };
 

@@ -169,6 +169,7 @@ function createMockSnapshot(manifests: Array<{
     plugins: [],
     observations: [],
     inputFingerprint: '',
+    requestIdentity: 'test-request',
     ts: Date.now(),
     manifests: manifests.map((entry) => ({
       pluginId: entry.pluginId,
