@@ -1,0 +1,5 @@
+# Proposed replacement for mounts: [] in ~/.colima/default/colima.yaml.
+# The current compose bind sources all live below the worktrees directory.
+mounts:
+  - location: /Users/kirillbaranov/Desktop/work/kb-labs-workspace-worktrees
+    writable: true

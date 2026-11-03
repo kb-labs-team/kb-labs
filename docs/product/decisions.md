@@ -313,6 +313,11 @@ S-222.
 
 ### Marketplace integrity pins may bypass registry freshness for the pinned artifact
 
+For an urgent workspace security fix, add only the exact `package@version` to
+`minimumReleaseAgeExclude` in the root `pnpm-workspace.yaml`, with the reason
+recorded in the change. Remove the exception once the release-age window has
+passed; do not use a package-wide wildcard.
+
 The Marketplace npm source may exclude one exact package version from
 `minimumReleaseAge` only when the request resolves to an exact version with
 catalog integrity and pnpm records that same tarball integrity after install.
