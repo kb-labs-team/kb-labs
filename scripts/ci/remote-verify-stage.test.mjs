@@ -9,6 +9,26 @@ import { runStage } from './remote-verify-stage.mjs';
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+test('journey workspace build uses the same measured concurrency entry and streams affected builds', async () => {
+  let invocation;
+  const result = await runStage({
+    stage: profile.buildStage,
+    packages: [],
+    selectedPackageCount: 0,
+    affectedBuild: true,
+    buildLimits: { cpuCount: 4, memoryBudgetBytes: 1000, concurrency: 2, expectedTaskFootprintBytes: 500 },
+    runCommand: async (command, args) => {
+      invocation = [command, args];
+      return { status: 0, stdout: JSON.stringify({ ok: true, data: { results: [{ Package: '@fixture/a', Task: 'build', OK: true }] } }), stderr: '' };
+    },
+  });
+
+  assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--affected', '--concurrency', '2', '--json']]);
+  assert.equal(result.status, 'pass');
+  assert.equal(result.selectedPackageCount, 1);
+});
+
 // case: S-262.7
 test('workspace package shard uses kb-devkit and records a stage result with elapsed time', async () => {
   let now = 1_000;
