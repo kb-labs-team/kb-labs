@@ -37,7 +37,7 @@ export async function runStage({
   stage, packageNames, packages, selectedPackageCount, shard, runCommand, now = Date.now, cache = {},
   resourceSamplePath, partialResultPath, sampleIntervalMs = 30_000,
   sampleResources = () => sampleRunnerResources({ workspaceRoot: root, now }),
-  buildLimits, measureBuildLimits,
+  buildLimits, measureBuildLimits, affectedBuild = false, devkitExecutable = './tools/kb-devkit/kb-devkit',
 }) {
   const definition = stageDefinitions.find((entry) => entry.id === stage);
   if (!definition) throw new Error(`Unknown verification stage ${stage}; use the registered stages in scripts/ci/verification-profile.json.`);
@@ -51,7 +51,7 @@ export async function runStage({
   if (stage === profile.buildStage) {
     name = stage;
     const selected = packages ?? [];
-    if (selected.length === 0) {
+    if (selected.length === 0 && !affectedBuild) {
       const at = now();
       return {
         name, status: 'pass', failures: [], logTail: 'kb-devkit selected no affected workspace packages; build had no work.',
@@ -59,7 +59,7 @@ export async function runStage({
         startedAt: new Date(at).toISOString(), finishedAt: new Date(at).toISOString(), durationMs: 0, cache: cacheRecord(cache),
       };
     }
-    command = './tools/kb-devkit/kb-devkit';
+    command = devkitExecutable;
   } else if (stage === profile.packageTestStage) {
     if (!Array.isArray(packageNames) || packageNames.length === 0 || packageNames.some((packageName) => typeof packageName !== 'string' || !packageName)) throw new Error(`${profile.packageTestStage} requires packages selected by kb-devkit affected --json.`);
     if (!Number.isSafeInteger(shard) || shard < 1) throw new Error(`${profile.packageTestStage} requires a positive shard number from the remote verification plan.`);
@@ -118,7 +118,9 @@ export async function runStage({
       if (partialResultPath) writeAtomicJSON(partialResultPath, result);
       return result;
     }
-    args = ['run', 'build', '--packages', (packages ?? []).join(','), '--concurrency', String(buildLimits.concurrency), '--json'];
+    args = affectedBuild
+      ? ['run', 'build', '--affected', '--concurrency', String(buildLimits.concurrency), '--json']
+      : ['run', 'build', '--packages', (packages ?? []).join(','), '--concurrency', String(buildLimits.concurrency), '--json'];
   }
   const captureResourceSample = () => {
     try {
@@ -181,7 +183,9 @@ export async function runStage({
   const stageResult = {
     name,
     status: result.status === 0 && taskFailures.length === 0 && sampleFailures.length === 0 ? 'pass' : 'fail',
-    selectedPackageCount: stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package' ? packageNames.length : selectedPackageCount,
+    selectedPackageCount: stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package'
+      ? packageNames.length
+      : affectedBuild ? JSON.parse(result.stdout).data.results.length : selectedPackageCount,
     failures: [...failures, ...sampleFailures],
     taskFailures,
     logTail: boundedTail(visibleLog),

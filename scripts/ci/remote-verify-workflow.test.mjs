@@ -88,6 +88,15 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(buildSteps.filter((step) => step.name === 'Build selected workspace packages once').length, 1);
 });
 
+test('journey batch and candidate route builds through the same runner entry', () => {
+  const batch = readYaml('.github/workflows/journey-batch.yml');
+  const candidate = readYaml('.github/workflows/remote-verify.yml');
+  const batchBuild = batch.jobs.producer.steps.find((step) => step.name === 'Produce shared build and candidate');
+  const candidateBuild = candidate.jobs.build.steps.find((step) => step.name === 'Build selected workspace packages once');
+  assert.equal(batchBuild.run, 'node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"');
+  assert.equal(candidateBuild.run, 'node scripts/ci/run-remote-stage.mjs');
+});
+
 // case: S-262.7
 test('remote verification reuses the existing lockfile, Go module, and kb-devkit CAS cache owners', () => {
   const workflow = readYaml('.github/workflows/remote-verify.yml');

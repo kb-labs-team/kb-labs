@@ -1,6 +1,6 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # preflight.sh <output-dir> <affected-build-base> owns all shared build, candidate, and journey unit checks.
-set -eu
+set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 OUT=${1:?usage: e2e/journey/preflight.sh <output-dir> <affected-build-base>}
 BUILD_BASE=${2:?usage: e2e/journey/preflight.sh <output-dir> <affected-build-base>}
@@ -52,9 +52,21 @@ if ! (cd tools/kb-devkit && go build -trimpath -o "$work/kb-devkit" .) > "$OUT/b
   echo "could not build kb-devkit from this checkout; see $OUT/build.log; next: (cd tools/kb-devkit && go build .)" >&2
   exit 1
 fi
-if ! env KB_DEVKIT_BASE_REF="$BUILD_BASE" "$work/kb-devkit" run build --affected >> "$OUT/build.log" 2>&1; then
+if ! (
+  cd "$ROOT"
+  PATH="$ROOT/tools/kb-devkit:$PATH" \
+    REMOTE_STAGE=workspace-build \
+    REMOTE_STAGE_RESULT="$OUT/workspace-build-stage.json" \
+    REMOTE_RESOURCE_SAMPLES="$OUT/resource-samples.jsonl" \
+    REMOTE_STAGE_LOG="$OUT/build.log" \
+    REMOTE_SELECTED_PACKAGE_COUNT=0 \
+    REMOTE_AFFECTED_BUILD=1 \
+    REMOTE_DEVKIT_EXECUTABLE="$work/kb-devkit" \
+    KB_DEVKIT_BASE_REF="$BUILD_BASE" \
+    node scripts/ci/run-remote-stage.mjs
+); then
   build_seconds=$(( $(date +%s) - stage_started ))
-  echo "devkit affected build failed; see $OUT/build.log; next: (cd tools/kb-devkit && KB_DEVKIT_BASE_REF='$BUILD_BASE' go run . run build --affected)" >&2
+  echo "devkit affected build failed; see $OUT/build.log; next: KB_DEVKIT_BASE_REF='$BUILD_BASE' REMOTE_STAGE=workspace-build REMOTE_STAGE_RESULT='$OUT/workspace-build-stage.json' REMOTE_RESOURCE_SAMPLES='$OUT/resource-samples.jsonl' REMOTE_SELECTED_PACKAGE_COUNT=0 REMOTE_AFFECTED_BUILD=1 REMOTE_DEVKIT_EXECUTABLE='$work/kb-devkit' node scripts/ci/run-remote-stage.mjs" >&2
   exit 1
 fi
 output_check_rc=0
