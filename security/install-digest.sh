@@ -13,6 +13,15 @@ readonly install_bin="$install_root/bin"
 readonly installed_script="$install_bin/digest.sh"
 readonly plist="$HOME/Library/LaunchAgents/$label.plist"
 readonly uid="$(id -u)"
+readonly checkout_root="$(cd "$(dirname "$source_script")/.." && pwd -P)"
+readonly worktrees_root_input="${KB_SECURITY_WORKTREES_ROOT:-$(cd "$checkout_root/.." && pwd -P)}"
+
+if [[ "$worktrees_root_input" != /* || ! -d "$worktrees_root_input" ]]; then
+  printf 'KB_SECURITY_WORKTREES_ROOT must name an existing absolute directory: %s\n' \
+    "$worktrees_root_input" >&2
+  exit 1
+fi
+readonly worktrees_root="$(cd "$worktrees_root_input" && pwd -P)"
 
 if [[ ! -f "$source_script" ]]; then
   echo "Digest source not found: $source_script" >&2
@@ -31,7 +40,7 @@ fi
 
 launch_path=''
 append_path_dir() {
-  local candidate="$1" resolved repo_root worktrees worktree_entry worktree_root
+  local candidate="$1" resolved
   [[ "$candidate" == /* && -d "$candidate" ]] || return 0
   resolved="$(cd "$candidate" && pwd -P)" || {
     printf "Could not resolve PATH directory: %s\nNext: /usr/bin/stat -f '%%N %%Sp' %q\n" "$candidate" "$candidate" >&2
@@ -43,22 +52,9 @@ append_path_dir() {
   case "/$resolved/" in
     */node_modules/*) return 0 ;;
   esac
-  if repo_root="$(git -C "$resolved" rev-parse --show-toplevel 2>/dev/null)"; then
-    worktrees="$(git -C "$repo_root" worktree list --porcelain)" || {
-      printf 'Could not list Git worktrees for PATH directory: %s\n' "$resolved" >&2
-      return 1
-    }
-    while IFS= read -r worktree_entry; do
-      case "$worktree_entry" in
-        'worktree '*)
-          worktree_root="${worktree_entry#worktree }"
-          case "$resolved/" in
-            "$worktree_root/"*) return 0 ;;
-          esac
-          ;;
-      esac
-    done <<< "$worktrees"
-  fi
+  case "$resolved/" in
+    "$worktrees_root/"*) return 0 ;;
+  esac
   case ":$launch_path:" in
     *":$resolved:"*) return 0 ;;
   esac
