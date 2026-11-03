@@ -2,7 +2,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
@@ -127,6 +127,7 @@ export function validatePackedSource(sourcePackage, packedPackage, {
   candidateNames,
   sourceManifest,
   packedManifest,
+  manifestArtifactPath = 'dist/manifest.json',
 } = {}) {
   const failures = [];
   if (sourcePackage.name !== packedPackage.name) {
@@ -152,7 +153,7 @@ export function validatePackedSource(sourcePackage, packedPackage, {
   if (sourceManifest !== undefined
       && (packedManifest === undefined
           || JSON.stringify(stableJson(sourceManifest)) !== JSON.stringify(stableJson(packedManifest)))) {
-    failures.push('dist/manifest.json differs from the workspace build output');
+    failures.push(`${manifestArtifactPath} differs from the workspace build output`);
   }
   return failures;
 }
@@ -291,12 +292,16 @@ export async function validateTarballAgainstWorkspace(tarball, packages, workspa
     }
   }
 
-  const sourceManifestJsonPath = join(source.directory, 'dist', 'manifest.json');
+  const declaredPluginManifest = source.manifest.kb?.manifest;
+  const manifestArtifactRelativePath = typeof declaredPluginManifest === 'string'
+    ? join(dirname(declaredPluginManifest), 'manifest.json')
+    : 'dist/manifest.json';
+  const sourceManifestJsonPath = join(source.directory, manifestArtifactRelativePath);
   let sourceManifestJson;
   let packedManifestJson;
   if (existsSync(sourceManifestJsonPath)) {
     sourceManifestJson = JSON.parse(readFileSync(sourceManifestJsonPath, 'utf8'));
-    const packedJson = readPacked('dist/manifest.json');
+    const packedJson = readPacked(manifestArtifactRelativePath);
     if (packedJson !== undefined) packedManifestJson = JSON.parse(packedJson);
   }
   failures.push(...validatePackedSource(source.manifest, manifest, {
@@ -305,6 +310,7 @@ export async function validateTarballAgainstWorkspace(tarball, packages, workspa
     candidateNames,
     sourceManifest: sourceManifestJson,
     packedManifest: packedManifestJson,
+    manifestArtifactPath: manifestArtifactRelativePath,
   }));
   if (fixtureNames.has(manifest.name)) {
     const fixture = await inspectPackedFixture(tarball);

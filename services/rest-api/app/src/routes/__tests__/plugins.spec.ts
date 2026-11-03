@@ -156,7 +156,7 @@ function createMockSnapshot(manifests: Array<{
   }>;
 }): RegistrySnapshot {
   return {
-    schema: 'kb.registry/1',
+    schema: 'kb.registry/2',
     rev: 1,
     version: '1.0.0',
     generatedAt: new Date().toISOString(),
@@ -167,6 +167,9 @@ function createMockSnapshot(manifests: Array<{
     source: { platformVersion: 'test', cwd: process.cwd() },
     corrupted: false,
     plugins: [],
+    observations: [],
+    inputFingerprint: '',
+    requestIdentity: 'test-request',
     ts: Date.now(),
     manifests: manifests.map((entry) => ({
       pluginId: entry.pluginId,

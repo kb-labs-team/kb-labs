@@ -73,7 +73,7 @@ export interface DiscoveredPlugin {
   scope: DiscoveryScope;
   origin: DiscoveryOrigin;
   manifestPath: string;
-  manifestKind: 'static' | 'module';
+  manifestKind: 'static';
   source: { kind: 'marketplace' | 'local'; path: string };
   display?: { name?: string; description?: string };
   integrity?: string;
@@ -99,6 +99,15 @@ export interface DiscoveryResult {
   manifests: Map<string, ManifestV3>;
   failures: DiscoveryFailure[];
   diagnostics: DiagnosticEvent[];
+  observations: DiscoveryObservation[];
+  requestIdentity: string;
+  fingerprint: string;
+}
+
+export interface DiscoveryObservation {
+  path: string;
+  kind: 'content' | 'absent' | 'present' | 'listing';
+  digest: string;
 }
 
 export interface EntityRef {
@@ -150,7 +159,7 @@ export interface RegistrySnapshotManifestEntry {
 }
 
 export interface RegistrySnapshot {
-  schema: 'kb.registry/1';
+  schema: 'kb.registry/2';
   rev: number;
   version: string;
   generatedAt: string;
@@ -165,7 +174,10 @@ export interface RegistrySnapshot {
   previousChecksum?: string | null;
   plugins: Array<{ id: string; version: string; source: { kind: 'marketplace' | 'local'; path: string } }>;
   manifests: RegistrySnapshotManifestEntry[];
+  observations: DiscoveryObservation[];
+  requestIdentity: string;
   diagnostics?: DiagnosticEvent[];
+  inputFingerprint: string;
   ts: number;
 }
 
@@ -262,7 +274,7 @@ export interface CatalogOpenOptions {
 }
 
 export interface CatalogScope {
-  platformRoot: string;
+  platformRoot?: string;
   projectRoot?: string;
 }
 
@@ -280,7 +292,7 @@ export interface IEntityRegistry {
   adapters(): ReadonlyMap<string, CatalogAdapter>;
   marketplaceLocks(): Promise<ReadonlyMap<string, MarketplaceLock>>;
   computePackageIntegrity(packageRoot: string): Promise<string>;
-  discoveryInputFingerprinter(): (roots: readonly string[]) => Promise<string>;
+  discoveryObservationFingerprinter(): (roots: readonly string[]) => Promise<string>;
   findStoredPluginPackageForRestPrefix(requestedPrefix: string, basePath: string): Promise<string | undefined>;
   refresh(): Promise<void>;
   onChange(cb: (diff: RegistryDiff) => void): () => void;

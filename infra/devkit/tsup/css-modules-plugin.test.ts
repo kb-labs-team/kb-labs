@@ -97,7 +97,7 @@ describe('cssModulesPlugin', () => {
     // matches Ant Design's actual rendered DOM class.
     expect(css).toContain('.ant-btn-primary');
     // ...while the local part of the same compound selector is still scoped.
-    expect(css).not.toMatch(/\.uiButton(?!_\w)/);
+    expect(css).not.toMatch(/\.uiButton(?!_[\w-])/);
   });
 
   it('rewrites @keyframes and their animation-name reference to the same scoped name', async () => {

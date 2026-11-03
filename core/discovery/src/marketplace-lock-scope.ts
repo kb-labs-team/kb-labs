@@ -1,4 +1,4 @@
-import * as fs from 'node:fs/promises';
+import { fs } from './recording-filesystem.js';
 import * as path from 'node:path';
 import type { MarketplaceLockScope, MarketplaceLockValidationResult } from './marketplace-lock.js';
 import { validateMarketplaceLock } from './marketplace-lock.js';

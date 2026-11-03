@@ -115,7 +115,7 @@ describe('registerHealthRoutes', () => {
     const cliApi = {
       getSystemHealth: vi.fn().mockResolvedValue(baseSnapshot),
       snapshot: vi.fn(() => ({
-        schema: 'kb.registry/1' as const,
+        schema: 'kb.registry/2' as const,
         rev: 1,
         generatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -181,7 +181,7 @@ describe('registerHealthRoutes', () => {
     const cliApi = {
       getSystemHealth: vi.fn().mockResolvedValue(baseSnapshot),
       snapshot: vi.fn(() => ({
-        schema: 'kb.registry/1' as const,
+        schema: 'kb.registry/2' as const,
         rev: snapshotRev,
         generatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -288,7 +288,7 @@ describe('registerHealthRoutes', () => {
     const cliApi = {
       getSystemHealth: vi.fn().mockResolvedValue(baseSnapshot),
       snapshot: vi.fn(() => ({
-        schema: 'kb.registry/1' as const,
+        schema: 'kb.registry/2' as const,
         rev: 2,
         generatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -359,7 +359,7 @@ describe('registerHealthRoutes', () => {
     const cliApi = {
       getSystemHealth: vi.fn().mockResolvedValue(baseSnapshot),
       snapshot: vi.fn(() => ({
-        schema: 'kb.registry/1' as const,
+        schema: 'kb.registry/2' as const,
         rev: 7,
         generatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),

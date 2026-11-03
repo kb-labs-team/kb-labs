@@ -10,7 +10,7 @@ import { forwardedIdentityHeaders } from '@kb-labs/gateway-contracts';
 import { assertNoStackTraceLeak } from './helpers/safe-error-envelope';
 
 const snapshot: RegistrySnapshot = {
-  schema: 'kb.registry/1',
+  schema: 'kb.registry/2',
   rev: 1,
   version: 'test',
   generatedAt: new Date(0).toISOString(),
@@ -19,6 +19,9 @@ const snapshot: RegistrySnapshot = {
   source: { cwd: process.cwd(), platformVersion: 'test' },
   plugins: [],
   manifests: [],
+  observations: [],
+  inputFingerprint: '',
+  requestIdentity: 'test-request',
   ts: 0,
 };
 

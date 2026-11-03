@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { buildCommand, failureMessage, inspectPackedFixture, validatePackageContents, validatePackedSource, validateTarballAgainstWorkspace, validateReleaseBuildOutputs, validateWorkspacePackageContents } from './validate-package-outputs.mjs';
+import { buildCommand, failureMessage, inspectPackedFixture, validatePackageContents, validatePackedSource, validateTarball, validateTarballAgainstWorkspace, validateReleaseBuildOutputs, validateWorkspacePackageContents } from './validate-package-outputs.mjs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
 import { readPlatformReleaseConfig, releaseArtifactPackageNames } from 'kb-create/scripts/platform-release-config.mjs';
 
@@ -83,12 +83,14 @@ test('requires declared build outputs and every main/export target to be packed'
     files: ['dist', 'README.md'],
     main: './dist/index.js',
     exports: { '.': { types: './dist/index.d.ts', import: './dist/index.js' } },
+    kb: { requiredOutputs: ['./manifest.json'] },
   };
   const failures = validatePackageContents(manifest, [
     'package/package.json', 'package/README.md', 'package/dist/index.js',
   ]);
   assert.deepEqual(failures, [
     { field: 'exports', target: './dist/index.d.ts' },
+    { field: 'kb.requiredOutputs', target: './manifest.json' },
   ]);
 });
 
@@ -143,20 +145,12 @@ test('runs packed journey plugin manifests through product discovery and resolve
   const fixture = new URL('../journey/fixtures/analytics-emitter/', import.meta.url);
   const output = mkdtempSync(join(tmpdir(), 'kb-candidate-fixture-test-'));
   try {
+    execFileSync(process.execPath, [new URL('../journey/fixtures/analytics-emitter/build.mjs', import.meta.url).pathname], { cwd: fixture });
     execFileSync('pnpm', ['pack', '--pack-destination', output, '--silent'], { cwd: fixture, stdio: 'ignore' });
     const [archive] = readdirSync(output).filter((filename) => filename.endsWith('.tgz'));
     assert.ok(archive, 'pnpm pack produced the journey fixture tarball');
     const archivePath = join(output, archive);
-    const unpacked = output;
-    execFileSync('tar', ['-xzf', archivePath, '-C', output]);
-    execFileSync('node', [
-      new URL('../../infra/devkit/tsup/emit-manifest-json.mjs', import.meta.url).pathname,
-      '--module', new URL('../journey/fixtures/analytics-emitter/manifest.js', import.meta.url).pathname,
-      '--output', join(unpacked, 'package/dist/manifest.json'),
-    ], { stdio: 'ignore' });
-    const rebuilt = join(output, 'rebuilt.tgz');
-    execFileSync('tar', ['-czf', rebuilt, '-C', unpacked, 'package']);
-    renameSync(rebuilt, archivePath);
+    assert.deepEqual(validateTarball(archivePath).failures, []);
     const result = await inspectPackedFixture(archivePath);
     assert.equal(result.kind, 'plugin');
     assert.deepEqual(result.failures, []);
@@ -169,26 +163,14 @@ test('rejects the packed pre-fix plugin layout through product handler resolutio
   const fixture = new URL('../journey/fixtures/analytics-emitter/', import.meta.url);
   const output = mkdtempSync(join(tmpdir(), 'kb-candidate-broken-layout-'));
   try {
+    execFileSync(process.execPath, [new URL('../journey/fixtures/analytics-emitter/build.mjs', import.meta.url).pathname], { cwd: fixture });
     const source = join(output, 'source');
     cpSync(fixture, source, { recursive: true });
     cpSync(join(source, 'dist/commands'), join(source, 'commands'), { recursive: true });
     rmSync(join(source, 'dist/commands'), { recursive: true });
-    const oldLayoutPackage = {
-      name: '@kb-labs/e2e-analytics-emitter',
-      version: '1.0.0',
-      type: 'module',
-      main: './manifest.js',
-      files: ['manifest.js', 'commands/*.js', 'dist/manifest.json'],
-      kb: { manifest: './manifest.js' },
-    };
-    writeFileSync(join(source, 'package.json'), JSON.stringify({
-      ...oldLayoutPackage,
-    }));
-    execFileSync('mkdir', ['-p', join(source, 'dist')]);
-    execFileSync('node', [
-      new URL('../../infra/devkit/tsup/emit-manifest-json.mjs', import.meta.url).pathname,
-      '--module', join(source, 'manifest.js'), '--output', join(source, 'dist/manifest.json'),
-    ], { stdio: 'ignore' });
+    const oldLayoutPackage = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'));
+    oldLayoutPackage.files = ['dist/manifest.js', 'dist/manifest.json', 'commands/*.js'];
+    writeFileSync(join(source, 'package.json'), JSON.stringify(oldLayoutPackage));
     execFileSync('pnpm', ['pack', '--pack-destination', output, '--silent'], { cwd: source, stdio: 'ignore' });
     const [archiveName] = readdirSync(output).filter((filename) => filename.endsWith('.tgz'));
     assert.ok(archiveName, 'pnpm pack produced the pre-fix fixture tarball');
@@ -200,9 +182,11 @@ test('rejects the packed pre-fix plugin layout through product handler resolutio
       new Set(), new Set([oldLayoutPackage.name]), new Set([oldLayoutPackage.name]),
     );
     assert.equal(result.manifest.name, oldLayoutPackage.name);
-    assert.ok(result.failures.some((failure) => failure.includes('@kb-labs/e2e-analytics-emitter')
+    assert.ok(result.failures.some((failure) => typeof failure === 'string'
+      && failure.includes('@kb-labs/e2e-analytics-emitter')
       && failure.includes('./commands/emit.js#default')));
-    assert.ok(result.failures.some((failure) => failure.includes('@kb-labs/e2e-analytics-emitter')
+    assert.ok(result.failures.some((failure) => typeof failure === 'string'
+      && failure.includes('@kb-labs/e2e-analytics-emitter')
       && failure.includes('./commands/complete.js#default')));
   } finally {
     rmSync(output, { recursive: true, force: true });
@@ -284,6 +268,30 @@ test('release build run preflight reports a missing dist output and exact packag
     },
   ]);
 });
+
+const journeyFixtures = JSON.parse(readFileSync(new URL('../scripts/pack-extras.json', import.meta.url), 'utf8'));
+for (const { directory } of journeyFixtures) {
+  test(`fixture builds keep generated outputs under dist: ${directory}`, () => {
+    const fixtureDirectory = new URL(`../../${directory}/`, import.meta.url).pathname.replace(/\/$/, '');
+    const fixture = new URL(`../../${directory}/`, import.meta.url);
+    const sourceEntries = new Set(readdirSync(fixtureDirectory).filter((entry) => entry !== 'dist'));
+    let addedEntries = [];
+    try {
+      execFileSync(process.execPath, [join(fixtureDirectory, 'build.mjs')], { cwd: fixture });
+      execFileSync(process.execPath, [new URL('../scripts/build-pack-extra.mjs', import.meta.url).pathname], { cwd: fixture });
+      addedEntries = readdirSync(fixtureDirectory)
+        .filter((entry) => entry !== 'dist' && !sourceEntries.has(entry));
+      assert.deepEqual(addedEntries, [], `${directory} added files beside its tracked sources`);
+    } finally {
+      for (const entry of addedEntries) rmSync(join(fixtureDirectory, entry), { recursive: true, force: true });
+      for (const entry of ['manifest.json', 'kb-create.requirements.json']) {
+        if (!sourceEntries.has(entry) && existsSync(join(fixtureDirectory, entry))) {
+          rmSync(join(fixtureDirectory, entry), { recursive: true, force: true });
+        }
+      }
+    }
+  });
+}
 
 // case: S-262.1
 test('devkit pack-extra build task emits the package-declared adapter manifest', () => {

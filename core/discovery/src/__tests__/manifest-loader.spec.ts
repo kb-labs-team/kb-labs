@@ -187,30 +187,32 @@ describe('loadManifest', () => {
   });
 
   // case: S-203.25
-  it('preserves the declared manifest import failure instead of reporting not found', async () => {
+  it('reports a missing adjacent JSON artifact without importing a declared module', async () => {
     const pkgDir = path.join(tmpDir, 'import-failure');
     await fs.mkdir(path.join(pkgDir, 'dist'), { recursive: true });
     await fs.writeFile(path.join(pkgDir, 'package.json'), JSON.stringify({ name: '@third-party/broken', kb: { manifest: './dist/manifest.js' } }));
-    await fs.writeFile(path.join(pkgDir, 'dist/manifest.js'), "throw new Error('manifest import exploded');\n");
+    await fs.writeFile(path.join(pkgDir, 'dist/helper.js'), "throw new Error('helper was imported');\n");
+    await fs.writeFile(path.join(pkgDir, 'dist/manifest.js'), "import './helper.js'; export const manifest = {};\n");
 
     const result = await loadManifestFile(pkgDir, diag);
 
     expect(result.kind).toBe('failed');
     expect(diag.getEvents().map(event => event.code)).toContain('MANIFEST_PARSE_ERROR');
-    expect(diag.getEvents().map(event => event.message).join('\n')).toContain('manifest import exploded');
+    expect(diag.getEvents().map(event => event.message).join('\n')).toContain('manifest.json');
+    expect(diag.getEvents().map(event => event.message).join('\n')).not.toContain('helper was imported');
     expect(diag.getEvents().map(event => event.code)).not.toContain('MANIFEST_NOT_FOUND');
   });
 
   // case: S-203.25
-  it('requires a named manifest export and reports the missing shape as failed', async () => {
+  it('requires a recognized schema in the adjacent JSON artifact', async () => {
     const pkgDir = path.join(tmpDir, 'default-only');
     await fs.mkdir(path.join(pkgDir, 'dist'), { recursive: true });
     await fs.writeFile(path.join(pkgDir, 'package.json'), JSON.stringify({ name: '@third-party/default-only', kb: { manifest: './dist/manifest.js' } }));
-    await fs.writeFile(path.join(pkgDir, 'dist/manifest.js'), 'export default { schema: "kb.plugin/3", id: "@third-party/default-only", version: "1.0.0" };');
+    await fs.writeFile(path.join(pkgDir, 'dist/manifest.json'), JSON.stringify({ schema: 'unknown', id: '@third-party/default-only' }));
 
     const result = await loadManifestFile(pkgDir, diag);
 
-    expect(result).toMatchObject({ kind: 'failed', cause: expect.stringContaining('must export a named "manifest"') });
+    expect(result).toMatchObject({ kind: 'failed', cause: expect.stringContaining('must declare a recognized schema') });
     expect(diag.getEvents().map(event => event.code)).toContain('MANIFEST_VALIDATION_ERROR');
   });
 
@@ -219,7 +221,7 @@ describe('loadManifest', () => {
     const pkgDir = path.join(tmpDir, 'unknown-schema');
     await fs.mkdir(path.join(pkgDir, 'dist'), { recursive: true });
     await fs.writeFile(path.join(pkgDir, 'package.json'), JSON.stringify({ name: '@third-party/unknown-schema', kb: { manifest: './dist/manifest.js' } }));
-    await fs.writeFile(path.join(pkgDir, 'dist/manifest.js'), 'export const manifest = { manifestVersion: "1.0.0", id: "@third-party/unknown-schema" };');
+    await fs.writeFile(path.join(pkgDir, 'dist/manifest.json'), JSON.stringify({ manifestVersion: '1.0.0', id: '@third-party/unknown-schema' }));
 
     const result = await loadManifestFile(pkgDir, diag);
 

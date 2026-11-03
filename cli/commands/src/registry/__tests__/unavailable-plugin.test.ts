@@ -78,12 +78,16 @@ describe('failed enabled plugins', () => {
       const fixture = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../e2e/journey/fixtures/analytics-emitter');
       const pluginDir = path.join(tmpDir, 'analytics-emitter');
       await copyAnalyticsFixture(fixture, pluginDir);
-      const manifestPath = path.join(pluginDir, 'manifest.js');
-      const source = await fs.readFile(manifestPath, 'utf8');
-      await fs.writeFile(manifestPath, source.replace(
-        "flags: [{ name: 'marker', type: 'string', description: 'Unique event marker', required: true }]",
-        "flags: { marker: { type: 'string', description: 'Unique event marker', required: true } }",
-      ));
+      const manifestModule = path.join(pluginDir, 'dist', 'manifest.js');
+      const source = await fs.readFile(manifestModule, 'utf8');
+      const validFlags = "flags: [{ name: 'marker', type: 'string', description: 'Unique event marker', required: true }]";
+      const invalidFlags = "flags: { marker: { type: 'string', description: 'Unique event marker', required: true } }";
+      await fs.writeFile(manifestModule, source.replace(validFlags, invalidFlags));
+      execFileSync(process.execPath, [
+        path.resolve(fixture, '../../../../infra/devkit/tsup/emit-manifest-json.mjs'),
+        '--module', manifestModule,
+        '--output', path.join(pluginDir, 'dist', 'manifest.json'),
+      ]);
       const lock = createEmptyLock();
       lock.plugins['@kb-labs/e2e-analytics-emitter'] = createMarketplaceEntry({
         version: '1.0.0', integrity: 'sha256-test', source: 'local', resolvedPath: './analytics-emitter',
@@ -113,6 +117,9 @@ describe('failed enabled plugins', () => {
       plugins: [],
       manifests: new Map(),
       diagnostics: [],
+      observations: [],
+      requestIdentity: 'test-request',
+      fingerprint: '',
       failures: [{
         id: '@kb-labs/release',
         packageName: '@kb-labs/release',
@@ -176,6 +183,9 @@ describe('failed enabled plugins', () => {
       manifests: new Map([[plugin.id, manifest]]),
       failures: [],
       diagnostics: [diagnostic],
+      observations: [],
+      requestIdentity: 'test-request',
+      fingerprint: '',
     });
     const registry = createRegistry();
     await registerManifests([discoveryResult!], registry);

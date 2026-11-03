@@ -28,7 +28,7 @@ const operatorHeaders = forwardedIdentityHeaders({
 
 function createMockSnapshot(rev: number): RegistrySnapshot {
   return {
-    schema: 'kb.registry/1',
+    schema: 'kb.registry/2',
     rev,
     version: '1.0.0',
     generatedAt: new Date().toISOString(),
@@ -40,6 +40,9 @@ function createMockSnapshot(rev: number): RegistrySnapshot {
     corrupted: false,
     plugins: [],
     manifests: [],
+    observations: [],
+    inputFingerprint: '',
+    requestIdentity: 'test-request',
     ts: Date.now(),
   };
 }
