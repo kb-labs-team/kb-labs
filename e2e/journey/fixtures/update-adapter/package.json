@@ -3,14 +3,14 @@
   "version": "1.0.0",
   "description": "Journey package used to verify adapter update compatibility checks",
   "type": "module",
-  "main": "./manifest.js",
+  "main": "./dist/manifest.js",
   "files": [
-    "manifest.js",
+    "dist/manifest.js",
     "dist/manifest.json"
   ],
   "kb": {
     "adapter": {
-      "manifest": "./manifest.js"
+      "manifest": "./dist/manifest.js"
     },
     "requiredOutputs": [
       "./dist/manifest.json"
