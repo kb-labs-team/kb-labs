@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { ExecutionBackend } from '@kb-labs/plugin-execution'
+import { createErrorEnvelope } from '@kb-labs/core-platform'
 import { SandboxRunner } from '../sandbox-runner.js'
 import type { StepExecutionRequest } from '../../types.js'
 
@@ -61,6 +62,30 @@ describe('SandboxRunner failed shell output', () => {
 })
 
 describe('SandboxRunner plugin failure diagnostics', () => {
+  // case: S-243.5
+  it('preserves the catalogue timeout code and hint on a failed step', async () => {
+    const timeout = createErrorEnvelope('KB_RUNTIME_TIMEOUT', { details: { timeoutMs: '25' } });
+    const runner = new SandboxRunner({
+      backend: {
+        execute: vi.fn().mockResolvedValue({ ok: false, error: timeout, executionTimeMs: 25 }),
+      } as unknown as ExecutionBackend,
+      cliApi: { snapshot: () => ({ manifests: [] }) } as unknown as IEntityRegistry,
+    });
+
+    const result = await runner.execute({
+      spec: { name: 'Timed out shell', uses: 'builtin:shell', timeoutMs: 25, with: { command: 'sleep 30' } },
+      context: {
+        runId: 'run-timeout', jobId: 'run-timeout:job', stepId: 'step-timeout', attempt: 0,
+        env: {}, secrets: {},
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      },
+    });
+
+    expect(result.status).toBe('failed');
+    if (result.status !== 'failed') { throw new Error('expected a failed step result'); }
+    expect(result.error).toMatchObject({ code: timeout.code, message: timeout.message, hint: timeout.hint });
+  });
+
   // case: S-203.6
   it('correlates plugin failure logs without exposing handler stacks in step errors', async () => {
     const backend = {

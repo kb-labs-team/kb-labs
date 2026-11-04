@@ -115,14 +115,11 @@ describe('SandboxRunner — builtin:shell KB_WORKSPACE_ROOT routing', () => {
     expect(env?.['KB_WORKSPACE_ROOT']).toBe('/main/workspace')
   })
 
-  it('uses spec.timeoutMs as shell timeout when with.timeout is absent', async () => {
-    // Regression: timeoutMs from spec was not forwarded to shellInput.timeout,
-    // causing the shell step to use the 5-minute default even when YAML declared
-    // a longer timeoutMs (e.g. 3600000 for claude-agent steps).
+  it('passes the declared timeout to the execution boundary', async () => {
     let capturedTimeout: number | undefined
     const backendCapturingTimeout = {
-      execute: vi.fn().mockImplementation(async (req: { input: Record<string, unknown> }) => {
-        capturedTimeout = req.input['timeout'] as number | undefined
+      execute: vi.fn().mockImplementation(async (req: { timeoutMs?: number }) => {
+        capturedTimeout = req.timeoutMs
         return { ok: true, outputs: {}, stdout: '', stderr: '', exitCode: 0 }
       }),
     }
