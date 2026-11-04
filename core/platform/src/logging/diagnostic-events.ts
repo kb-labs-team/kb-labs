@@ -9,6 +9,7 @@ export interface DiagnosticLogEvent {
   event: string;
   message: string;
   reasonCode: string;
+  correlationId?: string;
   level?: DiagnosticLogLevel;
   domain?: DiagnosticDomain;
   outcome?: DiagnosticOutcome;
@@ -40,6 +41,7 @@ export function logDiagnosticEvent(
     diagnosticDomain: event.domain ?? "plugin",
     diagnosticEvent: event.event,
     reasonCode: event.reasonCode,
+    ...(event.correlationId ? { correlationId: event.correlationId } : {}),
     ...(event.outcome ? { outcome: event.outcome } : {}),
     ...(event.pluginId ? { pluginId: event.pluginId } : {}),
     ...(event.pluginVersion ? { pluginVersion: event.pluginVersion } : {}),
