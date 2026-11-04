@@ -11,6 +11,8 @@ import {
 } from "@kb-labs/cli-commands";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
 import { createErrorEnvelope } from "@kb-labs/core-platform";
+import type { LoadPlatformConfigResult } from '@kb-labs/core-runtime';
+import { createPlatformConfigFixture } from './__tests__/fixtures/platform-config.js';
 
 const mocks = vi.hoisted(() => {
   const logger = {
@@ -97,6 +99,7 @@ const workspaceRoot = path.resolve(
 );
 let isolatedHome: string;
 let fixtureProjectId: string;
+let fixtureCatalogs: LoadPlatformConfigResult['catalog'][] = [];
 let rejectUnauthenticatedWebhookRequests = false;
 const originalEnvironment = {
   HOME: process.env.HOME,
@@ -247,32 +250,28 @@ describe("JSON envelope coverage for the live CLI registry", () => {
     }) as typeof fetch;
     const projects = await createProjectRegistry({ env: process.env });
     fixtureProjectId = (await projects.add(workspaceRoot)).project.id;
-    const platformConfig = {
-      platform,
-      platformConfig: {},
-      rawConfig: { gateway: { access: { mode: "local" } } },
-      rawPlatformConfig: { gateway: { access: { mode: "local" } } },
-      effectiveConfig: {},
-      platformRoot: workspaceRoot,
-      projectRoot: workspaceRoot,
-      sameLocation: true,
-      sources: { roots: { platform: "env", project: "platform" }, fields: {} },
-    };
+    const rawConfig = { gateway: { access: { mode: "local" } } };
+    const platformConfig = await createPlatformConfigFixture({
+      cwd: workspaceRoot,
+      home: isolatedHome,
+      rawConfig,
+      registeredProjects: [workspaceRoot],
+    });
+    fixtureCatalogs.push(platformConfig.catalog);
     mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
     mocks.initializePlatform.mockImplementation(async (config) => ({
       ...config,
       platform,
     }));
-    mocks.resolveProjectConfig.mockResolvedValue({
-      platformConfig: { adapters: {} },
-      rawConfig: { gateway: { access: { mode: "local" } } },
-      rawPlatformConfig: {},
-      effectiveConfig: {},
-      platformRoot: workspaceRoot,
-      projectRoot: workspaceRoot,
-      sameLocation: true,
-      sources: { roots: { platform: "env", project: "registry" }, fields: {} },
+    const projectConfig = await createPlatformConfigFixture({
+      cwd: workspaceRoot,
+      home: isolatedHome,
+      rawConfig,
+      projectScope: 'required',
+      registeredProjects: [workspaceRoot],
     });
+    fixtureCatalogs.push(projectConfig.catalog);
+    mocks.resolveProjectConfig.mockResolvedValue(projectConfig);
     registerBuiltinSystemCommands();
     await registerBuiltinCommands({
       cwd: workspaceRoot,
@@ -286,6 +285,8 @@ describe("JSON envelope coverage for the live CLI registry", () => {
   afterAll(async () => {
     mocks.initializePlatform.mockReset();
     globalThis.fetch = originalFetch;
+    await Promise.all(fixtureCatalogs.map((catalog) => catalog.dispose()));
+    fixtureCatalogs = [];
     await rm(isolatedHome, { recursive: true, force: true });
     for (const [key, value] of Object.entries(originalEnvironment)) {
       if (value === undefined) delete process.env[key];
