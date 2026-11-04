@@ -29,6 +29,12 @@ class JourneyBatchEntryTests(unittest.TestCase):
         (self.root / "tools/kb-devkit").mkdir(parents=True)
         shutil.copy2(REPO / "e2e/journey/batch.sh", self.root / "e2e/journey/batch.sh")
         shutil.copy2(REPO / "e2e/journey/batch_summary.py", self.root / "e2e/journey/batch_summary.py")
+        shutil.copy2(REPO / "e2e/journey/dispatch_registry.py", self.root / "e2e/journey/dispatch_registry.py")
+        shutil.copy2(REPO / "e2e/journey/invocations.py", self.root / "e2e/journey/invocations.py")
+        shutil.copy2(REPO / "e2e/journey/journey_values.py", self.root / "e2e/journey/journey_values.py")
+        shutil.copy2(REPO / "e2e/journey/journey_resources.py", self.root / "e2e/journey/journey_resources.py")
+        shutil.copy2(REPO / "e2e/journey/redaction.py", self.root / "e2e/journey/redaction.py")
+        shutil.copy2(REPO / "e2e/journey/jsonl.py", self.root / "e2e/journey/jsonl.py")
         shutil.copy2(REPO / "e2e/journey/scoreboard_contract.py", self.root / "e2e/journey/scoreboard_contract.py")
         shutil.copy2(REPO / "e2e/journey/preflight.sh", self.root / "e2e/journey/preflight.sh")
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
@@ -59,11 +65,14 @@ if [ "$*" = "--down" ] && [ "${BLOCK_RESET:-}" = 1 ]; then
   printf 'ready\\n' >&"$READY_FD"
   cat "$BLOCK_FIFO"
 fi
-case "$KB_JOURNEY_ONLY" in
-  service-local:explore) mode=local ;;
-  service-secured:explore) mode=secured ;;
-  *) mode=reset ;;
-esac
+mode="${KB_JOURNEY_SELECTION_MODE:-}"
+if [ -z "$mode" ]; then
+  case "$KB_JOURNEY_ONLY" in
+    service-local:explore) mode=local ;;
+    service-secured:explore) mode=secured ;;
+    *) mode=reset ;;
+  esac
+fi
 if [ -n "$KB_JOURNEY_ONLY" ] && [ ! -s "$ROOT/core/fixture/dist/index.js" ]; then
   printf 'candidate build artifact missing\\n' >&2
   exit 10
@@ -134,6 +143,18 @@ if [ "${FAIL_UNIT:-}" = 1 ]; then
 fi
 exit 0
 ''')
+        self._script(self.bin / "batch-python", f'''#!/bin/sh
+case "$1" in
+  *select_from_cases.py)
+    case "$3" in
+      local) printf '%s\\n' "${{SELECTED_RUNNERS_LOCAL:-[]}}" ;;
+      secured) printf '%s\\n' "${{SELECTED_RUNNERS_SECURED:-[]}}" ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  *) exec "{sys.executable}" "$@" ;;
+esac
+''')
         self._script(self.bin / "go", '''#!/bin/sh
 {
   printf 'go build'
@@ -197,7 +218,7 @@ exec "$REAL_TAR" "$@"
             "BLOCK_FIFO": str(self.root / "reset.fifo"),
             "KB_DEVKIT_BASE_REF": "origin/master",
             "ROOT": str(self.root),
-            "BATCH_PYTHON": sys.executable,
+            "BATCH_PYTHON": str(self.bin / "batch-python"),
             "REAL_TAR": real_tar,
             "SCOREBOARD_LOCAL": str(self.scoreboard_fixtures["local"]),
             "SCOREBOARD_SECURED": str(self.scoreboard_fixtures["secured"]),
@@ -241,6 +262,175 @@ exec "$REAL_TAR" "$@"
         self.assertIn("produced no case scoreboard", result.stderr)
         self.assertIn("entry exited with 0", result.stderr)
 
+    # case: S-262.8
+    def test_partial_batch_dispatches_the_selected_claim_owner(self):
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        env = dict(self.env, SELECTED_RUNNERS_LOCAL='["agent:commit"]')
+
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--cases", "S-010,S-011"],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        calls = self.calls.read_text().splitlines()
+        self.assertIn("journey agent:commit --no-build", calls)
+        self.assertIn("cases S-010,S-011", calls)
+
+    # case: S-262.8
+    def test_partial_batch_dispatches_multiple_owners_in_the_same_mode(self):
+        import json
+        local_scoreboard = json.loads(self.scoreboard_fixtures["local"].read_text())
+        local_scoreboard["selection"] = ["S-187.11"]
+        self.scoreboard_fixtures["local"].write_text(json.dumps(local_scoreboard), encoding="utf-8")
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        env = dict(self.env, SELECTED_RUNNERS_LOCAL='["agent:commit","service-local:explore"]')
+
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--cases", "S-187.11"],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("journey agent:commit,service-local:explore --no-build",
+                      self.calls.read_text().splitlines())
+        secured = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "secured",
+             str(producer), str(self.root / "secured-artifact"), "--cases", "S-187.11"],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_SECURED="[]"),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(secured.returncode, 0, secured.stderr + secured.stdout)
+        summary = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
+             str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
+             str(self.root / "secured-artifact")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(summary.returncode, 0)
+        rendered = (self.root / "summary/shared/summary.md").read_text()
+        self.assertIn("local: PASS (partial evidence; no gate verdict)", rendered)
+        self.assertIn("secured: no selected claims in this mode", rendered)
+        self.assertIn("- Result: PARTIAL", rendered)
+
+    # case: S-262.8
+    def test_partial_case_set_split_across_modes_stays_partial_in_summary(self):
+        import json
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard["selection"] = ["S-045.4", "S-045.5"]
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        local = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--cases", "S-045.4,S-045.5"],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_LOCAL='["service-local:explore"]'),
+            text=True, capture_output=True, check=False,
+        )
+        secured = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "secured",
+             str(producer), str(self.root / "secured-artifact"), "--cases", "S-045.4,S-045.5"],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_SECURED='["service-secured:explore"]'),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(local.returncode, 0, local.stderr + local.stdout)
+        self.assertEqual(secured.returncode, 0, secured.stderr + secured.stdout)
+        calls = self.calls.read_text().splitlines()
+        self.assertIn("journey service-local:explore --no-build", calls)
+        self.assertIn("journey service-secured:explore --no-build", calls)
+        self.assertIn("cases S-045.4,S-045.5", calls)
+
+        summary = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
+             str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
+             str(self.root / "secured-artifact")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(summary.returncode, 0)
+        rendered = (self.root / "summary/shared/summary.md").read_text()
+        self.assertIn("- Result: PARTIAL", rendered)
+        self.assertIn("Partial evidence is iteration-only and cannot produce a gate verdict.", rendered)
+
+    # case: S-262.8
+    def test_explicit_empty_case_selection_is_refused_without_running_a_batch(self):
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        calls_before = self.calls.read_text().splitlines()
+
+        for empty_selection in ("", "   "):
+            with self.subTest(selection=repr(empty_selection)):
+                result = subprocess.run(
+                    [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+                     str(producer), str(self.root / "local-artifact"), "--cases", empty_selection],
+                    cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+                )
+
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("--cases requires at least one case or step ID", result.stderr)
+                self.assertIn("next: node ./cli/bin/dist/bin.js qa cases list --json", result.stderr)
+                self.assertEqual(self.calls.read_text().splitlines(), calls_before,
+                                 "an empty selection must not start a mode runner")
+
+    # case: S-262.8
+    def test_mode_without_selected_claims_is_reported_as_partial_evidence(self):
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        local = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--cases", "S-010"],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_LOCAL='["agent:commit"]'),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(local.returncode, 0, local.stderr + local.stdout)
+        secured = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "secured",
+             str(producer), str(self.root / "secured-artifact"), "--cases", "S-010"],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_SECURED="[]"),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(secured.returncode, 0, secured.stderr + secured.stdout)
+        self.assertIn("no selected claims in this mode", secured.stdout)
+        self.assertFalse((self.root / "secured-artifact/secured/case-scoreboard.json").exists())
+        self.assertNotIn("journey  --no-build", self.calls.read_text())
+
+        summary = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
+             str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
+             str(self.root / "secured-artifact")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertNotEqual(summary.returncode, 0)
+        rendered = (self.root / "summary/shared/summary.md").read_text()
+        self.assertIn("secured: no selected claims in this mode", rendered,
+                      summary.stderr + summary.stdout + rendered)
+        self.assertIn("Partial evidence is iteration-only and cannot produce a gate verdict.", rendered)
+
     # case: S-262.1
     def test_entry_runs_product_steps_in_order_and_exports_both_modes(self):
         result = self._run()
@@ -257,6 +447,7 @@ exec "$REAL_TAR" "$@"
             "journey service-local:explore --no-build",
             "journey service-secured:explore --no-build",
         ])
+        self.assertIn("- Result: PASS", (self.root / "out/shared/summary.md").read_text())
         self.assertTrue((self.root / "out/local/local.json").is_file())
         self.assertTrue((self.root / "out/secured/secured.json").is_file())
         for stage_log in ("reset.log", "build.log", "release-build-output-check.log", "unit.log", "candidate.log"):
@@ -330,7 +521,8 @@ exec "$REAL_TAR" "$@"
         result = subprocess.run(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
              str(producer), str(self.root / "local-artifact"), "--cases", "S-023,S-024"],
-            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_LOCAL='["agent:commit"]'),
+            text=True, capture_output=True, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("cases S-023,S-024", self.calls.read_text().splitlines())

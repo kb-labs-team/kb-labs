@@ -388,6 +388,17 @@ class Journey:
         self.steps.append(result)
         return result
 
+    def missing_selected_claims(self, journey_results: list[dict[str, Any]]) -> list[str]:
+        """Return resolved claims that no journey result recorded as executed."""
+        executed = {
+            case_id
+            for journey_result in journey_results
+            for step in journey_result.get("steps", [])
+            if step.get("status") in {"PASS", "FAIL", "BLOCKED"}
+            for case_id in step.get("cases", [])
+        }
+        return sorted(self.selected_steps - executed)
+
     def result(self) -> JourneyResult:
         first_step = next((step for step in self.steps if step.status == "FAIL"), None)
         first = _step_dict(first_step) if first_step is not None else None

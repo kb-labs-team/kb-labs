@@ -19,6 +19,7 @@ class Runner:
     journey_sources: tuple[str, ...] = ("e2e/journey/runner.py",)
     claim_family: str = ""
     lane: str = ""
+    batch_default: bool = False
 
 
 MARKETPLACE_REGISTRY_LANE = "marketplace-registry"
@@ -37,10 +38,10 @@ RUNNERS = {
     "negative:occupied-port": Runner("negative:occupied-port", "agent", "explore", "occupied-port", "local"),
     "service-local:explore": Runner(
         "service-local:explore", "agent", "explore", "default", "local", "nightly",
-        ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), claim_family="service"),
+        ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), claim_family="service", batch_default=True),
     "service-secured:explore": Runner(
         "service-secured:explore", "human", "explore", "secured", "secured", "nightly",
-        ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), claim_family="service"),
+        ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), claim_family="service", batch_default=True),
     "service-marketplace-registry:local": Runner(
         "service-marketplace-registry:local", "agent", "explore", "default", "local", "nightly",
         ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), lane=MARKETPLACE_REGISTRY_LANE),
@@ -89,12 +90,18 @@ def lane_for_runner(selector: str) -> str:
     return runner.lane
 
 
+def runner_payload(runner: Runner) -> dict[str, object]:
+    payload = asdict(runner)
+    del payload["batch_default"]
+    return payload
+
+
 def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--runner":
         runner = RUNNERS.get(sys.argv[2])
         if runner is None:
             raise ValueError(f"unknown journey runner selector: {sys.argv[2]}")
-        print_report_text(json.dumps(asdict(runner)), flush=True)
+        print_report_text(json.dumps(runner_payload(runner)), flush=True)
         return 0
     if len(sys.argv) == 3 and sys.argv[1] == "--dispatch":
         selector = sys.argv[2]
@@ -104,8 +111,16 @@ def main() -> int:
             runner = RUNNERS.get(item)
             if runner is None:
                 raise ValueError(f"unknown journey runner selector: {item}")
-            runners.append(asdict(runner))
+            runners.append(runner_payload(runner))
         print_report_text(json.dumps(runners), flush=True)
+        return 0
+    if len(sys.argv) == 3 and sys.argv[1] == "--batch-mode":
+        mode = sys.argv[2]
+        if mode not in {"local", "secured"}:
+            raise ValueError(f"unsupported journey batch mode: {mode}")
+        selectors = sorted(selector for selector, runner in RUNNERS.items()
+                           if runner.mode == mode and runner.batch_default)
+        print_report_text(json.dumps(selectors), flush=True)
         return 0
     if len(sys.argv) == 3 and sys.argv[1] == "--supports":
         selection = json.load(sys.stdin)

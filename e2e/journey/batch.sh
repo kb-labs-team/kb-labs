@@ -180,21 +180,53 @@ run_mode() {
     return 1
   fi
   run_started=$(date +%s)
+  if [ -n "$selected_cases" ]; then
+    selected_runners_json=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py" \
+      --runners-for-mode "$mode" "$selected_cases") || {
+      echo "journey $mode mode could not resolve selected claim owners; next: rerun e2e/journey/batch.sh mode $mode $producer $out --cases $selected_cases" >&2
+      return 1
+    }
+    runner_selectors=$(printf '%s' "$selected_runners_json" | "${BATCH_PYTHON:-python3}" -c 'import json,sys; print(",".join(json.load(sys.stdin)))')
+    if [ -z "$runner_selectors" ]; then
+      printf 'no selected claims in this mode\n'
+      printf 'no selected claims in this mode\nexit=0\n' > "$mode_dir/batch.log"
+      duration=$(($(date +%s) - run_started))
+      "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
+        "$shared/batch-metadata.json" "$mode_dir/batch-metadata.json" "$mode" NO_SELECTED_CLAIMS "$duration" || return 1
+      return 0
+    fi
+  else
+    runner_selectors=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/dispatch_registry.py" --batch-mode "$mode") || {
+      echo "journey $mode mode runner could not be resolved from the dispatch registry; next: e2e/journey/dispatch_registry.py --batch-mode $mode" >&2
+      return 1
+    }
+    runner_selectors=$(printf '%s' "$runner_selectors" | "${BATCH_PYTHON:-python3}" -c 'import json,sys; print(",".join(json.load(sys.stdin)))')
+  fi
+  next_runner_command() {
+    if [ -n "$selected_cases" ]; then
+      printf 'KB_JOURNEY_CASES=%s KB_JOURNEY_SELECTION_MODE=%s KB_JOURNEY_ONLY=%s e2e/journey/run.sh --no-build' \
+        "$selected_cases" "$mode" "$runner_selectors"
+    else
+      printf 'KB_JOURNEY_ONLY=%s e2e/journey/run.sh --no-build' "$runner_selectors"
+    fi
+  }
   rc=0
-  KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_ONLY="service-$mode:explore" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
+  KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
+    KB_JOURNEY_ONLY="$runner_selectors" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ] && grep -q '^failed to solve:' "$mode_dir/batch.log"; then
     mv "$mode_dir/batch.log" "$mode_dir/infra-failed.log"
     rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
     rm -rf .journey/reports/invocations
     rc=0
-    KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_ONLY="service-$mode:explore" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
+    KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
+      KB_JOURNEY_ONLY="$runner_selectors" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
     echo "INFRA: first attempt failed during docker image build; retried once" >> "$mode_dir/batch.log"
   fi
   printf 'exit=%s\n' "$rc" >> "$mode_dir/batch.log"
   if ! cp -R .journey/reports/. "$mode_dir/"; then
     rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
     rm -rf .journey/reports/invocations
-    echo "journey $mode mode reports could not be copied; next: rerun KB_JOURNEY_ONLY=service-$mode:explore e2e/journey/run.sh --no-build" >&2
+    echo "journey $mode mode reports could not be copied; next: $(next_runner_command)" >&2
     return 1
   fi
   rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
@@ -210,7 +242,7 @@ run_mode() {
   "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
     "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" || return 1
   if [ "$scoreboard_missing" -eq 1 ]; then
-    echo "journey $mode mode produced no case scoreboard (entry exited with $rc); see $mode_dir/batch.log for the cause. Next: KB_JOURNEY_ONLY=service-$mode:explore e2e/journey/run.sh --no-build" >&2
+    echo "journey $mode mode produced no case scoreboard (entry exited with $rc); see $mode_dir/batch.log for the cause. Next: $(next_runner_command)" >&2
     return 1
   fi
   if [ "$rc" -ne 0 ]; then
@@ -221,7 +253,7 @@ run_mode() {
       printf 'Result: FAIL (non-gating for Release 1)\n' >> "$mode_dir/batch.log"
       return 0
     fi
-    echo "journey $mode mode failed; see $mode_dir/batch.log; next: KB_JOURNEY_ONLY=service-$mode:explore e2e/journey/run.sh --no-build" >&2
+    echo "journey $mode mode failed; see $mode_dir/batch.log; next: $(next_runner_command)" >&2
     return "$rc"
   fi
   return 0
@@ -234,7 +266,14 @@ case "${1:-}" in
   mode)
     case "$#" in
       4) selected_cases="" ;;
-      6) [ "$5" = "--cases" ] || usage; selected_cases=$6 ;;
+      6)
+        [ "$5" = "--cases" ] || usage
+        selected_cases=$6
+        case "$selected_cases" in
+          *[![:space:]]*) ;;
+          *) echo "journey batch --cases requires at least one case or step ID; an empty selection cannot mean a full batch; next: node ./cli/bin/dist/bin.js qa cases list --json" >&2; exit 2 ;;
+        esac
+        ;;
       *) usage ;;
     esac
     run_mode "$2" "$3" "$4" "$selected_cases"
