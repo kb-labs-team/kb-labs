@@ -71,7 +71,7 @@ const pluginPermissions = combinePermissions()
     // 30 min default for complex releases (167 packages); overridable via
     // KB_RELEASE_CHECKS_TIMEOUT_MS for profiling/tuning without a rebuild.
     timeoutMs: Number(process.env.KB_RELEASE_CHECKS_TIMEOUT_MS) || 1800000,
-    memoryMb: 4096, // full platform build:affected across 167 packages peaked at ~2.05GB on a CI runner, right at the old 2048 ceiling
+    memoryMb: 6144, // flow builds can include memory-intensive Rspack and Next.js packages on 7 GB hosted runners
     cpuMs: 300000, // 5 min CPU time
   })
   .build();
