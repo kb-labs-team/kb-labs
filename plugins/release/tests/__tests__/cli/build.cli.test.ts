@@ -93,4 +93,24 @@ describe('release:build', () => {
     expect(jsonResult).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
     expect(jsonResult).toEqual(textResult);
   });
+
+  it('carries the failed package build output in the failure cause', async () => {
+    vi.mocked(buildPackages).mockResolvedValue([
+      { name: '@kb-labs/sdk', success: true, durationMs: 10 },
+      { name: '@kb-labs/studio-app', success: false, durationMs: 10, error: 'ERROR in ./src/main.tsx\nModule not found' },
+    ] as never);
+
+    const result = await buildCommand.execute(
+      createMockContext({ ui: createCapturedUI().ui, cwd: '/project' }) as never,
+      mockCLIInput({ flags: { flow: 'platform', json: true } }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        cause: '@kb-labs/studio-app:\nERROR in ./src/main.tsx\nModule not found',
+        diagnostics: [{ code: 'RELEASE_PACKAGE_BUILD_FAILED', message: 'Build failed for @kb-labs/studio-app.' }],
+      },
+    });
+  });
 });
