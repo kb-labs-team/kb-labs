@@ -108,8 +108,23 @@ jobs:
         # The release plugin owns the governed dependency-order release build run
         # below. Building the whole workspace here duplicates that work and
         # enters the generic rspack/DTS path that release build runs deliberately
-        # avoid. Bootstrap only the platform CLI and release command surface.
-        run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release --no-cache
+        # avoid. Bootstrap only the platform CLI and release command surface,
+        # plus the adapter packages the workspace config selects: the CLI loads
+        # them dynamically at startup, so they are not in cli-bin's dependency
+        # closure. The list is read from .kb/kb.config.jsonc, never restated.
+        run: |
+          set -euo pipefail
+          adapters="$(node - <<'NODE'
+          const fs = require('node:fs');
+          const ts = require('typescript');
+          const parsed = ts.parseConfigFileTextToJson('.kb/kb.config.jsonc', fs.readFileSync('.kb/kb.config.jsonc', 'utf8'));
+          if (parsed.error) throw new Error(ts.flattenDiagnosticMessageText(parsed.error.messageText, '\n'));
+          const selected = Object.values(parsed.config.platform?.adapters ?? {}).flat();
+          const packages = new Set(selected.map((specifier) => specifier.split('/').slice(0, 2).join('/')));
+          process.stdout.write([...packages].sort().join(','));
+          NODE
+          )"
+          ./tools/kb-devkit/kb-devkit run build --packages "@kb-labs/cli-bin,@kb-labs/release${adapters:+,$adapters}" --no-cache
 
       - name: Hydrate release plan paths for candidate workspace
         # Plans are per-run state and are not part of the immutable source
