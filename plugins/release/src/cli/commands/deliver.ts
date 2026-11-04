@@ -1,24 +1,25 @@
 /**
- * Deliver command — ships the tarballs `release artifact create` already packed to a
- * destination ("target"), by name. This is the thin-CI half of the
+ * Deliver command — verifies a sealed candidate bundle and ships its exact
+ * tarballs to the configured registry. This is the thin-CI half of the
  * "plugin prepares, CI delivers" release plan: CI's only job is to have
- * the right target credentials and call this one command with the tag —
+ * the right registry credentials and call this one command with the tag —
  * package selection, tag→flow resolution, retry/backoff, and post-delivery
  * verification all live here, not in CI YAML.
  *
- * Deliberately reads `manifest.json` from `--artifacts-dir` (written by
- * `release artifact create`) instead of rediscovering or rebuilding packages — the
- * whole point is to ship the exact bytes that were already packed and
- * validated, not a fresh equivalent pack.
+ * Deliberately verifies `provenance.json`, the bundle indexes, and
+ * `npm/manifest.json` from `--bundle-dir` instead of rediscovering or
+ * rebuilding packages. It ships the exact bytes sealed by the hosted
+ * candidate builder.
  *
  * Not to be confused with `release stable publish` (`promote.ts`) — that command
  * still re-packs from the working tree at publish time (the older,
  * Verdaccio-pre-flight flow from ADR-0001) and remains in place unchanged.
  */
 
-import { readFileSync, appendFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { defineCommand, type CLIInput, type PluginCommandContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
+import { createValidatedErrorEnvelope } from '@kb-labs/sdk/errors';
 import {
   mergeConfigWithFlow,
   resolvePublishTag,
@@ -29,20 +30,22 @@ import {
 } from '../../core/index.js';
 import { findRepoRoot } from '../../shared/utils';
 import { publishPackagesProgrammatic, type PackageToPublish } from '../../shared/publish-programmatic';
+import { CandidateBundleError, verifyCandidateBundle } from '../../shared/candidate-bundle.js';
 import { resolveFlowName, type FlowResolvableFlags } from '../../shared/resolve-flow';
-import type { StagedArtifact } from './stage';
 
 const REGISTRY_VERIFY_RETRIES = 5;
 const REGISTRY_VISIBILITY_DEADLINE_MS = 15 * 60_000;
 
 interface DeliverFlags extends FlowResolvableFlags {
-  target?: string;
-  'artifacts-dir'?: string;
+  'bundle-dir'?: string;
+  'expected-digest'?: string;
+  'candidate-id'?: string;
+  commit?: string;
+  version?: string;
   tag?: string;
   registry?: string;
   otp?: string;
   access?: string;
-  token?: string;
   'dry-run'?: boolean;
   json?: boolean;
 }
@@ -57,19 +60,10 @@ interface DeliverFailure {
 
 interface DeliverPayload {
   success: boolean;
-  target?: string;
+  registry?: string;
   published?: Array<{ name: string; version: string }>;
   failed?: DeliverFailure[];
   verifyIssues?: string[];
-}
-
-function loadManifest(artifactsDir: string): StagedArtifact[] | { error: string } {
-  const manifestPath = join(artifactsDir, 'manifest.json');
-  try {
-    return JSON.parse(readFileSync(manifestPath, 'utf-8')) as StagedArtifact[];
-  } catch {
-    return { error: `No manifest.json found at ${manifestPath} — run \`kb release artifact create\` first` };
-  }
 }
 
 /**
@@ -89,9 +83,9 @@ function writeGithubStepSummary(markdown: string): void {
   }
 }
 
-function buildFailureSummaryMarkdown(target: string, publishedCount: number, failed: DeliverFailure[]): string {
+function buildFailureSummaryMarkdown(registry: string, publishedCount: number, failed: DeliverFailure[]): string {
   const lines: string[] = [
-    `## ❌ \`release artifact publish --target ${target}\` — ${failed.length} package(s) failed`,
+    `## ❌ \`release artifact publish --registry ${registry}\` — ${failed.length} package(s) failed`,
     '',
     `${publishedCount} package(s) delivered successfully; ${failed.length} did not.`,
     '',
@@ -106,18 +100,11 @@ function buildFailureSummaryMarkdown(target: string, publishedCount: number, fai
 
 export default defineCommand({
   id: 'release:deliver',
-  description: 'Ship the tarballs `release artifact create` already packed to a target (npm) — no packing, no rebuild',
+  description: 'Verify and deliver the exact tarballs in a sealed candidate bundle to the configured registry',
 
   handler: {
     async execute(ctx: PluginCommandContextV3, input: CLIInput<DeliverFlags>): Promise<CommandResult<DeliverPayload>> {
       const { flags } = input;
-      const target = flags.target ?? 'npm';
-
-      if (target !== 'npm') {
-        const msg = `release:deliver --target ${target} is not implemented — only "npm" ships this pass (see release plan's out-of-scope section for github-release/mirror)`;
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Use `kb release artifact publish --target npm` after the release plan is ready.' } };
-      }
-
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
 
@@ -131,29 +118,50 @@ export default defineCommand({
       }
       const config: ReleaseConfig = mergeConfigWithFlow(baseConfig, flowResult);
 
-      const artifactsDir = join(repoRoot, flags['artifacts-dir'] ?? '.kb/release/artifacts');
-      const manifest = loadManifest(artifactsDir);
-      if (!Array.isArray(manifest)) {
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: manifest.error, hint: 'Run `kb release artifact create` to create artifacts, then retry delivery.' } };
-      }
-      if (manifest.length === 0) {
-        const msg = `manifest.json at ${artifactsDir} lists no packages`;
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Run `kb release artifact create` to create package artifacts, then retry delivery.' } };
-      }
-
       const dryRun = flags['dry-run'];
       const npmTag = flags.tag ?? resolvePublishTag(config, 'stable');
       const registry = flags.registry ?? resolvePublishRegistry(config, 'stable');
-      const token = flags.token ?? useEnv('NPM_TOKEN') ?? useEnv('NODE_AUTH_TOKEN');
 
-      const packages: PackageToPublish[] = manifest.map(a => ({
+      const bundleDir = resolve(repoRoot, flags['bundle-dir'] ?? '.kb/release/bundle');
+      const expectedDigest = flags['expected-digest'];
+      const candidateId = flags['candidate-id'];
+      const commit = flags.commit;
+      const version = flags.version;
+      if (!expectedDigest || !candidateId || !commit || !version) {
+        return {
+          ok: false,
+          error: {
+            code: 'KB_RUNTIME_INPUT_INVALID',
+            message: 'Candidate delivery requires the hosted bundle digest and expected candidate identity.',
+            hint: 'Read candidateId, commit, flow, version, and bundleDigest from the hosted build run summary, then pass them as --candidate-id, --commit, --flow, --version, and --expected-digest.',
+          },
+        };
+      }
+      const trust = { expectedDigest, candidateId, commit, flow: flowResult, version };
+      let candidate: ReturnType<typeof verifyCandidateBundle>;
+      try {
+        candidate = verifyCandidateBundle(bundleDir, trust);
+      } catch (error) {
+        if (!(error instanceof CandidateBundleError)) throw error;
+        const command = `kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --registry "${registry}" --json`;
+        return {
+          ok: false,
+          error: {
+            code: 'KB_RUNTIME_INPUT_INVALID',
+            message: error.message,
+            hint: `Download the complete candidate bundle from its hosted build, then retry with: ${command}`,
+          },
+        };
+      }
+
+      const packages: PackageToPublish[] = candidate.artifacts.map(a => ({
         name: a.name,
         version: a.version,
-        path: artifactsDir,
-        tarballPath: join(artifactsDir, a.tarball),
+        path: candidate.artifactsDir,
+        tarballPath: join(candidate.artifactsDir, a.tarball),
       }));
 
-      const publishLoader = useLoader(`Delivering ${packages.length} package(s) to npm...`);
+      const publishLoader = useLoader(`Delivering ${packages.length} package(s) to ${registry}...`);
       publishLoader.start();
 
       // Publishing pre-built tarballs via `npm publish <tarball>` specifically
@@ -168,41 +176,63 @@ export default defineCommand({
         tag: npmTag,
         access: (flags.access as 'public' | 'restricted' | undefined) ?? config.publish?.access,
         registry,
-        token,
       });
 
+      const conflict = publishResult.results.find(result => result.alreadyPublished);
+      if (conflict) {
+        publishLoader.fail(`Immutable version already exists: ${conflict.name}@${conflict.version}`);
+        const error = createValidatedErrorEnvelope('KB_RELEASE_VERSION_CONFLICT', {
+          templateValues: { package: conflict.name, version: conflict.version },
+          hint: `Build a new higher-version candidate with kb release plan --flow ${flowResult} --channel canary --bump patch --json, then deliver its bundle using the digest and identity values in the hosted build run summary.`,
+        });
+        return { ok: false, error };
+      }
+
       const failed = publishResult.results.filter(r => !r.success);
-      if (failed.length > 0) {
-        publishLoader.fail(`${failed.length} package(s) failed to publish`);
+      if (publishResult.failed.length > 0) {
+        publishLoader.fail(`${publishResult.failed.length} package(s) failed to publish`);
         const publishedList = publishResult.results.filter(r => r.success).map(r => ({ name: r.name, version: r.version }));
-        const failedList: DeliverFailure[] = failed.map(r => ({
-          name: r.name,
-          version: r.version,
-          error: r.error ?? 'Unknown error',
-          errorCode: r.errorCode,
-          errorHint: r.errorHint,
-        }));
-        const result: DeliverPayload = { success: false, target, published: publishedList, failed: failedList };
+        const failedList: DeliverFailure[] = packages
+          .filter(pkg => publishResult.failed.includes(`${pkg.name}@${pkg.version}`))
+          .map(pkg => {
+            const failure = failed.find(result => result.name === pkg.name && result.version === pkg.version);
+            return {
+              name: pkg.name,
+              version: pkg.version,
+              error: failure?.error ?? publishResult.errors[0] ?? 'Registry rejected package delivery',
+              errorCode: failure?.errorCode,
+              errorHint: failure?.errorHint,
+            };
+          });
+        const result: DeliverPayload = { success: false, registry, published: publishedList, failed: failedList };
 
-        writeGithubStepSummary(buildFailureSummaryMarkdown(target, publishedList.length, failedList));
+        writeGithubStepSummary(buildFailureSummaryMarkdown(registry, publishedList.length, failedList));
 
-        const response = { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: 'Delivery failed', hint: 'Inspect failed package details, resolve registry errors, then retry delivery.' } };
+        const retryCommand = `kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --registry "${registry}" --json`;
+        const firstFailure = failedList[0];
+        const message = firstFailure
+          ? `Delivery to ${registry} failed for ${firstFailure.name}@${firstFailure.version}${firstFailure.errorCode ? ` (${firstFailure.errorCode})` : ''}`
+          : `Delivery to ${registry} failed for ${publishResult.failed.length} package(s)`;
+        const recovery = firstFailure?.errorCode === 'E401'
+          ? `Configure registry credentials with \`npm adduser --registry "${registry}" --auth-type=legacy\` or NPM_TOKEN/NODE_AUTH_TOKEN.`
+          : firstFailure?.errorHint ?? 'Check registry access and the candidate package details.';
+        const response = { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message, hint: `${recovery} Then retry with: ${retryCommand}` } };
         if (!flags.json) {
           ctx.ui?.sideBox?.({
-            title: 'Deliver — npm',
+            title: `Deliver — ${registry}`,
             sections: [{
               header: `Failed (${publishedList.length} delivered ok)`,
-              items: failedList.map(r => `${ctx.ui.symbols.error} ${r.name}@${r.version}${r.errorCode ? ` [${r.errorCode}]` : ''} — ${r.errorHint ?? r.error}`),
+              items: failedList.map(r => `${ctx.ui.symbols.error} ${r.name}@${r.version}${r.errorCode ? ` [${r.errorCode}]` : ''} — ${r.errorHint ?? 'Registry rejected this package.'}`),
             }],
             status: 'error',
           });
         }
         return response;
       }
-      publishLoader.succeed(`Delivered ${publishResult.results.length} package(s) to npm`);
+      publishLoader.succeed(`Delivered ${publishResult.results.length} package(s) to ${registry}`);
 
       if (dryRun) {
-        const result: DeliverPayload = { success: true, target, published: publishResult.results.map(r => ({ name: r.name, version: r.version })) };
+        const result: DeliverPayload = { success: true, registry, published: publishResult.results.map(r => ({ name: r.name, version: r.version })) };
         return result;
       }
 
@@ -212,7 +242,7 @@ export default defineCommand({
       // the retry budget here instead of a single-shot check.
       const verifyLoader = useLoader('Verifying delivery against the registry...');
       verifyLoader.start();
-      const verifyTargets: PublishablePackage[] = manifest.map(a => ({ name: a.name, version: a.version, path: artifactsDir }));
+      const verifyTargets: PublishablePackage[] = candidate.artifacts.map(a => ({ name: a.name, version: a.version, path: candidate.artifactsDir }));
       const verifyResults = await verifyAgainstRegistry(verifyTargets, {
         registry,
         retries: REGISTRY_VERIFY_RETRIES,
@@ -223,7 +253,7 @@ export default defineCommand({
 
       const result: DeliverPayload = {
         success: verifyIssues.length === 0,
-        target,
+        registry,
         published: publishResult.results.map(r => ({ name: r.name, version: r.version })),
         verifyIssues,
       };
@@ -233,7 +263,7 @@ export default defineCommand({
         // npm unpublish here. Surface loudly and let a human decide.
         verifyLoader.fail(`Delivery verification found ${verifyIssues.length} issue(s) — packages are published, verification failed`);
         writeGithubStepSummary([
-          `## ⚠️ \`release artifact publish --target ${target}\` — publish succeeded, verification found ${verifyIssues.length} issue(s)`,
+        `## ⚠️ \`release artifact publish --registry ${registry}\` — publish succeeded, verification found ${verifyIssues.length} issue(s)`,
           '',
           'Packages are already live on the registry — this is a verification problem, not a publish failure, and nothing was rolled back (npm unpublish is never attempted automatically).',
           '',
@@ -246,12 +276,12 @@ export default defineCommand({
       if (flags.json) {
         const response = verifyIssues.length === 0
           ? result
-          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: 'Delivery verification failed after publish completed', hint: 'Packages were published; inspect verification issues and rerun `kb release artifact publish` to confirm.' } };
+          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: `Delivery verification to ${registry} failed after publish completed`, hint: `Packages are already in the registry; inspect verification issues, then retry with: kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --registry "${registry}" --json` } };
         return response;
       }
 
       ctx.ui?.sideBox?.({
-        title: 'Deliver — npm',
+        title: `Deliver — ${registry}`,
         sections: [
           { header: `Delivered to ${registry} (tag: ${npmTag})`, items: publishResult.results.map(r => `${ctx.ui.symbols.success} ${r.name}@${r.version}`) },
           ...(verifyIssues.length > 0 ? [{ header: 'Verification issues', items: verifyIssues.map(i => `${ctx.ui.symbols.error} ${i}`) }] : []),
@@ -261,7 +291,7 @@ export default defineCommand({
 
       return verifyIssues.length === 0
         ? result
-        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery verification failed', hint: "Run `kb release artifact publish --help` to review its inputs and recovery steps, then retry." } };
+          : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Delivery verification to ${registry} failed`, hint: `Packages are already in the registry; inspect verification issues, then retry with: kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --registry "${registry}" --json` } };
     },
   },
 });

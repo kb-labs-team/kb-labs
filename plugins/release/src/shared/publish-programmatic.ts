@@ -1,7 +1,8 @@
 /**
  * Programmatic npm publishing for REST handlers (non-interactive context).
  *
- * Uses `npm publish` CLI via spawn with NODE_AUTH_TOKEN env variable.
+ * Uses the package manager's CLI via argv; npm resolves registry credentials
+ * from its protected user configuration when no explicit token is supplied.
  * This is the correct approach for granular access tokens (classic tokens
  * were revoked by npm in December 2025).
  *
@@ -9,6 +10,7 @@
  * 1. options.token (explicit override)
  * 2. NPM_TOKEN env variable
  * 3. NODE_AUTH_TOKEN env variable
+ * 4. npm's user configuration
  *
  * Reliability guarantees:
  * - Already-published versions are treated as success (idempotent re-runs).
@@ -130,7 +132,7 @@ function isAlreadyPublished(message: string): boolean {
  */
 const NPM_ERROR_HINTS: Record<string, string> = {
   E403: 'npm rejected the publish (403). If other packages in the same run succeeded with the same token, this is almost certainly an npm-side restriction on this specific package/account entry (e.g. a security hold), not a token or code problem — check npmjs.com directly or contact npm support. Retrying will not help until that is resolved.',
-  E401: 'Authentication failed (401) — NPM_TOKEN/NODE_AUTH_TOKEN is missing, expired, or invalid for this registry.',
+  E401: 'Registry authentication failed (401) — configure npm credentials for this registry with `npm adduser --registry <url> --auth-type=legacy`, or provide NPM_TOKEN/NODE_AUTH_TOKEN.',
   E404: 'Registry returned 404 — check the registry URL and that the package name/scope is correct and accessible with this token.',
   EOTP: 'npm requires a one-time password for this publish — programmatic (token-based) delivery cannot supply one; this package needs an interactive `npm publish` from a human, or a token exempt from OTP.',
 };
@@ -168,8 +170,8 @@ function resolveToken(token?: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 /**
- * Spawn `packageManager publish` for a single package.
- * Writes a temporary .npmrc for NODE_AUTH_TOKEN auth, cleans it up on exit.
+ * Spawn `packageManager publish` for a single package without shell parsing.
+ * Explicit tokens are referenced by a temporary .npmrc line and cleaned up on exit.
  */
 function spawnPublish(options: {
   packagePath: string;
@@ -240,7 +242,7 @@ function spawnPublish(options: {
     const child = spawn(packageManager, args, {
       cwd: packagePath,
       stdio: ['ignore', 'pipe', 'pipe'],
-      shell: true,
+      shell: false,
       env,
     });
 
@@ -394,19 +396,6 @@ export async function publishPackagesProgrammatic(
 
   const logger = useLogger();
   const token = resolveToken(options.token);
-
-  if (!token && !dryRun) {
-    const error = 'No npm token found. Set NPM_TOKEN (or NODE_AUTH_TOKEN) in environment.';
-    logger.error(error);
-    return {
-      results: [],
-      published: [],
-      alreadyPublished: [],
-      failed: packages.map(p => `${p.name}@${p.version}`),
-      skipped: [],
-      errors: [error],
-    };
-  }
 
   // Version map for dep rewriting (workspace:/link: → ^version).
   const versionMap = new Map(packages.map(p => [p.name, p.version]));

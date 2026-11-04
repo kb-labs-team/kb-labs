@@ -1,0 +1,20 @@
+services:
+  verdaccio:
+    image: verdaccio/verdaccio:5
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${KB_LOCAL_REGISTRY_PORT:-4873}:4873"
+    volumes:
+      - type: bind
+        source: ${KB_LOCAL_REGISTRY_STORAGE:?Set KB_LOCAL_REGISTRY_STORAGE to storage outside the repository}
+        target: /verdaccio/storage
+      - type: bind
+        source: ./config.yaml
+        target: /verdaccio/conf/config.yaml
+        read_only: true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4873/-/ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 30s

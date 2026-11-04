@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -7,18 +7,22 @@ import { EventEmitter } from 'node:events';
 
 const capturedNpmrc: string[] = [];
 const capturedArgs: string[][] = [];
+const capturedShell: Array<boolean | undefined> = [];
+const capturedEnv: NodeJS.ProcessEnv[] = [];
 // Tests can override these to simulate a failing `npm publish` — reset in beforeEach.
 let mockCloseCode = 0;
 let mockStderr = '';
 
 vi.mock('node:child_process', async (importOriginal) => ({
   ...await importOriginal<typeof import('node:child_process')>(),
-  spawn: vi.fn((_command: string, args: string[], options: { cwd: string }) => {
+  spawn: vi.fn((_command: string, args: string[], options: { cwd: string; shell?: boolean; env?: NodeJS.ProcessEnv }) => {
     const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter };
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
 
     capturedArgs.push(args);
+    capturedShell.push(options.shell);
+    capturedEnv.push(options.env ?? {});
 
     // Capture the temp .npmrc content synchronously, before it's restored/removed.
     const npmrcPath = join(options.cwd, '.npmrc');
@@ -54,10 +58,70 @@ describe('publishPackagesProgrammatic — .npmrc registry auth', () => {
     pkgDir = makePackageDir();
     capturedNpmrc.length = 0;
     capturedArgs.length = 0;
+    capturedShell.length = 0;
+    capturedEnv.length = 0;
   });
 
   afterEach(() => {
     rmSync(pkgDir, { recursive: true, force: true });
+  });
+
+  it('defers auth resolution to npm when the credential is in its protected user config', async () => {
+    const userConfig = join(pkgDir, 'user.npmrc');
+    writeFileSync(userConfig, '//127.0.0.1:4879/:_authToken=verdaccio-user-config-token\n');
+    const previousUserConfig = process.env.NPM_CONFIG_USERCONFIG;
+    const previousNpmToken = process.env.NPM_TOKEN;
+    const previousNodeToken = process.env.NODE_AUTH_TOKEN;
+    process.env.NPM_CONFIG_USERCONFIG = userConfig;
+    delete process.env.NPM_TOKEN;
+    delete process.env.NODE_AUTH_TOKEN;
+
+    let result: Awaited<ReturnType<typeof publishPackagesProgrammatic>>;
+    try {
+      result = await publishPackagesProgrammatic({
+        packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+        registry: 'http://127.0.0.1:4879',
+      });
+    } finally {
+      if (previousUserConfig === undefined) delete process.env.NPM_CONFIG_USERCONFIG;
+      else process.env.NPM_CONFIG_USERCONFIG = previousUserConfig;
+      if (previousNpmToken === undefined) delete process.env.NPM_TOKEN;
+      else process.env.NPM_TOKEN = previousNpmToken;
+      if (previousNodeToken === undefined) delete process.env.NODE_AUTH_TOKEN;
+      else process.env.NODE_AUTH_TOKEN = previousNodeToken;
+    }
+    expect(result.results[0]?.success).toBe(true);
+    expect(capturedArgs).toHaveLength(1);
+    expect(capturedEnv[0]?.NPM_CONFIG_USERCONFIG).toBe(userConfig);
+    expect(capturedEnv[0]?.NODE_AUTH_TOKEN).toBeUndefined();
+  });
+
+  it('returns npm authentication failure when neither user config nor environment supplies a credential', async () => {
+    const previousUserConfig = process.env.NPM_CONFIG_USERCONFIG;
+    const previousNpmToken = process.env.NPM_TOKEN;
+    const previousNodeToken = process.env.NODE_AUTH_TOKEN;
+    delete process.env.NPM_CONFIG_USERCONFIG;
+    delete process.env.NPM_TOKEN;
+    delete process.env.NODE_AUTH_TOKEN;
+    mockCloseCode = 1;
+    mockStderr = 'npm error code E401\nnpm error 401 Unauthorized';
+
+    let result: Awaited<ReturnType<typeof publishPackagesProgrammatic>>;
+    try {
+      result = await publishPackagesProgrammatic({
+        packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+        registry: 'http://127.0.0.1:4879',
+      });
+    } finally {
+      if (previousUserConfig !== undefined) process.env.NPM_CONFIG_USERCONFIG = previousUserConfig;
+      if (previousNpmToken !== undefined) process.env.NPM_TOKEN = previousNpmToken;
+      if (previousNodeToken !== undefined) process.env.NODE_AUTH_TOKEN = previousNodeToken;
+      mockCloseCode = 0;
+      mockStderr = '';
+    }
+
+    expect(result.results[0]).toMatchObject({ success: false, errorCode: 'E401' });
+    expect(capturedArgs).toHaveLength(1);
   });
 
   it('writes the auth token line scoped to the target registry, not registry.npmjs.org', async () => {
@@ -122,6 +186,8 @@ describe('publishPackagesProgrammatic — tarballPath (release artifact publish)
     pkgDir = makePackageDir();
     capturedNpmrc.length = 0;
     capturedArgs.length = 0;
+    capturedShell.length = 0;
+    capturedEnv.length = 0;
   });
 
   afterEach(() => {
@@ -138,6 +204,29 @@ describe('publishPackagesProgrammatic — tarballPath (release artifact publish)
 
     expect(capturedArgs).toHaveLength(1);
     expect(capturedArgs[0]).toEqual(['publish', tarballPath]);
+    expect(capturedShell).toEqual([false]);
+  });
+
+  it('passes metacharacter tarball paths as one argv value and keeps the token out of output and files', async () => {
+    const sentinel = 'x241-secret-sentinel-value';
+    const sentinelFile = join(pkgDir, 'x241-shell-was-run');
+    const maliciousTarball = `${join(pkgDir, 'safe.tgz')};touch ${sentinelFile}`;
+    const result = await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir, tarballPath: maliciousTarball }],
+      packageManager: 'npm',
+      token: sentinel,
+    });
+
+    expect(capturedShell).toEqual([false]);
+    expect(capturedArgs[0]).toEqual(['publish', maliciousTarball]);
+    expect(result.results[0]?.success).toBe(true);
+    expect(JSON.stringify(result)).not.toContain(sentinel);
+    expect(capturedNpmrc.join('\n')).not.toContain(sentinel);
+    expect(readdirSync(pkgDir).some(name => name.includes('x241-shell-was-run'))).toBe(false);
+    for (const name of readdirSync(pkgDir)) {
+      const file = join(pkgDir, name);
+      if (statSync(file).isFile()) expect(readFileSync(file, 'utf8')).not.toContain(sentinel);
+    }
   });
 
   it('omits --no-git-checks for a tarball publish even under pnpm — there is no working tree to check', async () => {

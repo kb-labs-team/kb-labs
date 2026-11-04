@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-// Dispatch delivery for a previously built candidate. The caller controls the
-// target transition; CI only verifies and publishes the supplied bundle.
+// Dispatch delivery for a previously built candidate. The caller supplies the
+// trusted identity and digest recorded outside the downloaded bundle.
 import { execFileSync } from 'node:child_process';
 
 const args = process.argv.slice(2);
@@ -20,6 +20,8 @@ const candidateId = required('--candidate-id');
 const flow = required('--flow');
 const version = required('--version');
 const target = required('--target');
+const commit = required('--commit');
+const expectedDigest = required('--expected-digest');
 const workflow = value('--workflow') ?? 'release-deliver-candidate.yml';
 const repository = value('--repository') ?? process.env.GITHUB_REPOSITORY;
 const timeoutMs = Number(value('--timeout-ms') ?? 3_600_000);
@@ -27,7 +29,7 @@ if (!repository) throw new Error('--repository or GITHUB_REPOSITORY is required'
 
 const run = (command, commandArgs) => execFileSync(command, commandArgs, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const startedAt = Date.now();
-run('gh', ['workflow', 'run', workflow, '--repo', repository, '--ref', 'master', '-f', `candidate_run_id=${candidateRunId}`, '-f', `candidate_id=${candidateId}`, '-f', `flow=${flow}`, '-f', `version=${version}`, '-f', `target=${target}`]);
+run('gh', ['workflow', 'run', workflow, '--repo', repository, '--ref', 'master', '-f', `candidate_run_id=${candidateRunId}`, '-f', `candidate_id=${candidateId}`, '-f', `flow=${flow}`, '-f', `version=${version}`, '-f', `channel=${target}`, '-f', `commit_sha=${commit}`, '-f', `expected_digest=${expectedDigest}`]);
 
 let runId;
 while (!runId && Date.now() - startedAt < timeoutMs) {
@@ -47,4 +49,4 @@ while (Date.now() - startedAt < timeoutMs) {
 if (!result || result.status !== 'completed' || result.conclusion !== 'success') {
   throw new Error(`delivery workflow ${runId} did not succeed: ${JSON.stringify(result)}`);
 }
-console.log(`::kb-output::${JSON.stringify({ candidateId, candidateRunId, deliveryRunId: runId, target })}`);
+console.log(`::kb-output::${JSON.stringify({ candidateId, candidateRunId, deliveryRunId: runId, target, commit, expectedDigest })}`);
