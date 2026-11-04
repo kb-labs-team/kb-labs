@@ -3,17 +3,21 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { platformFlowPolicies } from '../../../src/core/platform-flow-policy.mjs';
 
 const publishPackagesProgrammatic = vi.fn();
 const verifyAgainstRegistry = vi.fn();
 const findRepoRoot = vi.fn();
 
-vi.mock('../../../src/core/index.js', () => ({
-  mergeConfigWithFlow: vi.fn((_config: unknown, flow: string) => ({ publish: { [flow]: { stableTag: 'latest' } } })),
-  resolvePublishTag: vi.fn(() => 'latest'),
-  resolvePublishRegistry: vi.fn(() => 'https://registry.npmjs.org'),
-  verifyAgainstRegistry: (...args: unknown[]) => verifyAgainstRegistry(...args),
-}));
+vi.mock('../../../src/core/index.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../src/core/index.js')>();
+  return {
+    ...actual,
+    mergeConfigWithFlow: vi.fn((config: { flows: Record<string, unknown> }, flow: string) => config.flows[flow]),
+    resolvePublishTag: vi.fn(() => 'latest'),
+    verifyAgainstRegistry: (...args: unknown[]) => verifyAgainstRegistry(...args),
+  };
+});
 
 vi.mock('../../../src/shared/utils.js', () => ({
   findRepoRoot: (...args: unknown[]) => findRepoRoot(...args),
@@ -27,7 +31,7 @@ vi.mock('@kb-labs/sdk', async importOriginal => {
   const actual = await importOriginal<typeof import('@kb-labs/sdk')>();
   return {
     ...actual,
-    useConfig: vi.fn(async () => ({})),
+    useConfig: vi.fn(async () => ({ flows: { platform: {} } })),
     useEnv: vi.fn((name: string) => process.env[name]),
     useLoader: vi.fn(() => ({ start: vi.fn(), fail: vi.fn(), succeed: vi.fn() })),
   };
@@ -36,15 +40,27 @@ vi.mock('@kb-labs/sdk', async importOriginal => {
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import deliverCommand from '../../../src/cli/commands/deliver.js';
 import { createCandidateBundle } from '../../../src/shared/candidate-bundle.js';
+import type { CandidateGateProvenance } from '../../../src/core/delivery-policy.js';
 
-const registry = 'http://127.0.0.1:4879';
+const testDeliveryTarget = Object.values(platformFlowPolicies)
+  .flatMap(policy => Object.values(policy.deliveryTargets))
+  .find(target => target.kind === 'test');
+if (!testDeliveryTarget) throw new Error('Platform flow must declare a test delivery target');
+const registry = testDeliveryTarget.registry;
+const publicDeliveryTarget = Object.values(platformFlowPolicies)
+  .flatMap(policy => Object.values(policy.deliveryTargets))
+  .find(target => target.kind === 'public');
+if (!publicDeliveryTarget) throw new Error('Platform flow must declare a public delivery target');
 const packageName = '@kb-labs/fixture';
 const packageVersion = '1.0.0';
 const tarball = 'kb-labs-fixture-1.0.0.tgz';
 let root: string;
 let trusted: { candidateId: string; commit: string; flow: string; version: string; expectedDigest: string };
 
-function writeBundle(): void {
+function writeBundle(
+  channel: 'canary' | 'stable' = 'canary',
+  gate: CandidateGateProvenance = { policy: 'none', result: 'skipped' },
+): void {
   const sourceDir = join(root, 'source');
   mkdirSync(sourceDir, { recursive: true });
   const bytes = 'fixture tarball';
@@ -62,7 +78,8 @@ function writeBundle(): void {
     commit: '1234567890123456789012345678901234567890',
     flow: 'platform',
     version: packageVersion,
-    channel: 'canary',
+    channel,
+    gate,
     workflowRunId: '1234',
     artifactsDir: sourceDir,
     releaseIndexPath,
@@ -110,7 +127,7 @@ describe('release:deliver candidate bundle', () => {
       'candidate-id': trusted.candidateId,
       commit: trusted.commit,
       version: trusted.version,
-      registry,
+      target: 'local',
       json: true,
     } }));
 
@@ -127,6 +144,96 @@ describe('release:deliver candidate bundle', () => {
       expect.objectContaining({ registry }),
     );
     expect(result).toMatchObject({ success: true, registry });
+  });
+
+  // case: S-284.5
+  it('refuses a canary bundle at a public target with the catalogued policy error', async () => {
+    const { ui } = createCapturedUI();
+    const ctx = createMockContext({ ui, cwd: root });
+
+    const result = await deliverCommand.execute(ctx as never, mockCLIInput({ flags: {
+      flow: 'platform',
+      'bundle-dir': 'bundle',
+      'expected-digest': trusted.expectedDigest,
+      'candidate-id': trusted.candidateId,
+      commit: trusted.commit,
+      version: trusted.version,
+      target: 'npm',
+      json: true,
+    } }));
+
+    expect(result).toMatchObject({ ok: false, error: {
+      code: 'KB_RELEASE_CANDIDATE_POLICY_REJECTED',
+      hint: expect.stringContaining('--target local'),
+    } });
+    expect(publishPackagesProgrammatic).not.toHaveBeenCalled();
+  });
+
+  // case: S-284.5
+  it('delivers a stable bundle with a passed release-case gate at a public target', async () => {
+    rmSync(join(root, 'bundle'), { recursive: true, force: true });
+    writeBundle('stable', { policy: 'release-cases', result: 'passed', runId: 'journey-run-17' });
+    const { ui } = createCapturedUI();
+    const ctx = createMockContext({ ui, cwd: root });
+
+    const result = await deliverCommand.execute(ctx as never, mockCLIInput({ flags: {
+      flow: 'platform',
+      'bundle-dir': 'bundle',
+      'expected-digest': trusted.expectedDigest,
+      'candidate-id': trusted.candidateId,
+      commit: trusted.commit,
+      version: trusted.version,
+      target: 'npm',
+      json: true,
+    } }));
+
+    expect(result).toMatchObject({ success: true, registry: publicDeliveryTarget.registry });
+    expect(publishPackagesProgrammatic).toHaveBeenCalledWith(expect.objectContaining({ registry: publicDeliveryTarget.registry }));
+  });
+
+  // case: S-284.5
+  it('requires an explicit declared target and reports how to declare it', async () => {
+    const { ui } = createCapturedUI();
+    const ctx = createMockContext({ ui, cwd: root });
+
+    const result = await deliverCommand.execute(ctx as never, mockCLIInput({ flags: {
+      flow: 'platform',
+      'bundle-dir': 'bundle',
+      'expected-digest': trusted.expectedDigest,
+      'candidate-id': trusted.candidateId,
+      commit: trusted.commit,
+      version: trusted.version,
+      json: true,
+    } }));
+
+    expect(result).toMatchObject({ ok: false, error: {
+      code: 'KB_RELEASE_DELIVERY_TARGET_INVALID',
+      hint: expect.stringContaining('release.flows.platform.deliveryTargets'),
+    } });
+    expect(publishPackagesProgrammatic).not.toHaveBeenCalled();
+  });
+
+  // case: S-284.5
+  it('refuses a target name that the flow did not declare', async () => {
+    const { ui } = createCapturedUI();
+    const ctx = createMockContext({ ui, cwd: root });
+
+    const result = await deliverCommand.execute(ctx as never, mockCLIInput({ flags: {
+      flow: 'platform',
+      'bundle-dir': 'bundle',
+      'expected-digest': trusted.expectedDigest,
+      'candidate-id': trusted.candidateId,
+      commit: trusted.commit,
+      version: trusted.version,
+      target: 'undeclared',
+      json: true,
+    } }));
+
+    expect(result).toMatchObject({ ok: false, error: {
+      code: 'KB_RELEASE_DELIVERY_TARGET_INVALID',
+      hint: expect.stringContaining('deliveryTargets.undeclared'),
+    } });
+    expect(publishPackagesProgrammatic).not.toHaveBeenCalled();
   });
 
   // case: S-284.2
@@ -149,7 +256,7 @@ describe('release:deliver candidate bundle', () => {
       'candidate-id': trusted.candidateId,
       commit: trusted.commit,
       version: trusted.version,
-      registry,
+      target: 'local',
       json: true,
     } }));
 
@@ -184,7 +291,7 @@ describe('release:deliver candidate bundle', () => {
       'candidate-id': trusted.candidateId,
       commit: trusted.commit,
       version: trusted.version,
-      registry,
+      target: 'local',
       json: true,
     } }));
 
@@ -219,6 +326,7 @@ describe('release:deliver candidate bundle', () => {
       flow: trusted.flow,
       version: trusted.version,
       channel: 'canary',
+      gate: { policy: 'none', result: 'skipped' },
       workflowRunId: '1234',
       artifactsDir: attackerDir,
       releaseIndexPath: indexPath,
@@ -234,7 +342,7 @@ describe('release:deliver candidate bundle', () => {
       'candidate-id': trusted.candidateId,
       commit: trusted.commit,
       version: trusted.version,
-      registry,
+      target: 'local',
       json: true,
     } }));
 
@@ -271,7 +379,7 @@ describe('release:deliver candidate bundle', () => {
         'candidate-id': trusted.candidateId,
         commit: trusted.commit,
         version: trusted.version,
-        registry,
+        target: 'local',
         json: true,
       } }));
     } finally {
@@ -279,7 +387,7 @@ describe('release:deliver candidate bundle', () => {
       else process.env.NODE_AUTH_TOKEN = previousToken;
     }
 
-    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('invalid npm tarball filename') } });
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('digest') } });
     expect(publishPackagesProgrammatic).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain(sentinel);
     const files = readdirSync(root, { recursive: true, withFileTypes: true });

@@ -177,8 +177,10 @@ export type CatalogErrorCode =
   | "KB_RELEASE_BASELINE_DRIFT"
   | "KB_RELEASE_BRANCH_NOT_MASTER"
   | "KB_RELEASE_BUILD_FAILED"
+  | "KB_RELEASE_CANDIDATE_POLICY_REJECTED"
   | "KB_RELEASE_CHECK_FAILED"
   | "KB_RELEASE_CHECK_TIMEOUT"
+  | "KB_RELEASE_DELIVERY_TARGET_INVALID"
   | "KB_RELEASE_DOCKER_UNAVAILABLE"
   | "KB_RELEASE_GIT_PUSH_REJECTED"
   | "KB_RELEASE_INDEX_SEAL_FAILED"
@@ -459,8 +461,10 @@ export interface CatalogTemplateParameters {
   "KB_RELEASE_BASELINE_DRIFT": Record<never, never>;
   "KB_RELEASE_BRANCH_NOT_MASTER": Record<never, never>;
   "KB_RELEASE_BUILD_FAILED": Record<never, never>;
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": { "candidateId": string; "target": string };
   "KB_RELEASE_CHECK_FAILED": Record<never, never>;
   "KB_RELEASE_CHECK_TIMEOUT": Record<never, never>;
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": { "flow": string; "target": string };
   "KB_RELEASE_DOCKER_UNAVAILABLE": Record<never, never>;
   "KB_RELEASE_GIT_PUSH_REJECTED": Record<never, never>;
   "KB_RELEASE_INDEX_SEAL_FAILED": Record<never, never>;
@@ -741,8 +745,10 @@ export interface CatalogDetailsFor {
   "KB_RELEASE_BASELINE_DRIFT": { "check"?: string; "classification"?: string; "distTag"?: string; "gitVersion"?: string; "npmVersion"?: string };
   "KB_RELEASE_BRANCH_NOT_MASTER": { "check"?: string; "classification"?: string; "branch"?: string; "expected"?: string };
   "KB_RELEASE_BUILD_FAILED": Record<string, never>;
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": { "candidateId": string; "target": string };
   "KB_RELEASE_CHECK_FAILED": { "check"?: string; "package"?: string; "classification"?: string; "rule"?: string };
   "KB_RELEASE_CHECK_TIMEOUT": { "check"?: string; "package"?: string; "classification"?: string; "rule"?: string };
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": { "flow": string; "target": string };
   "KB_RELEASE_DOCKER_UNAVAILABLE": { "check"?: string; "classification"?: string; "package"?: string; "rule"?: string };
   "KB_RELEASE_GIT_PUSH_REJECTED": Record<string, never>;
   "KB_RELEASE_INDEX_SEAL_FAILED": { "gate"?: string; "rule"?: string };
@@ -1046,8 +1052,10 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": ["candidateId","target"],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -1328,8 +1336,10 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": ["candidateId","target"],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -1610,8 +1620,10 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": [],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -1892,8 +1904,10 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": ["candidateId","target"],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -2174,8 +2188,10 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": ["candidateId","target"],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -2456,8 +2472,10 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": [],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -2738,8 +2756,10 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_BASELINE_DRIFT": ["check","classification","distTag","gitVersion","npmVersion"],
   "KB_RELEASE_BRANCH_NOT_MASTER": ["check","classification","branch","expected"],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": ["candidateId","target"],
   "KB_RELEASE_CHECK_FAILED": ["check","package","classification","rule"],
   "KB_RELEASE_CHECK_TIMEOUT": ["check","package","classification","rule"],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": ["check","classification","package","rule"],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": ["gate","rule"],
@@ -3020,8 +3040,10 @@ export interface CatalogMessageTemplateParameters {
   "KB_RELEASE_BASELINE_DRIFT": Record<never, never>;
   "KB_RELEASE_BRANCH_NOT_MASTER": Record<never, never>;
   "KB_RELEASE_BUILD_FAILED": Record<never, never>;
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": { "candidateId": string; "target": string };
   "KB_RELEASE_CHECK_FAILED": Record<never, never>;
   "KB_RELEASE_CHECK_TIMEOUT": Record<never, never>;
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": { "flow": string; "target": string };
   "KB_RELEASE_DOCKER_UNAVAILABLE": Record<never, never>;
   "KB_RELEASE_GIT_PUSH_REJECTED": Record<never, never>;
   "KB_RELEASE_INDEX_SEAL_FAILED": Record<never, never>;
@@ -3302,8 +3324,10 @@ export interface CatalogHintTemplateParameters {
   "KB_RELEASE_BASELINE_DRIFT": Record<never, never>;
   "KB_RELEASE_BRANCH_NOT_MASTER": Record<never, never>;
   "KB_RELEASE_BUILD_FAILED": Record<never, never>;
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": Record<never, never>;
   "KB_RELEASE_CHECK_FAILED": Record<never, never>;
   "KB_RELEASE_CHECK_TIMEOUT": Record<never, never>;
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": { "flow": string; "target": string };
   "KB_RELEASE_DOCKER_UNAVAILABLE": Record<never, never>;
   "KB_RELEASE_GIT_PUSH_REJECTED": Record<never, never>;
   "KB_RELEASE_INDEX_SEAL_FAILED": Record<never, never>;
@@ -3584,8 +3608,10 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RELEASE_BASELINE_DRIFT": Record<never, never>;
   "KB_RELEASE_BRANCH_NOT_MASTER": Record<never, never>;
   "KB_RELEASE_BUILD_FAILED": Record<never, never>;
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": Record<never, never>;
   "KB_RELEASE_CHECK_FAILED": Record<never, never>;
   "KB_RELEASE_CHECK_TIMEOUT": Record<never, never>;
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": Record<never, never>;
   "KB_RELEASE_DOCKER_UNAVAILABLE": Record<never, never>;
   "KB_RELEASE_GIT_PUSH_REJECTED": Record<never, never>;
   "KB_RELEASE_INDEX_SEAL_FAILED": Record<never, never>;
