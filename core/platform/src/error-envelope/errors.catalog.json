@@ -3024,6 +3024,24 @@
       "hint": "Retry the request when you are ready."
     },
     {
+      "code": "KB_RUNTIME_PROCESS_LIMIT_EXCEEDED",
+      "httpStatus": 500,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "Governed process {process} in {cwd} exceeded its {resource} limit: observed {observed}, allowed {allowed}.",
+      "hint": "Reduce resource use or increase the owning plugin's declared quota, then rerun {process} from {cwd}.",
+      "structuredDetailFields": [
+        "allowed",
+        "cwd",
+        "observed",
+        "process",
+        "resource"
+      ]
+    },
+    {
       "code": "KB_RUNTIME_TIMEOUT",
       "httpStatus": 504,
       "area": "runtime",

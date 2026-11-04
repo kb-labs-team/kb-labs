@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { IProcessExecutor, ILogger, ProcessResult } from '@kb-labs/core-platform/adapters';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
 import { PermissionError } from '@kb-labs/plugin-contracts';
 import { createShellAPI } from '../api/shell.js';
 import { GovernedProcessError } from '../process/errors.js';
@@ -19,6 +20,37 @@ function executor(result: ProcessResult): IProcessExecutor {
 const identity = { executionId: 'exec-1', requestId: 'req-1', pluginId: 'test-plugin' };
 
 describe('governed ShellAPI', () => {
+  // case: S-284.7
+  it('surfaces governed memory termination as the catalogued process-limit error', async () => {
+    const run = executor(delegateResult());
+    run.execute = vi.fn(async () => {
+      throw new GovernedProcessError('PROCESS_MEMORY_LIMIT', 'Process terminated: memory_limit', {
+        result: { usage: { wallTimeMs: 1200, cpuMs: 500, peakMemoryMb: 4100, processCount: 12, stdoutBytes: 100, stderrBytes: 20 } },
+      }, { resource: 'memory (MB)', observed: 4100, allowed: 4096 });
+    });
+    const shell = createShellAPI({
+      pluginId: '@kb-labs/release',
+      permissions: { shell: { allow: ['pnpm'] }, quotas: { memoryMb: 4096 } },
+      cwd: '/workspace',
+      processExecutor: run,
+      processIdentity: identity,
+    });
+
+    const thrown = await shell.exec('pnpm', ['run', 'build'], { cwd: '/workspace/studio/app' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    const envelope = toErrorEnvelope(thrown);
+
+    expect(envelope.code).toBe('KB_RUNTIME_PROCESS_LIMIT_EXCEEDED');
+    expect(envelope.message).toContain('4100');
+    expect(envelope.message).toContain('4096');
+    expect(envelope.message).toContain('pnpm run build');
+    expect(envelope.message).toContain('/workspace/studio/app');
+    expect(envelope.hint).not.toBe('');
+    expect(envelope.details).toMatchObject({ allowed: '4096', observed: '4100' });
+  });
+
   it('denies shell when no command is declared', async () => {
     const shell = createShellAPI({ pluginId: identity.pluginId, permissions: {}, cwd: process.cwd(), processIdentity: identity });
     await expect(shell.exec('echo', ['hello'])).rejects.toBeInstanceOf(PermissionError);
@@ -127,12 +159,20 @@ describe('node process backend', () => {
 
   it('returns a structured timeout and terminates the process group', async () => {
     const shell = createShellAPI({ pluginId: identity.pluginId, permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
-    await expect(shell.exec(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { timeout: 100 })).rejects.toMatchObject({ code: 'PROCESS_TIMEOUT' });
+    const thrown = await shell.exec(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { timeout: 100 }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(toErrorEnvelope(thrown)).toMatchObject({ code: 'KB_RUNTIME_PROCESS_LIMIT_EXCEEDED', details: { resource: 'time (ms)', allowed: '100' } });
   });
 
   it('enforces bounded output', async () => {
     const shell = createShellAPI({ pluginId: identity.pluginId, permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
-    await expect(shell.exec(process.execPath, ['-e', 'process.stdout.write("x".repeat(100000))'], { maxOutputBytes: 1024 })).rejects.toMatchObject({ code: 'PROCESS_OUTPUT_LIMIT' });
+    const thrown = await shell.exec(process.execPath, ['-e', 'process.stdout.write("x".repeat(100000))'], { maxOutputBytes: 1024 }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(toErrorEnvelope(thrown)).toMatchObject({ code: 'KB_RUNTIME_PROCESS_LIMIT_EXCEEDED', details: { resource: 'captured output (bytes)', allowed: '1024' } });
   });
 
   it('cancels a running process', async () => {
