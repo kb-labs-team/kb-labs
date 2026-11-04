@@ -292,7 +292,7 @@ jobs:
           }
           NODE
 
-      - name: Create candidate provenance
+      - name: Assemble and seal candidate bundle
         env:
           CANDIDATE_ID: ${{ inputs.candidate_id }}
           COMMIT_SHA: ${{ inputs.commit_sha }}
@@ -300,37 +300,28 @@ jobs:
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
           RUN_ID: ${{ github.run_id }}
+          ARTIFACTS_DIR: .kb/release/artifacts
+          BUNDLE_DIR: .kb/release/bundle
+          RELEASE_INDEX_PATH: .kb/release/release-index.json
+          BINARY_MANIFEST_PATH: .kb/release/binary-manifest.json
+          BINARIES_DIR: dist
         run: |
           set -euo pipefail
-          mkdir -p .kb/release/bundle
-          cp -R .kb/release/artifacts .kb/release/bundle/npm
-          if [ -f .kb/release/release-index.json ]; then cp .kb/release/release-index.json .kb/release/bundle/; fi
-          if [ -f .kb/release/binary-manifest.json ]; then cp .kb/release/binary-manifest.json .kb/release/bundle/; fi
-          if [ -d dist ]; then cp -R dist .kb/release/bundle/binaries; fi
-          node -e '
-            const fs = require("node:fs");
-            const out = {
-              schema: "kb.release-provenance/1",
-              candidateId: process.env.CANDIDATE_ID,
-              commit: process.env.COMMIT_SHA,
-              flow: process.env.FLOW,
-              version: process.env.VERSION,
-              channel: process.env.CHANNEL,
-              workflowRunId: process.env.RUN_ID,
-            };
-            fs.writeFileSync(".kb/release/bundle/provenance.json", JSON.stringify(out, null, 2) + "\n");
-          '
-          (
-            cd .kb/release/bundle
-            find . -type f ! -name bundle.sha256 ! -name bundle.sha256.tmp -printf '%m  %p\n' | sort > bundle.modes
-            find . -type f ! -name bundle.sha256 ! -name bundle.sha256.tmp -print0 | sort -z | xargs -0 sha256sum > bundle.sha256.tmp
-            mv bundle.sha256.tmp bundle.sha256
-          )
+          node plugins/release/scripts/create-candidate-bundle.mjs
 
       - name: Upload immutable candidate bundle
+        id: upload-candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-candidate-${{ inputs.candidate_id }}
           path: .kb/release/bundle
           if-no-files-found: error
           retention-days: 30
+
+      - name: Record hosted artifact digest outside the bundle
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload-candidate.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_DIGEST"
+          printf '\n- **Actions artifact archive digest:** `%s`\n' "$ARTIFACT_DIGEST" >> "$GITHUB_STEP_SUMMARY"

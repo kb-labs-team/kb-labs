@@ -116,9 +116,13 @@ or manual dispatch.
 ### Build and deliver candidate workflows
 The workflow engine supplies an immutable release intent to
 `release-build-candidate.yml`. That workflow builds packages and binaries once,
-seals the unified release-index and uploads one candidate bundle. The engine
-then invokes `release-deliver-candidate.yml`, which verifies the bundle digest,
-publishes exact bytes and runs the post-publish launcher journey.
+seals the unified release-index and uploads one candidate bundle. Its run
+summary exposes the candidate ID, commit, flow, version, and semantic bundle
+digest outside the bundle; the upload step also records GitHub's artifact
+archive digest. The engine supplies the summary's trusted identity and bundle
+digest to `release-deliver-candidate.yml`, whose artifact download verifies
+the archive and whose shared candidate verifier checks the extracted bytes
+before publishing.
 
 Neither workflow chooses versions, resolves compatibility, performs a second
 build, or has a legacy tag-triggered fallback. Stable promotion is another

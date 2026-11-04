@@ -1,0 +1,33 @@
+storage: /verdaccio/storage
+
+auth:
+  htpasswd:
+    file: /verdaccio/storage/htpasswd
+    max_users: 1000
+
+uplinks:
+  npmjs:
+    url: https://registry.npmjs.org/
+    timeout: 180s
+    max_fails: 3
+    fail_timeout: 15s
+    cache: true
+
+packages:
+  '@kb-labs/*':
+    access: $all
+    publish: $authenticated
+    unpublish:
+
+  '**':
+    access: $all
+    publish: $authenticated
+    unpublish:
+    proxy: npmjs
+
+log:
+  type: stdout
+  format: pretty
+  level: warn
+
+max_body_size: 200mb

@@ -23,6 +23,14 @@ inputs:
     type: string
     description: Exact version in the candidate bundle
     required: true
+  commit:
+    type: string
+    description: Full source commit from the hosted candidate build summary
+    required: true
+  expectedDigest:
+    type: string
+    description: Bundle digest from the hosted candidate build summary
+    required: true
   target:
     type: string
     description: Delivery target, canary or stable
@@ -71,6 +79,8 @@ jobs:
             --candidate-id '${{ inputs.candidateId }}' \
             --flow '${{ inputs.flow }}' \
             --version '${{ inputs.version }}' \
+            --commit '${{ inputs.commit }}' \
+            --expected-digest '${{ inputs.expectedDigest }}' \
             --target '${{ inputs.target }}' \
             --repository "${GITHUB_REPOSITORY:-kb-labs-team/kb-labs}"
 

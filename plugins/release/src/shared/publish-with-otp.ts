@@ -122,7 +122,7 @@ function publishSinglePackage(options: PublishSingleOptions): Promise<void> {
     const child = spawn(packageManager, args, {
       cwd: packagePath,
       stdio: ['inherit', 'pipe', 'pipe'],
-      shell: true,
+      shell: false,
     });
 
     let stdout = '';

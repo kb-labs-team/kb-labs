@@ -236,7 +236,7 @@ export const manifest = {
         longDescription:
           'Produces the actual npm tarball artifacts for a flow\'s already-committed package.json versions ' +
           '— no re-bump, no rebuild. Writes a manifest.json (name/version/tarball/sha256) alongside the tarballs. ' +
-          'Intended to run once in CI right after checking out a release tag; every `release artifact publish` target then ' +
+          'Intended to run once in CI right after checking out a release tag; every `release artifact publish` registry then ' +
           'ships these exact bytes instead of re-packing independently. Not the same command as `release pack validate` ' +
           '(that one verifies proposed packages before a release is decided; this one packs an already-decided one).',
 
@@ -345,7 +345,7 @@ export const manifest = {
           scope: { type: 'string', description: 'Package scope (glob pattern)' },
           flow: { type: 'string', description: 'Named flow — selects packages the same way `release run --flow` does (e.g. excludes sdk from platform)' },
           tag: { type: 'string', description: 'npm dist-tag override (default: config.publish.stableTag, falls back to "latest")' },
-          registry: { type: 'string', description: 'Registry override (default: config.publish.npmRegistry, falls back to real npm)' },
+          registry: { type: 'string', description: 'Destination registry URL (default: config.publish.npmRegistry)' },
           otp: { type: 'string', description: 'One-time password (optional, will prompt if needed)' },
           'dry-run': { type: 'boolean', description: 'Simulate promote without actually publishing' },
           access: {
@@ -353,7 +353,7 @@ export const manifest = {
             choices: ['public', 'restricted'] as const,
             description: 'Package access level',
           },
-          token: { type: 'string', description: 'NPM auth token (overrides NPM_TOKEN env)' },
+          token: { type: 'string', description: 'Registry auth token (overrides NPM_TOKEN and NODE_AUTH_TOKEN environment variables)' },
           json: { type: 'boolean', description: 'Output in JSON format' },
         }),
 
@@ -367,29 +367,32 @@ export const manifest = {
         ],
       },
 
-      // release:deliver - Ship a `release artifact create`d artifact to a target (npm)
+      // release:deliver - Verify and deliver an immutable candidate bundle to a registry
       {
         path: 'release artifact publish',
         category: 'Publish',
-        describe: 'Ship the tarballs `release artifact create` already packed to a target — no packing, no rebuild',
+        describe: 'Verify and deliver the exact tarballs in a sealed candidate bundle to the configured registry',
         operationType: 'execute' as const,
         longDescription:
-          'CI-side half of the "plugin prepares, CI delivers" release flow: reads manifest.json written by ' +
-          '`release artifact create` and ships those exact tarballs to --target (only "npm" is implemented this pass). ' +
+          'Delivery verifies the hosted candidate bundle and ships the exact tarballs in its npm/ directory to the configured registry. ' +
           'Resolves {flow, channel} from --release-tag via release.flows[*].tagPattern so CI never needs to ' +
-          'guess the flow itself — just pass the tag. Verifies the delivery against the real registry ' +
-          'afterwards (with retry, since real npm has propagation lag); never attempts npm unpublish on a ' +
-          'verification failure — that is a human decision.',
+          'guess the flow itself — just pass the tag. Requires the expected bundle digest and candidate identity from outside ' +
+          'the bundle, then validates the exact file set, tarball names, package manifest, and release index before publishing. ' +
+          'Verifies each published package against that registry afterwards; ' +
+          'never attempts unpublish on a verification failure.',
 
         handler: './cli/commands/deliver.js#default',
 
         flags: defineCommandFlags({
           'release-tag': { type: 'string', description: 'Git tag to resolve {flow, channel} from (via release.flows[*].tagPattern) — alternative to --flow' },
           flow: { type: 'string', description: 'Named flow — alternative to --release-tag' },
-          target: { type: 'string', choices: ['npm'] as const, description: 'Delivery target (default: npm — the only target implemented this pass)' },
-          'artifacts-dir': { type: 'string', description: 'Where `release artifact create` wrote tarballs + manifest.json (default: .kb/release/artifacts)' },
+          'bundle-dir': { type: 'string', description: 'Downloaded candidate bundle root containing provenance.json, bundle.sha256, bundle.modes, and npm/ (default: .kb/release/bundle)' },
+          'expected-digest': { type: 'string', required: true, description: 'Trusted SHA-256 candidate payload digest from outside the downloaded bundle' },
+          'candidate-id': { type: 'string', required: true, description: 'Expected candidate id from the hosted build run' },
+          commit: { type: 'string', required: true, description: 'Expected full candidate commit SHA from the hosted build run' },
+          version: { type: 'string', required: true, description: 'Expected platform version from the hosted build run' },
           tag: { type: 'string', description: 'npm dist-tag override (default: config.publish.stableTag, falls back to "latest")' },
-          registry: { type: 'string', description: 'Registry override (default: config.publish.npmRegistry, falls back to real npm)' },
+          registry: { type: 'string', description: 'Destination registry URL (default: config.publish.npmRegistry)' },
           otp: { type: 'string', description: 'One-time password (optional, will prompt if needed)' },
           'dry-run': { type: 'boolean', description: 'Simulate delivery without actually publishing' },
           access: {
@@ -397,14 +400,11 @@ export const manifest = {
             choices: ['public', 'restricted'] as const,
             description: 'Package access level',
           },
-          token: { type: 'string', description: 'NPM auth token (overrides NPM_TOKEN env)' },
           json: { type: 'boolean', description: 'Output in JSON format' },
         }),
 
         examples: [
-          'kb release artifact publish --release-tag platform-v2.105.0 --target npm',
-          'kb release artifact publish --flow sdk --target npm',
-          'kb release artifact publish --release-tag sdk-v3.2.0 --dry-run',
+          'kb release artifact publish --flow platform --bundle-dir .kb/release/bundle --expected-digest "$EXPECTED_DIGEST" --candidate-id "$CANDIDATE_ID" --commit "$COMMIT" --version "$VERSION" --registry https://registry.npmjs.org',
         ],
       },
 
