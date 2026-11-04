@@ -131,7 +131,7 @@ export async function createWorkflowWorker(
     projectRoot = process.env["KB_PROJECT_ROOT"] ?? workspaceRoot,
     projectId,
     concurrency = 5,
-    defaultTimeout = 120000,
+    defaultTimeout,
     analytics,
     debugMode = process.env["WORKFLOW_DEBUG"] === "true",
   } = options;
@@ -965,8 +965,13 @@ export async function createWorkflowWorker(
 
           if (result.status === "failed") {
             const stepDurationMs = Date.now() - stepStartTime;
-            const error = new Error(
-              result.error?.message ?? "Step execution failed",
+            const error = Object.assign(
+              new Error(result.error?.message ?? "Step execution failed"),
+              {
+                code: result.error?.code,
+                hint: result.error?.hint,
+                details: result.error?.details,
+              },
             );
 
             // Mark step as failed (sets finishedAt timestamp + error)

@@ -64,6 +64,7 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        const stepIds = new Map<string, string>();
 
         while (true) {
           const { done, value } = await reader.read();
@@ -103,7 +104,30 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
               if (outputJson) { events.push(event); }
 
               const icon = STATUS_ICON[(event.payload?.['status'] as string) ?? ''] ?? '·';
-              const step = event.stepId ? ` step:${event.stepId.slice(0, 8)}` : '';
+              if (event.type === 'run.snapshot') {
+                const jobs = event.payload?.['jobs'];
+                if (Array.isArray(jobs)) {
+                  for (const job of jobs) {
+                    if (typeof job !== 'object' || job === null || !('steps' in job) || !Array.isArray(job.steps)) { continue; }
+                    for (const stepRecord of job.steps) {
+                      if (typeof stepRecord !== 'object' || stepRecord === null || !('id' in stepRecord) || typeof stepRecord.id !== 'string' || !('spec' in stepRecord) || typeof stepRecord.spec !== 'object' || stepRecord.spec === null || !('id' in stepRecord.spec) || typeof stepRecord.spec.id !== 'string') { continue; }
+                      stepIds.set(stepRecord.id, stepRecord.spec.id);
+                      const stepStatus = stepRecord.status === 'running' ? 'started' :
+                        stepRecord.status === 'success' ? 'succeeded' :
+                        stepRecord.status === 'failed' ? 'failed' : undefined;
+                      if (stepStatus) {
+                        const jobId = typeof job.id === 'string' ? job.id : undefined;
+                        const jobLabel = jobId ? ` job:${jobId}` : '';
+                        const stepIcon = STATUS_ICON[stepRecord.status] ?? '·';
+                        if (!outputJson) { ctx.ui?.write?.(`${stepIcon} step.${stepStatus}${jobLabel} step:${stepRecord.spec.id}`); }
+                      }
+                    }
+                  }
+                }
+                continue;
+              }
+              const stepId = event.stepId ? stepIds.get(event.stepId) ?? event.stepId : undefined;
+              const step = stepId ? ` step:${stepId}` : '';
               const job = event.jobId ? ` job:${event.jobId.slice(0, 8)}` : '';
               const summary = event.payload?.['summary'] ?? event.payload?.['error'] ?? '';
 

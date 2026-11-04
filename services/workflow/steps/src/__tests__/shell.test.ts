@@ -5,6 +5,9 @@
  * functions responsible for extracting structured outputs from shell stdout.
  */
 import { describe, it, expect, expectTypeOf, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createTestContext, type MockLoggerInstance } from '@kb-labs/sdk/testing'
 import type { ShellInput, ShellOutput } from '../shell.js'
 import { mergeJsonOutputs, parseOutputMarkerLine, tail, LineBatcher } from '../shell.js'
@@ -359,7 +362,6 @@ describe('ShellInput type shape', () => {
     const input: ShellInput = { command: 'echo hello' }
     expectTypeOf(input.command).toBeString()
     expectTypeOf(input.env).toEqualTypeOf<Record<string, string> | undefined>()
-    expectTypeOf(input.timeout).toEqualTypeOf<number | undefined>()
     expectTypeOf(input.throwOnError).toEqualTypeOf<boolean | undefined>()
   })
 
@@ -367,11 +369,9 @@ describe('ShellInput type shape', () => {
     const input: ShellInput = {
       command: 'npm test',
       env: { NODE_ENV: 'test' },
-      timeout: 60000,
       throwOnError: true,
     }
     expect(input.command).toBe('npm test')
-    expect(input.timeout).toBe(60000)
   })
 })
 
@@ -391,20 +391,40 @@ describe('ShellOutput type shape', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Regression: timeout with reject:false must NOT silently succeed
+// Execution cancellation is owned by the workflow step boundary. The handler
+// must stop its child process group when that boundary aborts the context.
 // ---------------------------------------------------------------------------
-describe('shellHandler — timeout regression (BUG: timedOut + reject:false = silent success)', () => {
-  it('throws an error when the command times out — must not return ok:true with empty stdout', async () => {
-    // Before the fix: execa with reject:false returned timedOut:true, exitCode:null.
-    // null ?? 0 === 0 → ok:true → silent success with empty stdout.
-    // After the fix: timedOut is detected and thrown as an error.
+describe('shellHandler — execution-boundary cancellation', () => {
+  // case: S-243.5
+  it('stops the child process group on boundary abort and flushes captured output', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'workflow-shell-timeout-'))
+    const pidFile = join(directory, 'child.pid')
     const { ctx, cleanup } = makeShellTestContext()
+    const controller = new AbortController()
+    Object.defineProperty(ctx, 'signal', { value: controller.signal })
+    let childPid: number | undefined
+    const execution = shellModule.execute(ctx, {
+      command: `printf 'working...\\n'; sleep 30 & echo $! > '${pidFile}'; wait`,
+      throwOnError: true,
+    })
+    const settled = execution.then(() => undefined, () => undefined)
     try {
-      await expect(
-        shellModule.execute(ctx, { command: 'sleep 10', timeout: 100 }),
-      ).rejects.toThrow(/timed out/i)
+      await vi.waitFor(async () => {
+        childPid = Number(await readFile(pidFile, 'utf8'))
+        expect(childPid).toBeGreaterThan(1)
+      }, { timeout: 1000 })
+      controller.abort()
+      await expect(execution).rejects.toThrow('execution aborted')
+      await vi.waitFor(() => {
+        expect(() => process.kill(childPid!, 0)).toThrow()
+      }, { timeout: 1000 })
+      expect(ctx.platform.logger.info).toHaveBeenCalledWith('Shell output (stdout)', expect.objectContaining({ text: 'working...' }))
     } finally {
+      controller.abort()
+      if (childPid) { try { process.kill(childPid, 'SIGKILL') } catch { /* test cleanup: process may already be gone */ } }
+      await settled
       cleanup()
+      await rm(directory, { recursive: true, force: true })
     }
   }, 5000)
 
@@ -447,50 +467,6 @@ describe('shellHandler — timeout regression (BUG: timedOut + reject:false = si
     }
   })
 
-  it('includes whatever the command printed before being killed in the timeout log entry', async () => {
-    const { ctx, cleanup } = makeShellTestContext()
-    try {
-      await expect(
-        shellModule.execute(ctx, {
-          // A shell builtin emits before the long-running child starts. Starting
-          // a second Node process within 200ms is scheduling-dependent on a
-          // loaded CI worker, which made this assertion flaky rather than testing
-          // the timeout log contract.
-          command: "printf 'working...\\n'; sleep 10",
-          timeout: 500,
-        }),
-      ).rejects.toThrow(/timed out/i)
-
-      expect(ctx.platform.logger.warn).toHaveBeenCalledWith(
-        'Shell command timed out',
-        expect.objectContaining({ stdoutTail: expect.stringContaining('working...') }),
-      )
-    } finally {
-      cleanup()
-    }
-  })
-
-  // Regression: the daemon logger call above writes to the daemon's own log
-  // sink, but what actually reaches a caller reading the failed step (e.g.
-  // workflow/daemon worker.ts's `new Error(result.error?.message ...)`, then
-  // engine.ts's markStepFailed which persists only message/stack) is the
-  // *thrown* error's message — nothing else survives that chain. Before this
-  // fix the thrown error was just "Shell command timed out after Xms", so a
-  // step that timed out mid-run looked identical to one that never printed
-  // anything at all, no matter what the daemon logger had captured.
-  it('carries the captured output tail in the thrown error itself, not just the log entry', async () => {
-    const { ctx, cleanup } = makeShellTestContext()
-    try {
-      await expect(
-        shellModule.execute(ctx, {
-          command: "printf 'working...\\n'; sleep 10",
-          timeout: 500,
-        }),
-      ).rejects.toThrow(/working\.\.\./)
-    } finally {
-      cleanup()
-    }
-  })
 })
 
 describe('shellHandler environment isolation', () => {

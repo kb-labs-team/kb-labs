@@ -68,6 +68,7 @@ export interface StepExecutionFailure {
   error: {
     message: string
     code?: string
+    hint?: string
     stack?: string
     details?: Record<string, unknown>
   }

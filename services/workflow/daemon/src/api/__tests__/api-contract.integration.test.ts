@@ -248,7 +248,7 @@ describe('Workflow API Contract Integration', () => {
   describe('Runs', () => {
     // case: S-027.2
     it('GET /api/v1/runs/:runId/events omits transitions already covered by its snapshot watermark', async () => {
-      const listeners: Array<(event: { type: string; runId: string; sequence: number; payload?: unknown }) => void> = [];
+      const listeners: Array<(event: { type: string; runId: string; sequence: number; jobId?: string; stepId?: string; payload?: unknown }) => void> = [];
       engine.subscribeToRunEvents.mockImplementation((_runId, listener) => {
         listeners.push(listener);
         return () => { listeners.splice(listeners.indexOf(listener), 1); };
@@ -267,7 +267,7 @@ describe('Workflow API Contract Integration', () => {
         if (response.status !== 200) {
           throw new Error(`SSE route returned ${response.status}: ${await response.text()}`);
         }
-        listeners[0]?.({ type: 'step.succeeded', runId: 'r1', sequence: 2, payload: { stepId: 'step-1' } });
+        listeners[0]?.({ type: 'step.succeeded', runId: 'r1', sequence: 2, jobId: 'job-1', stepId: 'step-1', payload: { stepId: 'step-1' } });
         listeners[0]?.({ type: 'run.finished', runId: 'r1', sequence: 3, payload: { status: 'success' } });
         const body = await response.text();
 
@@ -275,6 +275,8 @@ describe('Workflow API Contract Integration', () => {
         expect(body.match(/event: step\.started/g)).toBeNull();
         expect(body).toContain('event: run.finished');
         expect(body).toContain('event: step.succeeded');
+        expect(body).toContain('"jobId":"job-1"');
+        expect(body).toContain('"stepId":"step-1"');
         expect(body.indexOf('event: run.snapshot')).toBeLessThan(body.indexOf('event: step.succeeded'));
       } finally {
         await app.close();

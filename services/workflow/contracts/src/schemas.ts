@@ -249,6 +249,7 @@ export const WorkflowSpecSchema = z
 export const StepRunErrorSchema = z.object({
   message: z.string(),
   code: z.string().optional(),
+  hint: z.string().optional(),
   stack: z.string().optional(),
   timestamp: z.string().optional(),
   details: z.record(z.string(), z.unknown()).optional(),
@@ -354,6 +355,7 @@ export const RunMetadataSchema = z.object({
 export const ResultErrorSchema = z.object({
   message: z.string().min(1),
   code: z.string().optional(),
+  hint: z.string().optional(),
   details: z.record(z.string(), z.unknown()).optional(),
 })
 

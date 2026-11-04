@@ -16,6 +16,7 @@ import type { WorkflowSpec, WorkflowRun } from '@kb-labs/workflow-contracts';
 import type { ICache, IEventBus } from '@kb-labs/core-platform';
 import { InMemoryStorage } from '@kb-labs/core-platform/inmemory';
 import { mockLogger, type MockLoggerInstance } from '@kb-labs/shared-testing';
+import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 
 // Mock Cache
 class MockCache implements ICache {
@@ -525,6 +526,41 @@ describe('WorkflowEngine', () => {
       expect(updated?.result?.error?.message).toBeTruthy();
     });
 
+    // case: S-243.5
+    it('persists the catalogue timeout code and hint on the failed step, job, and terminal run', async () => {
+      const spec: WorkflowSpec = {
+        name: 'Timeout Test',
+        version: '1.0.0',
+        on: { manual: true },
+        jobs: {
+          main: {
+            runsOn: 'local',
+            steps: [{ name: 'Never ending', uses: 'builtin:shell', timeoutMs: 25 }],
+          },
+        },
+      };
+      const run = await engine.createRun({ spec, trigger: { type: 'manual' } });
+      const job = run.jobs.find((candidate) => candidate.jobName === 'main')!;
+      const step = job.steps[0]!;
+      const timeout = createErrorEnvelope('KB_RUNTIME_TIMEOUT', { details: { timeoutMs: '25' } });
+      const error = Object.assign(new Error(timeout.message), {
+        code: timeout.code,
+        hint: timeout.hint,
+        details: timeout.details,
+      });
+
+      await engine.markStepStarted(run.id, job.id, step.id);
+      await engine.markStepFailed(run.id, job.id, step.id, error);
+      await engine.markJobFailed(run.id, job.id, error, undefined, false);
+
+      const updated = await engine.getRun(run.id);
+      expect(updated?.status).toBe('failed');
+      expect(updated?.jobs[0]?.status).toBe('failed');
+      expect(updated?.jobs[0]?.steps[0]?.error).toMatchObject({ code: timeout.code, hint: timeout.hint });
+      expect(updated?.jobs[0]?.error).toMatchObject({ code: timeout.code, hint: timeout.hint });
+      expect(updated?.result?.error).toMatchObject({ code: timeout.code, hint: timeout.hint });
+    });
+
     it('B-030: downstream job of a failed upstream is cancelled, not left queued', async () => {
       const spec: WorkflowSpec = {
         name: 'Cascade Test',
@@ -749,6 +785,48 @@ describe('WorkflowEngine', () => {
       await engine.markJobFailed(replayed!.id, replayJob.id, new Error('step failed again'), undefined, false);
 
       expect((await engine.getRun(replayed!.id))?.status).toBe('failed');
+    });
+
+    // case: S-143.3
+    it('REPLAY-11 preserves successful job outputs after the failed job in failed-only replay', async () => {
+      const mixedSpec: WorkflowSpec = {
+        name: 'Mixed Replay Test',
+        version: '1.0.0',
+        on: { manual: true },
+        jobs: {
+          before: { runsOn: 'local', steps: [{ id: 'before-step', name: 'Before', uses: 'builtin:shell', with: { run: 'echo before' } }] },
+          failed: { runsOn: 'local', steps: [{ id: 'failed-step', name: 'Failed', uses: 'builtin:shell', with: { run: 'echo failed' } }] },
+          skipped: { runsOn: 'local', steps: [{ id: 'skipped-step', name: 'Skipped', uses: 'builtin:shell', with: { run: 'echo skipped' } }] },
+          cancelled: { runsOn: 'local', steps: [{ id: 'cancelled-step', name: 'Cancelled', uses: 'builtin:shell', with: { run: 'echo cancelled' } }] },
+          after: { runsOn: 'local', steps: [{ id: 'after-step', name: 'After', uses: 'builtin:shell', with: { run: 'echo after' } }] },
+        },
+      };
+      const source = await engine.createRun({ spec: mixedSpec, trigger: { type: 'manual' }, metadata: { workflowId: 'mixed-replay' } });
+      await engine.finalizeRun(source.id, 'failed', {});
+      const jobsByName = new Map(source.jobs.map((job) => [job.jobName, job]));
+      await engine.updateRun(source.id, (draft) => {
+        for (const job of draft.jobs) {
+          const status = job.jobName === 'failed' ? 'failed' :
+            job.jobName === 'skipped' ? 'skipped' :
+            job.jobName === 'cancelled' ? 'cancelled' : 'success';
+          job.status = status;
+          const step = job.steps[0]!;
+          step.status = status === 'failed' ? 'failed' : status === 'cancelled' ? 'cancelled' : status;
+          step.outputs = { result: `${job.jobName}-output` };
+        }
+        return draft;
+      });
+      await engine.deleteSnapshot(source.id);
+      const snapshotRun = (await engine.getRun(source.id))!;
+      await engine.createSnapshot(source.id, {}, snapshotRun.env ?? {});
+
+      const failedJob = jobsByName.get('failed')!;
+      const replayed = await engine.replayRun(source.id, { fromStepId: failedJob.steps[0]!.id });
+
+      expect(replayed!.jobs.map((job) => job.status)).toEqual(['success', 'queued', 'queued', 'queued', 'success']);
+      expect(replayed!.jobs[0]!.steps[0]!.outputs).toEqual({ result: 'before-output' });
+      expect(replayed!.jobs[4]!.steps[0]!.outputs).toEqual({ result: 'after-output' });
+      expect(replayed!.jobs[4]!.steps[0]!.status).toBe('success');
     });
 
     it('REPLAY-08: fromStepId in job-a resets steps in subsequent jobs to queued (not success)', async () => {

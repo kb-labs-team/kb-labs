@@ -62,6 +62,7 @@ import { resolveExecutionTarget } from '../target-resolver.js';
 import {
   AbortError,
   HandlerNotFoundError,
+  TimeoutError,
 } from '../errors.js';
 
 /**
@@ -122,6 +123,17 @@ export class InProcessBackend implements RawExecutionBackend {
     options?: ExecuteOptions
   ): Promise<ExecutionResult> {
     const start = performance.now();
+    const timeoutController = request.timeoutMs === undefined ? undefined : new AbortController();
+    let timeoutExpired = false;
+    const timeoutId = request.timeoutMs === undefined ? undefined : setTimeout(() => {
+      timeoutExpired = true;
+      timeoutController?.abort();
+    }, request.timeoutMs);
+    const executionSignal = timeoutController
+      ? options?.signal
+        ? AbortSignal.any([options.signal, timeoutController.signal])
+        : timeoutController.signal
+      : options?.signal;
     let lease: WorkspaceLease | undefined;
     let resolvedTarget = request.target;
     let workspaceDescriptor: WorkspaceDescriptor | undefined;
@@ -129,7 +141,7 @@ export class InProcessBackend implements RawExecutionBackend {
 
     try {
       // 1. Check abort before starting
-      if (options?.signal?.aborted) {
+      if (executionSignal?.aborted) {
         throw new AbortError('Execution aborted before start');
       }
 
@@ -245,11 +257,15 @@ export class InProcessBackend implements RawExecutionBackend {
         handlerPath: `${handlerPath}${exportSelector}`,
         input: requestToExecute.input,
         environment: requestToExecute.env,
-        signal: options?.signal,
+        signal: executionSignal,
         cwd: lease.cwd,           // From WorkspaceLease
         outdir: undefined,        // Optional, defaults to cwd/.kb/output
         adapterMiddlewares,
       });
+
+      if (timeoutExpired) {
+        throw new TimeoutError(`Execution timed out after ${request.timeoutMs}ms`, request.timeoutMs);
+      }
 
       // 6. Success is determined by absence of thrown error
       // v5: No exitCode - handlers throw on failure
@@ -272,10 +288,13 @@ export class InProcessBackend implements RawExecutionBackend {
     } catch (error) {
       const executionTimeMs = performance.now() - start;
       this.updateStats(false, executionTimeMs);
+      const executionFailure = timeoutExpired
+        ? new TimeoutError(`Execution timed out after ${request.timeoutMs}ms`, request.timeoutMs)
+        : error;
 
       return {
         ok: false,
-        ...normalizeExecutionFailure(error, request),
+        ...normalizeExecutionFailure(executionFailure, request),
         executionTimeMs,
         metadata: {
           backend: 'in-process',
@@ -284,6 +303,7 @@ export class InProcessBackend implements RawExecutionBackend {
         },
       };
     } finally {
+      if (timeoutId) { clearTimeout(timeoutId); }
       // Release materialized workspace (best-effort)
       if (workspaceDescriptor?.workspaceId && workspaceProvider?.release) {
         await workspaceProvider.release(workspaceDescriptor.workspaceId).catch(() => {});
