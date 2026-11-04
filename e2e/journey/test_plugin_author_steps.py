@@ -6,9 +6,15 @@ import unittest
 import urllib.request
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from plugin_author_steps import _validate_plugin_route_help, run_commit_case_steps, run_plugin_author_flow
+from plugin_author_steps import (
+    _validate_plugin_route_help,
+    preflight_installed_plugin_command,
+    run_commit_case_steps,
+    run_plugin_author_flow,
+)
 from service_steps import Journey
 from invocations import open_http
 from marketplace_sync_fixture import (
@@ -264,6 +270,30 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(str(raised.exception),
                          "journey command 'commit bogus' is absent from the live CLI registry: "
                          '{"ok": false, "error": {"code": "KB_RUNTIME_UNKNOWN_COMMAND"}}')
+
+    def test_group_preflight_rejects_a_missing_manifest_declared_child_route(self):
+        routes = ["commit", "commit commit", "commit plan show"]
+        missing_route = next(route for route in routes if route.startswith("commit ") and route != "commit commit")
+        lock = self.project / ".kb/marketplace.lock"
+        lock.write_text(json.dumps({"plugins": {"@kb-labs/commit": {"enabled": True}}}))
+        env = {**self.env, "KB_JOURNEY_WORKSPACE_ROOT": str(self.root)}
+
+        def command_runner(_runner, command, **kwargs):
+            if command[:3] == ["node", "--input-type=module", "-e"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps(routes), "")
+            invoked_route = command[1:-2]
+            if invoked_route == missing_route.split():
+                return subprocess.CompletedProcess(
+                    command, 2,
+                    json.dumps({"ok": False, "error": {"code": "KB_RUNTIME_UNKNOWN_COMMAND"}}), "",
+                )
+            return subprocess.CompletedProcess(command, 0, "group or child help", "")
+
+        with patch("plugin_author_steps.run_with_runner", side_effect=command_runner):
+            with self.assertRaisesRegex(RuntimeError, "commit plan show"):
+                preflight_installed_plugin_command(
+                    ["commit", "--help"], self.project, env, command_runner, self.kb,
+                )
 
     def run_flow(self, *, mode="local", fail_build=False):
         if fail_build:

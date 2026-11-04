@@ -3,6 +3,7 @@ import { mkdtemp, rm, access, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import type { LoadPlatformConfigResult } from "@kb-labs/core-runtime";
 
 const mocks = vi.hoisted(() => ({
   loadPlatformConfiguration: vi.fn(),
@@ -17,9 +18,11 @@ vi.mock("../platform-init.js", () => ({
 }));
 
 import { executeCli } from "../bootstrap.js";
+import { createPlatformConfigFixture } from './fixtures/platform-config.js';
 
 describe("CLI platform configuration, auth, and adapter ordering", () => {
   let isolatedHome: string | undefined;
+  let fixtureCatalogs: LoadPlatformConfigResult['catalog'][] = [];
   const originalEnv = { ...process.env };
   const logger = {
     trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {},
@@ -28,6 +31,8 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
   const platform = { logger, getAdapter: () => undefined };
 
   afterEach(async () => {
+    await Promise.all(fixtureCatalogs.map((catalog) => catalog.dispose()));
+    fixtureCatalogs = [];
     if (isolatedHome) await rm(isolatedHome, { recursive: true, force: true });
     isolatedHome = undefined;
     vi.unstubAllGlobals();
@@ -53,20 +58,21 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     return isolatedHome;
   }
 
-  function mockConfig(projectRoot: string, projectScope: 'required' | 'platform' = 'platform', rawConfig = {
+  async function mockConfig(projectRoot: string, projectScope: 'required' | 'platform' = 'platform', rawConfig = {
     gateway: { access: { mode: "local" } },
     platform: { deployment: { topology: "local" } },
-  }) {
-    return {
-      platformConfig: { adapters: { storage: "@kb-labs/adapters-fs" } },
+  }, registeredProject = true) {
+    const config = await createPlatformConfigFixture({
+      cwd: projectRoot,
+      home: isolatedHome!,
       rawConfig,
-      rawPlatformConfig: rawConfig,
-      effectiveConfig: { platform: { deployment: { topology: "local" } } },
-      platformRoot: isolatedHome,
-      projectRoot,
       projectScope,
-      sameLocation: false,
-      sources: { platform: "env", project: "registry", fields: {} },
+      registeredProjects: registeredProject ? [projectRoot] : [],
+    });
+    fixtureCatalogs.push(config.catalog);
+    return {
+      ...config,
+      platformConfig: { adapters: { storage: "@kb-labs/adapters-fs" } },
     };
   }
 
@@ -75,10 +81,11 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
   }
 
   it("loads project config after the gate, then initializes adapters once with the project root", async () => {
-    const cwd = await isolateEnvironment();
-    const projectRoot = path.join(cwd, "registered-project");
-    const platformConfig = mockConfig(cwd);
-    const projectConfig = mockConfig(projectRoot, 'required');
+    const home = await isolateEnvironment();
+    const projectRoot = path.join(home, "registered-project");
+    const cwd = projectRoot;
+    const platformConfig = await mockConfig(cwd);
+    const projectConfig = await mockConfig(projectRoot, 'required');
     mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
     mocks.resolveProjectConfig.mockResolvedValue(projectConfig);
     mockInitialization();
@@ -105,7 +112,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
   // case: S-048.7
   it('uses explicit platform scope before project initialization for config commands', async () => {
     const cwd = await isolateEnvironment();
-    const platformConfig = mockConfig(cwd);
+    const platformConfig = await mockConfig(cwd);
     mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
     mockInitialization();
 
@@ -116,9 +123,10 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
   });
 
   it("uses the root-resolution project for plugin discovery while initializing adapters from platform config", async () => {
-    const cwd = await isolateEnvironment();
-    const projectRoot = path.join(cwd, "registered-project");
-    const platformConfig = mockConfig(projectRoot);
+    const home = await isolateEnvironment();
+    const projectRoot = path.join(home, "registered-project");
+    const cwd = projectRoot;
+    const platformConfig = await mockConfig(cwd);
     const registerBuiltinCommands = vi.fn();
     mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
     mockInitialization();
@@ -133,6 +141,41 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({ projectRoot }));
   });
 
+  it("resolves an unknown command in a registered project before building its command catalog", async () => {
+    const home = await isolateEnvironment();
+    const projectRoot = path.join(home, "registered-project");
+    const cwd = projectRoot;
+    mocks.loadPlatformConfiguration.mockResolvedValue(await mockConfig(projectRoot));
+    mocks.resolveProjectConfig.mockResolvedValue(await mockConfig(projectRoot, 'required'));
+    mockInitialization();
+
+    await executeCli(["commit", "--help"], {
+      cwd,
+      registerBuiltinCommands: () => {},
+    });
+
+    expect(mocks.resolveProjectConfig).toHaveBeenCalledExactlyOnceWith(cwd, undefined);
+    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ projectRoot, projectScope: 'required' }),
+      { skipAdapterInitialization: false },
+    );
+  });
+
+  it("keeps unresolved routes platform-scoped when the cwd is not a registered project", async () => {
+    const cwd = await isolateEnvironment();
+    const platformConfig = await mockConfig(cwd, 'platform', undefined, false);
+    mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
+    mockInitialization();
+
+    await executeCli(["commit", "--help"], {
+      cwd,
+      registerBuiltinCommands: () => {},
+    });
+
+    expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
+    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(platformConfig, { skipAdapterInitialization: false });
+  });
+
   it("provides the installed Gateway address to built-in command registration", async () => {
     const cwd = await isolateEnvironment();
     const gatewayUrl = "http://127.0.0.1:4820";
@@ -141,7 +184,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
       installationId: "install-test",
       verification: { hostHealthUrl: `${gatewayUrl}/health` },
     }));
-    mocks.loadPlatformConfiguration.mockResolvedValue(mockConfig(cwd));
+    mocks.loadPlatformConfiguration.mockResolvedValue(await mockConfig(cwd));
     mockInitialization();
     const registerBuiltinCommands = vi.fn();
 
@@ -160,7 +203,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     delete env.KB_GATEWAY_URL;
     const gatewayUrl = "http://127.0.0.1:4873";
     await createProjectRegistry({ env }).add(cwd);
-    mocks.loadPlatformConfiguration.mockResolvedValue(mockConfig(cwd));
+    mocks.loadPlatformConfiguration.mockResolvedValue(await mockConfig(cwd));
     const platformWithTransport = {
       logger,
       getAdapter: (name: string) => name === "serviceTransport"
@@ -193,7 +236,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     const env = { ...process.env };
     delete env.KB_GATEWAY_URL;
     const gatewayUrl = "http://127.0.0.1:4873";
-    mocks.loadPlatformConfiguration.mockResolvedValue(mockConfig(cwd));
+    mocks.loadPlatformConfiguration.mockResolvedValue(await mockConfig(cwd));
     const platformWithTransport = {
       logger,
       getAdapter: (name: string) => name === "serviceTransport"
@@ -223,7 +266,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
   it("uses --gateway-url as the invocation address without changing process transport", async () => {
     const cwd = await isolateEnvironment();
     const gatewayUrl = "https://team-gateway.example.test";
-    mocks.loadPlatformConfiguration.mockResolvedValue(mockConfig(cwd));
+    mocks.loadPlatformConfiguration.mockResolvedValue(await mockConfig(cwd));
     mockInitialization();
     const registerBuiltinCommands = vi.fn();
 
@@ -240,7 +283,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     const cwd = await isolateEnvironment();
     delete process.env.KB_GATEWAY_URL;
     process.env.GATEWAY_PORT = "4000oops";
-    mocks.loadPlatformConfiguration.mockResolvedValue(mockConfig(cwd));
+    mocks.loadPlatformConfiguration.mockResolvedValue(await mockConfig(cwd));
     mockInitialization();
     const registerBuiltinCommands = vi.fn();
 
@@ -252,25 +295,34 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
 
   // case: S-043.6
   it("uses a registered project root for command discovery before an unknown plugin path is dispatched", async () => {
-    const cwd = await isolateEnvironment();
-    const projectRoot = path.join(cwd, "registered-project");
-    const platformConfig = mockConfig(projectRoot);
+    const home = await isolateEnvironment();
+    const projectRoot = path.join(home, "registered-project");
+    const cwd = projectRoot;
+    const platformConfig = await mockConfig(cwd);
     const registerBuiltinCommands = vi.fn();
     mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
+    mocks.resolveProjectConfig.mockResolvedValue(await mockConfig(projectRoot, 'required'));
     mockInitialization();
 
     await executeCli(["commit", "plan", "show"], { cwd, registerBuiltinCommands });
 
-    expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
+    expect(mocks.resolveProjectConfig).toHaveBeenCalledExactlyOnceWith(cwd, undefined);
+    expect(mocks.initializePlatform).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRoot, projectScope: 'required' }),
+      { skipAdapterInitialization: false },
+    );
     expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({
-      platformRoot: cwd,
+      platformRoot: platformConfig.platformRoot,
       projectRoot,
     }));
   });
 
   it("skips adapter construction for global help and version without creating .kb state", async () => {
     const cwd = await isolateEnvironment();
-    const platformConfig = mockConfig(cwd);
+    const platformConfig = await mockConfig(cwd);
+    await platformConfig.catalog.dispose();
+    fixtureCatalogs = fixtureCatalogs.filter((catalog) => catalog !== platformConfig.catalog);
+    await rm(process.env.KB_HOME!, { recursive: true, force: true });
     mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
     mockInitialization();
 

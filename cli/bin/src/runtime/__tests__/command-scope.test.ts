@@ -51,6 +51,20 @@ describe('bootstrap command scope resolution', () => {
     expect(resolveProjectScope({ type: 'not-found', input: [], suggestions: [] }, { help: true }, [])).toBe('platform');
     expect(resolveProjectScope({ type: 'not-found', input: [], suggestions: [] }, { version: true }, [])).toBe('platform');
     expect(resolveProjectScope({ type: 'not-found', input: ['missing'], suggestions: [] }, {}, ['missing'])).toBe('platform');
+    expect(resolveProjectScope(
+      { type: 'not-found', input: ['commit'], suggestions: [] },
+      { help: true },
+      ['commit'],
+      {},
+      true,
+    )).toBe('required');
+    expect(resolveProjectScope(
+      { type: 'not-found', input: ['missing'], suggestions: [] },
+      {},
+      ['missing'],
+      {},
+      false,
+    )).toBe('platform');
   });
 
   it('lets only registered platform/project scope selectors override project context', () => {
