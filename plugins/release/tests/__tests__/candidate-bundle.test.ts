@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createCandidateBundle, verifyCandidateBundle } from '../../src/shared/candidate-bundle.js';
+import type { CandidateGateProvenance } from '../../src/core/delivery-policy.js';
 
 let root: string;
 
@@ -13,6 +14,7 @@ const identity = {
   flow: 'platform',
   version: '1.0.0',
 };
+const testPolicy = { targetKind: 'test' as const };
 
 function writeSource(artifactsDir: string, tarball: string, tarballBytes: string, includeUnlistedNpmFile = false) {
   mkdirSync(artifactsDir);
@@ -26,7 +28,13 @@ function writeSource(artifactsDir: string, tarball: string, tarballBytes: string
   if (includeUnlistedNpmFile) writeFileSync(join(artifactsDir, 'unlisted.tgz'), 'unexpected');
 }
 
-function makeBundle(includeUnlistedNpmFile = false, tarball = 'kb-labs-fixture-1.0.0.tgz', tarballBytes = 'fixture tarball bytes') {
+function makeBundle(
+  includeUnlistedNpmFile = false,
+  tarball = 'kb-labs-fixture-1.0.0.tgz',
+  tarballBytes = 'fixture tarball bytes',
+  channel: 'canary' | 'stable' = 'canary',
+  gate: CandidateGateProvenance = { policy: 'none', result: 'skipped' },
+) {
   root = mkdtempSync(join(tmpdir(), 'x241-candidate-'));
   const artifactsDir = join(root, 'source-artifacts');
   writeSource(artifactsDir, tarball, tarballBytes, includeUnlistedNpmFile);
@@ -35,7 +43,8 @@ function makeBundle(includeUnlistedNpmFile = false, tarball = 'kb-labs-fixture-1
   const bundleDir = join(root, 'bundle');
   const provenance = createCandidateBundle({
     ...identity,
-    channel: 'canary',
+    channel,
+    gate,
     workflowRunId: '1234',
     artifactsDir,
     releaseIndexPath,
@@ -57,11 +66,72 @@ describe('candidate bundle producer and verifier', () => {
   // case: S-284.1
   it('creates a bundle whose provenance digest, exact file set, modes and package bytes verify', () => {
     const { bundleDir, trust } = makeBundle();
-    const verified = verifyCandidateBundle(bundleDir, trust);
+    const verified = verifyCandidateBundle(bundleDir, trust, testPolicy);
 
     expect(verified.provenance.bundleDigest).toMatch(/^[a-f0-9]{64}$/);
     expect(verified.artifacts).toHaveLength(1);
     expect(verified.artifactsDir).toBe(join(bundleDir, 'npm'));
+    expect(verified.provenance.gate).toEqual({ policy: 'none', result: 'skipped' });
+  });
+
+  // case: S-284.5
+  it('allows a canary bundle at a declared test target', () => {
+    const { bundleDir, trust } = makeBundle();
+
+    expect(() => verifyCandidateBundle(bundleDir, trust, {
+      targetKind: 'test',
+    })).not.toThrow();
+  });
+
+  // case: S-284.5
+  it('refuses a canary bundle at a public target', () => {
+    const { bundleDir, trust } = makeBundle();
+
+    expect(() => verifyCandidateBundle(bundleDir, trust, {
+      targetKind: 'public',
+    })).toThrow(/Public delivery requires a channel with a passed release-case gate/);
+  });
+
+  // case: S-284.5
+  it('refuses to seal a stable candidate whose release-case gate did not pass, including for a test target', () => {
+    expect(() => makeBundle(false, 'kb-labs-fixture-1.0.0.tgz', 'fixture tarball bytes', 'stable', {
+      policy: 'release-cases', result: 'failed', runId: 'journey-run-17',
+    })).toThrow(/Channel stable requires a passed release-case gate/);
+  });
+
+  // case: S-284.5
+  it('allows a stable candidate with a passed release-case gate at a public target', () => {
+    const { bundleDir, trust } = makeBundle(false, 'kb-labs-fixture-1.0.0.tgz', 'fixture tarball bytes', 'stable', {
+      policy: 'release-cases', result: 'passed', runId: 'journey-run-17',
+    });
+
+    expect(() => verifyCandidateBundle(bundleDir, trust, { targetKind: 'public' })).not.toThrow();
+  });
+
+  // case: S-284.5
+  it('rejects provenance without the required gate field', () => {
+    const { bundleDir, trust } = makeBundle();
+    const provenancePath = join(bundleDir, 'provenance.json');
+    const provenance = JSON.parse(readFileSync(provenancePath, 'utf8')) as Record<string, unknown>;
+    delete provenance.gate;
+    writeFileSync(provenancePath, JSON.stringify(provenance, null, 2) + '\n');
+
+    expect(() => verifyCandidateBundle(bundleDir, trust, {
+      targetKind: 'test',
+    })).toThrow(/gate/);
+  });
+
+  // case: S-284.5
+  it('rejects edited provenance against the hosted digest in a scratch bundle', () => {
+    const { bundleDir, trust } = makeBundle();
+    const provenancePath = join(bundleDir, 'provenance.json');
+    const provenance = JSON.parse(readFileSync(provenancePath, 'utf8')) as Record<string, unknown>;
+    provenance.channel = 'stable';
+    writeFileSync(provenancePath, JSON.stringify(provenance, null, 2) + '\n');
+
+    expect(() => verifyCandidateBundle(bundleDir, trust, {
+      targetKind: 'test',
+    })).toThrow(/digest/);
   });
 
   // case: S-284.1
@@ -69,7 +139,7 @@ describe('candidate bundle producer and verifier', () => {
     const { bundleDir, tarballPath, trust } = makeBundle();
     writeFileSync(tarballPath, 'tampered bytes');
 
-    expect(() => verifyCandidateBundle(bundleDir, trust)).toThrow(/digest differs/);
+    expect(() => verifyCandidateBundle(bundleDir, trust, testPolicy)).toThrow(/digest/);
   });
 
   // case: S-284.1
@@ -83,6 +153,7 @@ describe('candidate bundle producer and verifier', () => {
     const rewrittenProvenance = createCandidateBundle({
       ...identity,
       channel: 'canary',
+      gate: { policy: 'none', result: 'skipped' },
       workflowRunId: '1234',
       artifactsDir: sourceDir,
       releaseIndexPath,
@@ -90,7 +161,7 @@ describe('candidate bundle producer and verifier', () => {
     });
 
     expect(rewrittenProvenance.bundleDigest).not.toBe(original.trust.expectedDigest);
-    expect(() => verifyCandidateBundle(rewrittenBundle, original.trust)).toThrow(/trusted candidate digest/);
+    expect(() => verifyCandidateBundle(rewrittenBundle, original.trust, testPolicy)).toThrow(/trusted candidate digest/);
   });
 
   // case: S-284.1
@@ -105,13 +176,14 @@ describe('candidate bundle producer and verifier', () => {
     createCandidateBundle({
       ...identity,
       channel: 'canary',
+      gate: { policy: 'none', result: 'skipped' },
       workflowRunId: '1234',
       artifactsDir: sourceDir,
       releaseIndexPath,
       outputDir: changedModeBundle,
     });
 
-    expect(() => verifyCandidateBundle(changedModeBundle, original.trust)).toThrow(/trusted candidate digest/);
+    expect(() => verifyCandidateBundle(changedModeBundle, original.trust, testPolicy)).toThrow(/trusted candidate digest/);
   });
 
   // case: S-284.1
@@ -123,7 +195,7 @@ describe('candidate bundle producer and verifier', () => {
   ])('rejects a candidate that differs from the trusted %s', (_field, changed) => {
     const { bundleDir, trust } = makeBundle();
 
-    expect(() => verifyCandidateBundle(bundleDir, { ...trust, ...changed })).toThrow(/trusted candidate identity/);
+    expect(() => verifyCandidateBundle(bundleDir, { ...trust, ...changed }, testPolicy)).toThrow(/trusted candidate identity/);
   });
 
   // case: S-284.1
@@ -131,7 +203,7 @@ describe('candidate bundle producer and verifier', () => {
     const { bundleDir, trust } = makeBundle();
     writeFileSync(join(bundleDir, 'unlisted.txt'), 'unexpected');
 
-    expect(() => verifyCandidateBundle(bundleDir, trust)).toThrow(/file set differs/);
+    expect(() => verifyCandidateBundle(bundleDir, trust, testPolicy)).toThrow(/digest/);
   });
 
   // case: S-284.1
@@ -144,7 +216,7 @@ describe('candidate bundle producer and verifier', () => {
     const { bundleDir, trust } = makeBundle();
     chmodSync(join(bundleDir, filename), 0o600);
 
-    expect(() => verifyCandidateBundle(bundleDir, trust)).toThrow(/canonical mode/);
+    expect(() => verifyCandidateBundle(bundleDir, trust, testPolicy)).toThrow(/canonical mode/);
   });
 
   // case: S-284.1
@@ -168,6 +240,7 @@ describe('candidate bundle producer and verifier', () => {
     expect(() => createCandidateBundle({
       ...identity,
       channel: 'canary',
+      gate: { policy: 'none', result: 'skipped' },
       workflowRunId: '1234',
       artifactsDir,
       releaseIndexPath,
