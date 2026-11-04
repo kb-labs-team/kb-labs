@@ -8,12 +8,7 @@
 
 import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { lintWorkflowFiles } from '@kb-labs/workflow-runtime';
-
-export interface LintFlags {
-  path?: string;
-  json?: boolean;
-  strict?: boolean;
-}
+import type { LintFlags } from '@kb-labs/workflow-contracts';
 
 export default defineCommand<unknown, CLIInput<LintFlags>, unknown>({
   id: 'workflow:lint',

@@ -32,13 +32,14 @@ import {
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { can, type Policy, type Identity } from '@kb-labs/core-policy';
-import { PlatformAuditStore, isErrorCode, type ICache, type ILogger } from '@kb-labs/core-platform';
+import { PlatformAuditStore, isErrorCode, type ICache, type ILogger, type IServiceTransport } from '@kb-labs/core-platform';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
-import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
+import type { IEntityRegistry, ServiceManifest } from '@kb-labs/plugin-contracts';
 import { createDaemonServer, getListenOptions, type ObservabilityCollectorLike } from '@kb-labs/shared-http';
 import { readForwardedIdentity } from '@kb-labs/gateway-contracts';
 import { toIdentity, actionForOperation, type Permits } from './mcp/authz.js';
-import { validateManifests } from './mcp/tool-builder.js';
+import { buildServiceTools, validateManifests, type McpServiceTool } from './mcp/tool-builder.js';
+import { callServiceTool } from './mcp/service-tool-router.js';
 import { type PlatformResolver } from './mcp/tool-router.js';
 import { resolveVisibleTools, executeToolCall, invalidMcpToolArguments, mcpToolError, mcpToolSuccess, unexpectedMcpResult, validateToolArguments } from './mcp/request-handler.js';
 import { McpObservabilityCollector } from './observability/collector.js';
@@ -84,6 +85,8 @@ export interface McpDaemonServerOptions {
   authMode?: McpAuthMode;
   /** Public Gateway URL included in catalogued authentication hints when known. */
   gatewayUrl?: string;
+  serviceManifests?: readonly ServiceManifest[];
+  serviceTransport?: IServiceTransport;
 }
 
 export class McpDaemonServer {
@@ -93,6 +96,7 @@ export class McpDaemonServer {
   private readonly audit: PlatformAuditStore;
   private app: FastifyInstance | undefined;
   private registry: IEntityRegistry | undefined;
+  private serviceTools: McpServiceTool[] = [];
 
   constructor(opts: McpDaemonServerOptions) {
     this.opts = opts;
@@ -118,6 +122,7 @@ export class McpDaemonServer {
   async start(): Promise<string> {
     // Initialize the registry ONCE; snapshot() is reused per request.
     this.registry = this.opts.catalog;
+    this.serviceTools = buildServiceTools(this.opts.serviceManifests ?? []);
 
     // Structural manifest validation runs ONCE here, independent of any
     // identity's permissions — so broken manifests are visible in logs and
@@ -246,6 +251,7 @@ export class McpDaemonServer {
             description: t.description,
             inputSchema: t.inputSchema as { type: 'object' },
           })),
+          ...this.serviceTools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema as { type: 'object' } })),
           // Authenticated callers only — mirrors the visibility gate above.
           ...(permits ? [DIAGNOSTICS_TOOL] : []),
         ],
@@ -269,7 +275,26 @@ export class McpDaemonServer {
                 : mcpToolSuccess(renderManifestDiagnostics(this.collector.getManifestDiagnostics()));
             }
           } else {
-            result = await executeToolCall({
+            const serviceTool = this.serviceTools.find((tool) => tool.name === params.name);
+            if (serviceTool) {
+              if (!permits) {
+                result = mcpToolError('KB_AUTH_REQUIRED', {
+                  gatewayUrl: this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL ?? '<url>',
+                });
+              } else if (!permits('execute', serviceTool.serviceId)) {
+                result = mcpToolError('KB_AUTH_FORBIDDEN', { permission: 'execute' });
+              } else if (!this.opts.serviceTransport) {
+                result = unexpectedMcpResult(new Error(`Service transport is unavailable for ${serviceTool.serviceId}.`), reqLogger);
+              } else {
+                const args = (params.arguments ?? {}) as Record<string, unknown>;
+                const validationError = validateToolArguments(serviceTool.inputSchema, args);
+                if (validationError) {
+                  result = invalidMcpToolArguments(validationError);
+                } else {
+                  result = await callServiceTool(serviceTool, args, this.opts.serviceTransport, reqLogger);
+                }
+              }
+            } else result = await executeToolCall({
               name: params.name,
               args: (params.arguments ?? {}) as Record<string, unknown>,
               visibleTools,

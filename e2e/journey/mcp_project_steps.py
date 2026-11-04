@@ -1,6 +1,8 @@
 """Project MCP journey steps for typed errors, mutations, auth and isolation."""
 from __future__ import annotations
 
+from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_tool_names
+
 from project_service_path import project_service_path
 
 import json
@@ -222,7 +224,7 @@ def unknown_tool(project_id: str, token: str = "") -> str | None:
 
 
 def invalid_arguments(project_id: str, token: str = "") -> str | None:
-    status, body = mcp_call(project_id, 1404, "kb-labs-commit__commit_plan_apply", {"force": "yes"}, token)
+    status, body = mcp_call(project_id, 1404, commit_tool("commit plan apply"), {"force": "yes"}, token)
     if status != 200:
         return f"invalid arguments returned HTTP {status}, expected HTTP 200 tool error result"
     return _check_error_result(body, "KB_RUNTIME_MCP_INVALID_ARGUMENTS", argument="force")
@@ -358,19 +360,19 @@ def secured_project_catalog_isolation(project_a: str, project_b: str, token: str
             return f"authenticated tools/list for {project_id} returned no catalog"
         names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
         if project_id == project_a:
-            if "kb-labs-commit__commit_plan_apply" not in names:
+            if commit_tool("commit plan apply") not in names:
                 return "Project A's authenticated catalog omitted its project-only Commit tool"
             if "kb-labs-review__review_run" in names:
                 return "Project A's authenticated catalog included Project B's Review tool"
         else:
             if "kb-labs-review__review_run" not in names:
                 return "Project B's authenticated catalog omitted its project-only Review tool"
-            if "kb-labs-commit__commit_plan_apply" in names:
+            if commit_tool("commit plan apply") in names:
                 return "Project B's authenticated catalog included Project A's Commit tool"
     return None
 
 
-def local_auth(project_id: str) -> str | None:
+def local_auth(project_id: str, enabled_service_ids: frozenset[str] = DEFAULT_ENABLED_SERVICES) -> str | None:
     status, body, _ = _request(
         project_service_path(project_id, "mcp"),
         method="POST",
@@ -387,12 +389,12 @@ def local_auth(project_id: str) -> str | None:
         return "local tokenless tools/list did not return the selected project catalog"
     names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
     expected = {
-        "kb-labs-commit__commit_commit",
-        "kb-labs-workflow__workflow_run",
+        commit_tool("commit commit"),
+        *service_tool_names(enabled_service_ids),
         "kb-labs__mcp_diagnostics",
     }
     if not expected <= names:
-        return f"local tokenless tools/list omitted selected project tools: {sorted(expected - names)}"
+        return f"local tokenless tools/list mismatch: expected={sorted(expected)} served={sorted(names)[:50]}"
     return None
 
 
@@ -409,9 +411,9 @@ def commit_tool_schema(project_id: str, token: str) -> str | None:
         return f"project A tools/list returned HTTP {status}"
     result = body.get("result") if isinstance(body, dict) else None
     tools = result.get("tools", []) if isinstance(result, dict) else []
-    tool = next((item for item in tools if isinstance(item, dict) and item.get("name") == "kb-labs-commit__commit_plan_apply"), None)
+    tool = next((item for item in tools if isinstance(item, dict) and item.get("name") == commit_tool("commit plan apply")), None)
     if tool is None:
-        return "project A catalog omitted kb-labs-commit__commit_plan_apply"
+        return "project A catalog omitted the declared commit plan apply tool"
     schema = tool.get("inputSchema")
     if not isinstance(schema, dict) or schema.get("type") != "object" or not isinstance(schema.get("properties"), dict):
         return "commit plan apply tool did not expose its manifest-derived object input schema"
@@ -426,14 +428,23 @@ def commit_tool_schema(project_id: str, token: str) -> str | None:
 
 
 def apply_commit_plan(project_id: str, token: str, project_root: str) -> str | None:
-    status, body = mcp_call(project_id, 1402, "kb-labs-commit__commit_plan_apply", {}, token)
+    fixture_path = os.environ.get("KB_JOURNEY_PROJECT_FIXTURES_FILE", "")
+    preparation_result = None
+    if fixture_path and Path(fixture_path).is_file():
+        handoff = json.loads(Path(fixture_path).read_text(encoding="utf-8"))
+        preparation_result = handoff.get("commitPlanPreparationResult")
+    plan_show = run_command(["kb", "commit", "plan", "show", "--json"],
+                            cwd=project_root, env=os.environ, timeout=30)
+    status, body = mcp_call(project_id, 1402, commit_tool("commit plan apply"), {}, token)
     if status != 200:
         return f"commit plan apply returned HTTP {status}"
     result = body.get("result") if isinstance(body, dict) else None
     content = result.get("content", []) if isinstance(result, dict) else []
     text = "\n".join(item.get("text", "") for item in content if isinstance(item, dict))
     if not isinstance(result, dict) or result.get("isError") or not text:
-        return "commit plan apply did not return a successful result containing the created commit SHA"
+        return ("commit plan apply did not return a successful result containing the created commit SHA; "
+                f"plan preparation={json.dumps(preparation_result, sort_keys=True)} "
+                f"plan show --json exit={plan_show.returncode} stdout={plan_show.stdout[:4000]} stderr={plan_show.stderr[:1000]}")
     commits = re.findall(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])", text, flags=re.IGNORECASE)
     if not commits:
         return "commit plan apply output did not contain a commit SHA"
@@ -471,7 +482,7 @@ def project_isolation(project_a: str, project_b: str, project_b_root: str, token
         return f"project B tools/list returned HTTP {status}"
     result = body.get("result") if isinstance(body, dict) else None
     tools = result.get("tools", []) if isinstance(result, dict) else []
-    if any(isinstance(tool, dict) and tool.get("name") == "kb-labs-commit__commit_plan_apply" for tool in tools):
+    if any(isinstance(tool, dict) and tool.get("name") == commit_tool("commit plan apply") for tool in tools):
         return "project B listed project A's project-scoped commit tool"
     return unknown_tool(project_b, token)
 
@@ -495,7 +506,7 @@ def project_plugin_catalog_isolation(project_a: str, project_b: str, token: str)
             return f"project {project_id} tools/list returned no tool catalog"
         catalogs[project_id] = {tool["name"] for tool in tools
                                 if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
-    project_only_tool = "kb-labs-commit__commit_plan_apply"
+    project_only_tool = commit_tool("commit plan apply")
     if project_only_tool not in catalogs[project_a]:
         return "Project A's catalog omitted its project-only Commit tool"
     if project_only_tool in catalogs[project_b]:
@@ -505,7 +516,7 @@ def project_plugin_catalog_isolation(project_a: str, project_b: str, token: str)
 
 def project_readonly_tool_isolation(project_a: str, project_b: str, token: str) -> str | None:
     """Read Project A's Commit plan, then verify the same read-only tool is absent from B (S-199.4)."""
-    tool_name = "kb-labs-commit__commit_open"
+    tool_name = commit_tool("commit plan show")
     with invocation_context(step_id="mcp.project-readonly-tool"):
         status_a, body_a, _ = _request(
             project_service_path(project_a, "mcp"), method="POST", token=token,

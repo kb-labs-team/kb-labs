@@ -20,6 +20,11 @@
       "types": "./dist/routes.d.ts",
       "import": "./dist/routes.js",
       "require": "./dist/routes.js"
+    },
+    "./service-commands": {
+      "types": "./dist/service-commands.d.ts",
+      "import": "./dist/service-commands.js",
+      "require": "./dist/service-commands.js"
     }
   },
   "files": [

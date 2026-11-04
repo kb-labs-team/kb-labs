@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_tool_names
 from nightly_report import aggregate, fingerprint, load_results, render_summary, sync_issues
 from entrypoint import run_runner
 import runner as journey_runner
@@ -93,6 +94,38 @@ class UninstallShimResultTest(unittest.TestCase):
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_project_mcp_tool_name_artifact_matches_producer(self):
+        root = Path(__file__).parents[2]
+        result = subprocess.run(
+            ["node", str(root / "services/mcp/app/scripts/generate-project-mcp-journey-names.mjs"), "--check"],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_service_catalog_expectations_follow_the_enabled_service_set(self):
+        self.assertTrue(service_tool_names(DEFAULT_ENABLED_SERVICES))
+        disabled = DEFAULT_ENABLED_SERVICES - {"workflow"}
+        self.assertFalse(any(name.startswith("workflow__") for name in service_tool_names(disabled)))
+
+    def test_s045_case_tool_name_matches_generated_catalog(self):
+        root = Path(__file__).parents[2]
+        catalog = json.loads((root / "e2e/journey/generated/project_mcp_tool_names.json").read_text())
+        service_prefixes = tuple(catalog["servicePrefixes"])
+        generated_names = {
+            tool_name
+            for commands in catalog["services"].values()
+            for tool_name in commands.values()
+        }
+        case = root / "docs/qa/scenarios/S-045-project-mcp-tools.md"
+        row = next(line for line in case.read_text().splitlines() if line.startswith("| S-045.2 |"))
+        case_names = [
+            token
+            for token in row.split("|")[3].split("`")
+            if token.startswith(service_prefixes)
+        ]
+        self.assertTrue(case_names)
+        self.assertTrue(all(name in generated_names for name in case_names))
+
     def test_required_probe_refreshes_mutated_state_outside_claim_selection(self):
         selection = JourneySelection(
             requested=("S-001.1",), claims=frozenset({"S-001.1"}), owning_steps={},
@@ -1638,19 +1671,38 @@ raise SystemExit(1)
 
     def test_mcp_probe_uses_shared_mcp_reader(self):
         tools = [{"name": name, "inputSchema": {"type": "object"}}
-                 for name in ("kb-labs-commit__commit_commit", "kb-labs-workflow__workflow_run", "kb-labs__mcp_diagnostics")]
+                 for name in (commit_tool("commit commit"), *service_tool_names(DEFAULT_ENABLED_SERVICES), "kb-labs__mcp_diagnostics")]
         with patch("service_runner.request_mcp", return_value=(200, {"jsonrpc": "2.0", "result": {"tools": tools}}, {})) as request:
-            failure = mcp_probe("prj_test", "token")
+            failure = mcp_probe("prj_test", "token", DEFAULT_ENABLED_SERVICES)
         self.assertIsNone(failure)
         self.assertEqual(request.call_args.kwargs["accept"], "application/json, text/event-stream")
         self.assertEqual(request.call_args.kwargs["step"], "project-scoped MCP tools/list")
 
+    def test_mcp_probe_accepts_catalog_for_project_without_workflow(self):
+        enabled = DEFAULT_ENABLED_SERVICES - {"workflow"}
+        tools = [{"name": name, "inputSchema": {"type": "object"}}
+                 for name in (commit_tool("commit commit"), *service_tool_names(enabled), "kb-labs__mcp_diagnostics")]
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
+            self.assertIsNone(mcp_probe("prj_without_workflow", "token", enabled))
+
+    def test_mcp_probe_rejects_service_tool_outside_enabled_catalog(self):
+        enabled = DEFAULT_ENABLED_SERVICES - {"workflow"}
+        tools = [{"name": name, "inputSchema": {"type": "object"}}
+                 for name in (commit_tool("commit commit"), *service_tool_names(enabled),
+                              "workflow__workflow_run", "kb-labs__mcp_diagnostics")]
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
+            failure = mcp_probe("prj_with_extra_workflow", "token", enabled)
+        self.assertIn("service catalog mismatch", failure)
+        self.assertIn("workflow__workflow_run", failure)
+
     def test_mcp_probe_uses_sanitized_platform_member_manifest_id(self):
         tools = [{"name": name, "inputSchema": {"type": "object"}}
-                 for name in ("kb-labs-commit__commit_commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics")]
+                 for name in (*service_tool_names(DEFAULT_ENABLED_SERVICES), "kb-labs__mcp_diagnostics")]
         with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
-            failure = mcp_probe("prj_test", "token")
-        self.assertIn("kb-labs-workflow__workflow_run", failure)
+            failure = mcp_probe("prj_test", "token", DEFAULT_ENABLED_SERVICES)
+        self.assertIn("expected=", failure)
+        self.assertIn(commit_tool("commit commit"), failure)
+        self.assertIn("served=", failure)
 
     def test_prepare_mcp_projects_writes_id_and_canonical_root_to_fixture_handoff(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1701,6 +1753,9 @@ raise SystemExit(1)
             "projectARoot": str(project_a.resolve()),
             "projectBId": project_b_id,
             "projectBRoot": project_b_root,
+            "commitPlanPreparationResult": {
+                "path": str(plan_path), "planId": "journey-commit", "totalCommits": 1,
+            },
         })
         self.assertEqual(calls[0], ["kb", "marketplace", "install", "@kb-labs/commit", "--json"])
         registration_calls = [call for call in calls if call[:3] == ["kb", "project", "add"]]

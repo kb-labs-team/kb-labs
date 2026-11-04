@@ -4,7 +4,7 @@
 
 import { defineCommand, validationError, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
-import type { RunsLogsFlags } from '../flags.js';
+import type { RunsLogsFlags } from '@kb-labs/workflow-contracts';
 
 type LogEntry = {
   level: string;

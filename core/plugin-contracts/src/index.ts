@@ -266,6 +266,8 @@ export { createExecutionMeta } from "./runner.js";
 export type {
   ManifestV3,
   ServiceManifest,
+  ServiceCommandDeclaration,
+  ServiceCommandRouteDeclaration,
   ProjectServiceApiDeclaration,
   ProjectServiceDeclaration,
   ServiceRuntime,

@@ -74,6 +74,7 @@ export const workflowRunFlags = {
   'workflow-id': {
     type: 'string',
     description: 'Workflow ID to run (e.g., "release-manager/create-release")',
+    required: true,
   },
   input: {
     type: 'string',
@@ -368,7 +369,7 @@ export const lintFlags = {
   },
 } as const;
 
-export type LintFlags = typeof lintFlags;
+export interface LintFlags { path?: string; json?: boolean; strict?: boolean; }
 
 /**
  * Flags for workflow:defs-list command
@@ -419,3 +420,35 @@ export interface DefsViewFlags {
   id?: string;
   json?: boolean;
 }
+
+export const createFlags = {
+  json: { type: 'boolean', description: OUTPUT_JSON_DESCRIPTION, default: false },
+} as const;
+
+export const jobStatusFlags = {
+  json: { type: 'boolean', description: OUTPUT_JSON_DESCRIPTION, default: false },
+} as const;
+
+export const jobListFlags = {
+  json: { type: 'boolean', description: OUTPUT_JSON_DESCRIPTION, default: false },
+  status: { type: 'string', description: 'Filter by status' },
+} as const;
+
+export const logShowFlags = {
+  json: { type: 'boolean', description: OUTPUT_JSON_DESCRIPTION, default: false },
+} as const;
+
+export const cronsListFlags = {
+  json: { type: 'boolean', description: OUTPUT_JSON_DESCRIPTION, default: false },
+} as const;
+
+export const cronsToggleFlags = {
+  json: { type: 'boolean', description: OUTPUT_JSON_DESCRIPTION, default: false },
+} as const;
+
+export interface CreateFlags { json?: boolean; }
+export interface JobStatusFlags { json?: boolean; }
+export interface JobListFlags { json?: boolean; status?: string; }
+export interface LogShowFlags { json?: boolean; }
+export interface CronsListFlags { json?: boolean; }
+export interface CronsToggleFlags { json?: boolean; }

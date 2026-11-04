@@ -18,6 +18,8 @@ import type {
   RegistrySnapshotManifestEntry,
 } from '@kb-labs/plugin-contracts';
 import type { CliCommandDecl, PermissionSpec } from '@kb-labs/plugin-contracts';
+import type { ServiceManifest } from '@kb-labs/plugin-contracts';
+import type { ServiceCommandRouteDeclaration } from '@kb-labs/plugin-contracts';
 import type { CommandManifest } from '@kb-labs/cli-commands';
 import type { Permits } from './authz.js';
 
@@ -61,7 +63,7 @@ function sanitizePluginId(pluginId: string): string {
  * Build a collision-safe MCP tool name: `{pluginId}__{command_path}`.
  * The plugin segment is sanitized so npm scope chars (@, /) are removed.
  */
-function toolName(pluginId: string, commandPath: string): string {
+export function mcpToolName(pluginId: string, commandPath: string): string {
   return `${sanitizePluginId(pluginId)}__${commandPath.trim().replace(/\s+/g, '_')}`;
 }
 
@@ -107,7 +109,7 @@ function buildTool(entry: RegistrySnapshotManifestEntry, decl: CliCommandDecl): 
     );
   }
   return {
-    name: toolName(entry.pluginId, decl.path),
+    name: mcpToolName(entry.pluginId, decl.path),
     description: decl.describe,
     inputSchema: generateCommandSchema(toCommandManifest(decl, entry)),
     pluginId: entry.pluginId,
@@ -117,6 +119,38 @@ function buildTool(entry: RegistrySnapshotManifestEntry, decl: CliCommandDecl): 
     operationType: decl.operationType,
     permissions: getHandlerPermissions(entry.manifest, 'cli', decl.path),
   };
+}
+
+export interface McpServiceTool {
+  name: string;
+  description: string;
+  inputSchema: {
+    type: 'object';
+    properties: Record<string, { type: 'string' | 'boolean' | 'number' | 'array' }>;
+    required: string[];
+    additionalProperties: false;
+  };
+  serviceId: string;
+  route: ServiceCommandRouteDeclaration;
+}
+
+/** Derive project service tools from the enabled service manifests. */
+export function buildServiceTools(manifests: readonly ServiceManifest[]): McpServiceTool[] {
+  return manifests.flatMap((manifest) => (manifest.commands ?? []).flatMap((command) => {
+    if (command.kind === 'local') return [];
+    return [{
+      name: mcpToolName(manifest.id, command.name),
+      description: command.description,
+      inputSchema: {
+        type: 'object',
+        properties: Object.fromEntries(Object.entries(command.flags).map(([key, flag]) => [key, { type: flag.type }])),
+        required: Object.entries(command.flags).filter(([, flag]) => flag.required).map(([key]) => key),
+        additionalProperties: false,
+      },
+      serviceId: manifest.id,
+      route: command.route,
+    }];
+  }));
 }
 
 /**

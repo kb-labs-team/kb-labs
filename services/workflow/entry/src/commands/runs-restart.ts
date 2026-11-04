@@ -8,7 +8,7 @@
 
 import { defineCommand, validationError, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
-import type { RunsRestartFlags } from '../flags.js';
+import type { RunsRestartFlags } from '@kb-labs/workflow-contracts';
 
 export default defineCommand<unknown, CLIInput<RunsRestartFlags>, unknown>({
   id: 'workflow:runs-restart',
