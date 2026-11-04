@@ -109,19 +109,18 @@ jobs:
         # below. Building the whole workspace here duplicates that work and
         # enters the generic rspack/DTS path that release build runs deliberately
         # avoid. Bootstrap only the platform CLI and release command surface,
-        # plus the adapter packages the workspace config selects: the CLI loads
-        # them dynamically at startup, so they are not in cli-bin's dependency
-        # closure. The list is read from .kb/kb.config.jsonc, never restated.
+        # plus the enabled adapters of the workspace marketplace lock: platform
+        # startup discovers adapter manifests (and slot defaults such as
+        # embeddings) from that lock, and they are loaded dynamically, so they
+        # are not in cli-bin's dependency closure. The list is read from the
+        # lock, never restated.
         run: |
           set -euo pipefail
           adapters="$(node - <<'NODE'
           const fs = require('node:fs');
-          const ts = require('typescript');
-          const parsed = ts.parseConfigFileTextToJson('.kb/kb.config.jsonc', fs.readFileSync('.kb/kb.config.jsonc', 'utf8'));
-          if (parsed.error) throw new Error(ts.flattenDiagnosticMessageText(parsed.error.messageText, '\n'));
-          const selected = Object.values(parsed.config.platform?.adapters ?? {}).flat();
-          const packages = new Set(selected.map((specifier) => specifier.split('/').slice(0, 2).join('/')));
-          process.stdout.write([...packages].sort().join(','));
+          const lock = JSON.parse(fs.readFileSync('.kb/marketplace.lock', 'utf8'));
+          const enabled = Object.entries(lock.adapters ?? {}).filter(([, entry]) => entry.enabled).map(([name]) => name);
+          process.stdout.write(enabled.sort().join(','));
           NODE
           )"
           ./tools/kb-devkit/kb-devkit run build --packages "@kb-labs/cli-bin,@kb-labs/release${adapters:+,$adapters}" --no-cache
