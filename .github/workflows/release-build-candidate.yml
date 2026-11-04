@@ -38,9 +38,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve-gate-policy:
+    name: Resolve declared release gate policy
+    runs-on: ubuntu-latest
+    outputs:
+      required: ${{ steps.policy.outputs.required }}
+      policy: ${{ steps.policy.outputs.policy }}
+      target: ${{ steps.policy.outputs.target }}
+    steps:
+      - name: Checkout exact intent commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 1
+      - name: Resolve flow gate policy
+        id: policy
+        env:
+          FLOW: ${{ inputs.flow }}
+          CHANNEL: ${{ inputs.channel }}
+        run: node .kb/workflows/scripts/resolve-candidate-gate.mjs --flow "$FLOW" --channel "$CHANNEL"
+
   journey-gate:
     name: Clean installer journey gate
     uses: ./.github/workflows/reusable-installer-journey.yml
+    if: needs.resolve-gate-policy.outputs.required == 'true'
+    needs: resolve-gate-policy
     with:
       ref: ${{ inputs.commit_sha }}
     permissions:
@@ -48,7 +70,12 @@ jobs:
 
   build:
     name: Build candidate ${{ inputs.candidate_id }}
-    needs: journey-gate
+    needs: [resolve-gate-policy, journey-gate]
+    if: >-
+      always() &&
+      needs.resolve-gate-policy.result == 'success' &&
+      ((needs.resolve-gate-policy.outputs.required != 'true' && needs.journey-gate.result == 'skipped') ||
+       (needs.resolve-gate-policy.outputs.required == 'true' && needs.journey-gate.result == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -299,6 +326,9 @@ jobs:
           FLOW: ${{ inputs.flow }}
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
+          GATE_POLICY: ${{ needs.resolve-gate-policy.outputs.policy }}
+          GATE_RESULT: ${{ needs.journey-gate.result == 'success' && 'passed' || 'skipped' }}
+          GATE_RUN_ID: ${{ needs.journey-gate.result == 'success' && github.run_id || '' }}
           RUN_ID: ${{ github.run_id }}
           ARTIFACTS_DIR: .kb/release/artifacts
           BUNDLE_DIR: .kb/release/bundle

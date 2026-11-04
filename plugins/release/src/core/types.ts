@@ -280,6 +280,19 @@ export interface FlowConfig {
   tagPattern?: string;
   /** Replaces global build config for this flow. */
   build?: BuildConfig;
+  /** Named candidate delivery destinations declared by this flow. */
+  deliveryTargets?: Record<string, ReleaseDeliveryTarget>;
+}
+
+export interface ReleaseDeliveryTarget {
+  registry: string;
+  kind: 'test' | 'public';
+}
+
+export interface ReleaseFlowPolicy {
+  deliveryTargets: Record<string, ReleaseDeliveryTarget>;
+  gatePolicy: Record<ReleaseChannel, { policy: 'none' | 'release-cases' }>;
+  channelDeliveryTargets: Record<ReleaseChannel, string>;
 }
 
 export interface BuildConfig {

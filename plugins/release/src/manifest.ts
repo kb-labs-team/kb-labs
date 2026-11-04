@@ -367,14 +367,15 @@ export const manifest = {
         ],
       },
 
-      // release:deliver - Verify and deliver an immutable candidate bundle to a registry
+      // release:deliver - Verify and deliver an immutable candidate bundle to a declared target
       {
         path: 'release artifact publish',
         category: 'Publish',
-        describe: 'Verify and deliver the exact tarballs in a sealed candidate bundle to the configured registry',
+        describe: 'Verify and deliver the exact tarballs in a sealed candidate bundle to a declared target',
         operationType: 'execute' as const,
         longDescription:
-          'Delivery verifies the hosted candidate bundle and ships the exact tarballs in its npm/ directory to the configured registry. ' +
+          'Delivery requires a named target declared in release.flows[flow].deliveryTargets and ships the exact tarballs in its npm/ directory to that target. ' +
+          'Test targets accept verified canary and ungated candidates; public targets require a stable candidate with a passed release-case gate. ' +
           'Resolves {flow, channel} from --release-tag via release.flows[*].tagPattern so CI never needs to ' +
           'guess the flow itself — just pass the tag. Requires the expected bundle digest and candidate identity from outside ' +
           'the bundle, then validates the exact file set, tarball names, package manifest, and release index before publishing. ' +
@@ -391,8 +392,8 @@ export const manifest = {
           'candidate-id': { type: 'string', required: true, description: 'Expected candidate id from the hosted build run' },
           commit: { type: 'string', required: true, description: 'Expected full candidate commit SHA from the hosted build run' },
           version: { type: 'string', required: true, description: 'Expected platform version from the hosted build run' },
-          tag: { type: 'string', description: 'npm dist-tag override (default: config.publish.stableTag, falls back to "latest")' },
-          registry: { type: 'string', description: 'Destination registry URL (default: config.publish.npmRegistry)' },
+          target: { type: 'string', required: true, description: 'Named delivery target from release.flows[flow].deliveryTargets' },
+          tag: { type: 'string', description: 'npm dist-tag override (default follows the candidate channel)' },
           otp: { type: 'string', description: 'One-time password (optional, will prompt if needed)' },
           'dry-run': { type: 'boolean', description: 'Simulate delivery without actually publishing' },
           access: {
@@ -404,7 +405,7 @@ export const manifest = {
         }),
 
         examples: [
-          'kb release artifact publish --flow platform --bundle-dir .kb/release/bundle --expected-digest "$EXPECTED_DIGEST" --candidate-id "$CANDIDATE_ID" --commit "$COMMIT" --version "$VERSION" --registry https://registry.npmjs.org',
+          'kb release artifact publish --flow platform --bundle-dir .kb/release/bundle --expected-digest "$EXPECTED_DIGEST" --candidate-id "$CANDIDATE_ID" --commit "$COMMIT" --version "$VERSION" --target npm',
         ],
       },
 

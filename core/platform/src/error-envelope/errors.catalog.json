@@ -3540,6 +3540,36 @@
         "maximumBytes"
       ],
       "httpStatus": 500
+    },
+    {
+      "code": "KB_RELEASE_CANDIDATE_POLICY_REJECTED",
+      "area": "release",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "httpStatus": 400,
+      "message": "Candidate {candidateId} does not satisfy the delivery policy for target {target}.",
+      "hint": "Check the channel gate policy and target kind: gate-required channels need a passed release-case gate at every target, and public targets require a gate-required channel.",
+      "structuredDetailFields": [
+        "candidateId",
+        "target"
+      ]
+    },
+    {
+      "code": "KB_RELEASE_DELIVERY_TARGET_INVALID",
+      "area": "release",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "httpStatus": 400,
+      "message": "Release flow {flow} does not declare delivery target {target}.",
+      "hint": "Declare release.flows.{flow}.deliveryTargets.{target} with registry and kind test or public, then rerun kb release artifact publish --target {target}.",
+      "structuredDetailFields": [
+        "flow",
+        "target"
+      ]
     }
   ]
 }
