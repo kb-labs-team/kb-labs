@@ -7,12 +7,15 @@ export function resolveProjectScope(
   global: GlobalFlags,
   cmdPath: string[],
   flags: Record<string, unknown> = {},
+  hasRegisteredProject = false,
 ): 'platform' | 'required' {
   if (global.version || (global.help && cmdPath.length === 0)) {
     return 'platform';
   }
   if (route.type === 'not-found' || route.type === 'ambiguous') {
-    return 'platform';
+    return route.type === 'not-found' && cmdPath.length > 0 && hasRegisteredProject
+      ? 'required'
+      : 'platform';
   }
   if (route.type === 'system-cmd') {
     const requestedScope = declaredScope(route.cmd.flags, flags);

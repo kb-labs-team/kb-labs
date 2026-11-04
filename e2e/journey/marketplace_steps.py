@@ -31,7 +31,7 @@ from invocations import (
     run_command,
     run_with_runner,
 )
-from plugin_author_steps import run_commit_case_steps
+from plugin_author_steps import preflight_installed_plugin_command, run_commit_case_steps
 from commit_fixture import commit_fixture_source_version
 
 
@@ -694,6 +694,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     export_project_identity_to_child_environment(base_env, project_root=str(project))
     platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
     def cli(args: list[str], cwd: Path = project) -> CompletedProcess[str]:
+        preflight_installed_plugin_command(args, cwd, base_env, runner, Path("kb"))
         return _run(kb_command(args), cwd=cwd, env=base_env, runner=runner)
 
     commit_package = "@kb-labs/commit"
