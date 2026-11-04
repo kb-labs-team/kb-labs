@@ -4,7 +4,7 @@
  *
  * Security features:
  * - Blocks dangerous commands (rm -rf /, fork bombs, etc.)
- * - Timeout enforcement (default 5 minutes)
+ * - Execution cancellation forwarded from the workflow execution boundary
  * - Environment variable isolation
  * - Working directory restrictions
  */
@@ -160,9 +160,6 @@ export interface ShellInput {
   /** Additional environment variables */
   env?: Record<string, string>;
 
-  /** Timeout in milliseconds (default: 300000 = 5 min) */
-  timeout?: number;
-
   /** Throw on non-zero exit code (default: false) */
   throwOnError?: boolean;
 }
@@ -308,18 +305,18 @@ export function mergeJsonOutputs(output: ShellOutput, warn?: (msg: string) => vo
 /**
  * Built-in shell execution handler.
  *
- * Executes shell commands with safety checks and timeout enforcement.
+ * Executes shell commands with safety checks and execution-boundary cancellation.
  *
  * @param ctx - Handler execution context
  * @param input - Shell command input
  * @returns Shell execution result
- * @throws Error if dangerous command detected or timeout exceeded
+ * @throws Error if dangerous command detected or execution is cancelled
  */
 async function shellHandler(
   ctx: PluginContextV3,
   input: ShellInput,
 ): Promise<Record<string, unknown>> {
-  const { command, env = {}, timeout = 300000, throwOnError = false } = input;
+  const { command, env = {}, throwOnError = false } = input;
 
   // Security: Check for dangerous commands
   const normalizedCommand = command.toLowerCase().trim();
@@ -342,11 +339,10 @@ async function shellHandler(
   ctx.platform.logger.info('Executing shell command', {
     command: command.slice(0, 200),
     cwd,
-    timeout,
   });
 
   try {
-    // detached: true puts the subprocess in its own process group. On timeout we kill
+    // detached: true puts the subprocess in its own process group. On cancellation we kill
     // the entire group (process.kill(-pid, 'SIGKILL')), which takes down both the shell
     // and any children it spawned. Without this, SIGTERM reaches only the shell; child
     // processes (e.g. `sleep N`) inherit the pipe write-end and block await indefinitely.
@@ -415,23 +411,23 @@ async function shellHandler(
       for (const line of lines) {emitLine('stderr', line);}
     });
 
-    // Self-managed timeout: kill the entire process group so orphaned children
-    // release the pipe write-end and await proc resolves immediately.
-    let timedOut = false;
-    const killTimer = setTimeout(() => {
-      timedOut = true;
+    // The execution boundary owns the deadline. This handler only terminates
+    // its process group when that boundary signals cancellation.
+    const killProcessGroup = () => {
       const pid = proc.pid;
       if (pid !== undefined) {
         try {
           process.kill(-pid, 'SIGKILL');
-        } catch {
-          // process already exited
+        } catch (error) {
+          if (!(error instanceof Error) || !('code' in error) || error.code !== 'ESRCH') { throw error; }
         }
       }
-    }, timeout);
+    };
+    if (ctx.signal?.aborted) { killProcessGroup(); }
+    else { ctx.signal?.addEventListener('abort', killProcessGroup, { once: true }); }
 
     const result = await proc;
-    clearTimeout(killTimer);
+    ctx.signal?.removeEventListener('abort', killProcessGroup);
 
     // Flush remaining buffered content
     if (stdoutBuf) {emitLine('stdout', stdoutBuf);}
@@ -443,34 +439,7 @@ async function shellHandler(
     stdoutBatcher.flush();
     stderrBatcher.flush();
 
-    if (timedOut) {
-      // Whatever the command printed before the kill is the only clue to
-      // whether it was hung or just slow — without it the run log shows a
-      // multi-hour gap between "Executing shell command" and this error and
-      // nothing in between (see kb-labs incident: 20min Build-step timeout
-      // debugged blind because of exactly this).
-      const stderrTail = tail(stderrFull, FAILURE_OUTPUT_TAIL_CHARS);
-      const stdoutTail = tail(stdoutFull, FAILURE_OUTPUT_TAIL_CHARS);
-      ctx.platform.logger.warn('Shell command timed out', {
-        timeoutMs: timeout,
-        stderrTail,
-        stdoutTail,
-      });
-      // The logger call above writes to the daemon's own log sink, but the
-      // *thrown* error is what actually reaches the caller: it becomes
-      // result.error in ExecutionResult, then result.error.message in
-      // worker.ts's markStepFailed(), which is the only piece of this that
-      // survives into the run's persisted step.error (engine.ts only keeps
-      // message/stack, not arbitrary error.details). So the tails have to be
-      // in the message itself, not just logged, or a step failure still
-      // reads as an empty echo of the command with no signal about how far
-      // it got. Command line is included too since that's often literally
-      // the only thing otherwise in the message on a hung step.
-      const parts = [`Shell command timed out after ${timeout}ms: ${command.slice(0, 200)}`];
-      if (stdoutTail) { parts.push(`--- stdout (tail) ---\n${stdoutTail}`); }
-      if (stderrTail) { parts.push(`--- stderr (tail) ---\n${stderrTail}`); }
-      throw new Error(parts.join('\n'));
-    }
+    if (ctx.signal?.aborted) { throw new Error('Shell command execution aborted'); }
 
     const output: ShellOutput = {
       // Use our accumulated buffers — result.stdout/stderr are empty because
@@ -510,21 +479,6 @@ async function shellHandler(
 
     return mergeJsonOutputs(output, (msg) => ctx.platform.logger.warn(`[shell] ${msg}`));
   } catch (error) {
-    // Handle timeout (defensive fallback: the primary path is the manually
-    // managed killTimer above, which throws before this catch is reached —
-    // this covers execa surfacing its own TimeoutError, e.g. if `reject`
-    // behavior changes upstream). execa's TimeoutError/ExecaError carries
-    // whatever stdout/stderr it captured on the error object itself.
-    if (error && typeof error === 'object' && 'timedOut' in error && error.timedOut) {
-      const execTimeoutError = error as { stdout?: string; stderr?: string };
-      const timeoutParts = [`Shell command timed out after ${timeout}ms: ${command.slice(0, 200)}`];
-      const execStdoutTail = tail(execTimeoutError.stdout ?? '', FAILURE_OUTPUT_TAIL_CHARS);
-      const execStderrTail = tail(execTimeoutError.stderr ?? '', FAILURE_OUTPUT_TAIL_CHARS);
-      if (execStdoutTail) { timeoutParts.push(`--- stdout (tail) ---\n${execStdoutTail}`); }
-      if (execStderrTail) { timeoutParts.push(`--- stderr (tail) ---\n${execStderrTail}`); }
-      throw new Error(timeoutParts.join('\n'));
-    }
-
     // Handle execution error
     if (error && typeof error === 'object' && 'exitCode' in error) {
       const execError = error as { exitCode?: number; stdout?: string; stderr?: string };

@@ -368,10 +368,10 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
     raw.flushHeaders?.();
     raw.write(': connected\n\n');
 
-    const sendEvent = (type: string, payload: unknown, sequence?: number) => {
+    const sendEvent = (type: string, payload: unknown, sequence?: number, jobId?: string, stepId?: string) => {
       if (closed || raw?.writableEnded || !raw) {return;}
       raw.write(`event: ${type}\n`);
-      raw.write(`data: ${JSON.stringify({ type, runId, sequence, payload, timestamp: new Date().toISOString() })}\n\n`);
+      raw.write(`data: ${JSON.stringify({ type, runId, sequence, jobId, stepId, payload, timestamp: new Date().toISOString() })}\n\n`);
     };
 
     // Send current snapshot
@@ -404,7 +404,7 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
 
     onLiveEvent = (event) => {
       if (closed || event.sequence <= run.eventSequence) {return;}
-      sendEvent(event.type, event.payload, event.sequence);
+      sendEvent(event.type, event.payload, event.sequence, event.jobId, event.stepId);
       resetIdle();
       if (TERMINAL_EVENTS.includes(event.type)) {
         cleanup();
