@@ -5,8 +5,8 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ILogger } from '@kb-labs/core-platform';
-import type { WorkflowRerunRequest, WorkflowRestartRequest, WorkflowRunRequest } from '@kb-labs/workflow-contracts';
-import type { WorkflowEngine, WorkflowService } from '@kb-labs/workflow-engine';
+import type { WorkflowRerunRequest, WorkflowRestartRequest, WorkflowRun, WorkflowRunRequest } from '@kb-labs/workflow-contracts';
+import type { WorkflowEngine, WorkflowEvent, WorkflowService } from '@kb-labs/workflow-engine';
 import type { OperationObserver } from '@kb-labs/shared-http';
 import type { WorkflowHostService } from '../host/workflow-host-service.js';
 import { fail, ok } from './response.js';
@@ -298,14 +298,54 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
     const { runId: rawId } = request.params;
     const runId = await hostService.resolveRunId(rawId) ?? rawId;
 
-    const run = await observability.observeOperation('workflow.run.events', () => engine.getRun(runId));
+    let snapshotSent = false;
+    let closed = false;
+    let unsubscribed = false;
+    let unsubscribe: (() => void) | undefined;
+    let raw: typeof reply.raw | undefined;
+    const pendingEvents: WorkflowEvent[] = [];
+    let onLiveEvent: (event: WorkflowEvent) => void = () => {};
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+    const cleanup = () => {
+      if (closed) {return;}
+      closed = true;
+      pendingEvents.length = 0;
+      if (!unsubscribed) {
+        unsubscribed = true;
+        unsubscribe?.();
+      }
+      if (idleTimer) {clearTimeout(idleTimer);}
+      if (keepAliveTimer) {clearInterval(keepAliveTimer);}
+      if (raw && !raw.writableEnded) {raw.end();}
+    };
+    reply.raw.once('close', cleanup);
+    reply.raw.once('error', cleanup);
+    const dispatchEvent = (event: WorkflowEvent) => {
+      if (closed) {return;}
+      if (snapshotSent) {
+        onLiveEvent(event);
+      } else {
+        pendingEvents.push(event);
+      }
+    };
+    unsubscribe = engine.subscribeToRunEvents(runId, (event) => dispatchEvent(event));
+    let run: WorkflowRun | null;
+    try {
+      run = await observability.observeOperation('workflow.run.events', () => engine.getRun(runId));
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+    if (closed) {return;}
     if (!run) {
+      cleanup();
       return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', `Workflow run ${runId} was not found.`, undefined, { runId });
     }
 
     // SSE response
     reply.hijack();
-    const raw = reply.raw;
+    raw = reply.raw;
 
     const origin = request.headers.origin;
     if (typeof origin === 'string') {
@@ -328,14 +368,14 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
     raw.flushHeaders?.();
     raw.write(': connected\n\n');
 
-    const sendEvent = (type: string, payload: unknown) => {
-      if (raw.writableEnded) {return;}
+    const sendEvent = (type: string, payload: unknown, sequence?: number) => {
+      if (closed || raw?.writableEnded || !raw) {return;}
       raw.write(`event: ${type}\n`);
-      raw.write(`data: ${JSON.stringify({ type, runId, payload, timestamp: new Date().toISOString() })}\n\n`);
+      raw.write(`data: ${JSON.stringify({ type, runId, sequence, payload, timestamp: new Date().toISOString() })}\n\n`);
     };
 
     // Send current snapshot
-    sendEvent('run.snapshot', run);
+    sendEvent('run.snapshot', run, run.eventSequence);
 
     // If run already terminal — emit the terminal event then close.
     // Clients subscribing after completion still see the terminal event,
@@ -344,43 +384,41 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       const terminalType =
         run.status === 'success' ? 'run.finished' :
         run.status === 'failed' ? 'run.failed' : 'run.cancelled';
-      sendEvent(terminalType, run);
-      raw.end();
+      sendEvent(terminalType, run, run.eventSequence);
+      cleanup();
       return;
     }
 
-    // Subscribe to live events
-    let idleTimer: ReturnType<typeof setTimeout> | null = null;
-
     const resetIdle = () => {
+      if (closed) {return;}
       if (idleTimer) {clearTimeout(idleTimer);}
       idleTimer = setTimeout(() => {
         cleanup();
       }, IDLE_TIMEOUT_MS);
     };
 
-    const keepAliveTimer = setInterval(() => {
-      if (raw.writableEnded) {return;}
-      raw.write(': keep-alive\n\n');
+    keepAliveTimer = setInterval(() => {
+      if (closed || raw?.writableEnded) {return;}
+      raw?.write(': keep-alive\n\n');
     }, KEEP_ALIVE_MS);
 
-    const unsubscribe = engine.subscribeToRunEvents(runId, (event) => {
-      sendEvent(event.type, event.payload);
+    onLiveEvent = (event) => {
+      if (closed || event.sequence <= run.eventSequence) {return;}
+      sendEvent(event.type, event.payload, event.sequence);
       resetIdle();
       if (TERMINAL_EVENTS.includes(event.type)) {
         cleanup();
       }
-    });
-
-    const cleanup = () => {
-      unsubscribe();
-      if (idleTimer) {clearTimeout(idleTimer);}
-      clearInterval(keepAliveTimer);
-      if (!raw.writableEnded) {raw.end();}
     };
 
     resetIdle();
-    request.raw.on('close', cleanup);
+    snapshotSent = true;
+    pendingEvents.sort((left, right) => left.sequence - right.sequence);
+    for (const event of pendingEvents) {
+      dispatchEvent(event);
+      if (closed || raw.writableEnded) {break;}
+    }
+    pendingEvents.length = 0;
   });
 
   logger.info('[workflows-api] Workflows API endpoints registered');

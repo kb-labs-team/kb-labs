@@ -261,6 +261,7 @@ export const StepRunSchema = z.object({
   name: z.string().min(1),
   index: z.number().int().nonnegative(),
   status: StepStateSchema,
+  eventSequence: z.number().int().nonnegative().default(0),
   queuedAt: z.string().datetime(),
   startedAt: z.string().datetime().optional(),
   finishedAt: z.string().datetime().optional(),
@@ -291,6 +292,7 @@ export const JobRunSchema = z.object({
   tenantId: TenantIdSchema, // ← Inherited from run for isolation
   jobName: z.string().min(1),
   status: JobStateSchema,
+  eventSequence: z.number().int().nonnegative().default(0),
   runsOn: z.enum(['local', 'sandbox']),
   queuedAt: z.string().datetime(),
   startedAt: z.string().datetime().optional(),
@@ -385,6 +387,7 @@ export const RunSchema = z.object({
   name: z.string().min(1),
   version: z.string().min(1),
   status: RunStateSchema,
+  eventSequence: z.number().int().nonnegative().default(0),
   createdAt: z.string().datetime(),
   queuedAt: z.string().datetime(),
   startedAt: z.string().datetime().optional(),

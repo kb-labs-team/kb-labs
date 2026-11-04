@@ -195,6 +195,21 @@ export class WorkflowEngine {
     })
   }
 
+  private async publishEvent(
+    event: Omit<WorkflowEvent, 'sequence'>,
+    sequence?: number,
+  ): Promise<void> {
+    if (sequence !== undefined) {
+      await this.events.publish({ ...event, sequence })
+      return
+    }
+    const run = await this.stateStore.getRun(event.runId)
+    if (!run) {
+      throw new Error(`Cannot publish workflow event for missing run ${event.runId}`)
+    }
+    await this.events.publish({ ...event, sequence: run.eventSequence })
+  }
+
   async createRun(input: CreateRunInput): Promise<WorkflowRun> {
     const run = await this.runCoordinator.ensureRun(input)
 
@@ -207,7 +222,7 @@ export class WorkflowEngine {
       trigger: input.trigger?.type,
     }).catch(() => {}) // Silent fail for analytics
 
-    await this.events.publish({
+    await this.publishEvent({
       type: EVENT_NAMES.run.created,
       runId: run.id,
       payload: {
@@ -280,7 +295,7 @@ export class WorkflowEngine {
       })
     }, ancillaryFailures)
 
-    await this.runAncillaryOperation(runId, '', 'event.publish.run.cancelled', () => this.events.publish({
+    await this.runAncillaryOperation(runId, '', 'event.publish.run.cancelled', () => this.publishEvent({
       type: EVENT_NAMES.run.cancelled,
       runId,
       payload: { reason: 'cancelled by parent workflow' },
@@ -501,7 +516,7 @@ export class WorkflowEngine {
           errorMessage: error.message, willRetry: true, failureKind: classified.kind, failureCode: classified.code,
         })
       }, ancillaryFailures)
-      await this.runAncillaryOperation(runId, jobId, 'event.publish.job.failed', () => this.events.publish({
+      await this.runAncillaryOperation(runId, jobId, 'event.publish.job.failed', () => this.publishEvent({
         type: EVENT_NAMES.job.failed,
         runId,
         jobId,
@@ -517,7 +532,7 @@ export class WorkflowEngine {
           errorMessage: error.message, willRetry: false, failureKind: classified.kind, failureCode: classified.code,
         })
       }, ancillaryFailures)
-      await this.runAncillaryOperation(runId, jobId, 'event.publish.job.failed', () => this.events.publish({
+      await this.runAncillaryOperation(runId, jobId, 'event.publish.job.failed', () => this.publishEvent({
         type: EVENT_NAMES.job.failed,
         runId,
         jobId,
@@ -528,7 +543,7 @@ export class WorkflowEngine {
         cancelledJobs = await this.cancelDownstreamJobs(runId, job.jobName, `upstream job "${job.jobName}" failed`)
       }, ancillaryFailures)
       for (const cancelledJob of cancelledJobs) {
-        await this.runAncillaryOperation(runId, cancelledJob.jobId, 'event.publish.job.cancelled', () => this.events.publish({
+        await this.runAncillaryOperation(runId, cancelledJob.jobId, 'event.publish.job.cancelled', () => this.publishEvent({
           type: EVENT_NAMES.job.cancelled,
           runId,
           jobId: cancelledJob.jobId,
@@ -601,7 +616,7 @@ export class WorkflowEngine {
       stepCount: job?.steps.length ?? 0,
     }).catch(() => {})
 
-    await this.events.publish({
+    await this.publishEvent({
       type: EVENT_NAMES.job.started,
       runId,
       jobId,
@@ -637,7 +652,7 @@ export class WorkflowEngine {
         runId, jobId, jobName: job?.jobName, durationMs: duration, stepCount: job?.steps.length ?? 0,
       })
     }, ancillaryFailures)
-    await this.runAncillaryOperation(runId, jobId, 'event.publish.job.succeeded', () => this.events.publish({
+    await this.runAncillaryOperation(runId, jobId, 'event.publish.job.succeeded', () => this.publishEvent({
       type: EVENT_NAMES.job.succeeded,
       runId,
       jobId,
@@ -745,7 +760,7 @@ export class WorkflowEngine {
             runId, name: run.name, jobCount: run.jobs.length, status: 'success',
           })
         }, ancillaryFailures)
-        await this.runAncillaryOperation(runId, jobId, 'event.publish.run.finished', () => this.events.publish({
+        await this.runAncillaryOperation(runId, jobId, 'event.publish.run.finished', () => this.publishEvent({
           type: EVENT_NAMES.run.finished,
           runId,
           payload: { status: 'success', name: run.name },
@@ -782,7 +797,7 @@ export class WorkflowEngine {
             runId, name: run.name, jobCount: run.jobs.length, status: 'failed',
           })
         }, ancillaryFailures)
-        await this.runAncillaryOperation(runId, jobId, 'event.publish.run.failed', () => this.events.publish({
+        await this.runAncillaryOperation(runId, jobId, 'event.publish.run.failed', () => this.publishEvent({
           type: EVENT_NAMES.run.failed,
           runId,
           payload: { status: 'failed', name: run.name },
@@ -799,18 +814,18 @@ export class WorkflowEngine {
    * Mark step as started (running).
    */
   async markStepStarted(runId: string, jobId: string, stepId: string): Promise<void> {
-    await this.stateStore.transitionStep(runId, jobId, stepId, 'running', (draft) => {
+    const step = await this.stateStore.transitionStep(runId, jobId, stepId, 'running', (draft) => {
       draft.startedAt = new Date().toISOString()
     })
 
     this.logger.debug('Step started', { runId, jobId, stepId })
 
-    await this.events.publish({
+    await this.publishEvent({
       type: EVENT_NAMES.step.started,
       runId,
       jobId,
       stepId,
-    })
+    }, step?.eventSequence)
   }
 
   /**
@@ -822,7 +837,7 @@ export class WorkflowEngine {
     stepId: string,
     output?: unknown,
   ): Promise<void> {
-    await this.stateStore.transitionStep(runId, jobId, stepId, 'success', (draft) => {
+    const step = await this.stateStore.transitionStep(runId, jobId, stepId, 'success', (draft) => {
       draft.finishedAt = new Date().toISOString()
       if (output !== undefined) {
         draft.outputs = output as Record<string, unknown>
@@ -831,13 +846,13 @@ export class WorkflowEngine {
 
     this.logger.debug('Step completed', { runId, jobId, stepId })
 
-    await this.events.publish({
+    await this.publishEvent({
       type: EVENT_NAMES.step.succeeded,
       runId,
       jobId,
       stepId,
       payload: output !== undefined ? { outputs: output } : undefined,
-    })
+    }, step?.eventSequence)
   }
 
   /**
@@ -850,7 +865,7 @@ export class WorkflowEngine {
     error: Error,
     outputs?: Record<string, unknown>,
   ): Promise<void> {
-    await this.stateStore.transitionStep(runId, jobId, stepId, 'failed', (draft) => {
+    const step = await this.stateStore.transitionStep(runId, jobId, stepId, 'failed', (draft) => {
       draft.finishedAt = new Date().toISOString()
       draft.error = {
         message: error.message,
@@ -861,13 +876,13 @@ export class WorkflowEngine {
 
     this.logger.debug('Step failed', { runId, jobId, stepId, error: error.message })
 
-    await this.events.publish({
+    await this.publishEvent({
       type: EVENT_NAMES.step.failed,
       runId,
       jobId,
       stepId,
       payload: { error: error.message },
-    })
+    }, step?.eventSequence)
   }
 
   /**
@@ -902,7 +917,7 @@ export class WorkflowEngine {
       step.startedAt = step.startedAt ?? new Date().toISOString()
     })
 
-    await this.events.publish({
+    await this.publishEvent({
       type: EVENT_NAMES.step.waitingApproval,
       runId,
       payload: { jobId, stepId },
@@ -934,7 +949,7 @@ export class WorkflowEngine {
       step.metadata = { ...(step.metadata ?? {}), childRunId }
     })
 
-    await this.events.publish({
+    await this.publishEvent({
       type: EVENT_NAMES.step.waitingChild,
       runId,
       jobId,
@@ -1019,7 +1034,7 @@ export class WorkflowEngine {
 
     this.logger.info(action === 'approve' ? 'Approval granted' : 'Approval rejected', { runId, jobId, stepId, comment })
 
-    await this.events.publish({
+    await this.publishEvent({
       type: EVENT_NAMES.step.updated,
       runId,
       payload: { jobId, stepId, action },
@@ -1361,7 +1376,7 @@ export class WorkflowEngine {
     type: WorkflowEventName,
     run: WorkflowRun,
   ): Promise<void> {
-    await this.events.publish({
+    await this.publishEvent({
       type,
       runId: run.id,
       payload: {
@@ -1382,7 +1397,7 @@ export class WorkflowEngine {
     entry: { level: string; message: string; stream: string; lineNo: number; timestamp: string; meta?: Record<string, unknown> },
     stepName?: string,
   ): Promise<void> {
-    await this.events.publish({
+    await this.publishEvent({
       type: EVENT_NAMES.log.appended,
       runId,
       jobId,
@@ -1516,6 +1531,46 @@ export class WorkflowEngine {
       }
     }
 
+    // Create a new run identity before rebuilding its nested job and step IDs.
+    const newRunId = randomUUID()
+    const newNow = new Date().toISOString()
+
+    // A replay is a new run with new identities. Keep completed work before a
+    // restart point, and make every job with queued work executable again.
+    const replayJobs = restoredRun.jobs.map((job) => {
+      const jobId = `${newRunId}:${job.jobName}`
+      const steps = job.steps.map((step) => {
+        const completed = step.status === 'success' || step.status === 'skipped'
+        return {
+          ...step,
+          id: `${jobId}:${step.index}`,
+          runId: newRunId,
+          jobId,
+          queuedAt: completed ? step.queuedAt : newNow,
+          startedAt: completed ? step.startedAt : undefined,
+          finishedAt: completed ? step.finishedAt : undefined,
+          durationMs: completed ? step.durationMs : undefined,
+          attempt: 0,
+          outputs: completed ? step.outputs : undefined,
+          error: completed ? step.error : undefined,
+        }
+      })
+      const completed = steps.every((step) => step.status === 'success' || step.status === 'skipped')
+      return {
+        ...job,
+        id: jobId,
+        runId: newRunId,
+        status: completed ? 'success' as const : 'queued' as const,
+        queuedAt: newNow,
+        startedAt: completed ? job.startedAt : undefined,
+        finishedAt: completed ? job.finishedAt : undefined,
+        durationMs: completed ? job.durationMs : undefined,
+        attempt: 0,
+        error: completed ? job.error : undefined,
+        steps,
+      }
+    })
+
     // Reconstruct job.blocked and job.pendingDependencies based on the reset
     // step state. In a completed run all jobs have blocked=false, so without
     // this step scheduleRun would enqueue all jobs simultaneously, ignoring
@@ -1523,7 +1578,7 @@ export class WorkflowEngine {
     const isJobComplete = (job: JobRun): boolean =>
       job.steps.every(s => s.status === 'success' || s.status === 'skipped')
 
-    for (const job of restoredRun.jobs) {
+    for (const job of replayJobs) {
       if (!job.needs || job.needs.length === 0) {
         job.blocked = false
         job.pendingDependencies = []
@@ -1540,11 +1595,10 @@ export class WorkflowEngine {
     // Create a new run ID so the original run's history is preserved.
     // Overwriting the same ID would destroy history and corrupt state if the
     // original run's worker is still live (race condition).
-    const newRunId = randomUUID()
-    const newNow = new Date().toISOString()
     const newRun: WorkflowRun = {
       ...restoredRun,
       id: newRunId,
+      jobs: replayJobs,
       status: 'queued',
       createdAt: newNow,
       queuedAt: newNow,

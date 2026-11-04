@@ -8,6 +8,7 @@ import type { EngineLogger } from './types'
 export interface WorkflowEvent<TPayload = Record<string, unknown>> {
   type: WorkflowEventName
   runId: string
+  sequence: number
   jobId?: string
   stepId?: string
   payload?: TPayload

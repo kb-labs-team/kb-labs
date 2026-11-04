@@ -45,6 +45,7 @@ function makeRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
     name: 'test-workflow',
     version: '1.0.0',
     status: 'queued',
+    eventSequence: 0,
     createdAt: '2026-01-01T00:00:00Z',
     queuedAt: '2026-01-01T00:00:00Z',
     trigger: { type: 'manual' },
@@ -53,9 +54,10 @@ function makeRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
         id: 'run-1:build',
         jobName: 'build',
         status: 'queued',
+        eventSequence: 0,
         steps: [
-          { id: 'run-1:build:0', name: 'compile', index: 0, status: 'queued' },
-          { id: 'run-1:build:1', name: 'test', index: 1, status: 'queued' },
+          { id: 'run-1:build:0', name: 'compile', index: 0, status: 'queued', eventSequence: 0 },
+          { id: 'run-1:build:1', name: 'test', index: 1, status: 'queued', eventSequence: 0 },
         ],
       } as JobRun,
     ],
@@ -94,7 +96,7 @@ describe('StateStore', () => {
       id: 'run-active',
       status: 'running',
       jobs: [{
-        id: 'run-active:build', jobName: 'build', status: 'running', runId: 'run-active',
+        id: 'run-active:build', jobName: 'build', status: 'running', eventSequence: 0, runId: 'run-active',
         runsOn: 'local', queuedAt: '2026-01-01T00:00:00.000Z', attempt: 0, steps: [],
       } as JobRun],
     }));
@@ -102,7 +104,7 @@ describe('StateStore', () => {
       id: 'run-finished',
       status: 'success',
       jobs: [{
-        id: 'run-finished:build', jobName: 'build', status: 'success', runId: 'run-finished',
+        id: 'run-finished:build', jobName: 'build', status: 'success', eventSequence: 0, runId: 'run-finished',
         runsOn: 'local', queuedAt: '2026-01-01T00:00:00.000Z', attempt: 0, steps: [],
       } as JobRun],
     }));
@@ -120,10 +122,10 @@ describe('StateStore', () => {
       status: 'success',
       metadata: { cronId: 'round-three' },
       jobs: [{
-        id: 'run-1:build', jobName: 'build', status: 'success', runId: 'run-1', runsOn: 'local',
+        id: 'run-1:build', jobName: 'build', status: 'success', eventSequence: 0, runId: 'run-1', runsOn: 'local',
         queuedAt: '2026-01-01T00:00:00.000Z', attempt: 0, artifacts: { produce: ['dist/app.tgz'] },
         steps: [{ id: 'run-1:build:0', runId: 'run-1', jobId: 'run-1:build', name: 'compile', index: 0,
-          status: 'success', queuedAt: '2026-01-01T00:00:00.000Z', attempt: 0,
+          status: 'success', eventSequence: 0, queuedAt: '2026-01-01T00:00:00.000Z', attempt: 0,
           spec: { name: 'compile', uses: 'builtin:shell' },
           outputs: { stdout: 'persisted-workflow-output\n' } }],
       } as JobRun],
@@ -292,6 +294,8 @@ describe('StateStore', () => {
 
     const updated = await store.transitionStep('run-1', 'run-1:build', 'run-1:build:0', 'running');
     expect(updated!.status).toBe('running');
+    expect(updated!.eventSequence).toBe(1);
+    expect((await store.getRun('run-1'))?.eventSequence).toBe(1);
   });
 
   it('transitionStep rejects an illegal transition', async () => {
