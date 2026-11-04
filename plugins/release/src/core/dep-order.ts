@@ -1,6 +1,6 @@
 /**
  * Topological ordering of packages by intra-monorepo dependency edges
- * (dependencies + peerDependencies). Used to make sure a package's own
+ * (dependencies + devDependencies + peerDependencies). Used to make sure a package's own
  * workspace dependencies are built before it — a package built out of
  * order can fail to resolve a dependency's subpath exports (e.g.
  * `@kb-labs/sdk/adapters`) if that dependency's dist/ doesn't exist yet
@@ -26,11 +26,15 @@ function buildIntraDeps<T extends OrderablePackage>(packages: T[], nameSet: Set<
     try {
       const pkgJson = JSON.parse(readFileSync(join(pkg.path, 'package.json'), 'utf-8')) as {
         dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
         peerDependencies?: Record<string, string>;
       };
-      for (const section of ['dependencies', 'peerDependencies'] as const) {
+      for (const section of ['dependencies', 'devDependencies', 'peerDependencies'] as const) {
         for (const depName of Object.keys(pkgJson[section] ?? {})) {
-          if (nameSet.has(depName)) { intra.add(depName); }
+          // A package's self-reference resolves within its own package and cannot
+          // be a distinct build prerequisite. Keeping it as an edge creates a
+          // self-cycle that stalls ordering for the rest of the release flow.
+          if (depName !== pkg.name && nameSet.has(depName)) { intra.add(depName); }
         }
       }
     } catch {

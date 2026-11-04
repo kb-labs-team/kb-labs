@@ -3,10 +3,9 @@
  * Prevents crashing running services whose dist/ is wiped by tsup's `clean: true`.
  */
 
-import { rename, rm, cp, readFile } from 'node:fs/promises';
+import { rename, rm, cp, readFile, readdir, symlink, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { BuildResult, PackageVersion, PluginLogger, ReleaseShell } from './types';
 import { topoSortForBuild } from './dep-order';
@@ -119,15 +118,25 @@ export function isBuildCommand(command: string, args?: string[]): boolean {
 async function runTsupSafeBuild(packagePath: string, packageName: string, shell: ReleaseShell): Promise<BuildResult> {
   const startTime = Date.now();
   const buildId = randomBytes(6).toString('hex');
-  const tempDir = join(tmpdir(), `kb-release-build-${buildId}`);
+  const tempPackageDir = join(dirname(packagePath), `.kb-release-build-${buildId}`);
+  const tempDistDir = join(tempPackageDir, 'dist');
   const distDir = join(packagePath, 'dist');
   const backupDir = join(packagePath, `dist.bak-${buildId}`);
 
   try {
-    const buildResult = await executeCommand(shell, 'npx', ['tsup', '-d', tempDir], packagePath, 5 * 60 * 1000);
+    await mkdir(tempPackageDir, { recursive: true });
+    for (const entry of await readdir(packagePath)) {
+      if (entry === 'dist' || entry === 'node_modules') { continue; }
+      await symlink(join(packagePath, entry), join(tempPackageDir, entry));
+    }
+    if (existsSync(join(packagePath, 'node_modules'))) {
+      await symlink(join(packagePath, 'node_modules'), join(tempPackageDir, 'node_modules'));
+    }
+
+    const buildResult = await executeCommand(shell, 'npx', ['tsup'], tempPackageDir, 5 * 60 * 1000);
 
     if (!buildResult.success) {
-      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      await rm(tempPackageDir, { recursive: true, force: true }).catch(() => {});
       return { ...buildResult, name: packageName, durationMs: Date.now() - startTime };
     }
 
@@ -136,19 +145,19 @@ async function runTsupSafeBuild(packagePath: string, packageName: string, shell:
     }
 
     try {
-      await rename(tempDir, distDir);
+      await rename(tempDistDir, distDir);
     } catch {
-      await cp(tempDir, distDir, { recursive: true });
-      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      await cp(tempDistDir, distDir, { recursive: true });
     }
 
     await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    await rm(tempPackageDir, { recursive: true, force: true }).catch(() => {});
     return { success: true, name: packageName, durationMs: Date.now() - startTime };
   } catch (err) {
     if (existsSync(backupDir) && !existsSync(distDir)) {
       await rename(backupDir, distDir).catch(() => {});
     }
-    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    await rm(tempPackageDir, { recursive: true, force: true }).catch(() => {});
     return {
       success: false,
       name: packageName,
