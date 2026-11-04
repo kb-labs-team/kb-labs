@@ -280,6 +280,7 @@ describe("JSON envelope coverage for the live CLI registry", () => {
       logger,
       platformRoot: workspaceRoot,
       projectRoot: workspaceRoot,
+      resolvePlatformVersion: async () => 'test',
     });
   });
 

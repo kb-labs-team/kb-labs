@@ -312,7 +312,7 @@ export class SandboxRunner implements Runner {
             cwd: request.workspace,
           }
         : undefined,
-      timeoutMs: request.spec.timeoutMs ?? resolution.permissions.quotas?.timeoutMs ?? this.defaultTimeout,
+      timeoutMs: request.spec.timeoutMs ?? this.defaultTimeout,
       target: request.target,
       // Pass loggerOverride so InProcessBackend can use it as ctx.logger base.
       // Allows hosts (e.g. workflow daemon stepLogger) to write to SQLite with workflow context.
@@ -411,12 +411,7 @@ export class SandboxRunner implements Runner {
       return buildCancelledResult(signal, result.error)
     }
 
-    // Detect timeout as explicit failure reason
-    const isTimeout = result.error?.code === 'TIMEOUT' ||
-      (result.error?.message ?? '').toLowerCase().includes('timed out') ||
-      (result.error?.message ?? '').toLowerCase().includes('timeout')
-
-    if (isTimeout) {
+    if (result.error?.code === 'KB_RUNTIME_TIMEOUT') {
       context.logger.error('Step timed out', {
         stepId: context.stepId,
         executionId,
@@ -427,8 +422,9 @@ export class SandboxRunner implements Runner {
       return {
         status: 'failed',
         error: {
-          message: result.error?.message ?? 'Step execution timed out',
-          code: 'STEP_TIMEOUT',
+          message: result.error.message,
+          code: result.error.code,
+          hint: result.error.hint,
           details: result.error?.details,
         },
         failure: classifyFailure(result.error, { source: 'execution', phase: 'response' }),
@@ -448,6 +444,7 @@ export class SandboxRunner implements Runner {
         error: {
         message: result.error?.message ?? 'Plugin execution failed',
         code: result.error?.code ?? 'UNKNOWN_ERROR',
+          hint: result.error?.hint,
           details: result.error?.details,
         },
         failure: classifyFailure(result.error, { source: 'execution', phase: 'response' }),
@@ -656,9 +653,6 @@ export class SandboxRunner implements Runner {
         ...(this.platformRoot ? { KB_PLATFORM_ROOT: this.platformRoot } : {}),
         ...(workspace ? { KB_WORKSPACE_ROOT: workspace } : {}),
       },
-      // with.timeout takes precedence; fall back to spec.timeoutMs so that the YAML-level
-      // timeoutMs (e.g. 3600000 for claude-agent steps) also caps the shell process.
-      timeout: typeof withBlock.timeout === 'number' ? withBlock.timeout : spec.timeoutMs,
       throwOnError: typeof withBlock.throwOnError === 'boolean' ? withBlock.throwOnError : false,
     }
 

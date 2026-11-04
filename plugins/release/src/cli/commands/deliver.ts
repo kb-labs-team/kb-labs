@@ -23,14 +23,15 @@ import { createValidatedErrorEnvelope } from '@kb-labs/sdk/errors';
 import {
   mergeConfigWithFlow,
   resolvePublishTag,
-  resolvePublishRegistry,
+  resolveDeliveryTargets,
+  findTestDeliveryTarget,
   verifyAgainstRegistry,
   type ReleaseConfig,
   type PublishablePackage,
 } from '../../core/index.js';
 import { findRepoRoot } from '../../shared/utils';
 import { publishPackagesProgrammatic, type PackageToPublish } from '../../shared/publish-programmatic';
-import { CandidateBundleError, verifyCandidateBundle } from '../../shared/candidate-bundle.js';
+import { CandidateBundleError, CandidatePolicyError, verifyCandidateBundle } from '../../shared/candidate-bundle.js';
 import { resolveFlowName, type FlowResolvableFlags } from '../../shared/resolve-flow';
 
 const REGISTRY_VERIFY_RETRIES = 5;
@@ -43,7 +44,7 @@ interface DeliverFlags extends FlowResolvableFlags {
   commit?: string;
   version?: string;
   tag?: string;
-  registry?: string;
+  target?: string;
   otp?: string;
   access?: string;
   'dry-run'?: boolean;
@@ -83,9 +84,9 @@ function writeGithubStepSummary(markdown: string): void {
   }
 }
 
-function buildFailureSummaryMarkdown(registry: string, publishedCount: number, failed: DeliverFailure[]): string {
+function buildFailureSummaryMarkdown(target: string, registry: string, publishedCount: number, failed: DeliverFailure[]): string {
   const lines: string[] = [
-    `## ❌ \`release artifact publish --registry ${registry}\` — ${failed.length} package(s) failed`,
+    `## ❌ \`release artifact publish --target ${target}\` — ${failed.length} package(s) failed`,
     '',
     `${publishedCount} package(s) delivered successfully; ${failed.length} did not.`,
     '',
@@ -119,8 +120,23 @@ export default defineCommand({
       const config: ReleaseConfig = mergeConfigWithFlow(baseConfig, flowResult);
 
       const dryRun = flags['dry-run'];
-      const npmTag = flags.tag ?? resolvePublishTag(config, 'stable');
-      const registry = flags.registry ?? resolvePublishRegistry(config, 'stable');
+      const targetName = flags.target;
+      const targets = resolveDeliveryTargets(baseConfig, flowResult);
+      const target = targetName ? targets[targetName] : undefined;
+      if (!targetName || !target) {
+        const hint = targetName
+          ? `Declare release.flows.${flowResult}.deliveryTargets.${targetName} with a registry URL and kind 'test' or 'public', then rerun kb release artifact publish --target ${targetName}.`
+          : `Choose a declared target in release.flows.${flowResult}.deliveryTargets, then rerun kb release artifact publish --target <name>.`;
+        return {
+          ok: false,
+          error: createValidatedErrorEnvelope('KB_RELEASE_DELIVERY_TARGET_INVALID', {
+            message: `Release flow ${flowResult} does not declare delivery target ${targetName ?? '(required)'}.`,
+            hint,
+            details: { flow: flowResult, target: targetName ?? '(required)' },
+          }),
+        };
+      }
+      const { registry, kind } = target;
 
       const bundleDir = resolve(repoRoot, flags['bundle-dir'] ?? '.kb/release/bundle');
       const expectedDigest = flags['expected-digest'];
@@ -140,10 +156,26 @@ export default defineCommand({
       const trust = { expectedDigest, candidateId, commit, flow: flowResult, version };
       let candidate: ReturnType<typeof verifyCandidateBundle>;
       try {
-        candidate = verifyCandidateBundle(bundleDir, trust);
+        candidate = verifyCandidateBundle(bundleDir, trust, { targetKind: kind });
       } catch (error) {
         if (!(error instanceof CandidateBundleError)) throw error;
-        const command = `kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --registry "${registry}" --json`;
+        if (error instanceof CandidatePolicyError) {
+          const testTarget = findTestDeliveryTarget(targets);
+          const hint = error.reason === 'channel-gate'
+            ? `${error.message}. After it passes, rerun: kb release artifact publish --target ${targetName}.`
+            : testTarget
+              ? `${error.message} Deliver an ungated channel to the test target with: kb release artifact publish --target ${testTarget}.`
+              : `${error.message} Declare a test target or change the channel gate policy before delivery.`;
+          return {
+            ok: false,
+            error: createValidatedErrorEnvelope('KB_RELEASE_CANDIDATE_POLICY_REJECTED', {
+              message: error.message,
+              hint,
+              details: { candidateId, target: targetName },
+            }),
+          };
+        }
+        const command = `kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --target ${targetName} --json`;
         return {
           ok: false,
           error: {
@@ -153,6 +185,8 @@ export default defineCommand({
           },
         };
       }
+
+      const npmTag = flags.tag ?? resolvePublishTag(config, candidate.provenance.channel);
 
       const packages: PackageToPublish[] = candidate.artifacts.map(a => ({
         name: a.name,
@@ -206,9 +240,9 @@ export default defineCommand({
           });
         const result: DeliverPayload = { success: false, registry, published: publishedList, failed: failedList };
 
-        writeGithubStepSummary(buildFailureSummaryMarkdown(registry, publishedList.length, failedList));
+        writeGithubStepSummary(buildFailureSummaryMarkdown(targetName, registry, publishedList.length, failedList));
 
-        const retryCommand = `kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --registry "${registry}" --json`;
+        const retryCommand = `kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --target ${targetName} --json`;
         const firstFailure = failedList[0];
         const message = firstFailure
           ? `Delivery to ${registry} failed for ${firstFailure.name}@${firstFailure.version}${firstFailure.errorCode ? ` (${firstFailure.errorCode})` : ''}`
@@ -276,7 +310,7 @@ export default defineCommand({
       if (flags.json) {
         const response = verifyIssues.length === 0
           ? result
-          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: `Delivery verification to ${registry} failed after publish completed`, hint: `Packages are already in the registry; inspect verification issues, then retry with: kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --registry "${registry}" --json` } };
+          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: `Delivery verification to ${registry} failed after publish completed`, hint: `Packages are already in the registry; inspect verification issues, then retry with: kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --target ${targetName} --json` } };
         return response;
       }
 
@@ -291,7 +325,7 @@ export default defineCommand({
 
       return verifyIssues.length === 0
         ? result
-          : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Delivery verification to ${registry} failed`, hint: `Packages are already in the registry; inspect verification issues, then retry with: kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --registry "${registry}" --json` } };
+          : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Delivery verification to ${registry} failed`, hint: `Packages are already in the registry; inspect verification issues, then retry with: kb release artifact publish --flow ${flowResult} --bundle-dir "${bundleDir}" --expected-digest "${expectedDigest}" --candidate-id "${candidateId}" --commit "${commit}" --version "${version}" --target ${targetName} --json` } };
     },
   },
 });

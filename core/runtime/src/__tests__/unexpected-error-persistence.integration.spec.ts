@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { computePackageIntegrity, createEmptyLock, createMarketplaceEntry, DiscoveryManager, findWorkspacePackages, writeMarketplaceLock } from '@kb-labs/core-discovery';
 import type { MarketplaceAdapterEntry } from '@kb-labs/plugin-contracts';
 import { ADAPTER_DEFAULTS, loadAdapterManifest } from '@kb-labs/core-platform';
+import { writeTestPlatformReceipt } from './platform-version-fixture.js';
 
 const repositoryRoot = path.resolve(fileURLToPath(import.meta.url), '../../../../..');
 const cliRoot = path.join(repositoryRoot, 'cli/bin');
@@ -24,6 +25,7 @@ describe('installed default log persistence across CLI processes', () => {
     const home = path.join(tempRoot, 'home');
     const platformRoot = path.join(tempRoot, 'platform');
     await Promise.all([mkdir(home, { recursive: true }), mkdir(platformRoot, { recursive: true })]);
+    writeTestPlatformReceipt(platformRoot);
     const layoutPath = path.join(platformRoot, '.kb/v2/platform-layout.json');
     await mkdir(path.dirname(layoutPath), { recursive: true });
     await copyFile(path.join(repositoryRoot, 'tools/kb-create/v2/contracts/platform-layout.json'), layoutPath);

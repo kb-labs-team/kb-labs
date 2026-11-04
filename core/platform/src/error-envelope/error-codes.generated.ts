@@ -30,6 +30,7 @@ export type CatalogErrorCode =
   | "KB_AUTH_TOKEN_EXPIRED"
   | "KB_AUTH_TOKEN_REISSUE_REQUIRED"
   | "KB_AUTH_USER_INACTIVE"
+  | "KB_CLI_PLATFORM_VERSION_UNAVAILABLE"
   | "KB_CONFIG_APPLY_FAILED"
   | "KB_CONFIG_CONFLICT"
   | "KB_CONFIG_INVALID"
@@ -177,8 +178,10 @@ export type CatalogErrorCode =
   | "KB_RELEASE_BASELINE_DRIFT"
   | "KB_RELEASE_BRANCH_NOT_MASTER"
   | "KB_RELEASE_BUILD_FAILED"
+  | "KB_RELEASE_CANDIDATE_POLICY_REJECTED"
   | "KB_RELEASE_CHECK_FAILED"
   | "KB_RELEASE_CHECK_TIMEOUT"
+  | "KB_RELEASE_DELIVERY_TARGET_INVALID"
   | "KB_RELEASE_DOCKER_UNAVAILABLE"
   | "KB_RELEASE_GIT_PUSH_REJECTED"
   | "KB_RELEASE_INDEX_SEAL_FAILED"
@@ -214,6 +217,7 @@ export type CatalogErrorCode =
   | "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION"
   | "KB_RUNTIME_DISK_FULL"
   | "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE"
+  | "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE"
   | "KB_RUNTIME_FRAME_TOO_LARGE"
   | "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE"
   | "KB_RUNTIME_INPUT_INVALID"
@@ -312,6 +316,7 @@ export interface CatalogTemplateParameters {
   "KB_AUTH_TOKEN_EXPIRED": { "gatewayUrl": string };
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": { "gatewayUrl": string };
   "KB_AUTH_USER_INACTIVE": { "gatewayUrl": string };
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": Record<never, never>;
   "KB_CONFIG_APPLY_FAILED": Record<never, never>;
   "KB_CONFIG_CONFLICT": { "path": string };
   "KB_CONFIG_INVALID": { "path": string };
@@ -459,8 +464,10 @@ export interface CatalogTemplateParameters {
   "KB_RELEASE_BASELINE_DRIFT": Record<never, never>;
   "KB_RELEASE_BRANCH_NOT_MASTER": Record<never, never>;
   "KB_RELEASE_BUILD_FAILED": Record<never, never>;
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": { "candidateId": string; "target": string };
   "KB_RELEASE_CHECK_FAILED": Record<never, never>;
   "KB_RELEASE_CHECK_TIMEOUT": Record<never, never>;
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": { "flow": string; "target": string };
   "KB_RELEASE_DOCKER_UNAVAILABLE": Record<never, never>;
   "KB_RELEASE_GIT_PUSH_REJECTED": Record<never, never>;
   "KB_RELEASE_INDEX_SEAL_FAILED": Record<never, never>;
@@ -496,6 +503,7 @@ export interface CatalogTemplateParameters {
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string };
   "KB_RUNTIME_DISK_FULL": { "path": string };
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": { "correlationId": string };
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;
@@ -594,6 +602,7 @@ export interface CatalogDetailsFor {
   "KB_AUTH_TOKEN_EXPIRED": { "gatewayUrl": string; "reason"?: string };
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": { "gatewayUrl": string; "reason"?: string };
   "KB_AUTH_USER_INACTIVE": { "gatewayUrl": string; "reason"?: string };
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": Record<string, never>;
   "KB_CONFIG_APPLY_FAILED": Record<string, never>;
   "KB_CONFIG_CONFLICT": { "path": string };
   "KB_CONFIG_INVALID": { "path": string; "contractPath"?: string; "exitCode"?: string; "hostStartupCode"?: string; "launcherLog"?: string; "log"?: string; "nextCommand"?: string; "readinessError"?: string; "readinessURL"?: string; "remedyOperation"?: string; "remedyPlatformRoot"?: string; "stderrTail"?: string; "waited"?: string };
@@ -741,8 +750,10 @@ export interface CatalogDetailsFor {
   "KB_RELEASE_BASELINE_DRIFT": { "check"?: string; "classification"?: string; "distTag"?: string; "gitVersion"?: string; "npmVersion"?: string };
   "KB_RELEASE_BRANCH_NOT_MASTER": { "check"?: string; "classification"?: string; "branch"?: string; "expected"?: string };
   "KB_RELEASE_BUILD_FAILED": Record<string, never>;
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": { "candidateId": string; "target": string };
   "KB_RELEASE_CHECK_FAILED": { "check"?: string; "package"?: string; "classification"?: string; "rule"?: string };
   "KB_RELEASE_CHECK_TIMEOUT": { "check"?: string; "package"?: string; "classification"?: string; "rule"?: string };
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": { "flow": string; "target": string };
   "KB_RELEASE_DOCKER_UNAVAILABLE": { "check"?: string; "classification"?: string; "package"?: string; "rule"?: string };
   "KB_RELEASE_GIT_PUSH_REJECTED": Record<string, never>;
   "KB_RELEASE_INDEX_SEAL_FAILED": { "gate"?: string; "rule"?: string };
@@ -778,6 +789,7 @@ export interface CatalogDetailsFor {
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string; "field"?: string; "observedType"?: string; "observedValuePreview"?: string };
   "KB_RUNTIME_DISK_FULL": { "path": string };
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": { "reason"?: string };
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": Record<string, never>;
   "KB_RUNTIME_FRAME_TOO_LARGE": { "actualBytes"?: string; "maximumBytes"?: string };
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": { "gatewayUrl"?: string; "requestStage"?: string; "httpStatus"?: string; "remoteCorrelationId"?: string; "remoteCode"?: string; "fields"?: string };
   "KB_RUNTIME_INPUT_INVALID": { "candidates"?: string; "field"?: string; "inboxCode"?: string; "waitingSteps"?: string };
@@ -899,6 +911,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_AUTH_TOKEN_EXPIRED": ["gatewayUrl"],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["gatewayUrl"],
   "KB_AUTH_USER_INACTIVE": ["gatewayUrl"],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": ["path"],
   "KB_CONFIG_INVALID": ["path"],
@@ -1046,8 +1059,10 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": ["candidateId","target"],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -1083,6 +1098,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -1181,6 +1197,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_AUTH_TOKEN_EXPIRED": [],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": [],
   "KB_AUTH_USER_INACTIVE": [],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": ["path"],
   "KB_CONFIG_INVALID": ["path"],
@@ -1328,8 +1345,10 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": ["candidateId","target"],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -1365,6 +1384,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -1463,6 +1483,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_AUTH_TOKEN_EXPIRED": ["gatewayUrl"],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["gatewayUrl"],
   "KB_AUTH_USER_INACTIVE": ["gatewayUrl"],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": [],
   "KB_CONFIG_INVALID": ["path"],
@@ -1610,8 +1631,10 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": [],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -1647,6 +1670,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": [],
   "KB_RUNTIME_DISK_FULL": [],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -1745,6 +1769,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_AUTH_TOKEN_EXPIRED": ["gatewayUrl"],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["gatewayUrl"],
   "KB_AUTH_USER_INACTIVE": ["gatewayUrl"],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": ["path"],
   "KB_CONFIG_INVALID": ["path"],
@@ -1892,8 +1917,10 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": ["candidateId","target"],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -1929,6 +1956,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": ["correlationId"],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -2027,6 +2055,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_AUTH_TOKEN_EXPIRED": [],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": [],
   "KB_AUTH_USER_INACTIVE": [],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": ["path"],
   "KB_CONFIG_INVALID": ["path"],
@@ -2174,8 +2203,10 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": ["candidateId","target"],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -2211,6 +2242,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -2309,6 +2341,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_AUTH_TOKEN_EXPIRED": ["gatewayUrl"],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["gatewayUrl"],
   "KB_AUTH_USER_INACTIVE": ["gatewayUrl"],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": [],
   "KB_CONFIG_INVALID": ["path"],
@@ -2456,8 +2489,10 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RELEASE_BASELINE_DRIFT": [],
   "KB_RELEASE_BRANCH_NOT_MASTER": [],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": [],
   "KB_RELEASE_CHECK_FAILED": [],
   "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": [],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": [],
@@ -2493,6 +2528,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": [],
   "KB_RUNTIME_DISK_FULL": [],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": ["correlationId"],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -2591,6 +2627,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_AUTH_TOKEN_EXPIRED": ["reason"],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["reason"],
   "KB_AUTH_USER_INACTIVE": ["reason"],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": [],
   "KB_CONFIG_INVALID": ["contractPath","exitCode","hostStartupCode","launcherLog","log","nextCommand","readinessError","readinessURL","remedyOperation","remedyPlatformRoot","stderrTail","waited"],
@@ -2738,8 +2775,10 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RELEASE_BASELINE_DRIFT": ["check","classification","distTag","gitVersion","npmVersion"],
   "KB_RELEASE_BRANCH_NOT_MASTER": ["check","classification","branch","expected"],
   "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": ["candidateId","target"],
   "KB_RELEASE_CHECK_FAILED": ["check","package","classification","rule"],
   "KB_RELEASE_CHECK_TIMEOUT": ["check","package","classification","rule"],
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": ["flow","target"],
   "KB_RELEASE_DOCKER_UNAVAILABLE": ["check","classification","package","rule"],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": ["gate","rule"],
@@ -2775,6 +2814,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["field","observedType","observedValuePreview"],
   "KB_RUNTIME_DISK_FULL": [],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": ["reason"],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": ["actualBytes","maximumBytes"],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": ["gatewayUrl","requestStage","httpStatus","remoteCorrelationId","remoteCode","fields"],
   "KB_RUNTIME_INPUT_INVALID": ["candidates","field","inboxCode","waitingSteps"],
@@ -2873,6 +2913,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_AUTH_TOKEN_EXPIRED": Record<never, never>;
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": Record<never, never>;
   "KB_AUTH_USER_INACTIVE": Record<never, never>;
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": Record<never, never>;
   "KB_CONFIG_APPLY_FAILED": Record<never, never>;
   "KB_CONFIG_CONFLICT": { "path": string };
   "KB_CONFIG_INVALID": { "path": string };
@@ -3020,8 +3061,10 @@ export interface CatalogMessageTemplateParameters {
   "KB_RELEASE_BASELINE_DRIFT": Record<never, never>;
   "KB_RELEASE_BRANCH_NOT_MASTER": Record<never, never>;
   "KB_RELEASE_BUILD_FAILED": Record<never, never>;
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": { "candidateId": string; "target": string };
   "KB_RELEASE_CHECK_FAILED": Record<never, never>;
   "KB_RELEASE_CHECK_TIMEOUT": Record<never, never>;
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": { "flow": string; "target": string };
   "KB_RELEASE_DOCKER_UNAVAILABLE": Record<never, never>;
   "KB_RELEASE_GIT_PUSH_REJECTED": Record<never, never>;
   "KB_RELEASE_INDEX_SEAL_FAILED": Record<never, never>;
@@ -3057,6 +3100,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string };
   "KB_RUNTIME_DISK_FULL": { "path": string };
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;
@@ -3155,6 +3199,7 @@ export interface CatalogHintTemplateParameters {
   "KB_AUTH_TOKEN_EXPIRED": { "gatewayUrl": string };
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": { "gatewayUrl": string };
   "KB_AUTH_USER_INACTIVE": { "gatewayUrl": string };
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": Record<never, never>;
   "KB_CONFIG_APPLY_FAILED": Record<never, never>;
   "KB_CONFIG_CONFLICT": Record<never, never>;
   "KB_CONFIG_INVALID": { "path": string };
@@ -3302,8 +3347,10 @@ export interface CatalogHintTemplateParameters {
   "KB_RELEASE_BASELINE_DRIFT": Record<never, never>;
   "KB_RELEASE_BRANCH_NOT_MASTER": Record<never, never>;
   "KB_RELEASE_BUILD_FAILED": Record<never, never>;
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": Record<never, never>;
   "KB_RELEASE_CHECK_FAILED": Record<never, never>;
   "KB_RELEASE_CHECK_TIMEOUT": Record<never, never>;
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": { "flow": string; "target": string };
   "KB_RELEASE_DOCKER_UNAVAILABLE": Record<never, never>;
   "KB_RELEASE_GIT_PUSH_REJECTED": Record<never, never>;
   "KB_RELEASE_INDEX_SEAL_FAILED": Record<never, never>;
@@ -3339,6 +3386,7 @@ export interface CatalogHintTemplateParameters {
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": Record<never, never>;
   "KB_RUNTIME_DISK_FULL": Record<never, never>;
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;
@@ -3437,6 +3485,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_AUTH_TOKEN_EXPIRED": Record<never, never>;
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": Record<never, never>;
   "KB_AUTH_USER_INACTIVE": Record<never, never>;
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": Record<never, never>;
   "KB_CONFIG_APPLY_FAILED": Record<never, never>;
   "KB_CONFIG_CONFLICT": Record<never, never>;
   "KB_CONFIG_INVALID": Record<never, never>;
@@ -3584,8 +3633,10 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RELEASE_BASELINE_DRIFT": Record<never, never>;
   "KB_RELEASE_BRANCH_NOT_MASTER": Record<never, never>;
   "KB_RELEASE_BUILD_FAILED": Record<never, never>;
+  "KB_RELEASE_CANDIDATE_POLICY_REJECTED": Record<never, never>;
   "KB_RELEASE_CHECK_FAILED": Record<never, never>;
   "KB_RELEASE_CHECK_TIMEOUT": Record<never, never>;
+  "KB_RELEASE_DELIVERY_TARGET_INVALID": Record<never, never>;
   "KB_RELEASE_DOCKER_UNAVAILABLE": Record<never, never>;
   "KB_RELEASE_GIT_PUSH_REJECTED": Record<never, never>;
   "KB_RELEASE_INDEX_SEAL_FAILED": Record<never, never>;
@@ -3621,6 +3672,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": Record<never, never>;
   "KB_RUNTIME_DISK_FULL": Record<never, never>;
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": { "correlationId"?: string };
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;

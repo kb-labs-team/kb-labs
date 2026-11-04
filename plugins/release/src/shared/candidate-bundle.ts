@@ -11,14 +11,17 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
+import { resolveCandidateGatePolicy, type CandidateGateProvenance } from '../core/delivery-policy.js';
+import type { ReleaseChannel } from '../core/types.js';
 
 export interface CandidateProvenance {
-  schema: 'kb.release-provenance/1';
+  schema: 'kb.release-provenance/2';
   candidateId: string;
   commit: string;
   flow: string;
   version: string;
-  channel: string;
+  channel: ReleaseChannel;
+  gate: CandidateGateProvenance;
   workflowRunId: string;
   bundleDigest: string;
 }
@@ -28,7 +31,8 @@ export interface CandidateBundleInput {
   commit: string;
   flow: string;
   version: string;
-  channel: string;
+  channel: ReleaseChannel;
+  gate: CandidateGateProvenance;
   workflowRunId: string;
   artifactsDir: string;
   outputDir: string;
@@ -57,6 +61,11 @@ export interface CandidateTrustAnchor {
   commit: string;
   flow: string;
   version: string;
+}
+
+export interface CandidateVerificationPolicy {
+  targetKind: 'test' | 'public';
+  promotionChannel?: ReleaseChannel;
 }
 
 export class CandidateBundleError extends Error {
@@ -113,7 +122,7 @@ function copyTree(source: string, target: string): void {
   }
 }
 
-function payloadDigest(bundleDir: string): string {
+function payloadDigest(bundleDir: string, provenance: Omit<CandidateProvenance, 'bundleDigest'>): string {
   const payload = filesUnder(bundleDir)
     .filter(path => path !== 'provenance.json' && path !== 'bundle.sha256' && path !== 'bundle.modes')
     .map(path => {
@@ -122,7 +131,17 @@ function payloadDigest(bundleDir: string): string {
       return `${path}\0${mode}\0${digest(readFileSync(filePath))}\n`;
     })
     .join('');
-  return digest(payload);
+  const policyIdentity = JSON.stringify({
+    schema: provenance.schema,
+    candidateId: provenance.candidateId,
+    commit: provenance.commit,
+    flow: provenance.flow,
+    version: provenance.version,
+    channel: provenance.channel,
+    workflowRunId: provenance.workflowRunId,
+    gate: provenance.gate,
+  });
+  return digest(`${payload}\0${policyIdentity}`);
 }
 
 function writeBundleIndexes(bundleDir: string): void {
@@ -158,16 +177,17 @@ export function createCandidateBundle(input: CandidateBundleInput): CandidatePro
   if (input.binariesDir) copyTree(input.binariesDir, join(bundleDir, 'binaries'));
 
   const provenance: Omit<CandidateProvenance, 'bundleDigest'> = {
-    schema: 'kb.release-provenance/1',
+    schema: 'kb.release-provenance/2',
     candidateId: input.candidateId,
     commit: input.commit,
     flow: input.flow,
     version: input.version,
     channel: input.channel,
     workflowRunId: input.workflowRunId,
+    gate: input.gate,
   };
   writeFileSync(join(bundleDir, 'provenance.json'), `${JSON.stringify({ ...provenance, bundleDigest: '' }, null, 2)}\n`);
-  const completeProvenance: CandidateProvenance = { ...provenance, bundleDigest: payloadDigest(bundleDir) };
+  const completeProvenance: CandidateProvenance = { ...provenance, bundleDigest: payloadDigest(bundleDir, provenance) };
   writeFileSync(join(bundleDir, 'provenance.json'), `${JSON.stringify(completeProvenance, null, 2)}\n`);
   writeBundleIndexes(bundleDir);
   verifyCandidateBundle(bundleDir, {
@@ -176,7 +196,7 @@ export function createCandidateBundle(input: CandidateBundleInput): CandidatePro
     commit: input.commit,
     flow: input.flow,
     version: input.version,
-  });
+  }, { targetKind: 'test' });
   return completeProvenance;
 }
 
@@ -241,7 +261,11 @@ function verifyNpmArtifacts(artifactsDir: string): CandidateArtifact[] {
   return manifest;
 }
 
-export function verifyCandidateBundle(bundlePath: string, trust: CandidateTrustAnchor): VerifiedCandidateBundle {
+export function verifyCandidateBundle(
+  bundlePath: string,
+  trust: CandidateTrustAnchor,
+  policy: CandidateVerificationPolicy,
+): VerifiedCandidateBundle {
   const bundleDir = resolve(bundlePath);
   try {
     if (!statSync(bundleDir).isDirectory()) throw new CandidateBundleError(`Candidate bundle path is not a directory: ${bundleDir}`);
@@ -250,9 +274,14 @@ export function verifyCandidateBundle(bundlePath: string, trust: CandidateTrustA
     throw new CandidateBundleError(`Candidate bundle directory does not exist or cannot be read: ${bundleDir}`);
   }
   const provenance = readJson<CandidateProvenance>(join(bundleDir, 'provenance.json'), 'provenance.json');
-  if (provenance.schema !== 'kb.release-provenance/1' || !provenance.candidateId || !/^[a-f0-9]{40}$/i.test(provenance.commit ?? '')
-    || !provenance.flow || !provenance.version || !provenance.channel || !provenance.workflowRunId) {
+  if (provenance.schema !== 'kb.release-provenance/2' || !provenance.candidateId || !/^[a-f0-9]{40}$/i.test(provenance.commit ?? '')
+    || !provenance.flow || !provenance.version || !['canary', 'stable'].includes(provenance.channel) || !provenance.workflowRunId) {
     throw new CandidateBundleError('Candidate provenance is incomplete or unsupported');
+  }
+  if (!provenance.gate || !['none', 'release-cases'].includes(provenance.gate.policy)
+    || !['passed', 'failed', 'skipped'].includes(provenance.gate.result)
+    || (provenance.gate.result === 'passed' && !provenance.gate.runId)) {
+    throw new CandidateBundleError('Candidate provenance is missing a valid gate result');
   }
   if (!/^[a-f0-9]{64}$/.test(trust.expectedDigest)) {
     throw new CandidateBundleError('The trusted candidate digest must be a SHA-256 hex digest');
@@ -260,6 +289,36 @@ export function verifyCandidateBundle(bundlePath: string, trust: CandidateTrustA
   if (provenance.candidateId !== trust.candidateId || provenance.commit.toLowerCase() !== trust.commit.toLowerCase()
     || provenance.flow !== trust.flow || provenance.version !== trust.version) {
     throw new CandidateBundleError('Candidate provenance does not match the trusted candidate identity');
+  }
+  if (policy.promotionChannel && provenance.channel !== policy.promotionChannel) {
+    throw new CandidatePolicyError(
+      `Candidate channel ${provenance.channel} does not match promotion channel ${policy.promotionChannel}`,
+      'channel-mismatch',
+    );
+  }
+  const { bundleDigest, ...provenanceIdentity } = provenance;
+  if (payloadDigest(bundleDir, provenanceIdentity) !== bundleDigest) {
+    throw new CandidateBundleError('Candidate payload digest differs from provenance.json');
+  }
+  if (bundleDigest !== trust.expectedDigest) {
+    throw new CandidateBundleError('Candidate payload digest differs from the trusted candidate digest');
+  }
+  const declaredGatePolicy = resolveCandidateGatePolicy(provenance.flow, provenance.channel);
+  if (provenance.gate.policy !== declaredGatePolicy.policy) {
+    throw new CandidateBundleError('Candidate provenance gate policy differs from the release flow declaration');
+  }
+  if (declaredGatePolicy.policy === 'release-cases'
+    && (provenance.gate.result !== 'passed' || !provenance.gate.runId)) {
+    throw new CandidatePolicyError(
+      `Channel ${provenance.channel} requires a passed release-case gate`,
+      'channel-gate',
+    );
+  }
+  if (policy.targetKind === 'public' && declaredGatePolicy.policy !== 'release-cases') {
+    throw new CandidatePolicyError(
+      'Public delivery requires a channel with a passed release-case gate',
+      'target-kind',
+    );
   }
 
   const checksumIndex = parseIndexedPaths(bundleDir, 'bundle.sha256');
@@ -291,12 +350,6 @@ export function verifyCandidateBundle(bundlePath: string, trust: CandidateTrustA
       throw new CandidateBundleError(`Candidate control index ${indexFile} does not have its canonical mode 0644`);
     }
   }
-  if (payloadDigest(bundleDir) !== provenance.bundleDigest) {
-    throw new CandidateBundleError('Candidate payload digest differs from provenance.json');
-  }
-  if (provenance.bundleDigest !== trust.expectedDigest) {
-    throw new CandidateBundleError('Candidate payload digest differs from the trusted candidate digest');
-  }
   if (provenance.flow === 'platform') {
     const index = readJson<{ platforms?: Array<{ id: string; version: string }> }>(join(bundleDir, 'release-index.json'), 'release-index.json');
     const platform = index.platforms?.find(entry => entry.id === 'platform');
@@ -305,4 +358,11 @@ export function verifyCandidateBundle(bundlePath: string, trust: CandidateTrustA
     }
   }
   return { bundleDir, artifactsDir, provenance, artifacts };
+}
+
+export class CandidatePolicyError extends CandidateBundleError {
+  constructor(message: string, readonly reason: 'channel-gate' | 'target-kind' | 'channel-mismatch') {
+    super(message);
+    this.name = 'CandidatePolicyError';
+  }
 }

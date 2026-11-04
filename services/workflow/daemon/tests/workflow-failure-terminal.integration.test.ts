@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { openCatalog } from '@kb-labs/core-registry';
 import { InMemoryCache, InMemoryEventBus, InMemoryStorage } from '@kb-labs/core-platform/inmemory';
 import { FaultInjectingCache } from '@kb-labs/shared-testing';
 import { mockLogger } from '@kb-labs/shared-testing';
+import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { PlatformContainer } from '@kb-labs/core-runtime';
+import { createDefaultProcessExecutor } from '@kb-labs/plugin-runtime';
+import { isTerminal } from '@kb-labs/workflow-constants';
 import { EnvSecretProvider, WorkflowEngine, workflowDeadLetterCacheKey, workflowProjectCacheKey } from '@kb-labs/workflow-engine';
-import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct';
+import { createExecutionBackend, createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct';
 import { createWorkflowWorker } from '../src/worker.js';
 
 // case: S-029.2, S-009.4
@@ -61,7 +65,7 @@ describe('live workflow failure terminalization', () => {
     });
     const failedJobId = run.jobs[0]!.id;
     deadLetterKey = workflowProjectCacheKey(projectId, workflowDeadLetterCacheKey(run.id, failedJobId));
-    const registry = await openCatalog({ platformRoot: workspaceRoot, projectRoot: workspaceRoot });
+    const registry = await openCatalog({ platformRoot: workspaceRoot, projectRoot: workspaceRoot }, { resolvePlatformVersion: async () => 'test' });
     let executionCount = 0;
     const backend = createNormalizedExecutionBackend({
       async execute(request) {
@@ -102,6 +106,108 @@ describe('live workflow failure terminalization', () => {
       await registry.dispose();
     }
   });
+
+  // case: S-243.5
+  it('expires a real shell step at its declared timeout and terminalizes the run with the catalogue error', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'workflow-live-timeout-'));
+    roots.push(workspaceRoot);
+    const pidFile = join(workspaceRoot, 'sleep.pid');
+    const logger = mockLogger();
+    const projectId = 'prj_0000000000000001';
+    const cache = new InMemoryCache();
+    const storage = new InMemoryStorage();
+    const events = new InMemoryEventBus();
+    const engine = new WorkflowEngine({
+      projectId, cache, storage, events, logger,
+      secretProvider: new EnvSecretProvider(), workspaceRoot,
+    });
+    const run = await engine.createRun({
+      spec: {
+        name: 'terminal-timeout', version: '1.0.0', on: { manual: true },
+        jobs: {
+          timeout: {
+            runsOn: 'local',
+            steps: [{
+              name: 'Timed shell',
+              uses: 'builtin:shell',
+              timeoutMs: 1500,
+              with: { command: `sleep 30 & echo $! > '${pidFile}'; wait`, throwOnError: true },
+            }],
+          },
+        },
+      },
+      trigger: { type: 'manual' }, metadata: { workflowId: 'terminal-timeout' },
+    });
+    const platform = new PlatformContainer();
+    platform.setAdapter('logger', logger);
+    platform.setAdapter('processExecutor', createDefaultProcessExecutor(logger));
+    const executionBackend = createExecutionBackend({ platform, mode: 'in-process' });
+    const registry = await openCatalog({ platformRoot: workspaceRoot, projectRoot: workspaceRoot });
+    const worker = await createWorkflowWorker({
+      engine, secretProvider: new EnvSecretProvider(), cliApi: registry,
+      logger,
+      platform: { executionBackend, hasExecutionBackend: true, getAdapter: () => undefined },
+      workspaceRoot, projectRoot: workspaceRoot, projectId, concurrency: 1,
+    });
+
+    let childPid: number | undefined;
+    let workerRun: Promise<void> | undefined;
+    try {
+      workerRun = worker.start();
+      await vi.waitFor(async () => {
+        let pidContents: string | undefined;
+        try { pidContents = await readFile(pidFile, 'utf8'); }
+        catch (error) {
+          if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') { throw error; }
+        }
+        if (pidContents === undefined) {
+          const current = await engine.getRun(run.id);
+          if (current?.status === 'failed') {
+            throw new Error(`workflow failed before shell child start (${current.status}): ${current.jobs[0]?.steps[0]?.error?.message}`);
+          }
+          throw new Error('waiting for the real shell child to start');
+        }
+        childPid = Number(pidContents);
+        expect(childPid).toBeGreaterThan(1);
+      }, { timeout: 4000 });
+      await vi.waitFor(async () => {
+        const current = await engine.getRun(run.id);
+        expect(current?.status).toBe('failed');
+      }, { timeout: 8000 });
+
+      const current = await engine.getRun(run.id);
+      const timeout = createErrorEnvelope('KB_RUNTIME_TIMEOUT', {
+        correlationId: run.id,
+        details: { timeoutMs: '1500' },
+      });
+      expect(isTerminal(current!.status, 'run')).toBe(true);
+      expect(current?.jobs[0]?.steps[0]?.error).toMatchObject({
+        code: timeout.code,
+        message: timeout.message,
+        hint: timeout.hint,
+      });
+      expect(current?.result?.error).toMatchObject({
+        code: timeout.code,
+        message: timeout.message,
+        hint: timeout.hint,
+      });
+      await vi.waitFor(() => {
+        expect(() => process.kill(childPid!, 0)).toThrow();
+      }, { timeout: 2000 });
+    } finally {
+      if (childPid) {
+        try { process.kill(childPid, 'SIGKILL'); }
+        catch (error) {
+          if (!(error instanceof Error) || !('code' in error) || error.code !== 'ESRCH') { throw error; }
+        }
+      }
+      await worker.stop();
+      await workerRun;
+      await executionBackend.shutdown();
+      await platform.shutdown();
+      await registry.dispose();
+    }
+  }, 15000);
 
   // case: S-027.6
   it('detects a real worker process death and persists the failed run through terminalization', async () => {

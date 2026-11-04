@@ -68,6 +68,7 @@ import { CONFIG_FIELD_SCOPE, type PlatformConfig } from "./config.js";
 import { requireProjectContext } from "./project-context.js";
 import { applyLocalNetworkOffset } from "./config-net-offset.js";
 import { isWorkspaceDevelopmentMode } from "./platform-mode.js";
+import { resolvePlatformVersion } from './platform-version.js';
 import { PLATFORM_CONFIG_PRODUCT } from "./schema/platform-config-schema.js";
 import type { PlatformContainer } from './container.js';
 
@@ -684,6 +685,11 @@ export async function loadPlatformConfig(
     platformRoot: roots.platformRoot,
     projectRoot: projectScope === 'platform' ? roots.platformRoot : configRoot,
   }, {
+    resolvePlatformVersion: () => resolvePlatformVersion(roots.platformRoot, {
+      sameLocation: roots.sameLocation,
+      rawConfig: rawProjectConfig,
+      rawPlatformConfig,
+    }),
     ...(options.persistCatalogSnapshot !== undefined ? { persistSnapshot: options.persistCatalogSnapshot } : {}),
     ...(options.executionHealth ? {
       healthContributors: [createHealthContributor('execution', options.executionHealth)],

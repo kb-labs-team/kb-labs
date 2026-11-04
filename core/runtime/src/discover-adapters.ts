@@ -4,6 +4,7 @@
  */
 
 import { openCatalog } from '@kb-labs/core-registry';
+import { resolvePlatformVersion } from './platform-version.js';
 import type { CatalogOpenOptions } from '@kb-labs/plugin-contracts';
 import type { AdapterManifest } from '@kb-labs/core-platform';
 import { loadCatalogAdapterEntries } from './adapter-module-loader.js';
@@ -44,7 +45,16 @@ export async function discoverAdapters(
 ): Promise<Map<string, DiscoveredAdapter>> {
   const catalog = await openCatalog(
     { platformRoot, projectRoot: platformRoot },
-    workspaceOptions ? { workspaceAdapters: workspaceOptions } : {},
+    {
+      resolvePlatformVersion: () => resolvePlatformVersion(
+        workspaceOptions?.development ? workspaceOptions.workspaceRoot : platformRoot,
+        {
+        sameLocation: true,
+        rawConfig: { platform: { mode: workspaceOptions?.development ? 'development' : 'installed' } },
+        },
+      ),
+      ...(workspaceOptions ? { workspaceAdapters: workspaceOptions } : {}),
+    },
   );
   return loadCatalogAdapterEntries(catalog.adapters(), workspaceOptions);
 }
@@ -57,8 +67,16 @@ export async function loadAdapterChannelFactory(
   const catalog = await openCatalog(
     { platformRoot, projectRoot: platformRoot },
     development
-      ? { workspaceAdapters: { development: true, workspaceRoot: platformRoot, configuredPackages: [], discoverAll: true } }
-      : {},
+      ? {
+        resolvePlatformVersion: () => resolvePlatformVersion(platformRoot, {
+          sameLocation: true,
+          rawConfig: { platform: { mode: 'development' } },
+        }),
+        workspaceAdapters: { development: true, workspaceRoot: platformRoot, configuredPackages: [], discoverAll: true },
+      }
+      : {
+        resolvePlatformVersion: () => resolvePlatformVersion(platformRoot, { sameLocation: true }),
+      },
   );
   const adapters = await loadCatalogAdapterEntries(catalog.adapters(), development
     ? { development: true, workspaceRoot: platformRoot, configuredPackages: [], discoverAll: true }

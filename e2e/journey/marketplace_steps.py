@@ -303,9 +303,15 @@ def _platform_snapshot(platform_root: Path) -> tuple[str, tuple[tuple[str, str],
 
 def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[str, str],
                                      runner: CommandRunner) -> None:
-    """Prove the missing-session error, then save the admin CLI session."""
+    """Clear both credential stores, prove the auth refusal, then log in as admin."""
     if journey.mode != "secured":
         return
+
+    logout = kb_command(["auth", "logout", "--json"])
+    with invocation_context(step_id="marketplace.unauthenticated-session"):
+        logout_result = _run(logout, cwd=project, env=env, runner=runner)
+    if logout_result.returncode != 0:
+        raise RuntimeError("could not clear saved Gateway credentials before unauthenticated marketplace checks")
 
     def assert_auth_required(step_id: str) -> None:
         command = kb_command([ "marketplace", "plugins", "list", "--scope", "platform", "--json"])
@@ -318,7 +324,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         failure = decode_ux_error_result(payload) if result.returncode else None
         if (result.returncode == 0 or not isinstance(failure, dict)
                 or failure.get("code") != "KB_AUTH_REQUIRED"
-                or failure.get("message") != "Authentication is required."
+                or failure.get("message") != catalogued_error_message("KB_AUTH_REQUIRED")
                 or failure.get("hint") != catalogued_error_hint(
                     "KB_AUTH_REQUIRED", gatewayUrl=env.get("KB_JOURNEY_BASE_URL", "<url>"))):
             raise RuntimeError("unauthenticated marketplace list did not return KB_AUTH_REQUIRED with the login hint")

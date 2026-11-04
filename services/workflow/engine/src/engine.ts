@@ -434,7 +434,7 @@ export class WorkflowEngine {
   async markJobFailed(
     runId: string,
     jobId: string,
-    error: Error,
+    error: Error & { code?: string; hint?: string; details?: Record<string, unknown> },
     failure?: ClassifiedFailure,
     policyOverride?: false | { max: number; backoff?: 'exp' | 'lin'; initialIntervalMs?: number; maxIntervalMs?: number; on?: string[] }
   ): Promise<WorkflowOperationResult> {
@@ -455,6 +455,9 @@ export class WorkflowEngine {
     await this.stateStore.transitionJob(runId, jobId, 'failed', (draft) => {
       draft.error = {
         message: error.message,
+        code: error.code,
+        hint: error.hint,
+        details: error.details,
         stack: error.stack,
         timestamp: new Date().toISOString(),
       }
@@ -783,7 +786,12 @@ export class WorkflowEngine {
             summary: `Job ${failedJob.jobName} failed`,
             error: {
               message: failedJob.error.message,
-              details: failedJob.error.stack ? { stack: failedJob.error.stack } : undefined,
+              code: failedJob.error.code,
+              hint: failedJob.error.hint,
+              details: {
+                ...(failedJob.error.details ?? {}),
+                ...(failedJob.error.stack ? { stack: failedJob.error.stack } : {}),
+              },
             },
           }
         }
@@ -862,13 +870,16 @@ export class WorkflowEngine {
     runId: string,
     jobId: string,
     stepId: string,
-    error: Error,
+    error: Error & { code?: string; hint?: string; details?: Record<string, unknown> },
     outputs?: Record<string, unknown>,
   ): Promise<void> {
     const step = await this.stateStore.transitionStep(runId, jobId, stepId, 'failed', (draft) => {
       draft.finishedAt = new Date().toISOString()
       draft.error = {
         message: error.message,
+        code: error.code,
+        hint: error.hint,
+        details: error.details,
         stack: error.stack,
       }
       if (outputs) {draft.outputs = outputs}
@@ -1497,7 +1508,13 @@ export class WorkflowEngine {
     // containing fromStepId have all their steps correctly reset to queued.
     if (options.fromStepId) {
       let foundStep = false
+      const restartJob = restoredRun.jobs.find((job) =>
+        job.steps.some((step) => step.id === options.fromStepId),
+      )
       for (const job of restoredRun.jobs) {
+        if (job.status === 'success' && job !== restartJob) {
+          continue
+        }
         for (const step of job.steps) {
           if (step.id === options.fromStepId) {
             foundStep = true

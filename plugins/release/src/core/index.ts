@@ -6,6 +6,7 @@ export * from './reporters';
 export * from './shell-adapter';
 export * from './versioning-strategies';
 export * from './channel';
+export * from './delivery-policy';
 export * from './tag';
 export * from './status';
 

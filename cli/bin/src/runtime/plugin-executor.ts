@@ -260,6 +260,7 @@ export function createSystemCommandContext(
   context: SystemContext,
   platform: PlatformContainer,
   env: NodeJS.ProcessEnv,
+  resolvePlatformVersion: () => Promise<string>,
   resultWriter: CliResultWriter = missingCliResultWriter,
 ): PluginContextV3 & { executionBackend?: PlatformContainer['executionBackend'] } {
   const ui = createCLIUIFacade(
@@ -312,8 +313,7 @@ export function createSystemCommandContext(
       binaryName: cliBinaryName,
       argv: process.argv.slice(2),
       flags: {},
-      // CLI_VERSION is injected from package.json in bin.ts at startup.
-      cliVersion: process.env.CLI_VERSION ?? "0.0.0",
+      resolvePlatformVersion,
     },
     pluginVersion: "1.0.0",
     trace: {

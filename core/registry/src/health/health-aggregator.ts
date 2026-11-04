@@ -23,7 +23,7 @@ export interface HealthDeps {
   listPlugins: () => PluginBrief[];
   getManifest: (pluginId: string) => ManifestV3 | undefined;
   root: string;
-  platformVersion: string;
+  resolvePlatformVersion: () => Promise<string>;
   healthContributors: HealthContributor[];
 }
 
@@ -77,10 +77,10 @@ export class HealthAggregator {
     const degraded = snapshot.partial || snapshot.stale || contributedHealth.some(component => component.status === 'degraded');
 
     const version: SystemHealthSnapshot['version'] = {
-      kbLabs: process.env.KB_LABS_VERSION || this.deps.platformVersion,
       rest: process.env.KB_REST_VERSION || 'unknown',
       studio: process.env.KB_STUDIO_VERSION,
       ...(opts?.version ?? {}),
+      kbLabs: await this.deps.resolvePlatformVersion(),
     };
     if (!version.git && gitInfo) {version.git = gitInfo;}
 

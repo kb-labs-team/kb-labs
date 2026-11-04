@@ -1166,7 +1166,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
-      "processExitClass": "input-refusal",
+      "processExitClass": "operation-failure",
       "message": "Required configuration is missing or conflicting: {field}.",
       "hint": "Provide the configuration value or run the wizard to complete it.",
       "httpStatus": 500
@@ -1704,6 +1704,17 @@
       "processExitClass": "operation-failure",
       "message": "The managed `kb` command points to a platform root without a valid installation receipt.",
       "hint": "Run `kb-create doctor --fix --platform-root <platform-root>` to point the command at the live installation.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_CLI_PLATFORM_VERSION_UNAVAILABLE",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The platform version cannot be read from the resolved root.",
+      "hint": "Run `kb-create doctor --platform-root <platform-root>` to inspect the root, then restore its platform receipt or the core-runtime package manifest.",
       "httpStatus": 500
     },
     {
@@ -2758,6 +2769,21 @@
       "httpStatus": 500
     },
     {
+      "code": "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE",
+      "httpStatus": 503,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "message": "No execution host is connected for this namespace.",
+      "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the Gateway dispatch record, then ensure a RuntimeServer is connected to the Gateway.",
+      "hintWithoutCorrelationId": "Ensure a RuntimeServer is running and connected to the Gateway, then retry the command.",
+      "runtimeTemplateParameters": {
+        "correlationId": "optional"
+      }
+    },
+    {
       "code": "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE",
       "area": "runtime",
       "stage": "run",
@@ -3540,6 +3566,36 @@
         "maximumBytes"
       ],
       "httpStatus": 500
+    },
+    {
+      "code": "KB_RELEASE_CANDIDATE_POLICY_REJECTED",
+      "area": "release",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "httpStatus": 400,
+      "message": "Candidate {candidateId} does not satisfy the delivery policy for target {target}.",
+      "hint": "Check the channel gate policy and target kind: gate-required channels need a passed release-case gate at every target, and public targets require a gate-required channel.",
+      "structuredDetailFields": [
+        "candidateId",
+        "target"
+      ]
+    },
+    {
+      "code": "KB_RELEASE_DELIVERY_TARGET_INVALID",
+      "area": "release",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "httpStatus": 400,
+      "message": "Release flow {flow} does not declare delivery target {target}.",
+      "hint": "Declare release.flows.{flow}.deliveryTargets.{target} with registry and kind test or public, then rerun kb release artifact publish --target {target}.",
+      "structuredDetailFields": [
+        "flow",
+        "target"
+      ]
     }
   ]
 }

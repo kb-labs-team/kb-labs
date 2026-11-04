@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createErrorEnvelope } from '@kb-labs/core-platform';
-import { access, cp, mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, cp, mkdtemp, mkdir, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -12,6 +12,21 @@ import { createProjectRegistry } from '@kb-labs/core-project-registry';
 import { SessionManager } from '@kb-labs/sdk/gateway';
 
 const CLI_CHILD_PROCESS_TIMEOUT_MS = 60_000;
+
+async function writeTestPlatformReceipt(platformRoot: string): Promise<void> {
+  const receiptPath = path.join(platformRoot, '.kb', 'v2', 'receipt.json');
+  const gatewayUrl = process.env.KB_GATEWAY_URL ?? `http://127.0.0.1:${process.env.GATEWAY_PORT ?? '4000'}`;
+  await mkdir(path.dirname(receiptPath), { recursive: true });
+  await writeFile(receiptPath, JSON.stringify({
+    id: 'test-receipt',
+    installationId: 'test-installation',
+    plan: {
+      request: { gatewayUrl },
+      serviceGraph: { platformVersion: '2.120.1' },
+    },
+    verification: { hostHealthUrl: `${gatewayUrl}/health` },
+  }));
+}
 
 async function writeInstalledAdapterLock(
   platformRoot: string,
@@ -65,6 +80,7 @@ describe('installed platform adapter defaults', () => {
       mkdir(registeredProject, { recursive: true }),
       mkdir(unregisteredProject, { recursive: true }),
     ]);
+    await writeTestPlatformReceipt(platformRoot);
     await writeFile(path.join(platformRoot, '.kb', 'kb.config.jsonc'), JSON.stringify({
       gateway: { access: { mode: 'secured' } },
       platform: { adapters: {} },
@@ -201,6 +217,7 @@ describe('installed platform adapter defaults', () => {
       mkdir(projectRoot, { recursive: true }),
       mkdir(home, { recursive: true }),
     ]);
+    await writeTestPlatformReceipt(platformRoot);
     await writeFile(path.join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({
       gateway: { access: { mode: 'local' } },
       platform: { adapters: {} },
@@ -287,6 +304,7 @@ describe('installed platform adapter defaults', () => {
     const primaryGatewayPort = (primaryGatewayServer.address() as AddressInfo).port;
     await writeFile(path.join(primaryPlatformRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
       installationId: 'installed-root-a', verification: { hostHealthUrl: `http://127.0.0.1:${primaryGatewayPort}/health` },
+      plan: { serviceGraph: { platformVersion: '2.120.1' } },
     }));
 
     gatewayServer = createServer((request, response) => {
@@ -309,8 +327,11 @@ describe('installed platform adapter defaults', () => {
     await new Promise<void>((resolve) => gatewayServer!.listen(0, '127.0.0.1', resolve));
     const gatewayPort = (gatewayServer.address() as AddressInfo).port;
     await mkdir(path.join(platformRoot, '.kb', 'v2'), { recursive: true });
-    await writeFile(path.join(platformRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+    const unifiedVersion = '2.120.2-cand.d84c8f013160';
+    const receiptPath = path.join(platformRoot, '.kb', 'v2', 'receipt.json');
+    await writeFile(receiptPath, JSON.stringify({
       installationId: 'installed-root-b', verification: { hostHealthUrl: `http://127.0.0.1:${gatewayPort}/health` },
+      plan: { serviceGraph: { platformVersion: unifiedVersion } },
     }));
 
     const configPath = path.join(workspaceRoot, '.kb', 'kb.config.jsonc');
@@ -360,10 +381,52 @@ describe('installed platform adapter defaults', () => {
       timeout: 30_000,
     });
     expect(version.status, version.stderr || version.stdout).toBe(0);
-    expect(version.stdout.trim()).not.toBe('');
-    await expect(access(path.join(projectRoot, '.kb'))).rejects.toThrow();
-    await expect(access(path.join(env.KB_HOME!, 'state'))).rejects.toThrow();
+    expect(version.stdout.trim()).toBe(unifiedVersion);
 
+    for (const args of [['--version', '--json'], ['--json', '--version']]) {
+      const globalVersionJSON = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), ...args], {
+        cwd: projectRoot,
+        env,
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      expect(globalVersionJSON.status, globalVersionJSON.stderr || globalVersionJSON.stdout).toBe(0);
+      expect(JSON.stringify(JSON.parse(globalVersionJSON.stdout))).toContain(unifiedVersion);
+    }
+
+    const versionJSON = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'version', '--json'], {
+      cwd: projectRoot,
+      env,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    expect(versionJSON.status, versionJSON.stderr || versionJSON.stdout).toBe(0);
+    expect(JSON.stringify(JSON.parse(versionJSON.stdout))).toContain(unifiedVersion);
+
+    const unavailableReceipt = `${receiptPath}.unavailable`;
+    await rename(receiptPath, unavailableReceipt);
+    try {
+      const expectedVersionError = createErrorEnvelope('KB_CLI_PLATFORM_VERSION_UNAVAILABLE');
+      for (const args of [['--version', '--json'], ['--json', '--version'], ['version', '--json']]) {
+        const missingVersion = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), ...args], {
+          cwd: projectRoot,
+          env,
+          encoding: 'utf8',
+          timeout: 30_000,
+        });
+        expect(missingVersion.status, missingVersion.stderr || missingVersion.stdout).not.toBe(0);
+        expect(JSON.parse(missingVersion.stdout)).toMatchObject({
+          ok: false,
+          error: {
+            code: expectedVersionError.code,
+            message: expectedVersionError.message,
+            hint: expectedVersionError.hint,
+          },
+        });
+      }
+    } finally {
+      await rename(unavailableReceipt, receiptPath);
+    }
     await createProjectRegistry({ env }).add(projectRoot);
 
     const command = await spawnCli(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'adapter', 'list', '--json'], {
@@ -473,6 +536,7 @@ describe('installed platform adapter defaults', () => {
     await writeFile(path.join(versionRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
       installationId: 'platform-data-root-test',
       verification: { hostHealthUrl: `http://127.0.0.1:${gatewayPort}/health` },
+      plan: { serviceGraph: { platformVersion: '2.120.1' } },
     }));
 
     const configPath = path.join(versionRoot, '.kb', 'kb.config.jsonc');

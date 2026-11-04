@@ -403,7 +403,7 @@ func configureGatewayAddress(address string, graph *contracts.ServiceGraph, host
 		return resolutionDiag(contracts.CodeInputRequired, "the selected service profile does not declare a Gateway service", map[string]string{"gatewayUrl": address})
 	}
 	if baseGatewayPort < 1 || baseGatewayPort > 65535 {
-		return resolutionDiag(contracts.CodeConfigRequired, "the selected service profile does not declare a valid Gateway port", map[string]string{"gatewayUrl": address})
+		return resolutionDiag(contracts.CodeConfigRequired, "the selected service profile does not declare a valid Gateway port", map[string]string{"field": "gatewayUrl"})
 	}
 	offset := port - baseGatewayPort
 	ports := make(map[string]int, len(graph.Services))
@@ -425,15 +425,15 @@ func configureGatewayAddress(address string, graph *contracts.ServiceGraph, host
 		}
 		var config map[string]any
 		if err := json.Unmarshal([]byte(patches[index].JSON), &config); err != nil {
-			return resolutionDiag(contracts.CodeConfigRequired, "the declared platform adapter options are not valid JSON", map[string]string{"path": patches[index].Path})
+			return resolutionDiag(contracts.CodeConfigRequired, "the declared platform adapter options are not valid JSON", map[string]string{"field": patches[index].Path})
 		}
 		serviceTransport, ok := config["serviceTransport"].(map[string]any)
 		if !ok {
-			return resolutionDiag(contracts.CodeConfigRequired, "platform adapter options do not declare serviceTransport", map[string]string{"path": patches[index].Path})
+			return resolutionDiag(contracts.CodeConfigRequired, "platform adapter options do not declare serviceTransport", map[string]string{"field": patches[index].Path})
 		}
 		services, ok := serviceTransport["services"].(map[string]any)
 		if !ok {
-			return resolutionDiag(contracts.CodeConfigRequired, "serviceTransport does not declare service addresses", map[string]string{"path": patches[index].Path})
+			return resolutionDiag(contracts.CodeConfigRequired, "serviceTransport does not declare service addresses", map[string]string{"field": patches[index].Path})
 		}
 		for serviceID, resolvedPort := range ports {
 			settings, ok := services[serviceID].(map[string]any)
@@ -446,25 +446,25 @@ func configureGatewayAddress(address string, graph *contracts.ServiceGraph, host
 			}
 			serviceURL, err := url.Parse(currentAddress)
 			if err != nil || serviceURL.Hostname() == "" {
-				return resolutionDiag(contracts.CodeConfigRequired, "serviceTransport contains an invalid service URL", map[string]string{"path": patches[index].Path, "service": serviceID})
+				return resolutionDiag(contracts.CodeConfigRequired, "serviceTransport contains an invalid service URL", map[string]string{"field": patches[index].Path})
 			}
 			serviceURL.Host = net.JoinHostPort(serviceURL.Hostname(), strconv.Itoa(resolvedPort))
 			settings["url"] = serviceURL.String()
 		}
 		gateway, ok := services["gateway"].(map[string]any)
 		if !ok {
-			return resolutionDiag(contracts.CodeConfigRequired, "serviceTransport does not declare a Gateway address", map[string]string{"path": patches[index].Path})
+			return resolutionDiag(contracts.CodeConfigRequired, "serviceTransport does not declare a Gateway address", map[string]string{"field": patches[index].Path})
 		}
 		gateway["url"] = address
 		encoded, err := json.Marshal(config)
 		if err != nil {
-			return resolutionDiag(contracts.CodeConfigRequired, "the declared Gateway address could not be encoded", map[string]string{"path": patches[index].Path})
+			return resolutionDiag(contracts.CodeConfigRequired, "the declared Gateway address could not be encoded", map[string]string{"field": patches[index].Path})
 		}
 		patches[index].JSON = string(encoded)
 		configured = true
 	}
 	if !configured {
-		return resolutionDiag(contracts.CodeConfigRequired, "the selected release must declare platform.adapterOptions to set a Gateway address", map[string]string{"gatewayUrl": address})
+		return resolutionDiag(contracts.CodeConfigRequired, "the selected release must declare platform.adapterOptions to set a Gateway address", map[string]string{"field": "gatewayUrl"})
 	}
 	if host.Env == nil {
 		host.Env = map[string]string{}
@@ -699,7 +699,7 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 		}
 		known[requirement.ID] = true
 		if previous, exists := owners[requirement.ID]; exists && previous != requirement.Path {
-			return nil, resolutionDiag(contracts.CodeConfigRequired, "configuration requirement "+requirement.ID+" is declared with conflicting paths", map[string]string{"requirement": requirement.ID})
+			return nil, resolutionDiag(contracts.CodeConfigRequired, "configuration requirement "+requirement.ID+" is declared with conflicting paths", map[string]string{"field": requirement.ID})
 		}
 		owners[requirement.ID] = requirement.Path
 		secrets[requirement.ID] = requirement.Secret
@@ -723,7 +723,7 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 			value = requirement.Default
 		}
 		if value == "" && requirement.Required && !optionalRequirement(requirement) && !allowMissingRequiredInputs {
-			return nil, resolutionDiag(contracts.CodeConfigRequired, "required configuration "+requirement.ID+" is missing", map[string]string{"requirement": requirement.ID})
+			return nil, resolutionDiag(contracts.CodeConfigRequired, "required configuration "+requirement.ID+" is missing", map[string]string{"field": requirement.ID})
 		}
 		if value != "" {
 			result = append(result, contracts.ConfigPatch{Path: requirement.Path, JSON: value, Owner: "manifest:" + requirement.ID})
@@ -731,7 +731,7 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 	}
 	for id := range request.Values {
 		if !known[id] {
-			return nil, resolutionDiag(contracts.CodeConfigRequired, "configuration "+id+" is not declared by selected manifests", map[string]string{"requirement": id})
+			return nil, resolutionDiag(contracts.CodeConfigRequired, "configuration "+id+" is not declared by selected manifests", map[string]string{"field": id})
 		}
 	}
 	if err := validateSecretInputIDs(request.SecretInputs, func(id string) bool { return known[id] && secrets[id] }); err != nil {

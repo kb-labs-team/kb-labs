@@ -12,7 +12,7 @@ import { adapterList as adapterListCommand } from '../../commands/system/adapter
 import { adapterUnbind as adapterUnbindCommand } from '../../commands/system/adapter/unbind.js';
 import { configSet } from '../../commands/system/config/set.js';
 import { ADAPTER_CONFIG_KEYS } from '@kb-labs/core-runtime';
-import { openCatalog } from '@kb-labs/core-registry';
+import { openCatalog as openCatalogWithVersion } from '@kb-labs/core-registry';
 import { setResolvedCatalog } from '../../registry/discovery-state.js';
 
 vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => {
@@ -129,6 +129,11 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   await rm(sandbox, { recursive: true, force: true });
 });
+
+const openCatalog = (
+  scope: Parameters<typeof openCatalogWithVersion>[0],
+  options: Omit<Parameters<typeof openCatalogWithVersion>[1], 'resolvePlatformVersion'> = {},
+) => openCatalogWithVersion(scope, { ...options, resolvePlatformVersion: async () => 'test' });
 
 describe('kb adapter list', () => {
   it.each(adapterListProjectionCases)('projects effective host state for $slot from mapped key $key', async ({ slot, key, projection }) => {

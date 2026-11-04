@@ -59,13 +59,24 @@ describe('installed project plugin routes at CLI bootstrap', () => {
     const pluginRoot = path.join(workspaceRoot, 'plugins', 'commit');
     const packageName = '@kb-labs/commit';
     const version = '2.120.1';
+    const gatewayUrl = process.env.KB_GATEWAY_URL ?? `http://127.0.0.1:${process.env.GATEWAY_PORT ?? '4000'}`;
     await Promise.all([
       mkdir(home, { recursive: true }),
       mkdir(path.join(platformRoot, '.kb'), { recursive: true }),
+      mkdir(path.join(platformRoot, '.kb', 'v2'), { recursive: true }),
       mkdir(projectRoot, { recursive: true }),
       mkdir(packedRoot, { recursive: true }),
       mkdir(unpackedRoot, { recursive: true }),
     ]);
+    await writeFile(path.join(platformRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+      id: 'test-receipt',
+      installationId: 'test-installation',
+      plan: {
+        request: { gatewayUrl },
+        serviceGraph: { platformVersion: version },
+      },
+      verification: { hostHealthUrl: `${gatewayUrl}/health` },
+    }));
     process.env.HOME = home;
     process.env.KB_HOME = kbHome;
     process.env.KB_PLATFORM_ROOT = platformRoot;

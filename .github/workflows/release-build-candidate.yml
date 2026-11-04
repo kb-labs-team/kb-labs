@@ -38,9 +38,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve-gate-policy:
+    name: Resolve declared release gate policy
+    runs-on: ubuntu-latest
+    outputs:
+      required: ${{ steps.policy.outputs.required }}
+      policy: ${{ steps.policy.outputs.policy }}
+      target: ${{ steps.policy.outputs.target }}
+    steps:
+      - name: Checkout exact intent commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 1
+      - name: Resolve flow gate policy
+        id: policy
+        env:
+          FLOW: ${{ inputs.flow }}
+          CHANNEL: ${{ inputs.channel }}
+        run: node .kb/workflows/scripts/resolve-candidate-gate.mjs --flow "$FLOW" --channel "$CHANNEL"
+
   journey-gate:
     name: Clean installer journey gate
     uses: ./.github/workflows/reusable-installer-journey.yml
+    if: needs.resolve-gate-policy.outputs.required == 'true'
+    needs: resolve-gate-policy
     with:
       ref: ${{ inputs.commit_sha }}
     permissions:
@@ -48,7 +70,12 @@ jobs:
 
   build:
     name: Build candidate ${{ inputs.candidate_id }}
-    needs: journey-gate
+    needs: [resolve-gate-policy, journey-gate]
+    if: >-
+      always() &&
+      needs.resolve-gate-policy.result == 'success' &&
+      ((needs.resolve-gate-policy.outputs.required != 'true' && needs.journey-gate.result == 'skipped') ||
+       (needs.resolve-gate-policy.outputs.required == 'true' && needs.journey-gate.result == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -81,8 +108,22 @@ jobs:
         # The release plugin owns the governed dependency-order release build run
         # below. Building the whole workspace here duplicates that work and
         # enters the generic rspack/DTS path that release build runs deliberately
-        # avoid. Bootstrap only the platform CLI and release command surface.
-        run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release --no-cache
+        # avoid. Bootstrap only the platform CLI and release command surface,
+        # plus the enabled adapters of the workspace marketplace lock: platform
+        # startup discovers adapter manifests (and slot defaults such as
+        # embeddings) from that lock, and they are loaded dynamically, so they
+        # are not in cli-bin's dependency closure. The list is read from the
+        # lock, never restated.
+        run: |
+          set -euo pipefail
+          adapters="$(node - <<'NODE'
+          const fs = require('node:fs');
+          const lock = JSON.parse(fs.readFileSync('.kb/marketplace.lock', 'utf8'));
+          const enabled = Object.entries(lock.adapters ?? {}).filter(([, entry]) => entry.enabled).map(([name]) => name);
+          process.stdout.write(enabled.sort().join(','));
+          NODE
+          )"
+          ./tools/kb-devkit/kb-devkit run build --packages "@kb-labs/cli-bin,@kb-labs/release${adapters:+,$adapters}" --no-cache
 
       - name: Hydrate release plan paths for candidate workspace
         # Plans are per-run state and are not part of the immutable source
@@ -299,6 +340,9 @@ jobs:
           FLOW: ${{ inputs.flow }}
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
+          GATE_POLICY: ${{ needs.resolve-gate-policy.outputs.policy }}
+          GATE_RESULT: ${{ needs.journey-gate.result == 'success' && 'passed' || 'skipped' }}
+          GATE_RUN_ID: ${{ needs.journey-gate.result == 'success' && github.run_id || '' }}
           RUN_ID: ${{ github.run_id }}
           ARTIFACTS_DIR: .kb/release/artifacts
           BUNDLE_DIR: .kb/release/bundle

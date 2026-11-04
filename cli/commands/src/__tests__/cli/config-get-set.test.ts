@@ -18,7 +18,7 @@ import { configGet } from '../../commands/system/config/get.js';
 import { configSet } from '../../commands/system/config/set.js';
 import { configShow } from '../../commands/system/config/show.js';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
-import { openCatalog } from '@kb-labs/core-registry';
+import { openCatalog as openCatalogWithVersion } from '@kb-labs/core-registry';
 import { resolveConfigRoots, userConfigFileForScope } from '../../commands/system/config/shared.js';
 import { setResolvedCatalog } from '../../registry/discovery-state.js';
 
@@ -198,6 +198,11 @@ const PLATFORM_FILE = () => path.join(platformRoot, '.kb', 'kb.config.jsonc');
 const PROJECT_SETTINGS_FILE = () => path.join(kbHome, 'state', projectId, 'config.jsonc');
 
 // ── config set ───────────────────────────────────────────────────────────────
+
+const openCatalog = (
+  scope: Parameters<typeof openCatalogWithVersion>[0],
+  options: Omit<Parameters<typeof openCatalogWithVersion>[1], 'resolvePlatformVersion'> = {},
+) => openCatalogWithVersion(scope, { ...options, resolvePlatformVersion: async () => 'test' });
 
 describe('config set', () => {
   it('writes project-owned settings to the platform state directory', async () => {

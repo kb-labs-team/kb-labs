@@ -24,7 +24,7 @@ interface TestLockEntry {
 }
 
 async function openTestCatalog(root: string) {
-  return openCatalog({ platformRoot: root, projectRoot: root });
+  return openCatalog({ platformRoot: root, projectRoot: root }, { resolvePlatformVersion: async () => 'test' });
 }
 
 async function writeLock(root: string, entries: Record<string, TestLockEntry>): Promise<void> {

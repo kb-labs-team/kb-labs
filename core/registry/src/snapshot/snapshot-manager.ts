@@ -27,7 +27,6 @@ export interface SnapshotManagerOptions {
   root: string;
   requestIdentity: string;
   ttlMs?: number;
-  platformVersion: string;
   cache?: ICache;
   cacheSnapshotKey?: string;
   persistSnapshot?: boolean;
@@ -40,7 +39,6 @@ export class SnapshotManager {
   private readonly snapshotPath: string;
   private readonly backupPath: string;
   private readonly ttlMs: number;
-  private readonly platformVersion: string;
   private readonly cache?: ICache;
   private readonly cacheKey?: string;
   private readonly persistSnapshot: boolean;
@@ -57,7 +55,6 @@ export class SnapshotManager {
     this.backupPath = resolveRuntimeStatePath(this.root, [...SNAPSHOT_DIR, SNAPSHOT_BACKUP], stateOptions);
     this.snapshotDir = dirname(this.snapshotPath);
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
-    this.platformVersion = opts.platformVersion;
     this.cache = opts.cache;
     this.cacheKey = opts.cacheSnapshotKey;
     this.persistSnapshot = opts.persistSnapshot ?? true;
@@ -140,7 +137,7 @@ export class SnapshotManager {
       ttlMs: this.ttlMs,
       partial: true,
       stale: false,
-      source: { platformVersion: this.platformVersion, cwd: this.root },
+      source: { cwd: this.root },
       plugins: [],
       manifests: [],
       observations: [],
@@ -214,7 +211,7 @@ export class SnapshotManager {
       ttlMs,
       partial: raw.partial ?? true,
       stale: raw.stale ?? (expiresAt ? Date.now() > Date.parse(expiresAt) : false),
-      source: raw.source ?? { platformVersion: this.platformVersion, cwd: this.root },
+      source: raw.source ?? { cwd: this.root },
       corrupted: !schemaValid || raw.corrupted === true || !Array.isArray(raw.observations),
       plugins: Array.isArray(raw.plugins) ? raw.plugins : [],
       manifests,

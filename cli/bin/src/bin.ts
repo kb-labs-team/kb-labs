@@ -143,10 +143,6 @@ if (process.argv.includes('--json')) {
 // `node_modules/@kb-labs/*` in installed mode (independent of process.cwd()).
 const BIN_MODULE_URL = import.meta.url;
 
-// Inject the package version compiled into this binary by tsup.config.ts.
-declare const __KB_CLI_VERSION__: string;
-process.env.CLI_VERSION = __KB_CLI_VERSION__;
-
 (async () => {
   // Import the platform only after the logging environment is bootstrapped.
   const [{ run }, { platform }, { createJsonPresenter, createTextPresenter }, { handleExecutionError }] = await Promise.all([

@@ -633,8 +633,16 @@ func (r *recordingInstaller) Install(items []contracts.Artifact) error {
 	}
 	return r.failure
 }
-func (r *recordingInstaller) Restore([]contracts.Artifact) error   { r.restores++; return nil }
-func (r *recordingInstaller) Uninstall([]contracts.Artifact) error { return nil }
+func (r *recordingInstaller) Prepare(items []contracts.Artifact) (contracts.PreparedArtifacts, error) {
+	return recordingPreparedArtifacts{install: func() error { return r.Install(items) }}, nil
+}
+
+type recordingPreparedArtifacts struct{ install func() error }
+
+func (p recordingPreparedArtifacts) Install(func(string, bool) error) error { return p.install() }
+func (recordingPreparedArtifacts) Close() error                             { return nil }
+func (r *recordingInstaller) Restore([]contracts.Artifact) error            { r.restores++; return nil }
+func (r *recordingInstaller) Uninstall([]contracts.Artifact) error          { return nil }
 
 func treeDigest(root string) ([32]byte, error) {
 	hash := sha256.New()

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createContextLogger } from '@kb-labs/core-platform';
 import { loadPlatformConfig } from '../config-loader.js';
+import { writeTestPlatformReceipt } from './platform-version-fixture.js';
 
 describe('loadPlatformConfig process secret registration', () => {
   let root: string | undefined;
@@ -22,6 +23,7 @@ describe('loadPlatformConfig process secret registration', () => {
     const adapterRoot = fileURLToPath(new URL('../../../../adapters/openai', import.meta.url));
     const config = path.join(platformRoot, '.kb');
     await mkdir(path.join(platformRoot, 'node_modules', '@kb-labs', 'cli-bin'), { recursive: true });
+    writeTestPlatformReceipt(platformRoot);
     await mkdir(config, { recursive: true });
     await mkdir(projectRoot, { recursive: true });
     await writeFile(path.join(config, 'marketplace.lock'), JSON.stringify({

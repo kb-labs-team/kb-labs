@@ -52,6 +52,27 @@ func TestPnpmUsesVerifiedTarballInsteadOfRegistrySpec(t *testing.T) {
 	}
 }
 
+func TestPnpmRejectsCorruptTarballBeforeWritingSharedCache(t *testing.T) {
+	valid := []byte("sealed package bytes")
+	corrupt := []byte("corrupt package bytes")
+	digest := fmt.Sprintf("%x", sha256.Sum256(valid))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write(corrupt)
+	}))
+	t.Cleanup(server.Close)
+	cacheRoot := t.TempDir()
+	item := contracts.Artifact{ID: "platform", Kind: "package", Package: "@kb/platform", Version: "2",
+		SHA256: digest, Tarball: server.URL + "/platform.tgz"}
+
+	if _, err := (Pnpm{CacheRoot: cacheRoot, Client: server.Client()}).tarball(item); err == nil {
+		t.Fatal("corrupt sealed package tarball unexpectedly passed verification")
+	}
+	cachePath := filepath.Join(cacheRoot, "packages", digest+".tgz")
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Fatalf("corrupt tarball changed shared cache at %s: %v", cachePath, err)
+	}
+}
+
 func TestPnpmRestoreRequiresSharedCacheForSealedArtifacts(t *testing.T) {
 	item := contracts.Artifact{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: strings.Repeat("a", 64), Tarball: "https://registry.test/platform.tgz"}
 	err := (Pnpm{Root: t.TempDir(), Runner: &fakeRunner{}}).Restore([]contracts.Artifact{item})
@@ -83,7 +104,7 @@ func TestPnpmCommandKeepsPackageManagerStateInsideInstallRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := manager.run("add", "file:"+fixture); err != nil {
-		t.Fatalf("pnpm add local artifact: %v", err)
+		t.Fatalf("pnpm add local artifact: %#v", err)
 	}
 	for _, command := range []string{"install", "remove"} {
 		args := []string(nil)
@@ -231,7 +252,7 @@ func TestPnpmMinimumReleaseAgeExemptsOnlySealedExactVersions(t *testing.T) {
 	writeMinimumReleaseAgeWorkspace(t, root)
 	pm := Pnpm{Root: root, PackageManagerRoot: packageManagerRoot, Registry: server.URL}
 	if err := pm.Install([]contracts.Artifact{itemV1}); err != nil {
-		t.Fatalf("install first sealed exact version: %v", err)
+		t.Fatalf("install first sealed exact version: %#v", err)
 	}
 	if err := pm.Install([]contracts.Artifact{itemV2}); err != nil {
 		t.Fatalf("install second sealed exact version from the coalesced exclusion: %v", err)

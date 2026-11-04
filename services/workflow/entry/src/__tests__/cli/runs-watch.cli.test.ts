@@ -55,6 +55,35 @@ afterEach(() => {
 });
 
 describe('workflow:runs watch', () => {
+  // case: S-027.2
+  it('renders active snapshot steps and later step transitions with their workflow IDs', async () => {
+    mockFetchWithSse([
+      {
+        type: 'run.snapshot',
+        payload: {
+          status: 'running',
+          jobs: [{
+            id: 'job-uuid',
+            steps: [{
+              id: 'step-uuid',
+              name: 'First visible step',
+              status: 'running',
+              spec: { id: 'first-id' },
+            }],
+          }],
+        },
+      },
+      { type: 'step.succeeded', stepId: 'step-uuid', payload: { status: 'success' } },
+      { type: 'run.finished', payload: { status: 'success' } },
+    ]);
+
+    const { ui, captured } = createCapturedUI();
+    await runsWatchCommand.execute(createMockContext({ ui }), mockCLIInput({ argv: ['run-abc'] }));
+
+    expect(captured.writes.some((line) => line.includes('step.started') && line.includes('step:first-id'))).toBe(true);
+    expect(captured.writes.some((line) => line.includes('step.succeeded') && line.includes('step:first-id'))).toBe(true);
+  });
+
   it('CW-01: no runId and no runs → exitCode 0, info message', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({

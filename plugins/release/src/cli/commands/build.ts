@@ -121,7 +121,8 @@ export default defineCommand({
           });
 
       const ok = results.every(r => r.success);
-      const failed = results.filter(r => !r.success).map(r => r.name);
+      const failedResults = results.filter(r => !r.success);
+      const failed = failedResults.map(r => r.name);
 
       if (ok) {
         buildLoader.succeed(`Built ${results.length} package(s)`);
@@ -137,6 +138,12 @@ export default defineCommand({
               code: 'KB_RUNTIME_COMMAND_FAILED',
               message: `Release build failed for ${failed.length} package(s).`,
               hint: 'Inspect the failed packages and their build output, resolve the errors, then rerun `kb release build run`.',
+              // The captured tail of each failed build is the only evidence of
+              // why it failed; JSON consumers (CI) never see the side box.
+              cause: failedResults
+                .filter(r => r.error)
+                .map(r => `${r.name}:\n${r.error}`)
+                .join('\n\n') || undefined,
               diagnostics: failed.map((name) => ({
                 code: 'RELEASE_PACKAGE_BUILD_FAILED',
                 severity: 'error' as const,

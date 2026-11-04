@@ -62,6 +62,7 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
         event: 'gateway.execution.dispatch',
         level: 'warn',
         reasonCode: 'execution_host_unavailable',
+        correlationId: requestId,
         message: 'No execution host connected for namespace',
         outcome: 'failed',
         serviceId: 'gateway',
@@ -72,9 +73,8 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
         },
       });
       return reply.code(503).send({
-        error: 'No execution host connected',
-        hint: 'Ensure a RuntimeServer is running and connected to Gateway',
-        namespaceId: auth.namespaceId,
+        ok: false,
+        error: createErrorEnvelope('KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE', { correlationId: requestId }),
       });
     }
 

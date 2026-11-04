@@ -102,5 +102,7 @@ jobs:
             --candidate-id '${{ inputs.candidateId }}' \
             --flow '${{ inputs.flow }}' \
             --version '${{ inputs.version }}' \
+            --commit '${{ inputs.commit }}' \
+            --expected-digest '${{ inputs.expectedDigest }}' \
             --channel '${{ inputs.target }}' \
             --repository "${GITHUB_REPOSITORY:-kb-labs-team/kb-labs}"

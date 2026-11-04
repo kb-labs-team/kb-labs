@@ -25,6 +25,7 @@ vi.mock('node:fs', async (importOriginal) => {
 });
 
 import { runInProcess } from '@kb-labs/plugin-runtime';
+import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { InProcessBackend } from '../backends/in-process.js';
 import type { ExecutionRequest } from '../types.js';
 
@@ -55,7 +56,13 @@ function makeRequest(overrides: Partial<ExecutionRequest> = {}): ExecutionReques
     handlerRef: './dist/handler.js',
     pluginRoot: '/tmp/plugin',
     input: {},
-    descriptor: { hostType: 'workflow' } as unknown as ExecutionRequest['descriptor'],
+    descriptor: {
+      hostType: 'workflow',
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '1.0.0',
+      permissions: {},
+      hostContext: { host: 'workflow', workflowId: 'workflow-1', runId: 'run-1', jobId: 'job-1', stepId: 'step-1', attempt: 0 },
+    } as unknown as ExecutionRequest['descriptor'],
     ...overrides,
   };
 }
@@ -103,5 +110,45 @@ describe('InProcessBackend — loggerOverride platform handoff', () => {
 
     expect(vi.mocked(runInProcess).mock.calls[0]?.[0]?.handlerPath)
       .toMatch(/sessions-handler\.js#createSessionHandler$/);
+  });
+
+  it('enforces the execution request timeout and returns the catalogue timeout code', async () => {
+    vi.mocked(runInProcess).mockImplementation(async (input) => {
+      const signal = input.signal;
+      if (!signal) { throw new Error('execution timeout signal was not provided'); }
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+      return {
+        ok: true,
+        data: undefined,
+        executionMeta: {
+          startTime: 0,
+          endTime: 20,
+          duration: 20,
+          pluginId: 'test-plugin',
+          pluginVersion: '1.0.0',
+          requestId: 'timeout-test',
+        },
+      };
+    });
+    const backend = new InProcessBackend({
+      platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'],
+    });
+
+    const result = await backend.execute(makeRequest({ timeoutMs: 20 }));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) { throw new Error('expected timeout failure'); }
+    const timeout = createErrorEnvelope('KB_RUNTIME_TIMEOUT', {
+      correlationId: 'exec-001',
+      details: { timeoutMs: '20' },
+    });
+    expect(result.error).toMatchObject({
+      code: timeout.code,
+      message: timeout.message,
+      hint: timeout.hint,
+      details: timeout.details,
+    });
   });
 });
