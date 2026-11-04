@@ -110,6 +110,7 @@ describe('workflow project queue ownership', () => {
       runId: 'orphan-run',
       jobName: 'orphan',
       status: 'queued',
+      eventSequence: 0,
       runsOn: 'local',
       queuedAt: new Date().toISOString(),
       attempt: 0,

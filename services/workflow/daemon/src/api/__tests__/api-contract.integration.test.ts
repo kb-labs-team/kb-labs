@@ -35,6 +35,7 @@ function createHostServiceMock() {
         }],
       }],
     })),
+    resolveRunId: vi.fn(async () => null),
     cancelRun: vi.fn(async () => {}),
     listWorkflowRuns: vi.fn(async () => ({ runs: [], total: 0 })),
     getRunLogs: vi.fn(async () => [
@@ -59,7 +60,7 @@ function createEngineMock() {
         }],
       }],
     })),
-    subscribeToRunEvents: vi.fn(() => () => {}),
+    subscribeToRunEvents: vi.fn((_runId: string, _handler: (event: { type: string; runId: string; payload?: unknown }) => void) => () => {}),
     resolveApproval: vi.fn(async () => {}),
   };
 }
@@ -245,6 +246,79 @@ describe('Workflow API Contract Integration', () => {
   // ── Runs ─────────────────────────────────────────────────────────────
 
   describe('Runs', () => {
+    // case: S-027.2
+    it('GET /api/v1/runs/:runId/events omits transitions already covered by its snapshot watermark', async () => {
+      const listeners: Array<(event: { type: string; runId: string; sequence: number; payload?: unknown }) => void> = [];
+      engine.subscribeToRunEvents.mockImplementation((_runId, listener) => {
+        listeners.push(listener);
+        return () => { listeners.splice(listeners.indexOf(listener), 1); };
+      });
+      engine.getRun.mockImplementation(async () => {
+        listeners[0]?.({ type: 'step.started', runId: 'r1', sequence: 1, payload: { stepId: 'step-1' } });
+        return {
+          id: 'r1', status: 'running', eventSequence: 1,
+          jobs: [{ id: 'job-1', steps: [{ id: 'step-1', name: 'compile', status: 'running', startedAt: new Date().toISOString(), spec: { id: 'compile', with: {} } }] }],
+        };
+      });
+
+      const address = await app.listen({ port: 0, host: '127.0.0.1' });
+      try {
+        const response = await fetch(`${address}/api/v1/runs/r1/events`);
+        if (response.status !== 200) {
+          throw new Error(`SSE route returned ${response.status}: ${await response.text()}`);
+        }
+        listeners[0]?.({ type: 'step.succeeded', runId: 'r1', sequence: 2, payload: { stepId: 'step-1' } });
+        listeners[0]?.({ type: 'run.finished', runId: 'r1', sequence: 3, payload: { status: 'success' } });
+        const body = await response.text();
+
+        expect(body).toContain('event: run.snapshot');
+        expect(body.match(/event: step\.started/g)).toBeNull();
+        expect(body).toContain('event: run.finished');
+        expect(body).toContain('event: step.succeeded');
+        expect(body.indexOf('event: run.snapshot')).toBeLessThan(body.indexOf('event: step.succeeded'));
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('GET /api/v1/runs/:runId/events unsubscribes when disconnected during snapshot read', async () => {
+      let resolveRun!: (run: unknown) => void;
+      const deferredRun = new Promise<unknown>((resolve) => { resolveRun = resolve; });
+      const listeners: Array<(event: { type: string; runId: string; sequence: number }) => void> = [];
+      const unsubscribe = vi.fn(() => { listeners.length = 0; });
+      let subscribed!: () => void;
+      const subscriptionReady = new Promise<void>((resolve) => { subscribed = resolve; });
+      engine.subscribeToRunEvents.mockImplementation((_runId, listener) => {
+        listeners.push(listener);
+        subscribed();
+        return unsubscribe;
+      });
+      engine.getRun.mockReturnValue(deferredRun as never);
+
+      const address = await app.listen({ port: 0, host: '127.0.0.1' });
+      const controller = new AbortController();
+      const responsePromise = fetch(`${address}/api/v1/runs/r1/events`, { signal: controller.signal });
+      const responseResult = responsePromise.then(
+        (response) => ({ response }),
+        (error: unknown) => ({ error }),
+      );
+      try {
+        await subscriptionReady;
+        controller.abort();
+        await vi.waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1), { timeout: 1000 });
+        listeners[0]?.({ type: 'step.started', runId: 'r1', sequence: 1 });
+        resolveRun({ id: 'r1', status: 'running', eventSequence: 0, jobs: [] });
+        const result = await responseResult;
+        expect('error' in result).toBe(true);
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+        expect(listeners).toHaveLength(0);
+      } finally {
+        controller.abort();
+        resolveRun(null);
+        await app.close();
+      }
+    });
+
     it('GET /api/v1/runs — lists all runs', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/runs' });
       expect(res.statusCode).toBe(200);
