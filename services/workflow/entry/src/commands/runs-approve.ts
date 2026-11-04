@@ -10,7 +10,7 @@
 import { defineCommand, validationError, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 import { workflowCommandError } from './errors.js';
-import type { RunsApproveFlags } from '../flags.js';
+import type { RunsApproveFlags } from '@kb-labs/workflow-contracts';
 
 export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
   id: 'workflow:runs-approve',

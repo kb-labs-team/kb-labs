@@ -4,7 +4,7 @@
 
 import { defineCommand, validationError, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
-import type { RunsCancelFlags } from '../flags.js';
+import type { RunsCancelFlags } from '@kb-labs/workflow-contracts';
 
 export default defineCommand<unknown, CLIInput<RunsCancelFlags>, unknown>({
   id: 'workflow:runs-cancel',

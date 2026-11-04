@@ -1,4 +1,5 @@
 import type { ServiceManifest } from '@kb-labs/plugin-contracts';
+import { workflowServiceCommands } from '@kb-labs/workflow-contracts/service-commands';
 
 export const manifest: ServiceManifest = {
   schema: 'kb.service/1',
@@ -7,6 +8,7 @@ export const manifest: ServiceManifest = {
   version: '1.2.0',
   description: 'Workflow orchestration daemon — runs, schedules, cron',
   projectApi: { serviceId: 'workflow', rewritePrefix: '/api/v1' },
+  commands: Object.values(workflowServiceCommands.commands),
   runtime: {
     entry: 'dist/bin.js',
     port: 7778,

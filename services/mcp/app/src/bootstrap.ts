@@ -7,10 +7,12 @@ import { callOutput } from "./mcp/output-capture.js";
 import { createBufferedUI } from "./mcp/ui.js";
 import { McpDaemonServer } from "./server.js";
 import type { ServiceContext } from "@kb-labs/shared-daemon";
+import type { IServiceTransport } from "@kb-labs/core-platform";
+import type { ServiceManifest } from "@kb-labs/plugin-contracts";
 
 /** Project-runtime module setup. The runtime supplies the project root and port,
  * so the MCP process scope follows the project URL selected by the host. */
-export async function setupProjectMcp(ctx: ServiceContext): Promise<() => Promise<void>> {
+export async function setupProjectMcp(ctx: ServiceContext, serviceManifests: readonly ServiceManifest[]): Promise<() => Promise<void>> {
   const logger = ctx.logger.forComponent("mcp");
   const { policy } = await resolvePolicy({});
   const authMode = process.env.KB_MCP_AUTH_MODE === "local" ? "local" : "secured";
@@ -27,6 +29,8 @@ export async function setupProjectMcp(ctx: ServiceContext): Promise<() => Promis
     policy,
     endpointPath: "/",
     authMode,
+    serviceManifests,
+    serviceTransport: ctx.platform.getAdapter<IServiceTransport>("serviceTransport"),
   });
   await server.start();
   return async () => server.stop();

@@ -4,7 +4,7 @@
 
 import { defineCommand, validationError, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
-import type { RunsStatusFlags } from '../flags.js';
+import type { RunsStatusFlags } from '@kb-labs/workflow-contracts';
 
 const STEP_ICON: Record<string, string> = {
   success: '✓',

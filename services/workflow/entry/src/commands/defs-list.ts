@@ -4,7 +4,7 @@
 
 import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
-import type { DefsListFlags } from '../flags.js';
+import type { DefsListFlags } from '@kb-labs/workflow-contracts';
 
 export default defineCommand<unknown, CLIInput<DefsListFlags>, unknown>({
   id: 'workflow:defs-list',

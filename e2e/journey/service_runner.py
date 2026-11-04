@@ -2,6 +2,8 @@
 """Probe fresh-install service capabilities and emit machine-readable results."""
 from __future__ import annotations
 
+from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_family_tool_names, service_tool_names
+
 from kb_invocation import kb_command
 from installed_fixture import layout_relative, layout_value
 from journey_values import MissingJourneyState, journey_value
@@ -603,12 +605,14 @@ def _checks(mode: str, graph: FlowGraph | None = None):
         "project-aware workflow run endpoint", method="POST", payload={"trigger": {"type": "manual"}}, token=auth_token()))
     yield service_check("project-scoped MCP initialize", "mcp", lambda: mcp_initialize(pid(), auth_token()),
                         cases=["S-045.1"])
-    yield service_check("project-scoped MCP tools/list", "mcp", lambda: mcp_probe(pid(), auth_token()),
+    yield service_check("project-scoped MCP tools/list", "mcp", lambda: mcp_probe(
+        pid(), auth_token(), DEFAULT_ENABLED_SERVICES),
                         cases=["S-045.2"])
     yield service_check("project-scoped MCP diagnostics", "mcp", lambda: mcp_diagnostics(pid(), auth_token()),
                         cases=["S-045.3"])
     if mode == "local":
-        yield service_check("project MCP tokenless local access", "mcp", lambda: local_auth(pid()),
+        yield service_check("project MCP tokenless local access", "mcp", lambda: local_auth(
+            pid(), DEFAULT_ENABLED_SERVICES),
                             cases=["S-045.4"], runners=("service-local:explore",))
     else:
         yield service_check("project MCP secured missing and invalid token rejection", "mcp",
@@ -811,7 +815,7 @@ def mcp_initialize(project_id: str, token: str) -> str | None:
     return None
 
 
-def mcp_probe(project_id: str, token: str) -> str | None:
+def mcp_probe(project_id: str, token: str, enabled_service_ids: frozenset[str]) -> str | None:
     route = project_service_path(project_id, "mcp")
     status, body, _ = request_mcp(route, token=token, step="project-scoped MCP tools/list",
                                   accept="application/json, text/event-stream", payload={
@@ -825,9 +829,13 @@ def mcp_probe(project_id: str, token: str) -> str | None:
     if not isinstance(tools, list) or not tools:
         return "project-scoped MCP tools/list returned no project tools"
     names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
-    expected = {"kb-labs-commit__commit_commit", "kb-labs-workflow__workflow_run", "kb-labs__mcp_diagnostics"}
+    expected_services = service_tool_names(enabled_service_ids)
+    served_services = service_family_tool_names(names)
+    if expected_services != served_services:
+        return f"project-scoped MCP service catalog mismatch: expected={sorted(expected_services)} served={sorted(served_services)[:50]}"
+    expected = {commit_tool("commit commit"), "kb-labs__mcp_diagnostics"}
     if not expected <= names:
-        return f"project-scoped MCP tools/list omitted expected tools: {sorted(expected - names)}"
+        return f"project-scoped MCP tools/list mismatch: expected={sorted(expected)} served={sorted(names)[:50]}"
     if any(not isinstance(tool, dict) or not isinstance(tool.get("name"), str)
            or not isinstance(tool.get("inputSchema"), dict) for tool in tools):
         return "project-scoped MCP tools/list returned a tool without its name or input schema"
@@ -1084,7 +1092,7 @@ def _find_project_registration(payload: object) -> tuple[str, str]:
     return "", ""
 
 
-def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
+def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> dict[str, object]:
     """Prepare the staged note commit required by S-140.2 in the isolated KB state."""
     def git(*args: str) -> CompletedProcess[str]:
         command = ["git", "-C", str(project_root), *args]
@@ -1133,11 +1141,11 @@ def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
         "metadata": {"totalFiles": len(files), "totalCommits": 1, "llmUsed": False},
     }
     plan_path.write_text(json.dumps(plan, indent=2) + "\n")
-    return plan_path
+    return {"path": str(plan_path), "planId": "journey-commit", "totalCommits": len(plan["commits"])}
 
 
 def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
-                         runner=run_command) -> tuple[str, str]:
+                         runner=run_command) -> tuple[str, str, dict[str, object]]:
     """Install the project fixture plugins into A and register clean project B."""
     command_runner = runner
     def runner(command, **kwargs):
@@ -1152,7 +1160,7 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     installed = runner(install, cwd=str(project_a), env=env, capture_output=True,
                        text=True, timeout=300)
     _output(installed, install)
-    _write_mcp_commit_plan(project_a, env)
+    plan_preparation_result = _write_mcp_commit_plan(project_a, env)
 
     home = Path(env["HOME"])
     project_b = home / "project-b-mcp"
@@ -1187,12 +1195,12 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
             raise RuntimeError("MCP isolation project B unexpectedly has the Commit plugin installed")
         if "@kb-labs/review" not in lock.get("plugins", {}):
             raise RuntimeError("MCP isolation project B does not have its Review fixture plugin installed")
-    return project_b_id, project_b_root
+    return project_b_id, project_b_root, plan_preparation_result
 
 
 def _prepare_mcp_projects(project_id: str, project_root: str, registry: str, env: dict[str, str],
                           runner=run_command) -> tuple[str, str]:
-    project_b_id, project_b_root = prepare_mcp_projects(project_root, registry, env, runner)
+    project_b_id, project_b_root, plan_preparation_result = prepare_mcp_projects(project_root, registry, env, runner)
     fixture_path = env.get("KB_JOURNEY_PROJECT_FIXTURES_FILE", "")
     if fixture_path:
         output_path = Path(fixture_path)
@@ -1202,6 +1210,7 @@ def _prepare_mcp_projects(project_id: str, project_root: str, registry: str, env
             "projectARoot": str(Path(project_root).resolve()),
             "projectBId": project_b_id,
             "projectBRoot": project_b_root,
+            "commitPlanPreparationResult": plan_preparation_result,
         }), encoding="utf-8")
     return project_b_id, project_b_root
 

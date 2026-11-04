@@ -2,6 +2,8 @@
 """One isolated end-user install journey; each invocation runs in a fresh container."""
 from __future__ import annotations
 
+from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_tool_names
+
 from kb_invocation import kb_command, kb_login_shell, kb_login_shell_sequence
 from installed_fixture import layout_relative, layout_value
 from journey_values import journey_value
@@ -762,7 +764,7 @@ def mcp_rpc(url: str, method: str, request_id: int, params=None, token=None):
     return json.loads(body)
 
 
-def verify_project_mcp(env: dict[str, str], local: bool):
+def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: frozenset[str] = DEFAULT_ENABLED_SERVICES):
     registered, _ = run(kb_login_shell(["project", "add", "--json"]),
                         env=env, cwd=PROJECT, timeout=180)
     if not require(registered, step="register project for MCP"):
@@ -793,9 +795,9 @@ def verify_project_mcp(env: dict[str, str], local: bool):
         listed = mcp_rpc(url, "tools/list", 2, token=token)
         tools = listed.get("result", {}).get("tools", [])
         names = {tool.get("name") for tool in tools}
-        expected = {"kb-labs-commit__commit_commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics"}
+        expected = {commit_tool("commit commit"), *service_tool_names(enabled_service_ids), "kb-labs__mcp_diagnostics"}
         if not expected.issubset(names):
-            raise RuntimeError(f"tools/list missing expected tools: {sorted(expected - names)}")
+            raise RuntimeError(f"tools/list missing expected tools: expected={sorted(expected)} served={sorted(names)[:50]}")
         called = mcp_rpc(url, "tools/call", 3, {"name": "kb-labs__mcp_diagnostics", "arguments": {}}, token)
         content = called.get("result", {}).get("content", [])
         text = "\n".join(item.get("text", "") for item in content)
@@ -1589,7 +1591,7 @@ def _main(*, update_variant_runner=None):
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
 
     if FRONT == "agent" and SCENARIO == "commit":
-        verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local")
+        verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local", DEFAULT_ENABLED_SERVICES)
 
     update_group_selected = outer_graph.group_selected("update")
     update_journey = update_group_selected and (

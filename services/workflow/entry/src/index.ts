@@ -50,11 +50,10 @@ export const workflowCommands = {
 };
 
 export {
-  defsListFlags,
+  createFlags, cronsListFlags, cronsToggleFlags, healthFlags, jobListFlags, jobStatusFlags,
+  logShowFlags, metricsFlags, defsListFlags,
   defsViewFlags,
-  healthFlags,
   lintFlags,
-  metricsFlags,
   runsApproveFlags,
   runsCancelFlags,
   runsListFlags,
@@ -66,4 +65,6 @@ export {
   runsWatchFlags,
   runFlags,
   workflowRunFlags,
-} from './flags.js';
+} from '@kb-labs/workflow-contracts';
+export { workflowServiceCommands } from '@kb-labs/workflow-contracts/service-commands';
+export type { CreateFlags, JobStatusFlags, JobListFlags, LogShowFlags, CronsListFlags, CronsToggleFlags } from '@kb-labs/workflow-contracts';

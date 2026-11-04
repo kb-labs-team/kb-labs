@@ -18,6 +18,7 @@ import type {
 import { deriveProjectId, getHostServiceAddress, useEnv } from '@kb-labs/sdk';
 import { gatewayApiFetch } from '@kb-labs/sdk/gateway';
 import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
+import { workflowServiceCommands } from '@kb-labs/workflow-contracts/service-commands';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
 import type { ErrorCode } from '@kb-labs/core-platform/error-envelope';
 
@@ -179,6 +180,32 @@ export class WorkflowDaemonClient {
     return gatewayApiFetch(url, init);
   }
 
+  private commandPath(commandName: keyof typeof workflowServiceCommands.commands, parameters: Record<string, string> = {}): string {
+    const command = workflowServiceCommands.commands[commandName];
+    const route = 'route' in command ? command.route : undefined;
+    if (!route) throw new Error(`Workflow command "${commandName}" has no service route.`);
+    return this.resolveRoute(route.path, parameters);
+  }
+
+  private commandMethod(commandName: keyof typeof workflowServiceCommands.commands): string {
+    const command = workflowServiceCommands.commands[commandName];
+    const route = 'route' in command ? command.route : undefined;
+    if (!route) throw new Error(`Workflow command \"${commandName}\" has no service route.`);
+    return route.method;
+  }
+
+  private supportPath(routeName: keyof typeof workflowServiceCommands.supportRoutes, parameters: Record<string, string> = {}): string {
+    return this.resolveRoute(workflowServiceCommands.supportRoutes[routeName].path, parameters);
+  }
+
+  private resolveRoute(path: string, parameters: Record<string, string>): string {
+    return path.replace(/\{([^}]+)\}/g, (_match, name: string) => {
+      const value = parameters[name];
+      if (value === undefined) throw new Error(`Workflow route is missing path parameter "${name}".`);
+      return value;
+    });
+  }
+
   /** Send an API request through this client's project route and gateway auth. */
   fetchApi(url: string, init?: RequestInit): Promise<Response> {
     return this.authorizedFetch(url, init);
@@ -228,7 +255,7 @@ export class WorkflowDaemonClient {
    * Health check
    */
   async health(): Promise<WorkflowHealthResponse> {
-    const response = await this.authorizedFetch(`${this.baseUrl}/health`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('health')}`);
     if (!response.ok) {
       throw new Error(`Health check failed: ${response.statusText}`);
     }
@@ -239,7 +266,7 @@ export class WorkflowDaemonClient {
    * Get workflow metrics (raw metrics data from daemon)
    */
   async getMetrics(): Promise<WorkflowMetricsData> {
-    const response = await this.authorizedFetch(`${this.baseUrl}/metrics`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('metrics')}`);
     if (!response.ok) {
       throw new Error(`Failed to get metrics: ${response.statusText}`);
     }
@@ -252,7 +279,7 @@ export class WorkflowDaemonClient {
    */
   async getJobStatus(jobId: string): Promise<JobStatusDetail> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/jobs/${encodedJobId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('jobStatus', { 'job-id': encodedJobId })}`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -268,7 +295,7 @@ export class WorkflowDaemonClient {
    */
   async getJobSteps(jobId: string): Promise<JobStepsResponse> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/jobs/${encodedJobId}/steps`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.supportPath('jobSteps', { 'job-id': encodedJobId })}`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -284,7 +311,7 @@ export class WorkflowDaemonClient {
    */
   async getJobLogs(jobId: string): Promise<JobLogsResponse['logs']> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/jobs/${encodedJobId}/logs`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('logShow', { 'job-id': encodedJobId })}`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -300,7 +327,7 @@ export class WorkflowDaemonClient {
    * Get active executions
    */
   async getExecutions(): Promise<JobStatusInfo[]> {
-    const response = await this.authorizedFetch(`${this.baseUrl}/jobs`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('jobList')}`);
     if (!response.ok) {
       throw new Error(`Failed to get executions: ${response.statusText}`);
     }
@@ -314,7 +341,7 @@ export class WorkflowDaemonClient {
    * Get cron jobs
    */
   async getCronJobs(): Promise<CronListResponse> {
-    const response = await this.authorizedFetch(`${this.baseUrl}/crons`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('cronsList')}`);
     if (!response.ok) {
       throw new Error(`Failed to get cron jobs: ${response.statusText}`);
     }
@@ -324,8 +351,8 @@ export class WorkflowDaemonClient {
 
   async setCronEnabled(id: string, enabled: boolean): Promise<{ enabled: boolean }> {
     const action = enabled ? 'enable' : 'disable';
-    const response = await this.authorizedFetch(`${this.baseUrl}/crons/${encodeURIComponent(id)}/${action}`, {
-      method: 'POST',
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath(enabled ? 'cronsEnable' : 'cronsDisable', { id: encodeURIComponent(id) })}`, {
+      method: this.commandMethod(enabled ? 'cronsEnable' : 'cronsDisable'),
     });
     const data = await this.parseJsonResponse<unknown>(response);
     if (!response.ok) {
@@ -345,8 +372,8 @@ export class WorkflowDaemonClient {
     input?: unknown;
     priority?: number;
   }): Promise<{ id: string; status: string }> {
-    const response = await this.authorizedFetch(`${this.baseUrl}/jobs`, {
-      method: 'POST',
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('jobRun')}`, {
+      method: this.commandMethod('jobRun'),
       headers: {
         'Content-Type': 'application/json',
       },
@@ -383,7 +410,7 @@ export class WorkflowDaemonClient {
     if (params.tags) { query.set('tags', params.tags); }
 
     const qs = query.toString();
-    const response = await this.authorizedFetch(`${this.baseUrl}/workflows${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('defsList')}${qs ? `?${qs}` : ''}`);
     if (!response.ok) {
       throw new Error(`Failed to list workflows: ${response.statusText}`);
     }
@@ -397,7 +424,7 @@ export class WorkflowDaemonClient {
    */
   async getWorkflow(id: string): Promise<WorkflowInfo> {
     const encodedId = encodeURIComponent(id);
-    const response = await this.authorizedFetch(`${this.baseUrl}/workflows/${encodedId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('defsView', { id: encodedId })}`);
     if (response.status === 404) {
       throw new Error(`Workflow ${id} not found`);
     }
@@ -422,7 +449,7 @@ export class WorkflowDaemonClient {
     if (params.workflowId) { query.set('workflowId', params.workflowId); }
 
     const qs = query.toString();
-    const response = await this.authorizedFetch(`${this.baseUrl}/runs${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('runsList')}${qs ? `?${qs}` : ''}`);
     if (!response.ok) {
       throw new Error(`Failed to list runs: ${response.statusText}`);
     }
@@ -436,7 +463,7 @@ export class WorkflowDaemonClient {
    */
   async getRun(runId: string): Promise<WorkflowRunDetail> {
     const encodedId = encodeURIComponent(runId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('runsView', { 'run-id': encodedId })}`);
     if (response.status === 404) {
       throw new Error(`Run ${runId} not found`);
     }
@@ -466,7 +493,7 @@ export class WorkflowDaemonClient {
 
     const encodedId = encodeURIComponent(runId);
     const qs = query.toString();
-    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/logs${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('runsLogs', { 'run-id': encodedId })}${qs ? `?${qs}` : ''}`);
     if (response.status === 404) {
       throw new Error(`Run ${runId} not found`);
     }
@@ -482,7 +509,7 @@ export class WorkflowDaemonClient {
    * Stream run events via SSE (returns a ReadableStream or EventSource-compatible URL)
    */
   getRunEventsUrl(runId: string): string {
-    return `${this.baseUrl}/runs/${encodeURIComponent(runId)}/events`;
+    return `${this.baseUrl}${this.supportPath('runEvents', { 'run-id': encodeURIComponent(runId) })}`;
   }
 
   /**
@@ -500,7 +527,7 @@ export class WorkflowDaemonClient {
     }>;
   }> {
     const encodedId = encodeURIComponent(runId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/approvals`);
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.supportPath('pendingApprovals', { 'run-id': encodedId })}`);
     if (!response.ok) {
       const message = await response
         .json()
@@ -537,8 +564,8 @@ export class WorkflowDaemonClient {
     data?: Record<string, unknown>
   ): Promise<{ runId: string; jobId: string; stepId: string; action: string; resolved: boolean }> {
     const encodedId = encodeURIComponent(runId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/approvals/resolve`, {
-      method: 'POST',
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('runsApprove', { 'run-id': encodedId })}`, {
+      method: this.commandMethod('runsApprove'),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jobId, stepId, action, comment, data }),
     });
@@ -561,8 +588,8 @@ export class WorkflowDaemonClient {
    */
   async cancelRun(runId: string): Promise<void> {
     const encodedId = encodeURIComponent(runId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/cancel`, {
-      method: 'POST',
+    const response = await this.authorizedFetch(`${this.baseUrl}${this.commandPath('runsCancel', { 'run-id': encodedId })}`, {
+      method: this.commandMethod('runsCancel'),
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     });
@@ -583,9 +610,9 @@ export class WorkflowDaemonClient {
     request: WorkflowRunRequest = {}
   ): Promise<{ runId: string; status: string }> {
     const response = await this.authorizedFetch(
-      `${this.baseUrl}/workflows/${encodeURIComponent(workflowId)}/runs`,
+      `${this.baseUrl}${this.commandPath('workflowRun', { 'workflow-id': encodeURIComponent(workflowId) })}`,
       {
-        method: 'POST',
+        method: this.commandMethod('workflowRun'),
         headers: {
           'Content-Type': 'application/json',
         },
@@ -621,9 +648,9 @@ export class WorkflowDaemonClient {
     request: WorkflowRerunRequest = {},
   ): Promise<{ runId: string; status: string }> {
     const response = await this.authorizedFetch(
-      `${this.baseUrl}/runs/${encodeURIComponent(runId)}/rerun`,
+      `${this.baseUrl}${this.commandPath('runsRerun', { 'run-id': encodeURIComponent(runId) })}`,
       {
-        method: 'POST',
+        method: this.commandMethod('runsRerun'),
         headers: {
           'Content-Type': 'application/json',
         },
@@ -651,9 +678,9 @@ export class WorkflowDaemonClient {
     request: WorkflowRestartRequest = {},
   ): Promise<WorkflowRestartResponse> {
     const response = await this.authorizedFetch(
-      `${this.baseUrl}/runs/${encodeURIComponent(runId)}/restart`,
+      `${this.baseUrl}${this.commandPath('runsRestart', { 'run-id': encodeURIComponent(runId) })}`,
       {
-        method: 'POST',
+        method: this.commandMethod('runsRestart'),
         headers: {
           'Content-Type': 'application/json',
         },

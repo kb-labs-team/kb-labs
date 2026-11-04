@@ -49,7 +49,7 @@ type Teardown = () => Promise<void>;
 /** One project-scoped service the runtime runs. */
 export interface ProjectRuntimeModule {
   manifest: ServiceManifest;
-  setup: (ctx: ServiceContext) => Promise<Teardown>;
+  setup: (ctx: ServiceContext, serviceManifests: readonly ServiceManifest[]) => Promise<Teardown>;
 }
 
 /** The project-scoped services composed into every project runtime. */
@@ -201,7 +201,10 @@ export async function createProjectRuntimeConfig(
           }
           await assertProjectRoot(ctx, options.projectRoot);
           assertModuleAddress(ctx, projectServiceId(spec));
-          const teardown = await spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.manifest.id) });
+          const teardown = await spec.setup(
+            { ...ctx, logger: ctx.logger.forComponent(spec.manifest.id) },
+            modules.map((module) => module.manifest),
+          );
           if (index === 0) {
             return async () => {
               try {

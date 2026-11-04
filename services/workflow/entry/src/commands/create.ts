@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { defineCommand, handleError, type CLIInput, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { workflowCommandError } from './errors.js';
 
-export interface CreateFlags { json?: boolean; }
+import type { CreateFlags } from '@kb-labs/workflow-contracts';
 
 const EXAMPLE = `name: hello
 version: 1.0.0
