@@ -242,6 +242,7 @@ export class StateStore {
       }
 
       const draft = clone(run)
+      draft.eventSequence = run.eventSequence + 1
       const result = mutator(draft)
       const next = (result ?? draft) as WorkflowRun
       if (!terminalTransitionOwner && run.status !== next.status && isTerminal(next.status, 'run')) {
@@ -271,6 +272,7 @@ export class StateStore {
       const jobDraft = clone(existingJob)
       const result = mutator(jobDraft)
       const nextJob = (result ?? jobDraft) as JobRun
+      nextJob.eventSequence = run.eventSequence
       run.jobs[index] = nextJob
       updatedJob = nextJob
     })
@@ -308,6 +310,7 @@ export class StateStore {
       const draft = clone(existingStep)
       const result = mutator(draft)
       const nextStep = (result ?? draft) as StepRun
+      nextStep.eventSequence = run.eventSequence
       job.steps[stepIndex] = nextStep
       updatedStep = nextStep
     })
