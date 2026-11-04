@@ -28,19 +28,21 @@ describe("CLI run function", () => {
 
   it("delegates execution to executeCli", async () => {
     executeCliMock.mockResolvedValue(0);
-    const result = await run(["--help"]);
+    const resultWriter = vi.fn();
+    const result = await run(["--help"], { resultWriter });
 
     expect(executeCliMock).toHaveBeenCalledWith(
       ["--help"],
-      { moduleUrl: undefined },
+      { moduleUrl: undefined, resultWriter },
     );
     expect(result).toBe(0);
   });
 
   it("propagates exit codes from executeCli", async () => {
     executeCliMock.mockResolvedValue(42);
+    const resultWriter = vi.fn();
 
-    const result = await run(["version"]);
+    const result = await run(["version"], { resultWriter });
 
     expect(result).toBe(42);
   });

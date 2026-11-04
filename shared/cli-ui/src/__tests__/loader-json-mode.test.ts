@@ -1,119 +1,39 @@
-import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest';
-import { setJsonMode, isJsonMode, useLoader, Loader } from '../loader';
+import { describe, it, expect, vi } from 'vitest';
+import { useLoader } from '../loader';
 
-// Restore json mode after each test
-afterEach(() => {
-  setJsonMode(false);
-});
-
-describe('setJsonMode / isJsonMode', () => {
-  it('defaults to false', () => {
-    expect(isJsonMode()).toBe(false);
+describe('useLoader output streams', () => {
+  it('routes machine-mode progress to stderr', () => {
+    const output: string[] = [];
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(((text: string | Uint8Array) => {
+      output.push(String(text));
+      return true;
+    }) as typeof process.stderr.write);
+    try {
+      const loader = useLoader('Analyzing...', { spinner: false, total: 2, current: 1, jsonMode: true });
+      loader.start();
+      loader.update({ current: 1 });
+      loader.succeed('Done');
+      expect(output.join('')).toContain('Analyzing...');
+      expect(output.join('')).toContain('Done');
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
-  it('setJsonMode(true) flips the flag', () => {
-    setJsonMode(true);
-    expect(isJsonMode()).toBe(true);
-  });
-
-  it('setJsonMode(false) resets the flag', () => {
-    setJsonMode(true);
-    setJsonMode(false);
-    expect(isJsonMode()).toBe(false);
-  });
-});
-
-describe('useLoader picks up global json mode', () => {
-  it('creates a Loader with jsonMode=false by default', () => {
-    const loader = useLoader('test');
-    // start() should normally start the interval — but we can verify it doesn't
-    // write anything if we capture stdout
-    const write = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
-    loader.start();
-    // Fake enough time for the interval to fire
-    vi.useFakeTimers();
-    vi.advanceTimersByTime(500);
-    vi.useRealTimers();
-    loader.stop();
-    write.mockRestore();
-    // No assertion needed — just verify it doesn't throw
-  });
-
-  it('when setJsonMode(true), useLoader returns a no-op loader', () => {
-    setJsonMode(true);
-    const loader = useLoader('loading...');
-
-    const write = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
-    loader.start();
-    loader.succeed('done');
-    loader.fail('error');
-    expect(write).not.toHaveBeenCalled();
-    write.mockRestore();
-  });
-
-  it('explicit jsonMode option overrides global flag', () => {
-    setJsonMode(true);
-    // Explicit false should override the global true
-    const loader = useLoader('test', { jsonMode: false });
-    const write = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
-    loader.succeed('done');
-    // succeed() writes when jsonMode=false
-    expect(write).toHaveBeenCalled();
-    write.mockRestore();
-  });
-});
-
-describe('Loader in json mode suppresses all output', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('start() does not write to stdout', () => {
-    const loader = new Loader({ text: 'loading...', jsonMode: true });
-    const write = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
-    loader.start();
-    vi.advanceTimersByTime(1000);
-    expect(write).not.toHaveBeenCalled();
-    write.mockRestore();
-  });
-
-  it('succeed() does not write to stdout', () => {
-    const loader = new Loader({ text: 'loading...', jsonMode: true });
-    const write = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
-    loader.start();
-    loader.succeed('completed');
-    expect(write).not.toHaveBeenCalled();
-    write.mockRestore();
-  });
-
-  it('fail() does not write to stdout', () => {
-    const loader = new Loader({ text: 'loading...', jsonMode: true });
-    const write = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
-    loader.start();
-    loader.fail('failed');
-    expect(write).not.toHaveBeenCalled();
-    write.mockRestore();
-  });
-});
-
-describe('Loader in normal mode writes to stdout', () => {
-  it('succeed() writes success symbol to stdout', () => {
-    const loader = new Loader({ text: 'loading...', jsonMode: false });
-    const write = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
-    loader.succeed('done');
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('done'));
-    write.mockRestore();
-  });
-
-  it('fail() writes error symbol to stdout', () => {
-    const loader = new Loader({ text: 'loading...', jsonMode: false });
-    const write = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
-    loader.fail('oops');
-    expect(write).toHaveBeenCalledWith(expect.stringContaining('oops'));
-    write.mockRestore();
+  it('keeps human progress on stdout', () => {
+    const output: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(((text: string | Uint8Array) => {
+      output.push(String(text));
+      return true;
+    }) as typeof process.stdout.write);
+    try {
+      const loader = useLoader('Human progress', { spinner: false, total: 2, current: 1 });
+      loader.start();
+      loader.update({ current: 1 });
+      loader.stop();
+      expect(output.join('')).toContain('Human progress');
+    } finally {
+      stdout.mockRestore();
+    }
   });
 });

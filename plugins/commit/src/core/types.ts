@@ -39,6 +39,8 @@ export interface GenerateOptions {
   config?: import('../contracts/index.js').CommitPluginConfig; // eslint-disable-line @typescript-eslint/consistent-type-imports
   /** Progress callback for UI updates (updates spinner text) */
   onProgress?: (message: string) => void;
+  /** Human-facing output routed by the CLI or REST execution host. */
+  onOutput: (message: string) => void;
   /** Pause progress spinner before interactive prompts */
   onPauseProgress?: () => void;
   /** Resume progress spinner after interactive prompts */

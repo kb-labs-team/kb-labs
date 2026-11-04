@@ -24,6 +24,8 @@ plugin-runtime → plugin-execution-factory → core-runtime ✅
 - **SubprocessBackend** - Executes plugins in subprocess via IPC (isolated, secure)
 - **WorkerPoolBackend** - Pool of worker processes for parallel execution
 
+In-process execution trusts plugin code with the host process and its open descriptors; isolated modes provide the process boundary.
+
 ### Backend construction
 
 Only `@kb-labs/core-runtime` constructs the execution backend. Service planes receive the initialized instance from `platform.executionBackend`; they do not import a constructor.

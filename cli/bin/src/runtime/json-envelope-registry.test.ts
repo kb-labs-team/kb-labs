@@ -11,6 +11,7 @@ import {
 } from "@kb-labs/cli-commands";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
 import { createErrorEnvelope } from "@kb-labs/core-platform";
+import { createJsonPresenter } from '@kb-labs/cli-runtime';
 import type { LoadPlatformConfigResult } from '@kb-labs/core-runtime';
 import { createPlatformConfigFixture } from './__tests__/fixtures/platform-config.js';
 
@@ -343,7 +344,9 @@ describe("JSON envelope coverage for the live CLI registry", () => {
           cwd,
           env: process.env,
           registry,
+          resultWriter: (value, pretty = false) => process.stdout.write(`${typeof value === 'string' ? value : JSON.stringify(value, null, pretty ? 2 : undefined)}\n`),
           registerBuiltinCommands: () => {},
+          createJsonPresenter: () => createJsonPresenter((value) => { process.stdout.write(`${JSON.stringify(value)}\n`); }),
         });
         const stdoutRecords = [
           ...stdoutConsole.flatMap((spy) =>

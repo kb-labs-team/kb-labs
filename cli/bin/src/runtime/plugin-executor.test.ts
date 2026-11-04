@@ -22,6 +22,7 @@ import { executePlugin, renderUnavailableAdapterError } from './plugin-executor.
 describe('plugin executor adapter errors', () => {
   afterEach(() => vi.restoreAllMocks());
 
+
   it('renders an unconfigured capability as one line and marks it handled', () => {
     const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -192,7 +193,7 @@ describe('plugin executor adapter errors', () => {
   it('serializes each injected failure class for every registered bundled V3 handler', async () => {
     const actualRuntime = await vi.importActual<typeof import('@kb-labs/cli-runtime/v3')>('@kb-labs/cli-runtime/v3');
     executeCommandV3.mockImplementation((options) => actualRuntime.executeCommandV3(options));
-    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const output = vi.fn((value: unknown) => JSON.stringify(value));
     const workspaceRoot = fileURLToPath(new URL('../../../..', import.meta.url));
     await registerBuiltinCommands({
       cwd: workspaceRoot,
@@ -276,11 +277,12 @@ describe('plugin executor adapter errors', () => {
           flags: { json: true },
           manifestCmd: registered,
           platform,
+          resultWriter: output,
         });
 
         expect(exitCode, `${failureCase.name}: ${registered.packageName} ${commandPath}`).toBe(1);
         expect(output).toHaveBeenCalledOnce();
-        const serialized = JSON.parse(String(output.mock.calls[0]?.[0])) as { ok: false; error: Record<string, unknown> };
+        const serialized = JSON.parse(String(output.mock.results[0]?.value)) as { ok: false; error: Record<string, unknown> };
         expect(serialized.ok).toBe(false);
         expect(serialized.error.code).toBe(failureCase.code);
         expect(serialized.error.correlationId).toEqual(expect.any(String));

@@ -13,12 +13,14 @@ import type { IGatewayClient, GatewayExecuteRequest } from '@kb-labs/sdk/gateway
 import { resolveTransport, TerminalEventRenderer } from '@kb-labs/cli-runtime/gateway';
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
 import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
+import type { CliResultWriter } from './result-serializer.js';
 
 export interface GatewayExecutionOptions {
   commandId: string;
   argv: string[];
   flags: Record<string, unknown>;
   manifestCmd: RegisteredCommand | undefined;
+  resultWriter: CliResultWriter;
 }
 
 export function pluginCommandUnavailable(commandPath: string): ErrorEnvelopeError {
@@ -47,7 +49,7 @@ export async function executeViaGateway(
   client: IGatewayClient,
   options: GatewayExecutionOptions,
 ): Promise<number> {
-  const { commandId, argv, flags, manifestCmd } = options;
+  const { commandId, argv, flags, manifestCmd, resultWriter } = options;
 
   if (!manifestCmd) {
     throw pluginCommandUnavailable(commandId);
@@ -92,6 +94,11 @@ export async function executeViaGateway(
 
       if (event.type === 'execution:done') {
         exitCode = event.exitCode ?? 0;
+        if (process.env.KB_OUTPUT_MODE === 'json' && exitCode === 0) {
+          resultWriter({ ok: true, data: event.metadata?.result ?? null });
+        }
+      } else if (event.type === 'execution:error' && process.env.KB_OUTPUT_MODE === 'json') {
+        resultWriter({ ok: false, error: event.error });
       }
     }
   } finally {

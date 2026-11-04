@@ -25,6 +25,7 @@ import { noopUI } from "@kb-labs/plugin-contracts";
 import type { UIFacade } from "@kb-labs/plugin-contracts";
 import { createCLIUIFacade } from "./ui-facade";
 import { createContextLogger } from "@kb-labs/core-platform";
+import { missingCliResultWriter, type CliResultWriter } from './result-serializer.js';
 
 const CLI_LIFECYCLE_HOOK_ID = "cli-runtime";
 const LOG_SERVICE = "platform-init";
@@ -77,12 +78,12 @@ function ensureLifecycleHooksRegistered(): void {
  * Create CLI-specific UI provider.
  * Returns rich UI for CLI host, noopUI for other hosts (REST, workflow, etc.)
  */
-function createCLIUIProvider(): (hostType: string) => UIFacade {
+function createCLIUIProvider(writeResult: CliResultWriter): (hostType: string) => UIFacade {
   return (hostType: string): UIFacade => {
     if (hostType !== "cli") {
       return noopUI;
     }
-    return createCLIUIFacade();
+    return createCLIUIFacade(undefined, writeResult);
   };
 }
 
@@ -118,7 +119,7 @@ export async function loadPlatformConfiguration(
 /** Initialize the platform's adapters exactly once from an already-resolved scope. */
 export async function initializePlatform(
   loadResult: LoadPlatformConfigResult,
-  options: { skipAdapterInitialization?: boolean } = {},
+  options: { skipAdapterInitialization?: boolean; resultWriter?: CliResultWriter } = {},
 ): Promise<PlatformInitResult> {
   const {
     platformConfig,
@@ -139,7 +140,7 @@ export async function initializePlatform(
   const platformInstance = await initPlatform(
       platformConfig,
       adapterProjectRoot,
-      createCLIUIProvider(),
+      createCLIUIProvider(options.resultWriter ?? missingCliResultWriter),
       platformRoot !== adapterProjectRoot ? platformRoot : undefined,
     {
       assemblyHook: makeAssemblyHook(() =>

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createErrorEnvelope, resolveCliGatewayTarget } from '@kb-labs/core-platform';
+import { createJsonPresenter } from '@kb-labs/cli-runtime';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 import { ProjectRegistryError } from '@kb-labs/core-project-registry';
 import type { LoadPlatformConfigResult } from '@kb-labs/core-runtime';
@@ -40,7 +41,13 @@ vi.mock('../gateway-executor.js', () => ({
   executeViaGateway: mocks.executeViaGateway,
 }));
 
-import { executeCli } from '../bootstrap.js';
+import { executeCli as executeCliBase } from '../bootstrap.js';
+
+const executeCli: typeof executeCliBase = (args, options = {}) => executeCliBase(args, {
+  ...options,
+  resultWriter: options.resultWriter ?? ((value, pretty = false) => process.stdout.write(`${typeof value === 'string' ? value : JSON.stringify(value, null, pretty ? 2 : undefined)}\n`)),
+  createJsonPresenter: options.createJsonPresenter ?? (() => createJsonPresenter((value) => console.log(JSON.stringify(value)))),
+});
 
 describe('secured CLI auth ordering', () => {
   let isolatedHome: string | undefined;
@@ -125,10 +132,13 @@ describe('secured CLI auth ordering', () => {
       }));
       return { authenticated: true };
     });
-    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const records: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation(((record: string | Uint8Array) => {
+      records.push(String(record));
+      return true;
+    }) as typeof process.stdout.write);
 
     const exitCode = await executeCli(['auth', 'status', '--json'], { cwd: isolatedHome });
-    const records = stdout.mock.calls.map(([record]) => String(record));
 
     expect(exitCode).toBe(0);
     expect(records).toHaveLength(1);

@@ -171,7 +171,11 @@ describe('installed project plugin routes at CLI bootstrap', () => {
     mocks.initializePlatform.mockImplementation(async (config) => ({ ...config, platform }));
 
     expect(registry.resolve(['commit']).type).toBe('not-found');
-    const exitCode = await executeCli(['commit', '--help'], { cwd: projectRoot, env });
+    const exitCode = await executeCli(['commit', '--help'], {
+      cwd: projectRoot,
+      env,
+      resultWriter: (value, pretty = false) => process.stdout.write(`${typeof value === 'string' ? value : JSON.stringify(value, null, pretty ? 2 : undefined)}\n`),
+    });
 
     expect(exitCode).toBe(0);
     expect(mocks.resolveProjectConfig).toHaveBeenCalledExactlyOnceWith(projectRoot, undefined);

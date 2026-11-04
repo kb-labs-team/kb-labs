@@ -3,6 +3,7 @@ import { mkdtemp, rm, access, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import { createJsonPresenter } from "@kb-labs/cli-runtime";
 import type { LoadPlatformConfigResult } from "@kb-labs/core-runtime";
 
 const mocks = vi.hoisted(() => ({
@@ -17,8 +18,14 @@ vi.mock("../platform-init.js", () => ({
   initializePlatform: mocks.initializePlatform,
 }));
 
-import { executeCli } from "../bootstrap.js";
+import { executeCli as executeCliBase } from "../bootstrap.js";
 import { createPlatformConfigFixture } from './fixtures/platform-config.js';
+
+const executeCli: typeof executeCliBase = (args, options = {}) => executeCliBase(args, {
+  ...options,
+  resultWriter: options.resultWriter ?? ((value, pretty = false) => process.stdout.write(`${typeof value === 'string' ? value : JSON.stringify(value, null, pretty ? 2 : undefined)}\n`)),
+  createJsonPresenter: options.createJsonPresenter ?? (() => createJsonPresenter((value) => console.log(JSON.stringify(value)))),
+});
 
 describe("CLI platform configuration, auth, and adapter ordering", () => {
   let isolatedHome: string | undefined;
@@ -97,7 +104,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
 
     expect(mocks.loadPlatformConfiguration).toHaveBeenCalledExactlyOnceWith(cwd, undefined, "platform", { persistCatalogSnapshot: false });
     expect(mocks.resolveProjectConfig).toHaveBeenCalledExactlyOnceWith(cwd, undefined);
-    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(projectConfig, { skipAdapterInitialization: false });
+    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(projectConfig, { skipAdapterInitialization: false, resultWriter: expect.any(Function) });
     expect(mocks.loadPlatformConfiguration.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.resolveProjectConfig.mock.invocationCallOrder[0]!,
     );
@@ -119,7 +126,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     await executeCli(['config', 'get', '--scope', 'platform', '--help'], { cwd, registerBuiltinCommands: () => {} });
 
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
-    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(platformConfig, { skipAdapterInitialization: false });
+    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(platformConfig, { skipAdapterInitialization: false, resultWriter: expect.any(Function) });
   });
 
   it("uses the root-resolution project for plugin discovery while initializing adapters from platform config", async () => {
@@ -136,7 +143,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
       registerBuiltinCommands,
     });
 
-    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(platformConfig, { skipAdapterInitialization: false });
+    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(platformConfig, { skipAdapterInitialization: false, resultWriter: expect.any(Function) });
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
     expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({ projectRoot }));
   });
@@ -157,7 +164,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     expect(mocks.resolveProjectConfig).toHaveBeenCalledExactlyOnceWith(cwd, undefined);
     expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ projectRoot, projectScope: 'required' }),
-      { skipAdapterInitialization: false },
+      { skipAdapterInitialization: false, resultWriter: expect.any(Function) },
     );
   });
 
@@ -173,7 +180,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     });
 
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
-    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(platformConfig, { skipAdapterInitialization: false });
+    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(platformConfig, { skipAdapterInitialization: false, resultWriter: expect.any(Function) });
   });
 
   it("provides the installed Gateway address to built-in command registration", async () => {
@@ -310,7 +317,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     expect(mocks.resolveProjectConfig).toHaveBeenCalledExactlyOnceWith(cwd, undefined);
     expect(mocks.initializePlatform).toHaveBeenCalledWith(
       expect.objectContaining({ projectRoot, projectScope: 'required' }),
-      { skipAdapterInitialization: false },
+      { skipAdapterInitialization: false, resultWriter: expect.any(Function) },
     );
     expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({
       platformRoot: platformConfig.platformRoot,
@@ -332,8 +339,8 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     }
 
     expect(mocks.initializePlatform).toHaveBeenCalledTimes(2);
-    expect(mocks.initializePlatform).toHaveBeenNthCalledWith(1, platformConfig, { skipAdapterInitialization: true });
-    expect(mocks.initializePlatform).toHaveBeenNthCalledWith(2, platformConfig, { skipAdapterInitialization: true });
+    expect(mocks.initializePlatform).toHaveBeenNthCalledWith(1, platformConfig, { skipAdapterInitialization: true, resultWriter: expect.any(Function) });
+    expect(mocks.initializePlatform).toHaveBeenNthCalledWith(2, platformConfig, { skipAdapterInitialization: true, resultWriter: expect.any(Function) });
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
     await expect(access(path.join(cwd, ".kb"))).rejects.toThrow();
     await expect(access(process.env.KB_HOME!)).rejects.toThrow();

@@ -9,6 +9,7 @@ import { cliBinaryName } from './cli-binary.js';
 import { sideBorderBox, sideBorderChain, safeColors, safeSymbols, formatTable, logLine, confirm as promptConfirm, text as promptText, select as promptSelect, multiSelect as promptMultiSelect } from '@kb-labs/shared-cli-ui';
 import type { UIFacade, UILogEntry, MessageOptions, Spinner, SelectChoice, MultiSelectChoice, TableColumn, ChainItem, UIOutput } from '@kb-labs/plugin-contracts';
 import { AdapterUnavailableError, toErrorEnvelope } from '@kb-labs/core-platform';
+import type { CliResultWriter } from './result-serializer.js';
 
 // Workspace root — used to shorten absolute paths in stack traces
 const WORKSPACE_ROOT = process.cwd();
@@ -44,7 +45,7 @@ interface PresenterDelegate {
   table?: (data: Record<string, unknown>[]) => void;
 }
 
-function renderTTYOutput(output: UIOutput, writeOutput: (text: string) => void, layout?: { wrap?: boolean; width?: number }): void {
+function renderTTYOutput(output: UIOutput, writeOutput: (text: string) => void, writeResult: CliResultWriter, layout?: { wrap?: boolean; width?: number }): void {
   switch (output.kind) {
     case 'message': {
       const sections = output.options?.sections?.map(section => ({ header: section.header, items: section.items })) ?? [];
@@ -95,7 +96,7 @@ function renderTTYOutput(output: UIOutput, writeOutput: (text: string) => void, 
       return;
     }
     case 'json':
-      console.log(output.pretty ? JSON.stringify(output.data, null, 2) : JSON.stringify(output.data));
+      writeResult(output.data, output.pretty);
       return;
     default: {
       const exhaustive: never = output;
@@ -104,18 +105,15 @@ function renderTTYOutput(output: UIOutput, writeOutput: (text: string) => void, 
   }
 }
 
-export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
+export function createCLIUIFacade(presenter: PresenterDelegate | undefined, writeResult: CliResultWriter): UIFacade {
   const jsonMode = () => process.env.KB_OUTPUT_MODE === 'json';
   const writeOutput = (value: string) => {
     const output = value.endsWith('\n') ? value : `${value}\n`;
     if (jsonMode()) {
       process.stderr.write(output);
     } else {
-      process.stdout.write(output);
+      writeResult(output);
     }
-  };
-  const writeResult = (value: unknown, pretty = false) => {
-    console.log(pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value));
   };
 
   return {
@@ -127,15 +125,15 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
     },
 
     info: (msg: string, options?: MessageOptions) => {
-      renderTTYOutput({ kind: 'message', level: 'info', message: msg, options }, writeOutput);
+      renderTTYOutput({ kind: 'message', level: 'info', message: msg, options }, writeOutput, writeResult);
     },
 
     success: (msg: string, options?: MessageOptions) => {
-      renderTTYOutput({ kind: 'message', level: 'success', message: msg, options }, writeOutput);
+      renderTTYOutput({ kind: 'message', level: 'success', message: msg, options }, writeOutput, writeResult);
     },
 
     warn: (msg: string, options?: MessageOptions) => {
-      renderTTYOutput({ kind: 'message', level: 'warn', message: msg, options }, writeOutput);
+      renderTTYOutput({ kind: 'message', level: 'warn', message: msg, options }, writeOutput, writeResult);
     },
 
     error: (err: Error | string, options?: MessageOptions) => {
@@ -165,6 +163,7 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
       renderTTYOutput(
         { kind: 'message', level: 'error', message, options: { ...options, sections } },
         value => console.error(value),
+        writeResult,
         { wrap: process.stderr.isTTY === true, width: process.stderr.columns },
       );
     },
@@ -192,11 +191,11 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
         presenter.table(output.data);
         return;
       }
-      renderTTYOutput(output, writeOutput);
+      renderTTYOutput(output, writeOutput, writeResult);
     },
 
     json: (data: unknown, options?: { pretty?: boolean }) => {
-      renderTTYOutput({ kind: 'json', data, pretty: options?.pretty }, writeOutput);
+      renderTTYOutput({ kind: 'json', data, pretty: options?.pretty }, writeOutput, writeResult);
     },
 
     newline: () => {
@@ -217,11 +216,11 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
     },
 
     sideBox: (options) => {
-      renderTTYOutput({ kind: 'sideBox', options }, writeOutput);
+      renderTTYOutput({ kind: 'sideBox', options }, writeOutput, writeResult);
     },
 
     chain: (items: ChainItem[]) => {
-      renderTTYOutput({ kind: 'chain', items }, writeOutput);
+      renderTTYOutput({ kind: 'chain', items }, writeOutput, writeResult);
     },
 
     confirm: async (message: string, options?) => {

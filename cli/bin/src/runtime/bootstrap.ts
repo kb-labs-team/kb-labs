@@ -8,6 +8,7 @@ import {
   registerSecretFlagValues,
   type ExecutionLimits,
 } from "@kb-labs/cli-runtime";
+import { missingCliResultWriter, type CliResultWriter } from './result-serializer.js';
 import {
   registerBuiltinCommands,
   renderGlobalHelp,
@@ -123,8 +124,9 @@ export interface CliRuntimeOptions {
   }) => Promise<void> | void;
   parseArgs?: typeof parseArgs;
   registry?: typeof registry;
-  createJsonPresenter?: typeof createJsonPresenter;
-  createTextPresenter?: typeof createTextPresenter;
+  createJsonPresenter?: () => ReturnType<typeof createJsonPresenter>;
+  createTextPresenter?: (isQuiet?: boolean) => ReturnType<typeof createTextPresenter>;
+  resultWriter?: CliResultWriter;
   createRuntime?: (options: RuntimeInitOptions) => Promise<CliRuntimeInstance>;
   createRuntimeContext?: (
     options: RuntimeInitOptions,
@@ -142,6 +144,7 @@ export async function executeCli(
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   const parse = options.parseArgs ?? parseArgs;
+  const resultWriter = options.resultWriter ?? missingCliResultWriter;
   const { cmdPath, rest, global, flagsObj } = parse(argv);
   const correlationId = randomUUID();
   const processLogContext = createProcessRootLogContext({
@@ -152,8 +155,8 @@ export async function executeCli(
   });
   const registryStore = options.registry ?? registry;
   registerBuiltinSystemCommands();
-  const jsonPresenterFactory = options.createJsonPresenter ?? createJsonPresenter;
-  const textPresenterFactory = options.createTextPresenter ?? createTextPresenter;
+  const jsonPresenterFactory = options.createJsonPresenter ?? (() => createJsonPresenter(resultWriter));
+  const textPresenterFactory = options.createTextPresenter ?? ((isQuiet = false) => createTextPresenter(resultWriter, isQuiet));
 
   // Logger destinations are selected while platform adapters are created.
   // Establish the CLI boundary before initialization for programmatic callers too.
@@ -259,6 +262,7 @@ export async function executeCli(
   try {
     initialized = await initializePlatform(loadedConfig, {
       skipAdapterInitialization: Boolean(isGlobalHelp || isGlobalVersion),
+      resultWriter,
     });
   } catch (error) {
     return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory, correlationId);
@@ -370,7 +374,7 @@ export async function executeCli(
     const completionTokens = cmdPath.slice(1);
     const completions = registryStore.complete(completionTokens);
     for (const c of completions) {
-      process.stdout.write(c + "\n");
+      resultWriter(c);
     }
     return 0;
   }
@@ -560,7 +564,13 @@ export async function executeCli(
 
       try {
         const runtime = await runtimeFactory(runtimeInitOptions);
-        const v3Context = createSystemCommandContext(cliContext, platform, commandEnv, getPlatformVersion);
+        const v3Context = createSystemCommandContext(
+          cliContext,
+          platform,
+          commandEnv,
+          getPlatformVersion,
+          resultWriter,
+        );
         const { gatewayUrl: _gatewayUrl, ...commandGlobalFlags } = global;
         const commandFlags: Record<string, unknown> = { ...commandGlobalFlags, ...flagsObj };
         if (global.gatewayUrl && cmd.flags?.some((flag) => flag.name === 'gateway-url')) {
@@ -586,7 +596,7 @@ export async function executeCli(
         if (global.json) {
           presenter.json({ ok: true, schema });
         } else {
-          process.stdout.write(JSON.stringify(schema, null, 2) + "\n");
+          resultWriter(schema, true);
         }
         return 0;
       }
@@ -631,6 +641,7 @@ export async function executeCli(
           cliContext,
           platform,
           presenter,
+          resultWriter,
           runWithMiddleware: async (run) => {
             const runtime = await runtimeFactory(runtimeInitOptions);
             return runtime.middleware.execute(cliContext, run);
@@ -652,6 +663,7 @@ interface DispatchPluginParams {
   cliContext: CliExecutionContext;
   platform: PlatformContainer;
   presenter: Presenter;
+  resultWriter: CliResultWriter;
   runWithMiddleware: (run: () => Promise<number>) => Promise<number>;
 }
 
@@ -697,6 +709,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
           argv: p.actualRest,
           flags: commandFlags,
           manifestCmd: p.manifestCmd,
+          resultWriter: p.resultWriter,
         });
       }
     }
@@ -709,6 +722,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
       flags: commandFlags,
       manifestCmd: p.manifestCmd,
       platform: p.platform,
+      resultWriter: p.resultWriter,
     });
 
     if (pluginExitCode !== undefined) {
@@ -747,8 +761,8 @@ function reportGateResult<T>(
 function reportInitializationError(
   error: unknown,
   global: ReturnType<typeof parseArgs>["global"],
-  jsonPresenterFactory: typeof createJsonPresenter,
-  textPresenterFactory: typeof createTextPresenter,
+  jsonPresenterFactory: () => ReturnType<typeof createJsonPresenter>,
+  textPresenterFactory: (isQuiet?: boolean) => ReturnType<typeof createTextPresenter>,
   correlationId: string,
 ): number {
   const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);

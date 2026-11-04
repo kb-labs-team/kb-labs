@@ -9,7 +9,7 @@
  * llm.enabled setting.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { simpleGit } from 'simple-git';
@@ -40,11 +40,13 @@ describe('generateCommitPlan - LLM gating', () => {
   it('requires a configured LLM for plan generation when llmComplete is undefined', async () => {
     const llm = mockLLM();
     const { cleanup } = createTestContext({ platform: { llm } });
+    const onOutput = vi.fn();
 
     try {
       await expect(generateCommitPlan({
         cwd: repoDir,
         llmComplete: undefined, // exactly what resolveContext() passes when config.llm.enabled is false
+        onOutput,
       })).rejects.toMatchObject({ slot: 'llm', reason: 'not-configured' });
 
       expect(llm.complete).not.toHaveBeenCalled();
@@ -57,11 +59,13 @@ describe('generateCommitPlan - LLM gating', () => {
   it('does call the gateway LLM when llmComplete is provided (LLM enabled)', async () => {
     const llm = mockLLM();
     const { cleanup } = createTestContext({ platform: { llm } });
+    const onOutput = vi.fn();
 
     try {
       await generateCommitPlan({
         cwd: repoDir,
         llmComplete: async (prompt: string) => ({ content: 'feat: update a.ts' }),
+        onOutput,
       });
 
       const calledComplete = (llm.complete as unknown as { mock: { calls: unknown[] } }).mock.calls.length > 0;

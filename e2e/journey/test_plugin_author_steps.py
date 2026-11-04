@@ -156,6 +156,7 @@ elif args[:2] == ["commit", "commit"]:
         print("Commits created successfully")
 elif args[:3] == ["review", "run", "--mode=heuristic"] and "--json" not in args:
     print("Files: 1\nFindings: 0\n")
+    print("Found 0 issue(s)", file=sys.stderr)
 elif args[:3] == ["review", "run", "--mode=heuristic"]:
     print(json.dumps({"ok": True, "data": {"findings": [{"file": ".kb/journey-commit-cases/s015-review.ts", "line": 1}], "metadata": {"mode": "heuristic", "analyzedFiles": 1}}}))
 elif args[:2] == ["review", "run"] and "--mode=llm" in args:
@@ -338,6 +339,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         expected = {
             *(f"S-014.{step}" for step in range(1, 4)),
             *(f"S-015.{step}" for step in range(1, 5)),
+            "S-203.1",
             *(f"S-030.{step}" for step in range(1, 5)),
             *(f"S-160.{step}" for step in range(1, 5)),
         }
@@ -349,6 +351,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual({step: claims[step] for step in ("S-015.1", "S-015.2", "S-015.3", "S-015.4")}, {
             "S-015.1": "PASS", "S-015.2": "PASS", "S-015.3": "PASS", "S-015.4": "PASS",
         })
+        self.assertEqual(claims["S-203.1"], "PASS")
         self.assertEqual({step: claims[step] for step in ("S-160.1", "S-160.2", "S-160.3", "S-160.4")}, {
             "S-160.1": "PASS", "S-160.2": "PASS", "S-160.3": "PASS", "S-160.4": "PASS",
         }, result.steps)

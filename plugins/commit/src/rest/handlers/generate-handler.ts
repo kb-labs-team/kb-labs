@@ -49,6 +49,7 @@ export default defineHandler({
         config,
         allowSecrets,
         autoConfirm,
+        onOutput: (message) => ctx.ui?.write?.(message),
         onProgress: (message) => {
         },
       });

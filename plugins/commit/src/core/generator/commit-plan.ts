@@ -144,7 +144,7 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
     await logger.error('🚨 SECRETS DETECTED', new Error('Secrets detected'), {
       secretFiles,
     });
-    console.error('\n' + warning + '\n');
+    options.onOutput(`\n${warning}\n`);
 
     // Check if --allow-secrets flag is set
     if (!options.allowSecrets) {
@@ -156,12 +156,13 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
     }
 
     // --allow-secrets flag is set - ask for user confirmation
-    console.log('\n⚠️  WARNING: --allow-secrets flag detected\n');
+    options.onOutput('\n⚠️  WARNING: --allow-secrets flag detected\n');
     options.onPauseProgress?.();
     const confirmed = await promptUserConfirmation(
       `⚠️  Proceed with committing ${secretFiles.length} file(s) that may contain secrets?`,
+      options.onOutput,
       false, // default: NO
-      options.autoConfirm
+      options.autoConfirm,
     );
     options.onResumeProgress?.();
 
@@ -178,7 +179,7 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
       secretFiles,
       confirmedAt: new Date().toISOString(),
     });
-    console.log('✅ User confirmed - continuing with commit generation...\n');
+    options.onOutput('✅ User confirmed - continuing with commit generation...\n');
   }
 
   // 4. Get file summaries (diff stats)
@@ -323,7 +324,7 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
           onProgress?.('🚨 Secrets detected in diff');
 
           // Show detailed report to user
-          console.error('\n' + report + '\n');
+          options.onOutput(`\n${report}\n`);
 
           // Check if --allow-secrets flag is set
           if (!options.allowSecrets) {
@@ -335,12 +336,13 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
           }
 
           // --allow-secrets flag is set - ask for user confirmation (or auto-confirm with --yes)
-          console.log('\n⚠️  WARNING: --allow-secrets flag detected\n');
+          options.onOutput('\n⚠️  WARNING: --allow-secrets flag detected\n');
           options.onPauseProgress?.();
           const confirmed = await promptUserConfirmation(
             `⚠️  Proceed with committing changes that contain ${secretMatches.length} potential secret(s)?`,
+            options.onOutput,
             false, // default: NO
-            options.autoConfirm // auto-confirm if --yes flag
+            options.autoConfirm, // auto-confirm if --yes flag
           );
           options.onResumeProgress?.();
 
@@ -357,7 +359,7 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
             secretMatches: secretMatches.map(m => ({ file: m.file, line: m.line, pattern: m.patternName })),
             confirmedAt: new Date().toISOString(),
           });
-          console.log('✅ User confirmed - continuing with Phase 2 analysis...\n');
+          options.onOutput('✅ User confirmed - continuing with Phase 2 analysis...\n');
           onProgress?.('Re-analyzing with diff context (Phase 2)...');
         }
 
