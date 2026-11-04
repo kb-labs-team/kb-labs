@@ -49,6 +49,7 @@ export interface RegisterBuiltinCommandsInput {
    * falls back to `cwd` — this keeps dev-mode behavior unchanged.
    */
   platformRoot?: string;
+  resolvePlatformVersion: () => Promise<string>;
   /**
    * The user's project root (directory containing `.kb/kb.config.{json,jsonc}`).
    * Discovery reads the project-scope `<projectRoot>/.kb/marketplace.lock` from
@@ -60,7 +61,7 @@ export interface RegisterBuiltinCommandsInput {
 
 // eslint-disable-next-line sonarjs/cognitive-complexity
 export async function registerBuiltinCommands(
-  input: RegisterBuiltinCommandsInput = {},
+  input: RegisterBuiltinCommandsInput,
 ) {
   const log = input.logger ?? platform.logger;
 
@@ -80,7 +81,7 @@ export async function registerBuiltinCommands(
     const catalog = input.catalog ?? await openCatalog({
       platformRoot: input.platformRoot ?? cwd,
       projectRoot: input.projectRoot ?? cwd,
-    });
+    }, { resolvePlatformVersion: input.resolvePlatformVersion });
     setResolvedCatalog(catalog);
     const { discoverManifestsDetailed } = await import('../registry/discover');
     const discovery = await discoverManifestsDetailed(catalog);

@@ -240,3 +240,4 @@ export type { StartFullCycleRequest } from "./run-orchestrator.js";
 // Use-cases
 export { startFullCycle } from "./use-cases/start-full-cycle.js";
 export { isWorkspaceDevelopmentMode, type PlatformModeSource } from "./platform-mode.js";
+export { resolvePlatformVersion } from './platform-version.js';

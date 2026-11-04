@@ -1,4 +1,5 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import { generateExamples } from '../../utils/generate-examples';
 
 type VersionFlags = {
@@ -34,7 +35,8 @@ export const version = defineSystemCommand<VersionFlags, VersionResult>({
   },
   async handler(ctx, argv, flags) {
     const cliCtx = ctx.hostContext?.host === 'cli' ? ctx.hostContext : undefined;
-    const cliVersion = cliCtx?.cliVersion ?? process.env.CLI_VERSION ?? '0.0.0';
+    if (!cliCtx?.resolvePlatformVersion) throw new ErrorEnvelopeError(createErrorEnvelope('KB_CLI_PLATFORM_VERSION_UNAVAILABLE'));
+    const cliVersion = await cliCtx.resolvePlatformVersion();
     const nodeVersion = process.version;
     const platform = `${process.platform} ${process.arch}`;
 

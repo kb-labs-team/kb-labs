@@ -24,6 +24,7 @@ import { createDefaultExecutionPolicyLLM } from './wrappers/default-execution-po
 import { configuredAdapterForSlot, resolveDiscoveredAdapterDefaults } from './default-adapters.js';
 import { resolvePlatformDataPath, resolvePlatformDataRoot } from '@kb-labs/core-project-registry';
 import { openCatalog } from '@kb-labs/core-registry';
+import { resolvePlatformVersion } from './platform-version.js';
 import type { IEntityRegistry, CatalogOpenOptions } from '@kb-labs/plugin-contracts';
 
 import { ResourceManager } from './core/resource-manager.js';
@@ -569,6 +570,10 @@ export async function initPlatform(
     ? { development: true, workspaceRoot: workspaceRoot!, configuredPackages }
     : { development: false, configuredPackages };
   const catalog = suppliedCatalog ?? await openCatalog({ platformRoot: adapterRoot, projectRoot: cwd }, {
+    resolvePlatformVersion: () => resolvePlatformVersion(adapterRoot, {
+      sameLocation: true,
+      rawConfig: { platform: { mode: workspaceDevelopment ? 'development' : 'installed' } },
+    }),
     workspaceAdapters,
   });
   const discoveredAdapters = await loadCatalogAdapterEntries(catalog.adapters(), workspaceAdapters);

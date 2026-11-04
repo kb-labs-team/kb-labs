@@ -140,6 +140,27 @@ type Pnpm struct {
 var approvedNativeBuilds = []string{"better-sqlite3", "esbuild", "unrs-resolver"}
 
 func (p Pnpm) Install(items []contracts.Artifact) error {
+	verified, err := p.verifyTarballs(items)
+	if err != nil {
+		return err
+	}
+	return p.installVerified(items, verified)
+}
+
+func (p Pnpm) installVerified(items []contracts.Artifact, verified map[string][]byte) error {
+	for _, item := range items {
+		data, ok := verified[item.ID]
+		if !ok {
+			continue
+		}
+		path := filepath.Join(p.CacheRoot, "packages", item.SHA256+".tgz")
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			return err
+		}
+	}
 	if err := p.prepare(); err != nil {
 		return err
 	}
@@ -166,6 +187,48 @@ func (p Pnpm) Install(items []contracts.Artifact) error {
 		return err
 	}
 	return p.verifyAndRecord(items)
+}
+
+func (p Pnpm) verifyTarballs(items []contracts.Artifact) (map[string][]byte, error) {
+	verified := make(map[string][]byte)
+	for _, item := range items {
+		if item.IsBinary() || item.Tarball == "" {
+			continue
+		}
+		if item.SHA256 == "" {
+			return nil, fmt.Errorf("artifact %q tarball requires sha256", item.ID)
+		}
+		if p.CacheRoot == "" {
+			return nil, fmt.Errorf("artifact %q tarball requires the install root shared cache", item.ID)
+		}
+		path := filepath.Join(p.CacheRoot, "packages", item.SHA256+".tgz")
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			if p.Offline {
+				return nil, fmt.Errorf("offline package %s is absent from V2 cache", item.ID)
+			}
+			client := p.Client
+			if client == nil {
+				client = http.DefaultClient
+			}
+			response, getErr := client.Get(item.Tarball)
+			if getErr != nil {
+				return nil, fmt.Errorf("download package %s: %w", item.ID, getErr)
+			}
+			data, err = io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+				return nil, fmt.Errorf("download package %s: status %d: %v", item.ID, response.StatusCode, err)
+			}
+		} else if err != nil {
+			return nil, err
+		}
+		if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != item.SHA256 {
+			return nil, fmt.Errorf("package %s checksum mismatch: expected %s, got %s", item.ID, item.SHA256, actual)
+		}
+		verified[item.ID] = data
+	}
+	return verified, nil
 }
 
 func (p Pnpm) materializeManifests(items []contracts.Artifact) error {
@@ -654,6 +717,9 @@ func (p Pnpm) tarball(item contracts.Artifact) (string, error) {
 		if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
 			return "", fmt.Errorf("download package %s: status %d: %v", item.ID, response.StatusCode, err)
 		}
+		if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != item.SHA256 {
+			return "", fmt.Errorf("package %s checksum mismatch: expected %s, got %s", item.ID, item.SHA256, actual)
+		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return "", err
 		}
@@ -666,8 +732,8 @@ func (p Pnpm) tarball(item contracts.Artifact) (string, error) {
 	} else if err != nil {
 		return "", err
 	}
-	if fmt.Sprintf("%x", sha256.Sum256(data)) != item.SHA256 {
-		return "", fmt.Errorf("package %s checksum mismatch: expected %s, got %x", item.ID, item.SHA256, sha256.Sum256(data))
+	if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != item.SHA256 {
+		return "", fmt.Errorf("package %s checksum mismatch: expected %s, got %s", item.ID, item.SHA256, actual)
 	}
 	return path, nil
 }

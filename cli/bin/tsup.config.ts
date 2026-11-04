@@ -1,13 +1,7 @@
 import { defineConfig } from 'tsup';
-import { readFileSync } from 'node:fs';
 import nodePreset from '@kb-labs/devkit/tsup/node';
 
 const presetExternal = nodePreset.external || [];
-const packageMetadata = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
-if (!packageMetadata.version.trim()) {
-  throw new Error('CLI package.json must define a non-empty version before the binary can be built.');
-}
-
 export default defineConfig({
   ...nodePreset,
   entry: {
@@ -29,9 +23,6 @@ export default defineConfig({
     '@kb-labs/core-runtime',
     '@kb-labs/core-sandbox',
   ],
-  define: {
-    __KB_CLI_VERSION__: JSON.stringify(packageMetadata.version),
-  },
   // nodePreset уже включает все workspace пакеты через tsup.external.json
   // banner не нужен - shebang уже есть в src/bin.ts
 });

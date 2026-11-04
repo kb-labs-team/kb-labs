@@ -30,6 +30,7 @@ export type CatalogErrorCode =
   | "KB_AUTH_TOKEN_EXPIRED"
   | "KB_AUTH_TOKEN_REISSUE_REQUIRED"
   | "KB_AUTH_USER_INACTIVE"
+  | "KB_CLI_PLATFORM_VERSION_UNAVAILABLE"
   | "KB_CONFIG_APPLY_FAILED"
   | "KB_CONFIG_CONFLICT"
   | "KB_CONFIG_INVALID"
@@ -312,6 +313,7 @@ export interface CatalogTemplateParameters {
   "KB_AUTH_TOKEN_EXPIRED": { "gatewayUrl": string };
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": { "gatewayUrl": string };
   "KB_AUTH_USER_INACTIVE": { "gatewayUrl": string };
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": Record<never, never>;
   "KB_CONFIG_APPLY_FAILED": Record<never, never>;
   "KB_CONFIG_CONFLICT": { "path": string };
   "KB_CONFIG_INVALID": { "path": string };
@@ -594,6 +596,7 @@ export interface CatalogDetailsFor {
   "KB_AUTH_TOKEN_EXPIRED": { "gatewayUrl": string; "reason"?: string };
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": { "gatewayUrl": string; "reason"?: string };
   "KB_AUTH_USER_INACTIVE": { "gatewayUrl": string; "reason"?: string };
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": Record<string, never>;
   "KB_CONFIG_APPLY_FAILED": Record<string, never>;
   "KB_CONFIG_CONFLICT": { "path": string };
   "KB_CONFIG_INVALID": { "path": string; "contractPath"?: string; "exitCode"?: string; "hostStartupCode"?: string; "launcherLog"?: string; "log"?: string; "nextCommand"?: string; "readinessError"?: string; "readinessURL"?: string; "remedyOperation"?: string; "remedyPlatformRoot"?: string; "stderrTail"?: string; "waited"?: string };
@@ -899,6 +902,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_AUTH_TOKEN_EXPIRED": ["gatewayUrl"],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["gatewayUrl"],
   "KB_AUTH_USER_INACTIVE": ["gatewayUrl"],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": ["path"],
   "KB_CONFIG_INVALID": ["path"],
@@ -1181,6 +1185,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_AUTH_TOKEN_EXPIRED": [],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": [],
   "KB_AUTH_USER_INACTIVE": [],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": ["path"],
   "KB_CONFIG_INVALID": ["path"],
@@ -1463,6 +1468,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_AUTH_TOKEN_EXPIRED": ["gatewayUrl"],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["gatewayUrl"],
   "KB_AUTH_USER_INACTIVE": ["gatewayUrl"],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": [],
   "KB_CONFIG_INVALID": ["path"],
@@ -1745,6 +1751,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_AUTH_TOKEN_EXPIRED": ["gatewayUrl"],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["gatewayUrl"],
   "KB_AUTH_USER_INACTIVE": ["gatewayUrl"],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": ["path"],
   "KB_CONFIG_INVALID": ["path"],
@@ -2027,6 +2034,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_AUTH_TOKEN_EXPIRED": [],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": [],
   "KB_AUTH_USER_INACTIVE": [],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": ["path"],
   "KB_CONFIG_INVALID": ["path"],
@@ -2309,6 +2317,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_AUTH_TOKEN_EXPIRED": ["gatewayUrl"],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["gatewayUrl"],
   "KB_AUTH_USER_INACTIVE": ["gatewayUrl"],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": [],
   "KB_CONFIG_INVALID": ["path"],
@@ -2591,6 +2600,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_AUTH_TOKEN_EXPIRED": ["reason"],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["reason"],
   "KB_AUTH_USER_INACTIVE": ["reason"],
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": [],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": [],
   "KB_CONFIG_INVALID": ["contractPath","exitCode","hostStartupCode","launcherLog","log","nextCommand","readinessError","readinessURL","remedyOperation","remedyPlatformRoot","stderrTail","waited"],
@@ -2873,6 +2883,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_AUTH_TOKEN_EXPIRED": Record<never, never>;
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": Record<never, never>;
   "KB_AUTH_USER_INACTIVE": Record<never, never>;
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": Record<never, never>;
   "KB_CONFIG_APPLY_FAILED": Record<never, never>;
   "KB_CONFIG_CONFLICT": { "path": string };
   "KB_CONFIG_INVALID": { "path": string };
@@ -3155,6 +3166,7 @@ export interface CatalogHintTemplateParameters {
   "KB_AUTH_TOKEN_EXPIRED": { "gatewayUrl": string };
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": { "gatewayUrl": string };
   "KB_AUTH_USER_INACTIVE": { "gatewayUrl": string };
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": Record<never, never>;
   "KB_CONFIG_APPLY_FAILED": Record<never, never>;
   "KB_CONFIG_CONFLICT": Record<never, never>;
   "KB_CONFIG_INVALID": { "path": string };
@@ -3437,6 +3449,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_AUTH_TOKEN_EXPIRED": Record<never, never>;
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": Record<never, never>;
   "KB_AUTH_USER_INACTIVE": Record<never, never>;
+  "KB_CLI_PLATFORM_VERSION_UNAVAILABLE": Record<never, never>;
   "KB_CONFIG_APPLY_FAILED": Record<never, never>;
   "KB_CONFIG_CONFLICT": Record<never, never>;
   "KB_CONFIG_INVALID": Record<never, never>;

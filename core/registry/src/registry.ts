@@ -43,8 +43,6 @@ import type {
   RegistryOptions,
 } from './types.js';
 
-const PLATFORM_VERSION = '1.0.0';
-
 export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
   private readonly root: string;
   private readonly discoveryManager: DiscoveryManager;
@@ -77,7 +75,6 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
       root: this.root,
       requestIdentity: this.discoveryManager.requestIdentity,
       ttlMs: opts.cache?.ttlMs,
-      platformVersion: opts.platformVersion ?? PLATFORM_VERSION,
       cache: opts.cache?.adapter,
       cacheSnapshotKey: opts.cache?.snapshotKey,
       persistSnapshot: opts.persistSnapshot,
@@ -88,7 +85,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
       listPlugins: () => this.listPlugins(),
       getManifest: (id) => this.manifests.get(id),
       root: this.root,
-      platformVersion: opts.platformVersion ?? PLATFORM_VERSION,
+      resolvePlatformVersion: opts.resolvePlatformVersion,
       healthContributors: opts.healthContributors ?? [],
     });
   }
@@ -337,10 +334,7 @@ export class EntityRegistry implements IEntityRegistry, IEntityRegistryWriter {
       ttlMs,
       partial: false,
       stale: false,
-      source: {
-        cwd: this.root,
-        platformVersion: this.opts.platformVersion ?? PLATFORM_VERSION,
-      },
+      source: { cwd: this.root },
       plugins: this.plugins.map(p => ({
         id: p.id,
         version: p.version,

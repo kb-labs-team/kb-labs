@@ -16,7 +16,7 @@ import type { RegistryOptions } from './types.js';
 
 export async function openCatalog(
   scope: CatalogScope,
-  opts: Omit<RegistryOptions, 'root' | 'platformRoot'> = {},
+  opts: Omit<RegistryOptions, 'root' | 'platformRoot'>,
 ): Promise<IEntityRegistry> {
   const registry = new EntityRegistry({
     ...opts,

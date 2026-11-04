@@ -69,7 +69,7 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
         items: [
           `Status: ${result.status}`,
           `KB Labs: ${snapshot.version.kbLabs}`,
-          `CLI: ${ctx.hostContext?.host === 'cli' ? ctx.hostContext.cliVersion : process.env.CLI_VERSION ?? '0.0.0'}`,
+          `CLI: ${snapshot.version.kbLabs}`,
           `REST: ${snapshot.version.rest}`,
           `Git: ${gitInfo}`,
         ],

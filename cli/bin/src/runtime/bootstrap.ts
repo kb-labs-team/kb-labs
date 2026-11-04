@@ -34,10 +34,9 @@ import { executePlugin, createSystemCommandContext } from "./plugin-executor";
 import { tryResolveGateway, executeViaGateway, pluginCommandUnavailable } from "./gateway-executor";
 import { loadEnvFile } from "./env-loader";
 import { initializePlatform, loadPlatformConfiguration, resolveProjectConfig } from "./platform-init";
-import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
-import { platform as runtimePlatform, type PlatformContainer, type PlatformConfig } from "@kb-labs/core-runtime";
+import { platform as runtimePlatform, resolvePlatformVersion, type PlatformContainer, type PlatformConfig } from "@kb-labs/core-runtime";
 import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, isAgentDiagnosticsEnabled, toErrorEnvelope, type IServiceTransport } from "@kb-labs/core-platform";
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
 import { hasUsablePlatformAuth, resolveActiveGateway, resolveActiveGatewayAddress } from "@kb-labs/cli-runtime/gateway";
@@ -119,6 +118,7 @@ export interface CliRuntimeOptions {
     env: NodeJS.ProcessEnv;
     platformRoot?: string;
     projectRoot?: string;
+    resolvePlatformVersion: () => Promise<string>;
     catalog?: IEntityRegistry;
   }) => Promise<void> | void;
   parseArgs?: typeof parseArgs;
@@ -298,7 +298,9 @@ export async function executeCli(
     process.env.KB_RAW_CONFIG_JSON = JSON.stringify(rawConfig);
   }
 
-  const version = resolveVersion(options.version, env);
+  const versionSurface = global.version === true && isPlatformAuthExemptFlag('version');
+  let platformVersion: Promise<string> | undefined;
+  const getPlatformVersion = () => platformVersion ??= resolvePlatformVersion(platformRoot ?? cwd, initialized);
   const runtimeFactory =
     options.createRuntime ??
     (async (runtimeOptions: RuntimeInitOptions) => {
@@ -313,7 +315,6 @@ export async function executeCli(
   const cliLogger = createCliLogger(
     platform,
     cwd,
-    version,
     argv,
     cmdPath,
     global,
@@ -327,16 +328,22 @@ export async function executeCli(
     logger: cliLogger,
     platformRoot,
     projectRoot,
+    resolvePlatformVersion: getPlatformVersion,
     catalog: initialized.catalog,
   });
 
   // ── Handle --version early ─────────────────────────────────────────────────
-  if (global.version && isPlatformAuthExemptFlag('version')) {
+  if (versionSurface) {
     const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
-    if (global.json) {
-      presenter.json({ ok: true, version });
-    } else {
-      presenter.write(version);
+    try {
+      const version = await getPlatformVersion();
+      if (global.json) {
+        presenter.json({ ok: true, version });
+      } else {
+        presenter.write(version);
+      }
+    } catch (error) {
+      return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory, correlationId);
     }
     return 0;
   }
@@ -553,7 +560,7 @@ export async function executeCli(
 
       try {
         const runtime = await runtimeFactory(runtimeInitOptions);
-        const v3Context = createSystemCommandContext(cliContext, platform, commandEnv);
+        const v3Context = createSystemCommandContext(cliContext, platform, commandEnv, getPlatformVersion);
         const { gatewayUrl: _gatewayUrl, ...commandGlobalFlags } = global;
         const commandFlags: Record<string, unknown> = { ...commandGlobalFlags, ...flagsObj };
         if (global.gatewayUrl && cmd.flags?.some((flag) => flag.name === 'gateway-url')) {
@@ -790,7 +797,6 @@ function applyLogLevel(
 function createCliLogger(
   platform: PlatformContainer,
   cwd: string,
-  version: string,
   argv: string[],
   cmdPath: string[],
   global: { json?: unknown; quiet?: unknown; debug?: unknown },
@@ -808,7 +814,7 @@ function createCliLogger(
       traceId: `trace-${crypto.randomUUID()}`,
       spanId: `span-${crypto.randomUUID()}`,
     })
-    .with({ cwd, version, invocationId: `inv-${crypto.randomUUID()}`, argv });
+    .with({ cwd, invocationId: `inv-${crypto.randomUUID()}`, argv });
   logger.info("CLI invocation started", {
     commandPath: cmdPath.join(" "),
     argsCount: argv.length,
