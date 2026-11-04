@@ -3,6 +3,7 @@
  */
 
 import * as readline from 'node:readline';
+import { Writable } from 'node:stream';
 
 /**
  * Prompt user for yes/no confirmation
@@ -14,12 +15,13 @@ import * as readline from 'node:readline';
  */
 export async function promptUserConfirmation(
   question: string,
+  writeOutput: (text: string) => void,
   defaultValue: boolean = false,
   autoConfirm: boolean = false
 ): Promise<boolean> {
   // Auto-confirm mode (--yes flag)
   if (autoConfirm) {
-    console.log(`${question} [auto-confirmed with --yes]`);
+    writeOutput(`${question} [auto-confirmed with --yes]\n`);
     return true;
   }
 
@@ -29,9 +31,15 @@ export async function promptUserConfirmation(
     process.stdin.resume();
   }
 
+  const output = new Writable({
+    write(chunk, _encoding, callback) {
+      writeOutput(chunk.toString());
+      callback();
+    },
+  });
   const rl = readline.createInterface({
     input: process.stdin,
-    output: process.stdout,
+    output,
   });
 
   const defaultHint = defaultValue ? '[Y/n]' : '[y/N]';

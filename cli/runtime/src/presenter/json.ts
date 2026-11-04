@@ -2,7 +2,9 @@ import type { Presenter } from "./types";
 import type { SystemContext } from "../cli-context";
 import { toErrorEnvelope } from '@kb-labs/core-platform';
 
-export function createJsonPresenter(): Presenter & {
+export type JsonResultWriter = (value: unknown) => void;
+
+export function createJsonPresenter(writeResult: JsonResultWriter): Presenter & {
   setContext(context: SystemContext): void;
 } {
   let _context: SystemContext | null = null;
@@ -14,9 +16,9 @@ export function createJsonPresenter(): Presenter & {
     write: (_line) => {},
     info: (_line) => {},
     warn: (_line) => {},
-    error: (line) => console.log(JSON.stringify({ ok: false, error: toErrorEnvelope(new Error(line)) })),
+    error: (line) => writeResult({ ok: false, error: toErrorEnvelope(new Error(line)) }),
     json: (payload) => {
-      console.log(JSON.stringify(payload));
+      writeResult(payload);
       // System commands use simple JSON output
     },
     setContext(ctx: SystemContext) {

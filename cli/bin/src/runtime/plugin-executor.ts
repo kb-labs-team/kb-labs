@@ -19,8 +19,8 @@ import {
   noopUI,
 } from "@kb-labs/plugin-contracts";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
-import { setJsonMode } from "@kb-labs/shared-cli-ui";
 import { randomUUID } from "node:crypto";
+import { setJsonMode } from "@kb-labs/shared-cli-ui";
 import {
   AdapterUnavailableError,
   createContextLogger,
@@ -30,6 +30,7 @@ import { resolveCliHandlerPath } from "@kb-labs/core-platform";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
 import { cliBinaryName } from './cli-binary.js';
 import { createCLIUIFacade } from "./ui-facade";
+import { missingCliResultWriter, type CliResultWriter } from './result-serializer.js';
 
 export interface PluginExecutionOptions {
   context: SystemContext;
@@ -39,6 +40,7 @@ export interface PluginExecutionOptions {
   flags: Record<string, unknown>;
   manifestCmd?: RegisteredCommand;
   platform: PlatformContainer;
+  resultWriter?: CliResultWriter;
 }
 
 /**
@@ -51,6 +53,7 @@ export async function executePlugin(
   options: PluginExecutionOptions,
 ): Promise<number | undefined> {
   const { context, env, commandId, argv, flags, manifestCmd, platform } = options;
+  const resultWriter = options.resultWriter ?? missingCliResultWriter;
 
   // No manifest command info - can't execute
   if (!manifestCmd) {
@@ -112,6 +115,7 @@ export async function executePlugin(
     // PresenterDelegate exposes debug/spinner/table — the runtime impl has all).
     let ui = createCLIUIFacade(
       context.presenter as unknown as Parameters<typeof createCLIUIFacade>[0],
+      resultWriter,
     );
     if (jsonMode) {
       setJsonMode(true);
@@ -173,6 +177,7 @@ export async function executePlugin(
     if (renderUnavailableAdapterError(
       error,
       context.presenter as unknown as Parameters<typeof createCLIUIFacade>[0],
+      resultWriter,
     )) {
       return 1;
     }
@@ -190,11 +195,12 @@ function permissionAllowsEnvironmentVariable(
 export function renderUnavailableAdapterError(
   error: unknown,
   presenter?: Parameters<typeof createCLIUIFacade>[0],
+  resultWriter: CliResultWriter = missingCliResultWriter,
 ): boolean {
   if (!(error instanceof AdapterUnavailableError) || error.reason !== "not-configured") {
     return false;
   }
-  createCLIUIFacade(presenter).error(error);
+  createCLIUIFacade(presenter, resultWriter).error(error);
   return true;
 }
 
@@ -254,9 +260,11 @@ export function createSystemCommandContext(
   context: SystemContext,
   platform: PlatformContainer,
   env: NodeJS.ProcessEnv,
+  resultWriter: CliResultWriter = missingCliResultWriter,
 ): PluginContextV3 & { executionBackend?: PlatformContainer['executionBackend'] } {
   const ui = createCLIUIFacade(
     context.presenter as unknown as Parameters<typeof createCLIUIFacade>[0],
+    resultWriter,
   );
   const requestId = `cli-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const traceId = `trace-${randomUUID()}`;

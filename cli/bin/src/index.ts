@@ -1,4 +1,5 @@
 import { executeCli } from "./runtime/bootstrap";
+import type { CliResultWriter } from './runtime/result-serializer.js';
 
 /**
  * CLI entry point.
@@ -9,7 +10,7 @@ import { executeCli } from "./runtime/bootstrap";
  */
 export async function run(
   argv: string[],
-  opts: { moduleUrl?: string } = {},
+  opts: { moduleUrl?: string; resultWriter: CliResultWriter },
 ): Promise<number | void> {
-  return executeCli(argv, { moduleUrl: opts.moduleUrl });
+  return executeCli(argv, { moduleUrl: opts.moduleUrl, resultWriter: opts.resultWriter });
 }

@@ -110,6 +110,7 @@ export default defineCommand({
           config,
           allowSecrets,
           autoConfirm,
+          onOutput: (message) => ctx.ui?.write?.(message),
           onProgress: (message) => { if (!flags.json) { analyzeLoader.update({ text: message }); } },
         });
       } catch (err) {

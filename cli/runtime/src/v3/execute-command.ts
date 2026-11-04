@@ -229,9 +229,16 @@ export async function executeCommandV3(
     //
     // Use the platformContainer passed from v3-adapter (which got it from bootstrap)
     // This ensures we use the SAME instance that was initialized with ExecutionBackend
-    const result =
-      await options.platformContainer.executionBackend.execute(request, {
+    const result = await options.platformContainer.executionBackend.execute(request, {
         signal,
+        onLog(entry) {
+          const text = entry.message.endsWith('\n') ? entry.message : `${entry.message}\n`;
+          if (entry.stream === 'stderr') {
+            process.stderr.write(text);
+          } else {
+            process.stdout.write(text);
+          }
+        },
       });
 
     // Handle execution result

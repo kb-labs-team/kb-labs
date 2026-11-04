@@ -1,7 +1,7 @@
 import type { Presenter } from "./types";
 import { sideBorderBox } from "@kb-labs/shared-cli-ui";
 
-export function createTextPresenter(isQuiet: boolean = false): Presenter {
+export function createTextPresenter(writeResult: (text: string) => void, isQuiet: boolean = false): Presenter {
   const isTTY = process.stdout.isTTY === true;
   return {
     isTTY,
@@ -9,12 +9,12 @@ export function createTextPresenter(isQuiet: boolean = false): Presenter {
     isJSON: false,
     write: (line) => {
       if (!isQuiet) {
-        console.log(line);
+        writeResult(line);
       }
     },
     info: (line) => {
       if (!isQuiet) {
-        console.log(line);
+        writeResult(line);
       }
     },
     warn: (line) => {

@@ -164,6 +164,7 @@ export default defineCommand({
         config,
         allowSecrets: flags['allow-secrets'] ?? false,
         autoConfirm: flags.yes ?? false,
+        onOutput: (message) => ctx.ui?.write?.(message),
         onProgress: (message) => analyzeLoader.update({ text: message }),
         onPauseProgress: () => analyzeLoader.stop(),
         onResumeProgress: () => analyzeLoader.start(),

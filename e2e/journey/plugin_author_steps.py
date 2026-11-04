@@ -303,6 +303,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     if prepared.status != "PASS":
         cases = [f"S-014.{step}" for step in range(1, 4)]
         cases.extend(f"S-015.{step}" for step in range(1, 5))
+        cases.append("S-203.1")
         cases.extend(f"S-030.{step}" for step in range(1, 5))
         cases.extend(f"S-160.{step}" for step in range(1, 5))
         for case_id in cases:
@@ -326,7 +327,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("S-014.1 expected a preview-only LLM plan without changing Git state")
 
     journey.step("generate a real-provider Commit plan without applying it", "plugin-author",
-                 s014_dry_run, cases=["S-014.1"])
+                 s014_dry_run, cases=["S-014.1", "S-203.1"])
 
     def s014_provider() -> None:
         adapter_cmd = ["adapter", "list", "--json"]
@@ -357,8 +358,10 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         result = cli(command, step_id="S-015.1")
         if result.returncode != 0 or "Files:" not in result.stdout:
             raise RuntimeError("S-015.1 did not complete and identify the reviewed change set")
+        if "Found " not in result.stderr:
+            raise RuntimeError("S-203.1 human-mode progress was not written to stderr")
 
-    journey.step("review changed files with heuristic mode", "plugin-author", s015_heuristic, cases=["S-015.1"])
+    journey.step("review changed files with heuristic mode", "plugin-author", s015_heuristic, cases=["S-015.1", "S-203.1"])
 
     def s015_findings() -> None:
         command = ["review", "run", "--mode=heuristic", "--json"]
@@ -372,7 +375,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
                     or not isinstance(finding.get("line"), int)):
                 raise RuntimeError("S-015.2 produced a finding without file path and line reference")
 
-    journey.step("inspect heuristic review findings", "plugin-author", s015_findings, cases=["S-015.2"])
+    journey.step("inspect heuristic review findings", "plugin-author", s015_findings, cases=["S-015.2", "S-203.1"])
 
     def s015_json() -> None:
         command = ["review", "run", "--json"]
