@@ -161,9 +161,9 @@ For `main`, only the aggregator job is required: **Platform E2E**. The 8 individ
 
 **Required checks (set in `Settings → Branches → main`):**
 - `Platform E2E` — the aggregator from `e2e-platform.yml` matrix
-- `CI (PR)` jobs — `Build Go tools`, `Build TS (devkit)`, `Deps (syncpack)`, `Plugin structure`, `lint`, `type-check`, `test`
+- `CI (PR)` jobs — `Release build preflight`, `Build Go tools`, `Build TS (devkit)`, `Deps (syncpack)`, `Plugin structure`, `lint`, `type-check`, `test`
 
-With these required, a PR cannot merge until both `CI (PR)` and the PR-triggered `Platform E2E` are green. See [ADR-0019](./adr/0019-pr-e2e-gate.md).
+The `Release build preflight` job runs the versioned release build on the PR commit. With these checks required, a PR cannot merge until the preflight, remaining `CI (PR)` jobs, and PR-triggered `Platform E2E` are green. See [ADR-0019](./adr/0019-pr-e2e-gate.md).
 
 ---
 
