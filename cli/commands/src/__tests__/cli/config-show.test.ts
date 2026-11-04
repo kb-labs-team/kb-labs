@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
-import { openCatalog } from '@kb-labs/core-registry';
+import { openCatalog as openCatalogWithVersion } from '@kb-labs/core-registry';
 import { setResolvedCatalog } from '../../registry/discovery-state.js';
 
 type LoadPlatformConfigResult = {
@@ -105,6 +105,11 @@ function splitRootResult(overrides: Partial<LoadPlatformConfigResult> = {}): Loa
     ...overrides,
   };
 }
+
+const openCatalog = (
+  scope: Parameters<typeof openCatalogWithVersion>[0],
+  options: Omit<Parameters<typeof openCatalogWithVersion>[1], 'resolvePlatformVersion'> = {},
+) => openCatalogWithVersion(scope, { ...options, resolvePlatformVersion: async () => 'test' });
 
 describe('config show', () => {
   let testRoot: string;

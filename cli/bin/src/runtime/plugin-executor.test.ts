@@ -140,6 +140,7 @@ describe('plugin executor adapter errors', () => {
       cwd: workspaceRoot,
       platformRoot: workspaceRoot,
       projectRoot: workspaceRoot,
+      resolvePlatformVersion: async () => 'test',
       logger: {
         trace() {},
         debug() {},
@@ -197,6 +198,7 @@ describe('plugin executor adapter errors', () => {
       cwd: workspaceRoot,
       platformRoot: workspaceRoot,
       projectRoot: workspaceRoot,
+      resolvePlatformVersion: async () => 'test',
       logger: {
         trace() {},
         debug() {},

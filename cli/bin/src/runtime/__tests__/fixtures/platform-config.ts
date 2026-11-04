@@ -16,7 +16,18 @@ export async function createPlatformConfigFixture(
 ): Promise<LoadPlatformConfigResult> {
   const kbHome = path.join(options.home, '.kb');
   await mkdir(kbHome, { recursive: true });
-  await writeFile(path.join(kbHome, 'kb.config.json'), JSON.stringify(options.rawConfig));
+  const platform = options.rawConfig.platform;
+  const platformConfig = {
+    ...options.rawConfig,
+    platform: {
+      ...(platform && typeof platform === 'object' && !Array.isArray(platform) ? platform : {}),
+      mode: 'development',
+    },
+  };
+  await writeFile(path.join(kbHome, 'kb.config.json'), JSON.stringify(platformConfig));
+  const developmentManifest = path.join(options.home, 'core', 'runtime', 'package.json');
+  await mkdir(path.dirname(developmentManifest), { recursive: true });
+  await writeFile(developmentManifest, JSON.stringify({ name: '@kb-labs/core-runtime', version: 'test' }));
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,

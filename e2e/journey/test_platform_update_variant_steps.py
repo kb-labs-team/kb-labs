@@ -12,6 +12,7 @@ from platform_update_variant_steps import _file_fingerprints, _install_vibeproxy
 from service_steps import Journey
 from installed_fixture import layout_relative, layout_value
 from journey_resources import workspace_resource
+from invocations import catalogued_error_hint, catalogued_error_message
 
 
 def _versioned_platform(root: Path, version: str) -> Path:
@@ -115,10 +116,18 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
                 registered.append((name, list(cases), check, tuple(requires)))
 
             def fake_runner(args, cwd):
-                if args[1] == "update":
+                if args[1] == "commit":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {}}), "")
+                if args[1] in ("--version", "version"):
+                    code = "KB_CLI_PLATFORM_VERSION_UNAVAILABLE"
                     return subprocess.CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
-                        "code": "KB_INSTALL_APPLY_FAILED", "message": "Artifact checksum mismatch.",
-                        "hint": "Replace the artifact and rerun the update."}}), "")
+                        "code": code, "message": catalogued_error_message(code),
+                        "hint": catalogued_error_hint(code)}}), "")
+                if args[1] == "update":
+                    code = "KB_INSTALL_APPLY_FAILED"
+                    return subprocess.CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
+                        "code": code, "message": catalogued_error_message(code),
+                        "hint": catalogued_error_hint(code)}}), "")
                 if args[1] == "status":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
                         "runningVersion": "3.2.0", "installedVersion": "3.2.0"}}), "")
@@ -145,7 +154,7 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
             claims = {case for _, cases, _, _ in registered for case in cases}
             self.assertTrue({"S-023.9", "S-023.10", "S-023.11", "S-023.12", "S-023.13",
                              "S-023.14", "S-023.15", "S-024.6", "S-194.7"}.issubset(claims))
-            self.assertEqual(len(registered), 12)
+            self.assertEqual(len(registered), 13)
             fixture_step = next(requires for name, _, _, requires in registered
                                 if name == "prepare update preservation baseline")
             self.assertEqual(fixture_step, ("state:project-registered",))
@@ -155,6 +164,9 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
             checksum_step = next(check for name, _, check, _ in registered
                                  if name == "reject corrupted sealed binary without changing N")
             checksum_step()
+            missing_owner_step = next(check for name, _, check, _ in registered
+                                      if name == "refuse CLI version when the platform receipt is missing")
+            missing_owner_step()
 
     def test_n_plus_two_plan_requires_every_intervening_sealed_note(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

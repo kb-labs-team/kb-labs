@@ -4,12 +4,14 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { discoverAdapters } from '../discover-adapters.js';
 import { AdapterUnavailableError } from '@kb-labs/core-platform';
+import { writeTestPlatformReceipt } from './platform-version-fixture.js';
 
 describe('discoverAdapters (lock-based)', () => {
   let tmpDir: string;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'discover-adapters-'));
+    writeTestPlatformReceipt(tmpDir);
   });
 
   afterEach(async () => {
@@ -139,6 +141,7 @@ describe('discoverAdapters (lock-based)', () => {
   it('loads workspace CLI adapters from the CLI workspace when platform root is isolated', async () => {
     const platformRoot = path.join(tmpDir, 'home', 'platform');
     const workspaceRoot = path.join(tmpDir, 'checkout');
+    writeTestPlatformReceipt(workspaceRoot);
     const packageRoot = path.join(workspaceRoot, 'adapters', 'fs');
     const distDir = path.join(packageRoot, 'dist');
     await fs.mkdir(distDir, { recursive: true });
@@ -302,6 +305,7 @@ describe('discoverAdapters — platform lock is authoritative', () => {
   beforeEach(async () => {
     platformRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'platform-'));
     projectRoot  = await fs.mkdtemp(path.join(os.tmpdir(), 'project-'));
+    writeTestPlatformReceipt(platformRoot);
   });
 
   afterEach(async () => {

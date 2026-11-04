@@ -8,7 +8,7 @@ const workspaceRoot = join(import.meta.dirname, '../../../..');
 
 beforeAll(async () => {
   registerBuiltinSystemCommands();
-  await registerBuiltinCommands({ cwd: workspaceRoot, platformRoot: workspaceRoot, projectRoot: workspaceRoot });
+  await registerBuiltinCommands({ cwd: workspaceRoot, platformRoot: workspaceRoot, projectRoot: workspaceRoot, resolvePlatformVersion: async () => 'test' });
 });
 
 function commandSnippets(text: string): string[] {

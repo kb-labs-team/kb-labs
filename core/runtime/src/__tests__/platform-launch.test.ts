@@ -5,6 +5,7 @@ import path from "node:path";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
 import { platform } from "../container.js";
 import { launchPlatform, resetPlatformRuntime } from "../platform-launch.js";
+import { writeTestPlatformReceipt } from './platform-version-fixture.js';
 
 const assemblyHook = (
   _raw: object,
@@ -22,6 +23,7 @@ describe("launchPlatform", () => {
   beforeEach(async () => {
     resetPlatformRuntime();
     projectRoot = await mkdtemp(path.join(tmpdir(), "kb-platform-launch-"));
+    writeTestPlatformReceipt(projectRoot);
     kbHome = await mkdtemp(path.join(tmpdir(), "kb-platform-launch-home-"));
     previousHome = process.env.HOME;
     previousKbHome = process.env.KB_HOME;

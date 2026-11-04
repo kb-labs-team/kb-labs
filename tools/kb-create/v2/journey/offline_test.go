@@ -43,6 +43,15 @@ type offlineArtifacts struct {
 	root string
 }
 
+func (a *offlineArtifacts) Prepare(items []contracts.Artifact) (contracts.PreparedArtifacts, error) {
+	return offlinePrepared{install: func() error { return a.Install(items) }}, nil
+}
+
+type offlinePrepared struct{ install func() error }
+
+func (p offlinePrepared) Install(func(string, bool) error) error { return p.install() }
+func (offlinePrepared) Close() error                             { return nil }
+
 func (a *offlineArtifacts) Install(items []contracts.Artifact) error {
 	if a.installErr != nil {
 		return a.installErr

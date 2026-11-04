@@ -89,7 +89,13 @@ function makeCtx(overrides: Partial<PluginContextV3['ui']> = {}): PluginContextV
     platform: makeMockPlatform() as never,
     runtime: { fs: {} as never, fetch: vi.fn(), env: vi.fn() },
     api: {} as never,
-    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
+    hostContext: {
+      host: 'cli' as const,
+      binaryName: 'kb',
+      argv: [],
+      flags: {},
+      resolvePlatformVersion: async () => 'test',
+    },
     trace: noopTraceContext,
   };
 }

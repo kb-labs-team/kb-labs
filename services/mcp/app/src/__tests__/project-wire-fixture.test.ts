@@ -96,7 +96,7 @@ describe('project MCP wire fixture producer', () => {
       callOutput.getStore()?.text.push('output from the external command adapter');
       return 0;
     });
-    catalog = await openCatalog({ platformRoot: projectRoot, projectRoot });
+    catalog = await openCatalog({ platformRoot: projectRoot, projectRoot }, { resolvePlatformVersion: async () => 'test' });
     daemon = new McpDaemonServer({
       port: 0,
       host: '127.0.0.1',
@@ -164,7 +164,7 @@ describe('project MCP wire fixture producer', () => {
       callOutput.getStore()?.text.push('mutation complete');
       return 0;
     });
-    catalog = await openCatalog({ platformRoot: projectRoot, projectRoot });
+    catalog = await openCatalog({ platformRoot: projectRoot, projectRoot }, { resolvePlatformVersion: async () => 'test' });
     daemon = new McpDaemonServer({
       port: 0, host: '127.0.0.1', logger: new NoOpLogger(), cache: new InMemoryCache(), catalog,
       platform: {

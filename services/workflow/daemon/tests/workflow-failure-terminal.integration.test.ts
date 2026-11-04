@@ -61,7 +61,7 @@ describe('live workflow failure terminalization', () => {
     });
     const failedJobId = run.jobs[0]!.id;
     deadLetterKey = workflowProjectCacheKey(projectId, workflowDeadLetterCacheKey(run.id, failedJobId));
-    const registry = await openCatalog({ platformRoot: workspaceRoot, projectRoot: workspaceRoot });
+    const registry = await openCatalog({ platformRoot: workspaceRoot, projectRoot: workspaceRoot }, { resolvePlatformVersion: async () => 'test' });
     let executionCount = 0;
     const backend = createNormalizedExecutionBackend({
       async execute(request) {
