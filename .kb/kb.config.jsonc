@@ -157,6 +157,7 @@
               "packages": {
                 "exclude": [
                   "templates/*",
+                  "e2e/journey/fixtures/*",
                   "{{.Name}}",
                   "@product-name/*",
                   "tmp/notifier-test",
