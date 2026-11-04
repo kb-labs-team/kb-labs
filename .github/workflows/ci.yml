@@ -30,6 +30,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Keep the release candidate's exact build path green on every merge to
+  # master, using a throwaway version derived from this commit.
+  release-build-preflight:
+    name: Release build preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Build platform release flow
+        uses: ./.github/actions/release-build-preflight
+        with:
+          commit-sha: ${{ github.sha }}
+          flow: platform
+          channel: canary
+          mode: preflight
+
   # The chart's render-time config/security contract is a static release gate.
   helm-chart-static:
     name: Helm chart topology gate

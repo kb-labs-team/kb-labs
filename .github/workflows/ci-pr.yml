@@ -39,6 +39,28 @@ jobs:
       - name: Check Single Version Policy (versions + format)
         run: pnpm deps:lint
 
+  # This runs the same versioned release build path used for immutable
+  # candidates, with a throwaway commit-scoped preflight version.
+  release-build-preflight:
+    name: Release build preflight
+    runs-on: ubuntu-latest
+    needs: preflight
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Build platform release flow
+        uses: ./.github/actions/release-build-preflight
+        with:
+          commit-sha: ${{ github.sha }}
+          flow: platform
+          channel: canary
+          mode: preflight
+
   # ── 0a. Resolve E2E ownership from the complete PR diff ──────────────────
   # The same JSON plan drives the selective E2E jobs below.
   e2e-test-plan:
