@@ -7,6 +7,8 @@ import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { noopTraceContext, noopUI } from '@kb-labs/plugin-contracts';
 import { registry } from '../../registry/service.js';
 import { registerBuiltinSystemCommands } from '../../utils/register.js';
+import { workflowCommands, workflowServiceCommands } from '@kb-labs/workflow-entry';
+import { workflowGroup } from './workflow.js';
 
 const tempDirectories: string[] = [];
 
@@ -20,6 +22,26 @@ describe('built-in workflow commands', () => {
 
     expect(registry.resolve(['workflow', 'runs', 'list']).type).toBe('system-cmd');
     expect(registry.resolve(['workflow', 'defs', 'view']).type).toBe('system-cmd');
+  });
+
+  it('registers every declared workflow command from the same service catalog', () => {
+    const registered: string[] = [];
+    const visit = (group: typeof workflowGroup, prefix: string): void => {
+      const groupPath = prefix ? `${prefix} ${group.name}` : group.name;
+      registered.push(...group.commands.map((command) => `${groupPath} ${command.name}`));
+      for (const subgroup of group.subgroups ?? []) visit(subgroup, groupPath);
+    };
+    visit(workflowGroup, '');
+    const declared = Object.values(workflowServiceCommands.commands).map((command) => command.name);
+    expect(registered.sort()).toEqual(declared.sort());
+    expect(Object.keys(workflowCommands).sort()).toEqual(Object.keys(workflowServiceCommands.commands).sort());
+  });
+
+  it('derives the workflow run leaf command from the service declaration', () => {
+    registerBuiltinSystemCommands();
+    const leaf = workflowServiceCommands.commands.workflowRun.name.split(' ').at(-1);
+    expect(leaf).toBeDefined();
+    expect(registry.resolve(['workflow', leaf!]).type).toBe('system-cmd');
   });
 
   it('serializes a workflow handler failure through the shared CLI command boundary', async () => {
