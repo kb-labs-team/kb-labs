@@ -62,7 +62,7 @@ async function startWorker(): Promise<void> {
   const workspaceRoot = process.cwd()
   const engine = new WorkflowEngine({ projectId, cache, storage, events: new InMemoryEventBus(), logger, secretProvider: new EnvSecretProvider(), workspaceRoot })
   await engine.cleanupStaleRuns()
-  const registry = await openCatalog({ platformRoot: workspaceRoot, projectRoot: workspaceRoot })
+  const registry = await openCatalog({ platformRoot: workspaceRoot, projectRoot: workspaceRoot }, { resolvePlatformVersion: async () => 'test' })
   const backend = createNormalizedExecutionBackend({
     async execute() {
       process.send?.({ type: 'step-started' })

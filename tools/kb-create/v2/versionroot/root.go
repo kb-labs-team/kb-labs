@@ -188,7 +188,21 @@ func (l Layout) ExistingPlatformRoot() (string, error) {
 	}
 	return l.PlatformRoot(), nil
 }
-func (l Layout) VersionsDir() string       { return contracts.VersionRootsDirectory(l.Root) }
+func (l Layout) VersionsDir() string { return contracts.VersionRootsDirectory(l.Root) }
+
+// CreateArtifactStaging creates private prepared-artifact storage inside the
+// install container's versions directory. The returned path is owned by the
+// caller and must be removed after installation or refusal.
+func (l Layout) CreateArtifactStaging() (string, error) {
+	if err := os.MkdirAll(l.VersionsDir(), 0o750); err != nil {
+		return "", fmt.Errorf("create version roots directory: %w", err)
+	}
+	stage, err := os.MkdirTemp(l.VersionsDir(), ".stage-artifacts-")
+	if err != nil {
+		return "", fmt.Errorf("create prepared artifact staging directory: %w", err)
+	}
+	return stage, nil
+}
 func (l Layout) SharedStateDir() string    { return contracts.SharedStateDirectory(l.Root) }
 func (l Layout) InstallerStateDir() string { return contracts.InstallerStateDirectory(l.Root) }
 func (l Layout) HostStateDir() string      { return contracts.HostStateDirectory(l.Root) }

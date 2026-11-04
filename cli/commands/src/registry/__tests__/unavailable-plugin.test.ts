@@ -9,9 +9,14 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { openCatalog } from '@kb-labs/core-registry';
+import { openCatalog as openCatalogWithVersion } from '@kb-labs/core-registry';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { DiscoveredPlugin } from '@kb-labs/plugin-contracts';
+
+const openCatalog = (
+  scope: Parameters<typeof openCatalogWithVersion>[0],
+  options: Omit<Parameters<typeof openCatalogWithVersion>[1], 'resolvePlatformVersion'> = {},
+) => openCatalogWithVersion(scope, { ...options, resolvePlatformVersion: async () => 'test' });
 
 describe('failed enabled plugins', () => {
   // case: S-203.21

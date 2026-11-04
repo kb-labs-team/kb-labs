@@ -673,6 +673,21 @@ func snapshotTree(t *testing.T, root string) []byte {
 
 type installArtifacts struct{ root string }
 
+func (a installArtifacts) Prepare(items []contracts.Artifact) (contracts.PreparedArtifacts, error) {
+	return installPreparedArtifacts{install: func(progress func(string, bool) error) error {
+		return a.InstallWithProgress(items, progress)
+	}}, nil
+}
+
+type installPreparedArtifacts struct {
+	install func(func(string, bool) error) error
+}
+
+func (p installPreparedArtifacts) Install(progress func(string, bool) error) error {
+	return p.install(progress)
+}
+func (installPreparedArtifacts) Close() error { return nil }
+
 func (a installArtifacts) Install(items []contracts.Artifact) error {
 	return a.InstallWithProgress(items, nil)
 }

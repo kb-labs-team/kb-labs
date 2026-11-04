@@ -20,6 +20,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
@@ -184,6 +185,96 @@ func TestUpdateBadChecksumIndexReturnsCataloguedApplyFailure(t *testing.T) {
 	}
 	if processIdentityAfter, err := os.ReadFile(state.HostPID()); err != nil || string(processIdentityAfter) != string(processIdentityBefore) {
 		t.Fatalf("bad-checksum update changed the running host identity: %v", err)
+	}
+}
+
+// case: S-023.12
+func TestUpdateBadPackageChecksumPreservesSharedStateAndReturnsOperationFailure(t *testing.T) {
+	inst := newInstallation(t)
+	if _, code, output := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start fixture host: %d %s", code, output)
+	}
+	validPackage := []byte("valid sealed cli package")
+	corruptPackage := []byte("corrupt sealed cli package")
+	validPlatformPackage := testfixtures.PackageTarball("@kb/platform", "2.0.0", nil)
+	validSDKPackage := testfixtures.PackageTarball("@kb/sdk", "2.0.0", nil)
+	validBinary := []byte("valid sealed update binary")
+	validBinaryDigest := sha256.Sum256(validBinary)
+	digest := sha256.Sum256(validPackage)
+	platformDigest := sha256.Sum256(validPlatformPackage)
+	sdkDigest := sha256.Sum256(validSDKPackage)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload []byte
+		switch request.URL.Path {
+		case "/kb-create":
+			payload = validBinary
+		case "/platform.tgz":
+			payload = validPlatformPackage
+		case "/sdk.tgz":
+			payload = validSDKPackage
+		default:
+			payload = corruptPackage
+		}
+		_, _ = writer.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Tarball = server.URL + "/platform.tgz"
+	source.Platforms[0].SHA256 = hex.EncodeToString(platformDigest[:])
+	source.SDKs[0].Tarball = server.URL + "/sdk.tgz"
+	source.SDKs[0].SHA256 = hex.EncodeToString(sdkDigest[:])
+	source.Platforms[0].Members[0].Version = "2.1.0"
+	source.Platforms[0].Members[0].Tarball = server.URL + "/cli-bin.tgz"
+	source.Platforms[0].Members[0].SHA256 = hex.EncodeToString(digest[:])
+	source.Platforms[0].Binaries[0].URL = server.URL + "/kb-create"
+	source.Platforms[0].Binaries[0].SHA256 = hex.EncodeToString(validBinaryDigest[:])
+	sealed, err := sealTestCatalog(t, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(t.TempDir(), "bad-package-checksum-release-index.json")
+	encodedIndex, err := json.Marshal(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, encodedIndex, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cacheRoot, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedCache, err := cacheRoot.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateBefore := snapshotStateTree(t, filepath.Join(inst.root, "state"))
+	_, failure, exitCode, _ := executeForTest(t, operationTestSetup{
+		Operation: "update", Index: indexPath, JSON: true,
+		Direct: directRequest{PlatformRoot: inst.root, PlatformVersion: "2.0.0", SDKVersion: "2.0.0", Policy: "compatible"},
+		RuntimeDeps: &runtime.Dependencies{Artifacts: artifacts.Composite{
+			Packages: artifacts.Pnpm{Root: inst.root, CacheRoot: sharedCache,
+				PackageManagerRoot: filepath.Join(inst.root, "state", "package-manager"), Client: server.Client()},
+			Binaries: artifacts.Binaries{Root: inst.root, CacheRoot: sharedCache, Client: server.Client()},
+		}},
+		NodePreflight: func() error { return nil },
+	})
+	if failure == nil || failure.Code != contracts.CodeApplyFailed || exitCode != 1 {
+		failureCode := ""
+		if failure != nil {
+			failureCode = failure.Code
+		}
+		t.Fatalf("bad-package-checksum update = code %q / exit %d; want %q / exit 1", failureCode, exitCode, contracts.CodeApplyFailed)
+	}
+	if !strings.Contains(failure.Cause, "checksum mismatch") {
+		t.Fatalf("bad-package-checksum update cause = %q, want package checksum mismatch", failure.Cause)
+	}
+	if _, err := diag.ToEnvelope(failure); err != nil {
+		t.Fatalf("bad-package-checksum update violated its diagnostic contract: %v", err)
+	}
+	if stateAfter := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(stateAfter, stateBefore) {
+		t.Fatalf("bad-package-checksum update changed shared state: before=%#v after=%#v", stateBefore, stateAfter)
 	}
 }
 

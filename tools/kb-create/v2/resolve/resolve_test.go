@@ -710,6 +710,30 @@ func TestPlanRejectsConflictingManifestRequirementOwnership(t *testing.T) {
 	}
 }
 
+// case: S-023.12
+func TestMissingRequiredConfigurationUsesCataloguedOperationFailure(t *testing.T) {
+	var source catalog.Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("2.0.0", "2.0.0", stdruntime.GOOS, stdruntime.GOARCH), &source); err != nil {
+		t.Fatal(err)
+	}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{{
+		ID: "gatewayMode", Path: "platform.gateway.mode", Required: true,
+	}}
+	_, err := planWithFixtureProvenance(contracts.InstallRequest{
+		PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Version: "2.0.0"},
+	}, source)
+	failure, ok := err.(*diag.Diag)
+	if !ok || failure.Code != contracts.CodeConfigRequired {
+		t.Fatalf("required configuration failure = %#v, want %s diagnostic", err, contracts.CodeConfigRequired)
+	}
+	if _, err := diag.ToEnvelope(failure); err != nil {
+		t.Fatalf("required configuration violated its catalogued detail contract: %v", err)
+	}
+	if got := diag.ExitCode(failure).Code(); got != 1 {
+		t.Fatalf("required configuration exit code = %d, want operation-failure status 1", got)
+	}
+}
+
 func TestPlanIncludesSDKAndResolvedAdapterArtifacts(t *testing.T) {
 	var source catalog.Catalog
 	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("2.0.0", "2.1.0", stdruntime.GOOS, stdruntime.GOARCH), &source); err != nil {

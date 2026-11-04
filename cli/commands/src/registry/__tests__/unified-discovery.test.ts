@@ -17,7 +17,7 @@ import {
   createMarketplaceEntry,
   computePackageIntegrity,
 } from '@kb-labs/core-discovery';
-import { openCatalog } from '@kb-labs/core-registry';
+import { openCatalog as openCatalogWithVersion } from '@kb-labs/core-registry';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import { discoverManifests } from '../discover';
 import { registerManifests } from '../register';
@@ -82,6 +82,11 @@ async function writeStorePin(kbHome: string, id: string, dir: string): Promise<v
     installedAt: new Date().toISOString(),
   }, null, 2));
 }
+
+const openCatalog = (
+  scope: Parameters<typeof openCatalogWithVersion>[0],
+  options: Omit<Parameters<typeof openCatalogWithVersion>[1], 'resolvePlatformVersion'> = {},
+) => openCatalogWithVersion(scope, { ...options, resolvePlatformVersion: async () => 'test' });
 
 describe('one discovery pipeline: CLI and registry agree', () => {
   let platformRoot: string;

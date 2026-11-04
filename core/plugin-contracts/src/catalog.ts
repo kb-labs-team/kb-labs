@@ -167,7 +167,7 @@ export interface RegistrySnapshot {
   ttlMs?: number;
   partial: boolean;
   stale: boolean;
-  source: { cwd: string; platformVersion: string };
+  source: { cwd: string; platformVersion?: string };
   corrupted?: boolean;
   checksum?: string;
   checksumAlgorithm?: 'sha256';

@@ -6,10 +6,12 @@ import os from 'node:os'
 import { AdapterProjectScopeError, PlatformConfigError } from '@kb-labs/core-platform'
 import { createProjectRegistry } from '@kb-labs/core-project-registry'
 import { loadPlatformConfig } from '../config-loader.js'
+import { writeTestPlatformReceipt } from './platform-version-fixture.js'
 
 let tmpDir: string
 
 function makePlatformDir(dir: string, configContents?: unknown): void {
+  writeTestPlatformReceipt(dir)
   mkdirSync(path.join(dir, 'node_modules', '@kb-labs', 'cli-bin'), { recursive: true })
   if (configContents !== undefined) {
     mkdirSync(path.join(dir, '.kb'), { recursive: true })

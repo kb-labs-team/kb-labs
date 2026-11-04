@@ -314,6 +314,7 @@ describe('secured CLI auth ordering', () => {
       cwd: path.resolve(import.meta.dirname, '../../../../../'),
       platformRoot: path.resolve(import.meta.dirname, '../../../../../'),
       projectRoot: path.resolve(import.meta.dirname, '../../../../../'),
+      resolvePlatformVersion: async () => 'test',
     });
     const commands = registry.listProtectionCommands()
       .filter(({ requiresSession }) => requiresSession)

@@ -183,6 +183,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     await writeFile(path.join(cwd, ".kb", "v2", "receipt.json"), JSON.stringify({
       installationId: "install-test",
       verification: { hostHealthUrl: `${gatewayUrl}/health` },
+      plan: { serviceGraph: { platformVersion: "2.120.1" } },
     }));
     mocks.loadPlatformConfiguration.mockResolvedValue(await mockConfig(cwd));
     mockInitialization();

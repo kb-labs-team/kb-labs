@@ -28,6 +28,10 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function openTestCatalog(scope: Parameters<typeof openCatalog>[0], options: Omit<Parameters<typeof openCatalog>[1], 'resolvePlatformVersion'> = {}) {
+  return openCatalog(scope, { ...options, resolvePlatformVersion: async () => 'test' });
+}
+
 async function createFakePlugin(root: string, id: string, opts?: {
   commands?: Array<{ path: string; describe: string }>;
   routes?: Array<{ method: string; path: string }>;
@@ -133,7 +137,7 @@ describe('Registry Integration', () => {
     process.env.KB_HOME = kbHome;
     const scopeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-memory-scope-'));
     try {
-      const catalog = await openCatalog({ platformRoot: scopeRoot, projectRoot: scopeRoot }, { persistSnapshot: false });
+      const catalog = await openTestCatalog({ platformRoot: scopeRoot, projectRoot: scopeRoot }, { persistSnapshot: false });
       await catalog.dispose();
       const snapshotPath = resolveRuntimeStatePath(scopeRoot, ['cache', 'registry.json'], { root: kbHome });
       await expect(fs.access(snapshotPath)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -154,7 +158,7 @@ describe('Registry Integration', () => {
     await registerPlugin(root, '@kb-labs/greeter', dir, integrity, ['plugin', 'cli-command', 'rest-route']);
 
     // 2. Discover: create registry
-    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
+    const registry = await openTestCatalog({ platformRoot: root, projectRoot: root });
 
     // 3. Query: verify plugin and entities
     const plugins = registry.listPlugins();
@@ -209,7 +213,7 @@ describe('Registry Integration', () => {
     });
     await registerPlugin(root, '@kb-labs/plugin-c', c.dir, c.integrity, ['plugin', 'studio-widget']);
 
-    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
+    const registry = await openTestCatalog({ platformRoot: root, projectRoot: root });
 
     // Verify totals
     expect(registry.listPlugins()).toHaveLength(3);
@@ -265,19 +269,19 @@ describe('Registry Integration', () => {
       };
 
       const packageA = await addWorkspacePlugin('a', 'sample from-a');
-      const first = await openCatalog({ platformRoot, projectRoot });
+      const first = await openTestCatalog({ platformRoot, projectRoot });
       expect(first.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('sample from-a');
       await first.dispose();
 
       const packageB = await addWorkspacePlugin('b', 'sample from-b');
-      const afterAdd = await openCatalog({ platformRoot, projectRoot });
+      const afterAdd = await openTestCatalog({ platformRoot, projectRoot });
       const afterAddCommands = afterAdd.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId);
       expect(afterAddCommands).toContain('sample from-a');
       expect(afterAddCommands).toContain('sample from-b');
       await afterAdd.dispose();
 
       await fs.rm(packageA, { recursive: true, force: true });
-      const afterRemoval = await openCatalog({ platformRoot, projectRoot });
+      const afterRemoval = await openTestCatalog({ platformRoot, projectRoot });
       const afterRemovalCommands = afterRemoval.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId);
       expect(afterRemovalCommands).not.toContain('sample from-a');
       expect(afterRemovalCommands).toContain('sample from-b');
@@ -316,7 +320,7 @@ describe('Registry Integration', () => {
       packageJson.kb = { manifest: 'dist/manifest.json' };
       await fs.writeFile(packageJsonPath, JSON.stringify(packageJson));
 
-      const beforeBuild = await openCatalog({ platformRoot, projectRoot });
+      const beforeBuild = await openTestCatalog({ platformRoot, projectRoot });
       expect(beforeBuild.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('sample after-build');
       await beforeBuild.dispose();
 
@@ -324,7 +328,7 @@ describe('Registry Integration', () => {
       await fs.mkdir(path.join(plugin.dir, 'dist'), { recursive: true });
       await fs.writeFile(path.join(plugin.dir, 'dist', 'manifest.json'), manifest);
 
-      const afterBuild = await openCatalog({ platformRoot, projectRoot });
+      const afterBuild = await openTestCatalog({ platformRoot, projectRoot });
       expect(afterBuild.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('sample after-build');
       await afterBuild.dispose();
     } finally {
@@ -356,7 +360,7 @@ describe('Registry Integration', () => {
       lock!.plugins['@kb-labs/commit']!.enabled = false;
       await writeMarketplaceLock(platformRoot, lock!);
 
-      const disabled = await openCatalog({ platformRoot, projectRoot });
+      const disabled = await openTestCatalog({ platformRoot, projectRoot });
       expect(disabled.queryEntities({ kind: 'cli-command' })).toHaveLength(0);
       await disabled.dispose();
       const snapshotPath = resolveRuntimeStatePath(projectRoot, ['cache', 'registry.json'], { root: kbHome });
@@ -371,7 +375,7 @@ describe('Registry Integration', () => {
       await fs.utimes(lockPath, changedAt, changedAt);
       expect((await fs.stat(lockPath)).mtimeMs).toBe(persistedSnapshot.ts);
 
-      const enabled = await openCatalog({ platformRoot, projectRoot });
+      const enabled = await openTestCatalog({ platformRoot, projectRoot });
       expect(enabled.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId))
         .toContain('commit plan show');
       await enabled.dispose();
@@ -418,13 +422,13 @@ describe('Registry Integration', () => {
         `export const manifest = ${JSON.stringify(triggerManifest)};`,
       ].join('\n'));
 
-      const discoveredBeforeEnable = await openCatalog({ platformRoot, projectRoot });
+      const discoveredBeforeEnable = await openTestCatalog({ platformRoot, projectRoot });
       expect(discoveredBeforeEnable.queryEntities({ kind: 'cli-command' })).toHaveLength(0);
       await discoveredBeforeEnable.dispose();
       expect((await readMarketplaceLock(platformRoot, new DiagnosticCollector()))?.plugins['@kb-labs/commit']?.enabled)
         .toBe(false);
 
-      const reopened = await openCatalog({ platformRoot, projectRoot });
+      const reopened = await openTestCatalog({ platformRoot, projectRoot });
       expect(reopened.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId))
         .not.toContain('commit plan show');
       await reopened.dispose();
@@ -453,13 +457,13 @@ describe('Registry Integration', () => {
       updatedManifest.cli = {
         commands: [{ path: 'target new', describe: 'New command', handler: './dist/target-new.js' }],
       };
-      const first = await openCatalog({ platformRoot, projectRoot });
+      const first = await openTestCatalog({ platformRoot, projectRoot });
       expect(first.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('target old');
       await first.dispose();
 
       await fs.writeFile(targetManifestPath, JSON.stringify(updatedManifest));
 
-      const reopened = await openCatalog({ platformRoot, projectRoot });
+      const reopened = await openTestCatalog({ platformRoot, projectRoot });
       const commandIds = reopened.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId);
       expect(commandIds).toContain('target new');
       expect(commandIds).not.toContain('target old');
@@ -485,11 +489,11 @@ describe('Registry Integration', () => {
       });
       await registerPlugin(platformRoot, '@kb-labs/platform-only', plugin.dir, plugin.integrity, ['plugin', 'cli-command']);
 
-      const withPlatform = await openCatalog({ platformRoot, projectRoot });
+      const withPlatform = await openTestCatalog({ platformRoot, projectRoot });
       expect(withPlatform.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('platform only');
       await withPlatform.dispose();
 
-      const withoutPlatform = await openCatalog({ platformRoot: undefined, projectRoot });
+      const withoutPlatform = await openTestCatalog({ platformRoot: undefined, projectRoot });
       expect(withoutPlatform.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('platform only');
       await withoutPlatform.dispose();
     } finally {
@@ -529,30 +533,30 @@ describe('Registry Integration', () => {
       const integrity = `sha256-${crypto.createHash('sha256').update(await fs.readFile(pkgPath)).digest('base64')}`;
       await registerPlugin(platformRoot, '@kb-labs/static-manifest', plugin.dir, integrity, ['plugin', 'cli-command']);
 
-      const first = await openCatalog({ platformRoot, projectRoot });
+      const first = await openTestCatalog({ platformRoot, projectRoot });
       expect(first.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('module command');
       expect(first.getDiagnostics().events.map(event => event.code)).toContain('MANIFEST_PARSE_ERROR');
       await first.dispose();
 
       await fs.writeFile(helperPath, "export const command = 'helper changed';\n");
-      const helperChanged = await openCatalog({ platformRoot, projectRoot });
+      const helperChanged = await openTestCatalog({ platformRoot, projectRoot });
       expect(helperChanged.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('helper changed');
       expect(helperChanged.getDiagnostics().events.map(event => event.code)).toContain('MANIFEST_PARSE_ERROR');
       await helperChanged.dispose();
 
       await fs.writeFile(jsonPath, jsonManifest('json old'));
-      const built = await openCatalog({ platformRoot, projectRoot });
+      const built = await openTestCatalog({ platformRoot, projectRoot });
       expect(built.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('json old');
       await built.dispose();
 
       await fs.writeFile(helperPath, "export const command = 'helper changed again';\n");
-      const helperChangedAfterBuild = await openCatalog({ platformRoot, projectRoot });
+      const helperChangedAfterBuild = await openTestCatalog({ platformRoot, projectRoot });
       expect(helperChangedAfterBuild.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('json old');
       expect(helperChangedAfterBuild.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('helper changed again');
       await helperChangedAfterBuild.dispose();
 
       await fs.writeFile(jsonPath, jsonManifest('json new'));
-      const jsonChanged = await openCatalog({ platformRoot, projectRoot });
+      const jsonChanged = await openTestCatalog({ platformRoot, projectRoot });
       expect(jsonChanged.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('json new');
       expect(jsonChanged.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('json old');
       await jsonChanged.dispose();
@@ -569,7 +573,7 @@ describe('Registry Integration', () => {
     await registerPlugin(root, '@kb-labs/persistent', dir, integrity, ['plugin', 'cli-command']);
 
     // First registry: discovers and persists snapshot
-    const reg1 = await openCatalog({ platformRoot: root, projectRoot: root });
+    const reg1 = await openTestCatalog({ platformRoot: root, projectRoot: root });
     expect(reg1.listPlugins()).toHaveLength(1);
     const snap1 = reg1.snapshot();
     expect(snap1.schema).toBe('kb.registry/2');
@@ -577,7 +581,7 @@ describe('Registry Integration', () => {
     await reg1.dispose();
 
     // Second registry: should load from snapshot cache
-    const reg2 = await openCatalog({ platformRoot: root, projectRoot: root });
+    const reg2 = await openTestCatalog({ platformRoot: root, projectRoot: root });
     expect(reg2.listPlugins()).toHaveLength(1);
     expect(reg2.queryEntities({ kind: 'cli-command' })).toHaveLength(1);
     await reg2.dispose();
@@ -608,7 +612,7 @@ describe('Registry Integration', () => {
     existingLock.plugins['@kb-labs/ghost'] = lock.plugins['@kb-labs/ghost'];
     await writeMarketplaceLock(root, existingLock);
 
-    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
+    const registry = await openTestCatalog({ platformRoot: root, projectRoot: root });
 
     // Only good plugin loaded
     expect(registry.listPlugins()).toHaveLength(1);
@@ -627,7 +631,7 @@ describe('Registry Integration', () => {
   });
 
   it('onChange fires on refresh with added/removed plugins', async () => {
-    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
+    const registry = await openTestCatalog({ platformRoot: root, projectRoot: root });
     expect(registry.listPlugins()).toHaveLength(0);
 
     const diffs: Array<{ added: unknown[]; removed: unknown[]; changed: unknown[] }> = [];
@@ -663,7 +667,7 @@ describe('Registry Integration', () => {
     });
     await registerPlugin(root, '@kb-labs/api-plugin', dir, integrity, ['plugin', 'cli-command', 'rest-route']);
 
-    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
+    const registry = await openTestCatalog({ platformRoot: root, projectRoot: root });
 
     // OpenAPI
     const spec = registry.getOpenAPISpec('@kb-labs/api-plugin');
@@ -694,7 +698,7 @@ describe('Registry Integration', () => {
     });
     await registerPlugin(root, '@kb-labs/healthy', dir, integrity, ['plugin', 'rest-route']);
 
-    const registry = await openCatalog({ platformRoot: root, projectRoot: root });
+    const registry = await openTestCatalog({ platformRoot: root, projectRoot: root });
     const health = await registry.getSystemHealth({ uptimeSec: 100 });
 
     expect(health.schema).toBe('kb.health/1');

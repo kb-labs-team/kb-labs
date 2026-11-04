@@ -8,6 +8,7 @@
  */
 
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import { generateExamples } from '../../utils/generate-examples';
 import { registry } from '../../registry/service';
 import { getRegisteredDiscovery, getResolvedCatalog } from '../../registry/discovery-state.js';
@@ -553,6 +554,14 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
       return runTrace(traceCtx);
     }
 
+    const resolvePlatformVersion = ctx.hostContext?.host === 'cli'
+      ? ctx.hostContext.resolvePlatformVersion
+      : undefined;
+    if (!resolvePlatformVersion) {
+      throw new ErrorEnvelopeError(createErrorEnvelope('KB_CLI_PLATFORM_VERSION_UNAVAILABLE'));
+    }
+    const cliVersion = await resolvePlatformVersion();
+
     // ── Base mode ──────────────────────────────────────────────────────────────
     const diagnostics: DiagDetails[] = [];
 
@@ -560,10 +569,10 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
     diagnostics.push({
       category: 'environment',
       status: 'ok',
-      message: `Node ${process.version}, CLI ${process.env.CLI_VERSION ?? '0.1.0'}, ${process.platform}/${process.arch}`,
+      message: `Node ${process.version}, CLI ${cliVersion}, ${process.platform}/${process.arch}`,
       details: {
         nodeVersion: process.version,
-        cliVersion: process.env.CLI_VERSION ?? '0.1.0',
+        cliVersion,
         platform: process.platform,
         arch: process.arch,
       },
@@ -681,7 +690,6 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
 
     // 4. Version compatibility
     try {
-      const cliVersion = process.env.CLI_VERSION ?? '0.1.0';
       const versionIssues: Array<{ plugin: string; required: string; current: string }> = [];
       for (const cmd of registry.listCommands()) {
         const required = cmd.manifest.engine?.kbCli;

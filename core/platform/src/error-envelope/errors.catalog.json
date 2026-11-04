@@ -1166,7 +1166,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
-      "processExitClass": "input-refusal",
+      "processExitClass": "operation-failure",
       "message": "Required configuration is missing or conflicting: {field}.",
       "hint": "Provide the configuration value or run the wizard to complete it.",
       "httpStatus": 500
@@ -1704,6 +1704,17 @@
       "processExitClass": "operation-failure",
       "message": "The managed `kb` command points to a platform root without a valid installation receipt.",
       "hint": "Run `kb-create doctor --fix --platform-root <platform-root>` to point the command at the live installation.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_CLI_PLATFORM_VERSION_UNAVAILABLE",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The platform version cannot be read from the resolved root.",
+      "hint": "Run `kb-create doctor --platform-root <platform-root>` to inspect the root, then restore its platform receipt or the core-runtime package manifest.",
       "httpStatus": 500
     },
     {

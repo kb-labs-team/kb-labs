@@ -6,6 +6,7 @@ import os from 'node:os'
 import { createProjectRegistry } from '@kb-labs/core-project-registry'
 import { PlatformConfigError } from '@kb-labs/core-platform'
 import { loadPlatformConfig } from '../config-loader.js'
+import { writeTestPlatformReceipt } from './platform-version-fixture.js'
 
 let tmpDir: string
 
@@ -21,6 +22,7 @@ function write(root: string, rel: string, contents: unknown): void {
 }
 
 function makePlatformDir(dir: string): void {
+  writeTestPlatformReceipt(dir)
   mkdirSync(path.join(dir, 'node_modules', '@kb-labs', 'cli-bin'), { recursive: true })
 }
 

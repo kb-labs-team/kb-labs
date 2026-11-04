@@ -85,7 +85,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
   });
 
   it('keeps a snapshot fresh when the manifest content is unchanged despite a later mtime', async () => {
-    const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test', requestIdentity: 'test-request' });
+    const mgr = new SnapshotManager({ root, kbHome, requestIdentity: 'test-request' });
     await mgr.persist(await makeSnapshot());
 
     setManifestMtime(T + 10_000); // mtime alone does not invalidate content
@@ -96,7 +96,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
   });
 
   it('marks the snapshot stale when manifest contents change', async () => {
-    const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test', requestIdentity: 'test-request' });
+    const mgr = new SnapshotManager({ root, kbHome, requestIdentity: 'test-request' });
     await mgr.persist(await makeSnapshot());
 
     writeFileSync(join(pluginRoot, 'dist', 'index.js'), 'export const manifest = { changed: true };');
@@ -115,7 +115,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
     const manifestArtifact = join(pluginRoot, 'dist', 'manifest.js');
     writeFileSync(manifestArtifact, 'export const manifest = {};');
 
-    const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test', requestIdentity: 'test-request' });
+    const mgr = new SnapshotManager({ root, kbHome, requestIdentity: 'test-request' });
     await mgr.persist(await makeSnapshot());
 
     writeFileSync(manifestArtifact, 'export const manifest = { changed: true };');
@@ -129,7 +129,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
   it('does not flag staleness when there is no locatable manifest artifact', async () => {
     rmSync(join(pluginRoot, 'dist'), { recursive: true, force: true });
 
-    const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test', requestIdentity: 'test-request' });
+    const mgr = new SnapshotManager({ root, kbHome, requestIdentity: 'test-request' });
     await mgr.persist(await makeSnapshot());
 
     const loaded = await mgr.load();
@@ -175,7 +175,7 @@ describe('SnapshotManager — runtime state location', () => {
   });
 
   it('writes the snapshot under the KB home state directory and leaves the repo clean', async () => {
-    const mgr = new SnapshotManager({ root, kbHome, platformVersion: 'test', requestIdentity: 'test-request' });
+    const mgr = new SnapshotManager({ root, kbHome, requestIdentity: 'test-request' });
     await mgr.persist(snapshot());
 
     expect(existsSync(join(root, '.kb'))).toBe(false);
@@ -186,10 +186,10 @@ describe('SnapshotManager — runtime state location', () => {
 
   it('ignores a snapshot an older version left in the repository', async () => {
     mkdirSync(join(root, '.kb', 'cache'), { recursive: true });
-    const legacy = new SnapshotManager({ root, kbHome, platformVersion: 'test', requestIdentity: 'test-request' }).createEmpty();
+    const legacy = new SnapshotManager({ root, kbHome, requestIdentity: 'test-request' }).createEmpty();
     writeFileSync(join(root, '.kb', 'cache', 'registry.json'), JSON.stringify(legacy));
 
-    const loaded = await new SnapshotManager({ root, kbHome, platformVersion: 'test', requestIdentity: 'test-request' }).load();
+    const loaded = await new SnapshotManager({ root, kbHome, requestIdentity: 'test-request' }).load();
     expect(loaded).toBeNull();
   });
 });

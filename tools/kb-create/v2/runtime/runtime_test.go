@@ -2,7 +2,11 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/receipt"
@@ -23,12 +28,27 @@ type fixedClock struct{ time.Time }
 func (c fixedClock) Now() time.Time { return c.Time }
 
 type fakeInstaller struct {
-	artifacts []contracts.Artifact
-	restored  []contracts.Artifact
-	err       error
-	removed   []contracts.Artifact
-	restores  int
+	artifacts  []contracts.Artifact
+	restored   []contracts.Artifact
+	err        error
+	removed    []contracts.Artifact
+	restores   int
+	prepareErr error
+	prepares   int
 }
+
+func (f *fakeInstaller) Prepare(items []contracts.Artifact) (contracts.PreparedArtifacts, error) {
+	f.prepares++
+	if f.prepareErr != nil {
+		return nil, f.prepareErr
+	}
+	return fakePreparedArtifacts{install: func() error { return f.Install(items) }}, nil
+}
+
+type fakePreparedArtifacts struct{ install func() error }
+
+func (f fakePreparedArtifacts) Install(func(string, bool) error) error { return f.install() }
+func (fakePreparedArtifacts) Close() error                             { return nil }
 
 func (f *fakeInstaller) Install(items []contracts.Artifact) error {
 	f.artifacts = append(f.artifacts, items...)
@@ -538,6 +558,63 @@ func TestUpdateRejectsMissingDependenciesBeforeSnapshot(t *testing.T) {
 	_, snapshot, err := Update(context.Background(), plan, Dependencies{})
 	if err == nil || snapshot.ID != "" {
 		t.Fatalf("result = snapshot %#v, error %v", snapshot, err)
+	}
+}
+
+func TestUpdateRequiresArtifactPreparationBeforeSnapshot(t *testing.T) {
+	root := t.TempDir()
+	preparationFailure := errors.New("sealed digest mismatch")
+	installer := &fakeInstaller{prepareErr: preparationFailure}
+	_, snapshot, err := Update(context.Background(), planIn(root, "verified-update-plan"), Dependencies{Artifacts: installer})
+	if !errors.Is(err, preparationFailure) || snapshot.ID != "" || installer.prepares != 1 || len(installer.artifacts) != 0 {
+		t.Fatalf("update = snapshot %#v, installer %#v, error %v; want verification refusal before snapshot/install", snapshot, installer, err)
+	}
+	layout, layoutErr := versionroot.New(root)
+	if layoutErr != nil {
+		t.Fatal(layoutErr)
+	}
+	if _, statErr := os.Stat(layout.SnapshotsDir()); !os.IsNotExist(statErr) {
+		t.Fatalf("verification refusal created snapshot storage: %v", statErr)
+	}
+}
+
+func TestUpdateInstallsTheSingleVerifiedArtifactResponse(t *testing.T) {
+	root := t.TempDir()
+	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before",
+		InstallationID: "stable-installation", Plan: contracts.ResolvedInstallPlan{PlanHash: "old"}}); err != nil {
+		t.Fatal(err)
+	}
+	good := []byte("sealed binary bytes")
+	corrupt := []byte("second response is corrupt")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requests++
+		if requests == 1 {
+			_, _ = writer.Write(good)
+			return
+		}
+		_, _ = writer.Write(corrupt)
+	}))
+	t.Cleanup(server.Close)
+	item := contracts.Artifact{ID: "kb-dev", Kind: "binary", URL: server.URL,
+		SHA256: fmt.Sprintf("%x", sha256.Sum256(good)), Target: "kb-dev"}
+	plan := planIn(root, "new-plan-123456")
+	plan.Artifacts = []contracts.Artifact{item}
+	cacheRoot := filepath.Join(root, ".kb", "v2", "cache")
+	installer := artifacts.Composite{
+		Packages: artifacts.Pnpm{Root: root, CacheRoot: cacheRoot},
+		Binaries: artifacts.Binaries{Root: root, CacheRoot: cacheRoot},
+	}
+	_, snapshot, err := Update(context.Background(), plan, Dependencies{Artifacts: installer, Probe: &fakeProbe{}, Clock: fixedClock{time.Unix(4, 0)}})
+	if err != nil || snapshot.ID == "" {
+		t.Fatalf("update = snapshot %#v, error %v", snapshot, err)
+	}
+	installed, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "bin", "kb-dev"))
+	if err != nil || !reflect.DeepEqual(installed, good) {
+		t.Fatalf("installed bytes = %q, error %v; want the first verified response %q", installed, err, good)
+	}
+	if requests != 1 {
+		t.Fatalf("artifact source received %d requests; want exactly one", requests)
 	}
 }
 

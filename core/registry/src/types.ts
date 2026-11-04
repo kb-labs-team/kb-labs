@@ -6,7 +6,7 @@ export interface RegistryOptions {
   root?: string;
   platformRoot?: string;
   cache?: { ttlMs?: number; adapter?: ICache; snapshotKey?: string };
-  platformVersion?: string;
+  resolvePlatformVersion: () => Promise<string>;
   verifyIntegrity?: boolean;
   workspaceAdapters?: CatalogOpenOptions['workspaceAdapters'];
   persistSnapshot?: boolean;

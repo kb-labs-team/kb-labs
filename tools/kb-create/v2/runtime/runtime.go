@@ -25,6 +25,7 @@ import (
 )
 
 type ArtifactInstaller interface {
+	Prepare([]contracts.Artifact) (contracts.PreparedArtifacts, error)
 	Install([]contracts.Artifact) error
 	Restore([]contracts.Artifact) error
 }
@@ -88,6 +89,10 @@ func installerSnapshots(platformRoot string) (string, error) {
 // Apply is the one V2 fresh-install operation. It deliberately has no
 // dependency on legacy manifests, state or package scanning.
 func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.InstallReceipt, error) {
+	return apply(ctx, plan, deps, nil)
+}
+
+func apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Dependencies, prepared contracts.PreparedArtifacts) (contracts.InstallReceipt, error) {
 	emit := func(phase string, start bool) error {
 		if deps.Progress != nil {
 			return deps.Progress.Emit(ProgressEvent{Phase: phase, Start: start})
@@ -130,7 +135,9 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 		}
 	}
 	var artifactErr error
-	if phased, ok := deps.Artifacts.(ProgressArtifactInstaller); ok {
+	if prepared != nil {
+		artifactErr = prepared.Install(func(phase string, start bool) error { return emit(phase, start) })
+	} else if phased, ok := deps.Artifacts.(ProgressArtifactInstaller); ok {
 		artifactErr = phased.InstallWithProgress(plan.Artifacts, emit)
 	} else {
 		if err := emit("Download and verify artifacts / install packages", true); err != nil {
@@ -342,13 +349,21 @@ func Update(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depend
 	if deps.VerificationConfigRoot != "" {
 		snapshotSourceRoot = deps.VerificationConfigRoot
 	}
+	prepared, err := deps.Artifacts.Prepare(plan.Artifacts)
+	if err != nil {
+		return contracts.InstallReceipt{}, contracts.Snapshot{}, fmt.Errorf("stage and verify sealed artifacts before update snapshot: %w", err)
+	}
 	snapshot, err := lifecycle.Mutate(plan.Request.PlatformRoot, snapshotSourceRoot, snapshotsDirectory, now(deps.Clock), func() error {
 		var applyErr error
-		result, applyErr = Apply(ctx, plan, deps)
+		result, applyErr = apply(ctx, plan, deps, prepared)
 		return applyErr
 	}, nil, restorePlanArtifacts(deps.Artifacts))
+	closeErr := prepared.Close()
 	if err != nil {
-		return contracts.InstallReceipt{}, snapshot, err
+		return contracts.InstallReceipt{}, snapshot, errors.Join(err, closeErr)
+	}
+	if closeErr != nil {
+		return contracts.InstallReceipt{}, snapshot, fmt.Errorf("remove staged update artifacts: %w", closeErr)
 	}
 	result.SnapshotID = snapshot.ID
 	if err := receipt.Write(plan.Request.PlatformRoot, result); err != nil {
