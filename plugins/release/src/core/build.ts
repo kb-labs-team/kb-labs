@@ -169,6 +169,11 @@ async function runDirectBuild(packagePath: string, packageName: string, shell: R
   return { ...result, name: packageName };
 }
 
+export function formatBuildFailureOutput(stdout: string, stderr: string, exitCode: number): string {
+  const combined = [stdout, stderr].filter(Boolean).join('\n').trim();
+  return combined.split('\n').slice(-30).join('\n') || `Build failed with exit code ${exitCode}`;
+}
+
 export interface SpawnResult extends Omit<BuildResult, 'name'> {
   stdout: string;
   stderr: string;
@@ -183,10 +188,9 @@ async function executeCommand(shell: ReleaseShell, command: string, args: string
   const startTime = Date.now();
   const result = await shell.exec(command, args, { cwd, timeout: timeoutMs, ...(env ? { env } : {}) });
   const exitCode = result.code;
-  const combined = (result.stderr || result.stdout).trim();
   return {
     success: result.ok,
-    error: result.ok ? undefined : combined.split('\n').slice(-30).join('\n') || `Build failed with exit code ${exitCode}`,
+    error: result.ok ? undefined : formatBuildFailureOutput(result.stdout, result.stderr, exitCode),
     durationMs: Date.now() - startTime,
     stdout: result.stdout,
     stderr: result.stderr,
