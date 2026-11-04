@@ -352,6 +352,7 @@ export function decodeErrorEnvelope(envelope: unknown, options: DecodeEnvelopeOp
     const reconstructed = createValidatedErrorEnvelope(envelope.code, {
       ...envelopeOptions,
       ...(envelope.correlationId ? { correlationId: envelope.correlationId } : {}),
+      ...(envelope.cause ? { cause: envelope.cause } : {}),
       ...(presentation === 'handler' ? { message: envelope.message, hint: envelope.hint } : {}),
       ...(Object.keys(details).length > 0 ? { details } : {}),
       ...(envelope.diagnostics ? { diagnostics: envelope.diagnostics } : {}),

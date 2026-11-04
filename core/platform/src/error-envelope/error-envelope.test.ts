@@ -71,6 +71,18 @@ describe('catalog producer contract', () => {
 });
 
 describe('received catalog envelope reconstruction', () => {
+  it('preserves the received cause when presenting a catalogued handler failure', () => {
+    const received = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      message: 'Release build failed for 1 package(s).',
+      hint: 'Inspect the failed packages and their build output, resolve the errors, then rerun `kb release build run`.',
+      cause: '@kb-labs/studio-app:\nERROR in ./src/main.tsx\nModule not found',
+    });
+
+    const reconstructed = decodeErrorEnvelope(received, { presentation: 'handler' });
+
+    expect(reconstructed.cause).toBe(received.cause);
+  });
+
   // case: S-203.2
   it('preserves validated catalogued envelope fields and reports missing values as protocol failures', () => {
     const received = {
