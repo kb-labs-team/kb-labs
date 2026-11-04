@@ -647,19 +647,10 @@ def capture_case_failure() -> None:
     fail(f"{first.get('name', 'journey step')}: {first.get('message', 'reported FAIL')}")
 
 
-def check_selected_claim_completion(journey_results: list[dict], selection: str | None = None) -> list[str]:
+def check_selected_claim_completion(journey_results: list[dict]) -> list[str]:
     """Fail the run if selected claims were not recorded by any of its journeys."""
-    raw_selection = (selection if selection is not None else
-                     ",".join(sorted(CASE_JOURNEY.selection)) if CASE_JOURNEY is not None else "")
-    selected = set(filter(None, raw_selection.split(",")))
-    executed = {
-        case_id
-        for journey_result in journey_results
-        for step in journey_result.get("steps", [])
-        if step.get("status") in {"PASS", "FAIL", "BLOCKED"}
-        for case_id in step.get("cases", [])
-    }
-    missing = sorted(selected - executed)
+    missing = (CASE_JOURNEY.missing_selected_claims(journey_results)
+               if CASE_JOURNEY is not None else [])
     if missing:
         fail("selected claim steps did not execute: " + ", ".join(missing)
              + "; the selected runner did not call their registered step functions")

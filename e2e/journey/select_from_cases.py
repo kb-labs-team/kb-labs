@@ -28,6 +28,7 @@ from dispatch_registry import RUNNERS, RUNNER_GROUPS, lanes_for_runners, runners
 from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import read_journey_selection, read_requested_cases
 from journey_resources import resource_root
+from journey_values import journey_value
 
 
 RUNNER_CONTEXT_NAMES = {"FRONT", "FRONT_DOOR", "SCENARIO", "VARIANT", "mode",
@@ -986,8 +987,11 @@ def selectors_from_coverage(results: list[dict]) -> list[str]:
     return sorted(selected)
 
 
-def selection_from_coverage(results: list[dict], requested: str) -> dict:
+def selection_from_coverage(results: list[dict], requested: str, *, mode: str | None = None,
+                            requested_runners: str | None = None) -> dict:
     """Resolve requested cases/steps against the QA coverage claim registry."""
+    if mode is not None and mode not in {"local", "secured"}:
+        raise ValueError(f"unsupported QA coverage mode: {mode!r}")
     registry: dict[str, set[str]] = {}
     sources_by_step: dict[str, set[str]] = {}
     declarations_by_step: dict[str, dict] = {}
@@ -1021,20 +1025,29 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
                             continue
                         sources_by_step.setdefault(step_id, set()).add(source)
                         declaration = _step_declaration(source, int(claim.get("line", 0)), root)
-                        mode = str(coverage.get("mode", ""))
-                        selectors = declaration.get("runners") or runners_for_source(source, mode)
+                        coverage_mode = str(coverage.get("mode", ""))
+                        selectors = declaration.get("runners") or runners_for_source(source, coverage_mode)
                         if declaration.get("runners"):
                             for selector in selectors:
-                                if RUNNERS[selector].mode != mode:
+                                if RUNNERS[selector].mode != coverage_mode:
                                     ineligible_by_step.setdefault(step_id, set()).add(selector)
                             selectors = [selector for selector in selectors
-                                         if RUNNERS[selector].mode == mode]
+                                         if RUNNERS[selector].mode == coverage_mode]
                         for selector in selectors:
                             owners_by_step.setdefault(step_id, {}).setdefault(selector, set()).add(step_id)
                         if declaration:
                             declarations = declarations_by_step.setdefault(step_id, [])
                             if declaration not in declarations:
                                 declarations.append(declaration)
+
+    if mode is not None:
+        for step_id, owners in owners_by_step.items():
+            ineligible_by_step.setdefault(step_id, set()).update(
+                selector for selector in owners if RUNNERS[selector].mode != mode)
+            owners_by_step[step_id] = {
+                selector: claims for selector, claims in owners.items()
+                if RUNNERS[selector].mode == mode
+            }
 
     case_ids = set(registry)
     step_ids = set().union(*registry.values()) if registry else set()
@@ -1061,13 +1074,35 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
                 f"unknown or unclaimed journey case/step ID: {token}. "
                 "Check available IDs with `node ./cli/bin/dist/bin.js qa cases list --json`, then rerun the journey."
             )
+    if mode is not None:
+        selected_mode_steps = {step_id for step_id in selected if owners_by_step.get(step_id)}
+        selected_other_mode_steps = {
+            step_id for step_id in selected
+            if not owners_by_step.get(step_id) and ineligible_by_step.get(step_id)
+        }
+        if len(selected_mode_steps | selected_other_mode_steps) == len(selected):
+            if selected_mode_steps:
+                selected = selected_mode_steps
+            else:
+                return {"selection": sorted(set(tokens)), "steps": [], "owners": {}, "runners": [],
+                        "prerequisiteSteps": [], "prerequisiteFlows": [], "stepSources": [],
+                        "capabilities": [], "composeProfiles": [], "selectedOwningSteps": {}}
     claim_sources = set().union(*sources_by_step.values()) if sources_by_step else set()
     declarations_by_name = validate_dependency_declarations(claim_sources, root)
     resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name,
-                                 owners_by_step, read_journey_selection(
-                                     os.environ, default_runner_selector="").requested_runners,
+                                 owners_by_step, (read_journey_selection(
+                                     os.environ, default_runner_selector="").requested_runners
+                                     if requested_runners is None else requested_runners),
                                  ineligible_by_step)
     return {"selection": sorted(set(tokens)), **resolved}
+
+
+def runners_for_case_selection(results: list[dict], requested: str, mode: str) -> list[str]:
+    """Return registered owners for selected claims in one execution mode."""
+    if mode not in {"local", "secured"}:
+        raise ValueError(f"unsupported QA coverage mode: {mode!r}")
+    selected = selection_from_coverage(results, requested, mode=mode, requested_runners="")
+    return selected["runners"]
 
 
 def main() -> int:
@@ -1075,6 +1110,22 @@ def main() -> int:
         root = resource_root()
         print_report_text(str(write_full_runner_plan_baseline(root)), flush=True)
         return 0
+    if len(sys.argv) == 4 and sys.argv[1] == "--runners-for-mode":
+        results = _coverage_results()
+        print_report_text(json.dumps(runners_for_case_selection(results, sys.argv[3], sys.argv[2])), flush=True)
+        return 0
+    results = _coverage_results()
+    requested = ",".join(read_requested_cases(os.environ))
+    if requested:
+        mode = journey_value("KB_JOURNEY_SELECTION_MODE")
+        print_report_text(json.dumps(selection_from_coverage(
+            results, requested, mode=mode, requested_runners="" if mode else None)), flush=True)
+    else:
+        print_report_text(json.dumps(selectors_from_coverage(results)), flush=True)
+    return 0
+
+
+def _coverage_results() -> list[dict]:
     results = []
     for mode in ("local", "secured"):
         command = ["node", "./cli/bin/dist/bin.js", "qa", "coverage", "show",
@@ -1085,12 +1136,7 @@ def main() -> int:
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
         results.append(read_coverage_result(result))
-    requested = ",".join(read_requested_cases(os.environ))
-    if requested:
-        print_report_text(json.dumps(selection_from_coverage(results, requested)), flush=True)
-    else:
-        print_report_text(json.dumps(selectors_from_coverage(results)), flush=True)
-    return 0
+    return results
 
 
 if __name__ == "__main__":

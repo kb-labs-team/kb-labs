@@ -31,7 +31,8 @@ def candidate_archive_sha256(path: Path) -> str:
 def _read_metadata(directory: Path, mode: str) -> dict[str, Any]:
     path = directory / mode / "batch-metadata.json"
     value = json.loads(path.read_text(encoding="utf-8"))
-    allowed_results = {"PASS", "FAIL", "PARTIAL", "INTERRUPTED"} if mode == "shared" else {"PASS", "FAIL"}
+    allowed_results = ({"PASS", "FAIL", "PARTIAL", "INTERRUPTED"} if mode == "shared"
+                       else {"PASS", "FAIL", "NO_SELECTED_CLAIMS"})
     if (not isinstance(value, dict)
             or not isinstance(value.get("stageDurationsSeconds"), dict)
             or value.get("result") not in allowed_results):
@@ -106,7 +107,7 @@ def verify_candidate_archive(metadata_path: Path, archive: Path) -> None:
 
 
 def write_mode_metadata(source: Path, destination: Path, mode: str, result: str, elapsed: int) -> None:
-    if mode not in {"local", "secured"} or result not in {"PASS", "FAIL"}:
+    if mode not in {"local", "secured"} or result not in {"PASS", "FAIL", "NO_SELECTED_CLAIMS"}:
         raise ValueError("mode metadata has an unsupported mode or result")
     value = json.loads(source.read_text(encoding="utf-8"))
     durations = dict(value["stageDurationsSeconds"])
@@ -168,10 +169,20 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
             metadata["result"] = "FAIL"
             _write_metadata(metadata_path, metadata)
         raise ValueError(f"batch artifacts contain mixed commit identities: {identities}")
-    scoreboards = {
-        mode: _read_scoreboard(output / mode)
+    mode_metadata = {"local": local_metadata, "secured": secured_metadata}
+    mode_without_selection = {
+        mode: mode_metadata[mode].get("result") == "NO_SELECTED_CLAIMS"
         for mode in ("local", "secured")
     }
+    scoreboards = {}
+    for mode in ("local", "secured"):
+        scoreboard_path = output / mode / "case-scoreboard.json"
+        if mode_without_selection[mode]:
+            if scoreboard_path.exists():
+                raise ValueError(f"mode {mode} has no selected claims but produced a scoreboard")
+            scoreboards[mode] = None
+        else:
+            scoreboards[mode] = _read_scoreboard(output / mode)
     local_durations = local_metadata["stageDurationsSeconds"]
     secured_durations = secured_metadata["stageDurationsSeconds"]
     shared_durations = producer_metadata["stageDurationsSeconds"]
@@ -186,23 +197,25 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
             local_durations["local"], secured_durations["secured"]
         ),
     }
-    mode_metadata = {"local": local_metadata, "secured": secured_metadata}
     mode_results = {
         mode: metadata.get("result")
         for mode, metadata in mode_metadata.items()
     }
-    partial = any(bool(board["selection"]) for board in scoreboards.values())
+    partial = (any(bool(board["selection"]) for board in scoreboards.values() if board is not None)
+               or any(mode_without_selection.values()))
     if partial:
         selections = "; ".join(
             f"{mode}=[{', '.join(scoreboards[mode]['selection'])}]"
             for mode in ("local", "secured")
+            if scoreboards[mode] is not None
         )
         lines = ["# Journey batch", "", f"- Commit: `{run['commit']}`",
                  f"- Baseline: `{run['baseline']}`", f"- Build base: `{run['buildBase']}`", "",
                  "## Stage durations"]
         lines.extend(f"- {stage}: {durations[stage]} seconds" for stage in STAGES)
         lines.extend(["", "- Modes: local and secured", "- Reports and logs: one directory per mode", ""])
-        lines.extend(f"- {mode}: {mode_results[mode]} (partial evidence; no gate verdict)"
+        lines.extend(f"- {mode}: no selected claims in this mode" if mode_without_selection[mode]
+                     else f"- {mode}: {mode_results[mode]} (partial evidence; no gate verdict)"
                      for mode in mode_metadata)
         lines.extend(["", f"- Partial selection: {selections}",
                       "- Partial evidence is iteration-only and cannot produce a gate verdict.",
