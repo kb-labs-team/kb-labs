@@ -203,7 +203,7 @@ describe('POST /api/v1/execute — error cases', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('returns 503 when no host is connected for namespace', async () => {
+  it('returns the catalogued execution-host failure with the dispatch correlation ID', async () => {
     mockDispatcher.firstHostWithCapability.mockReturnValue(null);
 
     const res = await app.inject({
@@ -213,13 +213,18 @@ describe('POST /api/v1/execute — error cases', () => {
     });
 
     expect(res.statusCode).toBe(503);
-    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String) } });
+    const failure = res.json() as { ok: false; error: { code: string; message: string; hint: string; correlationId: string } };
+    expect(failure.ok).toBe(false);
+    expect(failure.error).toEqual(createErrorEnvelope('KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE', {
+      correlationId: failure.error.correlationId,
+    }));
     expect(noopLogger.warn).toHaveBeenCalledWith(
       'No execution host connected for namespace',
       expect.objectContaining({
         diagnosticEvent: 'gateway.execution.dispatch',
         reasonCode: 'execution_host_unavailable',
         serviceId: 'gateway',
+        correlationId: failure.error.correlationId,
         evidence: expect.objectContaining({
           namespaceId: 'ns-test',
         }),

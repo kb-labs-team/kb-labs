@@ -2758,6 +2758,21 @@
       "httpStatus": 500
     },
     {
+      "code": "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE",
+      "httpStatus": 503,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "message": "No execution host is connected for this namespace.",
+      "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the Gateway dispatch record, then ensure a RuntimeServer is connected to the Gateway.",
+      "hintWithoutCorrelationId": "Ensure a RuntimeServer is running and connected to the Gateway, then retry the command.",
+      "runtimeTemplateParameters": {
+        "correlationId": "optional"
+      }
+    },
+    {
       "code": "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE",
       "area": "runtime",
       "stage": "run",

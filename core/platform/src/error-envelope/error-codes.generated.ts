@@ -216,6 +216,7 @@ export type CatalogErrorCode =
   | "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION"
   | "KB_RUNTIME_DISK_FULL"
   | "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE"
+  | "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE"
   | "KB_RUNTIME_FRAME_TOO_LARGE"
   | "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE"
   | "KB_RUNTIME_INPUT_INVALID"
@@ -500,6 +501,7 @@ export interface CatalogTemplateParameters {
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string };
   "KB_RUNTIME_DISK_FULL": { "path": string };
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": { "correlationId": string };
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;
@@ -784,6 +786,7 @@ export interface CatalogDetailsFor {
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string; "field"?: string; "observedType"?: string; "observedValuePreview"?: string };
   "KB_RUNTIME_DISK_FULL": { "path": string };
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": { "reason"?: string };
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": Record<string, never>;
   "KB_RUNTIME_FRAME_TOO_LARGE": { "actualBytes"?: string; "maximumBytes"?: string };
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": { "gatewayUrl"?: string; "requestStage"?: string; "httpStatus"?: string; "remoteCorrelationId"?: string; "remoteCode"?: string; "fields"?: string };
   "KB_RUNTIME_INPUT_INVALID": { "candidates"?: string; "field"?: string; "inboxCode"?: string; "waitingSteps"?: string };
@@ -1091,6 +1094,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -1375,6 +1379,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -1659,6 +1664,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": [],
   "KB_RUNTIME_DISK_FULL": [],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -1943,6 +1949,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": ["correlationId"],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -2227,6 +2234,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
   "KB_RUNTIME_DISK_FULL": ["path"],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -2511,6 +2519,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": [],
   "KB_RUNTIME_DISK_FULL": [],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": [],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": ["correlationId"],
   "KB_RUNTIME_FRAME_TOO_LARGE": [],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
   "KB_RUNTIME_INPUT_INVALID": [],
@@ -2795,6 +2804,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["field","observedType","observedValuePreview"],
   "KB_RUNTIME_DISK_FULL": [],
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": ["reason"],
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": ["actualBytes","maximumBytes"],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": ["gatewayUrl","requestStage","httpStatus","remoteCorrelationId","remoteCode","fields"],
   "KB_RUNTIME_INPUT_INVALID": ["candidates","field","inboxCode","waitingSteps"],
@@ -3079,6 +3089,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string };
   "KB_RUNTIME_DISK_FULL": { "path": string };
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;
@@ -3363,6 +3374,7 @@ export interface CatalogHintTemplateParameters {
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": Record<never, never>;
   "KB_RUNTIME_DISK_FULL": Record<never, never>;
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": Record<never, never>;
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;
@@ -3647,6 +3659,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": Record<never, never>;
   "KB_RUNTIME_DISK_FULL": Record<never, never>;
   "KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE": Record<never, never>;
+  "KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE": { "correlationId"?: string };
   "KB_RUNTIME_FRAME_TOO_LARGE": Record<never, never>;
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": Record<never, never>;
   "KB_RUNTIME_INPUT_INVALID": Record<never, never>;

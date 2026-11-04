@@ -25,6 +25,29 @@ describe('handleExecutionError', () => {
     return undefined;
   }
 
+  async function noExecutionHostFailure(): Promise<unknown> {
+    vi.spyOn(AuthSessionOwner.prototype, 'load').mockResolvedValue({
+      kind: 'session', gatewayUrl: 'https://gateway.test', accessToken: 'session-token',
+      refresh: vi.fn(), save: vi.fn(),
+    });
+    const envelope = createErrorEnvelope('KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE', {
+      correlationId: 'gateway-dispatch-123',
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: false, error: envelope }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+    const transport = new HttpSseGatewayTransport({ gatewayUrl: 'https://gateway.test', credentialKind: 'either' });
+    try {
+      for await (const event of transport.execute({ pluginId: '@example/plugin', handlerRef: 'dist/index.js', input: {} })) {
+        void event;
+      }
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  }
+
   // case: S-007.4
   it('renders a catalogued missing-credentials envelope in JSON mode', async () => {
     const json = vi.fn();
@@ -41,6 +64,19 @@ describe('handleExecutionError', () => {
         hint: createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'https://gateway.test' } }).hint,
       }),
     });
+  });
+
+  it('preserves the Gateway execution-host code, hint, and correlation in CLI JSON output', async () => {
+    const json = vi.fn();
+    const presenter = { isJSON: true, json, error: vi.fn() } as unknown as Presenter;
+    const envelope = createErrorEnvelope('KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE', {
+      correlationId: 'gateway-dispatch-123',
+    });
+
+    const exitCode = handleExecutionError(await noExecutionHostFailure(), presenter);
+
+    expect(exitCode).toBe(1);
+    expect(json).toHaveBeenCalledWith({ ok: false, error: envelope });
   });
 
   // case: S-007.4

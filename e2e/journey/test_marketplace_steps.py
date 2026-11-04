@@ -532,43 +532,48 @@ class MarketplaceStepTests(unittest.TestCase):
                 "KB_JOURNEY_ADMIN_PASSWORD": "fixture-password",
             }
             calls: list[tuple[str, ...]] = []
-            logged_in = False
+            session_saved = False
+            machine_credentials = True
 
             def fake_run(command, *, cwd, env, capture_output, text, timeout):
-                nonlocal logged_in
+                nonlocal session_saved, machine_credentials
                 calls.append(tuple(command))
                 args = command[1:]
+                if args[:2] == ["auth", "logout"]:
+                    machine_credentials = False
+                    session_saved = False
+                    return subprocess.CompletedProcess(command, 0, '{"ok":true}', "")
                 if args[:3] == ["marketplace", "plugins", "list"]:
-                    if logged_in:
+                    if machine_credentials or session_saved:
                         return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"entries": []}}), "")
                     return subprocess.CompletedProcess(command, 1, json.dumps({
                         "ok": False,
                         "error": {
                             "code": "KB_AUTH_REQUIRED",
-                            "message": "Authentication is required.",
+                            "message": catalogued_error_message("KB_AUTH_REQUIRED"),
                             "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://gateway.test"),
                         },
                     }), "")
                 if args[:2] == ["auth", "login"]:
-                    logged_in = True
+                    session_saved = True
                     return subprocess.CompletedProcess(command, 0, '{"ok":true}', "")
                 if args[:2] == ["auth", "status"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({
-                        "ok": True, "data": {"session": {"authenticated": logged_in}},
+                        "ok": True, "data": {"session": {"authenticated": session_saved}},
                     }), "")
-                if args[:3] == ["marketplace", "plugins", "list"] and logged_in:
-                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"entries": []}}), "")
                 return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command[1:3]}")
 
             journey = Journey("secured", "marketplace-auth-fixture")
             authenticate_secured_marketplace(journey, project, env, fake_run)
 
-            self.assertEqual(journey.result().status, "PASS")
+            self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(journey.result().case_run["claims"], [
                 {"claimId": "S-010.6", "kind": "journey", "status": "PASS"},
                 {"claimId": "S-041.7", "kind": "journey", "status": "PASS"},
             ])
             self.assertIn(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"), calls)
+            self.assertLess(calls.index(("kb", "auth", "logout", "--json")),
+                            calls.index(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json")))
             self.assertIn(("kb", "auth", "login", "--gateway-url", "http://gateway.test",
                            "--email", "admin@example.test", "--password-stdin", "--json"), calls)
             self.assertIn(("kb", "auth", "status", "--json"), calls)
