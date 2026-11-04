@@ -1,11 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { runSafeBuild } from '../../src/core/build';
 
 describe('release build run governed execution', () => {
+  it('keeps stdout diagnostics when a failed build also writes to stderr', async () => {
+    const packagePath = join(tmpdir(), `kb-release-build-test-${randomBytes(4).toString('hex')}`);
+    await mkdir(packagePath, { recursive: true });
+    await writeFile(join(packagePath, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { build: 'echo ok' } }));
+
+    const shell = {
+      async exec() {
+        return {
+          code: 1,
+          stdout: 'ERROR in ./src/main.tsx\nModule not found',
+          stderr: 'Warning: optional manifest metadata unavailable',
+          ok: false,
+        };
+      },
+    };
+
+    try {
+      const result = await runSafeBuild(packagePath, 'fixture', shell);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('ERROR in ./src/main.tsx\nModule not found');
+      expect(result.error).toContain('Warning: optional manifest metadata unavailable');
+    } finally {
+      await rm(packagePath, { recursive: true, force: true });
+    }
+  });
+
   it('delegates build commands to the injected shell with structured argv', async () => {
     const packagePath = join(tmpdir(), `kb-release-build-test-${randomBytes(4).toString('hex')}`);
     await mkdir(packagePath, { recursive: true });

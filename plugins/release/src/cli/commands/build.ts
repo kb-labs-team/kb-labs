@@ -12,6 +12,7 @@ import {
   type BuildResult,
 } from '../../core/index.js';
 import { findRepoRoot } from '../../shared/utils';
+import { formatBuildFailureOutput } from '../../core/build.js';
 
 interface BuildFlags {
   scope?: string;
@@ -109,7 +110,7 @@ export default defineCommand({
               name: `pnpm run ${buildScript}`,
               success: execResult.ok,
               durationMs: Date.now() - startedAt,
-              error: execResult.ok ? undefined : (execResult.stderr || execResult.stdout).trim().split('\n').slice(-30).join('\n'),
+              error: execResult.ok ? undefined : formatBuildFailureOutput(execResult.stdout, execResult.stderr, execResult.code),
             }];
           })()
         : await buildPackages(plan.packages, {

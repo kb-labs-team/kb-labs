@@ -65,6 +65,29 @@ describe('release:build', () => {
     );
   });
 
+  it('keeps stdout diagnostics when a configured build fails with stderr warnings', async () => {
+    vi.mocked(useConfig).mockResolvedValue({ build: { script: 'build:affected' } });
+    const shellExec = vi.fn().mockResolvedValue({
+      code: 1,
+      stdout: 'ERROR in ./src/main.tsx\nModule not found',
+      stderr: 'Warning: optional manifest metadata unavailable',
+      ok: false,
+    });
+    const { ui } = createCapturedUI();
+    const ctx = createMockContext({ ui, cwd: '/project' });
+    (ctx as unknown as { api: { shell: { exec: typeof shellExec } } }).api.shell.exec = shellExec;
+
+    const result = await buildCommand.execute(ctx as never, mockCLIInput({ flags: { flow: 'platform', json: true } }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        cause: expect.stringContaining('ERROR in ./src/main.tsx\nModule not found'),
+      },
+    });
+    expect((result as { error: { cause: string } }).error.cause).toContain('Warning: optional manifest metadata unavailable');
+  });
+
   it('BB-02: falls back to buildPackages (per-package strategy) when no build.script is configured', async () => {
     vi.mocked(useConfig).mockResolvedValue({});
     const { ui } = createCapturedUI();
