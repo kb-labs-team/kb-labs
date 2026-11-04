@@ -1451,8 +1451,8 @@ thread.join()
                 second.step("second claim", "test", lambda: None, cases=["S-042.2"])
                 second.step("third claim", "test", lambda: None, cases=["S-042.3"])
             results = [journey.result().__dict__ for journey in Journey.run_instances()]
-            with patch.object(runner, "FIRST_FAILURE", ""):
-                self.assertEqual(runner.check_selected_claim_completion(results, selected), [])
+            with patch.object(runner, "CASE_JOURNEY", first), patch.object(runner, "FIRST_FAILURE", ""):
+                self.assertEqual(runner.check_selected_claim_completion(results), [])
                 self.assertEqual(runner.FIRST_FAILURE, "")
         finally:
             Journey.reset_run_registry()
@@ -1462,16 +1462,47 @@ thread.join()
             with patch("tempfile.mkdtemp", return_value=temporary):
                 runner = importlib.import_module("runner")
 
-        with patch.object(runner, "FIRST_FAILURE", ""):
+        with patch.dict(os.environ, {
+                "KB_JOURNEY_CASES": "S-042.1,S-042.2,S-042.3",
+                "KB_JOURNEY_SELECTED_STEPS": "S-042.1,S-042.2,S-042.3",
+        }, clear=False):
+            journey = Journey("local", "missing-claim-completion")
+        with patch.object(runner, "CASE_JOURNEY", journey), patch.object(runner, "FIRST_FAILURE", ""):
             runner.check_selected_claim_completion(
-                [{"steps": [{"status": "PASS", "cases": ["S-042.1"]}]}],
-                "S-042.1,S-042.2,S-042.3",
-            )
+                [{"steps": [{"status": "PASS", "cases": ["S-042.1"]}]}])
             self.assertEqual(
                 runner.FIRST_FAILURE,
                 "selected claim steps did not execute: S-042.2, S-042.3; "
                 "the selected runner did not call their registered step functions",
             )
+
+    def test_split_mode_resolver_claims_are_the_runner_completion_selection(self):
+        from select_from_cases import _coverage_results, selection_from_coverage
+
+        requested = "S-045.4,S-045.5"
+        coverage = _coverage_results()
+        Journey.reset_run_registry()
+        try:
+            for mode in ("local", "secured"):
+                resolved = selection_from_coverage(
+                    coverage, requested, mode=mode, requested_runners="")
+                self.assertEqual(len(resolved["steps"]), 1)
+                env = {
+                    "KB_JOURNEY_CASES": requested,
+                    "KB_JOURNEY_SELECTED_STEPS": ",".join(resolved["steps"]),
+                }
+                with patch.dict(os.environ, env, clear=False):
+                    journey = Journey(mode, f"split-mode-completion-{mode}")
+                    journey.step("selected claim", "journey.test", lambda: None,
+                                 cases=resolved["steps"])
+                with patch.object(runner, "CASE_JOURNEY", journey), \
+                        patch.object(runner, "FIRST_FAILURE", ""):
+                    self.assertEqual(
+                        runner.check_selected_claim_completion([journey.result().__dict__]), [])
+                self.assertEqual(journey.selection, requested.split(","))
+                self.assertEqual(journey.selected_steps, set(resolved["steps"]))
+        finally:
+            Journey.reset_run_registry()
 
     def test_real_failure_remains_first_when_selection_claims_never_execute(self):
         with tempfile.TemporaryDirectory(prefix="journey-runner-import-") as temporary:
@@ -1482,8 +1513,9 @@ thread.join()
             journey = Journey("local", "aborted-run")
             journey.step("install", "platform.install", lambda: "install command failed", cases=["S-042.1"])
             result = journey.result()
-        with patch.object(runner, "FIRST_FAILURE", "install command failed: exit 1"):
-            missing = runner.check_selected_claim_completion([result.__dict__], "S-042.1,S-042.2")
+        with patch.object(runner, "CASE_JOURNEY", journey), \
+                patch.object(runner, "FIRST_FAILURE", "install command failed: exit 1"):
+            missing = runner.check_selected_claim_completion([result.__dict__])
             self.assertEqual(missing, ["S-042.2"])
             self.assertEqual(runner.FIRST_FAILURE, "install command failed: exit 1")
         self.assertEqual(result.case_run["claims"], [
