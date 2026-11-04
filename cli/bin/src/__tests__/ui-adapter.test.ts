@@ -12,7 +12,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SystemContext } from '@kb-labs/cli-runtime';
 import { noopUI, uiMessageLevelDefaultTitleCases, uiOutputContractCases } from '@kb-labs/plugin-contracts';
-import { setJsonMode } from '@kb-labs/shared-cli-ui';
 import { createCLIUIFacade } from '../runtime/ui-facade.js';
 
 // Tests for createCLIUIFacade (from plugin-executor) and createJsonModeUI logic
@@ -546,10 +545,6 @@ describe('UI Adapter', () => {
   });
 
   describe('JSON Mode UI (createJsonModeUI)', () => {
-    afterEach(() => {
-      setJsonMode(false);
-    });
-
     it('all UI methods except json() are no-ops in json mode', () => {
       // Replicate the createJsonModeUI logic from plugin-executor
       const baseJson = vi.fn();
@@ -657,7 +652,7 @@ describe('shared UI output contract in CLI adapter', () => {
       return true;
     });
     try {
-      contract.invoke(createCLIUIFacade());
+      contract.invoke(createCLIUIFacade(undefined, (value) => streamOutput.push(JSON.stringify(value))));
       const rendered = `${consoleOutput.join('\n')}\n${streamOutput.join('\n')}`;
       for (const expected of contract.visibleText) expect(rendered).toContain(expected);
     } finally {
@@ -684,12 +679,12 @@ describe('shared UI output contract in CLI adapter', () => {
       process.env.NO_COLOR = '1';
       vi.resetModules();
       const { createCLIUIFacade: createNoColorCLIUIFacade } = await import('../runtime/ui-facade.js');
-      const streamSpy = vi.spyOn(process.stdout, 'write').mockImplementation(value => {
+      const streamSpy = vi.spyOn(process.stderr, 'write').mockImplementation(value => {
         output.push(String(value));
         return true;
       });
       try {
-        createNoColorCLIUIFacade().chain([item]);
+        createNoColorCLIUIFacade(undefined, (value) => output.push(String(value))).chain([item]);
       } finally {
         streamSpy.mockRestore();
       }
@@ -709,7 +704,7 @@ describe('shared UI output contract in CLI adapter', () => {
       return true;
     });
     try {
-      contract.invoke(createCLIUIFacade());
+      contract.invoke(createCLIUIFacade(undefined, (value) => output.push(JSON.stringify(value))));
       expect(output.join('\n')).toContain(contract.title);
     } finally {
       consoleSpy.mockRestore();
