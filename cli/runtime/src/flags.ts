@@ -96,7 +96,12 @@ export function parseArgs(argv: string[]): {
           global.help = true;
           break;
         case "--version":
-          global.version = true;
+          if (cmdPath.length > 0) {
+            const value = args[0];
+            flagsObj.version = value !== undefined && !value.startsWith("-") ? args.shift() : true;
+          } else {
+            global.version = true;
+          }
           break;
         case "--no-color":
           global.noColor = true;
@@ -205,6 +210,11 @@ export function parseArgs(argv: string[]): {
     }
   }
   const rest = args;
+
+  if (cmdPath.length > 0 && global.version) {
+    flagsObj.version = true;
+    delete global.version;
+  }
 
   // Fallback to KB_PROFILE env var if --profile not provided
   // Priority: --profile flag > KB_PROFILE env var > default

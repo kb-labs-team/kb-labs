@@ -337,7 +337,12 @@ export async function executeCli(
   });
 
   // ── Handle --version early ─────────────────────────────────────────────────
-  if (versionSurface) {
+  const versionRoute = registryStore.resolve(cmdPath);
+  const versionFlags = versionRoute.type === 'command'
+    ? versionRoute.command.manifest.flags ?? []
+    : versionRoute.type === 'system-cmd' ? versionRoute.cmd.flags ?? [] : [];
+  const commandDeclaresVersion = versionFlags.some(flag => flag.name === 'version');
+  if (versionSurface || (flagsObj.version === true && !commandDeclaresVersion)) {
     const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
     try {
       const version = await getPlatformVersion();
@@ -447,6 +452,18 @@ export async function executeCli(
       ? routeResult.command.manifest.flags ?? []
       : [];
   registerSecretFlagValues(commandFlags, flagsObj);
+
+  const missingValue = commandFlags.find(flag => flag.required && flag.type !== 'boolean'
+    && Object.hasOwn(flagsObj, flag.name) && (flagsObj[flag.name] === true || flagsObj[flag.name] === ''));
+  if (missingValue && !global.help) {
+    const envelope = createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+      message: `Required flag --${missingValue.name} needs a value.`,
+      hint: `Run "kb ${cmdPath.join(' ')} --help" to see the required flags.`,
+    });
+    if (global.json) presenter.json({ ok: false, error: envelope });
+    else presenter.error(`${envelope.message} [${envelope.code}]\nHint: ${envelope.hint}`);
+    return 2;
+  }
 
   switch (routeResult.type) {
     case "not-found": {

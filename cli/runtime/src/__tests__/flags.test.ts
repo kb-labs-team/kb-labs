@@ -44,6 +44,21 @@ describe('parseArgs', () => {
     expect(global.version).toBe(true);
   });
 
+  it('parses a value-taking command --version without treating it as the global version request', () => {
+    const { global, flagsObj } = parseArgs(['release', 'artifact', 'publish', '--version', '2.121.0-canary.cec6dacc6']);
+    expect(global.version).toBeUndefined();
+    expect(flagsObj.version).toBe('2.121.0-canary.cec6dacc6');
+  });
+
+  it.each([['--version'], ['--version', ''], ['--version', '--json']])(
+    'keeps a missing command version in command flags for declaration validation: %j',
+    (...args) => {
+      const parsed = parseArgs(['release', 'artifact', 'publish', ...args]);
+      expect(parsed.global.version).toBeUndefined();
+      expect(parsed.flagsObj.version === true || parsed.flagsObj.version === '').toBe(true);
+    },
+  );
+
   it('parses --quiet', () => {
     const { global } = parseArgs(['--quiet']);
     expect(global.quiet).toBe(true);

@@ -126,6 +126,8 @@ if [[ "$args" == *"JSON.stringify(d.adapters)"* || "$args" == *"JSON.stringify(d
 if [[ "$args" == *"prepare-release-index.mjs"* ]]; then mkdir -p "$(dirname "$RELEASE_INDEX_PATH")"; printf '{"platforms":[{"id":"platform","version":"%s"}]}\\n' "$EXPECTED_VERSION" > "$RELEASE_INDEX_PATH"; fi
 if [[ "$args" == *"process.env.RELEASE_INDEX_PATH"* ]]; then printf '%s' "$EXPECTED_VERSION"; fi
 if [[ "$args" == *"create-candidate-bundle.mjs"* ]]; then printf '%s|%s|%s|%s|%s|%s|%s\\n' "$CANDIDATE_ID" "$COMMIT_SHA" "$VERSION" "$GATE_POLICY" "$GATE_RESULT" "$GATE_RUN_ID" "$RUN_ID" > '${bundleMetadataPath}'; printf 'bundle assembled\\n'; fi
+if [[ "$args" == *"bundle/provenance.json"* ]]; then printf 'trusted-test-digest'; fi
+if [[ "$args" == *"release artifact publish"* ]]; then printf '{"ok":true}\\n'; fi
 if [[ "$1" == -p ]]; then printf '2.0.0-preflight\\n'; fi
 exit 0
 `);
@@ -168,6 +170,7 @@ printf 'goreleaser %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Trusted candidate bundle digest: trusted-test-digest/);
     assert.equal(readFileSync(goreleaserArgsPath, 'utf8').trim(), 'release --snapshot --clean --skip=publish');
     assert.equal(readFileSync(goreleaserTagPath, 'utf8').trim(), 'v2.0.0-canary.012345678-binaries');
     const nodeCommands = readFileSync(nodeArgsPath, 'utf8');
@@ -194,6 +197,9 @@ printf 'goreleaser %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"
     const bundlePosition = nodeCommands.indexOf('plugins/release/scripts/create-candidate-bundle.mjs');
     assert.ok(indexPosition >= 0, nodeCommands);
     assert.ok(bundlePosition > indexPosition, nodeCommands);
+    assert.match(nodeCommands, /release artifact publish --flow platform --bundle-dir \.kb\/release\/bundle --expected-digest trusted-test-digest --candidate-id candidate-012345678 --commit 0123456789abcdef0123456789abcdef01234567 --version 2\.0\.0-canary\.012345678 --target local --json --dry-run/);
+    assert.equal(nodeCommands.split('release artifact publish --flow platform').length - 1, 1, nodeCommands);
+    assert.ok(nodeCommands.indexOf('release artifact publish --flow platform') > bundlePosition, nodeCommands);
     assert.equal(nodeCommands.split('release build run --flow platform --json').length - 1, 1, nodeCommands);
     assert.equal(nodeCommands.split('release artifact create --flow platform --out-dir .kb/release/artifacts --json').length - 1, 1, nodeCommands);
     assert.equal(nodeCommands.split('release version update --flow platform --channel canary --json').length - 1, 1, nodeCommands);
