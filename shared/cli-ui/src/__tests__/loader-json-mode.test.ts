@@ -1,21 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
-import { useLoader } from '../loader';
+import { setJsonMode, useLoader } from '../loader';
 
 describe('useLoader output streams', () => {
-  it('routes machine-mode progress to stderr', () => {
+  it('suppresses human loader output in machine mode', () => {
     const output: string[] = [];
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(((text: string | Uint8Array) => {
       output.push(String(text));
       return true;
     }) as typeof process.stderr.write);
+    setJsonMode(true);
     try {
-      const loader = useLoader('Analyzing...', { spinner: false, total: 2, current: 1, jsonMode: true });
+      const loader = useLoader('Analyzing...', { spinner: false, total: 2, current: 1 });
       loader.start();
       loader.update({ current: 1 });
       loader.succeed('Done');
-      expect(output.join('')).toContain('Analyzing...');
-      expect(output.join('')).toContain('Done');
+      expect(output.join('')).toBe('');
     } finally {
+      setJsonMode(false);
       stderr.mockRestore();
     }
   });
