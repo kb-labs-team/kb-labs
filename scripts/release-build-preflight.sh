@@ -157,3 +157,4 @@ fi
 
 run_step node ./cli/bin/dist/bin.js release build run --flow "$flow" --json
 run_step pnpm kb release artifact create --flow "$flow" --out-dir .kb/release/artifacts --json
+run_step goreleaser build --snapshot --single-target

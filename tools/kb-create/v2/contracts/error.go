@@ -43,6 +43,7 @@ const (
 	CodePackageManagerKilled      = "KB_INSTALL_PACKAGE_MANAGER_KILLED"
 	CodePortInUse                 = "KB_INSTALL_PORT_IN_USE"
 	CodeIncompatibleComponents    = "KB_INSTALL_INCOMPATIBLE_COMPONENTS"
+	CodeUnsupportedPlatform       = "KB_INSTALL_UNSUPPORTED_PLATFORM"
 	CodeProviderUnresolved        = "KB_INSTALL_PROVIDER_UNRESOLVED"
 	CodeProviderAmbiguous         = "KB_INSTALL_PROVIDER_AMBIGUOUS"
 	CodeInputRequired             = "KB_INSTALL_INPUT_REQUIRED"
@@ -110,6 +111,16 @@ func NewDiag(code, message, hint string, cause error) *diag.Diag {
 		return diag.Wrap(cause, code, message, opts...)
 	}
 	return diag.New(code, message, opts...)
+}
+
+// UnsupportedPlatformDiagnostic renders the catalogued error for an OS or
+// architecture without a KB Labs installer release.
+func UnsupportedPlatformDiagnostic(goos, goarch string) *diag.Diag {
+	failure, err := diag.FromCatalog(CodeUnsupportedPlatform, map[string]string{"os": goos, "arch": goarch})
+	if err != nil {
+		panic(err)
+	}
+	return failure
 }
 
 // UpdateIncompatibleDetails is the complete identity required by the

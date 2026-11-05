@@ -143,11 +143,7 @@ func supportedOS(goos string) error {
 	if goos == "linux" || goos == "darwin" {
 		return nil
 	}
-	failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
-		"Atomic platform switching is supported only on Linux and macOS.",
-		"Run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"` on Linux or macOS.", nil)
-	failure.Meta = map[string]any{"goos": goos}
-	return failure
+	return contracts.UnsupportedPlatformDiagnostic(goos, runtime.GOARCH)
 }
 
 func (l Layout) InstallRoot() string  { return l.Root }

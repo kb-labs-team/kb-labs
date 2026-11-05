@@ -38,6 +38,11 @@ runs:
     - name: Install exact workspace dependencies
       shell: bash
       run: pnpm install --frozen-lockfile
+    - name: Install GoReleaser
+      uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29
+      with:
+        version: latest
+        install-only: true
     - name: Run the governed release build path
       shell: bash
       env:

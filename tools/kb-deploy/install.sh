@@ -52,6 +52,16 @@ ok()   { printf "%s[ OK ]%s %s\n" "$C_GREEN"  "$C_RESET" "$1"; }
 warn() { printf "%s[WARN]%s %s\n" "$C_YELLOW" "$C_RESET" "$1"; }
 err()  { printf "%s[ERR ]%s %s\n" "$C_RED"    "$C_RESET" "$1" >&2; }
 
+# BEGIN GENERATED UNSUPPORTED PLATFORM
+kb_unsupported_platform() {
+  platform_os="$1"
+  platform_arch="$2"
+  err "$(printf 'KB_INSTALL_UNSUPPORTED_PLATFORM: %s/%s is not a supported platform.' "$platform_os" "$platform_arch")"
+  err "$(printf '%s' 'Run the same command on a supported Linux or macOS system.')"
+  exit 1
+}
+# END GENERATED UNSUPPORTED PLATFORM
+
 usage() {
   cat <<'EOF'
 Usage: install.sh [--version <tag>] [--dest <path>] [--channel <stable|canary>]
@@ -137,13 +147,9 @@ case "$ARCH" in
     ;;
 esac
 
-EXT=""
 case "$OS" in
   darwin|linux) ;;
-  mingw*|msys*|cygwin*)
-    OS="windows"
-    EXT=".exe"
-    ;;
+  mingw*|msys*|cygwin*) kb_unsupported_platform windows "$ARCH" ;;
   *)
     err "Unsupported OS: $OS"
     exit 1
@@ -171,7 +177,7 @@ else
   BASE_URL="https://github.com/${REPO}/releases/download/${RESOLVED_VERSION}"
 fi
 
-BINARY_FILE="${BINARY}-${OS}-${ARCH}${EXT}"
+BINARY_FILE="${BINARY}-${OS}-${ARCH}"
 BINARY_URL="${BASE_URL}/${BINARY_FILE}"
 CHECKSUMS_URL="${BASE_URL}/checksums.txt"
 
