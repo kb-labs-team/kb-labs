@@ -6,10 +6,11 @@
 // release artifact create instead of rebuilding or resolving npm tags.
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import {
   DEFAULT_HOST_PACKAGE,
   DEFAULT_PLATFORM_PACKAGE,
@@ -118,8 +119,8 @@ if (!Array.isArray(binaries)) throw new Error('binary manifest must contain a bi
 for (const binary of binaries) {
   for (const field of ['id', 'version', 'os', 'arch', 'url', 'filename', 'sha256']) if (!binary[field]) throw new Error(`binary manifest entry is missing ${field}`);
 }
-const staging = resolve(`${artifactsDir}/v2-manifest-root`);
-rmSync(staging, { recursive: true, force: true });
+const staging = mkdtempSync(join(tmpdir(), 'kb-release-index-manifest-root-'));
+process.on('exit', () => rmSync(staging, { recursive: true, force: true }));
 mkdirSync(staging, { recursive: true });
 
 const manifestFor = item => {
@@ -410,7 +411,8 @@ const exportValue = {
   adapters,
 };
 
-const exportPath = join(artifactsDir, 'manifest-export.json');
+mkdirSync(dirname(output), { recursive: true });
+const exportPath = join(dirname(output), 'manifest-export.json');
 writeFileSync(exportPath, `${JSON.stringify(exportValue, null, 2)}\n`);
 
 const sealer = sealerBin

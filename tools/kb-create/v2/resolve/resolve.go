@@ -288,7 +288,10 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		}
 		key := artifacts[index].Package + "@" + artifacts[index].Version
 		if item, ok := provenanceByPackage[key]; ok {
-			artifacts[index].Provenance = contracts.ArtifactProvenance{SourceRevision: item.SourceRevision, Integrity: item.Integrity, DistSHA256: item.DistSHA256}
+			artifacts[index].Provenance = contracts.ArtifactProvenance{
+				SourceRevision: item.SourceRevision, Integrity: item.Integrity,
+				DistSHA256: item.DistSHA256, ContentScope: item.ContentScope, PackageSHA256: item.PackageSHA256,
+			}
 		}
 		packagePath := filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(artifacts[index].Package)))
 		if err := packageartifacts.ValidatePackageProvenance(artifacts[index], packagePath); err != nil {

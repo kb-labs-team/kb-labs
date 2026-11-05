@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "00819b2d5bf1e67dc480ad5ea106bc47763c78058b833fc9c55fb03c086401a4",
+  "digest": "e84e1455fe8129f6f2397ac9cc8d2c32f12a2324d01cef83931387a4fcefa5ba",
   "channels": {
     "stable": "2.120.1"
   },
@@ -862,6 +862,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-/TB3FDMRM46tx+4tYm/qBp7oXPXoFbZWQQHTsAh+0jM1uG9j2G5pBOLjf2864DlqW03hZu9R9rboz0cJsHc+fg==",
       "distSha256": "97390b25b888fc5ec97504c15a73dedf98b6b70b72911326993e9233826c5193",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-analytics-file",
       "version": "2.120.1"
     },
@@ -869,6 +870,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-4WrCoq8lpi9q8YJaThFSrnifp1HjmAv/ZZGoRhgGLvA7kJdSk4LxQvkFCvlxg3ktDb8tukmnw+0zOTOu2O6XLA==",
       "distSha256": "6dc285dc4e9c63d65e489bd26899416db76f1a3df9f15f68af0282d307710ac0",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-analytics-sqlite",
       "version": "2.120.1"
     },
@@ -876,6 +878,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-yREhNAGjnLoUSCdjngZtSRu0Nl00+VtYm/e3LytPiEfjlfAdqVqsysLwK3azJyATgYl6U0w0NvazoFyXrk3WDA==",
       "distSha256": "82b59ffbc1d85dbc0ff457ccbe8bef3a88cf42f7938aa9f6917ffed1627fee0a",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-eventbus-cache",
       "version": "2.120.1"
     },
@@ -883,6 +886,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-rtq0gmhRZtuY/qG6KK6q+ndGuSZ3d9GWiGKRyOBjhZEsdxbXAhSDI24U+bc8FrNSAVtuzWdXoellg0HjFAa3Sg==",
       "distSha256": "a69028b7d0a7a36cbf481aab26fbd5601dac149bd4a0515ddd05e91331c23631",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-fs",
       "version": "2.107.0"
     },
@@ -890,6 +894,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-4RHYevY0bmqdUJeohNYcUPXrhaaehPxBQFhfaoMP9yMiNGA19GOInMFSaKiVXlW1llxkpJPo5ORX40wf7VdU7Q==",
       "distSha256": "c146619ae9ced56b27091a29743a1b666d5dbf0bacca9c52011d186c84b7ed2c",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-kblabs-gateway",
       "version": "2.120.1"
     },
@@ -897,6 +902,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-I57bMFI3q776D6UtLEUagKrYiJ+p2Us7ufj0PFKlJTk6zs7U74+y1hQgu4zNYBuOIK/wO6zflSpOuTVhZqcFhQ==",
       "distSha256": "3962bd7f650783d09c3451d8b3068923af27a737ba489e7d8c6021316b19b622",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-log-document",
       "version": "2.120.1"
     },
@@ -904,6 +910,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-ol0KgUaulHS3b8fpv7fd+uLZeUnqpAA4tF9XGMURxlNNTP7IC+gooqLnfQpdA/C7F9nIrP2Qum7AvcQOL5QKlg==",
       "distSha256": "d8bd8647e3dfbe9ffa91cb7e5b294cc71c51bc1820d16a6bed370217559c981b",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-log-ringbuffer",
       "version": "2.120.1"
     },
@@ -911,6 +918,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-V5e0QHZka4Sw5OlLXiir+9T5PvVDO6a/HU4Cl8i1kC32WC8pBDjJJD84Zf/Oqr+OxL8zydzPF5B61zMd3LPnuA==",
       "distSha256": "3858482cf324cee6f52d4ca257b3100c950e5147cecc8545054d04507b8a5299",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-openai",
       "version": "2.120.1"
     },
@@ -918,6 +926,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-kmnCUYikgl0Dg5uqT20/eMl2wyKPhsGgLi2Nl11eCfMYu/qE9RijDDB+w249XjqRUYCyDEBInfLbMyp0QZaxXA==",
       "distSha256": "f4484350e18d9320cf964d5156885ce9ca51ab8120ecec24915409b839dcfa6c",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-pino",
       "version": "2.120.1"
     },
@@ -925,6 +934,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-xvasO/4Rh7VIN4y78WfEgFBrf8nrh9sHw4ao54tp/BdYTX/67XTCxeuWmg035//7Vq2yBR+xuOvJXSKBTIHUXQ==",
       "distSha256": "13731cb11919e8790f8787653802e376b64f9b3c62758674ce9fc173034f5901",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-service-transport-http",
       "version": "2.120.1"
     },
@@ -932,6 +942,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-FFzWHrPBoZ72ETkkRA+d0g3Arh2AVbUvYHpbSZk6DqJFfy78wsTq4UYZV79TvGRW9aJl36k4wjzGmZ2ISqdzMw==",
       "distSha256": "5ce0f531e861ac306f7dd60a3a3fdd50a50a44cc5ad8f79b02b1758dc03134e0",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-sqlite",
       "version": "2.120.1"
     },
@@ -939,6 +950,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-H06irm8WvLFJloiVZjNcH2pzcC+T2u8sf1kObRW4FfGzh6mToyem+PMiaHq8jcN27m6wxxejwS4SVA4UfQqgWg==",
       "distSha256": "8d629a3cfd604261d568c9afab4c2869382ed7a47acad0525da6767755147eb4",
+      "contentScope": "dist",
       "package": "@kb-labs/adapters-state-broker",
       "version": "2.120.1"
     },
@@ -946,6 +958,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-iJHOFzXxvhOY1OeFBLHyqyjxZljPI67EpeeRr1rDTCG7C4Cv6MU8YpTQvch4F+LBHRxZA7Ff1WuwML3xdSpw8Q==",
       "distSha256": "8fbd7f387bd1af2e55953c3e3441ce68c5a061bdbeae4b57c8f9a7bcfd128923",
+      "contentScope": "dist",
       "package": "@kb-labs/agents",
       "version": "2.120.1"
     },
@@ -953,6 +966,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-ELGELneUXbJYZibkZd7PBG3IwygtH5re5PrnzfoHoOnMBhLgMQEImbaaXORXP1hKmStQoNm+BXtQhMziUmX0Lw==",
       "distSha256": "efe3dddfa497d084ba0e7d1110af8afcf7525863f2501fc5eff5fbef564a609a",
+      "contentScope": "dist",
       "package": "@kb-labs/cli-bin",
       "version": "2.120.1"
     },
@@ -960,6 +974,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-qHSPlfpMdZnz34m4r9yYOrLDUqXI1Xe2ckFv4Y0uSU9f0oK4TFYkXiM37fpUeMBQCj559WjghdeJk/J4tefGWw==",
       "distSha256": "ef1440bd5ce5ffbc35e7a306df942e0adc9d4cb662d330caa638566a47351f5f",
+      "contentScope": "dist",
       "package": "@kb-labs/cli-commands",
       "version": "2.120.1"
     },
@@ -967,6 +982,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-nO+F3kazaBV1glluBiR+dOJiTQsOO8eK4UV+C3D8Vc1Zj4PN3uPOdpMJqpOGyIEJ0XqyUgnmeR8vkEvNx7oqMg==",
       "distSha256": "21aa90595ee27ff3964b1a60a4efdc8b81a432b1966a278309e78e27c36c0716",
+      "contentScope": "dist",
       "package": "@kb-labs/cli-runtime",
       "version": "2.120.1"
     },
@@ -974,6 +990,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-u3/aNHL16LvfV83qNeLImVf10lrEG+Eo43SwKC/J4fFIcG3X52ReI4B3QayQZmMPtHloD1Q0/wmYTLrwzxZg3g==",
       "distSha256": "44c344bd785079c3bdde4a05e884ca777e36742470905df27a65083f5e37ba43",
+      "contentScope": "dist",
       "package": "@kb-labs/commit",
       "version": "2.120.1"
     },
@@ -981,6 +998,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-nkR8uv58k1pc0R2ySnimHw4Qa8Kxo7uG3VYAc66qrNQvvwYO6DQO4i6Ho2v4SsowovOZ/doN5cJTc14YMjRJSQ==",
       "distSha256": "0ca3b4d3c1824b4cbd95d09efa7113123e661abd904c299ba8a5326339500a60",
+      "contentScope": "dist",
       "package": "@kb-labs/core-contracts",
       "version": "2.120.1"
     },
@@ -988,6 +1006,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-Pc/gf3V1SUAAg6rFrO2grv/9NJdA2sSuhpIkuoXWa5S+v7yf+XWcyBtzBShZ16j5OKhCtb7ADspHtVRJHKW7NA==",
       "distSha256": "e9d021fc47c06071d3fd753038679258e4358fa8e195677fba9a62993f2ba98e",
+      "contentScope": "dist",
       "package": "@kb-labs/core-ipc",
       "version": "2.120.1"
     },
@@ -995,6 +1014,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-LDTjSasjig6Ij+ZNyxsr43EhNc2d67OiORc8ycNHQ+KTyqnxOxaoiPKYe+LAQAttQE7J1I0kFyPqQ3uF7N/kug==",
       "distSha256": "1b491573f6e7a9fea52971b3a82cfa74549ebb383419cdfeef048ca3bd26790b",
+      "contentScope": "dist",
       "package": "@kb-labs/core-platform",
       "version": "2.120.1"
     },
@@ -1002,6 +1022,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-5FSI2cRgsQijh7Vit+98wMZ/QLyfSXqmVY8FXeUwh05PAO59lKJxn1Rq3WBPLa/d0ny0NHSGIqAQp7y/aHswIg==",
       "distSha256": "49fa6d26573af913e1330a1c88f2f4ed67761a0cd9b2e402cceb5ed21584e67f",
+      "contentScope": "dist",
       "package": "@kb-labs/core-project-registry",
       "version": "2.120.1"
     },
@@ -1009,6 +1030,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-SQlNe2QH9zAbx+b70m2OubmPC69kFjLcLyp61lpmWYxcDyQMa6r00H8iOp/CuQmkQVRMlxou2M0hz1fYYaIYeA==",
       "distSha256": "c2e1bf7ef39e9d427ca7e07970f4ec53e5bf10a416e743101ab56385a296a28e",
+      "contentScope": "dist",
       "package": "@kb-labs/core-resource-broker",
       "version": "2.120.1"
     },
@@ -1016,6 +1038,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-RAdausruNORrRMqwyEJ2rpAoAcEVwmvJd8jhYaLG72FCxLubQ/H7YI0AqoFzACdZfbIeY98OFefaZ6cdy8dPCA==",
       "distSha256": "c04e9e27c7e874df656a9efdea61d4bf72f24423f071d97c80ef7dee9fd23db0",
+      "contentScope": "dist",
       "package": "@kb-labs/core-retry",
       "version": "2.120.1"
     },
@@ -1023,6 +1046,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-uCbzPLbzDSxd5y/5j0mx42uPWmRZIW7Ty3dImxnnleVygLnmalobwJLDklhDQUQNI6mEhdPbkjr8+68eSse08A==",
       "distSha256": "241d4889bbc7cc8cfc1fd579564ba8a2574a658f2c87d674c6986adbfc7b5298",
+      "contentScope": "dist",
       "package": "@kb-labs/core-runtime",
       "version": "2.120.1"
     },
@@ -1030,6 +1054,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-aiRz4g9YJTm7AjQitu0XM+xZKMaRIOK4apUf6n5vqu50WXKD7Z4/UXzRca2Q3s2xL9zZMiaR58HROtAkWEjyQA==",
       "distSha256": "d9185f2e525914dca228078ec405b97b2ffae21e41640148e92659670bc93996",
+      "contentScope": "dist",
       "package": "@kb-labs/core-state-daemon",
       "version": "2.120.1"
     },
@@ -1037,6 +1062,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-IrWFmoUZuH/bIR/igOJMrxUJRgRXWP/sEk4XqzElxoPRsw9RIhIXuQyyNr7VI1SieE6KlbGhNbtl9R833gRAMw==",
       "distSha256": "f88be2800defba008752031691477d22b515d00e14b528df20696f80e774304e",
+      "contentScope": "dist",
       "package": "@kb-labs/core-sys",
       "version": "2.120.1"
     },
@@ -1044,6 +1070,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-cY9kI0YPkz8HQmPOgrL6KDoE9IFlxqW/GT6X58tNwitLunri05s40tcTkSIQ87jk+VLORwYtrDM0bOoUjA3d9Q==",
       "distSha256": "be7e38050ff483bd209177c95e1c84a064354fa71b24116292c4fb6b56061b9a",
+      "contentScope": "dist",
       "package": "@kb-labs/core-workspace",
       "version": "2.120.1"
     },
@@ -1051,6 +1078,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-R7D9CjNMrZL4Q0NwNqEzuBnoPn5RaYtHVmch6RtSPiVlN5P6xK4LBElZd08TG6GLqcYGRri2X2bGaYtJCJdL1w==",
       "distSha256": "463d0b4a02adb1b95d308668a2683630ccbf8b800ff5eec4f09960d44af5280e",
+      "contentScope": "dist",
       "package": "@kb-labs/data-store",
       "version": "2.120.1"
     },
@@ -1058,6 +1086,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-SaWF4yJs0qBXh70pyUU3ls9PNW+d0Ltqrz7lYnMD6sCOJkBpPtXyZ0JIsYVlmnjUAPnxVT1ACVMKAoPBrhHaBA==",
       "distSha256": "d9514a2d6b311db2e474cba769bdcd947effc643653553d0132539ef5a414227",
+      "contentScope": "dist",
       "package": "@kb-labs/e2e-analytics-emitter",
       "version": "1.0.0"
     },
@@ -1065,6 +1094,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-j8wnVCYMuHnFc7Jxre6o4/1/pfNsllkTn8Do4qz6Fi1Ya0Ea8hhu49YZD7OzW05pSz0Rb3DpL3wKnKdVxeD6AQ==",
       "distSha256": "bef547f41bea4fa83925bb67c90516b868d1f96e4e5f7652d62d1d6eb07f5713",
+      "contentScope": "dist",
       "package": "@kb-labs/e2e-llm-deterministic",
       "version": "1.0.0"
     },
@@ -1072,6 +1102,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-rimtvFCI7ShSbRgnUzGLGpCsDI1Twc4NraqkqOvB6geVK6zIoRwDFN/Ih9NeqXrhJYhcplqfyhRn+f4Q6eU/tQ==",
       "distSha256": "d91db279b580521cadd94d6d3eb08a65e1857569975bb0608951fbfa90132116",
+      "contentScope": "dist",
       "package": "@kb-labs/gateway-app",
       "version": "2.120.1"
     },
@@ -1079,6 +1110,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-r29yxaBwJG5a4PdA2j7emFwsCS1KoEm3TmNJJO/hn6WbUu7w56H8m13Vm6w7wzpxMk92W1AJ+SjdFlkzj8s++A==",
       "distSha256": "4f91410068ba16fc366632a50cf4ba6ab2d0b492ddb1404bf1df992caa4729dd",
+      "contentScope": "dist",
       "package": "@kb-labs/host-agent-app",
       "version": "2.120.1"
     },
@@ -1086,6 +1118,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-7b56MCm6aQU3oojF6JDqqw8NzwmDWfL2Eal8i2P8ZKVwQZduZPJkojmKT/kxQQgZ46l/JlvMCAqAqR9GjdEAqw==",
       "distSha256": "1a37eba0df5aa23e7048fb2a40ea8857938b21d65ce36b14bc68b561a76bb20f",
+      "contentScope": "dist",
       "package": "@kb-labs/host-app",
       "version": "2.120.1"
     },
@@ -1093,6 +1126,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-k/vig2WAJuRLUW/FbUIkcYwuUqRhRf4/W4B/XjcqbQD4xmroz9WAMuXCf/+7jk/2niAfs5H0D9WdOdEpsYyh3A==",
       "distSha256": "3dd76bcf18481ec99802a7ba7813a14f760523b91ce43cdc62b0a01ec88e9c7a",
+      "contentScope": "dist",
       "package": "@kb-labs/llm-router",
       "version": "2.120.1"
     },
@@ -1100,6 +1134,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-Ufm21FrGJXJ3eiDJNZ1o+FxCFZJYxRaRUsVAT0WDHU2CTDH6pbTQZYhWCe3Cts2KxPlJDuLcmh5vXLR+X9h4ig==",
       "distSha256": "15f685d5d00ab6f3d4141500c4ff5fc828022dbe86d0adc958a0ae637929263a",
+      "contentScope": "dist",
       "package": "@kb-labs/marketplace-app",
       "version": "2.120.1"
     },
@@ -1107,6 +1142,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-wgA9Qb1TXK1bn1DtphRwnBkncI81NwThSFa5QB4kbuvDMOndMuXxKN1+RL/K1yY33YK1sL35vm7oSstCK2R1XQ==",
       "distSha256": "d813481a5416fcda1322b4092819e1ac490a341db3a600d08b88f5b669169cc4",
+      "contentScope": "dist",
       "package": "@kb-labs/marketplace-contracts",
       "version": "2.120.1"
     },
@@ -1114,6 +1150,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-UW2Ep/bqr5Zgh1g6fJ0J3TYdwndfZhnwRNWWQ4RLnx/9QgtCH8c6eXb0/Yf0ShSeqGvNAIq0Qdhn51RnQWmygA==",
       "distSha256": "007a92930115397406e97d5a07c9c1cd95a8763484d475bd359ffdc7f3176b74",
+      "contentScope": "dist",
       "package": "@kb-labs/mcp-app",
       "version": "2.120.1"
     },
@@ -1121,6 +1158,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-ywxv7+rQiNfKDM78W3wdCeLe2wXmibwalSIPk4qjVhMiC5gKFh7xvj1xgAzl731ouri9GuVXNo+rIhhAcCUDiA==",
       "distSha256": "ba107b40af7d215cea3ed95d6456422ce915076e544b1fcd354a268b199226b1",
+      "contentScope": "dist",
       "package": "@kb-labs/mind",
       "version": "2.120.1"
     },
@@ -1128,6 +1166,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-OlExairTjarXdle3P7LF/pZmkVr3KZRrncRJ+D+ziv6/hE4P9Te7mFX1XKyr4/4UGPYwOWx/sXdbqQs66AwZ4A==",
       "distSha256": "e981cdee707a838ec3ea6dc284139fe11939a2c9fb2ec979e24fd4b1921afa87",
+      "contentScope": "dist",
       "package": "@kb-labs/perm-presets",
       "version": "2.120.1"
     },
@@ -1135,6 +1174,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-7xdFDb/t83AZ1c6zrmS6/l7vUUTw3GaeOYvM907zpaKxnfm03DoM5u4s2JcApD3b0/kMUVbabdQtZZ+qWHizGw==",
       "distSha256": "85912ce99763a0b1ab4a33cd0b168d9206b169b1a2888ee94701f81fb346780e",
+      "contentScope": "dist",
       "package": "@kb-labs/platform-client",
       "version": "2.120.1"
     },
@@ -1142,6 +1182,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-mAhCnoqRPNA0kq3zsjolRn4T7SZnRk7mCnRxaeOeUeDNdupy6NmUFHmm7Dnpfr9Wg2yaGMi0IwMAzeYUnkPB+w==",
       "distSha256": "5e8ed281dda063fbdb14b0421194557c44842535c124157d9883582c4750d514",
+      "contentScope": "dist",
       "package": "@kb-labs/plugin-contracts",
       "version": "2.120.1"
     },
@@ -1149,6 +1190,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-QnF0Drklrzu+NoIaXcTaEZy/44Pap6pdLNUivhjY0jxd5CVmsHFcpzsxa7NkQC74zGdNqQM78mzED5Bxf2JjJQ==",
       "distSha256": "d6f17584b1bbbd40f6c92d0cfb69e47d776d0aa119bc040d7b26be808fc23ea4",
+      "contentScope": "dist",
       "package": "@kb-labs/project-runtime-app",
       "version": "2.120.1"
     },
@@ -1156,6 +1198,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-VmsHPJzsYvkv/mDfPLkFfd1/yo/zLpAupUyyWsHc4JrUG7wjxrgLrYFEem/auVxtA/SEfzA9v9gXgT9UrdOISg==",
       "distSha256": "cd1bff2d8db5ba258b580f651ef0b53adb41c3a2a669e366b835e301bad935b0",
+      "contentScope": "dist",
       "package": "@kb-labs/quality",
       "version": "2.120.1"
     },
@@ -1163,6 +1206,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-Prx8S9xczddYbrX0hHL78BvbeoQR/zaKmlqwcN5uMpNxsV0p3sA1mkZUWW6gJSh5barhYQYkG81tspq7ujHR+Q==",
       "distSha256": "a43a642e477a61674d9999ae84fc4e852d08464552824d3f11762dd50dcf7fa3",
+      "contentScope": "dist",
       "package": "@kb-labs/release",
       "version": "2.120.1"
     },
@@ -1170,6 +1214,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-Crk2+oC7sOn10qewMP7JPz9pYk1OihcpvFsoaxyUmGxp3WK3iOqVMsiVhX8RIYDoh3I/OepLnuryyKa6lrqTsg==",
       "distSha256": "0e0a7e24c5820dea5ef68018c17039f223e11b718a1570a4171be7018b000f32",
+      "contentScope": "dist",
       "package": "@kb-labs/rest-api-app",
       "version": "2.120.1"
     },
@@ -1177,6 +1222,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-QMxJSlGpP5LPbiLqFrD5wES8EqaQjCtVKON9g2NOjGDCiQ1i0zW8fsm5mM3W14jX/m765ezJwDPkFNuzufMt2g==",
       "distSha256": "79e57290779a587b0bd2160139666e38051fcdc7891eebb7cf88671a546a4103",
+      "contentScope": "dist",
       "package": "@kb-labs/review",
       "version": "2.120.1"
     },
@@ -1184,6 +1230,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-c676aVT/E2ljs2H8+Ru9CmEovVs0U6HVUX8iBbNTg+jfwvUIzle/vm+/Flui47qmfoFsTtoY0WUhQ+Kp0FJb5Q==",
       "distSha256": "c521b49eb32d1347eef495b7f1dce0c713a6c6a03a7b7734df129159a7638cdc",
+      "contentScope": "dist",
       "package": "@kb-labs/scaffold",
       "version": "2.120.1"
     },
@@ -1191,6 +1238,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-R3giFS5Y7bbd6TKytcgSZA8Tjuv15TnuSipZbGyCcu0r3XGNpMhPsZQlh199zBXzT85XRdGrU9Cd5mWaDUYEHQ==",
       "distSha256": "268902ab2f6474c4c3207b2fa995263ed930f56d9fd8c95b11528fc70a5a66ff",
+      "contentScope": "dist",
       "package": "@kb-labs/sdk",
       "version": "2.120.1"
     },
@@ -1198,6 +1246,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-pEQTFHURZIoZRLdhLyMcgBgJoC7xa4/t9eHpC6MfnnOpaN7T1YA6w46r5wV90t2HSfDQXCU+6jV7VBed3YdCHw==",
       "distSha256": "53738adcebfc534af67a01bb710c78b9189bedf44d534dbc26130cc12069769a",
+      "contentScope": "dist",
       "package": "@kb-labs/shared-cli-ui",
       "version": "2.120.1"
     },
@@ -1205,6 +1254,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-15jNUw09g/nEFhddMOnVY1j9lWGMAmbYMy0+aKgVZRjfpTFdqRp53iECDt1Ck1yxvhikAKSeb+eyxYIIkCAepQ==",
       "distSha256": "ca319c6ad99a8606c2e19f576d4ee80de0bdfe0141ae2d63d28e73351b0654cd",
+      "contentScope": "dist",
       "package": "@kb-labs/shared-command-kit",
       "version": "2.120.1"
     },
@@ -1212,6 +1262,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-9uZqvLYAi+7ech50pcDS1w6qCC3IjHyNAEZhnoi0zWp2rFylYHtnjMkGrCjNfq4i4m3O2NdP7Ju1AVYoUX90bw==",
       "distSha256": "a4b1f9fffcc489396e9a7fc4967f8e049fac10d7c1dbf4cd3edaf57bb5a6f4c1",
+      "contentScope": "dist",
       "package": "@kb-labs/shared-tool-kit",
       "version": "2.120.1"
     },
@@ -1219,6 +1270,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-SsY0XU2tHzZcjF9KbPWkg911Onx+I4eJWAXG/AIQYvgujBv2XbA3HTJ8SXPzsmB6WxNEfaYGdHzJEKS721mjKA==",
       "distSha256": "ebd76a2b6c9e14248a95076e01dbf347f513814451ad0c4b68b3685659a57cee",
+      "contentScope": "dist",
       "package": "@kb-labs/steward",
       "version": "2.120.1"
     },
@@ -1226,6 +1278,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-JPIYLV7y4GFbsbAaRU1yqFWgyDqZkaxnzsBDLxnMVAX7hCrb0Bbe/46iqXrlghgOP9mSjisOWDw5OJ+RgQFQqw==",
       "distSha256": "11000b879433e1f930908b672500584268bd336f4b2641138804a6d17098dd52",
+      "contentScope": "dist",
       "package": "@kb-labs/studio-app",
       "version": "2.120.1"
     },
@@ -1233,6 +1286,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-65nMal9FZHlAnz4BiEzBFyrAJCv36eiYSUGWErDEMzexRQO5U7zKeMUp+idw0qRUQGwoQaepVHRUNmVLSJ5chQ==",
       "distSha256": "81463d45bbb88d0deb4e7ba029f01000d9acc27e9b47ba0dc558d9132c89aa79",
+      "contentScope": "dist",
       "package": "@kb-labs/studio-devtools",
       "version": "2.120.1"
     },
@@ -1240,6 +1294,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-PPX7Yo/3ot+cyZQoZbV69qUn1/dhM7KZj9TfR2hRQ94TcLMXgWDLJeniHwUEZ6Gcfsg6IwPTkH4+Z12GBBoz8Q==",
       "distSha256": "9648865479130a6b04f1dfb1700ab475cf915afe9d81c42d06e65bf8fea15471",
+      "contentScope": "dist",
       "package": "@kb-labs/studio-event-bus",
       "version": "2.120.1"
     },
@@ -1247,6 +1302,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-fRqZ1wiJgX5DKS6Z9b796Nq8hWkdFshGiVsFL+3n4+1m/XzZ9D8h7baN7GIEBKQ898ZvJTwALCcuMotT0xNkHg==",
       "distSha256": "f67d64be6d55650fcd475c60dd3b810e921814a167075fe06c42ef0481d4e86f",
+      "contentScope": "dist",
       "package": "@kb-labs/studio-hooks",
       "version": "2.120.1"
     },
@@ -1254,6 +1310,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-ZvCkZI7Km0xP3E139EQ/hRaJU8Ql3piLznrJ+VYKL4ovg4zGRev1LHtAdmD/FDGWTeUFLKlXfXijSuvwfKzVHg==",
       "distSha256": "be46061c50417fced964386714183c6c89a053d88a5c070fb51e636409d689f6",
+      "contentScope": "dist",
       "package": "@kb-labs/studio-ui-core",
       "version": "2.120.1"
     },
@@ -1261,6 +1318,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-PAePNa15f+wDrfWrGMA+ijr6PYpPZyNAN7r9Vc7HlE1MrnlUiZsyMz4KQA5hpPyAflSA3LWWbC0hVUYE44yM2w==",
       "distSha256": "f162bfabe98c43c93f253be0ae659d0c8d1f8b23289037b556a4ed43fdbc8f4f",
+      "contentScope": "dist",
       "package": "@kb-labs/studio-ui-kit",
       "version": "2.120.1"
     },
@@ -1268,6 +1326,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-BtjWBUbPgohvkMVF4AlOXAexR9NIZuvVnBjVLH/hhW4HfL0+DUvYaesPflR9WxDZzIrIG08ySJYCcJMDVn9PBA==",
       "distSha256": "42248805d965fa461e47fb07bfeab9dd8920e0cc9a57bfb97d89cd4d66d13fc7",
+      "contentScope": "dist",
       "package": "@kb-labs/workflow-daemon",
       "version": "2.120.1"
     },
@@ -1275,6 +1334,7 @@
       "sourceRevision": "64dcb50ac",
       "integrity": "sha512-qiJ8JyOinr3dV0UAADfBo8GC+s1Q8I4PcvzODmAFhdt3Ptee61f8prMQ6lUmFfbrX85akh28955P50fqFZRo+w==",
       "distSha256": "aa9a663ae53494518f8f14de4c38b9fd3ddba58b49544ba5f7887f6957c3af41",
+      "contentScope": "dist",
       "package": "@kb-labs/workflow-entry",
       "version": "2.120.1"
     }

@@ -39,6 +39,27 @@ type ArtifactProvenance struct {
 	SourceRevision string `json:"sourceRevision"`
 	Integrity      string `json:"integrity"`
 	DistSHA256     string `json:"distSha256"`
+	ContentScope   string `json:"contentScope"`
+	PackageSHA256  string `json:"packageSha256,omitempty"`
+}
+
+const (
+	ProvenanceScopeDist    = "dist"
+	ProvenanceScopePackage = "package"
+)
+
+// HasContentDigest accepts only the provenance shape produced by the sealer:
+// a compiled package records a dist digest, while a static package records a
+// whole-package digest.
+func (p ArtifactProvenance) HasContentDigest() bool {
+	switch p.ContentScope {
+	case ProvenanceScopeDist:
+		return p.DistSHA256 != "" && p.PackageSHA256 == ""
+	case ProvenanceScopePackage:
+		return p.PackageSHA256 != "" && p.DistSHA256 == ""
+	default:
+		return false
+	}
 }
 
 // Identity is the single installed-unit identity shared by plan producers and

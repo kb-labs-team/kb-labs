@@ -119,76 +119,33 @@ jobs:
             --version "$VERSION" \
             --output .kb/release/binary-manifest.json
 
-      - name: Seal unified release index
+      - name: Seal, verify, and assemble candidate bundle
         if: inputs.flow == 'platform'
         env:
-          FLOW: ${{ inputs.flow }}
-          CHANNEL: ${{ inputs.channel }}
-          SOURCE_REVISION: ${{ inputs.commit_sha }}
-        run: |
-          set -euo pipefail
-          node e2e/platform/package-provenance.mjs \
-            --packages-dir .kb/release/artifacts \
-            --source-revision "$SOURCE_REVISION" \
-            --output .kb/release/provenance.json
-          config_json="$(node --input-type=module -e '
-            import { readPlatformReleaseConfig } from "./tools/kb-create/scripts/platform-release-config.mjs";
-            process.stdout.write(JSON.stringify(readPlatformReleaseConfig("./.kb/kb.config.jsonc")));
-          ')"
-          platform_members="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(d.platformMembers.join(","));' <<< "$config_json")"
-          platform_requires="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(d.platformRequires.join(","));' <<< "$config_json")"
-          platform_adapters="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(JSON.stringify(d.adapters));' <<< "$config_json")"
-          platform_adapter_options="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(JSON.stringify(d.adapterOptions));' <<< "$config_json")"
-          node tools/kb-create/scripts/prepare-release-index.mjs \
-            --flow "$FLOW" \
-            --channel "$CHANNEL" \
-            --artifacts-dir .kb/release/artifacts \
-            --provenance-manifest .kb/release/provenance.json \
-            --binary-manifest .kb/release/binary-manifest.json \
-            --platform-member-packages "$platform_members" \
-            --platform-requires "$platform_requires" \
-            --platform-adapter-config "$platform_adapters" \
-            --platform-adapter-options "$platform_adapter_options" \
-            --output .kb/release/release-index.json
-
-      - name: Verify sealed platform version
-        if: inputs.flow == 'platform'
-        env:
-          EXPECTED_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const index = JSON.parse(fs.readFileSync('.kb/release/release-index.json', 'utf8'));
-          const platform = (index.platforms ?? []).find((artifact) => artifact.id === 'platform');
-          if (!platform) throw new Error('sealed release index has no platform artifact');
-          if (platform.version !== process.env.EXPECTED_VERSION) {
-            throw new Error(`sealed platform version mismatch: ${platform.version} != ${process.env.EXPECTED_VERSION}`);
-          }
-          NODE
-
-      - name: Assemble and seal candidate bundle
-        env:
+          RELEASE_PREFLIGHT_COVERAGE: shared
           CANDIDATE_ID: ${{ inputs.candidate_id }}
           COMMIT_SHA: ${{ inputs.commit_sha }}
           FLOW: ${{ inputs.flow }}
-          VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
+          SOURCE_REVISION: ${{ inputs.commit_sha }}
+          EXPECTED_VERSION: ${{ inputs.version }}
           GATE_POLICY: ${{ needs.resolve-gate-policy.outputs.policy }}
           GATE_RESULT: ${{ needs.journey-gate.result == 'success' && 'passed' || 'skipped' }}
           GATE_RUN_ID: ${{ needs.journey-gate.result == 'success' && github.run_id || '' }}
           RUN_ID: ${{ github.run_id }}
           ARTIFACTS_DIR: .kb/release/artifacts
-          BUNDLE_DIR: .kb/release/bundle
+          PROVENANCE_MANIFEST_PATH: .kb/release/provenance.json
           RELEASE_INDEX_PATH: .kb/release/release-index.json
           BINARY_MANIFEST_PATH: .kb/release/binary-manifest.json
+          BUNDLE_DIR: .kb/release/bundle
           BINARIES_DIR: dist
-        run: |
-          set -euo pipefail
-          node plugins/release/scripts/create-candidate-bundle.mjs
+        run: bash scripts/release-candidate-post-build.sh
 
       - name: Upload immutable candidate bundle
         id: upload-candidate
+        env:
+          RELEASE_PREFLIGHT_COVERAGE: hosted-only
+          RELEASE_PREFLIGHT_HOSTED_ONLY_REASON: GitHub Actions artifact service creates the downloadable immutable archive.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-candidate-${{ inputs.candidate_id }}
@@ -198,6 +155,8 @@ jobs:
 
       - name: Record hosted artifact digest outside the bundle
         env:
+          RELEASE_PREFLIGHT_COVERAGE: hosted-only
+          RELEASE_PREFLIGHT_HOSTED_ONLY_REASON: Reads the Actions artifact-digest output and writes to GITHUB_STEP_SUMMARY.
           ARTIFACT_DIGEST: ${{ steps.upload-candidate.outputs.artifact-digest }}
         run: |
           set -euo pipefail

@@ -408,7 +408,7 @@ func refreshFixtureProvenance(t *testing.T, source *catalog.Catalog, manifestRoo
 		source.Provenance = append(source.Provenance, catalog.ArtifactProvenance{
 			Package: entry["name"], Version: entry["version"],
 			ArtifactProvenance: contracts.ArtifactProvenance{
-				SourceRevision: "test-source-revision", Integrity: integrity, DistSHA256: distDigest,
+				SourceRevision: "test-source-revision", Integrity: integrity, DistSHA256: distDigest, ContentScope: contracts.ProvenanceScopeDist,
 			},
 		})
 	}
