@@ -218,4 +218,22 @@ if [[ "$flow" == platform ]]; then
     BUNDLE_DIR=.kb/release/bundle \
     BINARIES_DIR="$release_dist" \
     bash scripts/release-candidate-post-build.sh
+  bundle_digest="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; process.stdout.write(JSON.parse(readFileSync(".kb/release/bundle/provenance.json", "utf8")).bundleDigest);')"
+  if [[ -z "$bundle_digest" ]]; then
+    printf 'Candidate bundle provenance did not contain a trusted digest.\n' >&2
+    exit 1
+  fi
+  printf 'Trusted candidate bundle digest: %s\n' "$bundle_digest"
+  version="$expected_version"
+  if [[ -z "$version" ]]; then
+    version="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; const index = JSON.parse(readFileSync(".kb/release/release-index.json", "utf8")); const platform = index.platforms.find(artifact => artifact.id === "platform"); if (!platform) throw new Error("Sealed release index has no platform artifact"); process.stdout.write(platform.version);')"
+  fi
+  run_step node ./cli/bin/dist/bin.js release artifact publish \
+    --flow "$flow" \
+    --bundle-dir .kb/release/bundle \
+    --expected-digest "$bundle_digest" \
+    --candidate-id "$candidate_id" \
+    --commit "$commit_sha" \
+    --version "$version" \
+    --target local --json --dry-run
 fi

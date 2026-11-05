@@ -15,7 +15,7 @@ import { resolveCandidateGatePolicy, type CandidateGateProvenance } from '../cor
 import type { ReleaseChannel } from '../core/types.js';
 
 export interface CandidateProvenance {
-  schema: 'kb.release-provenance/2';
+  schema: 'kb.release-provenance/3';
   candidateId: string;
   commit: string;
   flow: string;
@@ -122,12 +122,13 @@ function copyTree(source: string, target: string): void {
   }
 }
 
-function payloadDigest(bundleDir: string, provenance: Omit<CandidateProvenance, 'bundleDigest'>): string {
+function payloadDigest(bundleDir: string, provenance: Omit<CandidateProvenance, 'bundleDigest'>, modes: Map<string, string>): string {
   const payload = filesUnder(bundleDir)
     .filter(path => path !== 'provenance.json' && path !== 'bundle.sha256' && path !== 'bundle.modes')
     .map(path => {
       const filePath = join(bundleDir, path);
-      const mode = (lstatSync(filePath).mode & 0o777).toString(8);
+      const mode = modes.get(path);
+      if (!mode) throw new CandidateBundleError(`Candidate payload digest cannot include unindexed file: ${path}`);
       return `${path}\0${mode}\0${digest(readFileSync(filePath))}\n`;
     })
     .join('');
@@ -141,10 +142,10 @@ function payloadDigest(bundleDir: string, provenance: Omit<CandidateProvenance, 
     workflowRunId: provenance.workflowRunId,
     gate: provenance.gate,
   });
-  return digest(`${payload}\0${policyIdentity}`);
+  return digest(`${payload}\0${policyIdentity}\0${digest(readFileSync(join(bundleDir, 'bundle.modes')))}`);
 }
 
-function writeBundleIndexes(bundleDir: string): void {
+function writeBundleModes(bundleDir: string): void {
   const paths = filesUnder(bundleDir).filter(path => path !== 'bundle.sha256');
   const modes = paths.map(path => {
     const mode = (lstatSync(join(bundleDir, path)).mode & 0o777).toString(8);
@@ -152,7 +153,8 @@ function writeBundleIndexes(bundleDir: string): void {
   }).join('');
   writeFileSync(join(bundleDir, 'bundle.modes'), modes);
   chmodSync(join(bundleDir, 'bundle.modes'), 0o644);
-
+}
+function writeBundleChecksums(bundleDir: string): void {
   const files = filesUnder(bundleDir).filter(path => path !== 'bundle.sha256');
   const checksums = files.map(path => `${digest(readFileSync(join(bundleDir, path)))}  ./${path}\n`).join('');
   writeFileSync(join(bundleDir, 'bundle.sha256'), checksums);
@@ -177,7 +179,7 @@ export function createCandidateBundle(input: CandidateBundleInput): CandidatePro
   if (input.binariesDir) copyTree(input.binariesDir, join(bundleDir, 'binaries'));
 
   const provenance: Omit<CandidateProvenance, 'bundleDigest'> = {
-    schema: 'kb.release-provenance/2',
+    schema: 'kb.release-provenance/3',
     candidateId: input.candidateId,
     commit: input.commit,
     flow: input.flow,
@@ -186,10 +188,12 @@ export function createCandidateBundle(input: CandidateBundleInput): CandidatePro
     workflowRunId: input.workflowRunId,
     gate: input.gate,
   };
-  writeFileSync(join(bundleDir, 'provenance.json'), `${JSON.stringify({ ...provenance, bundleDigest: '' }, null, 2)}\n`);
-  const completeProvenance: CandidateProvenance = { ...provenance, bundleDigest: payloadDigest(bundleDir, provenance) };
-  writeFileSync(join(bundleDir, 'provenance.json'), `${JSON.stringify(completeProvenance, null, 2)}\n`);
-  writeBundleIndexes(bundleDir);
+  const provenancePath = join(bundleDir, 'provenance.json');
+  writeFileSync(provenancePath, `${JSON.stringify({ ...provenance, bundleDigest: '' }, null, 2)}\n`);
+  writeBundleModes(bundleDir);
+  const completeProvenance: CandidateProvenance = { ...provenance, bundleDigest: payloadDigest(bundleDir, provenance, parseIndexedPaths(bundleDir, 'bundle.modes')) };
+  writeFileSync(provenancePath, `${JSON.stringify(completeProvenance, null, 2)}\n`);
+  writeBundleChecksums(bundleDir);
   verifyCandidateBundle(bundleDir, {
     expectedDigest: completeProvenance.bundleDigest,
     candidateId: input.candidateId,
@@ -274,7 +278,7 @@ export function verifyCandidateBundle(
     throw new CandidateBundleError(`Candidate bundle directory does not exist or cannot be read: ${bundleDir}`);
   }
   const provenance = readJson<CandidateProvenance>(join(bundleDir, 'provenance.json'), 'provenance.json');
-  if (provenance.schema !== 'kb.release-provenance/2' || !provenance.candidateId || !/^[a-f0-9]{40}$/i.test(provenance.commit ?? '')
+  if (provenance.schema !== 'kb.release-provenance/3' || !provenance.candidateId || !/^[a-f0-9]{40}$/i.test(provenance.commit ?? '')
     || !provenance.flow || !provenance.version || !['canary', 'stable'].includes(provenance.channel) || !provenance.workflowRunId) {
     throw new CandidateBundleError('Candidate provenance is incomplete or unsupported');
   }
@@ -296,12 +300,24 @@ export function verifyCandidateBundle(
       'channel-mismatch',
     );
   }
+  const checksumIndex = parseIndexedPaths(bundleDir, 'bundle.sha256');
+  const modeIndex = parseIndexedPaths(bundleDir, 'bundle.modes');
+  const actualFiles = filesUnder(bundleDir).filter(path => path !== 'bundle.sha256').sort();
+  const checksumFiles = [...checksumIndex.keys()].sort();
+  const modeFiles = [...modeIndex.keys()].sort();
+  const actualModeFiles = actualFiles.filter(path => path !== 'bundle.modes');
   const { bundleDigest, ...provenanceIdentity } = provenance;
-  if (payloadDigest(bundleDir, provenanceIdentity) !== bundleDigest) {
+  if (payloadDigest(bundleDir, provenanceIdentity, modeIndex) !== bundleDigest) {
     throw new CandidateBundleError('Candidate payload digest differs from provenance.json');
   }
   if (bundleDigest !== trust.expectedDigest) {
     throw new CandidateBundleError('Candidate payload digest differs from the trusted candidate digest');
+  }
+  if (actualFiles.length !== checksumFiles.length || actualFiles.some((path, index) => path !== checksumFiles[index])) {
+    throw new CandidateBundleError('Candidate file set differs from bundle.sha256');
+  }
+  if (actualModeFiles.length !== modeFiles.length || actualModeFiles.some((path, index) => path !== modeFiles[index])) {
+    throw new CandidateBundleError('Candidate file set differs from bundle.modes');
   }
   const declaredGatePolicy = resolveCandidateGatePolicy(provenance.flow, provenance.channel);
   if (provenance.gate.policy !== declaredGatePolicy.policy) {
@@ -321,28 +337,12 @@ export function verifyCandidateBundle(
     );
   }
 
-  const checksumIndex = parseIndexedPaths(bundleDir, 'bundle.sha256');
-  const modeIndex = parseIndexedPaths(bundleDir, 'bundle.modes');
   const artifactsDir = join(bundleDir, 'npm');
   const artifacts = verifyNpmArtifacts(artifactsDir);
-  const actualFiles = filesUnder(bundleDir).filter(path => path !== 'bundle.sha256').sort();
-  const checksumFiles = [...checksumIndex.keys()].sort();
-  const modeFiles = [...modeIndex.keys()].sort();
-  const actualModeFiles = actualFiles.filter(path => path !== 'bundle.modes');
-  if (actualFiles.length !== checksumFiles.length || actualFiles.some((path, index) => path !== checksumFiles[index])) {
-    throw new CandidateBundleError('Candidate file set differs from bundle.sha256');
-  }
-  if (actualModeFiles.length !== modeFiles.length || actualModeFiles.some((path, index) => path !== modeFiles[index])) {
-    throw new CandidateBundleError('Candidate file set differs from bundle.modes');
-  }
   for (const path of actualFiles) {
     const filePath = join(bundleDir, path);
     if (digest(readFileSync(filePath)) !== checksumIndex.get(path)) {
       throw new CandidateBundleError(`Candidate bundle digest mismatch at ${path}`);
-    }
-    if (path !== 'bundle.modes') {
-      const mode = (lstatSync(filePath).mode & 0o777).toString(8);
-      if (mode !== modeIndex.get(path)) throw new CandidateBundleError(`Candidate file mode differs from bundle.modes at ${path}`);
     }
   }
   for (const indexFile of ['bundle.sha256', 'bundle.modes']) {
@@ -355,6 +355,14 @@ export function verifyCandidateBundle(
     const platform = index.platforms?.find(entry => entry.id === 'platform');
     if (!platform || platform.version !== provenance.version) {
       throw new CandidateBundleError('Candidate release-index.json platform version differs from provenance.json');
+    }
+  }
+  for (const [path, mode] of modeIndex) {
+    const filePath = join(bundleDir, path);
+    const expectedMode = Number.parseInt(mode, 8);
+    chmodSync(filePath, expectedMode);
+    if ((lstatSync(filePath).mode & 0o777) !== expectedMode) {
+      throw new CandidateBundleError(`Candidate file mode could not be restored at ${path}`);
     }
   }
   return { bundleDir, artifactsDir, provenance, artifacts };
