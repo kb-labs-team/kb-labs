@@ -1707,6 +1707,19 @@
       "httpStatus": 500
     },
     {
+      "code": "KB_CLI_RESULT_UNAVAILABLE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "httpStatus": 500,
+      "message": "The {binary} command could not return a result: {cause}.",
+      "hint": "Run `kb logs query` to inspect process diagnostics, correct the reported cause, then rerun the command.",
+      "structuredDetailFields": ["binary", "cause"],
+      "requiredStructuredDetailFields": ["binary", "cause"]
+    },
+    {
       "code": "KB_CLI_PLATFORM_VERSION_UNAVAILABLE",
       "area": "install",
       "stage": "preflight",

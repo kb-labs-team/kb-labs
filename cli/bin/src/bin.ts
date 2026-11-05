@@ -34,6 +34,24 @@ function descriptorIdentity(fd: number): string {
   return `${stat.dev}:${stat.ino}:${stat.mode}:${stat.rdev}`;
 }
 
+async function reportCliResultFailure(cause: string): Promise<void> {
+  const [{ createErrorEnvelope }, { createJsonPresenter, createTextPresenter }, { handleExecutionError }] = await Promise.all([
+    import('@kb-labs/core-platform'),
+    import('@kb-labs/cli-runtime'),
+    import('./runtime/execution-error.js'),
+  ]);
+  const binary = path.basename(process.argv[1] ?? 'kb');
+  const envelope = createErrorEnvelope('KB_CLI_RESULT_UNAVAILABLE', {
+    cause,
+    details: { binary, cause },
+    templateValues: { binary, cause },
+  });
+  const presenter = process.argv.includes('--json')
+    ? createJsonPresenter((value) => process.stdout.write(`${JSON.stringify(value)}\n`))
+    : createTextPresenter(writeCliResult);
+  handleExecutionError(new Error(cause), presenter, { envelope });
+}
+
 function isRemappedChild(): boolean {
   const marker = process.argv[2];
   if (!marker?.startsWith(INTERNAL_RESULT_CHANNEL)) return false;
@@ -58,7 +76,7 @@ function isRemappedChild(): boolean {
 
 const remappedChild = isRemappedChild();
 if (process.argv[2]?.startsWith(INTERNAL_RESULT_CHANNEL) && !remappedChild) {
-  process.stderr.write('kb: invalid internal result-channel handoff; run the command through the kb launcher again.\n');
+  await reportCliResultFailure('the internal result-channel identity check failed');
   process.exit(1);
 }
 
@@ -67,16 +85,23 @@ if (remappedChild) {
   closeSync(4);
 } else {
   if (process.platform !== 'darwin' && process.platform !== 'linux') {
-    process.stderr.write('kb: CLI result descriptor launch is supported on macOS and Linux only.\n');
+    await reportCliResultFailure('descriptor-based result handoff is unsupported on this operating system');
     process.exit(1);
   }
 
   const token = randomBytes(32).toString('hex');
   const challengePath = path.join(tmpdir(), `kb-result-channel-${token}`);
+  const resultPath = path.join(tmpdir(), `kb-result-output-${token}`);
   let challengeFd: number | undefined;
+  let resultFd: number | undefined;
   let challengeCreated = false;
+  let resultCreated = false;
   let exitCode = 1;
   try {
+    resultFd = openSync(resultPath, 'wx+', 0o600);
+    resultCreated = true;
+    unlinkSync(resultPath);
+    resultCreated = false;
     const writeFd = openSync(challengePath, 'wx', 0o600);
     challengeCreated = true;
     try {
@@ -89,24 +114,50 @@ if (remappedChild) {
     challengeCreated = false;
     const challenge = Buffer.from(JSON.stringify({
       token,
-      resultDescriptor: descriptorIdentity(1),
+      resultDescriptor: descriptorIdentity(resultFd),
       challengeDescriptor: descriptorIdentity(challengeFd),
     })).toString('base64url');
     const env = { ...process.env };
     const child = spawnSync(process.execPath, [process.argv[1]!, `${INTERNAL_RESULT_CHANNEL}${challenge}`, ...process.argv.slice(2)], {
       env,
-      stdio: [0, 2, 2, 1, challengeFd],
+      stdio: [0, 2, 2, resultFd, challengeFd],
     });
-    if (child.error) {
-      process.stderr.write(`kb: could not start CLI result process: ${child.error.message}\n`);
+    const resultBytes = fstatSync(resultFd).size;
+    if (child.error || child.signal || child.status === null || (resultBytes === 0 && child.status !== 0)) {
+      const cause = child.signal
+        ? `terminated by signal ${child.signal}`
+        : child.error
+          ? `could not start: ${child.error.message}`
+          : child.status === null
+            ? 'ended without a reported exit status'
+            : `exited with status ${child.status} without returning a result`;
+      await reportCliResultFailure(cause);
+      exitCode = 1;
+    } else if (resultBytes > 0) {
+      const buffer = Buffer.alloc(64 * 1024);
+      let resultOffset = 0;
+      let bytesRead = 0;
+      while ((bytesRead = readSync(resultFd, buffer, 0, buffer.length, resultOffset)) > 0) {
+        let offset = 0;
+        while (offset < bytesRead) {
+          offset += writeSync(1, buffer, offset, bytesRead - offset);
+        }
+        resultOffset += bytesRead;
+      }
+      exitCode = child.status;
     } else {
-      exitCode = child.status ?? 1;
+      exitCode = 0;
     }
   } catch (error) {
-    process.stderr.write(`kb: could not prepare CLI result channel: ${error instanceof Error ? error.message : String(error)}\n`);
+    const cause = error instanceof Error
+      ? `could not prepare the result channel: ${error.message}`
+      : 'could not prepare the result channel because of an unknown error';
+    await reportCliResultFailure(cause);
   } finally {
     if (challengeFd !== undefined) closeSync(challengeFd);
+    if (resultFd !== undefined) closeSync(resultFd);
     if (challengeCreated) unlinkSync(challengePath);
+    if (resultCreated) unlinkSync(resultPath);
   }
   process.exit(exitCode);
 }

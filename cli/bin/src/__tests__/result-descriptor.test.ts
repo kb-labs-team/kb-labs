@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { validateManifest, type ManifestV3 } from '@kb-labs/plugin-contracts';
-import { createProductErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, createProductErrorEnvelope } from '@kb-labs/core-platform';
 import { SessionManager } from '@kb-labs/sdk/gateway';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
@@ -78,6 +78,30 @@ describe('CLI result descriptor boundary', () => {
     ]) {
       expect(result.stderr).toContain(text);
     }
+  });
+
+  // case: S-284.8
+  it('prints a catalogued error when the CLI command child is terminated before returning a result', async () => {
+    fixture = await createCliFixture('local', 'in-process');
+    const result = await runCli(fixture, ['stdout', 'fixture', 'terminate', '--json']);
+    const cause = 'terminated by signal SIGKILL';
+    const expectedError = createErrorEnvelope('KB_CLI_RESULT_UNAVAILABLE', {
+      cause,
+      details: { cause, binary: 'bin.js' },
+      templateValues: { cause, binary: 'bin.js' },
+    });
+
+    expect(result.status, result.stderr || result.stdout).toBe(1);
+    expect(result.stdout, `stderr=${result.stderr}`).not.toBe('');
+    expectOneJsonEnvelope(result.stdout, { ok: false, error: expectedError });
+    expect(result.stdout).toContain(expectedError.message);
+    expect(result.stdout).toContain(expectedError.hint);
+
+    const humanResult = await runCli(fixture, ['stdout', 'fixture', 'terminate']);
+    expect(humanResult.status, humanResult.stderr || humanResult.stdout).toBe(1);
+    expect(humanResult.stdout).toBe('');
+    expect(humanResult.stderr).toContain(expectedError.message);
+    expect(humanResult.stderr).toContain(expectedError.hint);
   });
 
   // case: S-203.1
@@ -329,6 +353,12 @@ async function createOutputFixturePlugin(projectRoot: string): Promise<void> {
       handler: './descriptor-handler.js',
       operationType: 'execute',
       flags: [{ name: 'json', type: 'boolean', description: 'Machine result output', default: false }],
+    }, {
+      path: 'stdout fixture terminate',
+      describe: 'Terminate the CLI command child before it returns a result',
+      handler: './terminate-handler.js',
+      operationType: 'execute',
+      flags: [{ name: 'json', type: 'boolean', description: 'Machine result output', default: false }],
     }] },
   } satisfies ManifestV3;
   const validation = validateManifest(manifest);
@@ -345,6 +375,7 @@ async function createOutputFixturePlugin(projectRoot: string): Promise<void> {
     writeFile(path.join(pluginRoot, 'dist', 'handler.js'), fixtureHandlerSource),
     writeFile(path.join(pluginRoot, 'dist', 'json-handler.js'), jsonFixtureHandlerSource),
     writeFile(path.join(pluginRoot, 'dist', 'descriptor-handler.js'), descriptorFixtureHandlerSource),
+    writeFile(path.join(pluginRoot, 'dist', 'terminate-handler.js'), terminateFixtureHandlerSource),
     symlink(path.join(workspaceRoot, 'sdk', 'sdk'), path.join(pluginRoot, 'node_modules', '@kb-labs', 'sdk'), 'dir'),
   ]);
 }
@@ -396,6 +427,14 @@ export default {
       resultDescriptorUnavailable = true;
     }
     return { resultDescriptorUnavailable };
+  },
+};
+`;
+
+const terminateFixtureHandlerSource = `
+export default {
+  async execute() {
+    process.kill(process.pid, 'SIGKILL');
   },
 };
 `;
