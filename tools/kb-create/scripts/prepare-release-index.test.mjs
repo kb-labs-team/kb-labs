@@ -62,6 +62,8 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
   execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","kvStore":"@kb-labs/adapters-sqlite/kv","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}},"llm":{"apiKey":"${OPENAI_API_KEY}"}}', '--platform-member-packages', '@kb-labs/core-contracts,@kb-labs/scaffold,@kb-labs/release', '--release-notes', 'Candidate release notes from the journey fixture.', '--output', output], { stdio: 'pipe' });
+  assert.equal(existsSync(join(stage, 'v2-manifest-root')), false, 'release-index inspection files must stay out of the staged npm artifact directory');
+  assert.equal(existsSync(join(stage, 'manifest-export.json')), false, 'release-index input files must stay out of the staged npm artifact directory');
   const index = JSON.parse(readFileSync(output, 'utf8'));
   assert.equal(index.schema, 'kb.create.release-index/v2');
   assert.equal(index.compatibility.schema, 'kb.release-compatibility/2');
@@ -770,7 +772,7 @@ test('writes minLauncherVersion on the platform entry only when requested', () =
   const withMinimum = spawnSync(process.execPath, [...base, '--min-launcher-version', '2.0.0'], { encoding: 'utf8' });
   assert.notEqual(withMinimum.status, 0);
   assert.match(JSON.parse(withMinimum.stderr.split('\n')[0]).error.cause, /Launcher version \"\" is not a valid semantic version/);
-  const exported = JSON.parse(readFileSync(join(base[base.indexOf('--artifacts-dir') + 1], 'manifest-export.json'), 'utf8'));
+  const exported = JSON.parse(readFileSync(join(dirname(output), 'manifest-export.json'), 'utf8'));
   assert.equal(exported.platforms[0].minLauncherVersion, '2.0.0');
 });
 

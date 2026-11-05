@@ -5,19 +5,44 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { load as loadYaml } from 'js-yaml';
 
 const scriptPath = fileURLToPath(new URL('./release-build-preflight.sh', import.meta.url));
+const candidateWorkflowPath = fileURLToPath(new URL('../.github/workflows/release-build-candidate.yml', import.meta.url));
+
+test('every candidate step after binary manifest is shared-preflight or explicitly hosted-only', () => {
+  const workflow = loadYaml(readFileSync(candidateWorkflowPath, 'utf8'));
+  const steps = workflow.jobs.build.steps;
+  const manifestIndex = steps.findIndex(step => step.name === 'Generate binary manifest from checksums');
+  assert.notEqual(manifestIndex, -1, 'candidate workflow retains the binary manifest boundary');
+
+  const postManifestSteps = steps.slice(manifestIndex + 1);
+  assert.ok(postManifestSteps.length > 0, 'candidate workflow has post-manifest steps to classify');
+  for (const step of postManifestSteps) {
+    const classification = step.env?.RELEASE_PREFLIGHT_COVERAGE;
+    assert.ok(classification, `${step.name} must declare RELEASE_PREFLIGHT_COVERAGE`);
+    if (classification === 'shared') {
+      assert.equal(step.run?.trim(), 'bash scripts/release-candidate-post-build.sh', `${step.name} must call the shared post-build entrypoint`);
+      continue;
+    }
+    assert.equal(classification, 'hosted-only', `${step.name} has an unknown coverage classification`);
+    assert.ok(step.env?.RELEASE_PREFLIGHT_HOSTED_ONLY_REASON?.trim(), `${step.name} must explain its hosted-only requirement`);
+  }
+});
 
 test('preflight reports a final CLI command failure with its exact command and status', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'kb-release-preflight-'));
   try {
     const binDir = path.join(root, 'bin');
     const devkitDir = path.join(root, 'tools', 'kb-devkit');
+    const scriptsDir = path.join(root, 'scripts');
     mkdirSync(binDir, { recursive: true });
     mkdirSync(devkitDir, { recursive: true });
+    mkdirSync(scriptsDir, { recursive: true });
     mkdirSync(path.join(root, '.kb'), { recursive: true });
     writeFileSync(path.join(root, '.kb', 'marketplace.lock'), JSON.stringify({ adapters: {} }));
     writeFileSync(path.join(root, 'scripts-release-build-preflight.sh'), readFileSync(scriptPath));
+    writeFileSync(path.join(scriptsDir, 'release-candidate-post-build.sh'), readFileSync(new URL('./release-candidate-post-build.sh', import.meta.url)));
 
     const node = path.join(binDir, 'node');
     writeFileSync(node, `#!/usr/bin/env bash
@@ -58,15 +83,32 @@ test('preflight stages npm artifacts after the release build', () => {
   try {
     const binDir = path.join(root, 'bin');
     const devkitDir = path.join(root, 'tools', 'kb-devkit');
+    const scriptsDir = path.join(root, 'scripts');
     mkdirSync(binDir, { recursive: true });
     mkdirSync(devkitDir, { recursive: true });
+    mkdirSync(scriptsDir, { recursive: true });
     mkdirSync(path.join(root, '.kb'), { recursive: true });
     writeFileSync(path.join(root, '.kb', 'marketplace.lock'), JSON.stringify({ adapters: {} }));
     writeFileSync(path.join(root, 'scripts-release-build-preflight.sh'), readFileSync(scriptPath));
+    writeFileSync(path.join(scriptsDir, 'release-candidate-post-build.sh'), readFileSync(new URL('./release-candidate-post-build.sh', import.meta.url)));
 
     const node = path.join(binDir, 'node');
+    const nodeArgsPath = path.join(root, 'node-args.txt');
+    const orderPath = path.join(root, 'command-order.txt');
     writeFileSync(node, `#!/usr/bin/env bash
-if [[ "$*" == *"release plan"* ]]; then printf '{"ok":true}\\n'; fi
+args="$*"
+printf '%s\\n' "$*" >> '${nodeArgsPath}'
+if [[ -n "$RELEASE_PREFLIGHT_ORDER_FILE" ]]; then printf 'node %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"; fi
+if [[ "$args" == *"release plan"* ]]; then printf '{"ok":true}\\n'; fi
+if [[ "$args" == *"release artifact create"* ]]; then mkdir -p .kb/release/artifacts; printf '[]\\n' > .kb/release/artifacts/manifest.json; fi
+if [[ "$args" == *"resolve-candidate-gate.mjs"* ]]; then printf 'required=false\\npolicy=none\\ntarget=local\\n' > "$GITHUB_OUTPUT"; fi
+if [[ "$args" == *"platform-release-config.mjs"* ]]; then printf '{"platformMembers":[],"platformRequires":[],"adapters":{},"adapterOptions":{}}'; fi
+if [[ "$args" == *"d.platformMembers.join"* || "$args" == *"d.platformRequires.join"* ]]; then printf ''; fi
+if [[ "$args" == *"JSON.stringify(d.adapters)"* || "$args" == *"JSON.stringify(d.adapterOptions)"* ]]; then printf '{}'; fi
+if [[ "$args" == *"prepare-release-index.mjs"* ]]; then mkdir -p "$(dirname "$RELEASE_INDEX_PATH")"; printf '{"platforms":[{"id":"platform","version":"2.0.0-preflight"}]}\\n' > "$RELEASE_INDEX_PATH"; fi
+if [[ "$args" == *"process.env.RELEASE_INDEX_PATH"* ]]; then printf '2.0.0-preflight'; fi
+if [[ "$args" == *"create-candidate-bundle.mjs"* ]]; then printf 'bundle assembled\\n'; fi
+if [[ "$1" == -p ]]; then printf '2.0.0-preflight\\n'; fi
 exit 0
 `);
     chmodSync(node, 0o755);
@@ -75,28 +117,18 @@ exit 0
     writeFileSync(devkit, '#!/usr/bin/env bash\nexit 0\n');
     chmodSync(devkit, 0o755);
 
-    const pnpm = path.join(binDir, 'pnpm');
-    const pnpmArgsPath = path.join(root, 'pnpm-args.txt');
-    writeFileSync(pnpm, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" > '${pnpmArgsPath}'\n`);
-    chmodSync(pnpm, 0o755);
+    const go = path.join(binDir, 'go');
+    const goArgsPath = path.join(root, 'go-args.txt');
+    writeFileSync(go, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" > '${goArgsPath}'\nprintf '[]\\n'\n`);
+    chmodSync(go, 0o755);
 
     const goreleaser = path.join(binDir, 'goreleaser');
     const goreleaserArgsPath = path.join(root, 'goreleaser-args.txt');
-    const nodeArgsPath = path.join(root, 'node-args.txt');
-    const orderPath = path.join(root, 'command-order.txt');
     writeFileSync(goreleaser, `#!/usr/bin/env bash
 printf '%s\\n' "$*" > '${goreleaserArgsPath}'
 printf 'goreleaser %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"
 `);
     chmodSync(goreleaser, 0o755);
-    writeFileSync(node, `#!/usr/bin/env bash
-printf '%s\\n' "$*" >> '${nodeArgsPath}'
-if [[ -n "$RELEASE_PREFLIGHT_ORDER_FILE" ]]; then printf 'node %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"; fi
-if [[ "$*" == *"release plan"* ]]; then printf '{"ok":true}\\n'; fi
-if [[ "$1" == -p ]]; then printf '2.0.0-preflight\\n'; fi
-exit 0
-`);
-    chmodSync(node, 0o755);
 
     const result = spawnSync('bash', [path.join(root, 'scripts-release-build-preflight.sh'), 'platform', 'canary', '0123456789abcdef0123456789abcdef01234567', 'preflight'], {
       cwd: root,
@@ -105,20 +137,30 @@ exit 0
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.equal(readFileSync(pnpmArgsPath, 'utf8').trim(), 'kb release artifact create --flow platform --out-dir .kb/release/artifacts --json');
     assert.equal(readFileSync(goreleaserArgsPath, 'utf8').trim(), 'release --snapshot --clean --skip=publish');
     const nodeCommands = readFileSync(nodeArgsPath, 'utf8');
+    assert.match(nodeCommands, /\.\/cli\/bin\/dist\/bin\.js release artifact create --flow platform --out-dir \.kb\/release\/artifacts --json/);
     const snapshotPosition = nodeCommands.indexOf('tools/kb-create/scripts/prepare-binary-manifest.mjs');
     const regressionPosition = nodeCommands.indexOf('--test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs');
     assert.ok(snapshotPosition >= 0, nodeCommands);
     assert.ok(regressionPosition > snapshotPosition, nodeCommands);
-    assert.match(nodeCommands, /--artifacts dist\/artifacts\.json --checksums dist\/checksums\.txt/);
+    const releaseDist = process.env.KBLABS_RELEASE_DIST ?? 'dist';
+    assert.ok(nodeCommands.includes(`--artifacts ${releaseDist}/artifacts.json --checksums ${releaseDist}/checksums.txt`), nodeCommands);
+    assert.match(nodeCommands, /process\.env\.RELEASE_INDEX_PATH/);
+    assert.deepEqual(readFileSync(goArgsPath, 'utf8').trim().split(' '), [
+      '-C', 'tools/kb-create', 'run', './v2/cmd/kb-create-release-index', 'provenance',
+      path.join(root, '.kb/release/artifacts'), '0123456789abcdef0123456789abcdef01234567',
+    ]);
     const commandOrder = readFileSync(orderPath, 'utf8');
     const goreleaserPosition = commandOrder.indexOf('goreleaser release --snapshot --clean --skip=publish');
     const manifestPosition = commandOrder.indexOf('node tools/kb-create/scripts/prepare-binary-manifest.mjs');
     const regressionOrderPosition = commandOrder.indexOf('node --test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs');
     assert.ok(goreleaserPosition >= 0 && manifestPosition > goreleaserPosition, commandOrder);
     assert.ok(regressionOrderPosition > manifestPosition, commandOrder);
+    const indexPosition = nodeCommands.indexOf('tools/kb-create/scripts/prepare-release-index.mjs');
+    const bundlePosition = nodeCommands.indexOf('plugins/release/scripts/create-candidate-bundle.mjs');
+    assert.ok(indexPosition >= 0, nodeCommands);
+    assert.ok(bundlePosition > indexPosition, nodeCommands);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

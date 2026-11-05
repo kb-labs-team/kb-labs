@@ -324,6 +324,8 @@ func sealArtifactTarball(t *testing.T, item contracts.Artifact, tarball []byte) 
 		SourceRevision: sealed[0].SourceRevision,
 		Integrity:      sealed[0].Integrity,
 		DistSHA256:     sealed[0].DistSHA256,
+		ContentScope:   sealed[0].ContentScope,
+		PackageSHA256:  sealed[0].PackageSHA256,
 	}
 	return item
 }
