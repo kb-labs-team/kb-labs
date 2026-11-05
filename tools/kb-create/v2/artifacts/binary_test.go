@@ -19,7 +19,7 @@ func TestBinariesInstallsOnlyVerifiedReleaseAsset(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(payload) }))
 	defer server.Close()
 	root := t.TempDir()
-	if err := (Binaries{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache")}).Install([]contracts.Artifact{{ID: "kb-dev", Kind: "binary", URL: server.URL, SHA256: sum, Target: "kb-dev"}}); err != nil {
+	if err := (Binaries{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache")}).Install([]contracts.Artifact{{ID: "kb-dev", Kind: "binary", URL: server.URL, ResolvedURL: server.URL, SHA256: sum, Target: "kb-dev"}}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "bin", "kb-dev"))
@@ -34,7 +34,7 @@ func TestBinariesInstallPrimesChecksumKeyedOfflineCache(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(payload) }))
 	defer server.Close()
 	root := t.TempDir()
-	item := contracts.Artifact{ID: "kb-dev", Kind: "binary", URL: server.URL, SHA256: sum, Target: "kb-dev"}
+	item := contracts.Artifact{ID: "kb-dev", Kind: "binary", URL: server.URL, ResolvedURL: server.URL, SHA256: sum, Target: "kb-dev"}
 	cacheRoot := filepath.Join(root, ".kb", "v2", "cache")
 	if err := (Binaries{Root: root, CacheRoot: cacheRoot}).Install([]contracts.Artifact{item}); err != nil {
 		t.Fatal(err)
@@ -54,7 +54,7 @@ func TestBinariesCanUseInstallSharedCacheWhileInstallingIntoStage(t *testing.T) 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(payload) }))
 	defer server.Close()
 	stage, sharedCache := t.TempDir(), t.TempDir()
-	item := contracts.Artifact{ID: "kb-dev", Kind: "binary", URL: server.URL, SHA256: sum, Target: "kb-dev"}
+	item := contracts.Artifact{ID: "kb-dev", Kind: "binary", URL: server.URL, ResolvedURL: server.URL, SHA256: sum, Target: "kb-dev"}
 	if err := (Binaries{Root: stage, CacheRoot: sharedCache}).Install([]contracts.Artifact{item}); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestBinariesRejectsChecksumMismatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("wrong")) }))
 	defer server.Close()
 	root := t.TempDir()
-	err := (Binaries{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache")}).Install([]contracts.Artifact{{ID: "kb-dev", Kind: "binary", URL: server.URL, SHA256: "bad", Target: "kb-dev"}})
+	err := (Binaries{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache")}).Install([]contracts.Artifact{{ID: "kb-dev", Kind: "binary", URL: server.URL, ResolvedURL: server.URL, SHA256: "bad", Target: "kb-dev"}})
 	if err == nil {
 		t.Fatal("expected checksum error")
 	}
@@ -98,8 +98,8 @@ func TestBinariesVerifyEveryChecksumBeforeWritingAnyArtifact(t *testing.T) {
 	goodPath := filepath.Join(root, ".kb", "v2", "bin", "good")
 	goodCachePath := filepath.Join(cacheRoot, "binaries", goodDigest)
 	err := (Binaries{Root: root, CacheRoot: cacheRoot, Client: server.Client()}).Install([]contracts.Artifact{
-		{ID: "good", Kind: "binary", URL: server.URL + "/good", SHA256: goodDigest, Target: "good"},
-		{ID: "bad", Kind: "binary", URL: server.URL + "/bad", SHA256: fmt.Sprintf("%x", sha256.Sum256(good)), Target: "bad"},
+		{ID: "good", Kind: "binary", URL: server.URL + "/good", ResolvedURL: server.URL + "/good", SHA256: goodDigest, Target: "good"},
+		{ID: "bad", Kind: "binary", URL: server.URL + "/bad", ResolvedURL: server.URL + "/bad", SHA256: fmt.Sprintf("%x", sha256.Sum256(good)), Target: "bad"},
 	})
 	if err == nil {
 		t.Fatal("expected checksum failure")
@@ -146,7 +146,7 @@ func TestCompositeRemovesBinaryWhenPackageInstallFails(t *testing.T) {
 	root := t.TempDir()
 	runner := &fakeRunner{err: fmt.Errorf("pnpm failed")}
 	executor := Composite{Packages: Pnpm{Root: root, Runner: runner}, Binaries: Binaries{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache")}}
-	err := executor.Install([]contracts.Artifact{{ID: "kb-dev", Kind: "binary", URL: server.URL, SHA256: sum, Target: "kb-dev"}, {ID: "platform", Package: "@kb/platform", Version: "2"}})
+	err := executor.Install([]contracts.Artifact{{ID: "kb-dev", Kind: "binary", URL: server.URL, ResolvedURL: server.URL, SHA256: sum, Target: "kb-dev"}, {ID: "platform", Package: "@kb/platform", Version: "2"}})
 	if err == nil {
 		t.Fatal("expected package failure")
 	}
@@ -170,6 +170,7 @@ func TestPreparedPackageInstallsTheSingleVerifiedTarballResponse(t *testing.T) {
 	t.Cleanup(server.Close)
 	item := sealArtifactTarball(t, contracts.Artifact{ID: "once", Package: "@kb-labs/once", Version: "1.0.0"}, good)
 	item.Tarball = server.URL
+	item.ResolvedURL = server.URL
 	digest := sha256.Sum256(good)
 	item.SHA256 = hex.EncodeToString(digest[:])
 	root := t.TempDir()
@@ -226,7 +227,7 @@ func TestPreparedArtifactsStayInsideInstallRootWhenTMPDIRIsExternal(t *testing.T
 	installRoot := t.TempDir()
 	sentinel := t.TempDir()
 	t.Setenv("TMPDIR", sentinel)
-	item := contracts.Artifact{ID: "kb-dev", Kind: "binary", URL: server.URL, SHA256: digest, Target: "kb-dev"}
+	item := contracts.Artifact{ID: "kb-dev", Kind: "binary", URL: server.URL, ResolvedURL: server.URL, SHA256: digest, Target: "kb-dev"}
 	prepared, err := (Composite{
 		Binaries: Binaries{Root: installRoot, CacheRoot: filepath.Join(installRoot, ".kb", "v2", "cache"), Client: server.Client()},
 	}).Prepare([]contracts.Artifact{item})

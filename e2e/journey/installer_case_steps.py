@@ -428,6 +428,11 @@ def shim_owner_matches(data: dict, install_root: Path, expected_owner: Path) -> 
         "linked": owns_shim, "owner": str(canonical_owner)}
 
 
+def gateway_registry_path(launcher: str) -> Path:
+    home = Path(launcher).absolute().parents[2]
+    return Path(os.environ.get("XDG_DATA_HOME") or home / ".local" / "share") / "kb-create" / "gateway-roots.json"
+
+
 def gateway_registry_rows_for_installation(registry_path: Path, installation_id: str) -> list[dict]:
     registry = json.loads(Path(registry_path).read_text(encoding="utf-8"))
     if registry["schema"] != 2:
@@ -443,7 +448,7 @@ def verify_installation_spellings(*, launcher: str, index: Path, install_root: P
     """Prove the installed root's aliases resolve one receipt, Gateway row, and shim."""
     install_root = Path(install_root)
     spellings = (install_root, install_root / layout_value('currentLink'), active_platform_root(install_root))
-    registry_path = Path(launcher).absolute().parents[2] / ".kb" / "launcher" / "gateway-roots.json"
+    registry_path = gateway_registry_path(launcher)
     shim_path = Path(launcher).absolute().parent / "kb"
     before_shim = shim_path.readlink() if shim_path.is_symlink() else None
     registry_before = registry_path.read_bytes()
@@ -2274,7 +2279,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                  repair_dangling_shim, cases=["S-025.9"])
 
     def repair_gateway_index() -> None:
-        registry_path = Path(launcher).absolute().parents[2] / ".kb" / "launcher" / "gateway-roots.json"
+        registry_path = gateway_registry_path(launcher)
         root = explicit_gateway_root
         registry_before = registry_path.read_bytes()
         receipt_path = active_platform_root(root) / ".kb/v2/receipt.json"

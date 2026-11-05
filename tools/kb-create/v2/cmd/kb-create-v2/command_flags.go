@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/scenario"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -22,6 +24,7 @@ type flagDefinition struct {
 	Kind        flagKind
 	Default     string
 	Secret      bool
+	URL         bool
 }
 
 var flagCatalog = map[string]flagDefinition{
@@ -30,7 +33,7 @@ var flagCatalog = map[string]flagDefinition{
 	"project-root":                        {Name: "project-root", Usage: "project directory to register after installation"},
 	"platform-version":                    {Name: "platform-version", Usage: "exact platform version"},
 	"platform-channel":                    {Name: "platform-channel", Usage: "platform channel: stable, canary, experimental"},
-	"gateway-url":                         {Name: "gateway-url", Usage: "Gateway origin for this installation, for example http://127.0.0.1:4100"},
+	"gateway-url":                         {Name: "gateway-url", Usage: "Gateway origin for this installation, for example http://127.0.0.1:4100", URL: true},
 	"sdk-version":                         {Name: "sdk-version", Usage: "exact SDK version"},
 	"service-profile":                     {Name: "service-profile", Usage: "platform-owned service profile"},
 	"plugins":                             {Name: "plugins", Usage: "comma-separated plugin IDs or id@version pins"},
@@ -52,12 +55,13 @@ var flagCatalog = map[string]flagDefinition{
 	"yes":                                 {Name: "yes", Usage: "confirm recovery, uninstall, or rollback", Kind: boolFlag},
 	"platform-root":                       {Name: "platform-root", Usage: "platform root for an install request or lifecycle operation"},
 	"snapshot":                            {Name: "snapshot", Usage: "snapshot ID for rollback"},
-	"registry":                            {Name: "registry", Usage: "npm registry for exact artifact installation"},
-	"marketplace-registry-url":            {Name: "marketplace-registry-url", Usage: "KB Marketplace Registry URL for plugin resolution"},
+	"binary-source":                       {Name: "binary-source", Usage: "base URL for checksum-verified release binary assets", URL: true},
+	"registry":                            {Name: "registry", Usage: "npm registry for exact artifact installation", URL: true},
+	"marketplace-registry-url":            {Name: "marketplace-registry-url", Usage: "KB Marketplace Registry URL for plugin resolution", URL: true},
 	"marketplace-registry-public-key-env": {Name: "marketplace-registry-public-key-env", Usage: "environment variable containing the Registry Ed25519 public key"},
 	"marketplace-registry-token-env":      {Name: "marketplace-registry-token-env", Usage: "environment variable containing the Registry bearer token"},
-	"marketplace-npm-url":                 {Name: "marketplace-npm-url", Usage: "npm source or fallback mirror URL for Marketplace identities"},
-	"telemetry-endpoint":                  {Name: "telemetry-endpoint", Usage: "opt-in anonymous telemetry endpoint"},
+	"marketplace-npm-url":                 {Name: "marketplace-npm-url", Usage: "npm source or fallback mirror URL for Marketplace identities", URL: true},
+	"telemetry-endpoint":                  {Name: "telemetry-endpoint", Usage: "opt-in anonymous telemetry endpoint", URL: true},
 	"foreground":                          {Name: "foreground", Usage: "run the host directly in this process", Kind: boolFlag},
 	"interrupt":                           {Name: "interrupt", Usage: "interrupt active work before restarting the host", Kind: boolFlag},
 	"telemetry-consent":                   {Name: "telemetry-consent", Usage: "allow anonymous operational telemetry", Kind: boolFlag},
@@ -96,6 +100,10 @@ func (r *commandFlagReader) Changed(name string) bool {
 }
 
 func (r *commandFlagReader) Invocation() (string, error) {
+	if args := clikitcommand.Arguments(r.command); len(args) > 0 {
+		invocation, _ := retryArguments(args)
+		return invocation, nil
+	}
 	argv := strings.Fields(r.command.CommandPath())
 	var failure error
 	r.command.Flags().Visit(func(flag *pflag.Flag) {
@@ -138,6 +146,13 @@ func registerLocalFlags(command *cobra.Command, names []string, values map[strin
 		definition, ok := flagCatalog[name]
 		if !ok {
 			panic("kb-create descriptor references unknown flag " + name)
+		}
+		if name == "scenario" {
+			ids, err := scenario.IDs()
+			if err != nil {
+				panic(err)
+			}
+			definition.Usage += ": " + strings.Join(ids, ", ")
 		}
 		switch definition.Kind {
 		case stringFlag:

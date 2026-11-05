@@ -68,6 +68,17 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 	// was dropped whenever a manifest declared a /platform/adapters default.
 	config := map[string]any{"platform": map[string]any{"version": plan.ServiceGraph.PlatformVersion, "adapters": stringMapAsAny(adapters)}, "plugins": stringMapAsAny(plugins)}
 	merge(config, extra)
+	if plan.Registry != "" && (plan.Request.MarketplaceSources == nil || plan.Request.MarketplaceSources.NpmURL == "") {
+		if marketplace, ok := config["marketplace"].(map[string]any); ok {
+			if sources, ok := marketplace["sources"].([]any); ok {
+				for _, entry := range sources {
+					if source, ok := entry.(map[string]any); ok && source["kind"] == "npm" {
+						source["url"] = plan.Registry
+					}
+				}
+			}
+		}
+	}
 	if plan.Request.MarketplaceSources != nil {
 		source := plan.Request.MarketplaceSources
 		var sources []any

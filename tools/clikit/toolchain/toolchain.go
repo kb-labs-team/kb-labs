@@ -122,10 +122,20 @@ type Result struct {
 type CommandError struct {
 	ExitCode   int
 	StderrTail string
+	StdoutTail string
 	Err        error
 }
 
-func (e *CommandError) Error() string { return e.Err.Error() }
+func (e *CommandError) Error() string {
+	tail := diag.RedactText(strings.Trim(strings.Join([]string{e.StdoutTail, e.StderrTail}, "\n"), "\n"))
+	if len(tail) > stderrTailLimit {
+		tail = tail[len(tail)-stderrTailLimit:]
+	}
+	if strings.TrimSpace(tail) == "" {
+		return e.Err.Error()
+	}
+	return e.Err.Error() + "\n" + tail
+}
 func (e *CommandError) Unwrap() error { return e.Err }
 
 type TimeoutBound string
@@ -174,6 +184,11 @@ func PnpmExecutable() (node, pnpmScript string, err error) {
 		resolvedPnpmNode, resolvedPnpmScript, resolvedPnpmError = resolvePnpmAt(outerCorepackHome)
 	})
 	return resolvedPnpmNode, resolvedPnpmScript, resolvedPnpmError
+}
+
+// PnpmExecutableAt resolves the pinned pnpm from a caller-owned Corepack home.
+func PnpmExecutableAt(cacheRoot string) (node, pnpmScript string, err error) {
+	return resolvePnpmAt(cacheRoot)
 }
 
 func resolvePnpmAt(cacheRoot string) (node, script string, err error) {
@@ -291,7 +306,14 @@ func (r *runningInvocation) finish(started time.Time, operationTimeout time.Dura
 	if errors.As(err, &exit) {
 		result.ExitCode = exit.ExitCode()
 	}
-	return result, &CommandError{ExitCode: result.ExitCode, StderrTail: diag.RedactText(strings.TrimRight(result.Stderr, "\r\n")), Err: err}
+	return result, &CommandError{ExitCode: result.ExitCode, StdoutTail: diag.RedactText(strings.TrimRight(tailString(result.Stdout, stderrTailLimit), "\r\n")), StderrTail: diag.RedactText(strings.TrimRight(result.Stderr, "\r\n")), Err: err}
+}
+
+func tailString(value string, limit int) string {
+	if len(value) > limit {
+		value = value[len(value)-limit:]
+	}
+	return strings.ToValidUTF8(value, "�")
 }
 
 const stderrTailLimit = 4096

@@ -14,9 +14,7 @@ import (
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
-// KBHomeEnv overrides the machine-level KB Labs home (default ~/.kb). It is the
-// same variable the TS side uses for the project registry, so one setting
-// isolates every per-user file in tests and sandboxes.
+// KBHomeEnv explicitly overrides the installation-owned KB Labs home.
 const KBHomeEnv = "KB_HOME"
 
 // State names the per-installation host lifecycle files.
@@ -35,21 +33,26 @@ func StateForRoot(platformRoot string) (State, error) {
 	return State{Dir: layout.HostStateDir()}, nil
 }
 
-// KBHome resolves the machine-level KB Labs home: $KB_HOME when set, else ~/.kb.
-func KBHome() (string, error) {
+// KBHome resolves the explicitly overridden home or the installation-owned home.
+func KBHome(platformRoot string) (string, error) {
 	if override := strings.TrimSpace(os.Getenv(KBHomeEnv)); override != "" {
 		return override, nil
 	}
-	home, err := os.UserHomeDir()
+	return DefaultKBHome(platformRoot)
+}
+
+// DefaultKBHome returns the installation-owned home, independent of the environment.
+func DefaultKBHome(platformRoot string) (string, error) {
+	layout, err := versionroot.ForPlatformPath(platformRoot)
 	if err != nil {
-		return "", fmt.Errorf("resolve the user home directory: %w", err)
+		return "", fmt.Errorf("resolve the installation home: %w", err)
 	}
-	return filepath.Join(home, ".kb"), nil
+	return filepath.Join(layout.SharedStateDir(), "home"), nil
 }
 
 // StateHome resolves the per-user launcher state directory.
-func StateHome() (State, error) {
-	root, err := KBHome()
+func StateHome(platformRoot string) (State, error) {
+	root, err := KBHome(platformRoot)
 	if err != nil {
 		return State{}, contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "Cannot resolve the launcher state directory.", "Set KB_HOME to a writable directory.", err)
 	}

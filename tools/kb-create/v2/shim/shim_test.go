@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -461,4 +462,58 @@ func mustReadlink(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return target
+}
+
+// case: S-285.11
+func TestShimUsesInstallationHomeUnlessExplicitlyOverridden(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("KB_HOME", "")
+	root := filepath.Join(t.TempDir(), "platform")
+	active := installFixture(t, root)
+	entry := filepath.Join(active, "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
+	if err := os.WriteFile(entry, []byte("process.stdout.write(process.env.KB_HOME || '')\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(t.TempDir(), "kb-create")
+	if _, err := Ensure(launcher, active); err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.Command(Path(launcher)).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := host.DefaultKBHome(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(output) != want {
+		t.Fatalf("KB_HOME = %q, want %q", output, want)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".kb")); !os.IsNotExist(err) {
+		t.Fatalf("outer .kb exists: %v", err)
+	}
+	override := filepath.Join(home, "override")
+	t.Setenv("KB_HOME", override)
+	output, err = exec.Command(Path(launcher)).Output()
+	if err != nil || string(output) != override {
+		t.Fatalf("explicit KB_HOME = %q, error %v; want %q", output, err, override)
+	}
+}
+
+// case: S-285.15
+func TestEnsureUpdatesMarkedTarget(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	active := installFixture(t, root)
+	launcher := filepath.Join(t.TempDir(), "kb-create")
+	if _, err := Ensure(launcher, active); err != nil {
+		t.Fatal(err)
+	}
+	target := Target(active)
+	if err := os.WriteFile(target, []byte("#!/bin/sh\n# kb-create managed shim\nold\n"), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Ensure(launcher, active); err != nil {
+		t.Fatalf("update managed target: %v", err)
+	}
 }

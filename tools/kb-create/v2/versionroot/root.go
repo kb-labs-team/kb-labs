@@ -1054,8 +1054,11 @@ func (l Layout) validateSealedVersionRoot(stage string) error {
 	if err != nil {
 		return fmt.Errorf("resolve staged version root: %w", err)
 	}
-	relative, err := filepath.Rel(l.VersionsDir(), absolute)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+	inside, err := contracts.PathWithin(l.VersionsDir(), absolute)
+	if err != nil {
+		return fmt.Errorf("resolve staged version containment: %w", err)
+	}
+	if !inside {
 		return fmt.Errorf("staged version root is outside the declared version roots")
 	}
 	return ValidateNoSharedRuntimeProjectionEntries(absolute)
@@ -1398,7 +1401,14 @@ func validateContainerSymlinks(root, installRoot, packageManagerStateRoot string
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			if packageManagerStateRoot != "" && pathWithin(packageManagerStateRoot, path) {
+			insidePackageManager := false
+			if packageManagerStateRoot != "" {
+				insidePackageManager, err = contracts.PathWithin(packageManagerStateRoot, filepath.Dir(path))
+				if err != nil {
+					return err
+				}
+			}
+			if insidePackageManager {
 				linkTarget, err := os.Readlink(path)
 				if err != nil {
 					return fmt.Errorf("install container package-manager symlink target cannot be resolved at %s: %w", path, err)
@@ -1410,7 +1420,11 @@ func validateContainerSymlinks(root, installRoot, packageManagerStateRoot string
 				if err != nil {
 					return fmt.Errorf("install container package-manager symlink target cannot be resolved at %s: %w", path, err)
 				}
-				if !pathWithinOrEqual(installRoot, resolvedTarget) {
+				inside, err := contracts.PathWithin(installRoot, resolvedTarget)
+				if err != nil {
+					return err
+				}
+				if !inside {
 					return fmt.Errorf("install container package-manager symlink target escapes install root: %s -> %s", path, resolvedTarget)
 				}
 				return nil
@@ -1422,15 +1436,6 @@ func validateContainerSymlinks(root, installRoot, packageManagerStateRoot string
 		}
 		return nil
 	})
-}
-
-func pathWithin(root, path string) bool {
-	return path != root && pathWithinOrEqual(root, path)
-}
-
-func pathWithinOrEqual(root, path string) bool {
-	relative, err := filepath.Rel(root, path)
-	return err == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))))
 }
 
 func (l Layout) validateVersionTreeSymlinks() error {
@@ -1457,18 +1462,24 @@ func (l Layout) validateVersionTreeSymlinks() error {
 			target = filepath.Join(filepath.Dir(path), target)
 		}
 		target = filepath.Clean(target)
-		if !pathInside(l.Root, target) {
+		if inside, err := contracts.PathWithin(l.Root, target); err != nil {
+			return err
+		} else if !inside {
 			return fmt.Errorf("version tree symbolic link %s escapes the install root", path)
 		}
 		if resolvedParent, err := filepath.EvalSymlinks(filepath.Dir(target)); err == nil {
-			if !pathInside(l.Root, resolvedParent) {
+			if inside, err := contracts.PathWithin(l.Root, resolvedParent); err != nil {
+				return err
+			} else if !inside {
 				return fmt.Errorf("version tree symbolic link %s escapes the install root", path)
 			}
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("resolve version tree symbolic link parent %s: %w", path, err)
 		}
 		if resolved, err := filepath.EvalSymlinks(path); err == nil {
-			if !pathInside(l.Root, resolved) {
+			if inside, err := contracts.PathWithin(l.Root, resolved); err != nil {
+				return err
+			} else if !inside {
 				return fmt.Errorf("version tree symbolic link %s escapes the install root", path)
 			}
 		} else if !os.IsNotExist(err) {
@@ -1476,11 +1487,6 @@ func (l Layout) validateVersionTreeSymlinks() error {
 		}
 		return nil
 	})
-}
-
-func pathInside(root, path string) bool {
-	relative, err := filepath.Rel(root, path)
-	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func (l Layout) validateContractStatePaths() error {
@@ -1635,8 +1641,11 @@ func (l Layout) resolveVersionPath(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	relative, err := filepath.Rel(versions, abs)
-	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	inside, err := contracts.PathWithin(versions, abs)
+	if err != nil {
+		return "", err
+	}
+	if !inside || versions == abs {
 		return "", fmt.Errorf("%s is not inside %s", root, versions)
 	}
 	info, err := os.Stat(abs)

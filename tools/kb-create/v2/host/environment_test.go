@@ -18,6 +18,26 @@ import (
 	"github.com/kb-labs/create/v2/secrets"
 )
 
+// case: S-285.10
+func TestHostEnvironmentUsesInstalledPlatformRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	t.Setenv("KB_PLATFORM_ROOT", filepath.Join(t.TempDir(), "unrelated"))
+	runner := &ProcessRunner{PlatformRoot: root}
+	env, err := runner.environment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "KB_PLATFORM_ROOT=") {
+			got = strings.TrimPrefix(entry, "KB_PLATFORM_ROOT=")
+		}
+	}
+	if got != root {
+		t.Fatalf("platform root: got %q, want %q", got, root)
+	}
+}
+
 func TestHostReceivesPlatformSecretsAndSpecEnvironment(t *testing.T) {
 	dump := filepath.Join(t.TempDir(), "env.txt")
 	f := newRunner(t, 10, 5, "-dump-env", dump)
@@ -123,4 +143,28 @@ func TestProberReportsAHostThatDoesNotStart(t *testing.T) {
 	if _, err := prober.Start(context.Background(), invalid); launcherCode(t, err) != "KB_HOST_SPEC_INVALID" {
 		t.Fatalf("code %s", launcherCode(t, err))
 	}
+}
+
+// case: S-285.11
+func TestInstalledHostDefaultsKBHomeInsideInstallRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("KB_HOME", "")
+	root := filepath.Join(t.TempDir(), "install")
+	r := &ProcessRunner{PlatformRoot: root}
+	env, err := r.environment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	homePath, err := DefaultKBHome(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "KB_HOME=" + homePath
+	for _, item := range env {
+		if item == want {
+			return
+		}
+	}
+	t.Fatalf("host environment does not contain %s", want)
 }

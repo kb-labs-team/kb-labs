@@ -2,6 +2,7 @@
   "$schema": "./errors.catalog.schema.json",
   "version": 1,
   "environmentVariables": [
+    "KB_CREATE_DOWNLOAD_BASE_URL",
     "KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO",
     "KB_CREATE_PROCESS_IDENTITY",
     "KB_DEPLOY_BASE_REF",
@@ -19,9 +20,12 @@
     "KB_NET_OFFSET",
     "KB_PLATFORM_ROOT",
     "KB_PROJECT_ROOT",
+    "KB_SCENARIO_ANSWERS",
+    "KB_SCENARIO_SECRET",
     "KB_SOCKET_HASH",
     "KB_SOCKET_PATH",
-    "KB_TEST_DEADLINE_SCALE"
+    "KB_TEST_DEADLINE_SCALE",
+    "KB_URL_PASSWORD"
   ],
   "codes": [
     {

@@ -1660,7 +1660,8 @@ func TestInstallRootContainerKeepsLifecycleWritesInsideTheChosenDirectory(t *tes
 	}
 	current := filepath.Join(root, "current")
 	link, err := os.Readlink(current)
-	if err != nil || filepath.IsAbs(link) || !strings.HasPrefix(filepath.Clean(filepath.Join(root, link)), filepath.Join(root, "versions")+string(filepath.Separator)) {
+	inside, containmentErr := contracts.PathWithin(filepath.Join(root, "versions"), filepath.Join(root, link))
+	if err != nil || containmentErr != nil || filepath.IsAbs(link) || !inside || filepath.Clean(filepath.Join(root, link)) == filepath.Join(root, "versions") {
 		t.Fatalf("current link = %q, %v; want relative link into install-root versions", link, err)
 	}
 	entries, err := os.ReadDir(parent)

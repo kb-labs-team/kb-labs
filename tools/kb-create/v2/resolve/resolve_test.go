@@ -116,6 +116,50 @@ func TestOfflinePlanRejectsMissingOrCorruptArtifactCacheEntry(t *testing.T) {
 	}
 }
 
+// case: S-285.2
+func TestMissingGatewayCanBeResolvedFromHostDeclaration(t *testing.T) {
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{
+		ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+		Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+		Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Port: 4000}}}},
+		Config:   []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: `{"serviceTransport":{"services":{}}}`}},
+	}}}
+	plan, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: t.TempDir()}, source)
+	if err != nil || plan.Host == nil || plan.Host.HealthURL != source.Platforms[0].Host.HealthURL {
+		t.Fatalf("plan=%+v error=%v", plan, err)
+	}
+}
+
+// case: S-285.2
+func TestExplicitGatewaySuppliesMissingTransportEntry(t *testing.T) {
+	graph := contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway", Port: 4000}, {ID: "rest", Port: 5050}}}
+	host := contracts.HostSpec{HealthURL: "http://127.0.0.1:4000/health"}
+	patches := []contracts.ConfigPatch{{Path: "/platform/adapterOptions", JSON: `{"serviceTransport":{"services":{"rest":{"url":"http://127.0.0.1:5050"}}}}`}}
+	if err := configureGatewayAddress("http://127.0.0.1:5500", &graph, &host, patches); err != nil {
+		t.Fatal(err)
+	}
+	var options struct {
+		ServiceTransport struct {
+			Services map[string]struct {
+				URL string `json:"url"`
+			} `json:"services"`
+		} `json:"serviceTransport"`
+	}
+	if err := json.Unmarshal([]byte(patches[0].JSON), &options); err != nil {
+		t.Fatal(err)
+	}
+	if options.ServiceTransport.Services["gateway"].URL != "http://127.0.0.1:5500" || graph.Services[1].Port != 6550 {
+		t.Fatalf("options=%s graph=%+v", patches[0].JSON, graph)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(patches[0].JSON), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw["serviceTransport"].(map[string]any)["offset"] != float64(0) {
+		t.Fatalf("transport would shift the already shifted URLs again: %s", patches[0].JSON)
+	}
+}
+
 func TestPlanAppliesAnExplicitGatewayAddressToHostServicesAndConfig(t *testing.T) {
 	source := catalog.Catalog{
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},

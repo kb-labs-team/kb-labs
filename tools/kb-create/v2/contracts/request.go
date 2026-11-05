@@ -129,6 +129,10 @@ func invalidRequestField(field, message, action string, cause error) error {
 }
 
 func (r InstallRequest) Normalize() (InstallRequest, error) {
+	r.ServiceProfile = strings.TrimSpace(r.ServiceProfile)
+	if r.ServiceProfile == "" {
+		r.ServiceProfile = "default"
+	}
 	if r.Schema == "" {
 		r.Schema = RequestSchema
 	}
@@ -185,9 +189,11 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 		parsed, err := url.Parse(r.GatewayURL)
 		if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Port() == "" ||
 			(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+			// URL parse errors can quote fragments of credentials; the validation
+			// message supplies the safe, actionable reason instead.
 			return InstallRequest{}, invalidRequestField("gatewayUrl",
 				"gateway URL must be an http loopback origin with an explicit port",
-				"Set gatewayUrl to an http loopback origin with an explicit port in the request JSON, then retry.", err)
+				"Set gatewayUrl to an http loopback origin with an explicit port in the request JSON, then retry.", nil)
 		}
 		port, err := strconv.Atoi(parsed.Port())
 		if err != nil || port < 1 || port > 65535 {
@@ -410,4 +416,22 @@ func uniqueSorted(values []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+// PathWithin reports whether path resolves to root or a descendant of root.
+// Missing trailing components are allowed; existing symlinks are resolved.
+func PathWithin(root, path string) (bool, error) {
+	canonicalRoot, err := CanonicalPath(root)
+	if err != nil {
+		return false, fmt.Errorf("resolve containment root: %w", err)
+	}
+	canonicalPath, err := CanonicalPath(path)
+	if err != nil {
+		return false, fmt.Errorf("resolve containment path: %w", err)
+	}
+	relative, err := filepath.Rel(canonicalRoot, canonicalPath)
+	if err != nil {
+		return false, err
+	}
+	return filepath.IsLocal(relative), nil
 }

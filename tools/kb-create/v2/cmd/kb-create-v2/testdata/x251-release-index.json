@@ -1,0 +1,2181 @@
+{
+  "schema": "kb.create.release-index/v2",
+  "digest": "7eb10cc88ef5266b325cf48ec857c67bbb2f4f77337b406c1c5dc5bc4c18e427",
+  "channels": {
+    "canary": "2.121.0-canary.cec6dacc6"
+  },
+  "compatibility": {
+    "schema": "kb.release-compatibility/2",
+    "labels": [
+      {
+        "id": "platform@2.121.0-canary.cec6dacc6",
+        "kind": "platform",
+        "artifactId": "platform",
+        "version": "2.121.0-canary.cec6dacc6",
+        "requires": [
+          {
+            "label": "sdk@2.121.0-canary.cec6dacc6",
+            "constraint": "2.121.0-canary.cec6dacc6"
+          }
+        ],
+        "status": "prepared",
+        "validatedBy": [
+          "stage",
+          "package-manifest",
+          "artifact-hash",
+          "sdk-runtime-dependency"
+        ]
+      },
+      {
+        "id": "sdk@2.121.0-canary.cec6dacc6",
+        "kind": "sdk",
+        "artifactId": "sdk",
+        "version": "2.121.0-canary.cec6dacc6",
+        "status": "prepared",
+        "validatedBy": [
+          "stage",
+          "package-manifest",
+          "artifact-hash",
+          "sdk-runtime-dependency"
+        ]
+      },
+      {
+        "id": "binary:kb-create@2.121.0-canary.cec6dacc6:darwin/amd64",
+        "kind": "binary",
+        "artifactId": "kb-create",
+        "version": "2.121.0-canary.cec6dacc6",
+        "requires": [
+          {
+            "label": "platform@2.121.0-canary.cec6dacc6"
+          },
+          {
+            "label": "sdk@2.121.0-canary.cec6dacc6"
+          }
+        ],
+        "status": "prepared",
+        "validatedBy": [
+          "release-asset",
+          "artifact-hash",
+          "post-publish-smoke"
+        ]
+      },
+      {
+        "id": "binary:kb-create@2.121.0-canary.cec6dacc6:darwin/arm64",
+        "kind": "binary",
+        "artifactId": "kb-create",
+        "version": "2.121.0-canary.cec6dacc6",
+        "requires": [
+          {
+            "label": "platform@2.121.0-canary.cec6dacc6"
+          },
+          {
+            "label": "sdk@2.121.0-canary.cec6dacc6"
+          }
+        ],
+        "status": "prepared",
+        "validatedBy": [
+          "release-asset",
+          "artifact-hash",
+          "post-publish-smoke"
+        ]
+      },
+      {
+        "id": "binary:kb-create@2.121.0-canary.cec6dacc6:linux/amd64",
+        "kind": "binary",
+        "artifactId": "kb-create",
+        "version": "2.121.0-canary.cec6dacc6",
+        "requires": [
+          {
+            "label": "platform@2.121.0-canary.cec6dacc6"
+          },
+          {
+            "label": "sdk@2.121.0-canary.cec6dacc6"
+          }
+        ],
+        "status": "prepared",
+        "validatedBy": [
+          "release-asset",
+          "artifact-hash",
+          "post-publish-smoke"
+        ]
+      },
+      {
+        "id": "binary:kb-create@2.121.0-canary.cec6dacc6:linux/arm64",
+        "kind": "binary",
+        "artifactId": "kb-create",
+        "version": "2.121.0-canary.cec6dacc6",
+        "requires": [
+          {
+            "label": "platform@2.121.0-canary.cec6dacc6"
+          },
+          {
+            "label": "sdk@2.121.0-canary.cec6dacc6"
+          }
+        ],
+        "status": "prepared",
+        "validatedBy": [
+          "release-asset",
+          "artifact-hash",
+          "post-publish-smoke"
+        ]
+      }
+    ]
+  },
+  "platforms": [
+    {
+      "id": "platform",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/core-runtime",
+      "sha256": "bd708b8617989feae55c0ef22f13208ae4113af08f551a886c71d836e4b64643",
+      "tarball": "https://registry.npmjs.org/@kb-labs/core-runtime/-/core-runtime-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 425054,
+      "profiles": {
+        "client": {
+          "platformVersion": "2.121.0-canary.cec6dacc6",
+          "profile": "client",
+          "services": []
+        },
+        "default": {
+          "platformVersion": "2.121.0-canary.cec6dacc6",
+          "profile": "",
+          "services": [
+            {
+              "id": "studio",
+              "command": "studio-app",
+              "port": 3000,
+              "healthCheck": "/",
+              "dependsOn": [
+                "rest",
+                "gateway"
+              ],
+              "required": true
+            },
+            {
+              "id": "gateway",
+              "command": "gateway-app",
+              "port": 4000,
+              "healthCheck": "/health",
+              "dependsOn": [
+                "rest",
+                "workflow"
+              ],
+              "required": true
+            },
+            {
+              "id": "marketplace",
+              "command": "marketplace-app",
+              "port": 5070,
+              "healthCheck": "/health",
+              "required": true
+            },
+            {
+              "id": "marketplace-registry",
+              "command": "marketplace-registry-app",
+              "port": 5071,
+              "healthCheck": "/health",
+              "dependsOn": [
+                "state-daemon"
+              ],
+              "required": true
+            },
+            {
+              "id": "mcp-daemon",
+              "command": "mcp-app",
+              "port": 7779,
+              "healthCheck": "/health",
+              "required": true
+            },
+            {
+              "id": "rest",
+              "command": "rest-api-app",
+              "port": 5050,
+              "healthCheck": "http://localhost:5050/health",
+              "required": true
+            },
+            {
+              "id": "state-daemon",
+              "command": "kb-state-daemon",
+              "healthCheck": "/health",
+              "required": true
+            },
+            {
+              "id": "workflow",
+              "command": "kb-workflow",
+              "port": 7778,
+              "healthCheck": "/health",
+              "required": true
+            }
+          ]
+        }
+      },
+      "host": {
+        "command": "node_modules/.bin/kb-host",
+        "healthUrl": "http://127.0.0.1:4000/health",
+        "recover": {
+          "command": "node_modules/.bin/kb-recover"
+        }
+      },
+      "requires": [
+        {
+          "capability": "storage",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "cache",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "eventBus",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "documentDatabase",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "kvStore",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "logger",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "logRingBuffer",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "logPersistence",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "analytics",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "serviceTransport",
+          "requiredBy": "platform"
+        },
+        {
+          "capability": "llm",
+          "requiredBy": "platform"
+        }
+      ],
+      "config": [
+        {
+          "id": "platform.adapters",
+          "path": "/platform/adapters",
+          "default": "{\"storage\":\"@kb-labs/adapters-fs\",\"cache\":\"@kb-labs/adapters-state-broker\",\"eventBus\":\"@kb-labs/adapters-eventbus-cache\",\"documentDatabase\":\"@kb-labs/adapters-sqlite\",\"kvStore\":\"@kb-labs/adapters-sqlite/kv\",\"logger\":\"@kb-labs/adapters-pino\",\"logRingBuffer\":\"@kb-labs/adapters-log-ringbuffer\",\"logPersistence\":\"@kb-labs/adapters-log-document\",\"analytics\":\"@kb-labs/adapters-analytics-sqlite\",\"serviceTransport\":\"@kb-labs/adapters-service-transport-http\"}"
+        },
+        {
+          "id": "platform.adapterOptions",
+          "path": "/platform/adapterOptions",
+          "default": "{\"storage\":{\"baseDir\":\"storage\"},\"cache\":{\"url\":\"http://127.0.0.1:7777\",\"namespace\":\"kb:\"},\"serviceTransport\":{\"services\":{\"rest\":{\"url\":\"http://127.0.0.1:5050\"},\"workflow\":{\"url\":\"http://127.0.0.1:7778\"},\"marketplace\":{\"url\":\"http://127.0.0.1:5070\"},\"marketplace-registry\":{\"url\":\"http://127.0.0.1:5071\"},\"mcp-daemon\":{\"url\":\"http://127.0.0.1:7779\"}}},\"documentDatabase\":{\"filename\":\"database/kb.sqlite\"},\"kvStore\":{\"filename\":\"database/kb.sqlite\"},\"analytics\":{\"dbPath\":\"analytics/analytics.sqlite\"},\"logger\":{\"level\":\"info\",\"streaming\":{\"enabled\":true,\"bufferSize\":1000,\"bufferMaxAge\":3600000}},\"logRingBuffer\":{\"maxSize\":100},\"logPersistence\":{\"collection\":\"logs\",\"batchSize\":100,\"flushInterval\":5000,\"retention\":{\"maxAgeFatal\":2592000000,\"maxAgeError\":1209600000,\"maxAgeWarn\":604800000,\"maxAgeInfo\":1800000,\"maxAgeDebug\":1800000,\"cleanupIntervalMs\":300000}}}"
+        },
+        {
+          "id": "marketplace.sources",
+          "path": "/marketplace/sources",
+          "default": "[{\"kind\":\"npm\",\"url\":\"https://registry.npmjs.org\"}]"
+        }
+      ],
+      "binaries": [
+        {
+          "id": "kb-create",
+          "os": "darwin",
+          "arch": "amd64",
+          "url": "https://github.com/KirillBaranovOfficial/kb-labs-backup/releases/download/v2.121.0-canary.cec6dacc6-binaries/kb-create-darwin-amd64",
+          "sha256": "5c00760f008ed2571d313f4e6058d809eb57221151649815f1b43e69039b98b0",
+          "filename": "kb-create-darwin-amd64",
+          "sizeBytes": 13436288
+        },
+        {
+          "id": "kb-create",
+          "os": "darwin",
+          "arch": "arm64",
+          "url": "https://github.com/KirillBaranovOfficial/kb-labs-backup/releases/download/v2.121.0-canary.cec6dacc6-binaries/kb-create-darwin-arm64",
+          "sha256": "5ae83a8f596f18ad445edc14077b878f75e64508c5ddac80af2658d75387b0a4",
+          "filename": "kb-create-darwin-arm64",
+          "sizeBytes": 12418098
+        },
+        {
+          "id": "kb-create",
+          "os": "linux",
+          "arch": "amd64",
+          "url": "https://github.com/KirillBaranovOfficial/kb-labs-backup/releases/download/v2.121.0-canary.cec6dacc6-binaries/kb-create-linux-amd64",
+          "sha256": "b59bb9f86417b9b56b131e264dd2797748678bd29b9b86ce81acb238e03dfea6",
+          "filename": "kb-create-linux-amd64",
+          "sizeBytes": 13168802
+        },
+        {
+          "id": "kb-create",
+          "os": "linux",
+          "arch": "arm64",
+          "url": "https://github.com/KirillBaranovOfficial/kb-labs-backup/releases/download/v2.121.0-canary.cec6dacc6-binaries/kb-create-linux-arm64",
+          "sha256": "fd0c8d119b411e81dddca7ba27ab19e9f9e22ab95124b31fb88550289d111df3",
+          "filename": "kb-create-linux-arm64",
+          "sizeBytes": 12124322
+        }
+      ],
+      "members": [
+        {
+          "id": "studio",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/studio-app",
+          "sha256": "18f80929d179df826fc74dbee97ee3f855e322ba17100a6d44e50ca721f121f1",
+          "tarball": "https://registry.npmjs.org/@kb-labs/studio-app/-/studio-app-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 6199734
+        },
+        {
+          "id": "gateway",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/gateway-app",
+          "sha256": "bbdcffef18268728439f0835761cadfdf7dc43de7f1c629f32adf3ff0df985f1",
+          "tarball": "https://registry.npmjs.org/@kb-labs/gateway-app/-/gateway-app-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 381254,
+          "config": [
+            {
+              "id": "gateway.access.mode",
+              "path": "/gateway/access/mode",
+              "default": "\"local\"",
+              "hint": "Studio access: \"secured\" requires login; \"local\" is a no-login install that binds loopback only"
+            },
+            {
+              "id": "gateway.bootstrap.adminEmail",
+              "path": "/gateway/auth/bootstrap/adminEmail",
+              "hint": "Email of the first administrator (secured access)"
+            },
+            {
+              "id": "gateway.bootstrap.tenantId",
+              "path": "/gateway/auth/bootstrap/tenantId",
+              "hint": "Tenant that owns the first administrator; leave unset to use GATEWAY_BOOTSTRAP_TENANT_ID or the gateway default (kblabs-cloud)"
+            },
+            {
+              "id": "gateway.bootstrap.password",
+              "secret": true,
+              "generate": true,
+              "env": "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD",
+              "services": [
+                "gateway"
+              ],
+              "hint": "Password of the first administrator; kb-create generates one when omitted and discloses it once after successful install"
+            },
+            {
+              "id": "gateway.jwtSecret",
+              "secret": true,
+              "generate": true,
+              "env": "GATEWAY_JWT_SECRET",
+              "services": [
+                "gateway"
+              ],
+              "hint": "HMAC secret that signs session tokens (e.g. `openssl rand -hex 64`); without it the gateway uses a public development secret"
+            },
+            {
+              "id": "gateway.internalSecret",
+              "secret": true,
+              "generate": true,
+              "env": "GATEWAY_INTERNAL_SECRET",
+              "services": [
+                "gateway",
+                "rest"
+              ],
+              "hint": "Shared gateway-to-service authentication secret; kb-create generates and preserves it"
+            },
+            {
+              "id": "gateway.authStorage.filename",
+              "path": "/platform/adapterOptions/documentDatabase/filename",
+              "default": "\"database/kb.sqlite\"",
+              "hint": "Persistent database file for secured gateway identity, session, invite, and reset data"
+            }
+          ]
+        },
+        {
+          "id": "marketplace",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/marketplace-app",
+          "sha256": "2e941130d37a1618322922f97601306e51a2e3b3380cc9d6148b27d3691ee94a",
+          "tarball": "https://registry.npmjs.org/@kb-labs/marketplace-app/-/marketplace-app-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 4292
+        },
+        {
+          "id": "marketplace-registry",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/marketplace-registry-app",
+          "sha256": "bd726767253974f300ee7a183706c1790003ae17d5fe17de0f000827566efcb3",
+          "tarball": "https://registry.npmjs.org/@kb-labs/marketplace-registry-app/-/marketplace-registry-app-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 3093
+        },
+        {
+          "id": "mcp-daemon",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/mcp-app",
+          "sha256": "18b6e5ae380ed5056092f53113d46154540a923a9224c815296125e8db4d1345",
+          "tarball": "https://registry.npmjs.org/@kb-labs/mcp-app/-/mcp-app-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 3787172
+        },
+        {
+          "id": "rest",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/rest-api-app",
+          "sha256": "c8a030664e915bdaeeab17d49acf60635c826cef012899925fc1cb4bbc0c6881",
+          "tarball": "https://registry.npmjs.org/@kb-labs/rest-api-app/-/rest-api-app-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 346662
+        },
+        {
+          "id": "state-daemon",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/core-state-daemon",
+          "sha256": "adf3aa750eb654a0151d9a46e915d3d048815b598ee95fc6b1f1b06fe4e09499",
+          "tarball": "https://registry.npmjs.org/@kb-labs/core-state-daemon/-/core-state-daemon-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 2603622
+        },
+        {
+          "id": "workflow",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/workflow-daemon",
+          "sha256": "0d85d640cb908f7d821884b57332a6c5c387034eb7787c20704cf34cb4d1a4ca",
+          "tarball": "https://registry.npmjs.org/@kb-labs/workflow-daemon/-/workflow-daemon-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 188221
+        },
+        {
+          "id": "host-app",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/host-app",
+          "sha256": "6bff1e7afc3d004b4dff996af353cb22fa1d2fcf386506ca84d9bd026e4ca7f1",
+          "tarball": "https://registry.npmjs.org/@kb-labs/host-app/-/host-app-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 126337
+        },
+        {
+          "id": "cli-bin",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/cli-bin",
+          "sha256": "80629ef72d46542ca69047ce2b517ac9457178b3574e73668bbfc3acc63a0f39",
+          "tarball": "https://registry.npmjs.org/@kb-labs/cli-bin/-/cli-bin-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 141131
+        },
+        {
+          "id": "core-workspace",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/core-workspace",
+          "sha256": "c3165027444ea6a7905292dadd5ee43acf21039e739850b2cfcde5a976a121e2",
+          "tarball": "https://registry.npmjs.org/@kb-labs/core-workspace/-/core-workspace-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 11862
+        },
+        {
+          "id": "host-agent-app",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/host-agent-app",
+          "sha256": "225aa439e53bb5ced6e066862b65462126b39ee00ee6c74cb16888a9420fc723",
+          "tarball": "https://registry.npmjs.org/@kb-labs/host-agent-app/-/host-agent-app-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 22033
+        },
+        {
+          "id": "fs-storage",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/adapters-fs",
+          "sha256": "a435d28c70a9d09b76721296cd0f3851761602cd0cf60c1eded4aef00c29c9b6",
+          "tarball": "https://registry.npmjs.org/@kb-labs/adapters-fs/-/adapters-fs-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 11616
+        },
+        {
+          "id": "state-broker",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/adapters-state-broker",
+          "sha256": "88d52459ffccc22d300a30e9009582ddb4433fd5e46dae3e0e30303d770ddf74",
+          "tarball": "https://registry.npmjs.org/@kb-labs/adapters-state-broker/-/adapters-state-broker-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 6133
+        },
+        {
+          "id": "eventbus-cache",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/adapters-eventbus-cache",
+          "sha256": "b8466cd89c4c9f840d423cdf04ca933cf5e3d28113f1f9b5fde82c328e07d3b5",
+          "tarball": "https://registry.npmjs.org/@kb-labs/adapters-eventbus-cache/-/adapters-eventbus-cache-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 8805
+        },
+        {
+          "id": "sqlite-stores",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/adapters-sqlite",
+          "sha256": "7bb7a6524644da70172fde92d35287222ed9cd86d825af04bd20b4e1c0d0a1b9",
+          "tarball": "https://registry.npmjs.org/@kb-labs/adapters-sqlite/-/adapters-sqlite-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 51984
+        },
+        {
+          "id": "pino-logger",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/adapters-pino",
+          "sha256": "0b357163ecabc9f0bf3c330bb641c90acd3b1028cdfac8f6f7ffbfb6b4f0c9fb",
+          "tarball": "https://registry.npmjs.org/@kb-labs/adapters-pino/-/adapters-pino-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 11487
+        },
+        {
+          "id": "log-ringbuffer",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/adapters-log-ringbuffer",
+          "sha256": "453917b7bace500a36aaafcdcdfee6956cfe9d7f6694b4113f1034c4581d1d6d",
+          "tarball": "https://registry.npmjs.org/@kb-labs/adapters-log-ringbuffer/-/adapters-log-ringbuffer-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 7355
+        },
+        {
+          "id": "log-document",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/adapters-log-document",
+          "sha256": "f9d94b72b0c6923501051493215fcdb45d6fb4d17bf2d2f2a7f46f1baf37f7ba",
+          "tarball": "https://registry.npmjs.org/@kb-labs/adapters-log-document/-/adapters-log-document-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 10423
+        },
+        {
+          "id": "analytics-sqlite",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/adapters-analytics-sqlite",
+          "sha256": "fdca453694638879a9e662c0480e620e166f32342d42eaf88d6157bc02ad0f62",
+          "tarball": "https://registry.npmjs.org/@kb-labs/adapters-analytics-sqlite/-/adapters-analytics-sqlite-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 18591
+        },
+        {
+          "id": "service-transport-http",
+          "version": "2.121.0-canary.cec6dacc6",
+          "package": "@kb-labs/adapters-service-transport-http",
+          "sha256": "dcf869f5507ed49b1d79724c66f3517debd8d46c01aa1f1aa1a863010325cd80",
+          "tarball": "https://registry.npmjs.org/@kb-labs/adapters-service-transport-http/-/adapters-service-transport-http-2.121.0-canary.cec6dacc6.tgz",
+          "sizeBytes": 6607
+        }
+      ]
+    }
+  ],
+  "sdks": [
+    {
+      "id": "sdk",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/sdk",
+      "sha256": "eb2514869776005e305294c059295b0e17550ffedcb7e845f1104d127827d4b2",
+      "tarball": "https://registry.npmjs.org/@kb-labs/sdk/-/sdk-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 46637
+    }
+  ],
+  "plugins": [
+    {
+      "id": "@kb-labs/agents",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/agents",
+      "sha256": "e450f207b3e6ab56ac4151f5e56502b94c5dbaf4c9173ed8ee21dbbd526a110c",
+      "tarball": "https://registry.npmjs.org/@kb-labs/agents/-/agents-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 4257851,
+      "requires": [
+        {
+          "capability": "llm",
+          "requiredBy": "@kb-labs/agents"
+        }
+      ]
+    },
+    {
+      "id": "@kb-labs/clickup",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/clickup",
+      "sha256": "b7cf514ff0e5ab86a52f06072d6e5ee23f3ec9913311be8ce7e88f41a3db586f",
+      "tarball": "https://registry.npmjs.org/@kb-labs/clickup/-/clickup-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 97038
+    },
+    {
+      "id": "@kb-labs/commit",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/commit",
+      "sha256": "3b51f83055979bee3dec68d704443b0859c4ee6876c70fd8942641c84cd6f78f",
+      "tarball": "https://registry.npmjs.org/@kb-labs/commit/-/commit-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 2132541,
+      "requires": [
+        {
+          "capability": "storage",
+          "requiredBy": "@kb-labs/commit"
+        },
+        {
+          "capability": "cache",
+          "requiredBy": "@kb-labs/commit"
+        }
+      ]
+    },
+    {
+      "id": "@kb-labs/devlink",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/devlink",
+      "sha256": "562fed9b2ce0be6d5d75e4fe9c9d5a152a1d848bac0663f9d204570a5fd51c28",
+      "tarball": "https://registry.npmjs.org/@kb-labs/devlink/-/devlink-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 108776,
+      "requires": [
+        {
+          "capability": "storage",
+          "requiredBy": "@kb-labs/devlink"
+        }
+      ]
+    },
+    {
+      "id": "@kb-labs/github",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/github",
+      "sha256": "271b25554368e3dc9e78c975bd6c5ac69001171ddf2f5c98fed475088d59fd5e",
+      "tarball": "https://registry.npmjs.org/@kb-labs/github/-/github-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 9807
+    },
+    {
+      "id": "@kb-labs/inbox",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/inbox",
+      "sha256": "bb881b69297ec76f380e7caee73d222c59fddd382877419be9d9cd29cd199a87",
+      "tarball": "https://registry.npmjs.org/@kb-labs/inbox/-/inbox-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 208437
+    },
+    {
+      "id": "@kb-labs/infra-worker",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/infra-worker",
+      "sha256": "17196915f87c1094d58c63dac31a1d619134eff1e9f2b2b626384363f3a36035",
+      "tarball": "https://registry.npmjs.org/@kb-labs/infra-worker/-/infra-worker-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 20991
+    },
+    {
+      "id": "@kb-labs/marketplace-registry",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/marketplace-registry",
+      "sha256": "245230907ebfa5d008220ba038ce5ec33af8388a0a8e7f5a88644a8b9815886f",
+      "tarball": "https://registry.npmjs.org/@kb-labs/marketplace-registry/-/marketplace-registry-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 15632
+    },
+    {
+      "id": "@kb-labs/mind",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/mind",
+      "sha256": "f3a74a47ead8088137964be9dde887091a3695518a88f6a38cb2ddc3bb0064da",
+      "tarball": "https://registry.npmjs.org/@kb-labs/mind/-/mind-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 1652362,
+      "requires": [
+        {
+          "capability": "cache",
+          "requiredBy": "@kb-labs/mind"
+        },
+        {
+          "capability": "storage",
+          "requiredBy": "@kb-labs/mind"
+        }
+      ]
+    },
+    {
+      "id": "@kb-labs/qa",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/qa",
+      "sha256": "2aa8c2cc04112fe70f0f33b2853a07ee1302090f7592aae97927f85c362c1e3d",
+      "tarball": "https://registry.npmjs.org/@kb-labs/qa/-/qa-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 1446215
+    },
+    {
+      "id": "@kb-labs/quality",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/quality",
+      "sha256": "b5463577bbc3dd725dd5dc06fb27a0c75af66a32df40fca075368b7949cadb90",
+      "tarball": "https://registry.npmjs.org/@kb-labs/quality/-/quality-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 1748064,
+      "requires": [
+        {
+          "capability": "storage",
+          "requiredBy": "@kb-labs/quality"
+        },
+        {
+          "capability": "cache",
+          "requiredBy": "@kb-labs/quality"
+        }
+      ]
+    },
+    {
+      "id": "@kb-labs/release",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/release",
+      "sha256": "4b89538541c7e5781646f4ca9cf7d12e67e5280135188cd9b1b1c7b605baec64",
+      "tarball": "https://registry.npmjs.org/@kb-labs/release/-/release-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 3054171,
+      "requires": [
+        {
+          "capability": "storage",
+          "requiredBy": "@kb-labs/release"
+        },
+        {
+          "capability": "cache",
+          "requiredBy": "@kb-labs/release"
+        }
+      ]
+    },
+    {
+      "id": "@kb-labs/review",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/review",
+      "sha256": "461d03e6cd37ae21a3664be473e93a314ce989e64c132db744bd647038923bbe",
+      "tarball": "https://registry.npmjs.org/@kb-labs/review/-/review-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 559413,
+      "requires": [
+        {
+          "capability": "storage",
+          "requiredBy": "@kb-labs/review"
+        },
+        {
+          "capability": "cache",
+          "requiredBy": "@kb-labs/review"
+        }
+      ]
+    },
+    {
+      "id": "@kb-labs/site-tools",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/site-tools",
+      "sha256": "c8dbdb9cc7d84f0e6ee0ef016d5dbaed92143661540c156ee96a348d7d98d97b",
+      "tarball": "https://registry.npmjs.org/@kb-labs/site-tools/-/site-tools-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 7896
+    },
+    {
+      "id": "@kb-labs/steward",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/steward",
+      "sha256": "9c5f43c0afd0f608097d9446a0f1f1b08e66488e84ea82c7f26965e68d6a9408",
+      "tarball": "https://registry.npmjs.org/@kb-labs/steward/-/steward-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 108662,
+      "requires": [
+        {
+          "capability": "documentDatabase",
+          "requiredBy": "@kb-labs/steward"
+        }
+      ]
+    },
+    {
+      "id": "@kb-labs/viewer",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/viewer",
+      "sha256": "d158eb87eb3db065dc4620f7c7693ef4426386862ce47882e69ed871a4f3ecee",
+      "tarball": "https://registry.npmjs.org/@kb-labs/viewer/-/viewer-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 2520658
+    }
+  ],
+  "adapters": [
+    {
+      "id": "agent-workspace-provider",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-workspace-agent",
+      "sha256": "4981cdcba972c7c021363c1baa390f389de4eceba7840b1e689c3ec1cf6bcd4a",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-workspace-agent/-/adapters-workspace-agent-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 6394,
+      "provides": [
+        "workspaceProvider"
+      ]
+    },
+    {
+      "id": "analytics-duckdb",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-analytics-duckdb",
+      "sha256": "71b81dcfe3428a7f84125453cc885a9ff8a6bf1cfd3478cb39459e54e8c37b2e",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-analytics-duckdb/-/adapters-analytics-duckdb-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 16684,
+      "provides": [
+        "analytics"
+      ]
+    },
+    {
+      "id": "analytics-file",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-analytics-file",
+      "sha256": "026b8886d2be0afb811abef116ad7f14861e237bc72d9f77c9e5c52d21f14ecb",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-analytics-file/-/adapters-analytics-file-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 17073,
+      "provides": [
+        "analytics"
+      ]
+    },
+    {
+      "id": "analytics-sqlite",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-analytics-sqlite",
+      "sha256": "fdca453694638879a9e662c0480e620e166f32342d42eaf88d6157bc02ad0f62",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-analytics-sqlite/-/adapters-analytics-sqlite-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 18591,
+      "provides": [
+        "analytics"
+      ],
+      "defaultFor": [
+        "analytics"
+      ]
+    },
+    {
+      "id": "disk-io-storage",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/data-store",
+      "sha256": "746615b1be0d02fb37b092dc277b16ec9c97aa762f2b866cff787a656d283dd3",
+      "tarball": "https://registry.npmjs.org/@kb-labs/data-store/-/data-store-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 8921,
+      "provides": [
+        "storage"
+      ]
+    },
+    {
+      "id": "docker-environment-provider",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-environment-docker",
+      "sha256": "0c7296c252a89617a76054a1b82208b64cd4939ff1c8b43a3f66e30fa6d6c8ce",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-environment-docker/-/adapters-environment-docker-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 14948,
+      "provides": [
+        "environmentProvider"
+      ]
+    },
+    {
+      "id": "e2e-llm-deterministic",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/e2e-llm-deterministic",
+      "sha256": "958962873e687485227c5c2722960a2ecf88313a3604524b328363032a1ed0ff",
+      "tarball": "https://registry.npmjs.org/@kb-labs/e2e-llm-deterministic/-/e2e-llm-deterministic-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 1234,
+      "provides": [
+        "llm"
+      ]
+    },
+    {
+      "id": "eventbus-cache",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-eventbus-cache",
+      "sha256": "b8466cd89c4c9f840d423cdf04ca933cf5e3d28113f1f9b5fde82c328e07d3b5",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-eventbus-cache/-/adapters-eventbus-cache-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 8805,
+      "provides": [
+        "eventBus"
+      ],
+      "defaultFor": [
+        "eventBus"
+      ]
+    },
+    {
+      "id": "fs-storage",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-fs",
+      "sha256": "a435d28c70a9d09b76721296cd0f3851761602cd0cf60c1eded4aef00c29c9b6",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-fs/-/adapters-fs-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 11616,
+      "provides": [
+        "storage"
+      ],
+      "defaultFor": [
+        "storage"
+      ]
+    },
+    {
+      "id": "kblabs-gateway-llm",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-kblabs-gateway",
+      "sha256": "f9f00d0307cafb0a55d2feb6befacc4967ff1456be54781f6457d2613b3622c1",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-kblabs-gateway/-/adapters-kblabs-gateway-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 11507,
+      "provides": [
+        "llm"
+      ]
+    },
+    {
+      "id": "localfs-snapshot-provider",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-snapshot-localfs",
+      "sha256": "d3f3f4da9ec390d180a066700d675ef4509a42c2ad274fb773e7eca84c35e79b",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-snapshot-localfs/-/adapters-snapshot-localfs-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 7359,
+      "provides": [
+        "snapshotProvider"
+      ]
+    },
+    {
+      "id": "localfs-workspace-provider",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-workspace-localfs",
+      "sha256": "6f32a6f6576d0cb7f4285915cfc173f393c61707e3296d566d82b1a909b248ec",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-workspace-localfs/-/adapters-workspace-localfs-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 5554,
+      "provides": [
+        "workspaceProvider"
+      ],
+      "defaultFor": [
+        "workspaceProvider"
+      ]
+    },
+    {
+      "id": "log-document",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-log-document",
+      "sha256": "f9d94b72b0c6923501051493215fcdb45d6fb4d17bf2d2f2a7f46f1baf37f7ba",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-log-document/-/adapters-log-document-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 10423,
+      "provides": [
+        "logPersistence"
+      ],
+      "defaultFor": [
+        "logPersistence"
+      ]
+    },
+    {
+      "id": "log-ringbuffer",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-log-ringbuffer",
+      "sha256": "453917b7bace500a36aaafcdcdfee6956cfe9d7f6694b4113f1034c4581d1d6d",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-log-ringbuffer/-/adapters-log-ringbuffer-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 7355,
+      "provides": [
+        "logRingBuffer"
+      ],
+      "defaultFor": [
+        "logRingBuffer"
+      ]
+    },
+    {
+      "id": "mongodb-documentdb",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-mongodb",
+      "sha256": "11de7e22c11ac45dea00864fda3aa69fae8a8e61b08c3717ea5364f8a5704cfc",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-mongodb/-/adapters-mongodb-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 21189,
+      "provides": [
+        "documentDatabase"
+      ]
+    },
+    {
+      "id": "notifier-router",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/notifier-router",
+      "sha256": "560e1a7057c57e46f8d2db2a68bad76181e31d0fca8d493b9818bfd6935e466d",
+      "tarball": "https://registry.npmjs.org/@kb-labs/notifier-router/-/notifier-router-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 5865,
+      "provides": [
+        "notifier"
+      ]
+    },
+    {
+      "id": "openai-llm",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-openai",
+      "sha256": "5dc07cdb54eeeecd1def9be80d2843bd094bab4fd23a6a5f6a642400144b0195",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-openai/-/adapters-openai-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 13030,
+      "config": [
+        {
+          "id": "openai.apiKey",
+          "path": "/platform/adapterOptions/llm/apiKey",
+          "required": true,
+          "optional": true,
+          "severity": "warning",
+          "secret": true,
+          "env": "OPENAI_API_KEY",
+          "services": [
+            "gateway"
+          ],
+          "hint": "Set OPENAI_API_KEY or run kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env",
+          "action": "set OPENAI_API_KEY to enable LLM features"
+        },
+        {
+          "id": "openai.embeddings.apiKey",
+          "path": "/platform/adapterOptions/embeddings/apiKey",
+          "required": true,
+          "optional": true,
+          "severity": "warning",
+          "secret": true,
+          "env": "OPENAI_API_KEY",
+          "services": [
+            "gateway"
+          ],
+          "hint": "Set OPENAI_API_KEY or run kb config set --scope platform platform.adapterOptions.embeddings.apiKey '${OPENAI_API_KEY}' --allow-missing-env",
+          "action": "set OPENAI_API_KEY to enable embeddings"
+        }
+      ],
+      "provides": [
+        "llm",
+        "embeddings"
+      ],
+      "defaultFor": [
+        "llm",
+        "embeddings"
+      ]
+    },
+    {
+      "id": "pino-logger",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-pino",
+      "sha256": "0b357163ecabc9f0bf3c330bb641c90acd3b1028cdfac8f6f7ffbfb6b4f0c9fb",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-pino/-/adapters-pino-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 11487,
+      "provides": [
+        "logger"
+      ],
+      "defaultFor": [
+        "logger"
+      ]
+    },
+    {
+      "id": "qdrant-vectorstore",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-qdrant",
+      "sha256": "dccc7379b7fc8df4b1e1181ef554a1a49a02fc6091d77a129a352d878df696a1",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-qdrant/-/adapters-qdrant-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 16911,
+      "provides": [
+        "vectorStore"
+      ]
+    },
+    {
+      "id": "redis-cache",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-redis",
+      "sha256": "36ef4da72c58f4d71cc4e886d8ee68ef63c4df605b1e0092a4d4a311d6b44e02",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-redis/-/adapters-redis-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 6882,
+      "provides": [
+        "cache"
+      ]
+    },
+    {
+      "id": "s3-storage",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-s3",
+      "sha256": "8fbec3a1387142e8266b933b77f4a693fe677fd16fe0c4736876054a04c82992",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-s3/-/adapters-s3-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 6937,
+      "provides": [
+        "storage"
+      ]
+    },
+    {
+      "id": "service-transport-http",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-service-transport-http",
+      "sha256": "dcf869f5507ed49b1d79724c66f3517debd8d46c01aa1f1aa1a863010325cd80",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-service-transport-http/-/adapters-service-transport-http-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 6607,
+      "provides": [
+        "serviceTransport"
+      ]
+    },
+    {
+      "id": "sqlite-stores",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-sqlite",
+      "sha256": "7bb7a6524644da70172fde92d35287222ed9cd86d825af04bd20b4e1c0d0a1b9",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-sqlite/-/adapters-sqlite-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 51984,
+      "provides": [
+        "documentDatabase",
+        "kvStore",
+        "vectorStore"
+      ],
+      "defaultFor": [
+        "documentDatabase",
+        "kvStore",
+        "vectorStore"
+      ]
+    },
+    {
+      "id": "state-broker",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-state-broker",
+      "sha256": "88d52459ffccc22d300a30e9009582ddb4433fd5e46dae3e0e30303d770ddf74",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-state-broker/-/adapters-state-broker-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 6133,
+      "provides": [
+        "cache"
+      ],
+      "defaultFor": [
+        "cache"
+      ]
+    },
+    {
+      "id": "telegram-notifier",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-telegram",
+      "sha256": "7504a84135679524d3b50856eeb23c22bab0a2cb93ae348b20a56be42ec2b7c1",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-telegram/-/adapters-telegram-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 4625,
+      "provides": [
+        "notifierChannel"
+      ]
+    },
+    {
+      "id": "vibeproxy-llm",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-vibeproxy",
+      "sha256": "ae6e49f95d1a39b3d432c06974655ded3aa3463cf1e3b21933b5441b6444f8b6",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-vibeproxy/-/adapters-vibeproxy-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 13351,
+      "provides": [
+        "llm"
+      ]
+    },
+    {
+      "id": "voyage-ai-embeddings",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-voyage-ai",
+      "sha256": "2a1dad93464e53ce4cc03c46499e34428a5e00735abeb5b03f7345ce8dd49ff1",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-voyage-ai/-/adapters-voyage-ai-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 4392,
+      "provides": [
+        "embeddings"
+      ]
+    },
+    {
+      "id": "worktree-workspace-provider",
+      "version": "2.121.0-canary.cec6dacc6",
+      "package": "@kb-labs/adapters-workspace-worktree",
+      "sha256": "385e2c292117128f1902a92fcc8c1e3320c429327ea1dfa051a35989803d1385",
+      "tarball": "https://registry.npmjs.org/@kb-labs/adapters-workspace-worktree/-/adapters-workspace-worktree-2.121.0-canary.cec6dacc6.tgz",
+      "sizeBytes": 9395,
+      "provides": [
+        "workspaceProvider"
+      ]
+    }
+  ],
+  "provenance": [
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-wdtDgqVPePt2dunGpCXDYNt4Cpk6yUXhwWERazGktposV+HukfB6OD/M0fgO/oUFVBvff2qbF+U8SZE2BA0HfA==",
+      "distSha256": "4adee0255bdc52c6af41ed65fdf4893fcc81b01c3915951d5641c1c695d9bd64",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-analytics-duckdb",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-XdYDJgMmrOkAsvTXgmCXPgKV0t/UVsdZXt9jf/IOVj7BtQ7ADMLyhzMT5q8omKdA+ifRIpw5f8dwkqG4LKvGMQ==",
+      "distSha256": "c57fa7e4ae59576a1b598e145afe1b41a5b7a9bbfac9e9ad07d67186d1e9726c",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-analytics-file",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-nE4nzjA1sRDTgaVZ2NISEpgG8C5jmx3Ar9SPN4Aesp6U/ID1Yoz+LEFR4zUmB4Z6Zwm4oU/Z5/e0Rwi9CHx8Mw==",
+      "distSha256": "494f9faadbf1eb200202e4f7e89221822cfc4893ba5d9b20b6ef762f79691b8b",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-analytics-sqlite",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-mQ7XG++A0oe3vaKgvXYdPXyC1wgMMLFbBVGZmHjx88rhLDAGAUcvyjbnjfxZwHz3OVbItrfZ/DuJVmGFyT4G3A==",
+      "distSha256": "f858d50648901ac875057f52cf9bd3b3dcebb1de8c7d8a47e864f73bf26f7952",
+      "contentScope": "dist",
+      "package": "@kb-labs/data-store",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-pjV0AbJ0KjkfP+1I6cprBydOWE7itkTjQC2vdE86q50z0ClG27TPjW0SzsIGWpDNIF7KfMcHTEM1xki3/nUttg==",
+      "distSha256": "e30c9f1cd5d5458d853e571850ee9c64417496d887e6ec606e34b90ee8838315",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-environment-docker",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-eKc4xDxGA9696DjDCbvcdi3JWQM0G5jhHUfQ/EBzvyRVtVNAFYRnQaw3lAwwoGtEUGKcyyBTudowUL1gETHf3g==",
+      "distSha256": "3106b0f8ed4cea35e86b54a03c6dcab42efe31a87038140cf4ba801446248076",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-eventbus-cache",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-nEFnGUlGnObRHTVpeNY/DR3IcR+87EDcU/rMWNT3xfI33SENsRLJ6oul7axT1yXwfYBwJhYKJ3n59XYDUYCqfw==",
+      "distSha256": "a3a02b68268376a2739ec148e22d80f7ebe632008fd8760f936448f945e9e53f",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-kblabs-gateway",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-1rpIS6vOHFIiRr5/y98+CHSoE2OUxoLxXVPa2lZiklvce6ZtH3P3zw+Or4bes2RwwnC1OD1sBPGP/2EOYjPu5Q==",
+      "distSha256": "e5be46d0e2f98e52ec8340d95901226e9b094843bed5950149c9a50cf79036fa",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-fs",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-GdmLid7NlC3qb4PhwDRO4YVJdybOsdBhiobw6odm8ND4VXP9PbdiXwjOKzVwcT2kLy0Ha7u61q2vMw8X61RnjA==",
+      "distSha256": "a9d66e49e10f9d8d13353af19784470b37570cc57cb26908f7f15fb7f71063cf",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-log-document",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-leJZgY87364ODeeKIyzHgkhi9dH6Q9yQ4uimFI49C9/XwQYTfOzYJkEQ8OgukUnAsuyJmWD+mYyVhy7YCcgDjQ==",
+      "distSha256": "e8ee2a645eb866ae8499c84a5a7f9d5dc2dee67f16e74455e8d7cef20261e972",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-log-ringbuffer",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-3hlBmLb2DxJBNFAJkE7y4KGoyExUS45MjuTHec+UncBIKeRQ9WwS0RGzoWVyDcxWqYhcVq3xFymgqxrfvzEdsg==",
+      "distSha256": "6599e6e70b2b58ed7ebede8a546f8d161d6e54b90fe4a44dbd13e10006ded32e",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-mongodb",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-6s4Aq1+hTiuK0k+ar90ld5mp3zFHHLaJJBT6wr9Fm8HmChpyd+uLb8Gf8ZJA7l5IKpJJ2T361i+BQF15w5DD0g==",
+      "distSha256": "92d2ff3cb94689d52bf2f341602ec9c065cc4325c93f79c97f8c43763650a148",
+      "contentScope": "dist",
+      "package": "@kb-labs/notifier-router",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-ERt6/RXKv7aDs/7Uy5qEV+mL94ll3QX4jMzwGuDC2PUl+SFaApxGoHBvuMtcCnXe0gimjmMQRAyMIEXvd9ZhcA==",
+      "distSha256": "9b55536e279ff646cb501ecac74b317391ca5abc5a6fa2ea0f58ef9dc8bdb888",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-openai",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-S2PaLj21vyjrzaEx1npuOh9S5yIj9eQu2oVQ4dBTmhsUvAtrfL1St8ObQvq4Os7/+pN3L0Qm3ziFIF9s8r8frw==",
+      "distSha256": "8b0f879d523c402afde55fbd13f9f308aa8cd4e57b75018c51cbe9eaa73b86ab",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-pino",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-BMkkQ/03o0alHjMwj5aZl/91zC30AMNs/TxqkGy0k+k4pPHvyO5ghIHmyGpdBC7elRt5AhfKFwOei7D+eA8Aew==",
+      "distSha256": "bd581fd3de08ec38ac4557d0646d6c5864a1731e634478d71bc303750277c614",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-qdrant",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Sx4oU1LV09KfMlvkcTD/XrsBb7ZT+r8zqfOnArfjhbMYUKn43ZC3DyOivQnR8KglQY/XQaMnis63djyddL7e1g==",
+      "distSha256": "a18937fe7d097ff6aadc38d1d9bd0507e043194109ccb6c488e7d0e6fc65f748",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-redis",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-K+izVX1CmD3py3Nlw26XnYH+L78fjbBuM/Jhq8iMULlOQ/QNduPIV6RrJJ5lUjf4qac/RUMPcnr+FWwyzjAozQ==",
+      "distSha256": "aed17384b5fc7732d172671b1c3764b251d1b9d28ac9ad65ddf9323fcfb4c929",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-s3",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-WWcnuG5Rn2UbMwTal/Zqb7mC19b64eXD9A3X1/DA4WBBQ63FnbAu0p3dXHmDTA3T9SPfE9atLbgwR+kZVkaMgw==",
+      "distSha256": "f20e384ba9e221a4c6770816bb657d3c85e0b53d89da2d49f7c2ecc85cd87abd",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-service-transport-http",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-tmdQ7xJAZglq4BWNgj5ByRKKYtzpDKvbIJ7+/j7nLbjCjPjyK2NIkaz0Qb3mLN0Dz7sbmG0+TO5Gp8B4egLXlA==",
+      "distSha256": "54642a6265afda5a6f187acba68f28911567d034511f54d70ce14b447e393d23",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-snapshot-localfs",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-MwWlmSRg8ds2jCu97X4berkxABfxOgqeANaAhBfcN+lMLm1osxO9PrFosTq3AuXS900QYZbpQV/LtYWadj5reg==",
+      "distSha256": "b9eb25af5acff7c43f59257751e4245d463ab2499e17974a97e3ff3ee29d1269",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-sqlite",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-2FgycHs464HsxLVoUGyNxMlaj2OuD6qizcAEGzFm3PfjhdgqynAsLi6X6VEMv5N3vZvvpnqH6M3N/6WEcdyQjw==",
+      "distSha256": "955e88438dd573cc5774102c62451526572639703bd84bb40d2e0601787301b3",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-state-broker",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-0XUQgdSKK479gIaz9wqOtWkLwXw7ofO5f2K9/15rqikWL6PEYXzyUucP39jMr9TqRsTyKiSJ4sU/vpEmPTiKcw==",
+      "distSha256": "1f46ba0de79f8d87ae386b467d8fdea01c61a318ab0bf9d3bc294bafae24c6c9",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-telegram",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-M7kaG64XQBCWQkv/P3Be1D8wkgmTQafu2mK/Aq3NiLhMKTMgPxViwit2E7ND9IEwpZDQkYqXFWnGsFaPudnaaw==",
+      "distSha256": "7e2db046ad6b4ccbcf1a6c06273f86d6a7cc2e01c2f330590da11537567189ab",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-vibeproxy",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-T9tGKc0+iBoWyOsDlKzAeaLc+YIon+SsKf8ZDNDuU2WAlkePhL8R2hA9M7c6s0B3Wce2KG8brQe7J1dxo+6Z3A==",
+      "distSha256": "ba99b2414f7b03e05ac006ded9097c8df30f7434a3299bcc0ffda9a450406452",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-voyage-ai",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Tsp4MWmj0PXgetMgM3r/ApkxRSVkUE9o8Q+7etdgzypAX+unYy7np1Xge/hobQisaizXRhUpkT/EQQqUIkfAlQ==",
+      "distSha256": "91856ae4fb9abc3f92aa894ea628ae7d8aa963d0e153bcc9e1c4073e48e44c9b",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-workspace-agent",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-LgALuF5CQ9tBDHSb3Me2Ic42TL/jFFGnAp8ZcynKvdxIDszbCF0qJXS4I5K1eOxfGBSafhZAJcr71jJ7PQuaNg==",
+      "distSha256": "2abb798d078aa9ecfffda68600e6cece97b13f14cbaff8d11fb8e7b885089f64",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-workspace-localfs",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-lPDoBpvl/IBLQTRlVDjcPnl78E92KH71Gxv1zP+vs4jhXLRl1rpu+okcbflMaB26Eff+7sKvO8WdA6l5KDc18g==",
+      "distSha256": "47cf31255d2d99f29daa47c66188fe48e755aeae05ab785f444ba0e8c04a5f60",
+      "contentScope": "dist",
+      "package": "@kb-labs/adapters-workspace-worktree",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Rw3qr3HBEygjGIVkctZOroBMGUP6VOkbrOgd37T1G/OyzNUQw6jd8IS6guozjZrZhpEzPGui7c+0D1TzkoReoA==",
+      "distSha256": "c6547202383ecb9fbdcb78f6ac141f05481691a7d816b23842d85720d9b6ca88",
+      "contentScope": "dist",
+      "package": "@kb-labs/cli-bin",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-TTN1pwnf61Dtv6mNCd5+WbpqPnbdv7uckSL4FXVIN5TzeZkdGE7OYQnna6P374AFmUBH5qSXC/Iw4cVXKVR1Vg==",
+      "distSha256": "514793d5387b65c8b131a1bd9ef25ca9e387eed029ca3900192a3a54b09828a5",
+      "contentScope": "dist",
+      "package": "@kb-labs/cli-commands",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-x8BTToT9QmqNfXaZ99eP2JntG/j7uPuMOST24ZZ3kXGwYrf9FOmxjwq7wsGN9Rdt3cAEKljq3LOWMaB0uImJqw==",
+      "distSha256": "c15bb78d6b60bed4eb437cc2624a06986a3303772c40aa4ba447db92063ccf6c",
+      "contentScope": "dist",
+      "package": "@kb-labs/cli-contracts",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-SlQCtPbXOISXd1Uy8/06eCFFqDs344ThY9PdcW4aidetv7NzRxhcRWxZ6AB3JmqFPACOe1j7sWJpQo4VDCSNrA==",
+      "distSha256": "563c7f0f2d9affd190b7e171a124976639ca704a77f0b4560f6150eaed214675",
+      "contentScope": "dist",
+      "package": "@kb-labs/cli-runtime",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-8uBc8c3+fS2WhLkl9KJakRWQSyzACOtRsPByIQlBOT6sRVqrvkq9p6gOb/A9VKbI2l8PV2EDj6DkfjG1gkOezw==",
+      "distSha256": "47f89cd84b1cb5fafd1bdf84ee47d5e3f008e23f16b4ba1cfd9f036e184ed430",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-bundle",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-BIUuxZyDdLFvXFo1MUpsf1wmI1ieP0EPKHFm6pYmdfwzxhpO9z4XkK+8AVBQfc5Prs8Ck/OW3CzfJZnFqaTIYg==",
+      "distSha256": "82259103fc6d487e09333dc43895b42dce83c8649604409af8c0f0290c1f5ef9",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-config",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-QYe0nmFO+0TJoFwMiEFVDJtUNkGVU1qFwezS5LThqSouBaTgH6T5O/MvXCB1hOEUuphv18LM8OjbJ0mWF2SJqw==",
+      "distSha256": "21c29bffc88ee2f12c1314acf3922ec572d88651b4080583136e0ad491fd0570",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-contracts",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Uib3YhaWqzd3GUkGa/4bodl4gaIGr1Wnf1HeA9QD5sEKHbf7knv3/DzaFx11lknur2Tw8oDPXeVvaHGR0fIdFg==",
+      "distSha256": "5a88387049c9954c6f76ae810a8ff7eb83f112f725239e2a73dc6beded53aabd",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-discovery",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-yodj1DPM70LYsHyg8wxgmsk2LjZpFb+eh4wJLLbalS5Ned/GohOCx2uG24wd7DbmasPtNqrAvWsk/koYcH8eoQ==",
+      "distSha256": "a1484aaab735e5fce111ac5476b36a83286d63064bc663e001d6c95d8f2d5593",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-extension-store",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-qr220VrJEfLuCHAS929Q3TLJtuc9Ys0JQZY1G8YmJ89AtIzM91xaiuDGOy/U3KGiLnTjHgxQmgAgBuqbkedHSQ==",
+      "distSha256": "10327513dbabc19d33c8ef9bfe8d5c15501600202cf4939c6629ba3ccf9ed4a0",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-ipc",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-E3P2FQZj3EXlpbXnWWZSD2uOkGSLznGufgVuEKPYEqDYuCgfJokF8GCGyxF0qHfJYIB0qPBH0D5Z/khyungOKg==",
+      "distSha256": "7a89ee7f425ba1b78c02058b995dadb38d501e670ada35d0e976c0b95abdd9fb",
+      "contentScope": "dist",
+      "package": "@kb-labs/llm-router",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-YTnezkFkGj2cot0HeA0Vc9YvtwvN+OYQ0BwY78TVGFwb29HHjYVb4AmG0se4wLqTzIuMF8RKX5YIlXJTFyf3MA==",
+      "distSha256": "12301bd7a970b8c2cc5e2d4eafc264a0c88dc71354864199191adaeae700c6b5",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-platform",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-wAorZhB4GYKEGOZgrHkxIFK7iT2ad9ufRjz8bn5RUYWumnrMyl/V5FXXy37FYiXL2/d0L+AyJakJjkA4hPOxfA==",
+      "distSha256": "65293ab4966277a7cc48e527873fe585ec76cdd7cb623dc0240c2d902e68d6c4",
+      "contentScope": "dist",
+      "package": "@kb-labs/plugin-contracts",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-5E6vN9PreaRtJy5kAKpctvQJS+juW3grba5r7qq2hRwVWTZBj3ZTRviLHEhrzGNup/zLjV2h+Wj5d939Tz8aew==",
+      "distSha256": "806f0969299cafe7ec420c4846365d65a9c4e2a8178460e6e4d8042340d250d5",
+      "contentScope": "dist",
+      "package": "@kb-labs/plugin-execution",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-ujfpeDOODubOjWTFWbSUCP2A2vn1j/D39h0LOY++2pRDRWVq7ExghBYUGv1Vu+/MwzgCeDJVC4kCRaGZZecoPg==",
+      "distSha256": "08b397fcafdca31e9450b6b4cf8d58654c872d13cb36e8fe9667ed0d3e3acd16",
+      "contentScope": "dist",
+      "package": "@kb-labs/plugin-execution-factory",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-+jWmQHrDXwEFlR2crGVH2OqjzsFHLSvWyUFHTW8/L4V2Aawg2UStskloPUm8ucGoVBeA/69tTLFiORYZwfrxsw==",
+      "distSha256": "e801cd40d900dea9b9290776d9587894a3f94cbe4406729848c88a19631e4d98",
+      "contentScope": "dist",
+      "package": "@kb-labs/plugin-runtime",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-PUtTkZ93Av1sz/L4f0DvNP20cAKJCNJTDZLKxV1mYYgVPDTItFT24w6shI5PfM6F5k4pQy4udIUSkUcvFV9hZQ==",
+      "distSha256": "19d7d5f8f8e77ff40a393b0b6b02323129a1393adc168612fd47a9eb34c8b4bb",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-policy",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-ajgFjn0vgWWm8oRY4npwjRH6Sn+2pUMuHtvNBmxngNCqqPy0XU12+o5rj7R1ZGE9iWjhbB6ZiPKP16fotVqU/Q==",
+      "distSha256": "bd7362e14777fd8e63f55c7352bfaf61936016bcf52a8e4e6a305266e1774215",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-project-registry",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-cEVMLOHY5YBxGQAGnjddQ5IeDnQXPv9s1uUebhVzC+tL7s4AeDvrhmObFG18y4E14pkGGyAUxvrZPtKbHHitCQ==",
+      "distSha256": "8bc20e2b056287f465cee2ab1126495698dedb38585e9e5b01aa081b363de216",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-registry",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-dwJMMMKaoHn+9t+JlpKBqFcicbChABnY/qoOFGDfpxqn/pyii2VN6glVY7pGVG4QhSP3KDevwQ3M+C55so1SNw==",
+      "distSha256": "c2e1bf7ef39e9d427ca7e07970f4ec53e5bf10a416e743101ab56385a296a28e",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-resource-broker",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-LgFUcr0nXqvub8idh10pCXQdyMuW6mkUG/zoSjQYj4MNRrvGn16L2g4Q1q+oyeIz1KEIyyj9aBHjRpTA+mtaFA==",
+      "distSha256": "c04e9e27c7e874df656a9efdea61d4bf72f24423f071d97c80ef7dee9fd23db0",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-retry",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-wXdrZuLMupyEpe9mYzId+a7180gV6mwOhwrzZ2VYFoGBOOcEe6dCu2Jhm/yDDMDkJkTLMN2KJ/B4xAWa35RJvw==",
+      "distSha256": "2411ac5fad0f2376e048fab2b96384bbbcf0b60b4d142c740446c35c391ad4a9",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-runtime",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-34n+bSQksGdHlbyRndacP6JuvTmwLd9FCOtWm/vpprTpLp25yJA7XvSqjpQH8HikJZnE4tLnShxQVJhM5VB6oA==",
+      "distSha256": "7e009a3714fcca149e409e97b387023cb0abcae0279679cc0a320b3fe276fdf6",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-sandbox",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Oy7OZLBTu/pt+xQvOVQyL9lLpksO5/jP6GPxWI+3WuzGkyjTAf8Lk79eQLdbsSQ2n+nEoqDvzApP4nG7OoxSCQ==",
+      "distSha256": "bee6f22358643185b263938e45a3b062cb3fafbfa2079f28507874db831338c8",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-state-broker",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-g+SAyvMACr4hnr1qdt8pvoqCU5ObL0DX0EwmH/aCMJTXDTtDl5XO54WQGRANa5xBcgHI1cacpRdSVz8zWimDmg==",
+      "distSha256": "f88be2800defba008752031691477d22b515d00e14b528df20696f80e774304e",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-sys",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-C6/9s0X0hjRG2Zl+d0ZFG+rXrOIIGEW0ly0YuohUP+weLH18YOu2g/eTO+r1k3Z/m18jNcwgfhYpjMMANgLvAg==",
+      "distSha256": "f2a1e8764be9970088c2b71c6396fe04cf875ed4737e0c174e373fb944ec5830",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-tenant",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-nE/yoc3CwQeQmzwSmP7AG4v2i01kACg+MG3QJEktfOwiuGgzFmBKjLx+R/2nIp41KL90DWBICa2WkIvhxaXjig==",
+      "distSha256": "ce42918ed2574a1b37967eefc3a391465297ea3eea8b8a2ecb8fff89d3cd4e7f",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-types",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-hXzmkoFHdzzDyRZBo4dBBES1CVCkZmQ65fgQ8EAq8LF3wZlQPZ3g6eyx9omRdnTyAWEFczhxyOqQQiobBVnZUQ==",
+      "distSha256": "be7e38050ff483bd209177c95e1c84a064354fa71b24116292c4fb6b56061b9a",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-workspace",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-C/uehP6HPrkEwOZnK2fM9v2iSymIPrDPwKQaImlIbvP515QHR7q1Z9pA2x2kmZ6J33e+xFWWf6RekJIeJ5bWvg==",
+      "distSha256": "",
+      "contentScope": "package",
+      "packageSha256": "cd36774e040a949cf69b713da50360f2072d875df5c1b26ecb8122df2d577630",
+      "package": "@kb-labs/devkit",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-o1zwgwrozQ17cNzDiYLBIqfjNlOl/mDaR0yDLC6r3Tzr4roJ/ve0B8DEooYzw3qSjzxGU1SohnJomTkV330Kpg==",
+      "distSha256": "391da076035fe569d1f95422a664c4d3205b59a003647bd084917a5ac615c722",
+      "contentScope": "dist",
+      "package": "@kb-labs/agents",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-QpiDjKGJbuC/nLu9upvRcQQ8o3ylWYx/h9n6gscH1W4qYbXvwGrbtWEHFjNgntK9T98IhsUyvvx1lFyiaVmomQ==",
+      "distSha256": "19d35774b6843d5b8465aea256bbf356c55468eae0f577d96d5fce5c0452cddd",
+      "contentScope": "dist",
+      "package": "@kb-labs/clickup",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-bO4p60oyjYjl+uyboXAYPWls6aSVpu5wjmPguX8MMYcUVs/Cr2BtKWFZqbiM7oIinnU9hrt4rHicres0kATI0w==",
+      "distSha256": "0f5a8062b5a6eba5e87b742489d876bb5269adb9d950abfd15a15578dd44fb6b",
+      "contentScope": "dist",
+      "package": "@kb-labs/commit",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-CZ6r6dHBSKeAYP/FB9SyH0Yq4k4L29lQrnjwkeIm8wD4+7IzUGE0Lii8OjJj5ZK4FyW4LPa2FMluPwuC/fUIBg==",
+      "distSha256": "8046a2c4305e24a27bbbe744733d14dfb05de0e057420f6a12cbf05e8c79969a",
+      "contentScope": "dist",
+      "package": "@kb-labs/devlink",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-br6WqPtn0NJ7EeAkqtjeDhWqChoiIT7s05jGSGuCDxvQ5JexSW1kSuI4oeZitW1usthgzEnIDQgJI5CjbIVG+Q==",
+      "distSha256": "5d675786368af3ab1b8f89868737579dcf67504875456983375a9d0338658de8",
+      "contentScope": "dist",
+      "package": "@kb-labs/github",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-NCQEi5y6aVryA1ugzR5LX29017hSyGQoD8hp6qCM5mfmP24uG639DrMAqp94zkcusEGBOD188Z4FXtUEgUF9Vg==",
+      "distSha256": "0d773b592f95bdfbb65333d02dd23dd72c3feb83f17ca351e27a18e69caff863",
+      "contentScope": "dist",
+      "package": "@kb-labs/inbox",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-XsH7ib/Q4Qm2k6CTz57lWU1sPQvU5fsla53K+ZLzvx490bw8FDet5l8344WdcjOt2Aj4iXCB0NtePUaaAzMFLw==",
+      "distSha256": "55019233eab517caecef7956b55d31d90075f29a37a2619b173fea501b3578cd",
+      "contentScope": "dist",
+      "package": "@kb-labs/infra-worker",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-KEWn2zNjrqQ/2IKtzSJF/94fcwYdOs9aELD+afiLPQq6aWFSTGvLg/vTBhZ7iMGZo85YC4i4P1G5foFgogH+Ng==",
+      "distSha256": "aa37fd73a61d86b5878ee949dbe8fed07b9c103b8390df84ae091642c5471fc6",
+      "contentScope": "dist",
+      "package": "@kb-labs/marketplace-registry",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-IpiT39sEODjzCr/yjcjYHXenq0qcdXcRcbF0BZ06kzMJoSPykhqQDpnzRZ63Ua+oCkwgRyWgbpwOSRxa3aR5+g==",
+      "distSha256": "429c4d37dd9fc82cca3f94f2053efbf3e814cea4df3b03e1eb587d7d250c5a29",
+      "contentScope": "dist",
+      "package": "@kb-labs/mind",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-N1fS4w1dySobubNjLLlgP+8FfqcN4J/5+rrXrsDnXaLdx19xI7VlSHbweuXG34ku8vdUg7Se58um1axZhXJbmw==",
+      "distSha256": "f903a4b6565efe742e5765ee5b67d020c2436b0349d5347552947f38c8715757",
+      "contentScope": "dist",
+      "package": "@kb-labs/qa",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-w72/kbZ9GLXRSXrY/J5wkzyS0Sl9H4aPyB0oCHbL5uFUt6oJ+JQwb/Ug9IqeRpQ8HNtxsih4+7IhzBgjlba+dA==",
+      "distSha256": "a3d58928e24bdd5f902410eeaef2a502e50733c469c68ffbde1325893d352d74",
+      "contentScope": "dist",
+      "package": "@kb-labs/quality",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-L/+ND0cFmXoakbG/wuzy1OKKYfC98er9Iy6GTNXL36isfVyIukaPyoe+gcC0zBbZpuenGzM14fUyUQLdVVxrqw==",
+      "distSha256": "afd72aa1289bbcc18e4a724a5fc447d66b2515cb407190a6d715dc4b30b4c339",
+      "contentScope": "dist",
+      "package": "@kb-labs/release",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Sdvbf6JT2ZdKYZaGu80D4ZBwvMkDS+YiamuKbikWmyVqbQofIfVXuY1AWbDqbeCXDWdgeUKY6PGRc65MPJPRDQ==",
+      "distSha256": "e95aa4310ca9f89d3acd40162aa15eabac20324ee9dfcc05d625d802ac16cd1a",
+      "contentScope": "dist",
+      "package": "@kb-labs/review",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-jQtkmKRhsddDADm52CwrsarQQJByBzNgOo5CkRZNA7Nd1Niq3B6qbhCkciHsOlLNAllHdzAMAkzi572tu/eFNA==",
+      "distSha256": "1fa28c2c04d8d86b5e38adb8c75b643928ca95ed275af4f273e823d5b47d8036",
+      "contentScope": "dist",
+      "package": "@kb-labs/site-tools",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-0kIAtiE+/LPOPp+ORiCjfeTCKpCC/9gbHeY7jmEIu7g81qzcJnKg6BITFWVgQ4+RGPDfpKLYYTbCMOWH8EpjmA==",
+      "distSha256": "9181734f5c1dcd1fe492d725d3085ac5aa2b4608bb45c9ac4559ddd7650b59d2",
+      "contentScope": "dist",
+      "package": "@kb-labs/steward",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-ukPVdjeqADo+rURlbi3jrsVyZbCMQmJPqe+fibvs3EJWY+57DpDZ7WWJct/W8+ZVX5HySdM2lPgx5UMOdAPYmw==",
+      "distSha256": "3557d7a347bf05c87235acc68848abea5f7acc3d03b0c6ba1e875181c9ac0eac",
+      "contentScope": "dist",
+      "package": "@kb-labs/viewer",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-YezXNbjs9Z002PNbhy218LUKHozNYI5yNCSauz1Vz/NgSYdwT0NLNRjXD+LE1rpXDppXPl4/RTbxkNholHDIZA==",
+      "distSha256": "b0a06e2bcfc6916added5d324c8e9a11288aec250b6d8f16df6641b4a21656c9",
+      "contentScope": "dist",
+      "package": "@kb-labs/sdk",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Ha7YHokn3xIACbg/0fZTpFHb6XtaAk6x4OKC0aEa1KJMeVgSNfCKoBMjFr+3qgHJpZ1ZCVfy6PkCP7ap32oxyQ==",
+      "distSha256": "0deae3d3397e037b2bee604becbd1be5953a4735e2813aa57224358ee2e0adf8",
+      "contentScope": "dist",
+      "package": "@kb-labs/platform-client",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-tvIJH6lkb2Q1c8C0OX1LhOPcO5JeyokYLJhDH7XDolcZjV1sM5rNdvjffLNGW2Spf8VveUCV3fxI3a8JhpGj+Q==",
+      "distSha256": "07e6536b21a48a7ca2a2545118a3ed505ae8b982f508967c70aa45873773342b",
+      "contentScope": "dist",
+      "package": "@kb-labs/shared-cli-ui",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-fcMNWmHnu9uuDnc3VMl65e3KlrwXfUOdTFayB4dW7v74Droo5Iye1c/c7Sh386crd9mtFHEEFykQxm+UeiaV9Q==",
+      "distSha256": "643ff3f74b2d1b779d186978aa78dc05144bb51c3195114c63e6426c088aa1ae",
+      "contentScope": "dist",
+      "package": "@kb-labs/shared-command-kit",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-h0R7pEOWbaCCx//XHMXgEnyCGQRTMWPb2owEMHUTg/hmv/BkUjeGuYyo7EYlr3v1RXWXLblgJHTH2PoaLXBQEg==",
+      "distSha256": "b1cec76df30d03bc874c26deef7117f9063516c8330a0a06619f0b2a673c6930",
+      "contentScope": "dist",
+      "package": "@kb-labs/shared-daemon",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-gQQgFLyTboglNhOglezoaBQ87dCt+JUSWTG22tGc/g5mFxuHAImWMWqo7Cx8oF9NhL23ljj+Bo372jtjzjSddQ==",
+      "distSha256": "dd9be3720782d16e2e0248995ca8148982466a2ac8c7db422e37085777eb166b",
+      "contentScope": "dist",
+      "package": "@kb-labs/shared-http",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-RJl4xSmlUAFcTYD/G+ws53BWyAJi5oABSOVsGzGffZIbkE+gBg3IHDEjRMNL0tUODeKefUQahap8PWqBJUq3ug==",
+      "distSha256": "1af933a4c1ed2e855cb3e1201515ac8ab52862d3707187b932f29b65ba1c3f01",
+      "contentScope": "dist",
+      "package": "@kb-labs/perm-presets",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-wZk1L2/TrM89JK5Nx0kds3Dq1kjrrbGTfgiVwCPP32pLH28MaccvqTeJ7iVF9Emy72dGI3FYEr+MJGABiJOakA==",
+      "distSha256": "d1311a07145eb4c5f1f683bce8a4823e78d83970f610299976cb0ffc513e0486",
+      "contentScope": "dist",
+      "package": "@kb-labs/shared-testing",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-FC1l70d1cighywtwCmqDXfDVWe23dgzxgiYcrwh7+WE/lf/ZCDWkF8OXXZjPThnRmbFJa37pl/ZoM/bt1hif+w==",
+      "distSha256": "f161d5c05fdd036ce91ddde144d17fa1b64902679fc698fc2a47d1853022985e",
+      "contentScope": "dist",
+      "package": "@kb-labs/shared-testing-e2e",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-v8HPt9ES5oWvA2U1TrSUZfZ0xy3ehE57V+JO0tSkRatfLSJGvdJJsNUGVViY+qPJPqvfhl+4xDCNIhiZkuHC1w==",
+      "distSha256": "0450401ed6bad2b8d68e1879d194443b5e1576fca99a85914f642fb513b981f6",
+      "contentScope": "dist",
+      "package": "@kb-labs/shared-testing-platform",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-VAlQAZt4bkD9a4iewbB5C69PGHcvZBqwNJA6h6QgKd0627eCuvelGAz3qWt/egLn5yQeg+4jChhTGPueZ12H/g==",
+      "distSha256": "31312e819c83861ab86f97e76f4bcbb9d100d3607b132b3dcff9c4b48d12640f",
+      "contentScope": "dist",
+      "package": "@kb-labs/shared-tool-kit",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-UwN1Na3EgRGif6mKyqviLHymLKbaTFFsaTyrb9iWtwfR+JNzOW7k6VcquBkUYot5sBawWl8NFFMrhvR2HTAWvg==",
+      "distSha256": "e6052b33444e786222267019d15cb6db9d2ebfedd36c227d08b2e90ed4afef6c",
+      "contentScope": "dist",
+      "package": "@kb-labs/studio-app",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Nm8sEcXXxNcuWl/dqlB/EXOoXtf6IW7R4kgNh/HUgWrtLwq+X9sGlaJBk/kKPsRt2GdI9JNHrrq7dnAF4heeqA==",
+      "distSha256": "df01cd1cddec16d6e80d4d7ddc84295492370748de0ea1d88ed880d738a3fa44",
+      "contentScope": "dist",
+      "package": "@kb-labs/studio-data-client",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Sw2iwZzVz5szIBfr8V8FVH2xtRd/m81OpfwSBKWFS77TcZ56U9mivvDQhvAbn/D4kqD0CNBaHG6+GbGrv1iiNQ==",
+      "distSha256": "e10111d4f786e4c22440a285d13924815338433b998656edbb31a5564e574e60",
+      "contentScope": "dist",
+      "package": "@kb-labs/studio-devtools",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-h9TezAEvrKcSwyOcQAJ8zSzV8ATxrTJa+/IP9Q7XWi2ICcJZubh1QMdqt/GNderexkn5dNWAMoZLC5rp/cZQ5A==",
+      "distSha256": "3bdb30609aa553c6467f46256351a4a0baeeac57d9ebb2e904b64959c6cca86c",
+      "contentScope": "dist",
+      "package": "@kb-labs/studio-event-bus",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-SOPYtx7k8yPcfEySPtCkgrCoNM7ZC8ZLTQTpf2di+FUM2sqyhAELVj34KkODSfMoxGdgbe3HX1vM95l1gcLd4w==",
+      "distSha256": "38e945e5242b922afd9d4b9fbcee527754dba81728bdb5bbb0ded426f4b5233e",
+      "contentScope": "dist",
+      "package": "@kb-labs/studio-federation",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-97LHDS/cC/KkO78G4pJLNazLYRv8eZzVmUBndEGRkXJV6GiTqqEVMTSBurxEtRMp7uHKyWhgGrKtn2CAZOVhmg==",
+      "distSha256": "86d9164d8bd0a3543c169015fcc13a71401bfbdb9cf2fed9fdadec4526d57f2d",
+      "contentScope": "dist",
+      "package": "@kb-labs/studio-hooks",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-a+zuMMGNYLAvn3873mpnukUgHJ6qzSvIofBYEvOcuRMKTiYZIfBGam0Mv05OSYekPZ993BWXkfDzcUKFa3358A==",
+      "distSha256": "523eda75ce3f35980a7ecbe6eb35ebf6e1a048637036553aafa884faf532c182",
+      "contentScope": "dist",
+      "package": "@kb-labs/studio-plugin-tools",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-QKRcQFg3h60dPBqY7B3cBKCUhsQ8U3/N7ZpJIk4CTP4+5eoTqIYtvprUFQSlQdx7lGlQxD7z7CBLGexoPXSMFw==",
+      "distSha256": "732bb4ae91bc3a4076be14ce2e5cc180433e9fca64647fc9a42a4f0adf00a01c",
+      "contentScope": "dist",
+      "package": "@kb-labs/studio-ui-core",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-GzWJ97p956hlERhn54n29tRDOa9c0mQ4eWpyMixkPiqSvlS9Bh/PtaptNUEWo+QxUTeXJVZ3DbSfXw7ZqQyV0g==",
+      "distSha256": "6aa3ee218f81d5f326863706410799b405ffe777f8bff4378fd71614555bf9b6",
+      "contentScope": "dist",
+      "package": "@kb-labs/studio-ui-kit",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-2SoSOQjoPT/v7GjOtFVfKJv9TK2iY4wf18pYqmqAxdKHehnFFKj0oPqC5b5/b3ccSlFWDE+RoBbzchJKnHjfIg==",
+      "distSha256": "1a11437adbd64cf8aa28bd1ff853818a3c47dc2794d27ddf34b936b45f345146",
+      "contentScope": "dist",
+      "package": "@kb-labs/scaffold-contracts",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-M8LU6+6RAVs3ZIbs3eSZmisKZmSn/oX/wrX6VdxCecP4WGBCOeN15yLe6zUKPlsoav8kWEaZjapT47+DrLOu4Q==",
+      "distSha256": "846590fee644cea811ff01b80605678bef5deaeeec69ab7f8328e1298306f64a",
+      "contentScope": "dist",
+      "package": "@kb-labs/scaffold-core",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-QdCBX85GFxUk5zeKGWfuWp9W2jYwK6Rg4Q7yiaRt0hTRo6DwnXxBg28eD7SEP0fQGg9jk3nEOJYUZmmXJNaBsw==",
+      "distSha256": "60f9dbeb61955f548bfac2d58b058ff62de7b7133ccb8075114ea4856e68a8d4",
+      "contentScope": "dist",
+      "package": "@kb-labs/scaffold",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-HwCN+ZLhhLslkrODmRcKGJVHF8DGXbPyXPVoQwRoaR3HXAxnOeulae9r6h22usnAConxo8zNQyvZy2NngqTd9Q==",
+      "distSha256": "a3d4808b4572ea3e966fea08ce5edc1ec03280880e8825bf0e767ad74e9a661b",
+      "contentScope": "dist",
+      "package": "@kb-labs/host-agent-contracts",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-rDl/uW4bk4KbCUnLVDNzQ2yDMix0rduECzOT2mnCgjL5RYv1fdr3KL3HQxG8RK8LWWJHVLuyyVy93nyQSeeObg==",
+      "distSha256": "406940cd582b5b4bf2a608e3fbe3d94a71a62e7fb1a516df9d990e58540b0d95",
+      "contentScope": "dist",
+      "package": "@kb-labs/host-agent-core",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-T8RAWE8y4sTGj67Cx5ktCfcVe4Lcydri9Mju0JKhSDGBRTCfLpTrXqe/9KVD6qZDY/iATuhSlvnnOglVoTyNIA==",
+      "distSha256": "77cccb23a8aabb00ca458d48f3f9b669f0332d6ca6d5397a99660c38817eefb6",
+      "contentScope": "dist",
+      "package": "@kb-labs/gateway-app",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-cJnnnCr074G8SrakTJUde6B6Q8iJGnrDaCXC97+THtrn/phXFwETJMtw550EPF9dXZHF/QF7idFzsoVZ9zbcyw==",
+      "distSha256": "89f9d90080f1883c51be28fb87b605fa30d6cdd1133e35a0e9011180df4c861e",
+      "contentScope": "dist",
+      "package": "@kb-labs/gateway-auth",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Kx5JxKJDqbTH1aw4Kp9NdmMrbS54rS5s3Ss49FaDzVt8fjasAKb7xi5EuW/DcVqnUzYnLxEgeCy9hHmeMbDf4g==",
+      "distSha256": "18d28b32ded40703df2510009217d66b22af20adcb2a5d77f25284b0147c637d",
+      "contentScope": "dist",
+      "package": "@kb-labs/gateway-contracts",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-gw2/+FYPWgT8als4/7yNufrSD226EDhgOBtRVcQ945WXZT+toJOPsZMmfKzMcX3Ac7d9biqQM3J43VMLKRoj5w==",
+      "distSha256": "6d8dd45988d9711b8c2845e30be876745f441a50766447e390da660394625f35",
+      "contentScope": "dist",
+      "package": "@kb-labs/gateway-core",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-4frVS3Eyem7CX6AUJKM/crZqixlrsrxbjc8BsDdD5KbodS5ckLY/mc6+8Xb+nVqonhL/NGUHp6BNjN0wRDuMTQ==",
+      "distSha256": "e4a1119ee7330e21289e0d9145d51cac3edd0f1c33fdbaa335b185982dc9a498",
+      "contentScope": "dist",
+      "package": "@kb-labs/gateway-runtime-server",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-KQjE6XzqRqmASDUdra5Hp+ovVgQ7bUokekiJdeik2ph55riYbZLzSwvFCQyykYM2H0ccLtBzwSOe9AX/dPkk1Q==",
+      "distSha256": "4a708ae16b2133fedecb54bba4f796d59ebe94e77dfba18144ab52e070462b44",
+      "contentScope": "dist",
+      "package": "@kb-labs/host-app",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-fhC50totbRAJ8c9cKOzQZJW4vX/foIzhCXWbjrD4MfWnht8LRfBxX0qn1W4Jy3pf79uADzmI4oT6gLJglGCE/w==",
+      "distSha256": "f8d60d50238adbe9633aa2cde879b769333d73dc03df7f93bd9962ba1588c90e",
+      "contentScope": "dist",
+      "package": "@kb-labs/host-agent-app",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-kj+MK0ixvznZiNM9OmBs55oKYsJ3iWXFRnwJnC6CMj+5437oZOLicevhKGqfU61F0qLK81gYXV+HMouXk53cxA==",
+      "distSha256": "5833bbe8ef99e45149ed26800a74d4ca94b564e0cdc2c61e9ef70aff87f19cde",
+      "contentScope": "dist",
+      "package": "@kb-labs/host-agent-client",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-TnwaKqXgJ9cX6nfmnGoE7OLoNdY66LakJ+K63ai6Et7sZMlQ59K+NU8WvFr7/0FpOe3BXuNRQGIAvOZ7RV4Qaw==",
+      "distSha256": "ff39e4539c5c43a41059c52ebf2cdd545ba7445425a5d5875111edc02fc74223",
+      "contentScope": "dist",
+      "package": "@kb-labs/host-agent-fs",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-n38eLT8R58/bom84SM8NoxscX0KmVdaSEI7rrrD7nAPtTdBlH/cPvI/XbPJdBw2oELDdviv0quidfKKjWaZLbg==",
+      "distSha256": "445a04d16307574823bf315c83131f25c20c79cff40cf8f430420c64d1f826d9",
+      "contentScope": "dist",
+      "package": "@kb-labs/host-agent-transport",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-GM4TU/W7autNomU3C8Z+P9UljZM5n0ukQvMwZlt8vHwClyTHdYBOW2OcJSsdx9h2mPbY7HsDDvxTmxonhCkNUA==",
+      "distSha256": "e4a9b01e6105a17d9c5b9025ecd2ca8e7ccba44c3e688aaec5c84fa760ab4003",
+      "contentScope": "dist",
+      "package": "@kb-labs/marketplace-app",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-O5+xVUk0EJHKp77nIPKJXl72kDPgm3plarF0DUwyQNUuW3fqESIa+ct1yKl/u7oRwAS4SFzaEjUse1vLND3HgA==",
+      "distSha256": "5afec3e229b69e8aa220168006fb024eaa06a6162aa9c3396e3a9f84eddffb0d",
+      "contentScope": "dist",
+      "package": "@kb-labs/marketplace-contracts",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-QyAFR3AkK7Y26DaHCaiZebUbZCJLYu2Lgzr25eATlDdAdDgq5QTzPgVVSsdjtCmT0n/Y1SxNU/SeinrDvNa9RA==",
+      "distSha256": "f2ce488ae85dbbafe5729be684c9cbb0af98bd58dd64d3669a9a279268c23453",
+      "contentScope": "dist",
+      "package": "@kb-labs/marketplace-api",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-p2qNyz91rLGIOyVK4y42qp1Gkp5EQd51HR7aHBOS8E+4p0yy1VZTEtmXWDcrOAH04aGptfwiXUgmGrFynDAmGQ==",
+      "distSha256": "9669f44cb7e4012282a78ae020988c2c1e1e5e6fc0fcf0bdac2c8dc6e6b63d98",
+      "contentScope": "dist",
+      "package": "@kb-labs/marketplace-core",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Bs7U0jJnoqK9dWtzEBRMUX07nttlMJEbrniaaVboiCefAogx8jzEPKtEX8LbZY3uWYAevZ12gd8AEPd10QACig==",
+      "distSha256": "7a30364789cf4037d3d79df8e64c89638100078199a2dea7c2da28b2ec3f908c",
+      "contentScope": "dist",
+      "package": "@kb-labs/marketplace-npm",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-rfYmIyHFUm5rxHs5UbeKtofpCVJW9PoPRvSxWcqA+s8fxKQJTFCvEJvocgGKEIWRI84dyMQUojO5ooSTWZHdfw==",
+      "distSha256": "8bd486e4e118c047108eece6b4d63978b6264e550403193afb032122c2d7e719",
+      "contentScope": "dist",
+      "package": "@kb-labs/marketplace-registry-api",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-oOFnz8qntQ3T1+SLw57YSEYzPSyYw9+XbodXgLr1EfXxJV90fapoEiXsod336kQ2P5Sh4BeYPoMqG0UASfgwbQ==",
+      "distSha256": "f59532402fb5fe1fa7b55402940c78627b77781d226812cc06a832b0840536af",
+      "contentScope": "dist",
+      "package": "@kb-labs/marketplace-registry-app",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-GjC2DXP61TqUx2kKTBuZlFfQLOvqNlSNqvuv5P5vD0UV2shR7LMzINZVn85nJ27Ki5aPkyOJu8VK/r3pI8g8iA==",
+      "distSha256": "4832f9a922e446c2430641a3754ecb05a8707d66c0885ce365249b1caf94e71a",
+      "contentScope": "dist",
+      "package": "@kb-labs/marketplace-registry-contracts",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Xp/s6RwAL4tAF2SMZDv5zwQN7/j7z7xnxHmCwh3R9tMaVLAMp0rsD3ohwDxl4nY6vPo+OVm0bjzveE4aLae/Pw==",
+      "distSha256": "47b14e5543645a5905deabad1e181476a1c3c9e81ad70753035109534dde4046",
+      "contentScope": "dist",
+      "package": "@kb-labs/marketplace-registry-core",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-9HMuJeaAMoMgFsx97tENrunIpa2VB2va49448/+BE2qUA1GaMM7Mkxdni5Y+gSVK3zKYwdgM/DNq6eIICeeS/Q==",
+      "distSha256": "11c8f1bbd1bbe24929b4fd19836a234a5f1684243c6eb58e8dd36959bc6baba6",
+      "contentScope": "dist",
+      "package": "@kb-labs/mcp-app",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-tH2mM4mRNQrwKZuTXTPmA5gNj+gi+Xo5RP6aNU1rLSzBUDg1hEdbwHcml+uynGCs2Qq5RxnJJf6aY3ZkPb6qGg==",
+      "distSha256": "8fc69a71250950fe8f990a3a3c6fc280c6e9ad76081c754bf8e0e1c92cd460b5",
+      "contentScope": "dist",
+      "package": "@kb-labs/project-runtime-app",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-ZjqjgnF0hg93X0r5Nip2SZE4NiUyCRk5RieMFxTf/LLKALFUOZ9UGv+5F/sHbi6YELjxEXy4aX8V06hteLGR2w==",
+      "distSha256": "84931618422612c11d0cb48ee67483bf7a1ef4357044ed800ed73611e690dcbd",
+      "contentScope": "dist",
+      "package": "@kb-labs/rest-api-app",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-b9hfwWNeREqgIPxK9tVvP1gLZIoeznOQEW1TvuifrAR7YP4XnotShxPFr0s7j/pcJswbB8TQLw69xrJiuI/RjQ==",
+      "distSha256": "76bfc723fec660b980e701dde590cf24b30ac3f8ab29f8b20ed4e5d69364217d",
+      "contentScope": "dist",
+      "package": "@kb-labs/rest-api-contracts",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-7Iz4BmoqIZ6dW4KcwI7VM510F2wuA1Qu/1M5pO7dSOofiGctw7+Hr8ztw8A6vS7nH03rSTNzACCJ2ZQUvj44OQ==",
+      "distSha256": "92654d52799b68249c504a9ec777c6272e83d1c76bf11957cb9aa8149b91e95e",
+      "contentScope": "dist",
+      "package": "@kb-labs/rest-api-core",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-pB+Vq/avKkJRhuR0ux/JtJtvEqhMm08dtjX0uoLAI9vOnA4PffrLJweGM/r+Bq+b5KbZrlZcBy7A5leIrfCyOw==",
+      "distSha256": "115c91238712ef21790e85bd2dba2143814b35d7c588a77227e5e9ea1f3c2d6f",
+      "contentScope": "dist",
+      "package": "@kb-labs/core-state-daemon",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-zMps76HhwSOUsgUvk3eeRoQHCMfmfucqb4Jnw06/FUTAbVjcdYmrgvfttqvhPWlitESJoaiwBSjlwnUGdk6QfQ==",
+      "distSha256": "5769a135abb94ae493ec94ecce9de9d35a5ce832820686ddb0390165c14156bd",
+      "contentScope": "dist",
+      "package": "@kb-labs/workflow-artifacts",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-4yoeZC+WXyWnoYjSJ3Tlg41OBMpt4SNouM3BSsCMjd1Cib4c1JnMV/MrN1ne2JqPob5/TS8dLpbtLMDKP7mUOg==",
+      "distSha256": "ce7032a9462e51d710c4f5874d494ae9ca3687af65b5900cbf0d5173969b9db8",
+      "contentScope": "dist",
+      "package": "@kb-labs/workflow-constants",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-o89rlSKFq2MIy9n7zAnwzq2/T22jRvfVyafG79XGCsE64HL620shUNg3lImz36wNwIrDaLkOev9eiG92lTP2zw==",
+      "distSha256": "33791d8868edf9a5e8de2688ab1aced1705b326d00684c391412836990093586",
+      "contentScope": "dist",
+      "package": "@kb-labs/workflow-contracts",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-+Q3Erstxcqpid7L1STPdg+zfJKBafsctSNZMe0VQWcDMDd4HCBfFAz2q/P0S31MfoYqBSC5gJ5qe5VBOBcHqXQ==",
+      "distSha256": "7dd7f8a0a179cba41cb6617c265654f7369de11bd8acd912203d1a54c4cf049d",
+      "contentScope": "dist",
+      "package": "@kb-labs/workflow-daemon",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-TsYn+NenWWNt+7o/aNglLlI4Rimwdlb5/pHKakM1yXvbIkLzr43dUoEpLIbkd71BtY7M74QQ39Hz7OetmssaMA==",
+      "distSha256": "b4e2e68f413110bed83e9ff92360eecbf118f487fdbc68186e7b9b12e2553940",
+      "contentScope": "dist",
+      "package": "@kb-labs/workflow-engine",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-TymMybiECMroEWkFIUojDqLcgP8kebB89upMhnnhfSCkcQv6qRJ0pFNkUzyE6TTorbS92J0qfO6BWnCD1y3OxA==",
+      "distSha256": "81ce6e030a3743beee48fcd8588f0c6f72a91f4b80c4f3eacb5df97b7227ac6b",
+      "contentScope": "dist",
+      "package": "@kb-labs/workflow-entry",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Yk02rIEYdIddgnU5WOYjxg6fDaiSW2m8Mocti6y1h5kq/p9kuI1kLpaKUAlsbjB4qO7lJ5awyWWNuLfO+W1mYg==",
+      "distSha256": "8e3699f4ae70c0c21cbd8d7858d6d3da2fdb59d2c74c9c7e34976b6718c88312",
+      "contentScope": "dist",
+      "package": "@kb-labs/workflow-runtime",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-Rdep7TRmilnkJf983UAQzTnwwQlgZGxCpH0KKMQdkiHa+C2I0KL2YAntH5oazanrEYkBf6/H5srcd9Q6ePfwtg==",
+      "distSha256": "b6441b66f4b8c0293090bbc4c1f407283806338a25ed1654558b59d80e968be5",
+      "contentScope": "dist",
+      "package": "@kb-labs/workflow-steps",
+      "version": "2.121.0-canary.cec6dacc6"
+    },
+    {
+      "sourceRevision": "cec6dacc60ef700471ca2df20ad7205f7e820f70",
+      "integrity": "sha512-kKHSMzLqmFA4VG4nz2dAiIf+mO260VvyvBHzJGo5g/x0vW0OGNzD0k9YDl3IUGvxcsbWoObldkhE61RmsIfGpA==",
+      "distSha256": "bef547f41bea4fa83925bb67c90516b868d1f96e4e5f7652d62d1d6eb07f5713",
+      "contentScope": "dist",
+      "package": "@kb-labs/e2e-llm-deterministic",
+      "version": "2.121.0-canary.cec6dacc6"
+    }
+  ]
+}

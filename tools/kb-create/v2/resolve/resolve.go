@@ -29,6 +29,8 @@ import (
 // Options describe the launcher doing the resolving. Zero values mean the
 // running process: its OS/arch, and no launcher-version constraint check.
 type Options struct {
+	BinarySource         string
+	Registry             string
 	LauncherVersion      string
 	OS, Arch             string
 	ProjectRootSelection bool
@@ -69,6 +71,16 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			return contracts.ResolvedInstallPlan{}, err
 		}
 	}
+	binarySource, err := packageartifacts.NormalizeSourceURL(options.BinarySource)
+	if err != nil {
+		return contracts.ResolvedInstallPlan{}, err
+	}
+	options.BinarySource = binarySource
+	registry, err := packageartifacts.NormalizeSourceURL(options.Registry)
+	if err != nil {
+		return contracts.ResolvedInstallPlan{}, err
+	}
+	options.Registry = registry
 	goos, goarch := options.OS, options.Arch
 	if goos == "" {
 		goos = runtime.GOOS
@@ -76,7 +88,7 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if goarch == "" {
 		goarch = runtime.GOARCH
 	}
-	request, err := request.Normalize()
+	request, err = request.Normalize()
 	if err != nil {
 		return contracts.ResolvedInstallPlan{}, err
 	}
@@ -126,14 +138,9 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	}
 	graph, ok := platform.Profiles[request.ServiceProfile]
 	if !ok {
-		if request.ServiceProfile == "" {
-			graph, ok = platform.Profiles["default"]
-		}
-		if !ok {
-			return contracts.ResolvedInstallPlan{}, incompatible("service profile", profileName(request.ServiceProfile), platform.Version, "service profile "+profileName(request.ServiceProfile), "is not supplied by platform "+platform.Version)
-		}
+		return contracts.ResolvedInstallPlan{}, incompatible("service profile", request.ServiceProfile, platform.Version, "service profile "+request.ServiceProfile, "is not supplied by platform "+platform.Version)
 	}
-	graph.PlatformVersion, graph.Profile = platform.Version, profileName(request.ServiceProfile)
+	graph.PlatformVersion, graph.Profile = platform.Version, request.ServiceProfile
 	artifacts := []contracts.Artifact{{ID: platform.ID, Kind: "platform", Package: platform.Package, Version: platform.Version, SHA256: platform.SHA256, Tarball: platform.Tarball, SizeBytes: platform.SizeBytes, Config: platform.Config}}
 	for _, member := range platform.Members {
 		item := artifact(member, "platform-member")
@@ -185,8 +192,11 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			return contracts.ResolvedInstallPlan{}, incompatible("platform-member", "@kb-labs/cli-bin", platform.Version, "client CLI "+platform.Version, "release index must contain exactly one @kb-labs/cli-bin platform member")
 		}
 		clientArtifacts := append(clientBinary, clientCLI...)
+		if err := annotateArtifactResolution(request, clientArtifacts, options.BinarySource, options.Registry); err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
 		plan := contracts.ResolvedInstallPlan{
-			Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: clientArtifacts,
+			Schema: contracts.ResolvedPlanSchema, BinarySource: options.BinarySource, Registry: options.Registry, Request: request, Artifacts: clientArtifacts,
 			ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version),
 			ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest,
 		}
@@ -275,7 +285,7 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		return contracts.ResolvedInstallPlan{}, err
 	}
 	sortArtifacts(artifacts)
-	if err := annotateArtifactResolution(request, artifacts); err != nil {
+	if err := annotateArtifactResolution(request, artifacts, options.BinarySource, options.Registry); err != nil {
 		return contracts.ResolvedInstallPlan{}, err
 	}
 	provenanceByPackage := make(map[string]catalog.ArtifactProvenance, len(source.Provenance))
@@ -319,7 +329,7 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			return contracts.ResolvedInstallPlan{}, err
 		}
 	}
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version), ProviderBindings: bindings, Host: selectedHost, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, BinarySource: options.BinarySource, Registry: options.Registry, Request: request, Artifacts: artifacts, ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version), ProviderBindings: bindings, Host: selectedHost, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
 	plan.PlanHash = hash(plan)
 	return plan, nil
 }
@@ -441,6 +451,9 @@ func configureGatewayAddress(address string, graph *contracts.ServiceGraph, host
 		if !ok {
 			return resolutionDiag(contracts.CodeConfigRequired, "platform adapter options do not declare serviceTransport", map[string]string{"field": patches[index].Path})
 		}
+		// These addresses are resolved below; the HTTP transport must not apply
+		// the host's local network offset to them a second time.
+		serviceTransport["offset"] = 0
 		services, ok := serviceTransport["services"].(map[string]any)
 		if !ok {
 			return resolutionDiag(contracts.CodeConfigRequired, "serviceTransport does not declare service addresses", map[string]string{"field": patches[index].Path})
@@ -463,7 +476,8 @@ func configureGatewayAddress(address string, graph *contracts.ServiceGraph, host
 		}
 		gateway, ok := services["gateway"].(map[string]any)
 		if !ok {
-			return resolutionDiag(contracts.CodeConfigRequired, "serviceTransport does not declare a Gateway address", map[string]string{"field": patches[index].Path})
+			gateway = make(map[string]any)
+			services["gateway"] = gateway
 		}
 		gateway["url"] = address
 		encoded, err := json.Marshal(config)
@@ -484,9 +498,13 @@ func configureGatewayAddress(address string, graph *contracts.ServiceGraph, host
 	return nil
 }
 
-func annotateArtifactResolution(request contracts.InstallRequest, artifacts []contracts.Artifact) error {
+func annotateArtifactResolution(request contracts.InstallRequest, artifacts []contracts.Artifact, binarySource, registry string) error {
 	for index := range artifacts {
 		item := &artifacts[index]
+		fetchBinary, kindErr := item.IsFetchBinary()
+		if kindErr != nil {
+			return kindErr
+		}
 		if request.Source == contracts.SourceOffline {
 			layout, err := versionroot.New(request.PlatformRoot)
 			if err != nil {
@@ -496,7 +514,7 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 			if err != nil {
 				return err
 			}
-			if item.IsBinary() {
+			if fetchBinary {
 				cachePath = filepath.Join(cachePath, "binaries", item.SHA256)
 			} else {
 				cachePath = filepath.Join(cachePath, "packages", item.SHA256+".tgz")
@@ -520,10 +538,31 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 			continue
 		}
 		item.ResolvedFrom = "registry"
-		if item.IsBinary() {
+		if fetchBinary {
 			item.ResolvedURL = item.URL
+			if binarySource != "" {
+				original, err := url.Parse(item.URL)
+				if err != nil || original.Host == "" {
+					return fmt.Errorf("binary %s has an invalid release URL", item.ID)
+				}
+				parts := strings.Split(strings.Trim(original.Path, "/"), "/")
+				if len(parts) < 2 || parts[len(parts)-1] == "" || parts[len(parts)-2] == "" {
+					return fmt.Errorf("binary %s has no release tag and asset", item.ID)
+				}
+				item.ResolvedURL = binarySource + "/" + url.PathEscape(parts[len(parts)-2]) + "/" + url.PathEscape(parts[len(parts)-1])
+			}
 		} else {
 			item.ResolvedURL = item.Tarball
+			if registry != "" {
+				if item.Package == "" || item.Version == "" {
+					return fmt.Errorf("artifact %s lacks package identity", item.ID)
+				}
+				name := item.Package
+				if pos := strings.LastIndex(name, "/"); pos >= 0 {
+					name = name[pos+1:]
+				}
+				item.ResolvedURL = registry + "/" + item.Package + "/-/" + name + "-" + item.Version + ".tgz"
+			}
 		}
 	}
 	return nil
@@ -549,14 +588,6 @@ func cloneHost(host contracts.HostSpec) contracts.HostSpec {
 		host.Recover = &recovery
 	}
 	return host
-}
-
-func profileName(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return "default"
-	}
-	return trimmed
 }
 
 // registryKind reports whether a package the platform bundles is also a

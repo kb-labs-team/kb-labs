@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/kb-labs/clikit/diag"
@@ -103,11 +102,11 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 	if stateErr != nil {
 		return nil, asDiag(stateErr)
 	}
-	launcherState, launcherStateErr := host.StateHome()
-	if launcherStateErr != nil {
-		return nil, asDiag(launcherStateErr)
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return nil, asDiag(homeErr)
 	}
-	registryPath := filepath.Join(launcherState.Dir, "gateway-roots.json")
+	registryPath := gateway.RegistryPath(home)
 	registryRoots, registryErr := (gateway.Registry{Path: registryPath, OperationRoot: root}).Read()
 	if registryErr != nil {
 		return nil, asDiag(registryErr)
@@ -253,11 +252,11 @@ func executeDoctorFix(input doctorCommandInput, response doctor.Response) (docto
 		if err != nil {
 			return doctorFixResult{}, asDiag(err)
 		}
-		launcherState, err := host.StateHome()
+		home, err := os.UserHomeDir()
 		if err != nil {
 			return doctorFixResult{}, asDiag(err)
 		}
-		registryPath := filepath.Join(launcherState.Dir, "gateway-roots.json")
+		registryPath := gateway.RegistryPath(home)
 		origin := recordedGatewayURL(active)
 		if active.Plan.Host == nil || origin == "" {
 			reason := "the validated installation receipt has no Gateway address to restore"
@@ -267,7 +266,7 @@ func executeDoctorFix(input doctorCommandInput, response doctor.Response) (docto
 			return doctorFixResult{}, failure
 		}
 		registry := gateway.Registry{Path: registryPath, OperationRoot: input.PlatformRoot}
-		if err := registry.Register(activeRoot, origin); err != nil {
+		if err := registry.Writer(gateway.DoctorFix).Register(activeRoot, origin); err != nil {
 			return doctorFixResult{}, asDiag(err)
 		}
 		return doctorFixResult{OK: true, Operation: "doctor-fix", Findings: []doctor.Finding{},

@@ -428,7 +428,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             launcher.parent.mkdir(parents=True)
             (launcher.parent / "kb").symlink_to(install_root / "current/.kb/v2/bin/kb")
             first_owner = [install_root]
-            registry = home / ".kb" / "launcher" / "gateway-roots.json"
+            registry = home / ".local" / "share" / "kb-create" / "gateway-roots.json"
             registry.parent.mkdir(parents=True)
             writer_fixture = Path(__file__).parent / "testdata" / "gateway-roots-schema2.json"
             writer_registry = json.loads(writer_fixture.read_text())

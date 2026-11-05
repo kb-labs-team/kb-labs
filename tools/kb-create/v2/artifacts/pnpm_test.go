@@ -42,7 +42,7 @@ func TestPnpmUsesVerifiedTarballInsteadOfRegistrySpec(t *testing.T) {
 	defer server.Close()
 	root := t.TempDir()
 	cacheRoot := t.TempDir()
-	items, runner := sealedTestRunner(t, contracts.Artifact{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: sum, Tarball: server.URL})
+	items, runner := sealedTestRunner(t, contracts.Artifact{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: sum, Tarball: server.URL, ResolvedURL: server.URL})
 	if err := (Pnpm{Root: root, CacheRoot: cacheRoot, Runner: runner}).Install(items); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestPnpmRejectsCorruptTarballBeforeWritingSharedCache(t *testing.T) {
 	t.Cleanup(server.Close)
 	cacheRoot := t.TempDir()
 	item := contracts.Artifact{ID: "platform", Kind: "package", Package: "@kb/platform", Version: "2",
-		SHA256: digest, Tarball: server.URL + "/platform.tgz"}
+		SHA256: digest, Tarball: server.URL + "/platform.tgz", ResolvedURL: server.URL + "/platform.tgz"}
 
 	if _, err := (Pnpm{CacheRoot: cacheRoot, Client: server.Client()}).tarball(item); err == nil {
 		t.Fatal("corrupt sealed package tarball unexpectedly passed verification")
@@ -70,6 +70,17 @@ func TestPnpmRejectsCorruptTarballBeforeWritingSharedCache(t *testing.T) {
 	cachePath := filepath.Join(cacheRoot, "packages", digest+".tgz")
 	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
 		t.Fatalf("corrupt tarball changed shared cache at %s: %v", cachePath, err)
+	}
+}
+
+func TestPnpmTarballRequiresResolvedSource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("unresolved index URL was fetched")
+	}))
+	defer server.Close()
+	item := contracts.Artifact{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: strings.Repeat("a", 64), Tarball: server.URL}
+	if _, err := (Pnpm{CacheRoot: t.TempDir()}).tarball(item); err == nil || !strings.Contains(err.Error(), "resolved download URL") {
+		t.Fatalf("error = %v, want missing resolved download URL", err)
 	}
 }
 
@@ -185,6 +196,14 @@ func TestPnpmMinimumReleaseAgeExemptsOnlySealedExactVersions(t *testing.T) {
 		t.Fatalf("cached pnpm selected unexpected version: %q", strings.TrimSpace(string(output)))
 	}
 
+	// The release-age registry serves only the test packages, not pnpm itself.
+	// Seed the package-manager fixture from the already verified pinned installation.
+	cachedPnpm := filepath.Dir(filepath.Dir(pnpmScript))
+	fixturePnpm := filepath.Join(packageManagerRoot, "corepack", "v1", "pnpm", toolchain.SupportedPnpm)
+	if err := os.CopyFS(fixturePnpm, os.DirFS(cachedPnpm)); err != nil {
+		t.Fatal(err)
+	}
+
 	sealedV1 := packageTarball(t, "@kb-labs/sealed", "1.0.0", nil)
 	sealedV2 := packageTarball(t, "@kb-labs/sealed", "1.0.1", nil)
 	sealedWithFreshDependency := packageTarball(t, "@kb-labs/sealed-fresh-dependency", "1.0.1", map[string]string{"@unrelated/fresh": "1.0.0"})
@@ -250,9 +269,10 @@ func TestPnpmMinimumReleaseAgeExemptsOnlySealedExactVersions(t *testing.T) {
 
 	root := t.TempDir()
 	writeMinimumReleaseAgeWorkspace(t, root)
-	pm := Pnpm{Root: root, PackageManagerRoot: packageManagerRoot, Registry: server.URL}
+	var provisionLog strings.Builder
+	pm := Pnpm{Root: root, PackageManagerRoot: packageManagerRoot, Registry: server.URL, Log: &provisionLog}
 	if err := pm.Install([]contracts.Artifact{itemV1}); err != nil {
-		t.Fatalf("install first sealed exact version: %#v", err)
+		t.Fatalf("install first sealed exact version: %#v; process output: %s", err, diag.RedactText(provisionLog.String()))
 	}
 	if err := pm.Install([]contracts.Artifact{itemV2}); err != nil {
 		t.Fatalf("install second sealed exact version from the coalesced exclusion: %v", err)
@@ -403,7 +423,7 @@ func TestPnpmReportsExpectedAndReceivedTarballChecksums(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(payload) }))
 	defer server.Close()
 	runner := &fakeRunner{}
-	err := (Pnpm{Root: t.TempDir(), CacheRoot: t.TempDir(), Runner: runner}).Install([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: sum, Tarball: server.URL}})
+	err := (Pnpm{Root: t.TempDir(), CacheRoot: t.TempDir(), Runner: runner}).Install([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: sum, Tarball: server.URL, ResolvedURL: server.URL}})
 	if err == nil || !strings.Contains(err.Error(), "expected "+sum) || !strings.Contains(err.Error(), fmt.Sprintf("got %x", sha256.Sum256(payload))) || len(runner.calls) != 0 {
 		t.Fatalf("error/calls = %v / %#v", err, runner.calls)
 	}
@@ -1112,5 +1132,36 @@ func TestPnpmUsesOfflineModeWhenRequested(t *testing.T) {
 	want := []string{"add", "--dir", root, "--reporter=append-only", "--offline", "@kb/platform@2"}
 	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0].args, want) {
 		t.Fatalf("calls = %#v", runner.calls)
+	}
+}
+
+// case: S-285.18
+func TestCommandFailureCrossesInstallerDiagnosticBoundary(t *testing.T) {
+	program := filepath.Join(t.TempDir(), "failure")
+	if err := os.WriteFile(program, []byte("#!/bin/sh\nprintf 'registry unavailable\\nAPI_TOKEN=example-secret\\n' >&2\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := toolchain.Run(context.Background(), toolchain.Invocation{Tool: "fixture", Executable: program, Operation: toolchain.OperationPackageManager})
+	if err == nil {
+		t.Fatal("expected the subprocess to fail")
+	}
+	failure := contracts.NewDiag(contracts.CodeApplyFailed, "fixture failed", "retry the fixture", err)
+	if !strings.Contains(failure.Reason, "registry unavailable") || strings.Contains(failure.Reason, "example-secret") {
+		t.Fatalf("diagnostic omitted safe subprocess stderr: %q", failure.Reason)
+	}
+}
+
+func TestCommandStdoutFailureCrossesInstallerDiagnosticBoundary(t *testing.T) {
+	program := filepath.Join(t.TempDir(), "failure")
+	if err := os.WriteFile(program, []byte("#!/bin/sh\nprintf 'HTTP 404 registry unavailable\\n'\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := toolchain.Run(context.Background(), toolchain.Invocation{Tool: "fixture", Executable: program, Operation: toolchain.OperationPackageManager})
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	failure := contracts.NewDiag(contracts.CodeApplyFailed, "fixture failed", "retry", err)
+	if !strings.Contains(failure.Reason, "HTTP 404") || !strings.Contains(failure.Cause, "HTTP 404") {
+		t.Fatalf("diagnostic reason=%q cause=%q", failure.Reason, failure.Cause)
 	}
 }

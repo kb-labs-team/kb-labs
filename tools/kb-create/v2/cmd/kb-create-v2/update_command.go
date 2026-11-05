@@ -48,10 +48,11 @@ type updateCommandInput struct {
 	Direct                                  directRequest
 	RetryCommand                            string
 	Resume                                  bool
-	Executable, SecretEnv, Registry         string
+	Executable, SecretEnv                   string
 	ArtifactRunner                          artifacts.Runner
 	TelemetryEndpoint                       string
 	TelemetryConsent                        bool
+	Arguments                               []string
 }
 
 func updateActivationRetryHint(input updateCommandInput) string {
@@ -78,7 +79,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		}
 	}
 	resolved, failure := resolvePlan(planInput{Operation: "update", Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
-		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable})
+		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable, Arguments: input.Arguments})
 	if failure != nil {
 		return updateCommandResult{}, failure
 	}
@@ -144,7 +145,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		if marshalErr != nil {
 			return updateCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "the update request could not be encoded", "rerun `kb-create update` with the same request", marshalErr)
 		}
-		response := transport.PlanWith(encoded, resolved.Catalog, resolve.Options{LauncherVersion: buildVersion, Operation: resolve.OperationUpdate})
+		response := transport.PlanWith(encoded, resolved.Catalog, resolve.Options{LauncherVersion: buildVersion, Operation: resolve.OperationUpdate, BinarySource: plan.BinarySource, Registry: plan.Registry})
 		if !response.OK {
 			return updateCommandResult{}, response.Error
 		}
@@ -195,7 +196,7 @@ func planUpdateWithMarketplaceLock(activeRoot string, plan contracts.ResolvedIns
 			"retry `"+retryCommand+"` with the same request", err)
 		return contracts.ResolvedInstallPlan{}, failure
 	}
-	response := transport.PlanWith(encoded, source, resolve.Options{LauncherVersion: buildVersion, Operation: resolve.OperationUpdate})
+	response := transport.PlanWith(encoded, source, resolve.Options{LauncherVersion: buildVersion, Operation: resolve.OperationUpdate, BinarySource: plan.BinarySource, Registry: plan.Registry})
 	if !response.OK {
 		return contracts.ResolvedInstallPlan{}, response.Error
 	}
@@ -345,7 +346,7 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	offline := plan.Request.Source == contracts.SourceOffline
-	installer, err := newArtifactExecutor(layout, stage, input.Registry, offline, transcript, input.ArtifactRunner)
+	installer, err := newArtifactExecutor(layout, stage, plan.Registry, offline, transcript, input.ArtifactRunner)
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "the shared artifact cache path could not be resolved", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the update", err)
 	}
@@ -424,8 +425,8 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 		if originErr != nil {
 			return updateCommandResult{}, contracts.HostSpecDiagnostic("the updated Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"` after checking the receipt", originErr.Error(), originErr)
 		}
-		registry := gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: installRoot}
-		err = registry.RegisterForTransaction(root, origin, activate)
+		registry := gateway.Registry{OperationRoot: installRoot}
+		err = registry.Writer(gateway.Update).RegisterForTransaction(root, origin, activate)
 	} else {
 		err = activate()
 	}

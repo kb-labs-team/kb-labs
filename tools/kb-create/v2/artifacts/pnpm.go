@@ -31,7 +31,10 @@ type Runner interface {
 }
 
 type CommandRunner struct {
-	environment []string
+	environment  []string
+	corepackHome string
+	registry     string
+	offline      bool
 }
 
 const externalCommandStderrTailBytes = 4096
@@ -46,20 +49,48 @@ func (f *externalCommandFailure) Error() string { return f.cause.Error() }
 func (f *externalCommandFailure) Unwrap() error { return f.cause }
 
 func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
+	var env []string
+	if len(r.environment) > 0 {
+		env = packageManagerEnvironment(os.Environ(), r.environment)
+	}
 	var executable string
 	if name == "pnpm" {
-		node, script, err := toolchain.PnpmExecutable()
+		var node, script string
+		var err error
+		if r.corepackHome == "" {
+			node, script, err = toolchain.PnpmExecutable()
+		} else {
+			node, script, err = toolchain.PnpmExecutableAt(r.corepackHome)
+		}
 		if err != nil {
-			return err
+			if r.corepackHome == "" {
+				return err
+			}
+			source := r.registry
+			if source == "" {
+				source = "Corepack's default npm registry"
+			}
+			if !r.offline {
+				var provision toolchain.Result
+				provision, err = toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env, Operation: toolchain.OperationPackageManager})
+				if provision.Stdout != "" {
+					_, _ = io.WriteString(output, provision.Stdout)
+				}
+				if provision.Stderr != "" {
+					_, _ = io.WriteString(output, provision.Stderr)
+				}
+				if err == nil {
+					node, script, err = toolchain.PnpmExecutableAt(r.corepackHome)
+				}
+			}
+			if err != nil {
+				return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s; check --registry.", toolchain.SupportedPnpm, source), "Check --registry and rerun the install command.", err)
+			}
 		}
 		executable = node
 		args = append([]string{script}, args...)
 	} else {
 		executable = name
-	}
-	var env []string
-	if len(r.environment) > 0 {
-		env = packageManagerEnvironment(os.Environ(), r.environment)
 	}
 	result, err := toolchain.Run(ctx, toolchain.Invocation{Tool: name, Executable: executable, Args: args, Env: env, Operation: toolchain.OperationPackageManager})
 	if result.Stdout != "" {
@@ -207,24 +238,22 @@ func (p Pnpm) verifyTarballs(items []contracts.Artifact) (map[string][]byte, err
 			if p.Offline {
 				return nil, fmt.Errorf("offline package %s is absent from V2 cache", item.ID)
 			}
-			client := p.Client
-			if client == nil {
-				client = http.DefaultClient
+			target := item.ResolvedURL
+			if target == "" {
+				return nil, fmt.Errorf("artifact %s lacks a resolved download URL", item.ID)
 			}
-			response, getErr := client.Get(item.Tarball)
-			if getErr != nil {
-				return nil, fmt.Errorf("download package %s: %w", item.ID, getErr)
-			}
-			data, err = io.ReadAll(response.Body)
-			_ = response.Body.Close()
-			if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
-				return nil, fmt.Errorf("download package %s: status %d: %v", item.ID, response.StatusCode, err)
+			data, err = fetchArtifact(p.Client, item, target)
+			if err != nil {
+				return nil, err
 			}
 		} else if err != nil {
 			return nil, err
 		}
 		if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != item.SHA256 {
-			return nil, fmt.Errorf("package %s checksum mismatch: expected %s, got %s", item.ID, item.SHA256, actual)
+			if p.Offline {
+				return nil, fmt.Errorf("package %s checksum mismatch in offline cache: expected %s, got %s", item.ID, item.SHA256, actual)
+			}
+			return nil, downloadFailure(item, item.ResolvedURL, fmt.Errorf("checksum mismatch: expected %s, got %s", item.SHA256, actual))
 		}
 		verified[item.ID] = data
 	}
@@ -325,7 +354,7 @@ func (p Pnpm) run(command string, specs ...string) error {
 		if p.PackageManagerRoot == "" {
 			return fmt.Errorf("pnpm package-manager state root is required")
 		}
-		runner = CommandRunner{environment: p.packageManagerEnvironment()}
+		runner = CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.Registry, offline: p.Offline}
 	}
 	log := p.Log
 	if log == nil {
@@ -361,15 +390,22 @@ func (p Pnpm) run(command string, specs ...string) error {
 
 func (p Pnpm) packageManagerEnvironment() []string {
 	root := p.PackageManagerRoot
-	return []string{
-		"COREPACK_HOME=" + filepath.Join(root, "corepack"),
+	env := []string{
+		"COREPACK_HOME=" + p.corepackHome(),
 		"XDG_CACHE_HOME=" + filepath.Join(root, "xdg-cache"),
 		"XDG_DATA_HOME=" + filepath.Join(root, "xdg-data"),
 		"XDG_STATE_HOME=" + filepath.Join(root, "xdg-state"),
 		"npm_config_cache=" + filepath.Join(root, "pnpm-cache"),
+		"npm_config_devdir=" + filepath.Join(root, "node-gyp"),
 		"npm_config_store_dir=" + filepath.Join(root, "pnpm-store"),
 	}
+	if p.Registry != "" {
+		env = append(env, "COREPACK_NPM_REGISTRY="+p.Registry)
+	}
+	return env
 }
+
+func (p Pnpm) corepackHome() string { return filepath.Join(p.PackageManagerRoot, "corepack") }
 
 func (p Pnpm) prepare() error {
 	if p.Root == "" {
@@ -704,21 +740,16 @@ func (p Pnpm) tarball(item contracts.Artifact) (string, error) {
 		if p.Offline {
 			return "", fmt.Errorf("offline package %s is absent from V2 cache", item.ID)
 		}
-		client := p.Client
-		if client == nil {
-			client = http.DefaultClient
+		target := item.ResolvedURL
+		if target == "" {
+			return "", fmt.Errorf("artifact %s lacks a resolved download URL", item.ID)
 		}
-		response, getErr := client.Get(item.Tarball)
-		if getErr != nil {
-			return "", fmt.Errorf("download package %s: %w", item.ID, getErr)
-		}
-		data, err = io.ReadAll(response.Body)
-		_ = response.Body.Close()
-		if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
-			return "", fmt.Errorf("download package %s: status %d: %v", item.ID, response.StatusCode, err)
+		data, err = fetchArtifact(p.Client, item, target)
+		if err != nil {
+			return "", err
 		}
 		if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != item.SHA256 {
-			return "", fmt.Errorf("package %s checksum mismatch: expected %s, got %s", item.ID, item.SHA256, actual)
+			return "", downloadFailure(item, target, fmt.Errorf("checksum mismatch: expected %s, got %s", item.SHA256, actual))
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return "", err

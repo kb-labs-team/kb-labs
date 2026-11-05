@@ -454,6 +454,13 @@ func (r *ProcessRunner) RunTool(ctx context.Context, tool Tool, extra []string, 
 // platform's secrets, then the spec's explicit values (the release wins).
 func (r *ProcessRunner) environment() ([]string, error) {
 	values := map[string]string{}
+	if r.PlatformRoot != "" {
+		home, err := KBHome(r.PlatformRoot)
+		if err != nil {
+			return nil, err
+		}
+		values[KBHomeEnv] = home
+	}
 	suppressed := map[string]struct{}{}
 	if r.SecretEnv != nil {
 		environment, err := r.SecretEnv()
@@ -487,6 +494,11 @@ func (r *ProcessRunner) environment() ([]string, error) {
 	}
 	for key, value := range values {
 		env = append(env, key+"="+value)
+	}
+	// A locally launched host must resolve adapters against its installation,
+	// even when the caller's current directory belongs to another workspace.
+	if r.PlatformRoot != "" {
+		env = append(env, "KB_PLATFORM_ROOT="+r.PlatformRoot)
 	}
 	r.mu.Lock()
 	r.secrets = r.secrets[:0]
@@ -633,10 +645,11 @@ func (r *ProcessRunner) waitReadyUntil(ctx context.Context, pid int, exited <-ch
 }
 
 type readinessProbe struct {
-	URL     string
-	Status  int
-	Error   string
-	Healthy bool
+	URL       string
+	Status    int
+	Error     string
+	Healthy   bool
+	StudioURL string
 }
 
 func validControlAddress(address string) bool {
@@ -707,6 +720,21 @@ func (r *ProcessRunner) probeURL(ctx context.Context, healthURL string) readines
 	defer response.Body.Close()
 	result.Status = response.StatusCode
 	result.Healthy = response.StatusCode >= 200 && response.StatusCode < 300
+	if result.Healthy && strings.Contains(response.Header.Get("Content-Type"), "application/json") {
+		var health struct {
+			Data struct {
+				Studio *struct {
+					URL string `json:"url"`
+				} `json:"studio"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&health); err != nil {
+			result.Healthy = false
+			result.Error = err.Error()
+		} else if health.Data.Studio != nil {
+			result.StudioURL = health.Data.Studio.URL
+		}
+	}
 	if result.Healthy && r.ControlCredential != "" {
 		address := response.Header.Get(contracts.HostActiveWorkAddressHeader)
 		if !validControlAddress(address) {
@@ -893,11 +921,7 @@ func GatewayResourceConflict(gatewayURL, operation, platformRoot string) *diag.D
 }
 
 func registeredGatewayRoot(port string, pid int, platformRoot string) (string, string, error) {
-	launcherState, err := StateHome()
-	if err != nil {
-		return "", "", nil
-	}
-	roots, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: platformRoot}).Read()
+	roots, err := (gateway.Registry{OperationRoot: platformRoot}).Read()
 	if err != nil {
 		return "", "", err
 	}
@@ -936,10 +960,6 @@ func registeredGatewayRoot(port string, pid int, platformRoot string) (string, s
 // RegisteredPortConflict prevents status from reporting a stopped host while
 // the installation's previously registered Gateway is still listening.
 func RegisteredPortConflict(platformRoot, operation string) *diag.Diag {
-	state, err := StateHome()
-	if err != nil {
-		return nil
-	}
 	requested, err := filepath.Abs(platformRoot)
 	if err != nil {
 		return nil
@@ -947,7 +967,7 @@ func RegisteredPortConflict(platformRoot, operation string) *diag.Diag {
 	if resolved, resolveErr := filepath.EvalSymlinks(requested); resolveErr == nil {
 		requested = resolved
 	}
-	roots, err := (gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json"), OperationRoot: platformRoot}).Read()
+	roots, err := (gateway.Registry{OperationRoot: platformRoot}).Read()
 	if err != nil {
 		var failure *diag.Diag
 		if errors.As(err, &failure) {
@@ -1348,7 +1368,8 @@ func (r *ProcessRunner) Status(ctx context.Context) (Status, error) {
 	status.PID, status.StartedAt = record.PID, &started
 	if record.HealthURL != "" {
 		status.HealthURL = record.HealthURL
-		status.Healthy = r.probeURL(ctx, record.HealthURL).Healthy
+		probe := r.probeURL(ctx, record.HealthURL)
+		status.Healthy, status.StudioURL = probe.Healthy, probe.StudioURL
 	} else {
 		status.Healthy = r.healthy(ctx)
 	}

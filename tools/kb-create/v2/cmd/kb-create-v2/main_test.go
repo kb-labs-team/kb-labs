@@ -40,6 +40,64 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// case: S-285.1
+func TestPlanLoadsInstallerSavedIndex(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".local", "share", "kb-create", "release-index.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"invalid":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, failure := resolvePlan(planInput{Operation: "plan", Direct: directRequest{PlatformRoot: t.TempDir()}})
+	if failure == nil || failure.Message == "--index and either --input or --platform-root are required" {
+		t.Fatalf("saved index was not read: %#v", failure)
+	}
+}
+
+// case: S-285.1
+func TestJSONInstallLoadsInstallerSavedIndex(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".local", "share", "kb-create", "release-index.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"invalid":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, code, output := executeForTest(t, operationTestSetup{Operation: "install", PlatformRoot: filepath.Join(home, "platform"), JSON: true})
+	if code == 0 || strings.Contains(output, "install needs a release index and an install request") {
+		t.Fatalf("saved index was not read: %s", output)
+	}
+}
+
+// case: S-285.3
+func TestScenarioHelpListsCatalog(t *testing.T) {
+	root := newRootCommand()
+	cmd, _, err := root.Find([]string{"install"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := cmd.Flags().Lookup("scenario").Usage
+	if !strings.Contains(usage, "custom") || !strings.Contains(usage, "explore") {
+		t.Fatalf("scenario help lacks catalog IDs: %s", usage)
+	}
+}
+
+// case: S-285.3
+func TestUnknownScenarioListsCatalog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	index := writeJSONInstallFixture(t, home)
+	_, failure := resolvePlan(planInput{Operation: "plan", Index: index, Direct: directRequest{PlatformRoot: filepath.Join(home, "platform")}, ScenarioID: "local"})
+	if failure == nil || !strings.Contains(failure.Hint, "custom") || !strings.Contains(failure.Hint, "explore") {
+		t.Fatalf("failure=%#v", failure)
+	}
+}
+
 func TestRequestWithGeneratedSecretsAddsOnlyDeclaredGeneratedSecretInputs(t *testing.T) {
 	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: t.TempDir()}
 	artifacts := []contracts.Artifact{{Config: []contracts.ConfigRequirement{
@@ -265,11 +323,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 			t.Fatalf("status for %q did not report the canonical kb command owner: %#v", spelling, response.Data["shim"])
 		}
 	}
-	launcherState, err := host.StateHome()
-	if err != nil {
-		t.Fatal(err)
-	}
-	registryPath := filepath.Join(launcherState.Dir, "gateway-roots.json")
+	registryPath := gateway.RegistryPath(home)
 	activeReceiptPath := receipt.Path(physicalRoot)
 	receiptBefore, err := os.ReadFile(activeReceiptPath)
 	if err != nil {
@@ -354,17 +408,14 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 }
 
 func TestPlanAutomaticallyAllocatesGatewayFromInstalledRootIndex(t *testing.T) {
-	t.Setenv("KB_HOME", t.TempDir())
-	state, err := host.StateHome()
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
 	rootA, rootB := filepath.Join(t.TempDir(), "platform-a"), filepath.Join(t.TempDir(), "platform-b")
 	writeVersionedReceipt(t, rootA, contracts.InstallReceipt{ID: "registered-gateway-root",
 		Plan: contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{HealthURL: "http://127.0.0.1:4000/health"},
 			ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"}}})
-	registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
-	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
+	registry := gateway.Registry{Path: filepath.Join(data, "kb-create", "gateway-roots.json")}
+	if err := registry.Writer(gateway.Apply).Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
 	}
 	source := testReleaseCatalog(t, "2.0.0")
@@ -383,9 +434,17 @@ func TestPlanAutomaticallyAllocatesGatewayFromInstalledRootIndex(t *testing.T) {
 	if err := os.WriteFile(indexPath, encoded, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	before, err := os.ReadFile(registry.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var stdout, stderr bytes.Buffer
 	code := clikitcommand.Execute(newRootCommand(), []string{"plan", "--json", "--index", indexPath,
 		"--platform-root", rootB}, &stdout, &stderr)
+	after, err := os.ReadFile(registry.Path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("plan wrote registry: %v", err)
+	}
 	if code.Code() != 0 {
 		t.Fatalf("automatic Gateway plan exit=%d: %s", code.Code(), stdout.String()+stderr.String())
 	}
@@ -396,6 +455,15 @@ func TestPlanAutomaticallyAllocatesGatewayFromInstalledRootIndex(t *testing.T) {
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatal(err)
+	}
+	var statusOut, statusErr bytes.Buffer
+	statusCode := clikitcommand.Execute(newRootCommand(), []string{"status", "--json", "--platform-root", rootA}, &statusOut, &statusErr)
+	if statusCode.Code() != 0 {
+		t.Fatalf("status failed: %s %s", statusOut.String(), statusErr.String())
+	}
+	afterStatus, err := os.ReadFile(registry.Path)
+	if err != nil || !bytes.Equal(before, afterStatus) {
+		t.Fatalf("status wrote registry: %v", err)
 	}
 	plan := payload.Data.Plan
 	if plan.Request.GatewayURL != "http://127.0.0.1:4100" || plan.Host.HealthURL != "http://127.0.0.1:4100/health" ||
@@ -1365,7 +1433,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	if err != nil || secondaryReceipt.Verification.HostHealthURL != fmt.Sprintf("http://127.0.0.1:%d/health", port+100) {
 		t.Fatalf("secondary receipt Gateway = %q, error=%v; want next 100-port offset", secondaryReceipt.Verification.HostHealthURL, err)
 	}
-	registry, err := (gateway.Registry{Path: filepath.Join(home, ".kb", "launcher", "gateway-roots.json")}).Read()
+	registry, err := (gateway.Registry{Path: gateway.RegistryPath(home)}).Read()
 	if err != nil || len(registry) != 2 {
 		t.Fatalf("registered Gateway roots = %#v, error=%v", registry, err)
 	}
@@ -1689,17 +1757,27 @@ func TestApplyRequestValidationHintUsesActualRetryArguments(t *testing.T) {
 	if err := os.WriteFile(requestPath, []byte(`{"schema":"kb.create/v2","platformRoot":""}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, failure, code, output := executeForTest(t, operationTestSetup{
-		Operation: "apply", Index: index, Input: requestPath,
-		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: filepath.Join(home, "platform")}, Host: installHost{}},
-		NodePreflight: func() error { return nil },
-	})
-	if failure == nil || code == 0 || failure.Code != contracts.CodeInputRequired {
-		t.Fatalf("invalid request exit=%d failure=%v output=%s", code, failure, output)
+	args := []string{"apply", "--index", index, "--input", requestPath, "--json"}
+	factory := func(*cobra.Command) commandDependencies {
+		return commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: filepath.Join(home, "platform")}, Host: installHost{}}}
 	}
-	want := "Correct platformRoot in request file '" + requestPath + "', then retry: " + contracts.ShellCommand("kb-create", "apply", "--index", index, "--input", requestPath, "--json")
-	if !strings.Contains(failure.Hint, want) || !strings.Contains(failure.Hint, "Set `platformRoot` to a non-empty directory") {
-		t.Fatalf("validation hint = %q, want validation guidance and exact retry instruction %q", failure.Hint, want)
+	var output, stderr bytes.Buffer
+	code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &output, &stderr)
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+			Hint string `json:"hint"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if code.Code() == 0 || envelope.Error.Code != contracts.CodeInputRequired {
+		t.Fatalf("exit=%d output=%s", code.Code(), output.String())
+	}
+	want := contracts.ShellCommand(append([]string{"kb-create"}, args...)...)
+	if !strings.Contains(envelope.Error.Hint, want) || !strings.Contains(envelope.Error.Hint, "Set `platformRoot` to a non-empty directory") {
+		t.Fatalf("validation hint = %q, want validation guidance and retry %q", envelope.Error.Hint, want)
 	}
 }
 
@@ -1992,5 +2070,45 @@ func TestHelpListsRegisteredCommandsAndFlags(t *testing.T) {
 	}
 	if !strings.Contains(installHelp.String(), "--provider") {
 		t.Fatalf("install help is missing --provider: %s", installHelp.String())
+	}
+}
+
+func TestSavedReleaseIndexUsesLauncherDataDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", "")
+	if got, want := savedReleaseIndex(home), filepath.Join(home, ".local", "share", "kb-create", "release-index.json"); got != want {
+		t.Fatalf("default = %q, want %q", got, want)
+	}
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	if got, want := savedReleaseIndex(home), filepath.Join(data, "kb-create", "release-index.json"); got != want {
+		t.Fatalf("XDG = %q, want %q", got, want)
+	}
+}
+
+func TestStatusDoesNotWriteGatewayRegistry(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	root := filepath.Join(t.TempDir(), "platform")
+	writeVersionedReceipt(t, root, contracts.InstallReceipt{ID: "status-gateway-root", Plan: contracts.ResolvedInstallPlan{
+		Host:         &contracts.HostSpec{HealthURL: "http://127.0.0.1:4000/health"},
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"},
+	}})
+	registry := gateway.Registry{Path: gateway.RegistryPath("")}
+	if err := registry.Writer(gateway.Apply).Register(root, "http://127.0.0.1:4000"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(registry.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	code := clikitcommand.Execute(newRootCommand(), []string{"status", "--json", "--platform-root", root}, &out, &stderr)
+	if code.Code() != 0 {
+		t.Fatalf("status failed: %s %s", out.String(), stderr.String())
+	}
+	after, err := os.ReadFile(registry.Path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("status wrote registry: %v", err)
 	}
 }

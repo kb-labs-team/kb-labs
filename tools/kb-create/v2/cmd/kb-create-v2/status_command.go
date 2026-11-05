@@ -54,11 +54,7 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	if err != nil {
 		return nil, asDiag(err)
 	}
-	launcherState, err := host.StateHome()
-	if err != nil {
-		return nil, asDiag(err)
-	}
-	if _, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}).Read(); err != nil {
+	if _, err := (gateway.Registry{OperationRoot: root}).Read(); err != nil {
 		return nil, asDiag(err)
 	}
 	state := runner.State
@@ -80,6 +76,9 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	installed := receiptErr == nil
 	payload := map[string]any{"ok": true, "operation": "status", "host": status, "installed": installed,
 		"running": status.State == host.StateRunning, "reachable": status.Healthy}
+	if status.StudioURL != "" {
+		payload["studioUrl"] = status.StudioURL
+	}
 	bootstrapCompleted, err := (secrets.Store{PlatformRoot: platformRoot}).BootstrapCompleted()
 	if err != nil {
 		return nil, asDiag(err)
@@ -103,7 +102,11 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	}
 	next := "kb-create start"
 	if status.State == host.StateRunning && status.Healthy {
-		next = "cd ~/any-project && kb commit"
+		if status.StudioURL != "" {
+			next = "Open Studio: " + status.StudioURL
+		} else {
+			next = "Register a project with kb-create install --project-root <path>"
+		}
 	}
 	if inv.Executable != "" && installed && !shim.Correct(inv.Executable, platformRoot) {
 		next = "kb-create install"
