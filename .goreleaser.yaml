@@ -31,11 +31,8 @@ builds:
       - -X main.version={{.Version}}
       - -X main.commit={{.Commit}}
       - -X main.date={{.Date}}
-    goos: &goos [darwin, linux, windows]
+    goos: &goos [darwin, linux]
     goarch: &goarch [amd64, arm64]
-    ignore: &ignore
-      - goos: windows
-        goarch: arm64
 
   - id: kb-dev
     dir: tools/kb-dev
@@ -45,7 +42,6 @@ builds:
     ldflags: *ldflags
     goos: *goos
     goarch: *goarch
-    ignore: *ignore
 
   - id: kb-devkit
     dir: tools/kb-devkit
@@ -55,7 +51,6 @@ builds:
     ldflags: *ldflags
     goos: *goos
     goarch: *goarch
-    ignore: *ignore
 
   - id: kb-deploy
     dir: tools/kb-deploy
@@ -65,7 +60,6 @@ builds:
     ldflags: *ldflags
     goos: *goos
     goarch: *goarch
-    ignore: *ignore
 
   - id: kb-monitor
     dir: tools/kb-monitor
@@ -75,7 +69,6 @@ builds:
     ldflags: *ldflags
     goos: *goos
     goarch: *goarch
-    ignore: *ignore
 
 # Upload raw binaries (not archives). Matches what install.sh scripts expect:
 #   https://github.com/.../releases/latest/download/<binary>-<os>-<arch>
@@ -83,7 +76,6 @@ archives:
   - id: binaries
     formats:
       - binary
-    # Goreleaser auto-appends .exe for windows — don't double it here.
     name_template: "{{ .Binary }}-{{ .Os }}-{{ .Arch }}"
 
 checksum:

@@ -1749,7 +1749,7 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "{os}/{arch} is not a supported platform.",
-      "hint": "Use a supported platform (macOS, Linux or Windows on x64/arm64) or install from source.",
+      "hint": "Run the same command on a supported Linux or macOS system.",
       "httpStatus": 500
     },
     {

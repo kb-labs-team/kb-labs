@@ -1448,7 +1448,7 @@ only direct install, and no old flow is reachable.
 - [ ] Audit stdout/stderr/JSON/NDJSON and stable exit codes.
 - [ ] Audit secret redaction across state, plans, journals, events, diffs, and
       logs.
-- [ ] Run clean-machine Linux/macOS/Windows coverage as supported by current
+- [ ] Run clean-machine Linux/macOS coverage for the currently supported
       release targets.
 
 Exit criteria: every failure has an actionable structured outcome, every mode
