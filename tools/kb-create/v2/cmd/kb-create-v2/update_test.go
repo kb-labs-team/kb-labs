@@ -619,7 +619,7 @@ func fixturePackageArtifact(t *testing.T, name, version string) contracts.Artifa
 	t.Cleanup(server.Close)
 	digest := sha256.Sum256(archive)
 	return contracts.Artifact{
-		ID: name, Kind: "plugin", Package: name, Version: version, Tarball: server.URL,
+		ID: name, Kind: "plugin", Package: name, Version: version, Tarball: server.URL, ResolvedURL: server.URL,
 		SHA256: hex.EncodeToString(digest[:]), Provenance: fixturePackageProvenance(t, name, version),
 	}
 }
@@ -868,7 +868,7 @@ func TestFreshInstallWritesCompleteRunningIdentityBeforeFirstUpdate(t *testing.T
 	t.Setenv(host.KBHomeEnv, kbHome)
 	root := filepath.Join(home, "install")
 	port := freeLoopbackPort(t)
-	state, err := host.StateHome()
+	state, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -944,7 +944,7 @@ func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWr
 	root := filepath.Join(parent, "install")
 	kbHome := filepath.Join(base, "user-state")
 	t.Setenv(host.KBHomeEnv, kbHome)
-	state, err := host.StateHome()
+	state, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1078,7 +1078,7 @@ func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T
 	root := filepath.Join(home, "kb-platform")
 	kbHome := filepath.Join(home, ".kb")
 	t.Setenv(host.KBHomeEnv, kbHome)
-	state, err := host.StateHome()
+	state, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1353,8 +1353,8 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
 		Host:         hostSpec,
 		Artifacts: []contracts.Artifact{
-			{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/install", SHA256: digests["install"], Target: "bin/kb-create"},
-			{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
+			{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/install", ResolvedURL: server.URL + "/install", SHA256: digests["install"], Target: "bin/kb-create"},
+			{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
 		},
 	}
 	state, err := host.StateForRoot(root)
@@ -1410,14 +1410,15 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 				t.Fatalf("active version projection %s is not the activation link: mode=%v error=%v", projection.PlatformPath, info, statErr)
 			}
 			target, resolveErr := filepath.EvalSymlinks(path)
-			if resolveErr != nil || !strings.HasPrefix(target, layout.SharedStateDir()+string(filepath.Separator)) {
+			inside, containmentErr := contracts.PathWithin(layout.SharedStateDir(), target)
+			if resolveErr != nil || containmentErr != nil || !inside || target == layout.SharedStateDir() {
 				t.Fatalf("active version projection %s does not resolve into install-root shared state: target=%q error=%v", projection.PlatformPath, target, resolveErr)
 			}
 		}
 	}
 	assertActiveProjectionsAreLinks()
 
-	launcherState, err := host.StateHome()
+	launcherState, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1434,8 +1435,8 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 			ServiceGraph: contracts.ServiceGraph{PlatformVersion: version, Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
 			Host:         hostSpec,
 			Artifacts: []contracts.Artifact{
-				{ID: "fixture-binary", Kind: "binary", Version: version, URL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"},
-				{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
+				{ID: "fixture-binary", Kind: "binary", Version: version, URL: server.URL + "/" + name, ResolvedURL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"},
+				{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
 			},
 		}
 		plan.Request.PlatformRoot = layout.PlatformRoot()
@@ -1820,8 +1821,8 @@ func TestArtifactExecutorLeavesUnprojectedStageWithoutSharedProjections(t *testi
 		t.Fatal(err)
 	}
 	items := []contracts.Artifact{
-		{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/binary", SHA256: digests["binary"], Target: "bin/kb-create"},
-		{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
+		{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/binary", ResolvedURL: server.URL + "/binary", SHA256: digests["binary"], Target: "bin/kb-create"},
+		{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
 	}
 	if err := executor.InstallWithProgress(items, func(_ string, start bool) error {
 		if start {
@@ -2107,7 +2108,11 @@ func TestUpdatePreparationFailureLeavesPreviousVersionActive(t *testing.T) {
 	}
 
 	launcherState := t.TempDir()
-	if err := os.Mkdir(filepath.Join(launcherState, "gateway-roots.json"), 0o700); err != nil {
+	t.Setenv("XDG_DATA_HOME", launcherState)
+	if err := os.Mkdir(filepath.Join(launcherState, "kb-create"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(launcherState, "kb-create", "gateway-roots.json"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	plan := updatePlan(t, inst.root, freeLoopbackPort(t))
@@ -2171,9 +2176,10 @@ func TestUpdateActivationFailureRestoresGatewayRegistryAndActiveIdentity(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	registryPath := filepath.Join(inst.state, "gateway-roots.json")
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	registryPath := gateway.RegistryPath(inst.home)
 	registry := gateway.Registry{Path: registryPath, OperationRoot: inst.root}
-	if err := registry.Register(inst.root, origin); err != nil {
+	if err := registry.Writer(gateway.Apply).Register(inst.root, origin); err != nil {
 		t.Fatal(err)
 	}
 	registryBefore, err := os.ReadFile(registryPath)

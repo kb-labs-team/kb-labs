@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +32,21 @@ import (
 )
 
 var fakeHostBinary string
+
+// case: S-285.17
+func TestHealthProbeReadsReportedStudioURL(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{{`{"data":{"studio":{"url":"http://example.test/"}}}`, "http://example.test/"}, {`{"data":{}}`, ""}} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, tc.body)
+		}))
+		got := (&ProcessRunner{}).probeURL(context.Background(), server.URL)
+		server.Close()
+		if got.StudioURL != tc.want {
+			t.Fatalf("studio URL = %q; want %q", got.StudioURL, tc.want)
+		}
+	}
+}
 
 func TestStopKillsHostGrandchild(t *testing.T) {
 	f := newRunner(t, 10, 1)
@@ -456,6 +473,7 @@ func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
 	platformRoot := filepath.Join(root, "current")
 	launcherHome := t.TempDir()
 	t.Setenv(KBHomeEnv, launcherHome)
+	t.Setenv("XDG_DATA_HOME", launcherHome)
 	expectedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatal(err)
@@ -484,14 +502,10 @@ func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
 	if active, ok := ActiveHost(state); !ok || active.PID != os.Getpid() || filepath.Clean(active.PlatformRoot) != filepath.Clean(platformRoot) {
 		t.Fatalf("fixture active host = %#v, %t", active, ok)
 	}
-	launcherState, err := StateHome()
-	if err != nil {
+	if err := (gateway.Registry{Path: gateway.RegistryPath("")}).Writer(gateway.Apply).Register(platformRoot, "http://127.0.0.1:4100"); err != nil {
 		t.Fatal(err)
 	}
-	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(platformRoot, "http://127.0.0.1:4100"); err != nil {
-		t.Fatal(err)
-	}
-	if roots, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Read(); err != nil || len(roots) != 1 {
+	if roots, err := (gateway.Registry{Path: gateway.RegistryPath("")}).Read(); err != nil || len(roots) != 1 {
 		t.Fatalf("fixture Gateway roots = %#v, %v", roots, err)
 	}
 
@@ -541,6 +555,7 @@ func TestGatewayResourceConflictIdentifiesTheVerifiedLiveOwner(t *testing.T) {
 	}
 	platformRoot := filepath.Join(root, "current")
 	t.Setenv(KBHomeEnv, t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	state, err := StateForRoot(platformRoot)
 	if err != nil {
 		t.Fatal(err)
@@ -560,11 +575,7 @@ func TestGatewayResourceConflictIdentifiesTheVerifiedLiveOwner(t *testing.T) {
 		InstallationID: installationID, PlatformRoot: platformRoot}); err != nil {
 		t.Fatal(err)
 	}
-	launcherState, err := StateHome()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(
+	if err := (gateway.Registry{Path: gateway.RegistryPath("")}).Writer(gateway.Apply).Register(
 		platformRoot, gatewayURL); err != nil {
 		t.Fatal(err)
 	}
@@ -580,11 +591,8 @@ func TestPortConflictSurfacesGatewayIndexDiagnosticForRequestedRoot(t *testing.T
 	root := filepath.Join(t.TempDir(), "requested platform")
 	launcherHome := t.TempDir()
 	t.Setenv(KBHomeEnv, launcherHome)
-	state, err := StateHome()
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(state.Dir, "gateway-roots.json")
+	t.Setenv("XDG_DATA_HOME", launcherHome)
+	path := gateway.RegistryPath("")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}

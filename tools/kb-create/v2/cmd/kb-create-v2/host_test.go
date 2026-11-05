@@ -77,7 +77,7 @@ func TestBuiltCLICompatibilityRefusalsMatchCasesWithoutMutatingRoots(t *testing.
 		args = append(args, extra...)
 		command := exec.Command(launcher, args...)
 		command.Env = childEnvironment(os.Environ(), map[string]string{"HOME": home,
-			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": ""})
+			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": "", "XDG_DATA_HOME": ""})
 		output, err := command.CombinedOutput()
 		if err == nil {
 			t.Fatalf("plan unexpectedly succeeded: %s", output)
@@ -184,8 +184,8 @@ func TestBuiltCLIAllocatesAndRetainsSecondaryGatewayOffsets(t *testing.T) {
 	writeVersionedReceipt(t, rootA, contracts.InstallReceipt{ID: "registered-gateway-root",
 		Plan: contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{HealthURL: "http://127.0.0.1:4000/health"},
 			ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"}}})
-	registry := gateway.Registry{Path: filepath.Join(home, ".kb", "launcher", "gateway-roots.json")}
-	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
+	registry := gateway.Registry{Path: gateway.RegistryPath(home)}
+	if err := registry.Writer(gateway.Apply).Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -216,7 +216,7 @@ func TestBuiltCLIAllocatesAndRetainsSecondaryGatewayOffsets(t *testing.T) {
 		}
 		command := exec.Command(launcher, args...)
 		command.Env = childEnvironment(os.Environ(), map[string]string{"HOME": home,
-			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": ""})
+			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": "", "XDG_DATA_HOME": ""})
 		output, err := command.CombinedOutput()
 		if err != nil {
 			t.Fatalf("built kb-create plan %s: %v\n%s", root, err, output)
@@ -237,7 +237,7 @@ func TestBuiltCLIAllocatesAndRetainsSecondaryGatewayOffsets(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := registry.Register(root, origin); err != nil {
+		if err := registry.Writer(gateway.Apply).Register(root, origin); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -462,7 +462,7 @@ func newInstallationWithRoot(t *testing.T, launcher, fakehost, root, kbHome stri
 	}
 	t.Setenv(host.KBHomeEnv, kbHome)
 	home := t.TempDir()
-	state, err := host.StateHome()
+	state, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,7 +483,7 @@ func newEmptyInstallation(t *testing.T) installation {
 	kbHome := t.TempDir()
 	home := t.TempDir()
 	t.Setenv(host.KBHomeEnv, kbHome)
-	state, err := host.StateHome()
+	state, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -913,6 +913,7 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
 	kbHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", kbHome)
 	rootA := filepath.Join(t.TempDir(), "KB Labs ' $ROOT `tick`\nline")
 	rootB := filepath.Join(t.TempDir(), "secondary")
 	a := newInstallationWithRoot(t, launcher, fakehost, rootA, kbHome, port)
@@ -926,7 +927,7 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	activeReceiptRoot := layoutA.PlatformRoot()
-	if err := (gateway.Registry{Path: filepath.Join(kbHome, "launcher", "gateway-roots.json")}).Register(activeReceiptRoot, fmt.Sprintf("http://127.0.0.1:%d", port)); err != nil {
+	if err := (gateway.Registry{Path: filepath.Join(kbHome, "kb-create", "gateway-roots.json")}).Writer(gateway.Apply).Register(activeReceiptRoot, fmt.Sprintf("http://127.0.0.1:%d", port)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := receipt.Read(activeReceiptRoot); err != nil {
@@ -1307,6 +1308,7 @@ func TestStaleLiveHostRecoveryEndsAtPortConflict(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
 	kbHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", kbHome)
 	rootA := filepath.Join(t.TempDir(), "platform A")
 	rootB := filepath.Join(t.TempDir(), "platform B")
 	a := newInstallationWithRoot(t, launcher, fakehost, rootA, kbHome, port)
@@ -1322,7 +1324,7 @@ func TestStaleLiveHostRecoveryEndsAtPortConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (gateway.Registry{Path: filepath.Join(kbHome, "launcher", "gateway-roots.json")}).Register(
+	if err := (gateway.Registry{Path: filepath.Join(kbHome, "kb-create", "gateway-roots.json")}).Writer(gateway.Apply).Register(
 		layoutA.PlatformRoot(), fmt.Sprintf("http://127.0.0.1:%d", port)); err != nil {
 		t.Fatal(err)
 	}

@@ -158,9 +158,25 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
-			t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
+			t.Setenv("KB_HOME", "")
 			t.Setenv(environment, password)
-			root := filepath.Join(home, "platform")
+			realRoot := filepath.Join(home, "real")
+			if err := os.Mkdir(realRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(home, "linked")
+			if err := os.Symlink(realRoot, link); err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Join(link, "platform")
+			stateHome, err := host.StateHome(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inside, err := contracts.PathWithin(root, stateHome.Dir)
+			if err != nil || !inside {
+				t.Fatalf("state home is outside install root: %q: %v", stateHome.Dir, err)
+			}
 			port := freeAllocatedGatewayPortWithOffsets(t, 0)
 			source := testReleaseCatalog(t, "2.0.0")
 			source.Platforms[0].Host = &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5}
@@ -223,7 +239,7 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 			if !strings.Contains(stdout.String(), "supplied") || strings.Contains(stdout.String(), `"password"`) {
 				t.Fatal("command result did not report the supplied state without a password field")
 			}
-			assertSecretsAbsentFromTrees(t, []string{password, environment}, root, filepath.Join(home, ".kb"), requestPath, indexPath)
+			assertSecretsAbsentFromTrees(t, []string{password, environment}, home)
 			store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
 			if present, err := store.Exists(secrets.BootstrapPassword); err != nil || present {
 				t.Fatal("supplied bootstrap password remains in the secret store")
@@ -246,7 +262,7 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 			if strings.Contains(stdout.String(), password) || strings.Contains(stdout.String(), environment) {
 				t.Fatal("repeat command output exposed supplied secret material")
 			}
-			assertSecretsAbsentFromTrees(t, []string{password, environment}, root, filepath.Join(home, ".kb"), requestPath, indexPath)
+			assertSecretsAbsentFromTrees(t, []string{password, environment}, home)
 		})
 	}
 }

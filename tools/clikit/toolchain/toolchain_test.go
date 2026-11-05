@@ -275,3 +275,12 @@ func TestNodeRemediationRendersTheCatalogHint(t *testing.T) {
 		t.Fatalf("NodeRemediation() = %q; want catalog hint %q", got, want)
 	}
 }
+
+// case: S-285.18
+func TestCommandFailureDiagnosticIncludesSafeStderr(t *testing.T) {
+	failure := &CommandError{Err: errors.New("exit status 1"), StderrTail: strings.Repeat("x", stderrTailLimit+32) + "\nAPI_TOKEN=supersecret\nregistry unavailable"}
+	diagnostic := diag.Wrap(failure, "KB_RUNTIME_UNEXPECTED", "command failed", diag.WithCauseAndReason(failure.Error()))
+	if !strings.Contains(diagnostic.Reason, "registry unavailable") || strings.Contains(diagnostic.Reason, "supersecret") || len(diagnostic.Reason) > stderrTailLimit+100 {
+		t.Fatalf("diagnostic reason is missing safe bounded stderr: %q", diagnostic.Reason)
+	}
+}

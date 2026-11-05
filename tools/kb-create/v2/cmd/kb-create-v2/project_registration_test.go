@@ -870,7 +870,11 @@ func TestSecuredProjectRegistrationUsesTransientGatewayLogin(t *testing.T) {
 	rootChanges := changedFilesystemPaths(rootBefore, snapshotFilesystem(t, root))
 	kbHome := filepath.Join(home, ".kb")
 	for _, path := range homeChanges {
-		if !allowedProjectRegistrationHomePath(path, registered.ID) {
+		allowed, err := allowedProjectRegistrationHomePath(home, path, registered.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !allowed {
 			t.Errorf("project registration changed unapproved HOME path %q", path)
 		}
 	}
@@ -902,15 +906,17 @@ func TestSecuredProjectRegistrationUsesTransientGatewayLogin(t *testing.T) {
 	}
 }
 
-func allowedProjectRegistrationHomePath(path, projectID string) bool {
+func allowedProjectRegistrationHomePath(home, path, projectID string) (bool, error) {
 	allowed := map[string]bool{
 		filepath.Join(".kb"):                     true,
 		filepath.Join(".kb", "projects.json"):    true,
 		filepath.Join(".kb", "state"):            true,
 		filepath.Join(".kb", "state", projectID): true,
 	}
-	stateRoot := filepath.Join(".kb", "state", projectID) + string(filepath.Separator)
-	return allowed[path] || strings.HasPrefix(path, stateRoot)
+	if allowed[path] {
+		return true, nil
+	}
+	return contracts.PathWithin(filepath.Join(home, ".kb", "state", projectID), filepath.Join(home, path))
 }
 
 func containsPath(paths []string, expected string) bool {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 )
 
@@ -228,9 +229,9 @@ func TestBuildDerivesHostAuthFromTheAccessMode(t *testing.T) {
 		patches []contracts.ConfigPatch
 		want    string
 	}{
-		"local install has no login":       {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"local"`, Owner: "manifest:gateway.access.mode"}}, "off"},
-		"secured install requires login":   {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"secured"`, Owner: "manifest:gateway.access.mode"}}, "on"},
-		"no answer is the secured default": {nil, "on"},
+		"local install has no login":          {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"local"`, Owner: "manifest:gateway.access.mode"}}, "off"},
+		"secured install requires login":      {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"secured"`, Owner: "manifest:gateway.access.mode"}}, "on"},
+		"no answer is the secured default":    {nil, "on"},
 		"host auth follows the selected mode": {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"local"`, Owner: "manifest:a"}, {Path: "/host/auth", JSON: `"on"`, Owner: "manifest:b"}}, "off"},
 	}
 	for name, testCase := range cases {
@@ -425,5 +426,45 @@ func testPlan(root string) contracts.ResolvedInstallPlan {
 		Schema:       contracts.ResolvedPlanSchema,
 		Request:      contracts.InstallRequest{PlatformRoot: root},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Command: "serve", Port: 4000}}},
+	}
+}
+
+// case: S-285.14
+func TestBuildUsesRegistryForDefaultMarketplaceNpmSource(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.Registry = "http://127.0.0.1:4873"
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the shipped index")
+	}
+	index, err := catalog.LoadFile(filepath.Join(filepath.Dir(filename), "../../../../.x251/release-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range index.Platforms[0].Config {
+		if item.Path == "/marketplace/sources" {
+			plan.ConfigPatches = append(plan.ConfigPatches, contracts.ConfigPatch{Path: item.Path, JSON: item.Default})
+		}
+	}
+	if len(plan.ConfigPatches) == 0 {
+		t.Fatal("shipped index does not declare Marketplace sources")
+	}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Marketplace struct {
+			Sources []struct {
+				Kind string `json:"kind"`
+				URL  string `json:"url"`
+			} `json:"sources"`
+		} `json:"marketplace"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Marketplace.Sources) != 1 || config.Marketplace.Sources[0].URL != plan.Registry {
+		t.Fatalf("Marketplace sources = %+v, want registry %s", config.Marketplace.Sources, plan.Registry)
 	}
 }
