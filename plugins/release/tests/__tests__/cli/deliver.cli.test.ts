@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { platformFlowPolicies } from '../../../src/core/platform-flow-policy.mjs';
@@ -73,6 +73,10 @@ function writeBundle(
   }]));
   const releaseIndexPath = join(root, 'release-index.json');
   writeFileSync(releaseIndexPath, JSON.stringify({ platforms: [{ id: 'platform', version: packageVersion }] }));
+  const binariesDir = join(root, 'binaries');
+  mkdirSync(binariesDir, { recursive: true });
+  writeFileSync(join(binariesDir, 'executable'), 'binary');
+  chmodSync(join(binariesDir, 'executable'), 0o700);
   const provenance = createCandidateBundle({
     candidateId: 'test-candidate',
     commit: '1234567890123456789012345678901234567890',
@@ -83,6 +87,7 @@ function writeBundle(
     workflowRunId: '1234',
     artifactsDir: sourceDir,
     releaseIndexPath,
+    binariesDir,
     outputDir: join(root, 'bundle'),
   });
   trusted = {
@@ -115,6 +120,26 @@ afterEach(() => {
 });
 
 describe('release:deliver candidate bundle', () => {
+  // case: S-284.16
+  it('dry-runs delivery after transport strips every executable permission', async () => {
+    const normalize = (directory: string) => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) normalize(path);
+        else chmodSync(path, 0o644);
+      }
+    };
+    normalize(join(root, 'bundle'));
+    const { ui } = createCapturedUI();
+    const result = await deliverCommand.execute(createMockContext({ ui, cwd: root }), mockCLIInput({ flags: {
+      flow: 'platform', 'bundle-dir': 'bundle', 'expected-digest': trusted.expectedDigest,
+      'candidate-id': trusted.candidateId, commit: trusted.commit, version: trusted.version,
+      target: 'local', 'dry-run': true, json: true,
+    } }));
+    expect(result).toMatchObject({ success: true });
+    expect(publishPackagesProgrammatic).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true }));
+    expect(statSync(join(root, 'bundle', 'binaries', 'executable')).mode & 0o777).toBe(0o700);
+  });
   // case: S-284.1
   it('publishes the bundle tarballs to the configured registry after validating the bundle root', async () => {
     const { ui } = createCapturedUI();

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createCandidateBundle, verifyCandidateBundle } from '../../src/shared/candidate-bundle.js';
@@ -63,6 +63,25 @@ afterEach(() => {
 });
 
 describe('candidate bundle producer and verifier', () => {
+  // case: S-284.16
+  it('rejects a tampered mode manifest before applying its permissions', () => {
+    const { bundleDir, trust } = makeBundle();
+    const provenancePath = join(bundleDir, 'provenance.json');
+    const modesPath = join(bundleDir, 'bundle.modes');
+    const modes = readFileSync(modesPath, 'utf8');
+    const line = modes.split('\n').find(item => item.endsWith('  ./provenance.json'));
+    if (!line) throw new Error('provenance mode entry missing');
+    const tamperedModes = modes.replace(line, '777  ./provenance.json');
+    writeFileSync(modesPath, tamperedModes);
+    const checksumsPath = join(bundleDir, 'bundle.sha256');
+    const checksums = readFileSync(checksumsPath, 'utf8');
+    const modeChecksum = checksums.split('\n').find(item => item.endsWith('  ./bundle.modes'));
+    if (!modeChecksum) throw new Error('mode checksum missing');
+    writeFileSync(checksumsPath, checksums.replace(modeChecksum, `${createHash('sha256').update(tamperedModes).digest('hex')}  ./bundle.modes`));
+    const before = lstatSync(provenancePath).mode & 0o777;
+    expect(() => verifyCandidateBundle(bundleDir, trust, testPolicy)).toThrow(/digest/);
+    expect(lstatSync(provenancePath).mode & 0o777).toBe(before);
+  });
   // case: S-284.1
   it('creates a bundle whose provenance digest, exact file set, modes and package bytes verify', () => {
     const { bundleDir, trust } = makeBundle();
@@ -72,6 +91,46 @@ describe('candidate bundle producer and verifier', () => {
     expect(verified.artifacts).toHaveLength(1);
     expect(verified.artifactsDir).toBe(join(bundleDir, 'npm'));
     expect(verified.provenance.gate).toEqual({ policy: 'none', result: 'skipped' });
+  });
+
+  // case: S-284.16
+  it('verifies after artifact download normalizes restrictive source modes', () => {
+    root = mkdtempSync(join(tmpdir(), 'x241-candidate-'));
+    const artifactsDir = join(root, 'source-artifacts');
+    writeSource(artifactsDir, 'kb-labs-fixture-1.0.0.tgz', 'fixture tarball bytes');
+    chmodSync(join(artifactsDir, 'manifest.json'), 0o600);
+    chmodSync(join(artifactsDir, 'kb-labs-fixture-1.0.0.tgz'), 0o600);
+    const binariesDir = join(root, 'binaries');
+    mkdirSync(binariesDir);
+    writeFileSync(join(binariesDir, 'executable'), 'binary');
+    chmodSync(join(binariesDir, 'executable'), 0o700);
+    const releaseIndexPath = join(root, 'release-index.json');
+    writeFileSync(releaseIndexPath, JSON.stringify({ platforms: [{ id: 'platform', version: '1.0.0' }] }));
+    chmodSync(releaseIndexPath, 0o600);
+    const bundleDir = join(root, 'bundle');
+    const provenance = createCandidateBundle({
+      ...identity,
+      channel: 'canary',
+      gate: { policy: 'none', result: 'skipped' },
+      workflowRunId: '1234',
+      artifactsDir,
+      releaseIndexPath,
+      binariesDir,
+      outputDir: bundleDir,
+    });
+
+    const downloadedDir = join(root, 'downloaded');
+    cpSync(bundleDir, downloadedDir, { recursive: true });
+    const normalizeDownloadedModes = (directory: string) => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) normalizeDownloadedModes(path);
+        else chmodSync(path, (lstatSync(path).mode & 0o111) !== 0 ? 0o755 : 0o644);
+      }
+    };
+    normalizeDownloadedModes(downloadedDir);
+
+    expect(() => verifyCandidateBundle(downloadedDir, { ...identity, expectedDigest: provenance.bundleDigest }, testPolicy)).not.toThrow();
   });
 
   // case: S-284.5
