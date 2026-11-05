@@ -25,7 +25,7 @@ import { spawnSync } from 'node:child_process';
 import { closeSync, fstatSync, openSync, readSync, unlinkSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { writeCliResult } from './runtime/result-serializer.js';
+import { writeCliResult, writeCliResultTo } from './runtime/result-serializer.js';
 
 const INTERNAL_RESULT_CHANNEL = '--__kb_internal_result_channel=';
 
@@ -47,8 +47,8 @@ async function reportCliResultFailure(cause: string): Promise<void> {
     templateValues: { binary, cause },
   });
   const presenter = process.argv.includes('--json')
-    ? createJsonPresenter((value) => process.stdout.write(`${JSON.stringify(value)}\n`))
-    : createTextPresenter(writeCliResult);
+    ? createJsonPresenter((value) => writeCliResultTo(1, value))
+    : createTextPresenter((value) => writeCliResultTo(1, value));
   handleExecutionError(new Error(cause), presenter, { envelope });
 }
 
@@ -195,13 +195,26 @@ if (process.argv.includes('--json')) {
 const BIN_MODULE_URL = import.meta.url;
 
 (async () => {
-  // Import the platform only after the logging environment is bootstrapped.
-  const [{ run }, { platform }, { createJsonPresenter, createTextPresenter }, { handleExecutionError }] = await Promise.all([
-    import('./index.js'),
-    import('@kb-labs/core-runtime'),
-    import('@kb-labs/cli-runtime'),
-    import('./runtime/execution-error.js'),
-  ]);
+  let cliModules: [
+    typeof import('./index.js'),
+    typeof import('@kb-labs/core-runtime'),
+    typeof import('@kb-labs/cli-runtime'),
+    typeof import('./runtime/execution-error.js'),
+  ];
+  try {
+    // Import the platform only after the logging environment is bootstrapped.
+    cliModules = await Promise.all([
+      import('./index.js'),
+      import('@kb-labs/core-runtime'),
+      import('@kb-labs/cli-runtime'),
+      import('./runtime/execution-error.js'),
+    ]);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    await reportCliResultFailure(`could not load the CLI runtime: ${cause}`);
+    process.exit(1);
+  }
+  const [{ run }, { platform }, { createJsonPresenter, createTextPresenter }, { handleExecutionError }] = cliModules;
 
   const reportUnexpectedError = async (error: Error) => {
     const presenter = process.env.KB_OUTPUT_MODE === 'json'

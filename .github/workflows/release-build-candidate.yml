@@ -93,11 +93,6 @@ jobs:
           mode: candidate
           expected-version: ${{ inputs.version }}
 
-      - name: Stage exact npm artifacts
-        env:
-          FLOW: ${{ inputs.flow }}
-        run: pnpm kb release artifact create --flow "$FLOW" --out-dir .kb/release/artifacts --json
-
       - name: Build exact Go binary assets
         uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29
         if: inputs.flow == 'platform'

@@ -17,6 +17,44 @@ commit_sha="$3"
 mode="$4"
 expected_version="${5:-}"
 
+diagnostics_dir="${KBLABS_RELEASE_DIAGNOSTICS_DIR:-}"
+diagnostics_dir_owned=false
+diagnostics_step=0
+
+cleanup_diagnostics() {
+  local status=$?
+  if ((status == 0)) && [[ "$diagnostics_dir_owned" == true ]]; then
+    rm -rf -- "$diagnostics_dir"
+  fi
+}
+trap cleanup_diagnostics EXIT
+
+run_step() {
+  local status=0
+  if [[ -z "$diagnostics_dir" ]]; then
+    diagnostics_dir="$(mktemp -d "${TMPDIR:-/tmp}/kb-release-build-diagnostics.XXXXXXXX")"
+    diagnostics_dir_owned=true
+  fi
+  mkdir -p "$diagnostics_dir"
+  chmod 700 "$diagnostics_dir"
+  diagnostics_step=$((diagnostics_step + 1))
+  local step_id
+  printf -v step_id '%03d' "$diagnostics_step"
+  local stdout_file="$diagnostics_dir/step-${step_id}-stdout.log"
+  local stderr_file="$diagnostics_dir/step-${step_id}-stderr.log"
+  (umask 077; "$@") >"$stdout_file" 2>"$stderr_file" || status=$?
+  if ((status != 0)); then
+    printf 'Release preflight command failed (exit %d):' "$status" >&2
+    printf ' %q' "$@" >&2
+    printf '\n' >&2
+    printf '%s\n' "--- stdout tail ($stdout_file) ---" >&2
+    tail -n 60 "$stdout_file" >&2
+    printf '%s\n' "--- stderr tail ($stderr_file) ---" >&2
+    tail -n 60 "$stderr_file" >&2
+    return "$status"
+  fi
+}
+
 if [[ "$mode" != candidate && "$mode" != preflight ]]; then
   echo "Unknown release build mode '$mode'; use candidate or preflight." >&2
   exit 2
@@ -43,12 +81,12 @@ packages="@kb-labs/cli-bin,@kb-labs/release"
 if [[ -n "$adapters" ]]; then
   packages="$packages,$adapters"
 fi
-./tools/kb-devkit/kb-devkit run build --packages "$packages" --no-cache
+run_step ./tools/kb-devkit/kb-devkit run build --packages "$packages" --no-cache
 
-node ./cli/bin/dist/bin.js release plan \
+run_step node ./cli/bin/dist/bin.js release plan \
   --flow "$flow" --channel "$channel" --bump auto --json
 
-node --input-type=module - "$flow" "$channel" "$commit_sha" "$mode" <<'NODE'
+run_step node --input-type=module - "$flow" "$channel" "$commit_sha" "$mode" <<'NODE'
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -92,7 +130,7 @@ fs.writeFileSync(planPath, `${JSON.stringify(plan, null, 2)}\n`);
 NODE
 
 if [[ "$mode" == candidate && "$channel" == stable ]]; then
-  EXPECTED_VERSION="$expected_version" node --input-type=module <<'NODE'
+  run_step env EXPECTED_VERSION="$expected_version" node --input-type=module <<'NODE'
 import fs from 'node:fs';
 import path from 'node:path';
 const plan = JSON.parse(fs.readFileSync('.kb/release/plans/root/current/plan.json', 'utf8'));
@@ -113,8 +151,9 @@ if (mismatches.length > 0) {
 console.log(`Verified ${plan.packages.length} package(s) already at ${expected}; skipping re-bump.`);
 NODE
 else
-  node ./cli/bin/dist/bin.js release version update \
+  run_step node ./cli/bin/dist/bin.js release version update \
     --flow "$flow" --channel "$channel" --json
 fi
 
-node ./cli/bin/dist/bin.js release build run --flow "$flow" --json
+run_step node ./cli/bin/dist/bin.js release build run --flow "$flow" --json
+run_step pnpm kb release artifact create --flow "$flow" --out-dir .kb/release/artifacts --json
