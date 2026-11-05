@@ -68,7 +68,6 @@ describe('CLI result descriptor boundary', () => {
     expect(result.status, result.stderr || result.stdout).toBe(0);
     expectOneJsonEnvelope(result.stdout, { ok: true, data: { complete: true, childStatus: 0 } });
     for (const text of [
-      'fixture loader progress',
       'fixture console progress',
       'fixture console error',
       'fixture direct progress',
@@ -78,6 +77,7 @@ describe('CLI result descriptor boundary', () => {
     ]) {
       expect(result.stderr).toContain(text);
     }
+    expect(result.stderr).not.toContain('fixture loader progress');
   });
 
   // case: S-284.8
@@ -96,6 +96,7 @@ describe('CLI result descriptor boundary', () => {
     expectOneJsonEnvelope(result.stdout, { ok: false, error: expectedError });
     expect(result.stdout).toContain(expectedError.message);
     expect(result.stdout).toContain(expectedError.hint);
+    expect(result.stderr).not.toContain('fixture completed build');
 
     const humanResult = await runCli(fixture, ['stdout', 'fixture', 'terminate']);
     expect(humanResult.status, humanResult.stderr || humanResult.stdout).toBe(1);
@@ -432,8 +433,12 @@ export default {
 `;
 
 const terminateFixtureHandlerSource = `
+import { useLoader } from '@kb-labs/sdk';
+
 export default {
   async execute() {
+    const loader = useLoader('fixture build');
+    loader.fail('fixture completed build');
     process.kill(process.pid, 'SIGKILL');
   },
 };

@@ -46,4 +46,21 @@ runs:
         COMMIT_SHA: ${{ inputs['commit-sha'] }}
         MODE: ${{ inputs.mode }}
         EXPECTED_VERSION: ${{ inputs['expected-version'] }}
+        KBLABS_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/kb-release-build-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
       run: bash scripts/release-build-preflight.sh "$FLOW" "$CHANNEL" "$COMMIT_SHA" "$MODE" "$EXPECTED_VERSION"
+    - name: Upload release build diagnostics
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: release-build-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          ${{ runner.temp }}/kb-release-build-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          .kb/logs
+        if-no-files-found: ignore
+        retention-days: 7
+    - name: Remove successful release diagnostics
+      if: ${{ success() }}
+      shell: bash
+      env:
+        KBLABS_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/kb-release-build-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+      run: rm -rf -- "$KBLABS_RELEASE_DIAGNOSTICS_DIR"
