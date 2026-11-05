@@ -17,6 +17,26 @@ inputs:
     description: Required for stable candidate version verification
     required: false
     default: ''
+  candidate-id:
+    description: Immutable candidate identity for candidate mode
+    required: false
+    default: ''
+  run-id:
+    description: Hosted run identity for candidate mode
+    required: false
+    default: ''
+  gate-policy:
+    description: Resolved gate policy for candidate mode
+    required: false
+    default: ''
+  gate-result:
+    description: Resolved gate result for candidate mode
+    required: false
+    default: ''
+  gate-run-id:
+    description: Hosted gate run identity when a gate ran
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -51,6 +71,11 @@ runs:
         COMMIT_SHA: ${{ inputs['commit-sha'] }}
         MODE: ${{ inputs.mode }}
         EXPECTED_VERSION: ${{ inputs['expected-version'] }}
+        CANDIDATE_ID: ${{ inputs['candidate-id'] }}
+        RUN_ID: ${{ inputs['run-id'] }}
+        GATE_POLICY: ${{ inputs['gate-policy'] }}
+        GATE_RESULT: ${{ inputs['gate-result'] }}
+        GATE_RUN_ID: ${{ inputs['gate-run-id'] }}
         KBLABS_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/kb-release-build-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
       run: bash scripts/release-build-preflight.sh "$FLOW" "$CHANNEL" "$COMMIT_SHA" "$MODE" "$EXPECTED_VERSION"
     - name: Upload release build diagnostics

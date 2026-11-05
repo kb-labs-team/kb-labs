@@ -9,22 +9,38 @@ import { load as loadYaml } from 'js-yaml';
 
 const scriptPath = fileURLToPath(new URL('./release-build-preflight.sh', import.meta.url));
 const candidateWorkflowPath = fileURLToPath(new URL('../.github/workflows/release-build-candidate.yml', import.meta.url));
+const candidateActionPath = fileURLToPath(new URL('../.github/actions/release-build-preflight/action.yml', import.meta.url));
 
-test('every candidate step after binary manifest is shared-preflight or explicitly hosted-only', () => {
+test('candidate job expands the shared build once and leaves only hosted-only steps afterward', () => {
   const workflow = loadYaml(readFileSync(candidateWorkflowPath, 'utf8'));
   const steps = workflow.jobs.build.steps;
-  const manifestIndex = steps.findIndex(step => step.name === 'Generate binary manifest from checksums');
-  assert.notEqual(manifestIndex, -1, 'candidate workflow retains the binary manifest boundary');
+  const buildActionIndexes = steps.flatMap((step, index) => step.uses === './.github/actions/release-build-preflight' ? [index] : []);
+  assert.equal(buildActionIndexes.length, 1, 'candidate job must invoke the shared release-build action exactly once');
 
-  const postManifestSteps = steps.slice(manifestIndex + 1);
-  assert.ok(postManifestSteps.length > 0, 'candidate workflow has post-manifest steps to classify');
-  for (const step of postManifestSteps) {
+  const action = loadYaml(readFileSync(candidateActionPath, 'utf8'));
+  const preflightEntrypoints = action.runs.steps.filter(step => step.run === 'bash scripts/release-build-preflight.sh "$FLOW" "$CHANNEL" "$COMMIT_SHA" "$MODE" "$EXPECTED_VERSION"');
+  assert.equal(preflightEntrypoints.length, 1, 'shared action must execute the release preflight exactly once');
+  const candidateBuild = steps[buildActionIndexes[0]];
+  assert.equal(candidateBuild.with['candidate-id'], '${{ inputs.candidate_id }}');
+  assert.equal(candidateBuild.with['run-id'], '${{ github.run_id }}');
+  assert.equal(candidateBuild.with['gate-policy'], '${{ needs.resolve-gate-policy.outputs.policy }}');
+  assert.equal(candidateBuild.with['gate-result'], "${{ needs.journey-gate.result == 'success' && 'passed' || 'skipped' }}");
+  assert.equal(candidateBuild.with['gate-run-id'], "${{ needs.journey-gate.result == 'success' && github.run_id || '' }}");
+  assert.deepEqual(
+    Object.fromEntries(['CANDIDATE_ID', 'RUN_ID', 'GATE_POLICY', 'GATE_RESULT', 'GATE_RUN_ID'].map(name => [name, preflightEntrypoints[0].env[name]])),
+    {
+      CANDIDATE_ID: "${{ inputs['candidate-id'] }}",
+      RUN_ID: "${{ inputs['run-id'] }}",
+      GATE_POLICY: "${{ inputs['gate-policy'] }}",
+      GATE_RESULT: "${{ inputs['gate-result'] }}",
+      GATE_RUN_ID: "${{ inputs['gate-run-id'] }}",
+    },
+  );
+
+  const postActionSteps = steps.slice(buildActionIndexes[0] + 1);
+  for (const step of postActionSteps) {
     const classification = step.env?.RELEASE_PREFLIGHT_COVERAGE;
     assert.ok(classification, `${step.name} must declare RELEASE_PREFLIGHT_COVERAGE`);
-    if (classification === 'shared') {
-      assert.equal(step.run?.trim(), 'bash scripts/release-candidate-post-build.sh', `${step.name} must call the shared post-build entrypoint`);
-      continue;
-    }
     assert.equal(classification, 'hosted-only', `${step.name} has an unknown coverage classification`);
     assert.ok(step.env?.RELEASE_PREFLIGHT_HOSTED_ONLY_REASON?.trim(), `${step.name} must explain its hosted-only requirement`);
   }
@@ -95,6 +111,8 @@ test('preflight stages npm artifacts after the release build', () => {
     const node = path.join(binDir, 'node');
     const nodeArgsPath = path.join(root, 'node-args.txt');
     const orderPath = path.join(root, 'command-order.txt');
+    const bundleMetadataPath = path.join(root, 'bundle-metadata.txt');
+    const goreleaserTagPath = path.join(root, 'goreleaser-tag.txt');
     writeFileSync(node, `#!/usr/bin/env bash
 args="$*"
 printf '%s\\n' "$*" >> '${nodeArgsPath}'
@@ -105,9 +123,9 @@ if [[ "$args" == *"resolve-candidate-gate.mjs"* ]]; then printf 'required=false\
 if [[ "$args" == *"platform-release-config.mjs"* ]]; then printf '{"platformMembers":[],"platformRequires":[],"adapters":{},"adapterOptions":{}}'; fi
 if [[ "$args" == *"d.platformMembers.join"* || "$args" == *"d.platformRequires.join"* ]]; then printf ''; fi
 if [[ "$args" == *"JSON.stringify(d.adapters)"* || "$args" == *"JSON.stringify(d.adapterOptions)"* ]]; then printf '{}'; fi
-if [[ "$args" == *"prepare-release-index.mjs"* ]]; then mkdir -p "$(dirname "$RELEASE_INDEX_PATH")"; printf '{"platforms":[{"id":"platform","version":"2.0.0-preflight"}]}\\n' > "$RELEASE_INDEX_PATH"; fi
-if [[ "$args" == *"process.env.RELEASE_INDEX_PATH"* ]]; then printf '2.0.0-preflight'; fi
-if [[ "$args" == *"create-candidate-bundle.mjs"* ]]; then printf 'bundle assembled\\n'; fi
+if [[ "$args" == *"prepare-release-index.mjs"* ]]; then mkdir -p "$(dirname "$RELEASE_INDEX_PATH")"; printf '{"platforms":[{"id":"platform","version":"%s"}]}\\n' "$EXPECTED_VERSION" > "$RELEASE_INDEX_PATH"; fi
+if [[ "$args" == *"process.env.RELEASE_INDEX_PATH"* ]]; then printf '%s' "$EXPECTED_VERSION"; fi
+if [[ "$args" == *"create-candidate-bundle.mjs"* ]]; then printf '%s|%s|%s|%s|%s|%s|%s\\n' "$CANDIDATE_ID" "$COMMIT_SHA" "$VERSION" "$GATE_POLICY" "$GATE_RESULT" "$GATE_RUN_ID" "$RUN_ID" > '${bundleMetadataPath}'; printf 'bundle assembled\\n'; fi
 if [[ "$1" == -p ]]; then printf '2.0.0-preflight\\n'; fi
 exit 0
 `);
@@ -119,25 +137,39 @@ exit 0
 
     const go = path.join(binDir, 'go');
     const goArgsPath = path.join(root, 'go-args.txt');
-    writeFileSync(go, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" > '${goArgsPath}'\nprintf '[]\\n'\n`);
+    writeFileSync(go, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> '${goArgsPath}'\nprintf '[]\\n'\n`);
     chmodSync(go, 0o755);
 
     const goreleaser = path.join(binDir, 'goreleaser');
     const goreleaserArgsPath = path.join(root, 'goreleaser-args.txt');
     writeFileSync(goreleaser, `#!/usr/bin/env bash
 printf '%s\\n' "$*" > '${goreleaserArgsPath}'
+printf '%s\\n' "$GORELEASER_CURRENT_TAG" > '${goreleaserTagPath}'
 printf 'goreleaser %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"
 `);
     chmodSync(goreleaser, 0o755);
 
-    const result = spawnSync('bash', [path.join(root, 'scripts-release-build-preflight.sh'), 'platform', 'canary', '0123456789abcdef0123456789abcdef01234567', 'preflight'], {
+    const result = spawnSync('bash', [path.join(root, 'scripts-release-build-preflight.sh'), 'platform', 'canary', '0123456789abcdef0123456789abcdef01234567', 'candidate', '2.0.0-canary.012345678'], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, HOME: root, CI: 'true', GITHUB_REPOSITORY: 'example/kb-labs', RELEASE_PREFLIGHT_ORDER_FILE: orderPath },
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH}`,
+        HOME: root,
+        CI: 'true',
+        GITHUB_REPOSITORY: 'example/kb-labs',
+        CANDIDATE_ID: 'candidate-012345678',
+        RUN_ID: 'test-run-1',
+        GATE_POLICY: 'required',
+        GATE_RESULT: 'passed',
+        GATE_RUN_ID: 'test-gate-run-1',
+        RELEASE_PREFLIGHT_ORDER_FILE: orderPath,
+      },
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(readFileSync(goreleaserArgsPath, 'utf8').trim(), 'release --snapshot --clean --skip=publish');
+    assert.equal(readFileSync(goreleaserTagPath, 'utf8').trim(), 'v2.0.0-canary.012345678-binaries');
     const nodeCommands = readFileSync(nodeArgsPath, 'utf8');
     assert.match(nodeCommands, /\.\/cli\/bin\/dist\/bin\.js release artifact create --flow platform --out-dir \.kb\/release\/artifacts --json/);
     const snapshotPosition = nodeCommands.indexOf('tools/kb-create/scripts/prepare-binary-manifest.mjs');
@@ -157,10 +189,20 @@ printf 'goreleaser %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"
     const regressionOrderPosition = commandOrder.indexOf('node --test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs');
     assert.ok(goreleaserPosition >= 0 && manifestPosition > goreleaserPosition, commandOrder);
     assert.ok(regressionOrderPosition > manifestPosition, commandOrder);
+    assert.equal(readFileSync(bundleMetadataPath, 'utf8').trim(), 'candidate-012345678|0123456789abcdef0123456789abcdef01234567|2.0.0-canary.012345678|required|passed|test-gate-run-1|test-run-1');
     const indexPosition = nodeCommands.indexOf('tools/kb-create/scripts/prepare-release-index.mjs');
     const bundlePosition = nodeCommands.indexOf('plugins/release/scripts/create-candidate-bundle.mjs');
     assert.ok(indexPosition >= 0, nodeCommands);
     assert.ok(bundlePosition > indexPosition, nodeCommands);
+    assert.equal(nodeCommands.split('release build run --flow platform --json').length - 1, 1, nodeCommands);
+    assert.equal(nodeCommands.split('release artifact create --flow platform --out-dir .kb/release/artifacts --json').length - 1, 1, nodeCommands);
+    assert.equal(nodeCommands.split('release version update --flow platform --channel canary --json').length - 1, 1, nodeCommands);
+    assert.equal(nodeCommands.split('tools/kb-create/scripts/prepare-binary-manifest.mjs').length - 1, 1, nodeCommands);
+    assert.equal(nodeCommands.split('--test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs').length - 1, 1, nodeCommands);
+    assert.equal(nodeCommands.split('tools/kb-create/scripts/prepare-release-index.mjs').length - 1, 1, nodeCommands);
+    assert.equal(nodeCommands.split('plugins/release/scripts/create-candidate-bundle.mjs').length - 1, 1, nodeCommands);
+    assert.equal(commandOrder.split('goreleaser release --snapshot --clean --skip=publish').length - 1, 1, commandOrder);
+    assert.equal(readFileSync(goArgsPath, 'utf8').split('-C tools/kb-create run ./v2/cmd/kb-create-release-index provenance').length - 1, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

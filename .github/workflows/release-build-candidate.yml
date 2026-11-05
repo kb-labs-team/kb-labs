@@ -92,54 +92,11 @@ jobs:
           channel: ${{ inputs.channel }}
           mode: candidate
           expected-version: ${{ inputs.version }}
-
-      - name: Build exact Go binary assets
-        uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29
-        if: inputs.flow == 'platform'
-        env:
-          GORELEASER_CURRENT_TAG: v${{ inputs.version }}-binaries
-        with:
-          version: latest
-          args: release --snapshot --clean --skip=publish
-
-      - name: Generate binary manifest from checksums
-        if: inputs.flow == 'platform'
-        env:
-          CANDIDATE_ID: ${{ inputs.candidate_id }}
-          VERSION: ${{ inputs.version }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          test -s dist/checksums.txt
-          node tools/kb-create/scripts/prepare-binary-manifest.mjs \
-            --artifacts dist/artifacts.json \
-            --checksums dist/checksums.txt \
-            --repository "$REPOSITORY" \
-            --release-tag "v${VERSION}-binaries" \
-            --version "$VERSION" \
-            --output .kb/release/binary-manifest.json
-
-      - name: Seal, verify, and assemble candidate bundle
-        if: inputs.flow == 'platform'
-        env:
-          RELEASE_PREFLIGHT_COVERAGE: shared
-          CANDIDATE_ID: ${{ inputs.candidate_id }}
-          COMMIT_SHA: ${{ inputs.commit_sha }}
-          FLOW: ${{ inputs.flow }}
-          CHANNEL: ${{ inputs.channel }}
-          SOURCE_REVISION: ${{ inputs.commit_sha }}
-          EXPECTED_VERSION: ${{ inputs.version }}
-          GATE_POLICY: ${{ needs.resolve-gate-policy.outputs.policy }}
-          GATE_RESULT: ${{ needs.journey-gate.result == 'success' && 'passed' || 'skipped' }}
-          GATE_RUN_ID: ${{ needs.journey-gate.result == 'success' && github.run_id || '' }}
-          RUN_ID: ${{ github.run_id }}
-          ARTIFACTS_DIR: .kb/release/artifacts
-          PROVENANCE_MANIFEST_PATH: .kb/release/provenance.json
-          RELEASE_INDEX_PATH: .kb/release/release-index.json
-          BINARY_MANIFEST_PATH: .kb/release/binary-manifest.json
-          BUNDLE_DIR: .kb/release/bundle
-          BINARIES_DIR: dist
-        run: bash scripts/release-candidate-post-build.sh
+          candidate-id: ${{ inputs.candidate_id }}
+          run-id: ${{ github.run_id }}
+          gate-policy: ${{ needs.resolve-gate-policy.outputs.policy }}
+          gate-result: ${{ needs.journey-gate.result == 'success' && 'passed' || 'skipped' }}
+          gate-run-id: ${{ needs.journey-gate.result == 'success' && github.run_id || '' }}
 
       - name: Upload immutable candidate bundle
         id: upload-candidate

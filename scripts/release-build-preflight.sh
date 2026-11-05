@@ -159,14 +159,14 @@ fi
 run_step node ./cli/bin/dist/bin.js release build run --flow "$flow" --json
 run_step node ./cli/bin/dist/bin.js release artifact create --flow "$flow" --out-dir .kb/release/artifacts --json
 if [[ "$flow" == platform ]]; then
-  if [[ -n "${KBLABS_RELEASE_GORELEASER_CONFIG:-}" ]]; then
-    run_step goreleaser release --config "$KBLABS_RELEASE_GORELEASER_CONFIG" --snapshot --clean --skip=publish
-  else
-    run_step goreleaser release --snapshot --clean --skip=publish
-  fi
   binary_version="$expected_version"
   if [[ -z "$binary_version" ]]; then
     binary_version="$(node -p 'require("./cli/bin/package.json").version')"
+  fi
+  if [[ -n "${KBLABS_RELEASE_GORELEASER_CONFIG:-}" ]]; then
+    run_step env GORELEASER_CURRENT_TAG="v${binary_version}-binaries" goreleaser release --config "$KBLABS_RELEASE_GORELEASER_CONFIG" --snapshot --clean --skip=publish
+  else
+    run_step env GORELEASER_CURRENT_TAG="v${binary_version}-binaries" goreleaser release --snapshot --clean --skip=publish
   fi
   repository="${GITHUB_REPOSITORY:-$(node -p 'String(require("./package.json").repository).replace(/\.git$/, "")')}"
   run_step node tools/kb-create/scripts/prepare-binary-manifest.mjs \
@@ -178,20 +178,39 @@ if [[ "$flow" == platform ]]; then
     --output .kb/release/binary-manifest.json
   run_step env KBLABS_RELEASE_DIST="$release_dist" node --test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs
   short_commit="${commit_sha:0:9}"
-  gate_metadata_file="$diagnostics_dir/candidate-gate.env"
-  GITHUB_OUTPUT="$gate_metadata_file" node .kb/workflows/scripts/resolve-candidate-gate.mjs --flow "$flow" --channel "$channel" >/dev/null
-  gate_policy="$(awk -F= '$1 == "policy" { print $2 }' "$gate_metadata_file")"
+  if [[ "$mode" == candidate ]]; then
+    for name in CANDIDATE_ID RUN_ID GATE_POLICY GATE_RESULT; do
+      if [[ -z "${!name:-}" ]]; then
+        printf 'Candidate mode requires resolved workflow input %s.\n' "$name" >&2
+        exit 2
+      fi
+    done
+    candidate_id="$CANDIDATE_ID"
+    run_id="$RUN_ID"
+    gate_policy="$GATE_POLICY"
+    gate_result="$GATE_RESULT"
+    gate_run_id="${GATE_RUN_ID:-}"
+  else
+    gate_metadata_file="$diagnostics_dir/candidate-gate.env"
+    GITHUB_OUTPUT="$gate_metadata_file" node .kb/workflows/scripts/resolve-candidate-gate.mjs --flow "$flow" --channel "$channel" >/dev/null
+    gate_policy="$(awk -F= '$1 == "policy" { print $2 }' "$gate_metadata_file")"
+    candidate_id="preflight-$short_commit"
+    run_id="$candidate_id"
+    gate_result=skipped
+    gate_run_id=
+  fi
   run_step env \
     RELEASE_PREFLIGHT_COVERAGE=shared \
-    CANDIDATE_ID="preflight-$short_commit" \
+    CANDIDATE_ID="$candidate_id" \
     COMMIT_SHA="$commit_sha" \
     FLOW="$flow" \
     CHANNEL="$channel" \
     SOURCE_REVISION="$commit_sha" \
     EXPECTED_VERSION="$expected_version" \
     GATE_POLICY="$gate_policy" \
-    GATE_RESULT=skipped \
-    RUN_ID="preflight-$short_commit" \
+    GATE_RESULT="$gate_result" \
+    GATE_RUN_ID="$gate_run_id" \
+    RUN_ID="$run_id" \
     ARTIFACTS_DIR=.kb/release/artifacts \
     PROVENANCE_MANIFEST_PATH=.kb/release/provenance.json \
     RELEASE_INDEX_PATH=.kb/release/release-index.json \
