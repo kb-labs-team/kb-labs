@@ -80,6 +80,11 @@ exit 0
     writeFileSync(pnpm, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" > '${pnpmArgsPath}'\n`);
     chmodSync(pnpm, 0o755);
 
+    const goreleaser = path.join(binDir, 'goreleaser');
+    const goreleaserArgsPath = path.join(root, 'goreleaser-args.txt');
+    writeFileSync(goreleaser, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" > '${goreleaserArgsPath}'\n`);
+    chmodSync(goreleaser, 0o755);
+
     const result = spawnSync('bash', [path.join(root, 'scripts-release-build-preflight.sh'), 'platform', 'canary', '0123456789abcdef0123456789abcdef01234567', 'preflight'], {
       cwd: root,
       encoding: 'utf8',
@@ -88,6 +93,7 @@ exit 0
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(readFileSync(pnpmArgsPath, 'utf8').trim(), 'kb release artifact create --flow platform --out-dir .kb/release/artifacts --json');
+    assert.equal(readFileSync(goreleaserArgsPath, 'utf8').trim(), 'build --snapshot --single-target');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

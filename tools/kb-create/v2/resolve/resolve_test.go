@@ -691,6 +691,19 @@ func TestPlanTargetsReleaseManagedBinaryByLogicalID(t *testing.T) {
 	}
 }
 
+// case: S-284.10
+func TestPlanRejectsUnsupportedOperatingSystemWithCataloguedPlatformError(t *testing.T) {
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelCanary: "2.0.0-canary.abc123456"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0-canary.abc123456", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Binaries: []catalog.Binary{{ID: "kb-create", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-create-linux-amd64", Filename: "kb-create-linux-amd64", SHA256: "binary"}}}}}
+	_, err := planWithFixtureProvenanceOptions(contracts.InstallRequest{PlatformRoot: "/tmp/x", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}}, source, Options{OS: "windows", Arch: "amd64"})
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != contracts.CodeUnsupportedPlatform {
+		t.Fatalf("unsupported platform diagnostic = %#v, %v", failure, err)
+	}
+	if failure.Message != "windows/amd64 is not a supported platform." || !strings.Contains(failure.Hint, "Linux or macOS") {
+		t.Fatalf("unsupported platform message or hint = %q / %q", failure.Message, failure.Hint)
+	}
+}
+
 func TestPlanCarriesServiceHealthCheckIntoServiceGraph(t *testing.T) {
 	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "serve", Port: 4000, HealthCheck: "/health"}}}}}}}
 	plan, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1726,8 +1727,11 @@ func assertOnlyInstallRoot(t *testing.T, parent string) {
 func TestUnsupportedOperatingSystemIsCataloguedBeforeStaging(t *testing.T) {
 	err := supportedOS("windows")
 	var diagnostic *diag.Diag
-	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeInstallLayoutUnsupported {
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeUnsupportedPlatform {
 		t.Fatalf("unsupported operating-system error = %#v", err)
+	}
+	if diagnostic.Message != "windows/"+runtime.GOARCH+" is not a supported platform." || !strings.Contains(diagnostic.Hint, "Linux or macOS") {
+		t.Fatalf("unsupported operating-system message or hint = %q / %q", diagnostic.Message, diagnostic.Hint)
 	}
 }
 
