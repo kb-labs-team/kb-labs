@@ -121,7 +121,7 @@ func SealCatalogWithArchives(source catalog.Catalog, archives map[string][]byte)
 		setPackageSHA256(&source, item.Package, item.Version, hex.EncodeToString(archiveDigest[:]))
 		source.Provenance = append(source.Provenance, catalog.ArtifactProvenance{
 			Package: item.Package, Version: item.Version,
-			ArtifactProvenance: contracts.ArtifactProvenance{SourceRevision: item.SourceRevision, Integrity: item.Integrity, DistSHA256: item.DistSHA256},
+			ArtifactProvenance: contracts.ArtifactProvenance{SourceRevision: item.SourceRevision, Integrity: item.Integrity, DistSHA256: item.DistSHA256, ContentScope: item.ContentScope, PackageSHA256: item.PackageSHA256},
 		})
 	}
 	return source, nil
@@ -169,7 +169,7 @@ func PackageProvenance(name, version string) (contracts.ArtifactProvenance, erro
 	if err != nil {
 		return contracts.ArtifactProvenance{}, fmt.Errorf("derive sealed package fixture provenance: %w", err)
 	}
-	return contracts.ArtifactProvenance{SourceRevision: sealed[0].SourceRevision, Integrity: sealed[0].Integrity, DistSHA256: sealed[0].DistSHA256}, nil
+	return contracts.ArtifactProvenance{SourceRevision: sealed[0].SourceRevision, Integrity: sealed[0].Integrity, DistSHA256: sealed[0].DistSHA256, ContentScope: sealed[0].ContentScope, PackageSHA256: sealed[0].PackageSHA256}, nil
 }
 
 // MustSealCatalog is for static test catalog declarations that cannot return

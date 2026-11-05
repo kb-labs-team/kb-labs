@@ -16,6 +16,7 @@ channel="$2"
 commit_sha="$3"
 mode="$4"
 expected_version="${5:-}"
+release_dist="${KBLABS_RELEASE_DIST:-dist}"
 
 diagnostics_dir="${KBLABS_RELEASE_DIAGNOSTICS_DIR:-}"
 diagnostics_dir_owned=false
@@ -156,20 +157,46 @@ else
 fi
 
 run_step node ./cli/bin/dist/bin.js release build run --flow "$flow" --json
-run_step pnpm kb release artifact create --flow "$flow" --out-dir .kb/release/artifacts --json
+run_step node ./cli/bin/dist/bin.js release artifact create --flow "$flow" --out-dir .kb/release/artifacts --json
 if [[ "$flow" == platform ]]; then
-  run_step goreleaser release --snapshot --clean --skip=publish
+  if [[ -n "${KBLABS_RELEASE_GORELEASER_CONFIG:-}" ]]; then
+    run_step goreleaser release --config "$KBLABS_RELEASE_GORELEASER_CONFIG" --snapshot --clean --skip=publish
+  else
+    run_step goreleaser release --snapshot --clean --skip=publish
+  fi
   binary_version="$expected_version"
   if [[ -z "$binary_version" ]]; then
     binary_version="$(node -p 'require("./cli/bin/package.json").version')"
   fi
   repository="${GITHUB_REPOSITORY:-$(node -p 'String(require("./package.json").repository).replace(/\.git$/, "")')}"
   run_step node tools/kb-create/scripts/prepare-binary-manifest.mjs \
-    --artifacts dist/artifacts.json \
-    --checksums dist/checksums.txt \
+    --artifacts "$release_dist/artifacts.json" \
+    --checksums "$release_dist/checksums.txt" \
     --repository "$repository" \
     --release-tag "v${binary_version}-binaries" \
     --version "$binary_version" \
     --output .kb/release/binary-manifest.json
-  run_step node --test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs
+  run_step env KBLABS_RELEASE_DIST="$release_dist" node --test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs
+  short_commit="${commit_sha:0:9}"
+  gate_metadata_file="$diagnostics_dir/candidate-gate.env"
+  GITHUB_OUTPUT="$gate_metadata_file" node .kb/workflows/scripts/resolve-candidate-gate.mjs --flow "$flow" --channel "$channel" >/dev/null
+  gate_policy="$(awk -F= '$1 == "policy" { print $2 }' "$gate_metadata_file")"
+  run_step env \
+    RELEASE_PREFLIGHT_COVERAGE=shared \
+    CANDIDATE_ID="preflight-$short_commit" \
+    COMMIT_SHA="$commit_sha" \
+    FLOW="$flow" \
+    CHANNEL="$channel" \
+    SOURCE_REVISION="$commit_sha" \
+    EXPECTED_VERSION="$expected_version" \
+    GATE_POLICY="$gate_policy" \
+    GATE_RESULT=skipped \
+    RUN_ID="preflight-$short_commit" \
+    ARTIFACTS_DIR=.kb/release/artifacts \
+    PROVENANCE_MANIFEST_PATH=.kb/release/provenance.json \
+    RELEASE_INDEX_PATH=.kb/release/release-index.json \
+    BINARY_MANIFEST_PATH=.kb/release/binary-manifest.json \
+    BUNDLE_DIR=.kb/release/bundle \
+    BINARIES_DIR="$release_dist" \
+    bash scripts/release-candidate-post-build.sh
 fi
