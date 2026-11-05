@@ -82,18 +82,43 @@ exit 0
 
     const goreleaser = path.join(binDir, 'goreleaser');
     const goreleaserArgsPath = path.join(root, 'goreleaser-args.txt');
-    writeFileSync(goreleaser, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" > '${goreleaserArgsPath}'\n`);
+    const nodeArgsPath = path.join(root, 'node-args.txt');
+    const orderPath = path.join(root, 'command-order.txt');
+    writeFileSync(goreleaser, `#!/usr/bin/env bash
+printf '%s\\n' "$*" > '${goreleaserArgsPath}'
+printf 'goreleaser %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"
+`);
     chmodSync(goreleaser, 0o755);
+    writeFileSync(node, `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${nodeArgsPath}'
+if [[ -n "$RELEASE_PREFLIGHT_ORDER_FILE" ]]; then printf 'node %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"; fi
+if [[ "$*" == *"release plan"* ]]; then printf '{"ok":true}\\n'; fi
+if [[ "$1" == -p ]]; then printf '2.0.0-preflight\\n'; fi
+exit 0
+`);
+    chmodSync(node, 0o755);
 
     const result = spawnSync('bash', [path.join(root, 'scripts-release-build-preflight.sh'), 'platform', 'canary', '0123456789abcdef0123456789abcdef01234567', 'preflight'], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, HOME: root, CI: 'true' },
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, HOME: root, CI: 'true', GITHUB_REPOSITORY: 'example/kb-labs', RELEASE_PREFLIGHT_ORDER_FILE: orderPath },
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(readFileSync(pnpmArgsPath, 'utf8').trim(), 'kb release artifact create --flow platform --out-dir .kb/release/artifacts --json');
-    assert.equal(readFileSync(goreleaserArgsPath, 'utf8').trim(), 'build --snapshot --single-target');
+    assert.equal(readFileSync(goreleaserArgsPath, 'utf8').trim(), 'release --snapshot --clean --skip=publish');
+    const nodeCommands = readFileSync(nodeArgsPath, 'utf8');
+    const snapshotPosition = nodeCommands.indexOf('tools/kb-create/scripts/prepare-binary-manifest.mjs');
+    const regressionPosition = nodeCommands.indexOf('--test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs');
+    assert.ok(snapshotPosition >= 0, nodeCommands);
+    assert.ok(regressionPosition > snapshotPosition, nodeCommands);
+    assert.match(nodeCommands, /--artifacts dist\/artifacts\.json --checksums dist\/checksums\.txt/);
+    const commandOrder = readFileSync(orderPath, 'utf8');
+    const goreleaserPosition = commandOrder.indexOf('goreleaser release --snapshot --clean --skip=publish');
+    const manifestPosition = commandOrder.indexOf('node tools/kb-create/scripts/prepare-binary-manifest.mjs');
+    const regressionOrderPosition = commandOrder.indexOf('node --test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs');
+    assert.ok(goreleaserPosition >= 0 && manifestPosition > goreleaserPosition, commandOrder);
+    assert.ok(regressionOrderPosition > manifestPosition, commandOrder);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

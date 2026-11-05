@@ -1,13 +1,9 @@
 package artifacts
 
 import (
-	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -28,7 +24,7 @@ type releaseConfig struct {
 }
 
 // case: S-284.10
-func TestGoReleaserTargetsMatchBinaryManifestTargets(t *testing.T) {
+func TestGoReleaserTargetConfigurationsMatch(t *testing.T) {
 	repoRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
 	configBytes, err := os.ReadFile(filepath.Join(repoRoot, ".goreleaser.yaml"))
 	if err != nil {
@@ -77,46 +73,6 @@ func TestGoReleaserTargetsMatchBinaryManifestTargets(t *testing.T) {
 		}
 	}
 
-	root := t.TempDir()
-	checksumsPath := filepath.Join(root, "checksums.txt")
-	manifestPath := filepath.Join(root, "binary-manifest.json")
-	targets := sortedTargets(declared)
-	var checksums strings.Builder
-	for _, target := range targets {
-		filename := "kb-create-" + strings.ReplaceAll(target, "/", "-")
-		if err := os.WriteFile(filepath.Join(root, filename), []byte(target), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		fmt.Fprintf(&checksums, "%s  %s\n", strings.Repeat("a", 64), filename)
-	}
-	if err := os.WriteFile(checksumsPath, []byte(checksums.String()), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	command := exec.Command("node", filepath.Join(repoRoot, "tools", "kb-create", "scripts", "prepare-binary-manifest.mjs"),
-		"--checksums", checksumsPath, "--repository", "kb-labs-team/kb-labs", "--release-tag", "candidate", "--version", "2.0.0", "--output", manifestPath)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("binary manifest generator failed: %v\n%s", err, output)
-	}
-	var manifest struct {
-		Binaries []struct {
-			OS   string `json:"os"`
-			Arch string `json:"arch"`
-		} `json:"binaries"`
-	}
-	manifestBytes, err := os.ReadFile(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	produced := make(map[string]struct{}, len(manifest.Binaries))
-	for _, binary := range manifest.Binaries {
-		produced[binary.OS+"/"+binary.Arch] = struct{}{}
-	}
-	if !sameTargetSet(declared, produced) {
-		t.Fatalf("GoReleaser targets %v differ from binary manifest targets %v", sortedTargets(declared), sortedTargets(produced))
-	}
 }
 
 func releaseTargets(build releaseBuildConfig) map[string]struct{} {
