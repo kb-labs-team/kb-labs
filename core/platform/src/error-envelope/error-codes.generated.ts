@@ -884,9 +884,12 @@ export const catalogEnvironmentVariables = {
   "KB_NET_OFFSET": "KB_NET_OFFSET",
   "KB_PLATFORM_ROOT": "KB_PLATFORM_ROOT",
   "KB_PROJECT_ROOT": "KB_PROJECT_ROOT",
+  "KB_SCENARIO_ANSWERS": "KB_SCENARIO_ANSWERS",
+  "KB_SCENARIO_SECRET": "KB_SCENARIO_SECRET",
   "KB_SOCKET_HASH": "KB_SOCKET_HASH",
   "KB_SOCKET_PATH": "KB_SOCKET_PATH",
   "KB_TEST_DEADLINE_SCALE": "KB_TEST_DEADLINE_SCALE",
+  "KB_URL_PASSWORD": "KB_URL_PASSWORD",
 } as const;
 
 export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {

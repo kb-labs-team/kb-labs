@@ -24,7 +24,14 @@
       "required": ["ok", "error"],
       "properties": {
         "ok": { "const": false },
-        "error": { "$ref": "https://kblabs.ru/schemas/error-envelope.schema.json" }
+        "error": { "$ref": "https://kblabs.ru/schemas/error-envelope.schema.json" },
+        "meta": {
+          "type": "object", "additionalProperties": false, "required": ["stream"],
+          "properties": { "stream": {
+            "type": "object", "additionalProperties": false, "required": ["terminal", "exitCode"],
+            "properties": { "terminal": { "const": true }, "exitCode": { "type": "integer", "minimum": 1 } }
+          } }
+        }
       }
     }
   }

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
@@ -110,7 +112,7 @@ func Ensure(launcher, platformRoot string) (EnsureResult, error) {
 	}
 	switch classification.Kind {
 	case ClassificationOtherInstallation:
-		if err := ensureTarget(target, cliEntry); err != nil {
+		if err := ensureTarget(target, cliEntry, requested.platformRoot); err != nil {
 			return EnsureResult{}, err
 		}
 		return EnsureResult{Linked: false, Owner: classification.Owner}, nil
@@ -120,7 +122,7 @@ func Ensure(launcher, platformRoot string) (EnsureResult, error) {
 		}
 		return EnsureResult{}, failed(path, fmt.Sprintf("is an existing file, not a validated kb link; inspect it and remove it with %s before installing the kb command", RemoveCommand(path)), nil)
 	case ClassificationOwned:
-		if err := ensureTarget(target, cliEntry); err != nil {
+		if err := ensureTarget(target, cliEntry, requested.platformRoot); err != nil {
 			return EnsureResult{}, err
 		}
 		if classification.Target != target {
@@ -130,7 +132,7 @@ func Ensure(launcher, platformRoot string) (EnsureResult, error) {
 		}
 		return EnsureResult{Linked: true, Owner: requested.root}, nil
 	case ClassificationAbsent:
-		if err := ensureTarget(target, cliEntry); err != nil {
+		if err := ensureTarget(target, cliEntry, requested.platformRoot); err != nil {
 			return EnsureResult{}, err
 		}
 		if err := os.Symlink(target, path); err != nil {
@@ -149,15 +151,15 @@ func EnsureVersionTarget(platformRoot, versionRoot string) error {
 	if err != nil {
 		return err
 	}
-	versionRelative, err := filepath.Rel(layout.VersionsDir(), versionRoot)
+	inside, err := contracts.PathWithin(layout.VersionsDir(), versionRoot)
 	if err != nil {
 		return err
 	}
-	if filepath.IsAbs(versionRelative) || versionRelative == ".." || strings.HasPrefix(versionRelative, ".."+string(filepath.Separator)) {
+	if !inside {
 		return fmt.Errorf("version target %s is outside the install root versions directory", versionRoot)
 	}
 	stableEntry := filepath.Join(layout.PlatformRoot(), "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
-	return ensureTarget(filepath.Join(versionRoot, ".kb", "v2", "bin", "kb"), stableEntry)
+	return ensureTarget(filepath.Join(versionRoot, ".kb", "v2", "bin", "kb"), stableEntry, platformRoot)
 }
 
 type installationOwner struct {
@@ -222,11 +224,21 @@ func replaceLink(path, target string) error {
 	return nil
 }
 
-func ensureTarget(target, cliEntry string) error {
-	content := []byte(shimContent(cliEntry))
+func ensureTarget(target, cliEntry, platformRoot string) error {
+	home, err := host.DefaultKBHome(platformRoot)
+	if err != nil {
+		return failed(target, "cannot resolve installation home", err)
+	}
+	content := []byte(shimContent(cliEntry, home))
 	if existing, err := os.ReadFile(target); err == nil {
-		if string(existing) != string(content) {
+		if string(existing) == string(content) {
+			return nil
+		}
+		if !strings.HasPrefix(string(existing), "#!/bin/sh\n# kb-create managed shim\n") {
 			return failed(target, "refusing to overwrite an unexpected kb launcher", nil)
+		}
+		if err := os.WriteFile(target, content, 0o750); err != nil {
+			return failed(target, "cannot update the managed kb launcher", err)
 		}
 		return nil
 	} else if !os.IsNotExist(err) {
@@ -241,8 +253,8 @@ func ensureTarget(target, cliEntry string) error {
 	return nil
 }
 
-func shimContent(cliEntry string) string {
-	return "#!/bin/sh\nexec node " + shellQuote(cliEntry) + " \"$@\"\n"
+func shimContent(cliEntry, home string) string {
+	return "#!/bin/sh\n# kb-create managed shim\nif [ -z \"${KB_HOME:-}\" ]; then KB_HOME=" + shellQuote(home) + "; export KB_HOME; fi\nexec node " + shellQuote(cliEntry) + " \"$@\"\n"
 }
 
 func shellQuote(value string) string {

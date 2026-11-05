@@ -18,6 +18,16 @@ import (
 )
 
 type streamWriterKey struct{}
+type argumentsKey struct{}
+
+// Arguments returns the arguments supplied to the current command boundary.
+func Arguments(command *cobra.Command) []string {
+	if command == nil || command.Context() == nil {
+		return nil
+	}
+	args, _ := command.Context().Value(argumentsKey{}).([]string)
+	return append([]string(nil), args...)
+}
 
 // FlagValueResetter lets a custom pflag.Value restore its declared default
 // without assuming that Set is idempotent or assignment-based.
@@ -157,6 +167,7 @@ func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) diag.
 	}
 	input := root.InOrStdin()
 	interaction := &Interaction{in: input, out: stdout, err: stderr, terminal: isTerminalInput(input), machine: modeForArgs(args) != result.ModeHuman}
+	baseContext = context.WithValue(baseContext, argumentsKey{}, append([]string(nil), args...))
 	baseContext = context.WithValue(baseContext, streamWriterKey{}, stdout)
 	root.SetContext(context.WithValue(baseContext, interactionKey{}, interaction))
 

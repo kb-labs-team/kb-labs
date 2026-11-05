@@ -15,6 +15,7 @@ import (
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
@@ -52,7 +53,68 @@ type Registry struct {
 	OperationRoot string
 }
 
+// DataDir is the launcher-owned data directory shared by the saved index and registry.
+func DataDir(home string) string {
+	if data := os.Getenv("XDG_DATA_HOME"); data != "" {
+		return filepath.Join(data, "kb-create")
+	}
+	return filepath.Join(home, ".local", "share", "kb-create")
+}
+
+func (r Registry) resolved() (Registry, error) {
+	if r.Path != "" {
+		return r, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return r, fmt.Errorf("resolve launcher data directory: %w", err)
+	}
+	r.Path = RegistryPath(home)
+	return r, nil
+}
+
+func RegistryPath(home string) string { return filepath.Join(DataDir(home), "gateway-roots.json") }
+
+// Mutation identifies a user-invoked operation permitted to change the registry.
+type Mutation uint8
+
+const (
+	Apply Mutation = iota + 1
+	Install
+	Update
+	Rollback
+	DoctorFix
+	Uninstall
+)
+
+// Writer exposes registry changes only with an explicit mutation capability.
+type Writer struct {
+	Registry
+	mutation Mutation
+}
+
+func (r Registry) Writer(mutation Mutation) Writer { return Writer{Registry: r, mutation: mutation} }
+
+func (w Writer) authorize() error {
+	if w.mutation < Apply || w.mutation > Uninstall {
+		return fmt.Errorf("invalid Gateway registry mutation")
+	}
+	return nil
+}
+
 func (r Registry) Read() ([]Root, error) {
+	roots, err := r.readFile()
+	if err != nil {
+		return nil, err
+	}
+	return r.removeMissingRoots(roots)
+}
+
+func (r Registry) readFile() ([]Root, error) {
+	r, err := r.resolved()
+	if err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(r.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -134,10 +196,6 @@ func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string
 	if err != nil {
 		return "", err
 	}
-	roots, err = r.removeMissingRoots(roots)
-	if err != nil {
-		return "", err
-	}
 	installationID, err := allocationInstallationID(platformRoot)
 	if err != nil {
 		return "", err
@@ -216,10 +274,6 @@ func (r Registry) ClaimantAmong(platformRoot, gatewayURL string, known []Root) (
 	if err != nil {
 		return Root{}, false, err
 	}
-	roots, err = r.removeMissingRoots(roots)
-	if err != nil {
-		return Root{}, false, err
-	}
 	installationID, err := allocationInstallationID(platformRoot)
 	if err != nil {
 		return Root{}, false, err
@@ -235,30 +289,36 @@ func (r Registry) ClaimantAmong(platformRoot, gatewayURL string, known []Root) (
 	return Root{}, false, nil
 }
 
-// removeMissingRoots releases address rows whose owned installation root has
-// been removed. Existing roots remain reserved even when their receipt or host
-// is temporarily unavailable; only a definitive missing path releases a row.
+// removeMissingRoots filters allocations whose active receipt is absent without
+// mutating the index during planning.
 func (r Registry) removeMissingRoots(roots []Root) ([]Root, error) {
 	kept := make([]Root, 0, len(roots))
-	removed := false
 	for _, root := range roots {
-		if _, err := os.Stat(root.PlatformRoot); errors.Is(err, os.ErrNotExist) {
-			removed = true
-			continue
-		} else if err != nil {
-			return nil, fmt.Errorf("check registered Gateway installation root %s: %w", root.PlatformRoot, err)
-		}
-		kept = append(kept, root)
-	}
-	if removed {
-		if err := r.write(kept); err != nil {
+		layout, err := versionroot.ForPlatformPath(root.PlatformRoot)
+		if err != nil {
 			return nil, err
 		}
+		active, err := layout.ExistingPlatformRoot()
+		if errors.Is(err, versionroot.ErrPlatformNotInstalled) || errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(receipt.Path(active)); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		kept = append(kept, root)
 	}
 	return kept, nil
 }
 
-func (r Registry) RegisterMany(values []Root) error {
+func (r Writer) RegisterMany(values []Root) error {
+	if err := r.authorize(); err != nil {
+		return err
+	}
 	if r.OperationRoot == "" && len(values) > 0 {
 		r.OperationRoot = values[0].PlatformRoot
 	}
@@ -292,7 +352,10 @@ func (r Registry) RegisterMany(values []Root) error {
 	return r.write(byRoot)
 }
 
-func (r Registry) Register(platformRoot, gatewayURL string) error {
+func (r Writer) Register(platformRoot, gatewayURL string) error {
+	if err := r.authorize(); err != nil {
+		return err
+	}
 	r.OperationRoot = platformRoot
 	if !filepath.IsAbs(platformRoot) || !validOrigin(gatewayURL) {
 		return fmt.Errorf("platform root and Gateway URL must be absolute and valid")
@@ -323,10 +386,18 @@ func (r Registry) Register(platformRoot, gatewayURL string) error {
 // RegisterForTransaction publishes a root registration only for the duration of
 // a caller-owned commit. If the commit fails, the exact prior registry bytes (or
 // prior absence) are restored before the error is returned.
-func (r Registry) RegisterForTransaction(platformRoot, gatewayURL string, commit func() error) error {
+func (r Writer) RegisterForTransaction(platformRoot, gatewayURL string, commit func() error) error {
+	if err := r.authorize(); err != nil {
+		return err
+	}
 	if commit == nil {
 		return fmt.Errorf("Gateway registration transaction requires a commit operation")
 	}
+	resolved, err := r.Registry.resolved()
+	if err != nil {
+		return err
+	}
+	r.Registry = resolved
 	previous, err := os.ReadFile(r.Path)
 	previousExists := err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -378,7 +449,10 @@ func (r Registry) restoreBytes(data []byte, existed bool) error {
 	return os.Rename(name, r.Path)
 }
 
-func (r Registry) Remove(platformRoot string) error {
+func (r Writer) Remove(platformRoot string) error {
+	if err := r.authorize(); err != nil {
+		return err
+	}
 	r.OperationRoot = platformRoot
 	installationID, err := validatedInstallationID(platformRoot)
 	if err != nil {
@@ -389,7 +463,10 @@ func (r Registry) Remove(platformRoot string) error {
 
 // RemoveInstallation releases the Gateway row for an identity captured while
 // its installation was still validated, including after uninstall removed it.
-func (r Registry) RemoveInstallation(installationID string) error {
+func (r Writer) RemoveInstallation(installationID string) error {
+	if err := r.authorize(); err != nil {
+		return err
+	}
 	if !validInstallationID(installationID) {
 		return fmt.Errorf("installation identity is invalid")
 	}
@@ -464,6 +541,11 @@ func validInstallationID(value string) bool {
 }
 
 func (r Registry) write(roots []Root) error {
+	var err error
+	r, err = r.resolved()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(r.Path), 0o700); err != nil {
 		return fmt.Errorf("create installed Gateway root index directory: %w", err)
 	}

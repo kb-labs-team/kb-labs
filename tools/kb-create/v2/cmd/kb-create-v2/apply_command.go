@@ -36,7 +36,7 @@ import (
 type applyCommandInput struct {
 	Plan                       planInput
 	Resolved                   *resolvedPlan
-	Registry                   string
+	Arguments                  []string
 	SecretEnv                  string
 	PendingSecrets             map[string]secrets.PendingSecret
 	Executable                 string
@@ -117,7 +117,6 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	if failure := resolve.ValidateSecretInputIDs(planned.Artifacts, secretIDs); failure != nil {
 		return applyCommandResult{}, asDiag(failure)
 	}
-	launcherState := resolved.State
 	root := planned.Request.PlatformRoot
 	installRoot := root
 	layout, layoutErr := versionroot.ForPlatformPath(root)
@@ -198,7 +197,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		if marshalErr != nil {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "the install request could not be encoded", "rerun `kb-create apply` with the same request", marshalErr)
 		}
-		response := transport.PlanWith(encoded, resolved.Catalog, resolve.Options{LauncherVersion: buildVersion})
+		response := transport.PlanWith(encoded, resolved.Catalog, resolve.Options{LauncherVersion: buildVersion, BinarySource: planned.BinarySource, Registry: planned.Registry})
 		if !response.OK {
 			return applyCommandResult{}, response.Error
 		}
@@ -275,7 +274,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	applyCtx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	offline := planned.Request.Source == contracts.SourceOffline
-	artifactExecutor, err := newArtifactExecutor(layout, operationRoot, input.Registry, offline, transcript, deps.ArtifactRunner)
+	artifactExecutor, err := newArtifactExecutor(layout, operationRoot, planned.Registry, offline, transcript, deps.ArtifactRunner)
 	if err != nil {
 		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 			"the shared artifact cache path could not be resolved",
@@ -314,7 +313,19 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	}
 	applied, applyErr := runtime.Apply(applyCtx, planned, runtimeDeps)
 	if applyErr != nil {
-		return applyCommandResult{}, applyDossier(root, correlationID, transcript.Path(), planned, redactions, applyErr)
+		diagnostic := applyDossier(root, correlationID, transcript.Path(), planned, redactions, applyErr)
+		arguments := input.Arguments
+		if len(arguments) == 0 {
+			arguments = input.Plan.Arguments
+		}
+		if len(arguments) > 0 {
+			invocation, variables := retryArguments(arguments)
+			diagnostic.Hint += " Retry: " + invocation
+			for _, variable := range variables {
+				diagnostic.Hint += " Set " + variable + " before retrying."
+			}
+		}
+		return applyCommandResult{}, diagnostic
 	}
 	if reusedHost != nil {
 		applied.ID = reusedHost.ID
@@ -360,7 +371,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 				startErr = errors.Join(startErr, runtimeDeps.Progress.Emit(runtime.ProgressEvent{Phase: "Start host"}))
 			}
 			if startErr != nil {
-				return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installed host did not become healthy", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` to inspect the installation, then rerun `"+contracts.ShellCommand("kb-create", "start", "--platform-root", root)+"`", startErr)
+				return applyCommandResult{}, installHostFailure(root, startErr)
 			}
 		}
 	} else {
@@ -392,7 +403,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			return applyCommandResult{}, contracts.HostSpecDiagnostic("the applied Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", root)+"` after checking the receipt", originErr.Error(), originErr)
 		}
 		roots = append(roots, gateway.Root{PlatformRoot: platformRoot, URL: origin})
-		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}).RegisterMany(roots); err != nil {
+		if err := (gateway.Registry{OperationRoot: root}).Writer(gateway.Apply).RegisterMany(roots); err != nil {
 			return applyCommandResult{}, asDiag(err)
 		}
 	}
@@ -442,6 +453,14 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		Profile: applied.Plan.ServiceGraph.Profile, Services: applied.Plan.ServiceGraph.Services,
 		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin, ProjectRegistrationNotice: registrationNotice,
 		disclosureStoreRoot: store.PlatformRoot}, nil
+}
+
+func installHostFailure(root string, cause error) *diag.Diag {
+	var diagnostic *diag.Diag
+	if errors.As(cause, &diagnostic) {
+		return diagnostic
+	}
+	return contracts.NewDiag(contracts.CodeApplyFailed, "the installed host did not become healthy", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` to inspect the installation, then rerun `"+contracts.ShellCommand("kb-create", "start", "--platform-root", root)+"`", cause)
 }
 
 func installMarketplaceScenarioPlugins(ctx context.Context, platformRoot string, applied *contracts.InstallReceipt, installer marketplace.InstallClient) *diag.Diag {

@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,7 +43,7 @@ func (b Binaries) verify(items []contracts.Artifact) ([]verifiedBinary, error) {
 		if b.CacheRoot == "" {
 			return nil, fmt.Errorf("binary cache root is required")
 		}
-		if item.URL == "" || item.SHA256 == "" || item.Target == "" {
+		if (!b.Offline && item.ResolvedURL == "") || item.SHA256 == "" || item.Target == "" {
 			return nil, fmt.Errorf("binary %q lacks url, hash or target", item.ID)
 		}
 		data, err := b.download(item)
@@ -53,7 +52,11 @@ func (b Binaries) verify(items []contracts.Artifact) ([]verifiedBinary, error) {
 		}
 		sum := fmt.Sprintf("%x", sha256.Sum256(data))
 		if sum != item.SHA256 {
-			return nil, fmt.Errorf("binary %s checksum mismatch", item.ID)
+			if b.Offline {
+				return nil, fmt.Errorf("binary %s checksum mismatch in offline cache", item.ID)
+			}
+			target := item.ResolvedURL
+			return nil, downloadFailure(item, target, fmt.Errorf("checksum mismatch"))
 		}
 		verified = append(verified, verifiedBinary{item: item, data: data})
 	}
@@ -95,20 +98,8 @@ func (b Binaries) download(item contracts.Artifact) ([]byte, error) {
 		}
 		return data, nil
 	}
-	client := b.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	response, err := client.Get(item.URL)
-	if err != nil {
-		return nil, fmt.Errorf("download binary %s: %w", item.ID, err)
-	}
-	data, readErr := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	if readErr != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("download binary %s: status %d: %v", item.ID, response.StatusCode, readErr)
-	}
-	return data, nil
+	return fetchArtifact(b.Client, item, item.ResolvedURL)
+
 }
 
 func (b Binaries) Remove(items []contracts.Artifact) error {

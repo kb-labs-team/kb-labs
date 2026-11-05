@@ -15,6 +15,7 @@ import (
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/clikit/stream"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/spf13/cobra"
@@ -35,25 +36,25 @@ type versionCommandInput struct{}
 type streamCompletion struct{ ExitStatus diag.ExitStatus }
 
 var operationDescriptors = []operationDescriptor{
-	{Name: "install", JSONStream: true, Short: "Install KB Labs interactively", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "marketplace-registry-url", "marketplace-registry-public-key-env", "marketplace-registry-token-env", "marketplace-npm-url", "scenario", "scenario-answers", "resume", "telemetry-endpoint", "telemetry-consent"}, Human: renderInstall, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+	{Name: "install", JSONStream: true, Short: "Install KB Labs interactively", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "binary-source", "marketplace-registry-url", "marketplace-registry-public-key-env", "marketplace-registry-token-env", "marketplace-npm-url", "scenario", "scenario-answers", "resume", "telemetry-endpoint", "telemetry-consent"}, Human: renderInstall, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		deps.Command = cmd
-		input := installCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Resume: flags.Bool("resume"), SecretEnv: flags.String("secret-env"), Registry: flags.String("registry"), Executable: deps.Executable, TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
+		input := installCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Resume: flags.Bool("resume"), SecretEnv: flags.String("secret-env"), Executable: deps.Executable, TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent"), Arguments: command.Arguments(cmd)}
 		if jsonMode(cmd) {
 			return executeInstallStream(ctx, input, deps)
 		}
 		return executeInstall(ctx, input, deps)
 	}},
-	{Name: "plan", Short: "Resolve an install request", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "registry", "marketplace-registry-url", "marketplace-registry-public-key-env", "marketplace-registry-token-env", "marketplace-npm-url", "scenario", "scenario-answers", "resume", "telemetry-endpoint", "telemetry-consent"}, Human: renderPlan, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+	{Name: "plan", Short: "Resolve an install request", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "registry", "binary-source", "marketplace-registry-url", "marketplace-registry-public-key-env", "marketplace-registry-token-env", "marketplace-npm-url", "scenario", "scenario-answers", "resume", "telemetry-endpoint", "telemetry-consent"}, Human: renderPlan, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		invocation, err := flags.Invocation()
 		if err != nil {
 			return nil, contracts.NewDiag(contracts.CodeOperationFailed, "the plan invocation could not be reconstructed", "rerun the command with its original flags", err)
 		}
-		input := planCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), RetryCommand: invocation, Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Registry: flags.String("registry"), Resume: flags.Bool("resume"), Executable: deps.Executable, KnownGateways: knownGatewayRoots(deps.Executable), TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
+		input := planCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), RetryCommand: invocation, Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Resume: flags.Bool("resume"), Executable: deps.Executable, KnownGateways: knownGatewayRoots(deps.Executable), TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent"), Arguments: command.Arguments(cmd)}
 		return executePlan(ctx, input)
 	}},
-	{Name: "apply", Short: "Apply an install request", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "marketplace-registry-url", "marketplace-registry-public-key-env", "marketplace-registry-token-env", "marketplace-npm-url", "scenario", "scenario-answers", "telemetry-endpoint", "telemetry-consent"}, Human: renderApply, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+	{Name: "apply", Short: "Apply an install request", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "binary-source", "marketplace-registry-url", "marketplace-registry-public-key-env", "marketplace-registry-token-env", "marketplace-npm-url", "scenario", "scenario-answers", "telemetry-endpoint", "telemetry-consent"}, Human: renderApply, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		deps.Command = cmd
-		input := applyCommandInput{Plan: planInput{Operation: "apply", Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Executable: deps.Executable, KnownGateways: knownGatewayRoots(deps.Executable)}, Registry: flags.String("registry"), SecretEnv: flags.String("secret-env"), Executable: deps.Executable, TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
+		input := applyCommandInput{Plan: planInput{Operation: "apply", Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Executable: deps.Executable, KnownGateways: knownGatewayRoots(deps.Executable), Arguments: command.Arguments(cmd)}, SecretEnv: flags.String("secret-env"), Executable: deps.Executable, TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
 		return executeApply(ctx, input, deps)
 	}},
 	{Name: "status", Short: "Show installation status", Args: cobra.NoArgs, Flags: []string{"platform-root"}, Human: renderStatus, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
@@ -72,12 +73,12 @@ var operationDescriptors = []operationDescriptor{
 	{Name: "restart", Short: "Restart the local host", Args: cobra.NoArgs, Flags: []string{"platform-root", "interrupt"}, Human: renderRestart, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		return executeHostRestart(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Interrupt: flags.Bool("interrupt"), Executable: deps.Executable, Version: buildVersion})
 	}},
-	{Name: "update", Short: "Update the installation", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "scenario", "scenario-answers", "resume", "registry", "marketplace-registry-url", "marketplace-registry-public-key-env", "marketplace-registry-token-env", "marketplace-npm-url", "telemetry-endpoint", "telemetry-consent"}, Human: renderUpdate, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+	{Name: "update", Short: "Update the installation", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "scenario", "scenario-answers", "resume", "registry", "binary-source", "marketplace-registry-url", "marketplace-registry-public-key-env", "marketplace-registry-token-env", "marketplace-npm-url", "telemetry-endpoint", "telemetry-consent"}, Human: renderUpdate, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		invocation, err := flags.Invocation()
 		if err != nil {
 			return nil, contracts.NewDiag(contracts.CodeOperationFailed, "the update invocation could not be reconstructed", "rerun the command with its original flags", err)
 		}
-		input := updateCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Direct: readUpdateRequest(flags), RetryCommand: invocation, Resume: flags.Bool("resume"), Executable: deps.Executable, SecretEnv: flags.String("secret-env"), Registry: flags.String("registry"), ArtifactRunner: deps.ArtifactRunner, TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
+		input := updateCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Direct: readUpdateRequest(flags), RetryCommand: invocation, Resume: flags.Bool("resume"), Executable: deps.Executable, SecretEnv: flags.String("secret-env"), ArtifactRunner: deps.ArtifactRunner, TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent"), Arguments: command.Arguments(cmd)}
 		return executeUpdate(ctx, input, deps)
 	}},
 	{Name: "uninstall", Short: "Remove the installation", Args: cobra.NoArgs, Flags: []string{"platform-root", "registry", "yes"}, Human: renderUninstall, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
@@ -111,7 +112,7 @@ func readUpdateRequest(flags *commandFlagReader) directRequest {
 }
 
 func readDirectRequestAt(flags *commandFlagReader, platformRootFlag string) directRequest {
-	return directRequest{PlatformRoot: flags.String(platformRootFlag), ProjectRoot: flags.String("project-root"), PlatformVersion: flags.String("platform-version"), PlatformChannel: flags.String("platform-channel"), GatewayURL: flags.String("gateway-url"), SDKVersion: flags.String("sdk-version"), ServiceProfile: flags.String("service-profile"), Plugins: flags.String("plugins"), Adapters: flags.String("adapters"), Providers: flags.Strings("provider"), Policy: flags.String("policy"), Offline: flags.Bool("offline"), MarketplaceRegistryURL: flags.String("marketplace-registry-url"), MarketplaceSigningKeyEnv: flags.String("marketplace-registry-public-key-env"), MarketplaceTokenEnv: flags.String("marketplace-registry-token-env"), MarketplaceNpmURL: flags.String("marketplace-npm-url")}
+	return directRequest{Registry: flags.String("registry"), BinarySource: flags.String("binary-source"), PlatformRoot: flags.String(platformRootFlag), ProjectRoot: flags.String("project-root"), PlatformVersion: flags.String("platform-version"), PlatformChannel: flags.String("platform-channel"), GatewayURL: flags.String("gateway-url"), SDKVersion: flags.String("sdk-version"), ServiceProfile: flags.String("service-profile"), Plugins: flags.String("plugins"), Adapters: flags.String("adapters"), Providers: flags.Strings("provider"), Policy: flags.String("policy"), Offline: flags.Bool("offline"), MarketplaceRegistryURL: flags.String("marketplace-registry-url"), MarketplaceSigningKeyEnv: flags.String("marketplace-registry-public-key-env"), MarketplaceTokenEnv: flags.String("marketplace-registry-token-env"), MarketplaceNpmURL: flags.String("marketplace-npm-url")}
 }
 
 func executablePath() string {
@@ -186,7 +187,7 @@ func runSafely(run func() error) error {
 	if homeErr != nil {
 		return diag.FromErrorWithLogger(err, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	}
-	logDir := filepath.Join(home, ".kb", "logs")
+	logDir := filepath.Join(gateway.DataDir(home), "logs")
 	if mkdirErr := os.MkdirAll(logDir, 0o700); mkdirErr != nil {
 		return diag.FromErrorWithLogger(err, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	}
@@ -311,6 +312,12 @@ func renderStatus(value any) string {
 	channel, _ := installation["platformChannel"].(string)
 	version, _ := installation["platformVersion"].(string)
 	lines := fmt.Sprintf("Installed: %t\nPlatform channel: %s\nPlatform version: %s\nRunning: %t\nReachable: %t", installed, channel, version, running, reachable)
+	if studio, ok := payload["studioUrl"].(string); ok && studio != "" {
+		lines += "\nStudio: " + studio
+	}
+	if next, ok := payload["next"].(string); ok && next != "" {
+		lines += "\nNext: " + next
+	}
 	if installedVersion, ok := payload["installedVersion"].(string); ok && installedVersion != "" {
 		lines += "\nInstalled version: " + installedVersion
 	}

@@ -293,6 +293,7 @@ var catalogEntries = map[string]CatalogEntry{
 }
 
 const (
+	KB_CREATE_DOWNLOAD_BASE_URL                   = "KB_CREATE_DOWNLOAD_BASE_URL"
 	KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO = "KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO"
 	KB_CREATE_PROCESS_IDENTITY                    = "KB_CREATE_PROCESS_IDENTITY"
 	KB_DEPLOY_BASE_REF                            = "KB_DEPLOY_BASE_REF"
@@ -310,13 +311,17 @@ const (
 	KB_NET_OFFSET                                 = "KB_NET_OFFSET"
 	KB_PLATFORM_ROOT                              = "KB_PLATFORM_ROOT"
 	KB_PROJECT_ROOT                               = "KB_PROJECT_ROOT"
+	KB_SCENARIO_ANSWERS                           = "KB_SCENARIO_ANSWERS"
+	KB_SCENARIO_SECRET                            = "KB_SCENARIO_SECRET"
 	KB_SOCKET_HASH                                = "KB_SOCKET_HASH"
 	KB_SOCKET_PATH                                = "KB_SOCKET_PATH"
 	KB_TEST_DEADLINE_SCALE                        = "KB_TEST_DEADLINE_SCALE"
+	KB_URL_PASSWORD                               = "KB_URL_PASSWORD"
 )
 
 func CatalogEnvironmentVariableNames() []string {
 	return []string{
+		KB_CREATE_DOWNLOAD_BASE_URL,
 		KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO,
 		KB_CREATE_PROCESS_IDENTITY,
 		KB_DEPLOY_BASE_REF,
@@ -334,8 +339,11 @@ func CatalogEnvironmentVariableNames() []string {
 		KB_NET_OFFSET,
 		KB_PLATFORM_ROOT,
 		KB_PROJECT_ROOT,
+		KB_SCENARIO_ANSWERS,
+		KB_SCENARIO_SECRET,
 		KB_SOCKET_HASH,
 		KB_SOCKET_PATH,
 		KB_TEST_DEADLINE_SCALE,
+		KB_URL_PASSWORD,
 	}
 }

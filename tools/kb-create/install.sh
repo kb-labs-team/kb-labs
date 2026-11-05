@@ -7,7 +7,7 @@ BINARY="kb-create"
 # Unset, public installs continue to download from GitHub Releases.
 DOWNLOAD_BASE_URL="${KB_CREATE_DOWNLOAD_BASE_URL:-https://github.com/${REPO}/releases/download}"
 DEST="${HOME}/.local/bin/${BINARY}"
-INDEX_DEST="${HOME}/.local/share/${BINARY}/release-index.json"
+INDEX_DEST="${XDG_DATA_HOME:-${HOME}/.local/share}/${BINARY}/release-index.json"
 VERSION="latest"
 CHANNEL="stable"
 RESOLVED_VERSION=""
@@ -55,6 +55,15 @@ info() { printf "%s[INFO]%s %s\n" "$C_CYAN" "$C_RESET" "$1"; }
 ok() { printf "%s[ OK ]%s %s\n" "$C_GREEN" "$C_RESET" "$1"; }
 warn() { printf "%s[WARN]%s %s\n" "$C_YELLOW" "$C_RESET" "$1"; }
 err() { printf "%s[ERR ]%s %s\n" "$C_RED" "$C_RESET" "$1" >&2; }
+
+# The source is recorded as provenance; do not persist URL userinfo.
+case "$DOWNLOAD_BASE_URL" in
+  *://*)
+    source_authority=${DOWNLOAD_BASE_URL#*://}
+    source_authority=${source_authority%%/*}
+    case "$source_authority" in *@*) err "The binary source URL must not contain credentials."; exit 1;; esac
+    ;;
+esac
 
 # BEGIN GENERATED UNSUPPORTED PLATFORM
 kb_unsupported_platform() {
@@ -231,6 +240,7 @@ fi
 chmod +x "$TMP_BIN"
 mkdir -p "$(dirname "$DEST")"
 mv "$TMP_BIN" "$DEST"
+mkdir -p "$(dirname "$INDEX_DEST")"
 
 # The launcher resolves installs from this signed index, never by talking to
 # npm directly. It ships next to the binary on the same immutable per-version
@@ -256,6 +266,8 @@ if curl -fsSL "$INDEX_URL" -o "$TMP_INDEX" 2>/dev/null; then
     fi
     mkdir -p "$(dirname "$INDEX_DEST")"
     mv "$TMP_INDEX" "$INDEX_DEST"
+    (umask 077; printf '%s\n' "$DOWNLOAD_BASE_URL" > "$(dirname "$INDEX_DEST")/binary-source")
+    chmod 600 "$(dirname "$INDEX_DEST")/binary-source"
   else
     rm -f "$TMP_INDEX"
     INDEX_DEST=""

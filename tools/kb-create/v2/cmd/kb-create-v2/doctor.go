@@ -276,12 +276,8 @@ func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult
 	}
 	if active, receiptErr := receipt.Read(platformRoot); receiptErr == nil && active.Plan.Host != nil {
 		if origin := recordedGatewayURL(active); origin != "" {
-			launcherState, stateErr := host.StateHome()
-			if stateErr != nil {
-				return doctorFixResult{}, asDiag(stateErr)
-			}
-			registry := gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}
-			if registryErr := registry.Register(platformRoot, origin); registryErr != nil {
+			registry := gateway.Registry{OperationRoot: root}
+			if registryErr := registry.Writer(gateway.DoctorFix).Register(platformRoot, origin); registryErr != nil {
 				return doctorFixResult{}, asDiag(registryErr)
 			}
 		}

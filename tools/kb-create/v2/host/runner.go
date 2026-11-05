@@ -46,6 +46,7 @@ type Status struct {
 	PID             int        `json:"pid,omitempty"`
 	Healthy         bool       `json:"healthy"`
 	HealthURL       string     `json:"healthUrl,omitempty"`
+	StudioURL       string     `json:"studioUrl,omitempty"`
 	PlatformVersion string     `json:"platformVersion,omitempty"`
 	TreeRoot        string     `json:"-"`
 	ReceiptID       string     `json:"receiptId,omitempty"`

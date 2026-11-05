@@ -104,6 +104,8 @@ func Execute() diag.ExitStatus {
 }
 
 type directRequest struct {
+	Registry                                                                                                                       string
+	BinarySource                                                                                                                   string
 	PlatformRoot, ProjectRoot, PlatformVersion, PlatformChannel, SDKVersion, ServiceProfile, GatewayURL, Plugins, Adapters, Policy string
 	MarketplaceRegistryURL, MarketplaceSigningKeyEnv, MarketplaceTokenEnv, MarketplaceNpmURL                                       string
 	Providers                                                                                                                      []string

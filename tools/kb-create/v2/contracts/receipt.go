@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
@@ -110,6 +111,19 @@ func ValidateArtifactIdentities(artifacts []Artifact) error {
 // installed package with a manifest projection.
 func (a Artifact) IsBinary() bool { return a.Kind == "binary" }
 
+// IsFetchBinary rejects kinds outside the release artifact contract.
+func (a Artifact) IsFetchBinary() (bool, error) {
+	if a.IsBinary() {
+		return true, nil
+	}
+	switch a.Kind {
+	case "platform", "platform-member", "sdk", "plugin", "adapter":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unknown artifact kind %q", a.Kind)
+	}
+}
+
 type Service struct {
 	ID          string   `json:"id"`
 	Command     string   `json:"command"`
@@ -137,6 +151,8 @@ type ProviderBinding struct {
 // re-resolve versions or discover unplanned services.
 type ResolvedInstallPlan struct {
 	Schema           string            `json:"schema"`
+	BinarySource     string            `json:"binarySource,omitempty"`
+	Registry         string            `json:"registry,omitempty"`
 	Request          InstallRequest    `json:"request"`
 	Artifacts        []Artifact        `json:"artifacts"`
 	ServiceGraph     ServiceGraph      `json:"serviceGraph"`

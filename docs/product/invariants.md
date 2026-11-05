@@ -72,7 +72,7 @@ in `Owner`.
 
 **Why:** The selected root is the user's explicit boundary for installation state and cleanup.
 
-**Enforcement:** case S-187.4, S-187.7–S-187.8, S-222.11–S-222.13; [S-187-install-project-workspace.md](../qa/scenarios/S-187-install-project-workspace.md#L31), [S-222-secured-bootstrap-contract-failure.md](../qa/scenarios/S-222-secured-bootstrap-contract-failure.md#L39).
+**Enforcement:** The installer-requested launcher data directory (`$XDG_DATA_HOME/kb-create`, default `~/.local/share/kb-create`) owns machine-wide allocation records; per-root state remains inside the install root. Case S-187.4, S-187.7–S-187.8, S-222.11–S-222.13; [S-187-install-project-workspace.md](../qa/scenarios/S-187-install-project-workspace.md#L31), [S-222-secured-bootstrap-contract-failure.md](../qa/scenarios/S-222-secured-bootstrap-contract-failure.md#L39).
 
 **Gap:** Runtime validation and install-root integration tests should prove every install, update, rollback, and recovery write resolves under the selected root, unless a separately requested destination owns it.
 
