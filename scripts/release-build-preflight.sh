@@ -157,4 +157,19 @@ fi
 
 run_step node ./cli/bin/dist/bin.js release build run --flow "$flow" --json
 run_step pnpm kb release artifact create --flow "$flow" --out-dir .kb/release/artifacts --json
-run_step goreleaser build --snapshot --single-target
+if [[ "$flow" == platform ]]; then
+  run_step goreleaser release --snapshot --clean --skip=publish
+  binary_version="$expected_version"
+  if [[ -z "$binary_version" ]]; then
+    binary_version="$(node -p 'require("./cli/bin/package.json").version')"
+  fi
+  repository="${GITHUB_REPOSITORY:-$(node -p 'String(require("./package.json").repository).replace(/\.git$/, "")')}"
+  run_step node tools/kb-create/scripts/prepare-binary-manifest.mjs \
+    --artifacts dist/artifacts.json \
+    --checksums dist/checksums.txt \
+    --repository "$repository" \
+    --release-tag "v${binary_version}-binaries" \
+    --version "$binary_version" \
+    --output .kb/release/binary-manifest.json
+  run_step node --test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs
+fi

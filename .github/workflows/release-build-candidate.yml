@@ -112,6 +112,7 @@ jobs:
           set -euo pipefail
           test -s dist/checksums.txt
           node tools/kb-create/scripts/prepare-binary-manifest.mjs \
+            --artifacts dist/artifacts.json \
             --checksums dist/checksums.txt \
             --repository "$REPOSITORY" \
             --release-tag "v${VERSION}-binaries" \
