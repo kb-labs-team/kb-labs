@@ -124,7 +124,7 @@ describe('publishPackagesProgrammatic — .npmrc registry auth', () => {
     expect(capturedArgs).toHaveLength(1);
   });
 
-  it('writes the auth token line scoped to the target registry, not registry.npmjs.org', async () => {
+  it('scopes the child credential to the target registry', async () => {
     await publishPackagesProgrammatic({
       packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
       registry: 'http://localhost:4873',
@@ -132,11 +132,11 @@ describe('publishPackagesProgrammatic — .npmrc registry auth', () => {
     });
 
     expect(capturedNpmrc).toHaveLength(1);
-    expect(capturedNpmrc[0]).toContain('//localhost:4873/:_authToken=${NODE_AUTH_TOKEN}');
-    expect(capturedNpmrc[0]).not.toContain('registry.npmjs.org');
+    expect(capturedEnv[0]?.['npm_config_//localhost:4873/:_authToken']).toBe('verdaccio-token');
+    expect(capturedNpmrc[0]).toBe('');
   });
 
-  it('still adds the staging registry auth line when the package .npmrc only has a token for another registry', async () => {
+  it('scopes staging auth when the package .npmrc contains a token for another registry', async () => {
     // Regression: a leftover package .npmrc from a real npmjs publish carries
     // `//registry.npmjs.org/:_authToken=...`. Treating any _authToken as
     // "already authenticated" skipped the line for the staging registry and
@@ -151,12 +151,12 @@ describe('publishPackagesProgrammatic — .npmrc registry auth', () => {
 
     expect(capturedNpmrc).toHaveLength(1);
     expect(capturedNpmrc[0]).toContain('//registry.npmjs.org/:_authToken=real-npm-token');
-    expect(capturedNpmrc[0]).toContain('//localhost:4973/:_authToken=${NODE_AUTH_TOKEN}');
-    // The pre-existing file is restored untouched afterwards.
+    expect(capturedEnv[0]?.['npm_config_//localhost:4973/:_authToken']).toBe('verdaccio-local');
+    // The pre-existing file remains untouched.
     expect(readFileSync(join(pkgDir, '.npmrc'), 'utf-8')).toBe('//registry.npmjs.org/:_authToken=real-npm-token\n');
   });
 
-  it('keeps an existing auth line for the SAME registry instead of adding a second one', async () => {
+  it('leaves an existing project auth line untouched', async () => {
     writeFileSync(join(pkgDir, '.npmrc'), '//localhost:4973/:_authToken=user-chosen\n');
 
     await publishPackagesProgrammatic({
@@ -165,7 +165,22 @@ describe('publishPackagesProgrammatic — .npmrc registry auth', () => {
       token: 'verdaccio-local',
     });
 
-    expect(capturedNpmrc[0]).toBe('//localhost:4973/:_authToken=user-chosen\n');
+    expect(capturedEnv[0]?.['npm_config_//localhost:4973/:_authToken']).toBe('verdaccio-local');
+    expect(readFileSync(join(pkgDir, '.npmrc'), 'utf-8')).toBe('//localhost:4973/:_authToken=user-chosen\n');
+  });
+
+  it('keeps dry runs offline and removes explicit credentials', async () => {
+    vi.stubEnv('npm_config_//localhost:4873/:_authToken', 'inherited-secret');
+    await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      registry: 'http://localhost:4873', token: 'dry-run-secret', dryRun: true,
+    });
+    expect(capturedArgs[0]).toContain('--offline');
+    expect(capturedEnv[0]?.NODE_AUTH_TOKEN).toBeUndefined();
+    expect(capturedEnv[0]?.['npm_config_//localhost:4873/:_authToken']).toBeUndefined();
+    expect(capturedEnv[0]?.HOME).not.toBe(process.env.HOME);
+    expect(capturedNpmrc[0]).not.toContain('dry-run-secret');
+    vi.unstubAllEnvs();
   });
 
   it('defaults to registry.npmjs.org when no registry is passed', async () => {
@@ -175,7 +190,7 @@ describe('publishPackagesProgrammatic — .npmrc registry auth', () => {
     });
 
     expect(capturedNpmrc).toHaveLength(1);
-    expect(capturedNpmrc[0]).toContain('//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}');
+    expect(capturedEnv[0]?.['npm_config_//registry.npmjs.org/:_authToken']).toBe('npm-token');
   });
 });
 
