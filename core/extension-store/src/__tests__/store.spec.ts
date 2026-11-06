@@ -23,6 +23,32 @@ describe('createExtensionStore (real pnpm, temp-dir store, no real HOME)', () =>
     await fs.rm(kbHome, { recursive: true, force: true });
   });
 
+  it('leaves no dangling pnpm store links after publishing and reusing an entry', async () => {
+    const fixture = await createFixturePackage({ name: 'sample-plugin', version: '1.0.0' });
+    try {
+      const store = createExtensionStore({ root: kbHome });
+      const request = { name: 'sample-plugin', version: '1.0.0', kind: 'plugin' as const, spec: `file:${fixture}` };
+      const first = await store.resolve(request);
+      const second = await store.resolve(request);
+      expect(second.entryDir).toBe(first.entryDir);
+
+      const visit = async (dir: string): Promise<void> => {
+        for (const item of await fs.readdir(dir, { withFileTypes: true })) {
+          const child = path.join(dir, item.name);
+          if (item.isSymbolicLink()) {
+            const target = await fs.realpath(child);
+            expect(path.relative(kbHome, target)).not.toMatch(/^\.\.(?:\/|$)/);
+          } else if (item.isDirectory()) {
+            await visit(child);
+          }
+        }
+      };
+      await visit(store.casDir);
+    } finally {
+      await fs.rm(fixture, { recursive: true, force: true });
+    }
+  }, INSTALL_TIMEOUT);
+
   it(
     'installs a version into the store and resolves its on-disk path',
     async () => {

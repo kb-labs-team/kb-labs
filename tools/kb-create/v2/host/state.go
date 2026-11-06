@@ -15,7 +15,7 @@ import (
 )
 
 // KBHomeEnv explicitly overrides the installation-owned KB Labs home.
-const KBHomeEnv = "KB_HOME"
+const KBHomeEnv = contracts.KBHomeEnv
 
 // State names the per-installation host lifecycle files.
 type State struct{ Dir string }
@@ -47,7 +47,7 @@ func DefaultKBHome(platformRoot string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve the installation home: %w", err)
 	}
-	return filepath.Join(layout.SharedStateDir(), "home"), nil
+	return contracts.KBHomeDirectory(layout.Root), nil
 }
 
 // StateHome resolves the per-user launcher state directory.

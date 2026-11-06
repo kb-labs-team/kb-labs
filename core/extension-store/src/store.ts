@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { withFileLock, type FileLockOptions } from '@kb-labs/core-project-registry';
 import { STORE_ENTRY_SCHEMA, type StoreEntry, type InstallPackageRequest, type PackageInstaller, type ResolvedStoreEntry, type StoreEntryRef } from './types.js';
 import { readStoreEntry, serializeStoreEntry } from './entry.js';
@@ -28,6 +28,41 @@ import {
 
 /** How often the `.used` mtime marker is refreshed on a hit — at most once a day (ADR-0048 D2). */
 const USED_MARKER_REFRESH_MS = 24 * 60 * 60 * 1000;
+
+// pnpm registers each synthetic project in its versioned CAS. Its registration
+// is no longer useful after publication, and must not outlive the staging path.
+async function removeStagingRegistration(casDir: string, staging: string): Promise<void> {
+  let target: string;
+  let versions: import('node:fs').Dirent[];
+  try {
+    target = await fs.realpath(staging);
+    versions = await fs.readdir(casDir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') { return; }
+    throw err;
+  }
+  for (const version of versions) {
+    if (!version.isDirectory()) { continue; }
+    const registry = join(casDir, version.name, 'projects');
+    let records: import('node:fs').Dirent[];
+    try {
+      const info = await fs.lstat(registry);
+      if (!info.isDirectory()) { throw new Error(`Invalid pnpm project registry: ${registry}`); }
+      records = await fs.readdir(registry, { withFileTypes: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') { continue; }
+      throw err;
+    }
+    for (const record of records) {
+      if (!record.isSymbolicLink()) { continue; }
+      const file = join(registry, record.name);
+      const link = await fs.readlink(file);
+      if (resolve(isAbsolute(link) ? link : join(dirname(file), link)) === target) {
+        await fs.unlink(file);
+      }
+    }
+  }
+}
 
 export interface ExtensionStoreOptions extends StoreRootOptions {
   /** Installed platform root whose cached package artifacts may back local file dependencies. */
@@ -141,10 +176,12 @@ export function createExtensionStore(options: ExtensionStoreOptions = {}): IExte
 
       const { entryDir } = entryJsonPath(name, version);
       await fs.mkdir(entriesDir, { recursive: true });
+      await removeStagingRegistration(casDir, staging);
       await fs.rename(staging, entryDir);
       await touchUsed(entryDir);
       return toResolved(entry, entryDir);
     } catch (err) {
+      await removeStagingRegistration(casDir, staging);
       await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined);
       throw err;
     }
