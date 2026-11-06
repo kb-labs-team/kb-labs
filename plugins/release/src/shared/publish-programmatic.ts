@@ -21,7 +21,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { useLogger, useEnv } from '@kb-labs/sdk';
@@ -34,7 +34,7 @@ export interface PackageToPublish {
   /**
    * Pre-built tarball to publish instead of packing fresh from `path`
    * (produced by `release artifact create` — see stage.ts). When set, `path` is
-   * only used as the cwd for npm's `.npmrc` auth lookup — no
+   * used as the process working directory — no
    * `rewriteWorkspaceDeps` mutation happens, since the tarball's
    * package.json is already final and must ship byte-for-byte unchanged.
    */
@@ -172,7 +172,7 @@ function resolveToken(token?: string): string | undefined {
 
 /**
  * Spawn `packageManager publish` for a single package without shell parsing.
- * Explicit tokens are referenced by a temporary .npmrc line and cleaned up on exit.
+ * Explicit tokens are scoped to the registry in the child process environment.
  */
 function spawnPublish(options: {
   packagePath: string;
@@ -207,47 +207,27 @@ function spawnPublish(options: {
 
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (token) { env['NODE_AUTH_TOKEN'] = token; }
-    const isolatedHome = dryRun ? mkdtempSync(join(tmpdir(), 'kb-publish-dry-run-')) : undefined;
-    if (isolatedHome) {
-      env.HOME = isolatedHome;
-      env.npm_config_cache = join(isolatedHome, 'cache');
-      env.npm_config_userconfig = join(isolatedHome, 'npmrc');
+    const isolatedDir = dryRun ? mkdtempSync(join(tmpdir(), 'kb-publish-dry-run-')) : undefined;
+    if (isolatedDir) {
+      env.HOME = isolatedDir;
+      env.npm_config_cache = join(isolatedDir, 'cache');
+      env.npm_config_userconfig = join(isolatedDir, 'npmrc');
+      delete env.NPM_CONFIG_USERCONFIG;
       delete env.NPM_TOKEN;
       delete env.NODE_AUTH_TOKEN;
-    }
-
-    // Write a per-package .npmrc so npm picks up NODE_AUTH_TOKEN.
-    // The auth line's host must match the target registry — hardcoding
-    // registry.npmjs.org here would silently break token auth against
-    // Verdaccio or any other non-npmjs registry.
-    const npmrcPath = join(packagePath, '.npmrc');
-    const npmrcExisted = existsSync(npmrcPath);
-    const npmrcBackup = npmrcExisted ? readFileSync(npmrcPath, 'utf-8') : null;
-    const registryHost = registry ? new URL(registry).host : 'registry.npmjs.org';
-    const authLine = `//${registryHost}/:_authToken=\${NODE_AUTH_TOKEN}\n`;
-
-    if (token && !dryRun) {
-      const existing = npmrcExisted ? readFileSync(npmrcPath, 'utf-8') : '';
-      // Only an auth line for THIS registry host counts as "already has
-      // auth". A package .npmrc left over from a real npmjs publish carries
-      // `//registry.npmjs.org/:_authToken=…`; treating that as sufficient
-      // skipped the line for the staging registry, and npm then failed with
-      // ENEEDAUTH for exactly the packages that had such a file.
-      if (!existing.includes(`//${registryHost}/:_authToken`)) {
-        writeFileSync(npmrcPath, existing + (existing === '' || existing.endsWith('\n') ? '' : '\n') + authLine);
+      for (const key of Object.keys(env)) {
+        if (/^npm_config_\/\/.*:_(?:authToken|auth|password)$/i.test(key)) delete env[key];
       }
+    } else if (token) {
+      // npm_config_//host/:_authToken is a scoped npm configuration key.
+      // Environment configuration overrides both project and user npmrc files.
+      const registryHost = registry ? new URL(registry).host : 'registry.npmjs.org';
+      delete env[`NPM_CONFIG_//${registryHost}/:_authToken`];
+      env[`npm_config_//${registryHost}/:_authToken`] = token;
     }
 
-    const restoreNpmrc = () => {
-      if (isolatedHome) { rmSync(isolatedHome, { recursive: true, force: true }); }
-      if (!token || dryRun) { return; }
-      try {
-        if (npmrcBackup !== null) {
-          writeFileSync(npmrcPath, npmrcBackup);
-        } else if (existsSync(npmrcPath)) {
-          unlinkSync(npmrcPath);
-        }
-      } catch { /* best-effort */ }
+    const cleanup = () => {
+      if (isolatedDir) { rmSync(isolatedDir, { recursive: true, force: true }); }
     };
 
     const child = spawn(packageManager, args, {
@@ -264,7 +244,7 @@ function spawnPublish(options: {
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
 
     child.on('close', (code: number | null) => {
-      restoreNpmrc();
+      cleanup();
       if (code === 0) {
         resolve();
       } else {
@@ -273,7 +253,7 @@ function spawnPublish(options: {
     });
 
     child.on('error', (err: Error) => {
-      restoreNpmrc();
+      cleanup();
       reject(err);
     });
   });
