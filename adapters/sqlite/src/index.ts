@@ -34,6 +34,7 @@ export {
 };
 
 export { manifest } from './manifest.js';
+export { SqliteVectorStore, createSqliteVectorStore, type SqliteVectorStoreConfig } from './vector-store.js';
 
 /**
  * Platform factory — called by the adapter loader when this module is

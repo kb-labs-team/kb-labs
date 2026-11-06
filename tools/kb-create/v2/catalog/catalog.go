@@ -29,8 +29,9 @@ type Catalog struct {
 	Provenance    []ArtifactProvenance         `json:"provenance,omitempty"`
 }
 
-// ArtifactProvenance binds an immutable package version to the exact source
-// revision and dist files that were packed into its registry tarball.
+// ArtifactProvenance binds an immutable package version to its source revision
+// and to either the compiled dist tree or complete static package tree packed
+// into its registry tarball.
 type ArtifactProvenance struct {
 	contracts.ArtifactProvenance
 	Package string `json:"package"`
@@ -91,8 +92,8 @@ func Validate(source Catalog) error {
 	}
 	provenanceVersions := make(map[string]struct{}, len(source.Provenance))
 	for _, provenance := range source.Provenance {
-		if provenance.Package == "" || provenance.Version == "" || provenance.SourceRevision == "" || provenance.Integrity == "" || provenance.DistSHA256 == "" {
-			return fmt.Errorf("artifact provenance must declare package, version, source revision, tarball integrity and dist digest")
+		if provenance.Package == "" || provenance.Version == "" || provenance.SourceRevision == "" || provenance.Integrity == "" || !provenance.ArtifactProvenance.HasContentDigest() {
+			return fmt.Errorf("artifact provenance must declare package, version, source revision, tarball integrity and a valid scoped content digest")
 		}
 		key := provenance.Package + "@" + provenance.Version
 		if _, exists := provenanceVersions[key]; exists {

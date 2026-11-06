@@ -1,7 +1,9 @@
 package v2cli
 
 import (
+	"context"
 	"fmt"
+	"reflect"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
@@ -42,16 +44,44 @@ func refuseRunningHost(platformRoot string) *diag.Diag {
 		return supervisor.Refusal(record, platformRoot)
 	}
 	command := contracts.ShellCommand("kb-create", "status", "--platform-root", platformRoot)
-	failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
+	failure := contracts.NewDiag(contracts.CodeHostAlreadyRunning, "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
 	failure.Meta = map[string]any{"pid": fmt.Sprint(record.PID), "platformRoot": record.PlatformRoot, "nextCommand": command}
 	return failure
 }
 
-func refuseApplyBesideRunningHost(plan contracts.ResolvedInstallPlan, platformRoot string) *diag.Diag {
+func reusableApplyHost(plan contracts.ResolvedInstallPlan, platformRoot string) (*contracts.InstallReceipt, *diag.Diag) {
 	if plan.Host == nil {
-		return nil
+		return nil, nil
 	}
-	return refuseRunningHost(platformRoot)
+	if refusal := refuseRunningHost(platformRoot); refusal == nil {
+		return nil, nil
+	} else if refusal.Code != contracts.CodeHostAlreadyRunning {
+		return nil, refusal
+	}
+	layout, err := versionroot.ForPlatformPath(platformRoot)
+	if err != nil {
+		return nil, unsupportedPlatformLayout(platformRoot, err)
+	}
+	activeRoot := layout.PlatformRoot()
+	active, err := receipt.Read(activeRoot)
+	if err != nil {
+		return nil, asDiag(err)
+	}
+	runner, err := host.NewRunner(activeRoot)
+	if err != nil {
+		return nil, asDiag(err)
+	}
+	status, err := runner.Status(context.Background())
+	if err != nil {
+		return nil, asDiag(err)
+	}
+	if status.State != host.StateRunning || !status.Healthy || status.ReceiptID != active.ID ||
+		active.Plan.Host == nil || plan.Host.Command != active.Plan.Host.Command ||
+		!reflect.DeepEqual(plan.Host.Args, active.Plan.Host.Args) || plan.Host.HealthURL != active.Plan.Host.HealthURL ||
+		!reflect.DeepEqual(plan.ServiceGraph, active.Plan.ServiceGraph) {
+		return nil, host.RootConflict(active.Plan.Request.PlatformRoot, status.PID)
+	}
+	return &active, nil
 }
 
 func refuseForeignHost(platformRoot string) *diag.Diag {

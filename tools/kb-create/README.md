@@ -121,6 +121,18 @@ without it the commands print short text. All take `--platform-root`.
 - `start` spawns `kb-create supervise` detached. `supervise` (foreground; the
   future autostart entry) keeps the host and serves the control channel.
   `start --foreground` runs only the host in the current process.
+
+To prepare a retained installed root from the current workspace candidate, run
+`bash e2e/journey/prepare-isolated-installed-root.sh` from the repository root
+with Docker Compose available. Candidate preparation uses the journey's
+`verdaccio` service and persistent third-party package cache; it does not start
+a standalone registry. The script stops the service on exit and retains its
+cache volume.
+The command prepares the candidate, plans against an explicitly selected free
+Gateway URL in the 4500–9900 range, checks every planned service port before
+installing, then runs doctor, a Gateway health request, and `kb-create stop`.
+It prints the platform root, isolated HOME, Gateway URL, and exact stop and
+cleanup commands. Run the printed cleanup command after using the root.
 - State home: per user, `<KB_HOME>/launcher` (`KB_HOME`, default `~/.kb`, the
   same variable the TS side uses): `host.pid`, `host.log`, `supervisor.pid`,
   `supervisor.log`, `control.json`, `update-requests.json`, `operation.lock`.

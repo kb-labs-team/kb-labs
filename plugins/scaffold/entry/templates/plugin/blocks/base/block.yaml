@@ -1,5 +1,0 @@
-id: base
-describe: |
-  Required. Scaffolds the three-package layout (entry / core / contracts)
-  with a working `hello` CLI command and inline examples showing how to use
-  the LLM, cache, and logger from the platform.

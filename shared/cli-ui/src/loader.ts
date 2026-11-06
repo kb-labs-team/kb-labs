@@ -5,6 +5,20 @@
  */
 
 import { safeColors, safeSymbols } from './colors';
+function writeOutput(text: string, jsonMode = false): void {
+  if (jsonMode) return;
+  process.stdout.write(text);
+}
+
+let _jsonMode = false;
+
+export function setJsonMode(enabled: boolean): void {
+  _jsonMode = enabled;
+}
+
+export function isJsonMode(): boolean {
+  return _jsonMode;
+}
 
 export interface LoaderOptions {
   /** Text to show while loading */
@@ -15,22 +29,11 @@ export interface LoaderOptions {
   total?: number;
   /** Current item for progress bar */
   current?: number;
-  /** Whether JSON mode is enabled (disables all visual feedback) */
+  /** Route human progress to stderr for machine-readable command output. */
   jsonMode?: boolean;
 }
 
 const SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
-// Process-scoped json mode flag. Set by SDK before invoking handler; read by useLoader().
-let _jsonMode = false;
-
-export function setJsonMode(enabled: boolean): void {
-  _jsonMode = enabled;
-}
-
-export function isJsonMode(): boolean {
-  return _jsonMode;
-}
 
 export class Loader {
   private isActive = false;
@@ -43,20 +46,19 @@ export class Loader {
     this.options = {
       text: 'Loading...',
       spinner: true,
-      jsonMode: false,
       ...options,
     };
     this.currentText = this.options.text ?? 'Loading...';
   }
 
   start(): void {
-    if (this.options.jsonMode || this.isActive) {
+    if (this.isActive) {
       return;
     }
     this.isActive = true;
 
     // Start periodic animation updates (every 200ms)
-    if (this.options.spinner && !this.options.jsonMode) {
+    if (this.options.spinner) {
       this.intervalId = setInterval(() => {
         if (!this.isActive) {
           this.clearInterval();
@@ -64,7 +66,7 @@ export class Loader {
         }
 
         const char = SPINNER_CHARS[this.frameIndex % SPINNER_CHARS.length];
-        process.stdout.write(`\r${char} ${this.currentText}`);  // ← Читаем реактивный текст
+        writeOutput(`\r${char} ${this.currentText}`, this.options.jsonMode);
         this.frameIndex++;
       }, 200);
     }
@@ -73,7 +75,7 @@ export class Loader {
   update(options: Partial<LoaderOptions>): void {
     this.options = { ...this.options, ...options };
 
-    if (!this.isActive || this.options.jsonMode) {return;}
+    if (!this.isActive) {return;}
 
     // Update reactive text - setInterval will pick it up on next tick
     if (options.text !== undefined) {
@@ -84,7 +86,7 @@ export class Loader {
     if (!this.intervalId) {
       if (this.options.spinner) {
         const text = this.options.text ?? 'Loading...';
-        console.log(`${safeSymbols.info} ${text}`);
+        writeOutput(`${safeSymbols.info} ${text}\n`, this.options.jsonMode);
       } else if (this.options.total !== undefined) {
         this.updateProgress();
       }
@@ -98,15 +100,15 @@ export class Loader {
 
   succeed(message?: string): void {
     this.stop();
-    if (!this.options.jsonMode && message) {
-      process.stdout.write(`\r\x1b[K${safeSymbols.success} ${message}\n`);
+    if (message) {
+      writeOutput(`\r\x1b[K${safeSymbols.success} ${message}\n`, this.options.jsonMode);
     }
   }
 
   fail(message?: string): void {
     this.stop();
-    if (!this.options.jsonMode && message) {
-      process.stdout.write(`\r\x1b[K${safeSymbols.error} ${message}\n`);
+    if (message) {
+      writeOutput(`\r\x1b[K${safeSymbols.error} ${message}\n`, this.options.jsonMode);
     }
   }
 
@@ -129,7 +131,7 @@ export class Loader {
     const bar = '█'.repeat(filledLength) + '░'.repeat(barLength - filledLength);
     const text = this.options.text || 'Progress';
 
-    process.stdout.write(`\r${safeColors.info('→')} ${text}... ${bar} ${percentage}% (${current}/${total})`);
+    writeOutput(`\r${safeColors.info('→')} ${text}... ${bar} ${percentage}% (${current}/${total})`, this.options.jsonMode);
   }
 }
 
@@ -151,27 +153,21 @@ export function createProgressBar(text: string, total: number, jsonMode = false)
  * Simple loading message without spinner
  */
 export function showLoading(text: string, jsonMode = false): void {
-  if (!jsonMode) {
-    console.log(`${safeColors.info('→')} ${text}...`);
-  }
+  writeOutput(`${safeColors.info('→')} ${text}...\n`, jsonMode);
 }
 
 /**
  * Show completion message
  */
 export function showSuccess(text: string, jsonMode = false): void {
-  if (!jsonMode) {
-    console.log(`${safeSymbols.success} ${text}`);
-  }
+  writeOutput(`${safeSymbols.success} ${text}\n`, jsonMode);
 }
 
 /**
  * Show error message
  */
 export function showError(text: string, jsonMode = false): void {
-  if (!jsonMode) {
-    console.log(`${safeSymbols.error} ${text}`);
-  }
+  writeOutput(`${safeSymbols.error} ${text}\n`, jsonMode);
 }
 
 /**

@@ -4,8 +4,7 @@
  * gateway, lifecycle, and all CLI-specific infrastructure.
  *
  * This package contains everything that was previously in @kb-labs/cli-core
- * minus the registry/discovery/generators/cache (now in @kb-labs/core-registry
- * and @kb-labs/core-discovery).
+ * except catalog ownership, whose reader contract lives in plugin-contracts.
  */
 
 // ---------------------------------------------------------------------------

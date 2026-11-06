@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { computePackageIntegrity, createEmptyLock, createMarketplaceEntry, DiscoveryManager, findWorkspacePackages, writeMarketplaceLock, type MarketplaceAdapterEntry } from '@kb-labs/core-discovery';
+import { computePackageIntegrity, createEmptyLock, createMarketplaceEntry, DiscoveryManager, findWorkspacePackages, writeMarketplaceLock } from '@kb-labs/core-discovery';
+import type { MarketplaceAdapterEntry } from '@kb-labs/plugin-contracts';
 import { ADAPTER_DEFAULTS, loadAdapterManifest } from '@kb-labs/core-platform';
+import { writeTestPlatformReceipt } from './platform-version-fixture.js';
 
 const repositoryRoot = path.resolve(fileURLToPath(import.meta.url), '../../../../..');
 const cliRoot = path.join(repositoryRoot, 'cli/bin');
@@ -23,9 +25,13 @@ describe('installed default log persistence across CLI processes', () => {
     const home = path.join(tempRoot, 'home');
     const platformRoot = path.join(tempRoot, 'platform');
     await Promise.all([mkdir(home, { recursive: true }), mkdir(platformRoot, { recursive: true })]);
+    writeTestPlatformReceipt(platformRoot);
     const layoutPath = path.join(platformRoot, '.kb/v2/platform-layout.json');
     await mkdir(path.dirname(layoutPath), { recursive: true });
     await copyFile(path.join(repositoryRoot, 'tools/kb-create/v2/contracts/platform-layout.json'), layoutPath);
+    await writeFile(path.join(platformRoot, '.kb/kb.config.json'), JSON.stringify({
+      gateway: { access: { mode: 'local' } },
+    }));
     const stateDataRoot = path.join(platformRoot, 'state/data');
     await mkdir(stateDataRoot, { recursive: true });
     await symlink(stateDataRoot, path.join(platformRoot, '.kb/data'), 'dir');
@@ -130,7 +136,7 @@ describe('installed default log persistence across CLI processes', () => {
       error?: { code?: string; correlationId?: string; cause?: unknown; stack?: unknown };
     });
     const failure = outputEnvelopes.find(envelope => envelope.error?.code === 'KB_PLUGIN_COMMAND_FAILED');
-    expect(failure, produced.stdout).toBeDefined();
+    expect(failure, `${produced.stderr}\n${produced.stdout}`).toBeDefined();
     if (!failure) { throw new Error('built CLI process handler did not render KB_PLUGIN_COMMAND_FAILED'); }
     expect(failure.ok).toBe(false);
     expect(failure.error?.code).toBe('KB_PLUGIN_COMMAND_FAILED');
@@ -158,9 +164,11 @@ describe('installed default log persistence across CLI processes', () => {
 });
 
 function cleanEnvironment(home: string, platformRoot: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, KB_PLATFORM_ROOT: platformRoot };
-  delete env.KB_HOME;
-  delete env.KB_NET_OFFSET;
-  delete env.GOFLAGS;
-  return env;
+  return {
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    HOME: home,
+    TMPDIR: path.dirname(home),
+    KB_PLATFORM_ROOT: platformRoot,
+    KB_DIAGNOSTICS: 'agent',
+  };
 }

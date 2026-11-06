@@ -12,11 +12,11 @@ The marketplace manages extension packages for the installed KB Labs platform. P
 Run these commands from the project root:
 
 ```bash
-kb marketplace install @kb-labs/commit-entry@1.2.3
+kb marketplace install @kb-labs/commit@1.2.3
 kb marketplace plugins list
-kb marketplace plugins disable @kb-labs/commit-entry
-kb marketplace plugins enable @kb-labs/commit-entry
-kb marketplace uninstall @kb-labs/commit-entry
+kb marketplace plugins disable @kb-labs/commit
+kb marketplace plugins enable @kb-labs/commit
+kb marketplace uninstall @kb-labs/commit
 ```
 
 Replace the example package and version with the published plugin you need. Commit `.kb/marketplace.lock` to share the project pin. The package itself is kept in the machine's shared extension store. If a project pin points to a missing store entry, reinstall it with `kb marketplace install <package[@version]>`. When an older v2 lock is rejected, regenerate it with `kb marketplace sync`.
@@ -25,10 +25,10 @@ A local plugin can be linked explicitly after building it:
 
 ```bash
 pnpm build
-kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry
+kb marketplace plugins add --link .kb/plugins/my-plugin
 ```
 
-Build the generated workspace before linking its entry package. The path is relative to the project root, and the link is recorded in `.kb/marketplace.lock`.
+Build the generated workspace before linking the plugin package. The path is relative to the project root, and the link is recorded in `.kb/marketplace.lock`.
 
 To create that workspace from an existing project, run `kb scaffold run plugin my-plugin`, then follow its printed build and link steps. The first command is available after the link succeeds.
 

@@ -2,11 +2,11 @@
 // Step: QA Checks (diff-aware, local, fast)
 // Env: ISSUE_NUMBER, BASE_BRANCH
 import { spawnSync } from 'node:child_process';
-import { run, runOut, workspaceRoot, emitKbOutput } from './lib/kb.mjs';
+import { run, workspaceRoot, emitKbOutput } from './lib/kb.mjs';
 
 process.chdir(workspaceRoot());
 
-const { ISSUE_NUMBER, BASE_BRANCH } = process.env;
+const { BASE_BRANCH } = process.env;
 
 // Type-check affected packages before running QA — catches TS errors that CI
 // would catch later, preventing a commit→CI-fail→fix loop.
@@ -17,20 +17,35 @@ if (typeCheck.status !== 0) {
   process.exit(1);
 }
 
-const context = JSON.stringify({ taskId: `issue-${ISSUE_NUMBER}`, agentId: 'workflow' });
-
-const qaResultRaw = runOut('pnpm', ['kb', 'qa', 'check', '--id', 'new-tests', '--base', BASE_BRANCH, '--context', context, '--json']) || '{}';
-console.log(qaResultRaw);
+const qaCheck = run('kb-devkit', ['check', '--only', 'new-tests', '--json'], {
+  allowFailure: true,
+  env: { ...process.env, KB_DEVKIT_BASE_REF: BASE_BRANCH },
+});
+const qaResultRaw = qaCheck.stdout || '{}';
 
 let qaResult = {};
 try {
   qaResult = JSON.parse(qaResultRaw);
 } catch {
-  qaResult = {};
+  qaResult = null;
 }
 
-const status = qaResult.status || 'passed';
-const blockers = qaResult.blockers || [];
-const warnings = qaResult.warnings || [];
+if (qaResult === null) {
+  emitKbOutput({ status: 'failed', blockers: ['kb-devkit check --only new-tests --json returned invalid JSON'], warnings: [] });
+  process.exit(1);
+}
 
+const checkData = qaResult.data?.packages ?? qaResult.packages ?? {};
+const issues = Object.values(checkData).flatMap((pkg) => pkg.issues ?? []);
+const blockers = issues.filter((issue) => issue.severity === 'error').map((issue) => issue.message);
+const warnings = issues.filter((issue) => issue.severity === 'warning').map((issue) => issue.message);
+if (qaCheck.status !== 0 && blockers.length === 0) {
+  const error = qaResult.error;
+  const detail = [error?.message, error?.cause, error?.hint].filter(Boolean).join(' ');
+  blockers.push(detail || 'kb-devkit check --only new-tests --json failed');
+}
+const status = blockers.length > 0 ? 'failed' : warnings.length > 0 ? 'warning' : 'passed';
+
+for (const warning of warnings) console.log(warning);
 emitKbOutput({ status, blockers, warnings, result: qaResult });
+if (status === 'failed') process.exit(1);

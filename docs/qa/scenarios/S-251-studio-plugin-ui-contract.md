@@ -33,4 +33,4 @@ Install and enable a project plugin that declares Studio pages, use its navigati
 
 ## Source
 
-The Studio registry is assembled from discovered manifests by `services/rest-api/app/src/routes/plugins.ts`. The Commit manifest demonstrates the V2 `studio.pages` and `studio.menus` contract in `plugins/commit/entry/src/manifest.ts`. Plugin page crashes are isolated by `studio/federation/src/page-error-boundary.tsx`. Project-specific Marketplace state is owned by `plugins/marketplace/core/src/marketplace-service.ts`.
+The Studio registry is assembled from discovered manifests by `services/rest-api/app/src/routes/plugins.ts`. The Commit manifest demonstrates the V2 `studio.pages` and `studio.menus` contract in `plugins/commit/src/manifest.ts`. Plugin page crashes are isolated by `studio/federation/src/page-error-boundary.tsx`. Project-specific Marketplace state is owned by `services/marketplace/core/src/marketplace-service.ts`.

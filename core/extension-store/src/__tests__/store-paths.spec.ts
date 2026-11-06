@@ -14,7 +14,7 @@ import { ExtensionStoreError } from '../errors.js';
 
 describe('encodeEntryKey', () => {
   it('replaces "/" with "+" in scoped names and appends the version', () => {
-    expect(encodeEntryKey('@kb-labs/commit-entry', '2.120.1')).toBe('@kb-labs+commit-entry@2.120.1');
+    expect(encodeEntryKey('@kb-labs/commit', '2.120.1')).toBe('@kb-labs+commit@2.120.1');
   });
 
   it('leaves an unscoped name untouched apart from the version suffix', () => {
@@ -52,14 +52,14 @@ describe('store layout paths', () => {
   });
 
   it('resolves one entry directory per exact name+version', () => {
-    const dir = resolveEntryDir(storeRoot, '@kb-labs/commit-entry', '2.120.1');
-    expect(dir).toBe(join(storeRoot, 'entries', '@kb-labs+commit-entry@2.120.1'));
+    const dir = resolveEntryDir(storeRoot, '@kb-labs/commit', '2.120.1');
+    expect(dir).toBe(join(storeRoot, 'entries', '@kb-labs+commit@2.120.1'));
   });
 
   it('resolves the installed package path inside an entry, including scoped names', () => {
-    const dir = resolveEntryDir(storeRoot, '@kb-labs/commit-entry', '2.120.1');
-    expect(entryPackagePath(dir, '@kb-labs/commit-entry')).toBe(
-      join(dir, 'node_modules', '@kb-labs', 'commit-entry'),
+    const dir = resolveEntryDir(storeRoot, '@kb-labs/commit', '2.120.1');
+    expect(entryPackagePath(dir, '@kb-labs/commit')).toBe(
+      join(dir, 'node_modules', '@kb-labs', 'commit'),
     );
   });
 });

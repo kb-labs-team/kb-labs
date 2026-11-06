@@ -50,16 +50,16 @@ The flag declaration, the enriched analyzer, the types, and the Zod schema all a
 
 **File:** `plugins/kb-labs-qa-plugin/packages/qa-cli/src/cli/commands/qa-trends.ts`
 
-Currently the handler imports `analyzeTrends` from `@kb-labs/qa-core` and uses it for both the text path and the JSON path. We want the JSON path to call `analyzeEnrichedTrends` instead so the output includes `timeSeries`, `changelog`, and `velocity` per check type. The text path is unaffected.
+Currently the handler imports `analyzeTrends` from `@kb-labs/qa/core` and uses it for both the text path and the JSON path. We want the JSON path to call `analyzeEnrichedTrends` instead so the output includes `timeSeries`, `changelog`, and `velocity` per check type. The text path is unaffected.
 
 **Step 1.1** — Update the import at line 2 to add `analyzeEnrichedTrends`:
 
 ```ts
 // Before (line 2):
-import { loadHistory, analyzeTrends, buildTrendsReport } from '@kb-labs/qa-core';
+import { loadHistory, analyzeTrends, buildTrendsReport } from '@kb-labs/qa/core';
 
 // After:
-import { loadHistory, analyzeTrends, analyzeEnrichedTrends, buildTrendsReport } from '@kb-labs/qa-core';
+import { loadHistory, analyzeTrends, analyzeEnrichedTrends, buildTrendsReport } from '@kb-labs/qa/core';
 ```
 
 **Step 1.2** — Replace the JSON branch (lines 21–24) to call `analyzeEnrichedTrends` and output the `QAEnrichedTrendsResponse`-shaped payload:
@@ -82,7 +82,7 @@ The text rendering path (lines 26–32) is entirely untouched.
 
 ```ts
 import { defineCommand, type PluginContextV3 } from '@kb-labs/sdk';
-import { loadHistory, analyzeTrends, analyzeEnrichedTrends, buildTrendsReport } from '@kb-labs/qa-core';
+import { loadHistory, analyzeTrends, analyzeEnrichedTrends, buildTrendsReport } from '@kb-labs/qa/core';
 import type { QATrendsFlags } from './flags.js';
 
 type QATrendsInput = QATrendsFlags & { argv?: string[]; flags?: any };
@@ -180,23 +180,23 @@ When `qa:trends --json` is run, the output will be a `QAEnrichedTrendsResponse`:
 Build `qa-core` first (dependency of `qa-cli`), then `qa-cli`:
 
 ```
-pnpm --filter @kb-labs/qa-core build
+pnpm --filter @kb-labs/qa/core build
 ```
 
 ```
-pnpm --filter @kb-labs/qa-cli build
+pnpm --filter @kb-labs/qa/cli build
 ```
 
 Run the core test suite to confirm no regressions in the trend analyzer:
 
 ```
-pnpm --filter @kb-labs/qa-core test
+pnpm --filter @kb-labs/qa/core test
 ```
 
 TypeScript type-check the CLI package without emitting (fastest safety check):
 
 ```
-pnpm --filter @kb-labs/qa-cli exec tsc --noEmit
+pnpm --filter @kb-labs/qa/cli exec tsc --noEmit
 ```
 
 ---

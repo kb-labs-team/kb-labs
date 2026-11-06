@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AdapterUnavailableError,
   createProductErrorEnvelope,
   toErrorEnvelope,
   validateErrorEnvelope,
 } from '@kb-labs/core-platform';
+import { toErrorEnvelope as toPluginContractErrorEnvelope } from './index.js';
 import type { PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
 import {
   AbortError,
@@ -27,6 +29,15 @@ describe('core toErrorEnvelope for plugin errors', () => {
     ['abort', new AbortError(), 'KB_PLUGIN_ABORTED'],
     ['platform code without a product hint', new PluginError('boom', 'KB_RUNTIME_COMMAND_FAILED'), 'KB_RUNTIME_COMMAND_FAILED'],
   ];
+
+  it('derives REST status from the shared error catalog', () => {
+    const error = new PluginError('Package is missing.', 'KB_PLUGIN_NOT_INSTALLED', { package: '@kb-labs/missing' });
+    expect(error.statusCode).toBe(404);
+    expect(toErrorEnvelope(error)).toMatchObject({
+      code: 'KB_PLUGIN_NOT_INSTALLED',
+      details: { package: '@kb-labs/missing' },
+    });
+  });
 
   for (const [name, error, code] of cases) {
     it(`maps ${name} to ${code} as a valid envelope`, () => {
@@ -66,6 +77,13 @@ describe('core toErrorEnvelope for plugin errors', () => {
     expect(toErrorEnvelope(new Error('boom')).code).toBe('KB_RUNTIME_UNEXPECTED');
   });
 
+  it('preserves platform error identity through the plugin-contracts export', () => {
+    expect(toPluginContractErrorEnvelope(new AdapterUnavailableError('llm'))).toMatchObject({
+      code: 'KB_ADAPTER_NOT_CONFIGURED',
+      details: { service: 'llm' },
+    });
+  });
+
   it('keeps a validated product plugin code and rejects a missing hint', () => {
     const productError = createProductErrorEnvelope({
       code: 'COMMIT_NOTHING_STAGED',
@@ -76,6 +94,7 @@ describe('core toErrorEnvelope for plugin errors', () => {
     const error = new ProductPluginError(
       'Nothing is staged.',
       productError.code,
+      400,
       undefined,
       'Stage the intended changes, then retry.',
     );

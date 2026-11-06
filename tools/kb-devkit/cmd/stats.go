@@ -23,7 +23,7 @@ coverage metrics, and tech debt summary.`,
 		}
 
 		registry := checks.Build(cfg, ws.Root, "check")
-		results := checks.RunAll(ws, cfg, registry, nil)
+		results := checks.RunAll(ws, cfg, registry, nil, nil)
 
 		s := computeStats(results)
 

@@ -47,7 +47,7 @@ local check, or a deep LLM-powered review for complex PRs.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/review-entry
+pnpm kb marketplace install @kb-labs/review
 ```
 
 ---

@@ -2,8 +2,8 @@
 # workflows. Semgrep's YAML GitHub Actions rules interpret their `run` and
 # `uses` fields as shell commands/action tags, producing non-actionable noise.
 .kb/workflows/
-plugins/workflow/contracts/examples/
-plugins/workflow/examples/
+services/workflow/contracts/examples/
+services/workflow/examples/
 plugins/release/manager-cli/src/workflows/templates/
 
 # These images are disposable test harnesses and intentionally run with the
@@ -19,7 +19,6 @@ templates/nginx/
 # policy recommendations out of the SAST signal until the lockfile can be
 # regenerated as a dedicated dependency-policy change.
 pnpm-workspace.yaml
-plugins/clickup/pnpm-workspace.yaml
 infra/devkit/fixtures/monorepo/pnpm-workspace.yaml
 
 # Reviewed, intentional findings that the generic rules cannot distinguish
@@ -31,11 +30,10 @@ cli/bin/src/bootstrap.js
 core/plugin-execution/src/http/route-mounter.ts
 e2e/delivery/apply_test.go
 infra/devkit/bin/kb-devkit-qa.mjs
-plugins/marketplace-registry/api/src/routes/packages.ts
+services/marketplace-registry/api/src/routes/packages.ts
 plugins/review/heuristic/src/runner.ts
-plugins/state/daemon/src/__tests__/bootstrap.test.ts
-plugins/workflow/daemon/src/api/workflows-api.ts
-plugins/workflow/entry/src/studio/components/artifacts/MarkdownViewer.tsx
+services/workflow/daemon/src/api/workflows-api.ts
+services/workflow/entry/src/studio/components/artifacts/MarkdownViewer.tsx
 services/gateway/app/src/auth/routes.ts
 studio/ui-kit/src/content/UIJsonViewer.tsx
 sites/web/packages/site-ui/src/components/ui/code-block.tsx

@@ -26,7 +26,7 @@ several repositories on one platform.
 | # | Action | Expected |
 |---|---|---|
 | S-199.1 | Install `@kb-labs/mind` and a project-only plugin in Project A; install a different plugin in Project B; inspect each `.kb/marketplace.lock` and Studio Plugins page | A lists its installed plugins and not B's plugin; B lists its plugin and not the A-only plugins. Platform-installed plugins remain available according to the platform scope. |
-| S-199.2 | From Project A, run `kb mind index`, then `kb mind search --text "project alpha marker" --json`; run the same search from Project B | A's results cite only A paths and include its marker; B does not return A's marker or A paths. Mind index status and stored index belong to A. |
+| S-199.2 | From Project A, run `kb mind index update`, then `kb mind search --text "project alpha marker" --json`; run the same search from Project B | A's results cite only A paths and include its marker; B does not return A's marker or A paths. Mind index status and stored index belong to A. |
 | S-199.3 | Call `tools/list` at `/api/v1/projects/<A_ID>/mcp` and `/api/v1/projects/<B_ID>/mcp` | Each project endpoint lists tools for that project's installed plugins; an A-only tool is absent from B's catalog. |
 | S-199.4 | Call an A-only MCP tool through A, then call the same tool through B | A executes against A's repository and returns its result; B returns the typed unknown-tool result, and neither call reads or changes the other repository. |
 | S-199.5 | Repeat the two `tools/list` calls in secured mode without a token and with a valid member token | Missing credentials return HTTP 401 without a catalog; a valid member token returns only the requested project's catalog, subject to the platform's project-access policy. |

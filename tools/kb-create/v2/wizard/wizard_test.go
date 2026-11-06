@@ -26,7 +26,7 @@ func TestRequestScenarioUsesSharedProjectSelectionValidation(t *testing.T) {
 		In: bytes.NewBufferString("\n\n"), Out: &bytes.Buffer{},
 	})
 	var validation *contracts.RequestValidationError
-	if !errors.As(err, &validation) || validation.Code != contracts.CodeInputRequired || validation.Field != "projectRoot" {
+	if !errors.As(err, &validation) || validation.Field != "projectRoot" || validation.Diagnostic().Code != contracts.CodeInputRequired {
 		t.Fatalf("RequestScenario() error = %T %v, want shared projectRoot request validation", err, err)
 	}
 	if _, statErr := os.Stat(platformRoot); !os.IsNotExist(statErr) {
@@ -60,7 +60,7 @@ func TestRequestScenarioCompilesSameDeclarativeAnswersAsMachineRequest(t *testin
 	source, err := catalog.Seal(catalog.Catalog{
 		Channels:  map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
-		Plugins:   []catalog.Component{{ID: "@kb-labs/commit", Version: "1", Package: "@kb-labs/commit-entry", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}},
+		Plugins:   []catalog.Component{{ID: "@kb-labs/commit", Version: "1", Package: "@kb-labs/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}},
 		Adapters:  []catalog.Adapter{{Component: catalog.Component{ID: "state-broker", Version: "1", Package: "@kb/state", Tarball: "https://example.test/state.tgz", SHA256: "state"}, Provides: []string{"cache"}}},
 	})
 	if err != nil {
@@ -102,7 +102,7 @@ func TestRequestScenarioCompilesSameDeclarativeAnswersAsMachineRequest(t *testin
 	}
 	machine := request
 	machine.ScenarioID = "commit"
-	if machine.ProviderPreferences["cache"] != request.ProviderPreferences["cache"] || len(machine.Plugins) != 1 || machine.Plugins[0].ID != "@kb-labs/commit" {
+	if machine.ProviderPreferences["cache"] != request.ProviderPreferences["cache"] || len(machine.MarketplaceInstallSpecs) != 1 || machine.MarketplaceInstallSpecs[0] != "@kb-labs/commit" {
 		t.Fatalf("human/machine request mismatch: %#v / %#v", request, machine)
 	}
 }

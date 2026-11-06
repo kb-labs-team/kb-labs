@@ -103,7 +103,7 @@ export {
   PlatformError,
   isPluginError,
 } from "./errors.js";
-export { toErrorEnvelope } from "@kb-labs/core-platform/error-envelope";
+export { toErrorEnvelope } from "@kb-labs/core-platform";
 
 // Runtime
 export type {
@@ -266,6 +266,8 @@ export { createExecutionMeta } from "./runner.js";
 export type {
   ManifestV3,
   ServiceManifest,
+  ServiceCommandDeclaration,
+  ServiceCommandRouteDeclaration,
   ProjectServiceApiDeclaration,
   ProjectServiceDeclaration,
   ServiceRuntime,
@@ -331,3 +333,6 @@ export type {
   MutateHandler,
   ExecuteHandler,
 } from "./archetypes.js";
+
+export * from './catalog.js';
+export { mergeOpenAPISpecs } from './openapi-merge.js';

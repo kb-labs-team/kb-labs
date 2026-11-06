@@ -23,7 +23,7 @@
       "stalenessRisk": "low",
       "pages": [
         { "slug": "index",       "type": "manual", "static": true },
-        { "slug": "quick-start", "type": "hybrid", "owners": ["tools/kb-create/**", "cli/**", "plugins/marketplace/**"] },
+        { "slug": "quick-start", "type": "hybrid", "owners": ["tools/kb-create/**", "cli/**", "services/marketplace/**"] },
         { "slug": "installation","type": "hybrid", "owners": ["tools/kb-create/**", "cli/**", "core/runtime/src/default-adapters.ts"] },
         { "slug": "privacy",     "type": "manual", "owners": ["adapters/analytics-file/src/**"] }
       ]
@@ -40,7 +40,7 @@
         { "slug": "concepts/plugin-system",   "type": "manual", "owners": ["core/plugin-runtime/**", "core/plugin-contracts/**"] },
         { "slug": "concepts/adapter-system",  "type": "manual", "owners": ["core/platform/**", "core/runtime/src/loader.ts", "core/runtime/src/platform-data-root.ts", "core/project-registry/src/state-dir.ts", "adapters/**"] },
         { "slug": "concepts/execution-model", "type": "manual", "owners": ["core/plugin-execution/**", "core/runtime/src/config.ts", "core/runtime/src/config-schemas.ts", "core/runtime/src/loader.ts", "core/sandbox/**"] },
-        { "slug": "concepts/workflow-engine", "type": "manual", "owners": ["plugins/workflow/engine/**", "plugins/workflow/contracts/**", "plugins/workflow/daemon/src/cron-discovery.ts", "plugins/workflow/entry/src/manifest.ts"] },
+        { "slug": "concepts/workflow-engine", "type": "manual", "owners": ["services/workflow/engine/**", "services/workflow/contracts/**", "services/workflow/daemon/src/cron-discovery.ts", "cli/commands/src/commands/system/workflow.ts"] },
         { "slug": "concepts/permissions",     "type": "manual", "owners": ["core/policy/**", "shared/perm-presets/**"] },
         { "slug": "concepts/multi-tenancy",   "type": "manual", "owners": ["core/tenant/**"] },
         { "slug": "concepts/llm-routing",     "type": "manual", "owners": ["core/llm-router/**"], "status": "missing" }
@@ -91,7 +91,7 @@
             { "slug": "sdk/platform-client/index",          "type": "manual", "owners": ["sdk/platform-client/**"] },
             { "slug": "sdk/platform-client/quickstart",     "type": "manual", "owners": ["sdk/platform-client/**"] },
             { "slug": "sdk/platform-client/commands",       "type": "hybrid", "owners": ["sdk/platform-client/**"] },
-            { "slug": "sdk/platform-client/workflows",      "type": "hybrid", "owners": ["sdk/platform-client/**", "plugins/workflow/daemon/src/api/workflows-api.ts"] },
+            { "slug": "sdk/platform-client/workflows",      "type": "hybrid", "owners": ["sdk/platform-client/**", "services/workflow/daemon/src/api/workflows-api.ts"] },
             { "slug": "sdk/platform-client/authentication", "type": "manual", "owners": ["sdk/platform-client/**", "plugins/gateway/**"] },
             { "slug": "sdk/platform-client/streaming",      "type": "hybrid", "owners": ["sdk/platform-client/**"] },
             { "slug": "sdk/platform-client/errors",         "type": "hybrid", "owners": ["sdk/platform-client/**", "core/contracts/**"] }
@@ -107,16 +107,16 @@
       "stalenessRisk": "medium",
       "note": "Step-by-step tutorials. Code snippets must match real SDK API.",
       "pages": [
-        { "slug": "guides/first-plugin",         "type": "manual", "owners": ["sdk/**", "plugins/scaffold/**"] },
+        { "slug": "guides/first-plugin",         "type": "manual", "owners": ["sdk/**", "cli/scaffold/**"] },
         { "slug": "guides/first-adapter",        "type": "manual", "owners": ["sdk/**", "adapters/**"] },
-        { "slug": "guides/first-workflow",       "type": "manual", "owners": ["plugins/workflow/entry/src/manifest.ts", "plugins/workflow/entry/src/commands/init.ts", "plugins/workflow/entry/src/http-client.ts", "plugins/workflow/contracts/src/routes.ts", "plugins/workflow/engine/**", "plugins/workflow/contracts/**", "plugins/workflow/builtins/**", "plugins/workflow/daemon/src/api/workflows-api.ts", "services/host/app/src/project-runtime/**", "tools/kb-dev/**", "studio/**"] },
+        { "slug": "guides/first-workflow",       "type": "manual", "owners": ["cli/commands/src/commands/system/workflow.ts", "services/workflow/entry/src/commands/create.ts", "services/workflow/entry/src/http-client.ts", "services/workflow/contracts/src/routes.ts", "services/workflow/engine/**", "services/workflow/contracts/**", "services/workflow/builtins/**", "services/workflow/daemon/src/api/workflows-api.ts", "services/host/app/src/project-runtime/**", "tools/kb-dev/**", "studio/**"] },
         { "slug": "guides/add-studio-page",      "type": "manual", "owners": ["studio/**", "sdk/**"] },
         { "slug": "guides/llm-setup",            "type": "manual", "owners": ["tools/kb-create/**", "cli/commands/src/commands/system/config/**", "adapters/openai/**"] },
         { "slug": "guides/testing",              "type": "manual", "owners": ["shared/testing/**", "shared/testing-e2e/**", "infra/devkit/vitest/**", "infra/devkit/vitest.config.ts", "infra/devkit/fixtures/web/tests/**", "infra/devkit/templates/package-json/**", "devkit.yaml"] },
-        { "slug": "guides/production-readiness", "type": "manual", "owners": ["tools/kb-deploy/**", "services/gateway/app/kb-create.requirements.json", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/bootstrap.ts", "plugins/marketplace-registry/app/src/bootstrap.ts"] },
+        { "slug": "guides/production-readiness", "type": "manual", "owners": ["tools/kb-deploy/**", "services/gateway/app/kb-create.requirements.json", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/bootstrap.ts", "services/marketplace-registry/app/src/bootstrap.ts"] },
         { "slug": "guides/troubleshooting",      "type": "manual", "owners": ["tools/kb-dev/**", "tools/kb-devkit/**"] },
         { "slug": "guides/ci-install",            "type": "manual", "owners": ["tools/kb-create/**", ".github/actions/kb-create-install/**", "e2e/journey/scenarios.json", "e2e/journey/run.sh", ".github/workflows/reusable-installer-journey.yml"] },
-        { "slug": "guides/release-journey-coverage", "type": "manual", "owners": ["docs/qa/scenarios/**", "plugins/qa/contracts/src/types/cases.ts", "plugins/qa/contracts/src/types/config.ts", "plugins/qa/core/src/cases/**", "plugins/qa/entry/src/cli/commands/qa-cases-*.ts", "plugins/qa/entry/src/manifest.ts", "e2e/journey/service_steps.py", "e2e/journey/run.sh", "scripts/local-gate.sh", ".github/workflows/reusable-installer-journey.yml", ".github/workflows/release-build-candidate.yml", ".github/workflows/nightly-user-journey.yml"] }
+        { "slug": "guides/release-journey-coverage", "type": "manual", "owners": ["docs/qa/scenarios/**", "plugins/qa/src/contracts/types/cases.ts", "plugins/qa/src/contracts/types/config.ts", "plugins/qa/src/core/cases/**", "plugins/qa/src/cli/commands/qa-cases-*.ts", "plugins/qa/src/manifest.ts", "e2e/journey/service_steps.py", "e2e/journey/run.sh", "scripts/local-gate.sh", ".github/workflows/reusable-installer-journey.yml", ".github/workflows/release-build-candidate.yml", ".github/workflows/nightly-user-journey.yml"] }
       ]
     },
 
@@ -135,7 +135,7 @@
         { "slug": "plugins/sdk-hooks",        "type": "hybrid", "owners": ["sdk/sdk/src/hooks/**"] },
         { "slug": "plugins/rest-routes",      "type": "hybrid", "owners": ["shared/http/**", "plugins/rest-api/**"] },
         { "slug": "plugins/studio-pages",     "type": "manual", "owners": ["studio/**"] },
-        { "slug": "plugins/publishing",       "type": "manual", "owners": ["plugins/marketplace-registry/**"] }
+        { "slug": "plugins/publishing",       "type": "manual", "owners": ["services/marketplace-registry/**"] }
       ]
     },
 
@@ -184,7 +184,7 @@
         { "slug": "configuration/kb-config",             "type": "hybrid", "owners": ["core/config/**", "core/runtime/src/config.ts", "core/runtime/src/config-schemas.ts", "core/runtime/src/adapters/config-adapter.ts", "core/runtime/src/loader.ts", "core/runtime/src/platform-data-root.ts", "services/gateway/contracts/src/webhook-history.ts", "tools/kb-create/v2/contracts/platform-layout.json", "adapters/**"] },
         { "slug": "configuration/dev-config",            "type": "hybrid", "owners": ["infra/devkit/**", "tools/kb-devkit/**", "shared/daemon/src/daemon.ts", "services/host/app/src/host.ts"] },
         { "slug": "configuration/profiles",              "type": "manual", "owners": ["core/config/**", "core/runtime/src/adapters/config-adapter.ts"] },
-        { "slug": "configuration/environment-variables", "type": "manual", "owners": ["core/config/**", "core/platform/src/host-service-address.ts", "core/platform/src/service-listen-address.ts", "shared/daemon/src/daemon.ts", "cli/bin/src/runtime/plugin-executor.ts", "services/host/app/src/host.ts", "services/gateway/app/kb-create.requirements.json", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/bootstrap.ts", "plugins/marketplace-registry/app/src/bootstrap.ts"] }
+        { "slug": "configuration/environment-variables", "type": "manual", "owners": ["core/config/**", "core/platform/src/host-service-address.ts", "core/platform/src/service-listen-address.ts", "shared/daemon/src/daemon.ts", "cli/bin/src/runtime/plugin-executor.ts", "services/host/app/src/host.ts", "services/gateway/app/kb-create.requirements.json", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/bootstrap.ts", "services/marketplace-registry/app/src/bootstrap.ts"] }
       ]
     },
 
@@ -194,15 +194,15 @@
       "label": "Workflows",
       "stalenessRisk": "medium",
       "pages": [
-        { "slug": "workflows/index",           "type": "manual", "owners": ["plugins/workflow/contracts/src/schemas.ts", "plugins/workflow/contracts/src/expressions.ts", "plugins/workflow/constants/src/index.ts"] },
-        { "slug": "workflows/spec-reference",  "type": "hybrid", "owners": ["plugins/workflow/contracts/**"] },
-        { "slug": "workflows/steps",           "type": "manual", "owners": ["plugins/workflow/builtins/**", "plugins/workflow/constants/src/index.ts", "plugins/workflow/contracts/src/expressions.ts"] },
-        { "slug": "workflows/jobs",            "type": "manual", "owners": ["plugins/workflow/engine/**", "plugins/workflow/contracts/src/schemas.ts"] },
-        { "slug": "workflows/triggers",        "type": "manual", "owners": ["plugins/workflow/contracts/src/schemas.ts", "plugins/workflow/engine/src/workflow-repository.ts", "plugins/workflow/daemon/src/cron-discovery.ts"] },
-        { "slug": "workflows/gates",           "type": "manual", "owners": ["plugins/workflow/builtins/src/approval.ts", "plugins/workflow/builtins/src/gate.ts", "plugins/workflow/daemon/src/api/approvals-api.ts"] },
-        { "slug": "workflows/artifacts",       "type": "manual", "owners": ["plugins/workflow/artifacts/**", "plugins/workflow/engine/src/artifact-merger.ts"] },
-        { "slug": "workflows/retry-and-errors","type": "manual", "owners": ["plugins/workflow/engine/**"] },
-        { "slug": "workflows/patterns",        "type": "manual", "owners": ["plugins/workflow/contracts/**", "plugins/workflow/builtins/**"] }
+        { "slug": "workflows/index",           "type": "manual", "owners": ["services/workflow/contracts/src/schemas.ts", "services/workflow/contracts/src/expressions.ts", "services/workflow/constants/src/index.ts"] },
+        { "slug": "workflows/spec-reference",  "type": "hybrid", "owners": ["services/workflow/contracts/**"] },
+        { "slug": "workflows/steps",           "type": "manual", "owners": ["services/workflow/builtins/**", "services/workflow/constants/src/index.ts", "services/workflow/contracts/src/expressions.ts"] },
+        { "slug": "workflows/jobs",            "type": "manual", "owners": ["services/workflow/engine/**", "services/workflow/contracts/src/schemas.ts"] },
+        { "slug": "workflows/triggers",        "type": "manual", "owners": ["services/workflow/contracts/src/schemas.ts", "services/workflow/engine/src/workflow-repository.ts", "services/workflow/daemon/src/cron-discovery.ts"] },
+        { "slug": "workflows/gates",           "type": "manual", "owners": ["services/workflow/builtins/src/approval.ts", "services/workflow/builtins/src/gate.ts", "services/workflow/daemon/src/api/approvals-api.ts"] },
+        { "slug": "workflows/artifacts",       "type": "manual", "owners": ["services/workflow/artifacts/**", "services/workflow/engine/src/artifact-merger.ts"] },
+        { "slug": "workflows/retry-and-errors","type": "manual", "owners": ["services/workflow/engine/**"] },
+        { "slug": "workflows/patterns",        "type": "manual", "owners": ["services/workflow/contracts/**", "services/workflow/builtins/**"] }
       ]
     },
 
@@ -217,7 +217,7 @@
         { "slug": "gateway/routing",        "type": "hybrid", "owners": ["plugins/gateway/core/**"] },
         { "slug": "gateway/webhooks",       "type": "manual", "owners": ["services/gateway/app/src/webhook/**", "services/gateway/contracts/src/webhook-history.ts", "cli/commands/src/commands/system/webhook/**"] },
         { "slug": "gateway/self-hosted",    "type": "manual", "owners": ["tools/kb-deploy/**", "infra/docker-compose.backend.yml", "deploy/helm/kb-labs-platform/**", "services/host/app/src/host.ts", "services/gateway/app/kb-create.requirements.json"] },
-        { "slug": "gateway/architecture",   "type": "manual", "owners": ["plugins/gateway/**", "services/gateway/app/src/server.ts", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/routes/adapter-call.ts", "plugins/marketplace-registry/api/src/auth-middleware.ts"] }
+        { "slug": "gateway/architecture",   "type": "manual", "owners": ["plugins/gateway/**", "services/gateway/app/src/server.ts", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/routes/adapter-call.ts", "services/marketplace-registry/api/src/auth-middleware.ts"] }
       ]
     },
 
@@ -235,11 +235,11 @@
         { "slug": "services/kb-devkit",       "type": "manual", "owners": ["infra/devkit/**", "tools/kb-devkit/**"] },
         { "slug": "services/kb-deploy",       "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "services/kb-monitor",      "type": "manual", "owners": ["tools/kb-monitor/**"] },
-        { "slug": "services/marketplace",     "type": "manual", "owners": ["plugins/marketplace/**", "core/extension-store/**", "core/discovery/src/marketplace-lock.ts", "cli/commands/src/commands/system/adapter/**", "core/runtime/src/platform-data-root.ts", "adapters/fs/src/manifest.ts"] },
+        { "slug": "services/marketplace",     "type": "manual", "owners": ["services/marketplace/**", "cli/commands/src/commands/system/marketplace/**", "core/extension-store/**", "core/discovery/src/marketplace-lock.ts", "cli/commands/src/commands/system/adapter/**", "core/runtime/src/platform-data-root.ts", "adapters/fs/src/manifest.ts"] },
         { "slug": "services/rest-api",        "type": "hybrid", "owners": ["services/rest-api/app/src/**"] },
         { "slug": "services/studio",          "type": "manual", "owners": ["studio/app/**"] },
-        { "slug": "services/host-agent",      "type": "manual", "owners": ["plugins/host-agent/**", "adapters/workspace-agent/**"] },
-        { "slug": "services/workflow-daemon", "type": "manual", "owners": ["plugins/workflow/daemon/**", "plugins/workflow/contracts/src/cron.ts", "plugins/workflow/contracts/src/rest-api.ts", "plugins/workflow/entry/src/commands/crons-*.ts", "plugins/workflow/engine/src/state-store.ts", "services/host/app/src/project-runtime/workflow-schedules.ts"] }
+        { "slug": "services/host-agent",      "type": "manual", "owners": ["services/host-agent/**", "services/gateway-host-agent/**", "adapters/workspace-agent/**"] },
+        { "slug": "services/workflow-daemon", "type": "manual", "owners": ["services/workflow/daemon/**", "services/workflow/contracts/src/cron.ts", "services/workflow/contracts/src/rest-api.ts", "services/workflow/entry/src/commands/crons-*.ts", "services/workflow/engine/src/state-store.ts", "services/host/app/src/project-runtime/workflow-schedules.ts"] }
       ]
     },
 
@@ -252,7 +252,7 @@
         { "slug": "operations/index",             "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "operations/deployment",        "type": "manual", "owners": ["tools/kb-deploy/**", "services/host/app/src/host.ts"] },
         { "slug": "operations/observability",     "type": "manual", "owners": ["services/rest-api/app/src/routes/analytics.ts", "adapters/analytics-duckdb/**", "adapters/analytics-sqlite/**", "adapters/pino/**", "core/platform/src/adapters/analytics.ts", "core/plugin-runtime/src/platform/adapter-registry.ts"] },
-        { "slug": "operations/security",          "type": "manual", "owners": ["plugins/gateway/auth/**", "core/policy/**", "services/gateway/app/src/auth/**", "services/rest-api/app/src/routes/adapter-call.ts", "plugins/marketplace-registry/api/src/auth-middleware.ts"] },
+        { "slug": "operations/security",          "type": "manual", "owners": ["plugins/gateway/auth/**", "core/policy/**", "services/gateway/app/src/auth/**", "services/rest-api/app/src/routes/adapter-call.ts", "services/marketplace-registry/api/src/auth-middleware.ts"] },
         { "slug": "operations/incident-response", "type": "manual", "static": true },
         { "slug": "operations/runbooks",          "type": "manual", "static": true }
       ]
@@ -291,7 +291,7 @@
         { "slug": "use-cases/showcase-mind",           "type": "manual", "owners": ["plugins/mind/**"] },
         { "slug": "use-cases/showcase-agents",         "type": "manual", "owners": ["plugins/agents/**"],   "status": "missing" },
         { "slug": "use-cases/showcase-gateway",        "type": "manual", "owners": ["plugins/gateway/**"],  "status": "missing" },
-        { "slug": "use-cases/showcase-workflows",      "type": "manual", "owners": ["plugins/workflow/**"], "status": "missing" },
+        { "slug": "use-cases/showcase-workflows",      "type": "manual", "owners": ["services/workflow/**"], "status": "missing" },
         { "slug": "use-cases/showcase-studio",         "type": "manual", "owners": ["studio/**"],           "status": "missing" }
       ]
     }

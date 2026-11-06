@@ -25,7 +25,7 @@ const zones = [
 test('glob matching accepts zero or more directories for **', () => {
   assert.equal(matchesGlob('plugins/mind/index.ts', 'plugins/mind/**'), true);
   assert.equal(matchesGlob('plugins/mind/src/index.ts', 'plugins/mind/**'), true);
-  assert.equal(matchesGlob('plugins/workflow/index.ts', 'plugins/mind/**'), false);
+  assert.equal(matchesGlob('services/workflow/index.ts', 'plugins/mind/**'), false);
 });
 
 test('zone runner is carried into the shared E2E plan', () => {

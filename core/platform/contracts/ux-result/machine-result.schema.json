@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kblabs.ru/schemas/machine-result.schema.json",
+  "title": "KB Labs machine result",
+  "description": "Shared success and failure envelope for CLI, HTTP, and MCP machine results.",
+  "oneOf": [
+    { "$ref": "#/$defs/success" },
+    { "$ref": "#/$defs/failure" }
+  ],
+  "$defs": {
+    "success": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "data"],
+      "properties": {
+        "ok": { "const": true },
+        "data": {},
+        "meta": { "type": "object" }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "error": { "$ref": "https://kblabs.ru/schemas/error-envelope.schema.json" },
+        "meta": {
+          "type": "object", "additionalProperties": false, "required": ["stream"],
+          "properties": { "stream": {
+            "type": "object", "additionalProperties": false, "required": ["terminal", "exitCode"],
+            "properties": { "terminal": { "const": true }, "exitCode": { "type": "integer", "minimum": 1 } }
+          } }
+        }
+      }
+    }
+  }
+}

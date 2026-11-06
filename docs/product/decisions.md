@@ -1,8 +1,135 @@
 # Product decisions log
 
+## 2026-10-31
+
+### SQLite vector search breaks equal-score ties by record ID
+
+SQLite vector search orders equal cosine similarity scores by stable record ID
+ascending. This makes the returned order deterministic across database query
+plans and reopenings. Case: S-281.4.
+
+### Stock embeddings and vector storage are local-install defaults
+
+Fresh Release 1 installs select the bundled OpenAI-compatible embeddings
+entrypoint and the bundled SQLite vector-store entrypoint through their adapter
+manifests' `defaultFor` declarations. OpenAI credentials remain optional during
+installation and host startup; adapter listing and doctor report a missing key,
+and the first embeddings request returns the typed credentials error with the
+platform config command. The SQLite vector store persists beneath each
+registered project's durable state directory and uses brute-force cosine
+search for small local indexes. Its
+scale limits are documented; larger indexes can bind another provider.
+`snapshotManager` remains optional and unconfigured because no active Release 1
+case requires it. This supersedes the embeddings and vector-store portion of
+[Persistent adapter defaults and analytics persistence disclosure](#persistent-adapter-defaults-and-analytics-persistence-disclosure).
+Cases: S-054.1, S-054.2, S-054.4, S-054.6, S-054.24, S-054.25.
+
 This log records the product decisions behind the case catalog (`docs/qa/scenarios/`). Cases state *what* the product does. This log records *why* a boundary sits where it does, so a later change of mind can be made deliberately, starting with a new entry and a case change.
 
+The current cross-cutting product invariants and their enforcement status are listed in [invariants.md](./invariants.md).
+
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
+
+## 2026-10-29
+
+### Auto-advance review and landing outcomes follow durable side effects
+
+A review child with no valid verdict is a decision-needed outcome for both the child and its parent, committed through one transition and one orchestrator event; recovery does not recreate an already escalated review. For auto-advance acceptance, commit-only landing must succeed before the accepted advancement and event become durable. A landing refusal is escalated without accepted status. Scheduler recovery re-derives the worker run after the atomic rework handoff from its persisted run identity, so a restarted scheduler consumes the resumed worker result. The crash matrix observes all kb-runner durable state writes through `runnerStateStore`; clikit run-record internals remain covered at the Start API boundaries because their write is owned by clikit. Case: S-237.149.
+
+## 2026-10-27
+
+### macOS process ownership uses an inherited run-token descriptor
+
+macOS does not expose environment strings for Apple platform binaries through
+`kern.procargs2`, so the run environment marker cannot prove ownership of
+commands such as `/bin/sh` and `/bin/sleep` after exec and detachment. Each
+supervised command therefore inherits a run-unique file descriptor; the process
+owner matches the descriptor's vnode device and inode for same-UID processes
+across process inventory snapshots. This survives exec of platform binaries,
+setsid, and reparenting. A readable environment marker and recorded PID/start
+identity remain additional evidence. Foreign-UID unreadable candidates remain
+visible as potential setuid owners but are not accepted without other ownership
+proof. A recorded process that closes the token and loses its marker remains
+visible as unverified. A process that closes every inherited descriptor before
+it is observed and then detaches cannot be attributed after that point. Cases:
+S-237.1, S-237.7.
+## 2026-10-23
+
+### Built-in scenario plugins are Marketplace install specs
+
+A scenario plugins entry is the same install spec a user types into Marketplace. Marketplace resolves that spec through the rendered source order (Registry first, then an explicit npm fallback), and records the requested spec beside the canonical entity identity read from the installed manifest. Release 1's npm-only Commit install spec is @kb-labs/commit, and the installed manifest resolves to the same identity. An install spec can include a version or range; the receipt preserves that requested spec separately from the manifest identity. If all sources report not-found, a plain Marketplace install retains KB_PLUGIN_NOT_FOUND and records the sources tried. kb-create wraps Marketplace failures for scenario installs in KB_MARKETPLACE_INSTALL_FAILED, preserving the original Marketplace error code and message as the cause. The retry command uses the exact install spec. Cases: PC-001.4, S-039.1, S-051.2, S-268.9, S-268.13, S-268.14.
+
+### Host exclusivity follows claimed resources, not machine identity
+
+Independent install roots may run at the same time when they hold different
+resources. Each root owns its resolved Gateway address and service ports. A
+start or apply is refused with `KB_HOST_ALREADY_RUNNING` only when the requested
+host needs a Gateway address or port held by another verified live host; the
+diagnostic names that root and PID after process identity verification. A
+stopped root retains its allocation, and stale or malformed root indexes remain
+diagnosed by the index owner. Cases: PC-001.10, PC-001.12, PC-001.16, S-025.8.
+
+### Marketplace npm endpoints come from platform source configuration
+
+The npm source URL is explicit in the installed platform configuration: Release 1 declares npmjs, and `kb-create --marketplace-npm-url` replaces it for a mirror. Marketplace resolution does not inherit npmrc or `NPM_CONFIG_REGISTRY`; those settings affect package-manager operations but must not silently change the source used to resolve Marketplace identities. This keeps the URL visible in status/doctor and stable across updates. Cases: S-268.6, S-268.12.
+
+## 2026-10-22
+
+### Release 1 is local-only
+
+Release 1 supports local macOS and Linux development. It includes plugins,
+the public SDK and default adapters, workflows, marketplace management, and
+in-process, subprocess, and worker-pool plugin execution. Container execution
+and secured access (users, authentication, invites, and tokens) are Release 2.
+Several local repositories remain separate projects. The release headline gates
+only the local lane; the secured lane continues to run and report as
+non-gating. The cases below define the Release 1 promise:
+
+1. Install the platform with one command and start Studio without manual setup:
+   PC-001, PC-002, S-040, S-120, S-125, S-181.
+2. Install Commit from the marketplace and create AI commits in the selected
+   repository: S-010, S-160, S-182, S-123.
+3. Find, install, update, enable, disable, pin, and uninstall plugins:
+   S-010, S-011, S-012, S-047, S-050, S-182.
+4. Run workflows with inputs, inspect history, logs, and failures, cancel,
+   rerun, and schedule them from CLI and Studio: S-002, S-007, S-008, S-009,
+   S-021, S-022, S-029, S-044, S-056, S-143, S-184.
+5. Scaffold a plugin on the public SDK, check compatibility, configure default
+   adapters, and run it in supported Release 1 execution modes: S-003, S-048,
+   S-053, S-054, S-186, S-240, S-241, S-242, S-243, S-246, S-247.
+6. Update, roll back, uninstall safely, receive typed errors with next steps,
+   and diagnose the platform: PC-001, S-023, S-024, S-025, S-050, S-051,
+   S-053, S-258.
+7. Use multiple isolated local repositories as projects: S-043, S-124, S-187.
+8. Inspect analytics and platform, plugin, and workflow logs from CLI and
+   Studio: S-009, S-044, S-121, S-191, S-270.
+
+The Release 2 case list is S-039, S-042, S-045, S-046, S-052, S-055, S-100,
+S-101, S-102, S-103, S-104, S-105, S-106, S-107, S-108, S-140, S-188, S-189,
+S-190, S-245, S-253, and S-266. The S-266 case is landing from x128 and will
+be marked `release: false` there. There is no existing docs roadmap page in
+this checkout, so no new roadmap page is introduced.
+
+### Release 1 Marketplace defaults use npm until the public Registry is deployed
+
+Every Release 1 install renders `marketplace.sources` from the platform release
+configuration. Its default list is `[npm]`, so a fresh local install works before
+the public Registry is deployed. A Marketplace source explicitly supplied at
+install time overrides that default and persists across updates. Once the public
+Registry is live, changing the release-owned default to Registry-first is a
+separate owner decision. Case: S-268.9.
+
+## 2026-10-21
+
+### Marketplace management is built in; the publishing registry is optional
+
+Plugin and adapter installation is a platform capability: every installed
+platform includes the marketplace service and the built-in `kb marketplace`
+command group. The marketplace talks to package registries as a client. The
+marketplace-registry backend serves publisher operations and self-hosted
+deployments, so it is released and operated as a separate optional service,
+not included in the default installed service graph. The host still composes
+the consumer marketplace service directly. Cases: S-252, S-264.
 
 ## 2026-10-20
 
@@ -75,16 +202,23 @@ once; in-flight legacy agents are not migrated. The old reap helper remains
 until the post-install inventory passes, then is removed because `kb-runner`
 owns process-tree cleanup. Case: S-237.18.
 
-### D42 — A run with no active resource-costed reservation may start despite low host availability
+### D42 — Host pressure admission follows level and cost class
 
 When no resource-costed run is active, admission does not wait on the memory
 or CPU quota or live available-memory check because no work under this
-admission system can release memory. The run still waits on elevated host
-pressure, and slots, gates, FIFO, and disk admission remain enforced. When
-another resource-costed run is active, memory/CPU quota and live available
-memory both gate admission. If live available memory cannot be read, quota
-admission remains authoritative and the resource notice reports the failed
-signal and OS reason. Cases: S-237.29, S-237.38, S-237.53.
+admission system can release memory. Host-pressure admission is level-aware:
+normal admits both cost classes, memory warn admits light work and holds heavy
+work, and critical pressure holds both. The governor retains its pressure
+hysteresis and light concurrency limits; held work reports the pressure sample,
+current level, and when that level began. An unknown sample preserves the last
+known level for two minutes; once that sample is stale, the effective level is
+unknown, which admits light work and holds heavy work until a known sample
+updates the state. A held unknown-pressure run reports when pressure became
+unknown. Slots, gates, FIFO, and disk admission remain enforced. When another
+resource-costed run is active, memory/CPU quota and live available memory both
+gate admission. If live available memory cannot be read, quota admission remains
+authoritative and the resource notice reports the failed signal and OS reason.
+Cases: S-237.29, S-237.38, S-237.53, S-237.74.
 
 ### D43 — kb-runner cleanup protects against accidents, not deliberate same-user races
 
@@ -178,6 +312,11 @@ remains for account recovery after installation. Cases: PC-001, S-040, S-100,
 S-222.
 
 ### Marketplace integrity pins may bypass registry freshness for the pinned artifact
+
+For an urgent workspace security fix, add only the exact `package@version` to
+`minimumReleaseAgeExclude` in the root `pnpm-workspace.yaml`, with the reason
+recorded in the change. Remove the exception once the release-age window has
+passed; do not use a package-wide wildcard.
 
 The Marketplace npm source may exclude one exact package version from
 `minimumReleaseAge` only when the request resolves to an exact version with
@@ -401,13 +540,13 @@ A CORS preflight (`OPTIONS` with `Access-Control-Request-Method`) receives only 
 
 Owner intent (2026-10-02): “главное сделать платформенно (чтобы все подключенные плагины сразу получали защиту от доступа) без необходимости добавлять что-то в потребитель. по сути для разных точек разная защита — CLI - общая обертка над всеми командами (до вызова команды идет проверка авторизация и только после доступ), gateway - тоже все запросы не публичные перехватывает и отдает ошибку до того как запрос дойдет до сервисов. ну и MCP аналогично”
 
-Cases: S-007.4, S-041.7 to S-041.13, S-045.5, S-104, S-140.6.
+Cases: S-007.4, S-041.7 to S-041.10, S-041.12, S-255.7 to S-255.10, S-045.5, S-104, S-140.6.
 
-### Bind persistent built-in adapters on every fresh install
+### Persistent adapter defaults and analytics persistence disclosure
 
 "The idea is that the user has no headache at the base level and doesn't need to configure everything from scratch. Instead of an InMemory fallback, the minimum is FS/SQLite or something cheap and easy to install. No local databases with lots of replicas are needed, but later the user can replace adapters with the ones they need."
 
-Fresh local and secured installs resolve the same built-in adapter for every platform slot with a persistent local implementation, including when the user has not added a binding. Defaults are replaceable through `kb adapter bind <slot> <package>`; replacing a provider does not migrate or delete data held by the previous provider. An available persistent adapter must never be silently replaced by an InMemory fallback. OpenAI remains the implicit LLM provider; its adapter can construct without a key and reports `KB_ADAPTER_CREDENTIALS_MISSING` only when used. Missing credentials for optional capabilities are warning-severity doctor findings and do not make an otherwise healthy install fail; use reports the typed credentials error. Adapter manifests may declare required credential options as secret values with environment sources; these credentials may be missing at construction, while required structural options such as a service map exclude a provider from implicit defaults. Embeddings and vector store remain unconfigured and return typed adapter-required errors without configured providers. Durable account, workflow, KV, document, and analytics data survives a host restart. Doctor diagnosis is read-only; `kb-create doctor --fix` is the explicit repair operation for missing installed manifest projections.
+Fresh local and secured installs resolve the SQLite analytics adapter from the shipped platform release index, so a fresh install displays real aggregate stats with durable persistence and no volatility notice. If no persistent analytics binding resolves, the runtime can use its in-memory analytics buffer; Studio then states that those real stats cover only the current host process and reset on restart, and shows the catalog-owned `KB_ANALYTICS_PERSISTENCE_VOLATILE` hint for configuring a persistent adapter. Each adapter declares persistence through its structured stats capability; Studio does not infer it from provider names. Defaults are replaceable through `kb adapter bind <slot> <package>`; replacing a provider does not migrate or delete data held by the previous provider. An available persistent adapter must never be silently replaced by an InMemory fallback. OpenAI remains the implicit LLM provider; its adapter can construct without a key and reports `KB_ADAPTER_CREDENTIALS_MISSING` only when used. Missing credentials for optional capabilities are warning-severity doctor findings and do not make an otherwise healthy install fail; use reports the typed credentials error. Adapter manifests may declare required credential options as secret values with environment sources; these credentials may be missing at construction, while required structural options such as a service map exclude a provider from implicit defaults. Embeddings and vector store remain unconfigured and return typed adapter-required errors without configured providers. Durable account, workflow, KV, and document data survives a host restart. Doctor diagnosis is read-only; `kb-create doctor --fix` is the explicit repair operation for missing installed manifest projections. Cases: S-121.6, S-275.1.
 
 The sealed base install includes `@kb-labs/adapters-openai` so the runtime can
 select it through `defaultFor: { llm: ["llm"] }` without writing an explicit
@@ -415,7 +554,7 @@ select it through `defaultFor: { llm: ["llm"] }` without writing an explicit
 to package entry-point path segments; an empty array selects the package root.
 With `OPENAI_API_KEY` unset, adapter list and doctor report the missing
 credential as a warning; an LLM request returns the typed credentials error.
-Cases: S-054.1, S-054.2, S-054.9, S-054.10, S-054.11.
+Cases: S-054.1, S-054.2, S-054.9, S-054.10, S-054.11, S-272.1.
 
 ### 2026-10-01: Explicit token kinds and lifecycle contract changes
 
@@ -457,7 +596,7 @@ Cases: S-203.1, S-203.2.
 
 ### Platform members: core plugins only
 
-The platform ships its core plugins as members: `workflow` (the CLI for the workflow service), `marketplace` (installing the rest) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.
+The platform includes built-in capabilities: `workflow` (the CLI for the workflow service), `marketplace` (installing plugins) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.
 Cases: S-006, S-008, S-010, S-160.
 
 ### 2026-10-01: Platform installs seal runtime peer dependencies
@@ -509,6 +648,24 @@ Cases: S-010.1, S-054.11, S-054.12.
 
 `@kb-labs/adapters-fs` is the only adapter that declares itself the default for `storage`. `@kb-labs/data-store` stays installable and bindable, but two defaults made install resolution ambiguous.
 Cases: S-047, S-048.
+
+### 2026-10-20: Keep implicit storage project-scoped
+
+The fresh-install release config selects the filesystem adapter without writing
+`platform.adapterOptions.storage`; the adapter manifest supplies its implicit
+`<KB_HOME>/state/<projectId>/storage` path. A user-selected relative storage
+path remains platform data and is configured explicitly.
+Cases: S-048.2, S-054.1, S-054.21.
+
+### 2026-10-20: Release defaults have a release-owned config source
+
+The developer workspace config and the fresh-install release config have
+different owners and purposes. `.kb/kb.config.jsonc` retains the explicit
+workspace storage directory; `tools/kb-create/config/platform-release.jsonc`
+is the release producer's source for the config sealed into a fresh install and
+leaves implicit storage to the adapter manifest. Release tooling reads that
+source directly instead of deriving it by filtering developer settings. Cases:
+S-054.1, S-054.21, S-179.5.
 
 ### Marketplace plugins never mutate the sealed platform dependency graph
 
@@ -749,6 +906,17 @@ planning with `KB_INSTALL_PORT_IN_USE` and a `--gateway-url` hint. An explicit
 `--gateway-url` remains the operator override. Cases:
 PC-001.10, PC-001.12, PC-001.16.
 
+### 2026-10-30: automatic Gateway allocations stay within the local port domain
+
+When kb-create selects a Gateway address automatically, it uses 100-port
+boundaries from 4000 through 9900 and accounts for the selected service graph.
+Every nonzero derived service port must remain below the conventional
+ephemeral-port boundary shared by supported Linux and macOS environments. If
+the remaining registered addresses cannot satisfy that constraint, planning
+fails with no allocation instead of choosing an ephemeral service port.
+Explicit `--gateway-url` remains the operator override. Cases: PC-001.10,
+PC-001.16.
+
 ### Destructive confirmation without a TTY is invalid usage
 
 Destructive `kb-create` operations require explicit `--yes` when no terminal is
@@ -843,3 +1011,12 @@ field; the value and source environment-variable name never enter installer
 output or persisted artifacts. The provenance is stored atomically with the
 bootstrap password and survives retries until the successful result removes
 the supplied value. Cases: S-100.1, S-181.3.
+
+### S-203.26 verifies plugin failure correlation through the installed boundary
+
+A plain error thrown by an installed plugin command is governed by S-203.3 and
+returns `KB_PLUGIN_COMMAND_FAILED`, names the plugin and command, and carries a
+correlation ID. S-203.26 therefore uses a packaged journey fixture plugin to
+prove the second-process structured-log round trip for that contract. Uncatalogued
+platform failures remain `KB_RUNTIME_UNEXPECTED` and are tested at the platform
+error boundary. Cases: S-203.3, S-203.26.

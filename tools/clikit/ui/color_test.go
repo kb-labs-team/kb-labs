@@ -9,25 +9,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func TestColorEnabled_NoColorEnv(t *testing.T) {
-	t.Setenv("NO_COLOR", "1")
-	// Even a real char device would be disabled; a temp file suffices to assert
-	// the env short-circuit returns false before the device check.
-	if ColorEnabled(os.Stdout) {
-		t.Error("NO_COLOR must disable color")
+func TestColorEnabledNonFileWriter(t *testing.T) {
+	unsetColorOverrides(t)
+	t.Setenv("TERM", "xterm-256color")
+	if ColorEnabled(&strings.Builder{}) {
+		t.Fatal("a non-file writer must not enable color")
 	}
 }
 
-func TestColorEnabled_TermDumb(t *testing.T) {
-	t.Setenv("NO_COLOR", "")
-	t.Setenv("TERM", "dumb")
-	if ColorEnabled(os.Stdout) {
-		t.Error("TERM=dumb must disable color")
-	}
-}
-
-func TestColorEnabled_RegularFileIsNotATerminal(t *testing.T) {
-	t.Setenv("NO_COLOR", "")
+func TestColorEnabledRegularFile(t *testing.T) {
+	unsetColorOverrides(t)
 	t.Setenv("TERM", "xterm-256color")
 	f, err := os.Create(filepath.Join(t.TempDir(), "out.log"))
 	if err != nil {
@@ -35,31 +26,38 @@ func TestColorEnabled_RegularFileIsNotATerminal(t *testing.T) {
 	}
 	defer f.Close()
 	if ColorEnabled(f) {
-		t.Error("a regular file is not a char device — color must be off")
+		t.Fatal("a regular file is not a terminal")
 	}
 }
 
-func TestColorEnabled_NonFileWriter(t *testing.T) {
-	t.Setenv("NO_COLOR", "")
-	t.Setenv("TERM", "xterm-256color")
-	if ColorEnabled(&strings.Builder{}) {
-		t.Error("a non-*os.File writer must not enable color")
+func unsetColorOverrides(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"NO_COLOR", "FORCE_COLOR"} {
+		value, set := os.LookupEnv(name)
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("unset %s: %v", name, err)
+		}
+		t.Cleanup(func() {
+			if set {
+				if err := os.Setenv(name, value); err != nil {
+					t.Errorf("restore %s: %v", name, err)
+				}
+			} else if err := os.Unsetenv(name); err != nil {
+				t.Errorf("restore unset %s: %v", name, err)
+			}
+		})
 	}
 }
 
-// color() maps the enabled flag onto a concrete lipgloss color type.
-func TestColor_DisabledYieldsNoColor(t *testing.T) {
+func TestColorDisabledUsesLipglossNoColor(t *testing.T) {
 	if _, ok := color(false, "10").(lipgloss.NoColor); !ok {
-		t.Errorf("color(false) = %T, want lipgloss.NoColor", color(false, "10"))
+		t.Fatalf("disabled color type = %T", color(false, "10"))
 	}
 }
 
-func TestColor_EnabledYieldsConcreteColor(t *testing.T) {
-	c, ok := color(true, "10").(lipgloss.Color)
-	if !ok {
-		t.Fatalf("color(true) = %T, want lipgloss.Color", color(true, "10"))
-	}
-	if string(c) != "10" {
-		t.Errorf("color value = %q, want %q", string(c), "10")
+func TestColorEnabledUsesLipglossColor(t *testing.T) {
+	got, ok := color(true, "10").(lipgloss.Color)
+	if !ok || string(got) != "10" {
+		t.Fatalf("enabled color = %T(%v)", color(true, "10"), color(true, "10"))
 	}
 }

@@ -4,7 +4,8 @@
  * signal path it owns. Never touches the real HOME or the default ports.
  */
 
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { createServer, connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,16 +92,34 @@ async function writeProject(
 ): Promise<string> {
   const projectRoot = await mkdtemp(join(tmpdir(), "kb-host-test-"));
   await mkdir(join(projectRoot, ".kb"), { recursive: true });
+  await mkdir(join(projectRoot, ".kb", "v2"), { recursive: true });
+  await mkdir(join(projectRoot, ".kb", "data"), { recursive: true });
+  const layoutPath = join(projectRoot, ".kb", "v2", "platform-layout.json");
+  const layoutSource = join(process.cwd(), "../../../tools/kb-create/v2/contracts/platform-layout.json");
+  await writeFile(layoutPath, await readFile(layoutSource, "utf8"));
+  const releaseDefaultsPath = join(projectRoot, "release-defaults.json");
+  execFileSync(process.execPath, [
+    join(process.cwd(), "../../../tools/release/generate-platform-image-default.mjs"),
+    releaseDefaultsPath,
+  ], { cwd: process.cwd() });
+  const releaseDefaults = JSON.parse(await readFile(releaseDefaultsPath, "utf8")) as {
+    marketplace: { sources: unknown[] };
+  };
+  await rm(releaseDefaultsPath);
   await writeFile(
     join(projectRoot, ".kb", "kb.config.json"),
     JSON.stringify({
-      platform: { adapters: {}, ...config.platform },
+      platform: {
+        ...config.platform,
+        deployment: config.platform?.deployment ?? { topology: "local" },
+      },
       gateway: {
         studio: { enabled: false },
         ...(!config.defaultGatewayPort ? { port: gatewayPort } : {}),
         host: "127.0.0.1",
         ...config.gateway,
       },
+      marketplace: { sources: releaseDefaults.marketplace.sources },
       ...(config.host ? { host: config.host } : {}),
     }),
   );

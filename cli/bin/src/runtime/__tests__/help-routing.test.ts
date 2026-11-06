@@ -23,15 +23,15 @@ describe("hasNestedCommands", () => {
     expect(
       hasNestedCommands(["commit"], [
         command(["commit"]),
-        command(["commit", "open"]),
+        command(["commit", "plan", "show"]),
       ]),
     ).toBe(true);
   });
 
   it("does not treat a leaf command as a namespace", () => {
     expect(
-      hasNestedCommands(["commit", "open"], [
-        command(["commit", "open"]),
+      hasNestedCommands(["commit", "plan", "show"], [
+        command(["commit", "plan", "show"]),
       ]),
     ).toBe(false);
   });

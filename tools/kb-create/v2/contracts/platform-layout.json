@@ -21,13 +21,13 @@
   "sharedRuntimePaths": [
     { "platformPath": ".kb/v2/cache", "statePath": "state/cache", "kind": "directory", "preinstall": true },
     { "platformPath": ".kb/v2/scenarios", "statePath": "state/scenarios", "kind": "directory", "preinstall": true },
-    { "platformPath": ".kb/kb.config.jsonc", "statePath": "state/kb.config.jsonc", "kind": "file" },
-    { "id": "secretState", "platformPath": ".kb/v2/secret-state.json", "statePath": "state/secret-state.json", "kind": "file", "preinstall": true },
+    { "platformPath": ".kb/kb.config.jsonc", "statePath": "state/kb.config.jsonc", "kind": "file", "preserveUserState": true },
+    { "id": "secretState", "platformPath": ".kb/v2/secret-state.json", "statePath": "state/secret-state.json", "kind": "file", "preinstall": true, "preserveUserState": true },
     { "platformPath": ".kb/logs", "statePath": "state/logs", "kind": "directory", "preinstall": true },
     { "platformPath": ".kb/diagnostics", "statePath": "state/diagnostics", "kind": "directory", "preinstall": true }
   ],
   "versionStatePaths": [
-    ".kb/marketplace.lock"
+    { "path": ".kb/marketplace.lock", "kind": "file", "preserveUserState": true }
   ],
   "installerRecords": {
     "operationLogs": "installer/logs",

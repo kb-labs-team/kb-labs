@@ -23,7 +23,7 @@ type platformLayout struct {
 	OwnershipRecordStagingPrefix string              `json:"ownershipRecordStagingPrefix"`
 	OwnedEntries                 []string            `json:"ownedEntries"`
 	SharedRuntimePaths           []SharedRuntimePath `json:"sharedRuntimePaths"`
-	VersionStatePaths            []string            `json:"versionStatePaths"`
+	VersionStatePaths            []VersionStatePath  `json:"versionStatePaths"`
 	RuntimeStatePaths            []string            `json:"runtimeStatePaths"`
 	InstallerRecords             installerRecords    `json:"installerRecords"`
 }
@@ -40,11 +40,18 @@ type layoutDirectory struct {
 }
 
 type SharedRuntimePath struct {
-	ID           string `json:"id,omitempty"`
-	PlatformPath string `json:"platformPath"`
-	StatePath    string `json:"statePath"`
-	Kind         string `json:"kind"`
-	Preinstall   bool   `json:"preinstall,omitempty"`
+	ID                string `json:"id,omitempty"`
+	PlatformPath      string `json:"platformPath"`
+	StatePath         string `json:"statePath"`
+	Kind              string `json:"kind"`
+	Preinstall        bool   `json:"preinstall,omitempty"`
+	PreserveUserState bool   `json:"preserveUserState,omitempty"`
+}
+
+type VersionStatePath struct {
+	Path              string `json:"path"`
+	Kind              string `json:"kind"`
+	PreserveUserState bool   `json:"preserveUserState,omitempty"`
 }
 
 type PlatformDataRoot struct {
@@ -266,5 +273,9 @@ func VersionStatePaths() []string {
 	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil {
 		panic("invalid embedded platform layout contract: " + err.Error())
 	}
-	return append([]string(nil), layout.VersionStatePaths...)
+	paths := make([]string, 0, len(layout.VersionStatePaths))
+	for _, path := range layout.VersionStatePaths {
+		paths = append(paths, path.Path)
+	}
+	return paths
 }

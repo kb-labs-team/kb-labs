@@ -1,14 +1,16 @@
 /** Show platform adapters and their built-in fallback. */
 
 import { ADAPTER_DEFAULTS, toErrorEnvelope, ErrorEnvelopeError, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
-import { ADAPTER_CONFIG_KEYS, discoverAdapters, isWorkspaceDevelopmentMode, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
+import { adapterPackageName, adapterPackageRoot, configuredAdapterForSlot, isWorkspaceDevelopmentMode, loadCatalogAdapterEntries, loadPlatformConfig, projectEffectiveAdapterImplementation, resolveDiscoveredAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
 import { isEnvReference } from '@kb-labs/core-config';
 import { resolvePlatformDataPath, resolvePlatformDataRoot } from '@kb-labs/core-project-registry';
 import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
-import { readGatewaySuccessData, resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { readGatewaySuccessData } from '@kb-labs/sdk/gateway';
+import { resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
 import { projectNetworkRequirement } from './list-projection.js';
+import { requireResolvedCatalog } from '../../../registry/discovery-state.js';
 
 type AdapterRow = {
   slot: string;
@@ -38,17 +40,6 @@ type HostAdapterStatus = {
 
 type ListResult = CommandResult & { adapters?: AdapterRow[]; projectRoot?: string; envelope?: ErrorEnvelope };
 
-function packageName(spec: string): string {
-  const separator = spec.lastIndexOf('@');
-  return separator > spec.indexOf('/') ? spec.slice(0, separator) : spec;
-}
-
-function packageRoot(spec: string): string {
-  const name = packageName(spec);
-  const segments = name.split('/');
-  return name.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0] ?? name;
-}
-
 export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; description?: string } }, ListResult>({
   name: 'list',
   scope: 'platform',
@@ -62,19 +53,27 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
   async handler(ctx) {
     let loaded: Awaited<ReturnType<typeof loadPlatformConfig>>;
     try {
-      loaded = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: getContextCwd(ctx), loadEnvFile: false, projectScope: 'platform' });
+      const catalog = requireResolvedCatalog();
+      loaded = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: getContextCwd(ctx), loadEnvFile: false, projectScope: 'platform', catalog });
     } catch (error) {
       const envelope = toErrorEnvelope(error);
       throwSystemCataloguedError(envelope);
     }
     const config = loaded.platformConfig;
-    const resolvedDefaults = await resolveInstalledAdapterDefaults({
-      adapters: Object.fromEntries(Object.entries(config.adapters ?? {})),
+    const configuredPackages = Object.entries(config.adapters ?? {}).flatMap(([slot, value]) =>
+      (Array.isArray(value) ? value : [value]).filter((modulePath): modulePath is string => typeof modulePath === 'string')
+        .map((modulePath) => ({ packageName: modulePath.split('/').slice(0, 2).join('/'), slot })),
+    );
+    const workspaceOptions = isWorkspaceDevelopmentMode(loaded)
+      ? { development: true as const, workspaceRoot: loaded.projectRoot ?? getContextCwd(ctx), configuredPackages }
+      : { development: false as const, configuredPackages };
+    const discovered = await loadCatalogAdapterEntries(loaded.catalog.adapters(), workspaceOptions);
+    const resolvedDefaults = resolveDiscoveredAdapterDefaults({
+      adapters: { ...(config.adapters ?? {}) },
       adapterOptions: Object.fromEntries(Object.entries(config.adapterOptions ?? {})),
-    }, loaded.platformRoot, loaded.projectRoot ?? getContextCwd(ctx));
+    }, discovered, loaded.projectRoot ?? getContextCwd(ctx));
     const effectiveAdapters = resolvedDefaults.adapters as AdaptersConfig;
     const effectiveAdapterOptions = resolvedDefaults.adapterOptions as Record<string, unknown>;
-    const discovered = await discoverAdapters(loaded.platformRoot);
     const platformDataRoot = await resolvePlatformDataRoot(loaded.platformRoot, isWorkspaceDevelopmentMode(loaded));
     const startHostCommand = `kb-create start --platform-root ${JSON.stringify(loaded.platformRoot)}`;
     let hostStatuses = new Map<string, HostAdapterStatus>();
@@ -101,13 +100,13 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       runtimeReason = error instanceof Error ? error.message : String(error);
     }
     const rows = (Object.keys(ADAPTER_DEFAULTS) as AdapterSlot[]).map((slot): AdapterRow => {
-      const configKeys = ADAPTER_CONFIG_KEYS[slot];
-      const configKey = configKeys.find((key) => effectiveAdapters[key] !== undefined);
-      const configured = configKey ? effectiveAdapters[configKey] : undefined;
+      const configuredAdapter = configuredAdapterForSlot(slot, effectiveAdapters);
+      const configKey = configuredAdapter?.key;
+      const configured = configuredAdapter?.value;
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
-      const packageId = configuredPackage ? packageName(configuredPackage) : undefined;
+      const packageId = configuredPackage ? configuredPackage : undefined;
       const option = configKey ? effectiveAdapterOptions[configKey] : undefined;
-      const schema = packageId ? discovered.get(packageRoot(packageId))?.module.manifest : undefined;
+      const schema = packageId ? discovered.get(adapterPackageRoot(packageId))?.module.manifest : undefined;
       const configSchema = schema && typeof schema === 'object' && 'configSchema' in schema &&
         schema.configSchema && typeof schema.configSchema === 'object'
         ? schema.configSchema as Record<string, { required?: boolean; secret?: boolean; env?: string }>
@@ -130,15 +129,19 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
         Boolean(effectiveAdapters.logRingBuffer || effectiveAdapters.logPersistence);
       const hostStatus = hostStatuses.get(slot);
       const slotRuntimeKnown = runtimeStatus === 'known' && hostStatus !== undefined;
-      const implementation = slotRuntimeKnown
-        ? hostStatus.implementation === 'unavailable' ? null : hostStatus.implementation
-        : localLogsAvailable ? 'HybridLogReader' : packageId ?? (ADAPTER_DEFAULTS[slot].implementation === 'unavailable' ? null : ADAPTER_DEFAULTS[slot].implementation);
+      const unconfigured = ADAPTER_DEFAULTS[slot].defaultFallback === 'noop' && !packageId &&
+        (runtimeStatus === 'known' && !hostStatus ||
+          slotRuntimeKnown && hostStatus.mode === 'noop' && !hostStatus.configuredPackage);
+      const implementation = unconfigured ? null : projectEffectiveAdapterImplementation(
+        slot,
+        effectiveAdapters,
+        slotRuntimeKnown ? hostStatus.implementation : undefined,
+        localLogsAvailable ? 'HybridLogReader' : undefined,
+      );
       return {
         slot,
         implementation,
-        mode: slotRuntimeKnown
-          ? hostStatus.mode === 'noop' && !hostStatus.configuredPackage ? 'unconfigured' : hostStatus.mode
-          : 'unknown',
+        mode: unconfigured ? 'unconfigured' : slotRuntimeKnown ? hostStatus.mode : 'unknown',
         runtimeStatus: slotRuntimeKnown ? 'known' : 'unknown',
         ...(!slotRuntimeKnown ? { runtimeReason: runtimeStatus === 'known' ? `Host did not report slot ${slot}.` : runtimeReason } : {}),
         ...(hostStatus?.reason === 'load-failed' ? { reason: hostStatus.reason } : {}),
@@ -159,8 +162,8 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       if (knownSlots.has(slot)) {continue;}
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
       if (!configuredPackage) {continue;}
-      const implementation = packageName(configuredPackage);
-      const schema = discovered.get(packageRoot(implementation))?.module.manifest;
+      const implementation = adapterPackageName(configuredPackage);
+      const schema = discovered.get(adapterPackageRoot(implementation))?.module.manifest;
       rows.push({ slot, implementation, mode: 'unknown', runtimeStatus: 'unknown', runtimeReason,
         action: { id: 'start-host', label: 'Start host', command: startHostCommand },
         networkRequired: projectNetworkRequirement(schema) });

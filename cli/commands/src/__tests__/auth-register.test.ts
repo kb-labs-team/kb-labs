@@ -4,9 +4,9 @@ import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 
 const gatewayApiFetch = vi.hoisted(() => vi.fn());
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({
+vi.mock('@kb-labs/sdk/gateway', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@kb-labs/sdk/gateway')>()),
   gatewayApiFetch,
-  readGatewaySuccessData: async (response: Response) => (await response.json() as { data: unknown }).data,
 }));
 
 import { authRegister } from '../commands/system/auth/auth-register.js';

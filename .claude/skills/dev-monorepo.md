@@ -15,7 +15,7 @@ All internal dependencies use `workspace:*` — resolved locally, replaced with 
 
 1. Create directory in the appropriate group (`core/`, `plugins/`, `adapters/`, etc.)
 2. Add `package.json` with `"name": "@kb-labs/your-package"` and `workspace:*` deps
-3. pnpm-workspace.yaml globs auto-include it (e.g. `plugins/*/*`)
+3. pnpm-workspace.yaml globs auto-include it (e.g. `plugins/*`)
 4. Run `pnpm install` to link it
 
 ## Adding a New Plugin
@@ -38,7 +38,7 @@ All internal dependencies use `workspace:*` — resolved locally, replaced with 
 Layer 0: core/* (foundation, no deps on other layers)
 Layer 1: sdk/*, shared/*, core/plugin-*
 Layer 2: cli/*, adapters/*
-Layer 3: plugins/*/* (consume sdk, may consume adapters)
+Layer 3: plugins/* (consume the SDK; plugin runtime dependencies use its public API)
 Layer 4: studio/* (consumes sdk, plugins expose pages)
 ```
 

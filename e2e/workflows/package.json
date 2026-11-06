@@ -8,12 +8,13 @@
   },
   "devDependencies": {
     "@kb-labs/e2e-shared": "workspace:*",
+    "@kb-labs/release": "workspace:*",
+    "@kb-labs/rest-api-app": "workspace:*",
     "@kb-labs/shared-testing-e2e": "workspace:*",
+    "@kb-labs/workflow-contracts": "workspace:*",
     "@kb-labs/workflow-daemon": "workspace:*",
     "@kb-labs/workflow-engine": "workspace:*",
     "@kb-labs/workflow-runtime": "workspace:*",
-    "@kb-labs/rest-api-app": "workspace:*",
-    "@kb-labs/release-manager-cli": "workspace:*",
     "@playwright/test": "^1.52.0",
     "typescript": "^5.4.0"
   }

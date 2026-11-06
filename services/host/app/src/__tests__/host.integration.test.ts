@@ -1,5 +1,5 @@
 import * as marketplaceApp from "@kb-labs/marketplace-app";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installPlatformResolveHook } from "@kb-labs/plugin-runtime";
@@ -67,6 +67,12 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
       const get = await running.fetchGateway("/api/v1/state/state/greeting");
       expect(get.status).toBe(200);
       expect(JSON.parse(await get.text())).toBe("hello");
+
+      const journal = await readFile(
+        join(running.projectRoot, ".kb", "data", "state-broker", "journal.jsonl"),
+        "utf8",
+      );
+      expect(journal).toContain("greeting");
     } finally {
       const subject = running;
       running = undefined;

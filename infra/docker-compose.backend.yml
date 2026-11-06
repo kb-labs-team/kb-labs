@@ -1,7 +1,8 @@
+name: ${COMPOSE_PROJECT_NAME:-kb-labs-workspace}
+
 services:
   kb-redis:
     image: redis:7-alpine
-    container_name: kb-redis
     volumes:
       - redis_data:/data
     restart: unless-stopped
@@ -15,7 +16,6 @@ services:
 
   kb-minio:
     image: minio/minio:latest
-    container_name: kb-minio
     command: server /data --console-address ":9001"
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
@@ -29,12 +29,11 @@ services:
 
   kb-state-daemon:
     image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-state-daemon:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to an explicit release version}
-    container_name: kb-state-daemon
     ports:
-      - "7777:7777"
+      - "${KB_STATE_DAEMON_HOST_PORT:-7777}:7777"
     environment:
       - KB_STATE_DAEMON_PORT=7777
-    # No adapters, no persistence (InMemoryStateBroker) — see plugins/state/daemon/Dockerfile.
+    # No adapters, no persistence (InMemoryStateBroker) — see services/state/daemon/Dockerfile.
     # A restart wipes any in-flight locks; that is current, expected behaviour.
     restart: unless-stopped
     logging: *kb-json-logging
@@ -42,23 +41,24 @@ services:
       - kb-backend
 
   kb-marketplace-registry:
-    image: ${CONSUMER_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-consumer-marketplace-registry:${CONSUMER_IMAGE_TAG:?set CONSUMER_IMAGE_TAG to a derived image tag}
-    container_name: kb-marketplace-registry
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-marketplace-registry:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to an explicit release version}
+    profiles: [registry]
     ports:
-      - "5071:5071"
+      - "${KB_MARKETPLACE_REGISTRY_HOST_PORT:-5071}:5071"
     environment:
       - NODE_ENV=production
-      - KB_REGISTRY_URL=${KB_REGISTRY_URL:?set KB_REGISTRY_URL to your self-hosted registry URL}
+      - KB_REGISTRY_URL
       - KB_REGISTRY_PORT=5071
       - KB_SITE_URL=${KB_SITE_URL:-https://kblabs.ru}
-      - GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET}
+      - GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET:?set GATEWAY_JWT_SECRET in the deployment secret configuration}
       - GATEWAY_INTERNAL_SECRET=${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the deployment secret configuration}
+      - GATEWAY_BOOTSTRAP_ADMIN_PASSWORD=${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD:?set GATEWAY_BOOTSTRAP_ADMIN_PASSWORD in the deployment secret configuration}
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     depends_on:
       - kb-redis
       - kb-minio
-      # plugins/marketplace-registry/README.md:44 — real runtime dependency, not dev-only.
+      # services/marketplace-registry/README.md:46 — real runtime dependency, not dev-only.
       - kb-state-daemon
     restart: unless-stopped
     logging: *kb-json-logging
@@ -67,27 +67,22 @@ services:
 
   kb-marketplace:
     image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-marketplace:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to an explicit release version}
-    container_name: kb-marketplace
     ports:
-      - "5070:5070"
+      - "${KB_MARKETPLACE_HOST_PORT:-5070}:5070"
     environment:
       - NODE_ENV=production
       # Consumer-side daemon (distinct from kb-marketplace-registry, the
       # publisher/storage service). Points at your own registry, not any
-      # KB Labs default — see plugins/marketplace/daemon/Dockerfile.
-      - KB_REGISTRY_URL=http://kb-marketplace-registry:5071/api/v1
-    depends_on:
-      - kb-marketplace-registry
+      # KB Labs default — see services/marketplace/app/Dockerfile.
     restart: unless-stopped
     logging: *kb-json-logging
     networks:
       - kb-backend
 
   kb-gateway:
-    image: ${CONSUMER_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-consumer-gateway:${CONSUMER_IMAGE_TAG:?set CONSUMER_IMAGE_TAG to a derived image tag}
-    container_name: kb-gateway
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-gateway:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to an explicit release version}
     ports:
-      - "4000:4000"
+      - "${KB_GATEWAY_HOST_PORT:-4000}:4000"
     environment:
       - NODE_ENV=production
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -103,10 +98,9 @@ services:
       - kb-backend
 
   kb-rest-api:
-    image: ${CONSUMER_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-consumer-rest-api:${CONSUMER_IMAGE_TAG:?set CONSUMER_IMAGE_TAG to a derived image tag}
-    container_name: kb-rest-api
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-rest-api:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to an explicit release version}
     ports:
-      - "5050:5050"
+      - "${KB_REST_API_HOST_PORT:-5050}:5050"
     environment:
       - NODE_ENV=production
       - GATEWAY_INTERNAL_SECRET=${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the deployment secret configuration}
@@ -118,10 +112,9 @@ services:
       - kb-backend
 
   kb-workflow:
-    image: ${CONSUMER_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-consumer-workflow:${CONSUMER_IMAGE_TAG:?set CONSUMER_IMAGE_TAG to a derived image tag}
-    container_name: kb-workflow
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-workflow:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to an explicit release version}
     ports:
-      - "7778:7778"
+      - "${KB_WORKFLOW_HOST_PORT:-7778}:7778"
     environment:
       - NODE_ENV=production
     volumes:
@@ -133,16 +126,15 @@ services:
     networks:
       - kb-backend
     # IMPORTANT: exactly one instance. JobBroker/CronScheduler run in-process
-    # (plugins/workflow/daemon/src/bootstrap.ts) — a second instance
+    # (services/workflow/daemon/src/bootstrap.ts) — a second instance
     # double-fires every scheduled job. See docs/adr/0037.
     deploy:
       replicas: 1
 
   kb-mcp:
     image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-mcp:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to an explicit release version}
-    container_name: kb-mcp
     ports:
-      - "7779:7779"
+      - "${KB_MCP_HOST_PORT:-7779}:7779"
     environment:
       - NODE_ENV=production
       - GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET}
@@ -153,9 +145,8 @@ services:
 
   kb-studio:
     image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-studio:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to an explicit release version}
-    container_name: kb-studio
     ports:
-      - "3002:3000"
+      - "${KB_STUDIO_HOST_PORT:-3002}:3000"
     environment:
       - NODE_ENV=production
       - KB_API_BASE_URL=http://kb-gateway:4000/api/v1
@@ -168,9 +159,12 @@ services:
 
 networks:
   kb-backend:
-    name: kb-backend
+    name: ${COMPOSE_PROJECT_NAME:-kb-labs-workspace}_backend
 
 volumes:
   redis_data:
+    name: ${KB_REDIS_VOLUME_NAME:-${COMPOSE_PROJECT_NAME:-kb-labs-workspace}_redis_data}
   gateway_data:
+    name: ${KB_GATEWAY_VOLUME_NAME:-${COMPOSE_PROJECT_NAME:-kb-labs-workspace}_gateway_data}
   minio_data:
+    name: ${KB_MINIO_VOLUME_NAME:-${COMPOSE_PROJECT_NAME:-kb-labs-workspace}_minio_data}

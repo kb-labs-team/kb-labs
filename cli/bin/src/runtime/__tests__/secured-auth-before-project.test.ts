@@ -3,10 +3,13 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createErrorEnvelope, resolveCliGatewayTarget } from '@kb-labs/core-platform';
+import { createJsonPresenter } from '@kb-labs/cli-runtime';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 import { ProjectRegistryError } from '@kb-labs/core-project-registry';
+import type { LoadPlatformConfigResult } from '@kb-labs/core-runtime';
 import { platform as runtimePlatform } from '@kb-labs/core-runtime';
 import { registerBuiltinCommands, registerBuiltinSystemCommands, registry } from '@kb-labs/cli-commands';
+import { createPlatformConfigFixture } from './fixtures/platform-config.js';
 
 const mocks = vi.hoisted(() => ({
   loadPlatformConfiguration: vi.fn(),
@@ -38,7 +41,13 @@ vi.mock('../gateway-executor.js', () => ({
   executeViaGateway: mocks.executeViaGateway,
 }));
 
-import { executeCli } from '../bootstrap.js';
+import { executeCli as executeCliBase } from '../bootstrap.js';
+
+const executeCli: typeof executeCliBase = (args, options = {}) => executeCliBase(args, {
+  ...options,
+  resultWriter: options.resultWriter ?? ((value, pretty = false) => process.stdout.write(`${typeof value === 'string' ? value : JSON.stringify(value, null, pretty ? 2 : undefined)}\n`)),
+  createJsonPresenter: options.createJsonPresenter ?? (() => createJsonPresenter((value) => console.log(JSON.stringify(value)))),
+});
 
 describe('secured CLI auth ordering', () => {
   let isolatedHome: string | undefined;
@@ -53,8 +62,22 @@ describe('secured CLI auth ordering', () => {
   const originalCliVersion = process.env.CLI_VERSION;
   const originalDiagnostics = process.env.KB_DIAGNOSTICS;
   const originalLogLevel = process.env.KB_LOG_LEVEL;
+  let fixtureCatalogs: LoadPlatformConfigResult['catalog'][] = [];
+
+  async function configFixture(cwd: string, rawConfig: Record<string, unknown>, projectScope?: 'required' | 'platform') {
+    const loaded = await createPlatformConfigFixture({
+      cwd,
+      home: isolatedHome!,
+      rawConfig,
+      ...(projectScope ? { projectScope } : {}),
+    });
+    fixtureCatalogs.push(loaded.catalog);
+    return loaded;
+  }
 
   afterEach(async () => {
+    await Promise.all(fixtureCatalogs.map((catalog) => catalog.dispose()));
+    fixtureCatalogs = [];
     if (isolatedHome) await rm(isolatedHome, { recursive: true, force: true });
     isolatedHome = undefined;
     process.env.HOME = originalHome;
@@ -95,14 +118,10 @@ describe('secured CLI auth ordering', () => {
       gatewayUrl: 'http://gateway.test', accessToken: 'expired-access', refreshToken: 'valid-refresh',
       expiresAt: 0, email: 'member@example.test',
     }));
-    mocks.loadPlatformConfiguration.mockResolvedValue({
-      platformConfig: {}, rawConfig: { gateway: { access: { mode: 'secured' } } },
-      rawPlatformConfig: { gateway: { access: { mode: 'secured' } } }, effectiveConfig: undefined,
-      platformRoot: isolatedHome, projectRoot: undefined, sameLocation: true,
-      sources: { platformDefaults: 'platform', platform: 'env', project: 'platform', fields: {} },
-    });
+    const rawConfig = { gateway: { access: { mode: 'secured' } } };
+    mocks.loadPlatformConfiguration.mockResolvedValue(await configFixture(isolatedHome, rawConfig));
     mocks.initializePlatform.mockResolvedValue({
-      platform: { logger: mocks.logger }, platformConfig: {},
+      platform: { logger: mocks.logger, getAdapter: () => undefined }, platformConfig: {},
       rawConfig: { gateway: { access: { mode: 'secured' } } }, effectiveConfig: {},
       platformRoot: isolatedHome, projectRoot: undefined,
     });
@@ -113,10 +132,13 @@ describe('secured CLI auth ordering', () => {
       }));
       return { authenticated: true };
     });
-    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const records: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation(((record: string | Uint8Array) => {
+      records.push(String(record));
+      return true;
+    }) as typeof process.stdout.write);
 
     const exitCode = await executeCli(['auth', 'status', '--json'], { cwd: isolatedHome });
-    const records = stdout.mock.calls.map(([record]) => String(record));
 
     expect(exitCode).toBe(0);
     expect(records).toHaveLength(1);
@@ -138,19 +160,13 @@ describe('secured CLI auth ordering', () => {
     process.env.KB_DIAGNOSTICS = 'agent';
     process.env.KB_LOG_LEVEL = 'warn';
 
-    mocks.loadPlatformConfiguration.mockResolvedValue({
-      platformConfig: {},
-      rawConfig: {
-        gateway: { access: { mode: 'secured' } },
-        platform: { adapterOptions: { serviceTransport: { services: { gateway: { url: 'http://127.0.0.1:4000' } } } } },
-      },
-      rawPlatformConfig: { gateway: { access: { mode: 'secured' } } },
-      effectiveConfig: undefined,
-      platformRoot: isolatedHome,
-      projectRoot: isolatedHome,
-      sameLocation: true,
-      sources: { platformDefaults: 'platform', platform: 'env', project: 'platform', fields: {} },
-    });
+    const rawConfig = {
+      gateway: { access: { mode: 'secured' } },
+      platform: { adapterOptions: { serviceTransport: { services: { gateway: { url: 'http://127.0.0.1:4000' } } } } },
+    };
+    mocks.loadPlatformConfiguration.mockResolvedValue(await configFixture(
+      path.join(isolatedHome, 'unregistered-project'), rawConfig,
+    ));
     mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: false });
     const diagnostic = vi.spyOn(runtimePlatform.logger, 'warn');
 
@@ -175,7 +191,11 @@ describe('secured CLI auth ordering', () => {
     });
     const contextRecord = diagnostic.mock.calls.find(([message]) => message === 'CLI resolved invocation context')?.[1];
     expect(diagnostic.mock.calls.filter(([message]) => message === 'CLI resolved invocation context')).toHaveLength(1);
-    expect(contextRecord).toMatchObject({ accessMode: 'secured', platformConfigSource: 'platform', commandPath: 'config show' });
+    expect(contextRecord).toMatchObject({
+      accessMode: 'secured',
+      platformConfigSource: path.join(isolatedHome, '.kb', 'kb.config.json'),
+      commandPath: 'config show',
+    });
     expect(JSON.parse(records[0]!).error.correlationId).toBe(contextRecord?.correlationId);
     expect(mocks.loadPlatformConfiguration).toHaveBeenCalledExactlyOnceWith(
       path.join(isolatedHome, 'unregistered-project'),
@@ -199,16 +219,8 @@ describe('secured CLI auth ordering', () => {
     process.env.KB_NET_OFFSET = '200';
     const project = path.join(isolatedHome, 'anonymous-project');
     await mkdir(project, { recursive: true });
-    mocks.loadPlatformConfiguration.mockResolvedValue({
-      platformConfig: {},
-      rawConfig: { gateway: { access: {} } },
-      rawPlatformConfig: { gateway: { access: {} } },
-      effectiveConfig: undefined,
-      platformRoot: isolatedHome,
-      projectRoot: isolatedHome,
-      sameLocation: true,
-      sources: { platformDefaults: 'platform', platform: 'env', project: 'platform', fields: {} },
-    });
+    const rawConfig = { gateway: { access: {} } };
+    mocks.loadPlatformConfiguration.mockResolvedValue(await configFixture(isolatedHome, rawConfig));
     mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: false });
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -240,19 +252,13 @@ describe('secured CLI auth ordering', () => {
     process.env.GATEWAY_PORT = '4300';
     process.env.KB_NET_OFFSET = '200';
 
-    mocks.loadPlatformConfiguration.mockResolvedValue({
-      platformConfig: {},
-      rawConfig: { gateway: { access: { mode: 'secured' } } },
-      rawPlatformConfig: { gateway: { access: { mode: 'secured' } } },
-      effectiveConfig: undefined,
-      platformRoot: isolatedHome,
-      projectRoot: undefined,
-      sameLocation: false,
-      sources: { platformDefaults: '/isolated/platform/.kb/kb.config.json', platform: 'platform', project: 'platform', fields: {} },
-    });
+    const rawConfig = { gateway: { access: { mode: 'secured' } } };
+    mocks.loadPlatformConfiguration.mockResolvedValue(await configFixture(
+      path.join(isolatedHome, 'unregistered-project'), rawConfig,
+    ));
     mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: true });
     mocks.resolveProjectConfig.mockRejectedValue(new ProjectRegistryError(
-      'KB_PROJECT_UNKNOWN', 'No registered project matches this directory.', { path: 'unregistered' },
+      { code: 'KB_PROJECT_UNKNOWN', details: { path: 'unregistered' } }, 'No registered project matches this directory.',
     ));
     const diagnostic = vi.spyOn(runtimePlatform.logger, 'warn');
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -270,7 +276,7 @@ describe('secured CLI auth ordering', () => {
     expect(diagnostic.mock.calls.filter(([message]) => message === 'CLI resolved invocation context')).toHaveLength(1);
     expect(contextRecord).toMatchObject({
       accessMode: 'secured',
-      platformConfigSource: '/isolated/platform/.kb/kb.config.json',
+      platformConfigSource: path.join(isolatedHome, '.kb', 'kb.config.json'),
       commandPath: 'config show',
       projectResolution: { cwd: path.join(isolatedHome, 'unregistered-project') },
     });
@@ -318,6 +324,7 @@ describe('secured CLI auth ordering', () => {
       cwd: path.resolve(import.meta.dirname, '../../../../../'),
       platformRoot: path.resolve(import.meta.dirname, '../../../../../'),
       projectRoot: path.resolve(import.meta.dirname, '../../../../../'),
+      resolvePlatformVersion: async () => 'test',
     });
     const commands = registry.listProtectionCommands()
       .filter(({ requiresSession }) => requiresSession)
@@ -330,17 +337,9 @@ describe('secured CLI auth ordering', () => {
     await mkdir(unregisteredProjectRoot, { recursive: true });
     const projectRegistry = createProjectRegistry({ root: path.join(isolatedHome, '.kb') });
     await projectRegistry.add(registeredProjectRoot);
-    const registeredRoots = new Set((await projectRegistry.list()).map(({ project }) => project.path));
-    mocks.loadPlatformConfiguration.mockImplementation(async (cwd: string) => ({
-      platformConfig: {},
-      rawConfig: { gateway: { access: { mode: 'secured' } } },
-      rawPlatformConfig: { gateway: { access: { mode: 'secured' } } },
-      effectiveConfig: undefined,
-      platformRoot: isolatedHome,
-      projectRoot: registeredRoots.has(cwd) ? cwd : undefined,
-      sameLocation: false,
-      sources: { platform: 'platform', project: registeredRoots.has(cwd) ? 'project' : 'platform', fields: {} },
-    }));
+    await projectRegistry.list();
+    const rawConfig = { gateway: { access: { mode: 'secured' } } };
+    mocks.loadPlatformConfiguration.mockImplementation(async (cwd: string) => configFixture(cwd, rawConfig));
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     for (const cwd of [registeredProjectRoot, unregisteredProjectRoot]) {
@@ -380,11 +379,7 @@ describe('secured CLI auth ordering', () => {
     delete process.env.KB_NET_OFFSET;
 
     const rawConfig = { gateway: { access: { mode: 'secured' } } };
-    mocks.loadPlatformConfiguration.mockResolvedValue({
-      platformConfig: {}, rawConfig, rawPlatformConfig: rawConfig, effectiveConfig: undefined,
-      platformRoot: isolatedHome, projectRoot: undefined, sameLocation: true,
-      sources: { platform: 'env', project: 'platform', fields: {} },
-    });
+    mocks.loadPlatformConfiguration.mockResolvedValue(await configFixture(isolatedHome, rawConfig));
     mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: false });
     const diagnostic = vi.spyOn(runtimePlatform.logger, 'warn');
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -412,27 +407,26 @@ describe('secured CLI auth ordering', () => {
     process.env.KB_HOME = path.join(isolatedHome, '.kb');
     delete process.env.KB_PLATFORM_ROOT;
     delete process.env.KB_NET_OFFSET;
+    delete process.env.GATEWAY_PORT;
+    delete process.env.GATEWAY_HOST;
+    delete process.env.KB_GATEWAY_URL;
 
     const rawConfig = { gateway: { access: { mode: 'local' } } };
-    mocks.loadPlatformConfiguration.mockResolvedValue({
-      platformConfig: {}, rawConfig, rawPlatformConfig: rawConfig, effectiveConfig: undefined,
-      platformRoot: isolatedHome, projectRoot: undefined, sameLocation: true,
-      sources: { platform: 'env', project: 'platform', fields: {} },
-    });
+    mocks.loadPlatformConfiguration.mockResolvedValue(await configFixture(isolatedHome, rawConfig));
     mocks.initializePlatform.mockResolvedValue({
-      platform: { logger: mocks.logger }, platformConfig: {}, rawConfig, effectiveConfig: rawConfig,
+      platform: { logger: mocks.logger, getAdapter: () => undefined }, platformConfig: {}, rawConfig, effectiveConfig: rawConfig,
       platformRoot: isolatedHome, projectRoot: undefined,
     });
     mocks.hasUsablePlatformAuth.mockResolvedValue(false);
 
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const exitCode = await executeCli(['commit', 'open', '--json'], { cwd: isolatedHome });
+    const exitCode = await executeCli(['commit', 'plan', 'show', '--json'], { cwd: isolatedHome });
     const records = stdout.mock.calls.map(([record]) => String(record));
 
     expect(exitCode).toBe(2);
     expect(JSON.parse(records[0]!)).toMatchObject({
       ok: false,
-      error: { code: 'KB_RUNTIME_UNKNOWN_COMMAND', message: 'Unknown command: commit open' },
+      error: { code: 'KB_RUNTIME_UNKNOWN_COMMAND', message: 'Unknown command: commit plan show' },
     });
     expect(mocks.hasUsablePlatformAuth).not.toHaveBeenCalled();
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();

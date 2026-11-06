@@ -37,11 +37,15 @@ func TestRegistryReportsMetadataEncodingFailure(t *testing.T) {
 func TestCandidatePackageInstallerUsesInstallRootPackageManagerState(t *testing.T) {
 	layout := versionroot.Layout{Root: t.TempDir()}
 	stage := filepath.Join(layout.Root, "versions", "candidate")
-	installer, err := candidatePackageInstaller(layout, stage)
+	const registryURL = "http://127.0.0.1:49183"
+	installer, err := candidatePackageInstaller(layout, stage, registryURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if installer.PackageManagerRoot != layout.PackageManagerStateDir() {
 		t.Fatalf("package manager root = %q, want install-root state %q", installer.PackageManagerRoot, layout.PackageManagerStateDir())
+	}
+	if installer.Registry != registryURL {
+		t.Fatalf("package manager registry = %q, want Compose registry %q", installer.Registry, registryURL)
 	}
 }

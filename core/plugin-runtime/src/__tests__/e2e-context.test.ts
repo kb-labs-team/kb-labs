@@ -220,6 +220,7 @@ describe('E2E Context Tests', () => {
     expect((result.result as any).spanIdLength).toBeGreaterThan(0);
   });
 
+  // case: S-203.14
   it('should handle handler execution and exit code correctly', async () => {
     const handlerPath = join(testDir, 'exit-code-check.js');
     const handlerCode = `
@@ -260,6 +261,7 @@ describe('E2E Context Tests', () => {
       retryable: false,
       message: 'command failed',
       hint: 'Resolve the failure, then retry.',
+      correlationId: 'e2e-exit-test',
     });
     expect(result.meta).toBeDefined();
   });

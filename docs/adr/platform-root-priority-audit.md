@@ -13,8 +13,8 @@
 | `core/runtime/src/config-loader.ts:274-317` | Читает projectConfig первым, honoring `platform.dir`, потом мержит с platformConfig — project wins |
 | `core/runtime/src/service-bootstrap.ts:206-212` | Передаёт `projectRoot` как cwd для адаптеров, `platformRoot` отдельно |
 | `cli/bin/src/runtime/platform-init.ts:135-139` | Аналогично service-bootstrap — оба root переданы правильно |
-| `plugins/workflow/daemon/src/bootstrap.ts:31-36` | Явно читает `KB_PROJECT_ROOT` из env, используется для рабочих директорий |
-| `plugins/state/daemon/src/bootstrap.ts` | Минимальный bootstrap, не читает конкретные директории — корректно |
+| `services/workflow/daemon/src/bootstrap.ts:31-36` | Явно читает `KB_PROJECT_ROOT` из env, используется для рабочих директорий |
+| `services/state/daemon/src/bootstrap.ts` | Минимальный bootstrap, не читает конкретные директории — корректно |
 | `core/runtime/src/discover-adapters.ts:128-133` | Логика merge: projectRoot загружается первым с `overwrite=true`, платформа заполняет пробелы |
 
 ---
@@ -53,7 +53,7 @@ const lock = await readMarketplaceLock(this.root, diag);
 const registryRoot = getPlatformRoot() ?? repoRoot;
 const registry = await createRegistry({ root: registryRoot, ... });
 ```
-Registry плагинов (studio registry, widgetBundleDir) читается из платформы. `marketplace.lock` проекта игнорируется. Плагины из воркспейса (`./plugins/workflow/entry`) не обнаруживаются — используются установленные из `kb-platform/node_modules/`.
+Registry плагинов (studio registry, widgetBundleDir) читается из платформы. `marketplace.lock` проекта игнорируется. Плагины из воркспейса (`./services/workflow/entry`) не обнаруживаются — используются установленные из `kb-platform/node_modules/`.
 
 **Эффект**: Studio загружает виджеты из старой установленной версии, а не из актуального кода воркспейса.
 
@@ -85,7 +85,7 @@ const discovered = await discoverAdapters(
 ```
 Выглядит как инвертированный порядок (platform первый, project второй), но внутри `discoverAdapters` это **работает правильно** — project загружается с `overwrite=true`. Код запутанный, но функционально корректный.
 
-#### 7. `plugins/marketplace/daemon/src/bootstrap.ts` — platformRoot для service
+#### 7. `services/marketplace/app/src/bootstrap.ts` — platformRoot для service
 **Строка**: ~41  
 ```typescript
 const platformRoot = getPlatformRoot() ?? repoRoot;
@@ -105,7 +105,7 @@ const service = new MarketplaceService({ platformRoot, ... });
 | 4 | `plugins/gateway/app/src/bootstrap.ts` | ~26 | `repoRoot` вместо `projectRoot` | **MAJOR** |
 | 5 | `plugins/gateway/app/src/config.ts` | ~33 | Неправильная семантика параметра | **MAJOR** |
 | 6 | `core/runtime/src/loader.ts` | ~478 | Запутанный порядок аргументов (работает) | MINOR |
-| 7 | `plugins/marketplace/daemon/src/bootstrap.ts` | ~41 | platformRoot для service (возможно корректно) | MINOR |
+| 7 | `services/marketplace/app/src/bootstrap.ts` | ~41 | platformRoot для service (возможно корректно) | MINOR |
 
 ---
 
@@ -170,7 +170,7 @@ export async function bootstrap(projectRoot: string = process.cwd()): Promise<vo
 
 ## Не проверено
 
-- `plugins/host-agent/` — bootstrap
+- `services/host-agent/` — bootstrap
 - `plugins/infra-worker/` — bootstrap  
 - `adapters/storage-*/`, `adapters/llm-*/` — внутренняя логика путей
 - `core/registry/src/` — полная логика createRegistry

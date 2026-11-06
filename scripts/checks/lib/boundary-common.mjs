@@ -1,3 +1,4 @@
+import { writeCheckResult } from './check-result.mjs';
 /**
  * Shared helpers for the boundary / naming lints (tasks 0.2, 0.3, 0.5).
  *
@@ -52,27 +53,6 @@ export function findPackages(root, base, maxDepth = 3) {
     }
   };
   walk(start, 0);
-  return out;
-}
-
-/**
- * Real plugin packages: those that ship a `kb.plugin/3` manifest (package.json `kb.manifest`,
- * and the manifest source — or the built dist JSON — declares schema `kb.plugin/3`).
- * Daemons, engines, registries, runtimes and plain core/contracts packages under plugins/
- * are platform parts, not plugins, and are not returned.
- */
-export function findPluginEntryPackages(root) {
-  const out = [];
-  for (const pkg of findPackages(root, 'plugins')) {
-    const manifestRel = pkg.json?.kb?.manifest;
-    if (typeof manifestRel !== 'string') continue;
-    const candidates = [
-      join(pkg.dir, 'src', 'manifest.ts'),
-      join(pkg.dir, 'src', 'manifest.v3.ts'),
-      join(pkg.dir, 'dist', 'manifest.json'),
-    ];
-    if (candidates.some((f) => /kb\.plugin\/3/.test(readText(f)))) out.push(pkg);
-  }
   return out;
 }
 
@@ -185,31 +165,29 @@ export async function runLint({ name, rules, collect, argv = process.argv.slice(
   const useExceptions = !flag('--no-exceptions');
 
   const devkitMode = Boolean(process.env.KB_DEVKIT_MODE);
+  let checkInput = {};
   if (devkitMode) {
     let pkgName = process.env.KB_DEVKIT_PACKAGE_NAME ?? '';
-    if (!pkgName) {
-      try {
-        const chunks = [];
-        process.stdin.resume();
-        process.stdin.setEncoding('utf-8');
-        await new Promise((res) => {
-          process.stdin.on('data', (c) => chunks.push(c));
-          process.stdin.on('end', () => res());
-          setTimeout(() => res(), 50);
-        });
-        const raw = chunks.join('');
-        if (raw) pkgName = JSON.parse(raw)?.name ?? '';
-      } catch {
-        /* no JSON on stdin */
-      }
+    const chunks = [];
+    process.stdin.resume();
+    process.stdin.setEncoding('utf-8');
+    await new Promise((res, rej) => {
+      process.stdin.on('data', (c) => chunks.push(c));
+      process.stdin.on('end', res);
+      process.stdin.on('error', rej);
+    });
+    const raw = chunks.join('');
+    if (raw) {
+      checkInput = JSON.parse(raw);
+      pkgName ||= checkInput.name ?? '';
     }
     if (pkgName !== ANCHOR_PACKAGE) {
-      process.stdout.write(JSON.stringify({ issues: [] }) + '\n');
+      writeCheckResult([]);
       return 0;
     }
   }
 
-  const raw = collect(root);
+  const raw = collect(root, checkInput);
   const exceptions = useExceptions ? loadExceptions(exceptionsFile) : [];
   const { blocking, allowed, stale } = applyExceptions(raw, exceptions, rules);
 
@@ -230,7 +208,7 @@ export async function runLint({ name, rules, collect, argv = process.argv.slice(
   ];
 
   if (devkitMode) {
-    process.stdout.write(JSON.stringify({ issues }) + '\n');
+    writeCheckResult(issues);
     return 0; // devkit aggregates severity
   }
 

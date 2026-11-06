@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { IEntityRegistry, RegistrySnapshot, SystemHealthSnapshot } from '@kb-labs/core-registry';
+import type { IEntityRegistry, RegistrySnapshot, SystemHealthSnapshot } from '@kb-labs/plugin-contracts';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { EventHub, BroadcastEvent } from '../../events/hub';
 import type { ReadinessState } from '../readiness';
@@ -35,7 +35,7 @@ const BASE_CONFIG: RestApiConfig = {
 
 function createMockSnapshot(): RegistrySnapshot {
   return {
-    schema: 'kb.registry/1',
+    schema: 'kb.registry/2',
     rev: 42,
     version: '1.0.0',
     generatedAt: new Date().toISOString(),
@@ -47,6 +47,9 @@ function createMockSnapshot(): RegistrySnapshot {
     corrupted: false,
     plugins: [],
     manifests: [],
+    observations: [],
+    inputFingerprint: '',
+    requestIdentity: 'test-request',
     ts: Date.now(),
     checksum: 'abc123',
     checksumAlgorithm: 'sha256',

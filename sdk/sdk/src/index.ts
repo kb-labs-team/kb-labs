@@ -150,11 +150,11 @@ export {
   type RestInput,
   // Error utilities
   defineError,
-  PluginError,
   commonErrors,
   type ErrorDefinition,
   type ErrorDefinitions,
 } from "@kb-labs/shared-command-kit";
+export { PluginError } from '@kb-labs/plugin-contracts';
 
 // Re-export new flags system from shared-command-kit
 export {

@@ -26,14 +26,19 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/internal/testfixtures"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/transport"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -52,7 +57,7 @@ type recordingInstaller struct {
 func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 	_, fakehost := binaries(t)
 	inst := newEmptyInstallation(t)
-	inst.port = freeLoopbackPortWithOffset(t, 100)
+	inst.port = freeAllocatedGatewayPortWithOffsets(t, 100)
 
 	binary := []byte("built CLI fixture binary")
 	binaryDigest := sha256.Sum256(binary)
@@ -119,7 +124,7 @@ func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 	}
 	primary := applyRoot(indexA, requestA, "PRIMARY_SECRET=primary-secret")
 	if primary.code != 0 {
-		t.Fatalf("primary built CLI apply failed: %s", primary.output)
+		t.Fatalf("primary built CLI apply failed: %s\n%s", primary.output, installerEvidence(t, inst.root))
 	}
 	if _, code, output := inst.run("stop", "--json"); code != 0 {
 		t.Fatalf("stop primary host before secondary apply: %s", output)
@@ -137,7 +142,7 @@ func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 	secondaryRequest.PlatformRoot = secondaryRoot
 	t.Cleanup(func() {
 		command := exec.Command(inst.launcher, "stop", "--json", "--platform-root", secondaryRoot)
-		command.Env = append(os.Environ(), host.KBHomeEnv+"="+inst.kbHome)
+		command.Env = inst.childEnvironment()
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Errorf("stop secondary test host: %v\n%s", err, output)
 		}
@@ -161,7 +166,7 @@ func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 		if installed.Plan.Host != nil {
 			hostArgs = installed.Plan.Host.Args
 		}
-		t.Fatalf("secondary built CLI apply failed: %s\nhost args: %#v\nhost log: %s\nlauncher log: %s\nreceipt: %#v (%v)", secondary.output, hostArgs, hostLog, launcherLog, installed, receiptErr)
+		t.Fatalf("secondary built CLI apply failed: %s\nhost args: %#v\nhost log: %s\nlauncher log: %s\nreceipt: %#v (%v)\n%s", secondary.output, hostArgs, hostLog, launcherLog, installed, receiptErr, installerEvidence(t, secondaryRoot))
 	}
 	installed, err := receipt.Read(platformRootForTest(t, secondaryRoot))
 	if err != nil {
@@ -180,6 +185,27 @@ func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 			t.Fatalf("secondary apply serialized private value %q", privateValue)
 		}
 	}
+}
+
+func installerEvidence(t *testing.T, root string) string {
+	t.Helper()
+	var evidence strings.Builder
+	for _, directory := range []string{"diagnostics", "logs"} {
+		files, err := filepath.Glob(filepath.Join(root, "installer", directory, "apply-*") + "*")
+		if err != nil {
+			t.Errorf("find installer %s: %v", directory, err)
+			continue
+		}
+		for _, path := range files {
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Errorf("read installer evidence %q: %v", path, readErr)
+				continue
+			}
+			fmt.Fprintf(&evidence, "installer evidence %s:\n%s\n", path, data)
+		}
+	}
+	return evidence.String()
 }
 
 // case: S-023.18
@@ -593,7 +619,7 @@ func fixturePackageArtifact(t *testing.T, name, version string) contracts.Artifa
 	t.Cleanup(server.Close)
 	digest := sha256.Sum256(archive)
 	return contracts.Artifact{
-		ID: name, Kind: "plugin", Package: name, Version: version, Tarball: server.URL,
+		ID: name, Kind: "plugin", Package: name, Version: version, Tarball: server.URL, ResolvedURL: server.URL,
 		SHA256: hex.EncodeToString(digest[:]), Provenance: fixturePackageProvenance(t, name, version),
 	}
 }
@@ -607,8 +633,16 @@ func (r *recordingInstaller) Install(items []contracts.Artifact) error {
 	}
 	return r.failure
 }
-func (r *recordingInstaller) Restore([]contracts.Artifact) error   { r.restores++; return nil }
-func (r *recordingInstaller) Uninstall([]contracts.Artifact) error { return nil }
+func (r *recordingInstaller) Prepare(items []contracts.Artifact) (contracts.PreparedArtifacts, error) {
+	return recordingPreparedArtifacts{install: func() error { return r.Install(items) }}, nil
+}
+
+type recordingPreparedArtifacts struct{ install func() error }
+
+func (p recordingPreparedArtifacts) Install(func(string, bool) error) error { return p.install() }
+func (recordingPreparedArtifacts) Close() error                             { return nil }
+func (r *recordingInstaller) Restore([]contracts.Artifact) error            { r.restores++; return nil }
+func (r *recordingInstaller) Uninstall([]contracts.Artifact) error          { return nil }
 
 func treeDigest(root string) ([32]byte, error) {
 	hash := sha256.New()
@@ -701,6 +735,24 @@ func versionedReceipt(t *testing.T, version string, port int, hostArgs ...string
 	return contracts.InstallReceipt{ID: "receipt-" + version, InstallationID: "installation-stable", Plan: plan}
 }
 
+func TestUpdateReceiptPreservesTheResolvedPlanRootSpelling(t *testing.T) {
+	inst := newInstallation(t)
+	plan := updatePlan(t, inst.root, freeLoopbackPort(t))
+	wantRoot := plan.Request.PlatformRoot
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: inst.launcher}, inst.root, plan,
+		state, host.State{Dir: inst.state}, &runtime.Dependencies{Artifacts: &recordingInstaller{}})
+	if failure != nil {
+		t.Fatalf("update: code=%s message=%s details=%v", failure.Code, failure.Message, failure.Meta)
+	}
+	if got := result.Receipt.Plan.Request.PlatformRoot; got != wantRoot {
+		t.Fatalf("update receipt plan root = %q, want resolved request root %q", got, wantRoot)
+	}
+}
+
 // update runs the update command's orchestration and returns its JSON and status.
 func (i installation) update(t *testing.T, plan contracts.ResolvedInstallPlan, installer *recordingInstaller) (map[string]any, int, string) {
 	t.Helper()
@@ -756,9 +808,8 @@ func TestUpdateCommandKeepsRunningHostOnPreviousVersionAndReportsPendingRestart(
 		t.Fatal(err)
 	}
 	oldLockPath := filepath.Join(oldRoot, ".kb", "marketplace.lock")
-	oldLockBefore, lockErr := os.ReadFile(oldLockPath)
-	if lockErr != nil {
-		t.Fatal(lockErr)
+	if _, lockErr := os.Stat(oldLockPath); !os.IsNotExist(lockErr) {
+		t.Fatalf("fixture unexpectedly contains a marketplace lock: %v", lockErr)
 	}
 	oldConfigPath := filepath.Join(oldRoot, ".kb", "kb.config.jsonc")
 	oldConfigBefore, configErr := os.ReadFile(oldConfigPath)
@@ -776,8 +827,8 @@ func TestUpdateCommandKeepsRunningHostOnPreviousVersionAndReportsPendingRestart(
 	if after := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(after, stateBefore) {
 		t.Fatalf("shared state changed during successful staged update:\nbefore=%#v\nafter=%#v", stateBefore, after)
 	}
-	if got, err := os.ReadFile(oldLockPath); err != nil || !reflect.DeepEqual(got, oldLockBefore) {
-		t.Fatalf("old host marketplace lock view changed: %v", err)
+	if _, err := os.Stat(oldLockPath); !os.IsNotExist(err) {
+		t.Fatalf("update created a marketplace lock in the still-running old host root: %v", err)
 	}
 	if got, err := os.ReadFile(oldConfigPath); err != nil || !reflect.DeepEqual(got, oldConfigBefore) {
 		t.Fatalf("old host config view changed: %v", err)
@@ -817,7 +868,7 @@ func TestFreshInstallWritesCompleteRunningIdentityBeforeFirstUpdate(t *testing.T
 	t.Setenv(host.KBHomeEnv, kbHome)
 	root := filepath.Join(home, "install")
 	port := freeLoopbackPort(t)
-	state, err := host.StateHome()
+	state, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -828,7 +879,7 @@ func TestFreshInstallWritesCompleteRunningIdentityBeforeFirstUpdate(t *testing.T
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway"}}}}
 	resolved := resolvedPlan{Plan: plan, State: state}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcher}}}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	var processID int
 	t.Cleanup(func() {
@@ -893,7 +944,7 @@ func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWr
 	root := filepath.Join(parent, "install")
 	kbHome := filepath.Join(base, "user-state")
 	t.Setenv(host.KBHomeEnv, kbHome)
-	state, err := host.StateHome()
+	state, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -918,7 +969,7 @@ func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWr
 	})
 	resolved := resolvedPlan{Plan: plan, State: state}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcher}}}
 	runApplyForTest(t, resolved, deps)
 	installed = true
 	if _, code, output := inst.run("status", "--json"); code != 0 {
@@ -1027,7 +1078,7 @@ func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T
 	root := filepath.Join(home, "kb-platform")
 	kbHome := filepath.Join(home, ".kb")
 	t.Setenv(host.KBHomeEnv, kbHome)
-	state, err := host.StateHome()
+	state, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1040,7 +1091,7 @@ func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T
 	inst := installation{launcher: installedLauncher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	resolved := resolvedPlan{Plan: plan, State: state}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcher}}}
 	registerTestHostProcessTreeCleanup(t, root)
 	installed := false
 	t.Cleanup(func() {
@@ -1302,8 +1353,8 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
 		Host:         hostSpec,
 		Artifacts: []contracts.Artifact{
-			{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/install", SHA256: digests["install"], Target: "bin/kb-create"},
-			{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
+			{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/install", ResolvedURL: server.URL + "/install", SHA256: digests["install"], Target: "bin/kb-create"},
+			{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
 		},
 	}
 	state, err := host.StateForRoot(root)
@@ -1311,7 +1362,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		t.Fatal(err)
 	}
 	packageRunner := productionPackageFixtureRunner{}
-	deps := commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{}, ArtifactRunner: packageRunner}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{Host: installedHostStarter{root: root, executable: launcher}}, ArtifactRunner: packageRunner}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	t.Cleanup(func() {
 		status, code, output := inst.run("status", "--json")
@@ -1359,14 +1410,15 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 				t.Fatalf("active version projection %s is not the activation link: mode=%v error=%v", projection.PlatformPath, info, statErr)
 			}
 			target, resolveErr := filepath.EvalSymlinks(path)
-			if resolveErr != nil || !strings.HasPrefix(target, layout.SharedStateDir()+string(filepath.Separator)) {
+			inside, containmentErr := contracts.PathWithin(layout.SharedStateDir(), target)
+			if resolveErr != nil || containmentErr != nil || !inside || target == layout.SharedStateDir() {
 				t.Fatalf("active version projection %s does not resolve into install-root shared state: target=%q error=%v", projection.PlatformPath, target, resolveErr)
 			}
 		}
 	}
 	assertActiveProjectionsAreLinks()
 
-	launcherState, err := host.StateHome()
+	launcherState, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1383,8 +1435,8 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 			ServiceGraph: contracts.ServiceGraph{PlatformVersion: version, Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
 			Host:         hostSpec,
 			Artifacts: []contracts.Artifact{
-				{ID: "fixture-binary", Kind: "binary", Version: version, URL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"},
-				{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
+				{ID: "fixture-binary", Kind: "binary", Version: version, URL: server.URL + "/" + name, ResolvedURL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"},
+				{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
 			},
 		}
 		plan.Request.PlatformRoot = layout.PlatformRoot()
@@ -1489,9 +1541,30 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "install")
 	home := t.TempDir()
+	t.Cleanup(func() {
+		if err := filepath.Walk(home, func(name string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				if errors.Is(walkErr, os.ErrNotExist) {
+					return nil
+				}
+				return walkErr
+			}
+			mode := info.Mode().Perm() | 0o200
+			if info.IsDir() {
+				mode |= 0o100
+			}
+			if err := os.Chmod(name, mode); errors.Is(err, os.ErrNotExist) {
+				return nil
+			} else {
+				return err
+			}
+		}); err != nil {
+			t.Errorf("make isolated test HOME removable: %v", err)
+		}
+	})
 	t.Setenv("HOME", home)
 	t.Setenv("COREPACK_HOME", filepath.Join(home, "corepack"))
-	_, fakehost := binaries(t)
+	launcher, fakehost := binaries(t)
 	port := freeLoopbackPort(t)
 	registerTestHostProcessTreeCleanup(t, root)
 	sealed := fixturePackageArtifact(t, "@kb-labs/sealed-runtime", "1.0.0")
@@ -1505,7 +1578,7 @@ func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
 		Artifacts: []contracts.Artifact{sealed},
 	}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: productionPackageFixtureRunner{},
-		Runtime: &runtime.Dependencies{}}
+		Runtime: &runtime.Dependencies{Host: installedHostStarter{root: root, executable: launcher}}}
 	if _, failure := executeApply(context.Background(), applyCommandInput{Resolved: &resolvedPlan{Plan: plan, State: host.State{Dir: t.TempDir()}}}, deps); failure != nil {
 		t.Fatalf("fresh kb-create apply: code=%s reason=%s cause=%s meta=%v", failure.Code, failure.Reason, failure.Cause, failure.Meta)
 	}
@@ -1592,7 +1665,7 @@ func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	marketplaceModule := filepath.Join(workspaceRoot, "plugins", "marketplace", "npm", "dist", "index.js")
+	marketplaceModule := filepath.Join(workspaceRoot, "services", "marketplace", "npm", "dist", "index.js")
 	const marketplaceInstall = `
 const moduleURL = (await import('node:url')).pathToFileURL(process.argv[1]).href;
 const { NpmPackageSource } = await import(moduleURL);
@@ -1617,6 +1690,81 @@ console.log(JSON.stringify({ id: installed.id, version: installed.version }));
 	}
 	if err := json.Unmarshal(output, &installedAdapter); err != nil || installedAdapter.ID != adapterID || installedAdapter.Version != "1.0.0" {
 		t.Fatalf("Marketplace adapter result = %#v, err=%v, output=%s", installedAdapter, err, output)
+	}
+}
+
+func TestUpdatePlanRetainsInstalledMarketplaceAdapterFromActiveLock(t *testing.T) {
+	root := t.TempDir()
+	const adapterID = "@kb-labs/adapters-vibeproxy"
+	const pluginID = "@kb-labs/commit"
+	for _, packageName := range []string{adapterID, "@kb-labs/commit"} {
+		packageJSON := filepath.Join(root, "node_modules", filepath.FromSlash(packageName), "package.json")
+		if err := os.MkdirAll(filepath.Dir(packageJSON), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		encodedPackage, err := json.Marshal(map[string]string{"name": packageName, "version": "1.0.0"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(packageJSON, encodedPackage, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := marketplace.WriteLock(root, root, []contracts.Artifact{
+		{ID: adapterID, Kind: "adapter", Package: adapterID, Version: "1.0.0"},
+		{ID: pluginID, Kind: "plugin", Package: "@kb-labs/commit", Version: "1.0.0"},
+	}, time.Now()); err != nil {
+		t.Fatalf("write active marketplace lock: %v", err)
+	}
+
+	var source catalog.Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("1.0.0", "1.0.0", goruntime.GOOS, goruntime.GOARCH), &source); err != nil {
+		t.Fatal(err)
+	}
+	source.Adapters = append(source.Adapters, catalog.Adapter{Component: catalog.Component{
+		ID: adapterID, Version: "1.0.0", Package: adapterID, Tarball: "https://example.test/vibeproxy.tgz", SHA256: "vibeproxy",
+	}})
+	source, err := testfixtures.SealCatalog(source)
+	if err != nil {
+		t.Fatalf("seal update release index: %v", err)
+	}
+	request := contracts.InstallRequest{Schema: contracts.RequestSchema,
+		Platform: contracts.VersionSelector{Version: "1.0.0"}, SDK: contracts.VersionSelector{Version: "1.0.0"},
+		ServiceProfile: "default", PlatformRoot: root}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := transport.PlanWith(encoded, source, resolve.Options{LauncherVersion: buildVersion})
+	if !initial.OK {
+		t.Fatalf("initial plan: %#v", initial.Error)
+	}
+	updated, failure := planUpdateWithMarketplaceLock(root, *initial.Plan, source, "kb-create update --platform-root "+root)
+	if failure != nil {
+		t.Fatalf("plan with active marketplace lock: code=%s reason=%s details=%v", failure.Code, failure.Reason, failure.Meta)
+	}
+	foundAdapter, foundPlugin := false, false
+	for _, artifact := range updated.Artifacts {
+		if artifact.ID == adapterID && artifact.Kind == "adapter" {
+			foundAdapter = true
+		}
+		if artifact.ID == pluginID && artifact.Kind == "plugin" {
+			foundPlugin = true
+		}
+	}
+	if !foundAdapter || foundPlugin {
+		t.Fatalf("updated plan must retain the installed adapter and keep Marketplace plugins outside the release index: adapter=%t plugin=%t artifacts=%+v", foundAdapter, foundPlugin, updated.Artifacts)
+	}
+
+	withoutAdapter := source
+	withoutAdapter.Adapters = nil
+	_, failure = planUpdateWithMarketplaceLock(root, *initial.Plan, withoutAdapter,
+		"kb-create update --platform-root "+root)
+	if failure == nil || failure.Code != contracts.CodeIncompatibleComponents || failure.Meta["id"] != adapterID {
+		t.Fatalf("missing installed adapter failure = %#v; want a component-selection refusal naming %s", failure, adapterID)
+	}
+	if _, err := diag.ToEnvelope(failure); err != nil {
+		t.Fatalf("missing installed adapter diagnostic violated its catalog contract: %v", err)
 	}
 }
 
@@ -1673,8 +1821,8 @@ func TestArtifactExecutorLeavesUnprojectedStageWithoutSharedProjections(t *testi
 		t.Fatal(err)
 	}
 	items := []contracts.Artifact{
-		{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/binary", SHA256: digests["binary"], Target: "bin/kb-create"},
-		{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
+		{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/binary", ResolvedURL: server.URL + "/binary", SHA256: digests["binary"], Target: "bin/kb-create"},
+		{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
 	}
 	if err := executor.InstallWithProgress(items, func(_ string, start bool) error {
 		if start {
@@ -1758,9 +1906,7 @@ type productionPackageFixtureRunner struct {
 }
 
 func (r productionPackageFixtureRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
-	command := exec.CommandContext(ctx, name, args...)
-	command.Stdout, command.Stderr = output, output
-	if err := command.Run(); err != nil {
+	if err := (artifacts.CommandRunner{}).Run(ctx, output, name, args...); err != nil {
 		return err
 	}
 	root := ""
@@ -1793,6 +1939,7 @@ func assertContainerParent(t *testing.T, parent string) {
 	}
 }
 
+// case: S-023.12
 func TestUpdateFailureLeavesReceiptRootHostAndShimUnchanged(t *testing.T) {
 	inst := newInstallation(t)
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
@@ -1809,9 +1956,8 @@ func TestUpdateFailureLeavesReceiptRootHostAndShimUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldLockPath := filepath.Join(oldRoot, ".kb", "marketplace.lock")
-	oldLockBefore, err := os.ReadFile(oldLockPath)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(oldLockPath); !os.IsNotExist(err) {
+		t.Fatalf("fixture unexpectedly contains a marketplace lock: %v", err)
 	}
 	receiptBefore, err := os.ReadFile(receipt.Path(platformRootForTest(t, inst.root)))
 	if err != nil {
@@ -1877,8 +2023,8 @@ func TestUpdateFailureLeavesReceiptRootHostAndShimUnchanged(t *testing.T) {
 	if after := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(after, stateBefore) {
 		t.Fatalf("shared state changed during failed staged update:\nbefore=%#v\nafter=%#v", stateBefore, after)
 	}
-	if got, err := os.ReadFile(oldLockPath); err != nil || !reflect.DeepEqual(got, oldLockBefore) {
-		t.Fatalf("old host marketplace lock view changed after failed update: %v", err)
+	if _, err := os.Stat(oldLockPath); !os.IsNotExist(err) {
+		t.Fatalf("failed update created a marketplace lock in the still-running old host root: %v", err)
 	}
 	receiptAfter, err := os.ReadFile(receipt.Path(platformRootForTest(t, inst.root)))
 	if err != nil || string(receiptAfter) != string(receiptBefore) {
@@ -1899,6 +2045,10 @@ func TestUpdateFailureLeavesReceiptRootHostAndShimUnchanged(t *testing.T) {
 	currentLinkAfter, err := os.Readlink(layout.PlatformRoot())
 	if err != nil || currentLinkAfter != currentLinkBefore {
 		t.Fatalf("current link changed before update activation: %q %v", currentLinkAfter, err)
+	}
+	versionRoots, err := os.ReadDir(layout.VersionsDir())
+	if err != nil || len(versionRoots) != 1 || versionRoots[0].Name() != filepath.Base(activeBefore) {
+		t.Fatalf("failed staged update left version roots %#v, %v; want only active version %q", versionRoots, err, filepath.Base(activeBefore))
 	}
 	activeTreeAfter, err := treeDigest(activeAfter)
 	if err != nil || activeTreeAfter != activeTreeBefore {
@@ -1923,6 +2073,148 @@ func TestUpdateFailureLeavesReceiptRootHostAndShimUnchanged(t *testing.T) {
 	shimInfoAfter, err := os.Lstat(shim.Target(activeRoot))
 	if err != nil || !os.SameFile(shimInfoBefore, shimInfoAfter) {
 		t.Fatalf("shim target identity changed: %v", err)
+	}
+}
+
+func TestUpdatePreparationFailureLeavesPreviousVersionActive(t *testing.T) {
+	inst := newInstallation(t)
+	if _, code, output := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start fixture host: %d %s", code, output)
+	}
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptBefore, err := os.ReadFile(receipt.Path(layout.PlatformRoot()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateBefore := snapshotStateTree(t, filepath.Join(inst.root, "state"))
+	hostState, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processIdentityBefore, err := os.ReadFile(hostState.HostPID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentBefore, err := os.Readlink(layout.PlatformRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	launcherState := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", launcherState)
+	if err := os.Mkdir(filepath.Join(launcherState, "kb-create"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(launcherState, "kb-create", "gateway-roots.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plan := updatePlan(t, inst.root, freeLoopbackPort(t))
+	_, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: inst.launcher}, inst.root, plan,
+		hostState, host.State{Dir: launcherState}, &runtime.Dependencies{Artifacts: &recordingInstaller{}})
+	if failure == nil {
+		t.Fatal("update unexpectedly succeeded despite an unwriteable Gateway registry")
+	}
+	if got, err := os.ReadFile(receipt.Path(layout.PlatformRoot())); err != nil || string(got) != string(receiptBefore) {
+		t.Fatalf("failed update changed active receipt: %v", err)
+	}
+	if got, err := os.Readlink(layout.PlatformRoot()); err != nil || got != currentBefore {
+		t.Fatalf("failed update changed current link to %q: %v", got, err)
+	}
+	if after := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(after, stateBefore) {
+		t.Fatalf("failed update changed shared state: before=%#v after=%#v", stateBefore, after)
+	}
+	processIdentityAfter, err := os.ReadFile(hostState.HostPID())
+	if err != nil || string(processIdentityAfter) != string(processIdentityBefore) {
+		t.Fatalf("failed update changed the still-running N host identity: %v", err)
+	}
+	runner, err := host.NewRunner(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusCtx, cancelStatus := context.WithTimeout(context.Background(), 5*time.Second)
+	status, err := runner.Status(statusCtx)
+	cancelStatus()
+	if err != nil || status.State != "running" || !status.Healthy {
+		t.Fatalf("failed update left N host status %#v, %v; want running and healthy", status, err)
+	}
+	activeAfter, err := layout.Active()
+	if err != nil || activeAfter != activeRoot {
+		t.Fatalf("failed update left active root %q, want N root %q: %v", activeAfter, activeRoot, err)
+	}
+	versions, err := os.ReadDir(layout.VersionsDir())
+	if err != nil || len(versions) != 1 || versions[0].Name() != filepath.Base(activeRoot) {
+		t.Fatalf("failed update left versions %#v, %v; want only N %q", versions, err, filepath.Base(activeRoot))
+	}
+}
+
+func TestUpdateActivationFailureRestoresGatewayRegistryAndActiveIdentity(t *testing.T) {
+	inst := newInstallation(t)
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeBefore, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptBefore, err := os.ReadFile(receipt.Path(activeBefore))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeReceipt, err := receipt.Read(activeBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin, err := gateway.OriginFromHealthURL(activeReceipt.Plan.Host.HealthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	registryPath := gateway.RegistryPath(inst.home)
+	registry := gateway.Registry{Path: registryPath, OperationRoot: inst.root}
+	if err := registry.Writer(gateway.Apply).Register(inst.root, origin); err != nil {
+		t.Fatal(err)
+	}
+	registryBefore, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := updatePlan(t, inst.root, freeLoopbackPort(t))
+	hash := sha256.Sum256([]byte(plan.PlanHash))
+	target := filepath.Join(layout.VersionsDir(), "2.0.0-"+hex.EncodeToString(hash[:8]))
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "collision"), []byte("not a sealed root"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: inst.launcher}, inst.root, plan,
+		state, host.State{Dir: inst.state}, &runtime.Dependencies{Artifacts: &recordingInstaller{}})
+	if failure == nil {
+		t.Fatal("update unexpectedly succeeded despite activation target collision")
+	}
+	registryAfter, err := os.ReadFile(registryPath)
+	if err != nil || !bytes.Equal(registryAfter, registryBefore) {
+		t.Fatalf("failed update changed Gateway registry bytes: before=%q after=%q error=%v", registryBefore, registryAfter, err)
+	}
+	activeAfter, err := layout.Active()
+	if err != nil || activeAfter != activeBefore {
+		t.Fatalf("failed update active root = %q, %v; want N %q", activeAfter, err, activeBefore)
+	}
+	receiptAfter, err := os.ReadFile(receipt.Path(activeAfter))
+	if err != nil || !bytes.Equal(receiptAfter, receiptBefore) {
+		t.Fatalf("failed update changed active N receipt bytes: %v", err)
 	}
 }
 

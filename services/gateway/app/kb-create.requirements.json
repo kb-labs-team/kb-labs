@@ -44,8 +44,7 @@
       "env": "GATEWAY_INTERNAL_SECRET",
       "services": [
         "gateway",
-        "rest",
-        "marketplace-registry"
+        "rest"
       ],
       "hint": "Shared gateway-to-service authentication secret; kb-create generates and preserves it"
     },

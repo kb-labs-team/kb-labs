@@ -91,8 +91,11 @@ class ChildRuntime implements RuntimeProcess {
         this.done = true;
         // Processes the runtime spawned may outlive it (a crash, a SIGKILL of
         // the leader): end the group right away, while its id cannot have been
-        // recycled.
-        this.reapGroup();
+        // recycled. During an orderly stop, terminate() owns the process-tree
+        // grace period and will kill only descendants that remain afterward.
+        if (!this.stopping) {
+          this.reapGroup();
+        }
         resolve({ code, signal });
       });
     });
@@ -145,28 +148,43 @@ class ChildRuntime implements RuntimeProcess {
   }
 
   private async terminate(): Promise<void> {
-    if (!this.done) {
-      this.signalTree("SIGTERM");
-      const timer = setTimeout(() => this.signalTree("SIGKILL"), this.stopTimeoutMs);
-      try {
+    const pid = this.child.pid;
+    if (pid === undefined) {
+      if (!this.done) {
+        this.signalTree("SIGTERM");
         await this.exited;
-      } finally {
-        clearTimeout(timer);
       }
+      return;
+    }
+    if (isWindows()) {
+      if (!this.done) {
+        this.signalTree("SIGTERM");
+        await this.exited;
+      }
+      return;
     }
 
-    const pid = this.child.pid;
-    if (pid === undefined || isWindows()) {return;}
-    this.reapGroup();
     const deadline = Date.now() + this.stopTimeoutMs;
-    while (this.isGroupAlive(pid)) {
+    if (!this.done) {
+      this.signalTree("SIGTERM");
+    }
+    while (!this.done || this.isGroupAlive(pid)) {
       if (Date.now() >= deadline) {
-        throw new Error(
-          `Project runtime process group ${pid} did not stop within ${this.stopTimeoutMs} ms`,
-        );
+        this.reapGroup();
+        const killDeadline = Date.now() + this.stopTimeoutMs;
+        while (!this.done || this.isGroupAlive(pid)) {
+          if (Date.now() >= killDeadline) {
+            throw new Error(
+              `Project runtime process group ${pid} did not stop within ${this.stopTimeoutMs} ms after SIGKILL`,
+            );
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        }
+        break;
       }
       await new Promise<void>((resolve) => setTimeout(resolve, 10));
     }
+    await this.exited;
   }
 
   private isGroupAlive(pid: number): boolean {

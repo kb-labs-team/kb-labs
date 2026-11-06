@@ -3,7 +3,7 @@
  * Workflow SSE streaming endpoint.
  *
  * All CRUD operations (list runs, get run, cancel, run workflow) are handled
- * by the workflow plugin via plugin routes (/plugins/workflow/...).
+ * by the project-scoped workflow service route (/api/v1/projects/:projectId/workflow/...).
  * This file only provides the SSE event stream which requires a long-lived
  * connection that cannot go through the plugin execution backend.
  */

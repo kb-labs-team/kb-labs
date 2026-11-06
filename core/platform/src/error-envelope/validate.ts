@@ -100,9 +100,7 @@ export function validateErrorEnvelope(value: unknown): ErrorEnvelopeValidationIs
       add('details', 'must be an object');
     } else {
       for (const [key, entry] of Object.entries(value.details)) {
-        if (typeof entry !== 'string') {
-          add(`details.${key}`, 'must be a string');
-        } else if (isSerializedStructuredValue(entry)) {
+        if (typeof entry === 'string' && isSerializedStructuredValue(entry)) {
           add(`details.${key}`, 'must not contain serialized JSON; use data or diagnostics');
         }
       }

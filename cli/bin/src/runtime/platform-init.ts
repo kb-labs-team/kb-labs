@@ -8,7 +8,6 @@
  * only adds CLI-specific concerns: the UI provider and lifecycle hooks.
  */
 
-import { createHash } from "node:crypto";
 import {
   initPlatform,
   loadPlatformConfig as readPlatformConfig,
@@ -21,12 +20,12 @@ import {
   type LoadPlatformConfigResult,
   isWorkspaceDevelopmentMode,
 } from "@kb-labs/core-runtime";
-import { findRepoRoot } from "@kb-labs/core-sys";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { noopUI } from "@kb-labs/plugin-contracts";
 import type { UIFacade } from "@kb-labs/plugin-contracts";
 import { createCLIUIFacade } from "./ui-facade";
 import { createContextLogger } from "@kb-labs/core-platform";
+import { missingCliResultWriter, type CliResultWriter } from './result-serializer.js';
 
 const CLI_LIFECYCLE_HOOK_ID = "cli-runtime";
 const LOG_SERVICE = "platform-init";
@@ -79,12 +78,12 @@ function ensureLifecycleHooksRegistered(): void {
  * Create CLI-specific UI provider.
  * Returns rich UI for CLI host, noopUI for other hosts (REST, workflow, etc.)
  */
-function createCLIUIProvider(): (hostType: string) => UIFacade {
+function createCLIUIProvider(writeResult: CliResultWriter): (hostType: string) => UIFacade {
   return (hostType: string): UIFacade => {
     if (hostType !== "cli") {
       return noopUI;
     }
-    return createCLIUIFacade();
+    return createCLIUIFacade(undefined, writeResult);
   };
 }
 
@@ -106,31 +105,21 @@ export async function loadPlatformConfiguration(
   cwd: string,
   moduleUrl?: string,
   projectScope: 'required' | 'platform' = 'platform',
+  options: { persistCatalogSnapshot?: boolean } = {},
 ): Promise<LoadPlatformConfigResult> {
-  // Mirror daemon.ts: derive KB_SOCKET_HASH before config is loaded so
-  // ${KB_SOCKET_HASH} placeholders in socket paths resolve without warnings.
-  // kb-dev sets it as a real env var for managed services; the CLI derives the
-  // same value from KB_PROJECT_ROOT (or the repo root) when running standalone.
-  if (!process.env["KB_SOCKET_HASH"]) {
-    const repoRoot = await findRepoRoot(cwd).catch(() => cwd);
-    const hashRoot = process.env["KB_PROJECT_ROOT"] ?? repoRoot;
-    process.env["KB_SOCKET_HASH"] = createHash("md5")
-      .update(hashRoot)
-      .digest("hex")
-      .slice(0, 8);
-  }
-
   return readPlatformConfig({
     moduleUrl,
     startDir: cwd,
     projectScope,
+    executionHealth: () => platform.executionBackend.health(),
+    persistCatalogSnapshot: options.persistCatalogSnapshot,
   });
 }
 
 /** Initialize the platform's adapters exactly once from an already-resolved scope. */
 export async function initializePlatform(
   loadResult: LoadPlatformConfigResult,
-  options: { skipAdapterInitialization?: boolean } = {},
+  options: { skipAdapterInitialization?: boolean; resultWriter?: CliResultWriter } = {},
 ): Promise<PlatformInitResult> {
   const {
     platformConfig,
@@ -146,16 +135,20 @@ export async function initializePlatform(
     return { ...loadResult, platform };
   }
   ensureLifecycleHooksRegistered();
+  const workspaceDevelopment = isWorkspaceDevelopmentMode(loadResult);
+  const workspaceRoot = workspaceDevelopment ? projectRoot : undefined;
   const platformInstance = await initPlatform(
       platformConfig,
       adapterProjectRoot,
-      createCLIUIProvider(),
+      createCLIUIProvider(options.resultWriter ?? missingCliResultWriter),
       platformRoot !== adapterProjectRoot ? platformRoot : undefined,
     {
       assemblyHook: makeAssemblyHook(() =>
         process.env.KB_DEBUG === "true" ? platform.logger : undefined,
       ),
-      workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
+      workspaceDevelopment,
+      catalog: loadResult.catalog,
+      ...(workspaceRoot ? { workspaceRoot } : {}),
     },
   );
 

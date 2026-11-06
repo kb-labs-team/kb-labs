@@ -6,6 +6,7 @@ import { toErrorEnvelope, ErrorEnvelopeError } from './error-envelope/index.js';
 import {
   GATEWAY_SERVICE_NETWORK,
   resolveGatewayServiceAddress,
+  resolveCliGatewayAddress,
   resolveCliGatewayTarget,
   resolveServiceListenAddress,
 } from './service-listen-address.js';
@@ -31,7 +32,7 @@ describe('resolveServiceListenAddress', () => {
     }
   });
 
-  it('uses the explicit KB_GATEWAY_URL ahead of the active root receipt', async () => {
+  it('uses the explicit command Gateway URL ahead of the active root receipt', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, data: { installationId: 'root-b' } }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
@@ -44,6 +45,63 @@ describe('resolveServiceListenAddress', () => {
       expect(target.gatewayUrl).toBe('http://127.0.0.1:4300');
     } finally {
       vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('honors an explicit Gateway URL without reading an invalid installed receipt', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+      await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), '{invalid json');
+
+      await expect(resolveCliGatewayAddress(root, { gatewayUrl: 'http://gateway.example:4300', gatewayPort: '4301', netOffset: 0 }))
+        .resolves.toEqual({ gatewayUrl: 'http://gateway.example:4300', platformRoot: root });
+      await expect(resolveCliGatewayTarget(root, { gatewayUrl: 'http://gateway.example:4300', gatewayPort: '4301', netOffset: 0 }))
+        .resolves.toEqual({ gatewayUrl: 'http://gateway.example:4300', platformRoot: root });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an invalid configured port even when an explicit Gateway URL wins selection', () => {
+    let failure: unknown;
+    try {
+      resolveGatewayServiceAddress(undefined, {
+        gatewayUrl: 'http://gateway.example:4300', gatewayPort: '4000oops', netOffset: 0,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(toErrorEnvelope(failure)).toMatchObject({
+      code: 'KB_CONFIG_INVALID',
+      details: { path: 'GATEWAY_PORT' },
+    });
+  });
+
+  it('rejects an invalid configured port even when an installed receipt wins selection', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
+    try {
+      await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+      await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+        installationId: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+      }));
+
+      let failure: unknown;
+      try {
+        await resolveCliGatewayAddress(root, { gatewayPort: '4000oops', netOffset: 0 });
+      } catch (error) {
+        failure = error;
+      }
+      expect(toErrorEnvelope(failure)).toMatchObject({
+        code: 'KB_CONFIG_INVALID',
+        details: { path: 'GATEWAY_PORT' },
+      });
+    } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -156,24 +214,23 @@ describe('resolveServiceListenAddress', () => {
     }
   });
 
-  it('uses the saved session Gateway for a client root without a local installation receipt', async () => {
+  it('uses the configured transport address for a root without an installation receipt', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kb-client-gateway-'));
     try {
       await expect(resolveCliGatewayTarget(root, {
         netOffset: 0,
         gatewayPort: '4300',
-        sessionGatewayUrl: 'https://client-gateway.example.test/',
-      })).resolves.toMatchObject({ gatewayUrl: 'https://client-gateway.example.test' });
+      })).resolves.toMatchObject({ gatewayUrl: 'http://127.0.0.1:4300' });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it('applies workspace Gateway port and network offset when no receipt or session exists', async () => {
+  it('applies the configured Gateway port without a caller network offset', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kb-workspace-gateway-'));
     try {
-      await expect(resolveCliGatewayTarget(root, { gatewayPort: '4300', netOffset: 20 })).resolves.toMatchObject({
-        gatewayUrl: 'http://127.0.0.1:4320', platformRoot: root,
+      await expect(resolveCliGatewayTarget(root, { gatewayPort: '4300', netOffset: 0 })).resolves.toMatchObject({
+        gatewayUrl: 'http://127.0.0.1:4300', platformRoot: root,
       });
     } finally {
       await rm(root, { recursive: true, force: true });

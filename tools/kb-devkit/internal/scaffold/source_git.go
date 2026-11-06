@@ -1,11 +1,12 @@
 package scaffold
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 
+	"github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/devkit/internal/config"
 )
 
@@ -26,10 +27,7 @@ func resolveGit(tmpl config.ScaffoldTemplate) (fs.FS, func(), error) {
 	}
 	args = append(args, tmpl.URL, tmp)
 
-	cmd := exec.Command("git", args...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if _, err := toolchain.Run(context.Background(), toolchain.Invocation{Tool: "git", Executable: "git", Args: args, Operation: toolchain.OperationWorkspaceTask, Stdout: os.Stderr, Stderr: os.Stderr}); err != nil {
 		cleanup()
 		return nil, noop, fmt.Errorf("git clone %q: %w", tmpl.URL, err)
 	}

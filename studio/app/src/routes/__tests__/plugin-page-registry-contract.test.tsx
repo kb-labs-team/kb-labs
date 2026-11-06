@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import typedFailure from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
+import typedFailure from '@kb-labs/core-platform/contracts/ux-result/fixtures/valid/failure.json';
 import type { StudioRegistryV2 } from '@kb-labs/studio-federation';
 import { PluginPageV2 } from '../plugin-page-v2.js';
 import { RegistryV2Provider } from '../../providers/registry-v2-provider.js';

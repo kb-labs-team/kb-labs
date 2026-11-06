@@ -23,7 +23,7 @@ A developer uses the marketplace-installed Mind plugin to index a project and re
 
 | # | Action | Expected |
 |---|---|---|
-| S-016.1 | Run `kb mind index` | Indexing completes and reports the number of files indexed. |
+| S-016.1 | Run `kb mind index update` | Indexing completes and reports the number of files indexed. |
 | S-016.2 | Run `kb mind status` | Output includes the indexed file count and last-index time. |
 | S-016.3 | Run `kb mind search --text "how does authentication work"` | Results include matching source excerpts with file paths and line references. |
 | S-016.4 | Run `kb mind search --text "how does authentication work" --json` | Standard output is valid JSON containing the same result references. |

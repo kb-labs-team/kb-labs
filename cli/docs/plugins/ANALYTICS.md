@@ -259,7 +259,7 @@ describe('Query Handler', () => {
       { query: 'test' },
       {
         requestId: 'test-id',
-        pluginId: '@kb-labs/mind-cli',
+        pluginId: '@kb-labs/mind/cli',
         runtime: {
           // ... other runtime APIs
           analytics: trackEvent,

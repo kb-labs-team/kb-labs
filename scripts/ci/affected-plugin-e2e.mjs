@@ -14,7 +14,7 @@
  *
  * Usage:
  *   kb-devkit run build --affected --diff-only --json | node scripts/ci/affected-plugin-e2e.mjs
- *   node scripts/ci/affected-plugin-e2e.mjs --packages @kb-labs/mind-core,@kb-labs/sdk
+ *   node scripts/ci/affected-plugin-e2e.mjs --packages @kb-labs/mind/core,@kb-labs/sdk
  *   node scripts/ci/affected-plugin-e2e.mjs --changed-files /tmp/changed-files
  *
  * Output (stdout, one line): {"suites":["mind"],"include":[{"suite":"mind"}]}

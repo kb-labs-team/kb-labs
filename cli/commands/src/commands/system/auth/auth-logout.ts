@@ -5,7 +5,7 @@
  */
 
 import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { AuthSessionOwner } from '@kb-labs/cli-runtime/gateway';
+import { AuthSessionOwner } from '@kb-labs/sdk/gateway';
 
 type LogoutFlags = {
   json: { type: 'boolean'; description: string };

@@ -4,8 +4,8 @@
  * Thin HTTP client to the marketplace module the host co-locates in the same
  * process (ADR-0043: `INTERNAL_MODULES` in `host.ts`). It calls the exact
  * same REST surface as `kb marketplace plugins list|enable|disable`
- * (`plugins/marketplace/api/src/routes/packages.ts`,
- * `plugins/marketplace/entry/src/commands/plugins/*`) — the single source of
+ * (`services/marketplace/api/src/routes/packages.ts`,
+ * `cli/commands/src/commands/system/marketplace/commands/plugins/*`) — the single source of
  * truth for `.kb/marketplace.lock` state — so `/api/v1/plugins` and the CLI
  * never disagree about what "enabled" means. Reached on the host's internal
  * loopback address (never through the gateway): no auth token needed, this

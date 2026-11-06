@@ -10,7 +10,7 @@
  */
 
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
-import { AuthSessionOwner } from '@kb-labs/cli-runtime/gateway';
+import { AuthSessionOwner } from '@kb-labs/sdk/gateway';
 
 type StatusFlags = {
   json: { type: 'boolean'; description: string };

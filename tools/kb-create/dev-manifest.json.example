@@ -2,28 +2,104 @@
   "version": "3.0.0",
   "registryUrl": "https://registry.npmjs.org",
   "core": [
-    { "name": "@kb-labs/cli-bin",          "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-cli/packages/cli-bin" },
-    { "name": "@kb-labs/sdk",              "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-sdk/packages/sdk" },
-    { "name": "@kb-labs/core-runtime",     "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-core/packages/core-runtime" },
-    { "name": "@kb-labs/core-contracts",   "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-core/packages/core-contracts" },
-    { "name": "@kb-labs/shared-cli-ui",    "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-shared/packages/shared-cli-ui" },
-    { "name": "@kb-labs/core-state-daemon","localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-core/packages/core-state-daemon" }
+    {
+      "name": "@kb-labs/cli-bin",
+      "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-cli/packages/cli-bin"
+    },
+    {
+      "name": "@kb-labs/sdk",
+      "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-sdk/packages/sdk"
+    },
+    {
+      "name": "@kb-labs/core-runtime",
+      "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-core/packages/core-runtime"
+    },
+    {
+      "name": "@kb-labs/core-contracts",
+      "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-core/packages/core-contracts"
+    },
+    {
+      "name": "@kb-labs/shared-cli-ui",
+      "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-shared/packages/shared-cli-ui"
+    },
+    {
+      "name": "@kb-labs/core-state-daemon",
+      "localPath": "/Users/you/kb-labs-workspace/services/state/daemon"
+    }
   ],
   "services": [
-    { "id": "rest",        "pkg": "@kb-labs/rest-api-app",    "description": "REST API (port 5050)",          "default": true, "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-rest-api/apps/rest-api" },
-    { "id": "workflow",    "pkg": "@kb-labs/workflow-daemon",  "description": "Workflow engine (port 7778)",   "default": true, "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-workflow/packages/workflow-daemon" },
-    { "id": "gateway",     "pkg": "@kb-labs/gateway-app",     "description": "Central router (port 4000)",    "default": true, "localPath": "/Users/you/kb-labs-workspace/infra/kb-labs-gateway/apps/gateway-app" },
-    { "id": "marketplace", "pkg": "@kb-labs/marketplace-app", "description": "Marketplace (port 5070)",       "default": true, "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-marketplace/apps/marketplace" },
-    { "id": "studio",      "pkg": "@kb-labs/studio",          "description": "Web UI (port 3000)",            "default": true, "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-studio/apps/studio" }
+    {
+      "id": "rest",
+      "pkg": "@kb-labs/rest-api-app",
+      "description": "REST API (port 5050)",
+      "default": true,
+      "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-rest-api/apps/rest-api"
+    },
+    {
+      "id": "workflow",
+      "pkg": "@kb-labs/workflow-daemon",
+      "description": "Workflow engine (port 7778)",
+      "default": true,
+      "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-workflow/packages/workflow-daemon"
+    },
+    {
+      "id": "gateway",
+      "pkg": "@kb-labs/gateway-app",
+      "description": "Central router (port 4000)",
+      "default": true,
+      "localPath": "/Users/you/kb-labs-workspace/infra/kb-labs-gateway/apps/gateway-app"
+    },
+    {
+      "id": "marketplace",
+      "pkg": "@kb-labs/marketplace-app",
+      "description": "Marketplace (port 5070)",
+      "default": true,
+      "localPath": "/Users/you/kb-labs-workspace/services/marketplace/app"
+    },
+    {
+      "id": "studio",
+      "pkg": "@kb-labs/studio",
+      "description": "Web UI (port 3000)",
+      "default": true,
+      "localPath": "/Users/you/kb-labs-workspace/platform/kb-labs-studio/apps/studio"
+    }
   ],
   "plugins": [
-    { "id": "marketplace", "pkg": "@kb-labs/marketplace-entry", "description": "Install, list, enable plugins", "default": true, "localPath": "/Users/you/kb-labs-workspace/plugins/marketplace/entry" },
-    { "id": "mind",        "pkg": "@kb-labs/mind-entry",        "description": "AI code search (RAG)",           "default": true, "localPath": "/Users/you/kb-labs-workspace/plugins/mind/entry" },
-    { "id": "agents",      "pkg": "@kb-labs/agent-entry",       "description": "Autonomous agents",              "default": true, "localPath": "/Users/you/kb-labs-workspace/plugins/agents/entry" },
-    { "id": "ai-review",   "pkg": "@kb-labs/review-entry",      "description": "AI code review",                 "default": true, "localPath": "/Users/you/kb-labs-workspace/plugins/review/entry" },
-    { "id": "commit",      "pkg": "@kb-labs/commit-entry",      "description": "AI commit generation",           "default": true, "localPath": "/Users/you/kb-labs-workspace/plugins/commit/entry" }
+    {
+      "id": "mind",
+      "pkg": "@kb-labs/mind",
+      "description": "AI code search (RAG)",
+      "default": true,
+      "localPath": "/Users/you/kb-labs-workspace/plugins/mind"
+    },
+    {
+      "id": "agents",
+      "pkg": "@kb-labs/agents",
+      "description": "Autonomous agents",
+      "default": true,
+      "localPath": "/Users/you/kb-labs-workspace/plugins/agents"
+    },
+    {
+      "id": "ai-review",
+      "pkg": "@kb-labs/review",
+      "description": "AI code review",
+      "default": true,
+      "localPath": "/Users/you/kb-labs-workspace/plugins/review"
+    },
+    {
+      "id": "commit",
+      "pkg": "@kb-labs/commit",
+      "description": "AI commit generation",
+      "default": true,
+      "localPath": "/Users/you/kb-labs-workspace/plugins/commit"
+    }
   ],
   "binaries": [
-    { "id": "kb-dev", "name": "kb-dev", "description": "Service manager", "localPath": "/Users/you/kb-labs-workspace/infra/kb-labs-dev/kb-dev" }
+    {
+      "id": "kb-dev",
+      "name": "kb-dev",
+      "description": "Service manager",
+      "localPath": "/Users/you/kb-labs-workspace/infra/kb-labs-dev/kb-dev"
+    }
   ]
 }

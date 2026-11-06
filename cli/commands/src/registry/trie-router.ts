@@ -267,7 +267,7 @@ export class TrieRouter {
 
       if (!child) {
         // A command may also act as a namespace for more specific commands,
-        // e.g. `commit` and `commit open`. Prefer the specific command when
+        // e.g. `commit` and `commit plan show`. Prefer the specific command when
         // the next token is registered; only fall back to the shorter command
         // when the token is not a child and should be passed as an argument.
         if (node.command && i > 0) {

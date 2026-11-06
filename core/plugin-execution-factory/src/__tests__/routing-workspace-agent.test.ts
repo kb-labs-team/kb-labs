@@ -17,6 +17,7 @@ const testLogger = {
   warn: vi.fn(),
   error: vi.fn(),
   fatal: vi.fn(),
+  flush: vi.fn(async () => {}),
   child: () => testLogger,
 };
 

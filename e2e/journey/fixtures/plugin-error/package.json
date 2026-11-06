@@ -1,0 +1,13 @@
+{
+  "name": "@kb-labs/e2e-plugin-error",
+  "version": "1.0.0",
+  "description": "Installed journey plugin for correlated handler failure diagnostics",
+  "type": "module",
+  "main": "./dist/manifest.js",
+  "exports": { ".": "./dist/manifest.js" },
+  "files": ["dist/manifest.js", "dist/manifest.json", "dist/commands/*.js"],
+  "kb": { "manifest": "./dist/manifest.js", "requiredOutputs": ["./dist/manifest.json", "./dist/commands/*.js"] },
+  "peerDependencies": { "@kb-labs/sdk": "^2.120.1" },
+  "scripts": { "build": "node ./build.mjs" },
+  "license": "UNLICENSED"
+}

@@ -34,7 +34,7 @@ func TestRegisteredOperationCodesBelongToDiagnosticCatalog(t *testing.T) {
 	}
 
 	sourceRoot := filepath.Dir(firstRegisteredHandler(t))
-	scan, err := catalogcheck.Scan(sourceRoot)
+	scan, err := catalogcheck.Scan(sourceRoot, diag.CatalogEnvironmentVariableNames())
 	if err != nil {
 		t.Fatal(err)
 	}

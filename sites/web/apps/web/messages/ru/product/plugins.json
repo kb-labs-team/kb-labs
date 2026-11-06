@@ -70,6 +70,13 @@
     "ecoEyebrow": "Экосистема",
     "ecoTitle": "Создай и опубликуй свой плагин",
     "sdkDocsBtn": "SDK документация",
-    "ctaEyebrow": "Попробуйте прямо сейчас"
+    "ctaEyebrow": "Попробуйте прямо сейчас",
+    "lifecycleDiagram": {
+      "manifest": "единый источник правды",
+      "install": "kb marketplace install @scope/plugin",
+      "discover": "читает lock при каждом старте",
+      "register": "extractEntityKinds() — 7 типов сущностей",
+      "execute": "backend выбирается per-invocation"
+    }
   }
 }

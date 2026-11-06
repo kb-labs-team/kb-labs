@@ -112,7 +112,7 @@ Builds a specific plugin package.
 1. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
 2. Type "Tasks: Run Task"
 3. Select "Build Plugin"
-4. Enter plugin package name (e.g., `@kb-labs/mind-cli`)
+4. Enter plugin package name (e.g., `@kb-labs/mind/cli`)
 
 ### Run Dev Mode
 

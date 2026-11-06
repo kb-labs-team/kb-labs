@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 import {
   collectSseEvents,
   expectSseTerminates,
@@ -20,7 +20,7 @@ function isTerminal(e: SseEvent): boolean {
   return ['run.finished', 'run.failed', 'run.cancelled'].includes(eventType(e));
 }
 
-async function startRun(request: Parameters<Parameters<typeof test>[1]>[0]['request']): Promise<string> {
+async function startRun(request: APIRequestContext): Promise<string> {
   const catalogRes = await request.get(`${WORKFLOW}/api/v1/workflows`);
   const catalog = await catalogRes.json();
   const workflows: Array<{ id?: string; name?: string }> =
@@ -37,7 +37,7 @@ async function startRun(request: Parameters<Parameters<typeof test>[1]>[0]['requ
 }
 
 async function pollRunStatus(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   runId: string,
 ): Promise<string | undefined> {
   const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`);

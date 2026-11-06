@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 /**
  * check-tool-binaries custom check
  *
@@ -30,7 +31,7 @@ function git(args) {
 }
 
 function emit(result) {
-  process.stdout.write(JSON.stringify(result, null, 2));
+  writeCheckResult(result.items.map(({ target, ...issue }) => ({ ...issue, file: target })));
   process.exit(0);
 }
 

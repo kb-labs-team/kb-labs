@@ -155,8 +155,8 @@ verified current workflow definitions, not claims about recent hosted run
 activity.
 
 QA already requires journey claims for active release steps and requires
-executed per-mode coverage (`plugins/qa/core/src/cases/release-claim-baseline.ts:40–75`,
-`plugins/qa/entry/src/cli/commands/qa-coverage-show.ts:54–80`). The journey
+executed per-mode coverage (`plugins/qa/src/core/cases/release-claim-baseline.ts:40–75`,
+`plugins/qa/src/cli/commands/qa-coverage-show.ts:54–80`). The journey
 scoreboard includes all active cases and a separate release-case count
 (`e2e/journey/scoreboard.py:190–215`). The missing work is the cross-registry
 surface inventory, whole-pyramid tier evidence, fixture parity contract,

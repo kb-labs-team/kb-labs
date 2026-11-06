@@ -11,18 +11,22 @@ import (
 	"github.com/kb-labs/devkit/internal/workspace"
 )
 
-// DepsRule checks dependency link: resolution, version consistency, and
-// allowlist/denylist of @kb-labs/* dependencies.
-type DepsRule struct{}
+// DepsRule checks dependency link resolution, declaration of imported
+// workspace packages, relative package boundaries, version consistency, and
+// configured @kb-labs/* boundaries.
+type DepsRule struct {
+	workspace *workspace.Workspace
+}
+
+func (r *DepsRule) SetWorkspace(ws *workspace.Workspace) {
+	r.workspace = ws
+}
 
 func (r *DepsRule) Name() string { return "deps" }
 
 func (r *DepsRule) Check(pkg workspace.Package, preset config.Preset) []Issue {
 	rules := preset.Deps
 	hasBoundaryRules := len(rules.AllowedKbDeps) > 0 || len(rules.ForbiddenKbDeps) > 0 || len(rules.AllowedKbImports) > 0 || len(rules.ForbiddenKbImports) > 0
-	if !rules.CheckLinks && !rules.CheckVersionConsistency && !hasBoundaryRules {
-		return nil
-	}
 
 	path := filepath.Join(pkg.Dir, "package.json")
 	data, err := os.ReadFile(path)
@@ -31,10 +35,11 @@ func (r *DepsRule) Check(pkg workspace.Package, preset config.Preset) []Issue {
 	}
 
 	var raw struct {
-		Name             string            `json:"name"`
-		Dependencies     map[string]string `json:"dependencies"`
-		DevDependencies  map[string]string `json:"devDependencies"`
-		PeerDependencies map[string]string `json:"peerDependencies"`
+		Name                 string            `json:"name"`
+		Dependencies         map[string]string `json:"dependencies"`
+		OptionalDependencies map[string]string `json:"optionalDependencies"`
+		DevDependencies      map[string]string `json:"devDependencies"`
+		PeerDependencies     map[string]string `json:"peerDependencies"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil
@@ -44,6 +49,9 @@ func (r *DepsRule) Check(pkg workspace.Package, preset config.Preset) []Issue {
 
 	allDeps := make(map[string]string)
 	for k, v := range raw.Dependencies {
+		allDeps[k] = v
+	}
+	for k, v := range raw.OptionalDependencies {
 		allDeps[k] = v
 	}
 	for k, v := range raw.DevDependencies {
@@ -56,12 +64,44 @@ func (r *DepsRule) Check(pkg workspace.Package, preset config.Preset) []Issue {
 	if rules.CheckLinks {
 		issues = append(issues, checkLinkDeps(pkg.Dir, allDeps, r.Name())...)
 	}
+	if pkg.PnpmMember {
+		issues = append(issues, checkWorkspaceDependencyTargets(pkg, r.workspace, allDeps, r.Name())...)
+		issues = append(issues, checkDeclaredWorkspaceImports(pkg, r.workspace, raw.Name, allDeps, r.Name())...)
+		issues = append(issues, checkRelativeWorkspaceImports(pkg, r.workspace, r.Name())...)
+	}
 
 	if hasBoundaryRules {
 		issues = append(issues, checkBoundaryDeps(pkg, raw.Name, allDeps, rules, r.Name())...)
 		issues = append(issues, checkBoundaryImports(pkg, raw.Name, rules, r.Name())...)
 	}
 
+	return issues
+}
+
+func checkWorkspaceDependencyTargets(pkg workspace.Package, ws *workspace.Workspace, deps map[string]string, checkName string) []Issue {
+	var issues []Issue
+	for depName, depVersion := range deps {
+		if !strings.HasPrefix(depVersion, "workspace:") {
+			continue
+		}
+		found := false
+		if ws != nil {
+			for _, member := range ws.Packages {
+				if member.PnpmMember && member.Name == depName {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			issues = append(issues, Issue{
+				Check:    checkName,
+				Severity: SeverityError,
+				Message:  fmt.Sprintf("workspace dependency %q does not name a pnpm workspace member", depName),
+				File:     filepath.Join(pkg.Dir, "package.json"),
+			})
+		}
+	}
 	return issues
 }
 
@@ -169,27 +209,11 @@ func checkBoundaryDeps(pkg workspace.Package, pkgName string, deps map[string]st
 func checkBoundaryImports(pkg workspace.Package, pkgName string, rules config.DepsRules, checkName string) []Issue {
 	var issues []Issue
 	srcDir := filepath.Join(pkg.Dir, "src")
-	if _, err := os.Stat(srcDir); err != nil {
-		return nil
-	}
-
-	_ = filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		ext := filepath.Ext(path)
-		if ext != ".ts" && ext != ".tsx" && ext != ".mts" && ext != ".cts" && ext != ".js" && ext != ".mjs" && ext != ".cjs" {
-			return nil
-		}
-		data, rerr := os.ReadFile(path)
-		if rerr != nil {
-			return nil
-		}
+	forEachSourceFile(srcDir, nil, func(path string, data []byte) {
 		for _, spec := range findKbFromImports(data) {
 			if spec == pkgName || strings.HasPrefix(spec, pkgName+"/") {
 				continue
 			}
-			// AllowedKbDeps takes priority over ForbiddenKbDeps.
 			if len(rules.AllowedKbDeps) > 0 && matchAny(spec, rules.AllowedKbDeps) {
 				continue
 			}
@@ -227,9 +251,128 @@ func checkBoundaryImports(pkg workspace.Package, pkgName string, rules config.De
 				})
 			}
 		}
-		return nil
 	})
 	return issues
+}
+
+func checkDeclaredWorkspaceImports(pkg workspace.Package, ws *workspace.Workspace, pkgName string, deps map[string]string, checkName string) []Issue {
+	var issues []Issue
+	forEachSourceFile(pkg.Dir, ws, func(path string, data []byte) {
+		for _, spec := range findKbFromImports(data) {
+			dependency := kbPackageName(spec)
+			if dependency == pkgName {
+				continue
+			}
+			if _, declared := deps[dependency]; declared {
+				continue
+			}
+			issues = append(issues, Issue{
+				Check:    checkName,
+				Severity: SeverityError,
+				Message:  fmt.Sprintf("import %q uses undeclared workspace dependency %q", spec, dependency),
+				File:     path,
+			})
+		}
+	})
+	return issues
+}
+
+func checkRelativeWorkspaceImports(pkg workspace.Package, ws *workspace.Workspace, checkName string) []Issue {
+	if ws == nil {
+		return nil
+	}
+	var issues []Issue
+	forEachSourceFile(pkg.Dir, ws, func(path string, data []byte) {
+		for _, spec := range findModuleSpecifiers(data) {
+			if !strings.HasPrefix(spec, "./") && !strings.HasPrefix(spec, "../") {
+				continue
+			}
+			resolved, ok := resolveRelativeImport(path, spec)
+			if !ok {
+				continue
+			}
+			owner, ok := ws.PackageByPath(resolved)
+			if !ok || !owner.PnpmMember || owner.Dir == pkg.Dir {
+				continue
+			}
+			issues = append(issues, Issue{
+				Check:    checkName,
+				Severity: SeverityError,
+				Message:  fmt.Sprintf("relative import %q resolves into workspace package %q; import the package by name", spec, owner.Name),
+				File:     path,
+			})
+		}
+	})
+	return issues
+}
+
+func kbPackageName(spec string) string {
+	if !strings.HasPrefix(spec, "@kb-labs/") {
+		return ""
+	}
+	if slash := strings.IndexByte(spec[len("@kb-labs/"):], '/'); slash >= 0 {
+		return spec[:len("@kb-labs/")+slash]
+	}
+	return spec
+}
+
+func forEachSourceFile(root string, ws *workspace.Workspace, visit func(path string, data []byte)) {
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			switch info.Name() {
+			case "node_modules", "dist", ".git", ".next", ".turbo", "coverage":
+				return filepath.SkipDir
+			}
+			if path != root {
+				if _, err := os.Stat(filepath.Join(path, "package.json")); err == nil {
+					if ws == nil {
+						return filepath.SkipDir
+					}
+					if owner, ok := ws.PackageByPath(path); !ok || owner.Dir != path {
+						return filepath.SkipDir
+					}
+				}
+			}
+			return nil
+		}
+		switch filepath.Ext(path) {
+		case ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs":
+			if ws != nil {
+				if owner, ok := ws.PackageByPath(path); ok && owner.Dir != root {
+					return nil
+				}
+			}
+			data, readErr := os.ReadFile(path)
+			if readErr == nil {
+				visit(path, data)
+			}
+		}
+		return nil
+	})
+}
+
+func resolveRelativeImport(fromFile, spec string) (string, bool) {
+	base := filepath.Clean(filepath.Join(filepath.Dir(fromFile), filepath.FromSlash(spec)))
+	if filepath.Ext(base) != "" {
+		info, err := os.Stat(base)
+		return base, err == nil && !info.IsDir()
+	}
+	for _, ext := range []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json"} {
+		candidate := base + ext
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, true
+		}
+	}
+	for _, ext := range []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json"} {
+		candidate := filepath.Join(base, "index"+ext)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 func containsExact(values []string, candidate string) bool {
@@ -245,6 +388,16 @@ func containsExact(values []string, candidate string) bool {
 // clauses while ignoring comments, strings, and template literals. A regex
 // over the raw source would also match import examples in JSDoc comments.
 func findKbFromImports(data []byte) []string {
+	var specs []string
+	for _, spec := range findModuleSpecifiers(data) {
+		if strings.HasPrefix(spec, "@kb-labs/") {
+			specs = append(specs, spec)
+		}
+	}
+	return specs
+}
+
+func findModuleSpecifiers(data []byte) []string {
 	var specs []string
 
 	for i := 0; i < len(data); {
@@ -263,7 +416,29 @@ func findKbFromImports(data []byte) []string {
 			for i < len(data) && isIdentifierPart(data[i]) {
 				i++
 			}
-			if string(data[start:i]) != "from" {
+			word := string(data[start:i])
+			if word == "import" || word == "require" {
+				next := skipWhitespaceAndComments(data, i)
+				if word == "import" && next < len(data) && data[next] == '.' {
+					continue
+				}
+				if word == "import" && next < len(data) && (data[next] == '\'' || data[next] == '"') {
+					spec, after := readQuotedString(data, next)
+					specs = append(specs, spec)
+					i = after
+					continue
+				}
+				if next < len(data) && data[next] == '(' {
+					next = skipWhitespaceAndComments(data, next+1)
+					if next < len(data) && (data[next] == '\'' || data[next] == '"') {
+						spec, after := readQuotedString(data, next)
+						specs = append(specs, spec)
+						i = after
+					}
+				}
+				continue
+			}
+			if word != "from" {
 				continue
 			}
 
@@ -273,9 +448,7 @@ func findKbFromImports(data []byte) []string {
 			}
 			spec, next := readQuotedString(data, i)
 			i = next
-			if strings.HasPrefix(spec, "@kb-labs/") {
-				specs = append(specs, spec)
-			}
+			specs = append(specs, spec)
 		default:
 			i++
 		}

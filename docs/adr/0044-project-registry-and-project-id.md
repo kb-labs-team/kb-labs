@@ -52,9 +52,9 @@ There is no host process yet, so the registry must be usable directly from the C
     `06-command-naming.md`), all with `--json`; `add` and `remove` also with `--dry-run`. Errors use the unified error
     envelope and `KB_PROJECT_*` codes from `errors.catalog.json`. They work directly against the registry file; when a
     host exists they become clients of it.
-11. **Package placement:** contracts (types, error-code union, `IProjectRegistry`) in `@kb-labs/core-contracts`;
-    implementation in the new `@kb-labs/core-project-registry` (depends only on the contracts package); command layer
-    in `@kb-labs/cli-commands`.
+11. **Package placement:** persistent registry data types and error-code union in `@kb-labs/core-contracts`;
+    `IProjectRegistry` and its list result in `@kb-labs/core-project-registry`, which owns the implementation and
+    depends on contracts plus the platform error-envelope contract; command layer in `@kb-labs/cli-commands`.
 
 ## Consequences
 

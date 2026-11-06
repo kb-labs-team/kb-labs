@@ -1,6 +1,6 @@
 /**
  * The platform package set (ADR-0048 D5), shared by the plugin resolver and
- * development-time package checks. A plugin's own packages (`@kb-labs/commit-core`, ...)
+ * development-time package checks. A plugin's own packages (`@kb-labs/commit/core`, ...)
  * are not platform packages.
  */
 const PLATFORM_PACKAGE =

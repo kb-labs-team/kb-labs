@@ -9,7 +9,7 @@ globs:
 # Inbox Plugin
 
 Plugin for managing email via IMAP/SMTP from CLI and REST API.
-Packages: `@kb-labs/inbox-contracts`, `@kb-labs/inbox-core`, `@kb-labs/inbox-entry`.
+Packages: `@kb-labs/inbox/contracts`, `@kb-labs/inbox/core`, `@kb-labs/inbox`.
 
 ## Accounts (KB Labs / Kirill)
 
@@ -17,7 +17,7 @@ Packages: `@kb-labs/inbox-contracts`, `@kb-labs/inbox-core`, `@kb-labs/inbox-ent
 job   → kirillBaranovJob@yandex.ru   imap.yandex.ru:993 / smtp.yandex.ru:465
 ```
 
-Run `pnpm kb inbox accounts --json` to see all configured accounts.
+Run `pnpm kb inbox account list --json` to see all configured accounts.
 
 ## Env vars
 
@@ -42,19 +42,19 @@ All commands accept `--json`. `--account` accepts name (`job`) or index (`0`), d
 ```bash
 pnpm kb inbox list [--folder INBOX] [--unread] [--since 24h|7d|2w|ISO] [--limit 50] [--account job]
 pnpm kb inbox get <uid> [--folder INBOX] [--attachments] [--account job]
-pnpm kb inbox thread <uid> [--folder INBOX] [--account job]
+pnpm kb inbox thread show <uid> [--folder INBOX] [--account job]
 pnpm kb inbox search [--from addr] [--subject text] [--body text] [--text text] [--folder] [--since] [--limit 20]
-pnpm kb inbox folders [--account job]
-pnpm kb inbox accounts
+pnpm kb inbox folder list [--account job]
+pnpm kb inbox account list
 ```
 
 ### Write
 
 ```bash
 pnpm kb inbox send --to addr --subject "..." --body "..." [--cc addr] [--bcc addr] [--account job]
-pnpm kb inbox reply <uid> --body "..." [--folder INBOX] [--account job]
-pnpm kb inbox move <uid> --folder Work [--from INBOX] [--account job]
-pnpm kb inbox mark <uid> --read|--unread|--spam|--flagged|--unflagged [--folder INBOX] [--account job]
+pnpm kb inbox thread send <uid> --body "..." [--folder INBOX] [--account job]
+pnpm kb inbox message update <uid> --folder Work [--from INBOX] [--account job]
+pnpm kb inbox message set <uid> --read|--unread|--spam|--flagged|--unflagged [--folder INBOX] [--account job]
 pnpm kb inbox delete <uid> [--folder INBOX] [--account job]
 ```
 
@@ -75,11 +75,11 @@ Every command returns a consistent envelope — always check `ok` first:
 | Code | Meaning | Agent action |
 |------|---------|--------------|
 | `ENV_MISSING` | Account vars not set | Stop, ask user to configure |
-| `ACCOUNT_NOT_FOUND` | `--account X` not in config | Run `kb inbox accounts` to check |
+| `ACCOUNT_NOT_FOUND` | `--account X` not in config | Run `kb inbox account list` to check |
 | `IMAP_AUTH_FAILED` | Wrong password | Stop, ask user to create app-password |
 | `IMAP_CONNECT_FAILED` | Can't reach IMAP server | Check host/port, retry once |
 | `IMAP_TIMEOUT` | Connection timed out | Retry after short wait |
-| `IMAP_MAILBOX_NOT_FOUND` | Folder doesn't exist | Run `kb inbox folders` to get valid names |
+| `IMAP_MAILBOX_NOT_FOUND` | Folder doesn't exist | Run `kb inbox folder list` to get valid names |
 | `MESSAGE_NOT_FOUND` | UID stale | Re-run `kb inbox list` to refresh UIDs |
 | `SMTP_AUTH_FAILED` | SMTP auth error | Stop, ask user to check app-password |
 | `SMTP_CONNECT_FAILED` | Can't reach SMTP server | Check SMTP host/port |
@@ -98,9 +98,9 @@ pnpm kb inbox list --unread --since 24h --json
 pnpm kb inbox get <uid> --json
 
 # 3. Act on each: move, mark, reply, delete
-pnpm kb inbox move <uid> --folder Work --json
-pnpm kb inbox mark <uid> --spam --json
-pnpm kb inbox reply <uid> --body "..." --json
+pnpm kb inbox message update <uid> --folder Work --json
+pnpm kb inbox message set <uid> --spam --json
+pnpm kb inbox thread send <uid> --body "..." --json
 pnpm kb inbox delete <uid> --json
 ```
 
@@ -109,7 +109,7 @@ pnpm kb inbox delete <uid> --json
 ```bash
 pnpm kb inbox search --from sender@example.com --since 7d --json
 pnpm kb inbox search --subject "invoice" --limit 5 --json
-pnpm kb inbox thread <uid> --json   # get full conversation context
+pnpm kb inbox thread show <uid> --json   # get full conversation context
 ```
 
 ### Daily digest
@@ -126,7 +126,7 @@ pnpm kb inbox list --since 24h --json --limit 100   # all mail for last day
 - **Use `--since` to scope** — on large inboxes always add `--since` to avoid fetching thousands of messages.
 - **Spam flow** — `mark --spam` moves to Junk automatically if the folder exists. No need to `move` separately.
 - **Reply preserves thread** — `reply` sets In-Reply-To + References headers automatically. Don't use `send` for replies.
-- **Folder names are case-sensitive** — use `kb inbox folders` to get exact names before `move`.
+- **Folder names are case-sensitive** — use `kb inbox folder list` to get exact names before `move`.
 
 ## Code structure
 

@@ -13,7 +13,7 @@ export class MockProjectPluginsSource implements ProjectPluginsDataSource {
     if (!this.byProject.has(projectId)) {
       this.byProject.set(projectId, [
         {
-          id: '@kb-labs/commit-entry',
+          id: '@kb-labs/commit',
           version: '2.120.1',
           source: 'workspace',
           primaryKind: 'plugin',
@@ -22,7 +22,7 @@ export class MockProjectPluginsSource implements ProjectPluginsDataSource {
           scope: 'project',
         },
         {
-          id: '@kb-labs/review-entry',
+          id: '@kb-labs/review',
           version: '2.120.1',
           source: 'workspace',
           primaryKind: 'plugin',

@@ -72,6 +72,7 @@ describe('PluginDetailPage installation', () => {
 
     const installButton = await screen.findByRole('button', { name: 'Install Commit' });
     expect(screen.getByRole('combobox', { name: 'Project' })).toBeDefined();
+    await waitFor(() => expect(installButton.getAttribute('disabled')).toBeNull());
     fireEvent.click(installButton);
 
     await waitFor(() => expect(installPlugin).toHaveBeenCalledWith('project-a', '@kb-labs/commit@2.120.1'));

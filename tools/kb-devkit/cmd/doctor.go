@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/toolchain"
 	"github.com/spf13/cobra"
 )
 
@@ -76,10 +79,11 @@ func init() {
 }
 
 type doctorCheck struct {
-	Name   string `json:"name"`
-	OK     bool   `json:"ok"`
-	Detail string `json:"detail"`
-	Fix    string `json:"fix,omitempty"`
+	Name       string     `json:"name"`
+	OK         bool       `json:"ok"`
+	Detail     string     `json:"detail"`
+	Fix        string     `json:"fix,omitempty"`
+	Diagnostic *diag.Diag `json:"diagnostic,omitempty"`
 }
 
 func runDoctorChecks() []doctorCheck {
@@ -133,9 +137,22 @@ func runDoctorChecks() []doctorCheck {
 }
 
 func checkCommand(name, arg, label string) doctorCheck {
-	cmd := exec.Command(name, arg)
-	out, err := cmd.Output()
+	executable := name
+	args := []string{arg}
+	if label == "pnpm" {
+		node, script, err := toolchain.PnpmExecutable()
+		if err != nil {
+			return doctorToolFailure(label, err)
+		}
+		executable = node
+		args = append([]string{script}, args...)
+	}
+	result, err := toolchain.Run(context.Background(), toolchain.Invocation{Tool: label, Executable: executable, Args: args, Operation: toolchain.OperationVersionProbe})
 	if err != nil {
+		var diagnostic *diag.Diag
+		if errors.As(err, &diagnostic) {
+			return doctorToolFailure(label, diagnostic)
+		}
 		return doctorCheck{
 			Name:   label,
 			OK:     false,
@@ -143,10 +160,18 @@ func checkCommand(name, arg, label string) doctorCheck {
 			Fix:    fmt.Sprintf("install %s", name),
 		}
 	}
-	version := strings.TrimSpace(string(out))
+	version := strings.TrimSpace(result.Stdout)
 	return doctorCheck{
 		Name:   label,
 		OK:     true,
 		Detail: version,
 	}
+}
+
+func doctorToolFailure(label string, err error) doctorCheck {
+	var diagnostic *diag.Diag
+	if errors.As(err, &diagnostic) {
+		return doctorCheck{Name: label, OK: false, Detail: diagnostic.Message, Fix: diagnostic.Hint, Diagnostic: diagnostic}
+	}
+	return doctorCheck{Name: label, OK: false, Detail: err.Error(), Fix: err.Error()}
 }

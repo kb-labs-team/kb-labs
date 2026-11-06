@@ -23,9 +23,10 @@ const (
 
 // Info describes a host that Start brought up.
 type Info struct {
-	Runner    string `json:"runner"`
-	PID       int    `json:"pid,omitempty"`
-	HealthURL string `json:"healthUrl,omitempty"`
+	Runner         string `json:"runner"`
+	PID            int    `json:"pid,omitempty"`
+	HealthURL      string `json:"healthUrl,omitempty"`
+	ControlAddress string `json:"-"`
 }
 
 // StopResult reports how a stop ended. Forced means the grace period expired
@@ -45,6 +46,7 @@ type Status struct {
 	PID             int        `json:"pid,omitempty"`
 	Healthy         bool       `json:"healthy"`
 	HealthURL       string     `json:"healthUrl,omitempty"`
+	StudioURL       string     `json:"studioUrl,omitempty"`
 	PlatformVersion string     `json:"platformVersion,omitempty"`
 	TreeRoot        string     `json:"-"`
 	ReceiptID       string     `json:"receiptId,omitempty"`
@@ -177,7 +179,7 @@ func (p Prober) Probe(ctx context.Context, declared contracts.HostSpec) error {
 }
 
 func specInvalid(cause error) *diag.Diag {
-	return contracts.NewDiag(contracts.CodeHostSpecInvalid, "The host specification in the installation receipt is invalid: "+cause.Error()+".", "Reinstall the platform with \"kb-create apply\".", cause)
+	return contracts.HostSpecDiagnostic("The host specification in the installation receipt is invalid: "+cause.Error()+".", "Reinstall the platform with \"kb-create apply\".", cause.Error(), cause)
 }
 
 func hostError(code, message, hint string, cause error, details map[string]string) *diag.Diag {

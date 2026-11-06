@@ -58,7 +58,7 @@ kb wf list --json
 
 🔌 PLUGIN
   • plugin:@kb-labs/ai-review/full-audit - Complete AI code review and audit [review, audit, quality]
-  • plugin:@kb-labs/release-manager/standard-release - Standard release workflow [release, versioning]
+  • plugin:@kb-labs/release/standard-release - Standard release workflow [release, versioning]
 ```
 
 ### `kb wf init`

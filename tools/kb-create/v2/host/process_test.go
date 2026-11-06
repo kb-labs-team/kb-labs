@@ -7,26 +7,71 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/kb-labs/clikit/diag"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
+	"github.com/kb-labs/create/v2/internal/tempdirguard"
+	"github.com/kb-labs/create/v2/internal/testprocess"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
 var fakeHostBinary string
+
+// case: S-285.17
+func TestHealthProbeReadsReportedStudioURL(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{{`{"data":{"studio":{"url":"http://example.test/"}}}`, "http://example.test/"}, {`{"data":{}}`, ""}} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, tc.body)
+		}))
+		got := (&ProcessRunner{}).probeURL(context.Background(), server.URL)
+		server.Close()
+		if got.StudioURL != tc.want {
+			t.Fatalf("studio URL = %q; want %q", got.StudioURL, tc.want)
+		}
+	}
+}
+
+func TestStopKillsHostGrandchild(t *testing.T) {
+	f := newRunner(t, 10, 1)
+	grandchildFile := filepath.Join(t.TempDir(), "grandchild.pid")
+	f.runner.Spec.Command = "/bin/sh"
+	f.runner.Spec.Args = []string{"-c", fmt.Sprintf("sleep 60 & echo $! > %q; exec %q -port %d", grandchildFile, fakeHostBinary, f.port)}
+	info, err := f.runner.Start(context.Background())
+	if err != nil {
+		t.Fatalf("start host: %v", err)
+	}
+	data, err := os.ReadFile(grandchildFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grandchildPID, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("parse grandchild pid: %v", err)
+	}
+	if _, err := f.runner.Stop(context.Background()); err != nil {
+		t.Fatalf("stop host: %v", err)
+	}
+	if processAlive(grandchildPID) {
+		t.Fatalf("host stop left grandchild %d alive (host pid %d)", grandchildPID, info.PID)
+	}
+}
 
 func TestLifecycleRecordReadersNeverSeePartialPublication(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "host.pid")
@@ -109,6 +154,13 @@ func TestStartFailureRejectsUndeclaredEvidence(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	// Re-exec helper children (process_identity_exec_test.go) either replace
+	// their image with syscall.Exec or exit from inside the test, so the
+	// cleanup below never runs in them; they never use the fake host.
+	if os.Getenv("KB_PROCESS_IDENTITY_EXEC_PHASE") != "" {
+		os.Exit(m.Run())
+	}
+	checkLeakedTempEntries := tempdirguard.Own("kb-create-fakehost-")
 	dir, err := os.MkdirTemp("", "kb-create-fakehost-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -135,6 +187,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stdout, "process audit %s: none\n", fakeHostBinary)
 	}
 	os.RemoveAll(dir)
+	if leaked := checkLeakedTempEntries(); len(leaked) > 0 {
+		fmt.Fprintf(os.Stderr, "host tests left their own temp entries in %s: %v; entries with this prefix must be removed by the suite that created them\n", os.TempDir(), leaked)
+		code = 1
+	}
 	os.Exit(code)
 }
 
@@ -147,6 +203,16 @@ func freePort(t *testing.T) int {
 	}
 	defer listener.Close()
 	return listener.Addr().(*net.TCPAddr).Port
+}
+
+func startOwnedFakeHost(t *testing.T, port int, identityToken string) *exec.Cmd {
+	t.Helper()
+	command := exec.Command(fakeHostBinary, "-port", fmt.Sprint(port))
+	command.Env = ProcessEnvironmentWithIdentity(os.Environ(), identityToken)
+	if err := testprocess.Start(t, command); err != nil {
+		t.Fatalf("start owned fakehost process group: %v", err)
+	}
+	return command
 }
 
 type fixture struct {
@@ -210,6 +276,26 @@ func launcherCode(t *testing.T, err error) string {
 		t.Fatalf("diagnostic %s has no hint", typed.Code)
 	}
 	return typed.Code
+}
+
+// case: PC-001.2
+func TestHostControlReadinessUsesInstalledHostEnvironmentContract(t *testing.T) {
+	failedProbe := readinessProbe{URL: "http://127.0.0.1:5250/health", Status: 200, Error: "host readiness did not report a valid loopback control address"}
+	if got, want := probeDescription(failedProbe), "http://127.0.0.1:5250/health returned HTTP 200 but readiness failed: host readiness did not report a valid loopback control address"; got != want {
+		t.Fatalf("readiness failure description = %q, want %q", got, want)
+	}
+	f := newRunner(t, 10, 5)
+	f.runner.ControlCredential = strings.Repeat("c", 32)
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !validControlAddress(f.runner.ControlAddress) {
+		t.Fatalf("host readiness did not publish its loopback control address: %q", f.runner.ControlAddress)
+	}
+	items, err := f.runner.QueryActiveWork(context.Background())
+	if err != nil || len(items) != 0 {
+		t.Fatalf("authenticated active-work request = %v, %v; want empty list", items, err)
+	}
 }
 
 func TestStartStatusStopGraceful(t *testing.T) {
@@ -302,6 +388,29 @@ func TestRunnerDoesNotObserveOrStopAHostForAnotherRoot(t *testing.T) {
 	}
 }
 
+func TestSeparateGatewayResourcesCanRunConcurrently(t *testing.T) {
+	first := newRunner(t, 10, 5)
+	second := newRunner(t, 10, 5)
+	firstInfo, err := startProcessForTest(t, first.runner, context.Background())
+	if err != nil {
+		t.Fatalf("start first root: %v", err)
+	}
+	secondInfo, err := startProcessForTest(t, second.runner, context.Background())
+	if err != nil {
+		t.Fatalf("start second root on its separate Gateway: %v", err)
+	}
+	for _, current := range []struct {
+		name   string
+		runner *ProcessRunner
+		info   Info
+	}{{"first", first.runner, firstInfo}, {"second", second.runner, secondInfo}} {
+		status, err := current.runner.Status(context.Background())
+		if err != nil || status.State != StateRunning || !status.Healthy || status.PID != current.info.PID {
+			t.Fatalf("%s root status = %#v, %v; both roots should remain healthy on their separate Gateway resources", current.name, status, err)
+		}
+	}
+}
+
 func TestPortInUse(t *testing.T) {
 	f := newRunner(t, 10, 5)
 	f.runner.Operation = "apply"
@@ -319,6 +428,9 @@ func TestPortInUse(t *testing.T) {
 		if !errors.As(err, &typed) || typed.Code != "KB_INSTALL_PORT_IN_USE" || typed.Meta["port"] != fmt.Sprint(f.port) || typed.Meta["pid"] == "" || typed.Meta["command"] == "" {
 			t.Fatalf("port diagnostic lacks owner details: %#v", err)
 		}
+		if runtime.GOOS == "linux" && typed.Meta["pid"] != strconv.Itoa(os.Getpid()) {
+			t.Fatalf("port owner pid = %v, want current test process %d", typed.Meta["pid"], os.Getpid())
+		}
 		wire, marshalErr := diag.ToEnvelope(typed)
 		if marshalErr != nil {
 			t.Fatalf("marshal actual port preflight diagnostic: %v", marshalErr)
@@ -326,18 +438,18 @@ func TestPortInUse(t *testing.T) {
 		if wire.Code != "KB_INSTALL_PORT_IN_USE" || wire.Details["port"] != fmt.Sprint(f.port) {
 			t.Fatalf("actual kb-create wire diagnostic = %+v, want details.port=%d", wire, f.port)
 		}
-		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply")) ||
+		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply", "--platform-root", f.runner.PlatformRoot)) ||
 			!strings.Contains(typed.Hint, typed.Meta["pid"].(string)) || !strings.Contains(typed.Hint, typed.Meta["command"].(string)) {
 			t.Fatalf("port hint omits the owning process or attempted command: %#v", err)
 		}
-		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply", "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
+		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply", "--platform-root", f.runner.PlatformRoot, "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
 			t.Fatalf("port hint omits explicit Gateway recovery: %#v", err)
 		}
 	}
 	planFailure := CheckPorts(plan, "plan")
 	var planDiagnostic *diag.Diag
 	if !errors.As(planFailure, &planDiagnostic) || planDiagnostic.Code != "KB_INSTALL_PORT_IN_USE" ||
-		!strings.Contains(planDiagnostic.Hint, contracts.ShellCommand("kb-create", "plan", "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
+		!strings.Contains(planDiagnostic.Hint, contracts.ShellCommand("kb-create", "plan", "--platform-root", f.runner.PlatformRoot, "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
 		t.Fatalf("plan port diagnostic does not suggest a Gateway address: %#v", planFailure)
 	}
 	_, err = startProcessForTest(t, f.runner, context.Background())
@@ -361,6 +473,7 @@ func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
 	platformRoot := filepath.Join(root, "current")
 	launcherHome := t.TempDir()
 	t.Setenv(KBHomeEnv, launcherHome)
+	t.Setenv("XDG_DATA_HOME", launcherHome)
 	expectedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatal(err)
@@ -389,14 +502,10 @@ func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
 	if active, ok := ActiveHost(state); !ok || active.PID != os.Getpid() || filepath.Clean(active.PlatformRoot) != filepath.Clean(platformRoot) {
 		t.Fatalf("fixture active host = %#v, %t", active, ok)
 	}
-	launcherState, err := StateHome()
-	if err != nil {
+	if err := (gateway.Registry{Path: gateway.RegistryPath("")}).Writer(gateway.Apply).Register(platformRoot, "http://127.0.0.1:4100"); err != nil {
 		t.Fatal(err)
 	}
-	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(platformRoot, "http://127.0.0.1:4100"); err != nil {
-		t.Fatal(err)
-	}
-	if roots, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Read(); err != nil || len(roots) != 1 {
+	if roots, err := (gateway.Registry{Path: gateway.RegistryPath("")}).Read(); err != nil || len(roots) != 1 {
 		t.Fatalf("fixture Gateway roots = %#v, %v", roots, err)
 	}
 
@@ -425,15 +534,65 @@ func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
 	}
 }
 
+func TestGatewayResourceConflictIdentifiesTheVerifiedLiveOwner(t *testing.T) {
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ProcessIdentityEnv, token)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	gatewayURL := "http://127.0.0.1:" + port
+	root := filepath.Join(t.TempDir(), "running root")
+	writeReceipt(t, root, &contracts.HostSpec{Command: fakeHostBinary, HealthURL: gatewayURL + "/health"})
+	expectedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformRoot := filepath.Join(root, "current")
+	t.Setenv(KBHomeEnv, t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	state, err := StateForRoot(platformRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	processIdentity, err := ProcessIdentityForPID(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(state.HostPID(), pidRecord{PID: os.Getpid(), ProcessIdentity: processIdentity,
+		InstallationID: installationID, PlatformRoot: platformRoot}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (gateway.Registry{Path: gateway.RegistryPath("")}).Writer(gateway.Apply).Register(
+		platformRoot, gatewayURL); err != nil {
+		t.Fatal(err)
+	}
+
+	failure := GatewayResourceConflict(gatewayURL, "apply", filepath.Join(t.TempDir(), "other root"))
+	if failure == nil || failure.Code != contracts.CodeHostAlreadyRunning || failure.Meta["platformRoot"] != expectedRoot ||
+		failure.Meta["pid"] != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("Gateway resource conflict = %#v; want verified running root and PID", failure)
+	}
+}
+
 func TestPortConflictSurfacesGatewayIndexDiagnosticForRequestedRoot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "requested platform")
 	launcherHome := t.TempDir()
 	t.Setenv(KBHomeEnv, launcherHome)
-	state, err := StateHome()
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(state.Dir, "gateway-roots.json")
+	t.Setenv("XDG_DATA_HOME", launcherHome)
+	path := gateway.RegistryPath("")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -479,18 +638,9 @@ func TestActiveHostRejectsAReusedPID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
-	configureHostProcess(child)
-	if err := child.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(child.Process.Pid, token)
-		_ = child.Wait()
-	})
+	command := startOwnedFakeHost(t, freePort(t), token)
 	if err := writeJSONFile(state.HostPID(), map[string]any{
-		"pid": child.Process.Pid, "platformRoot": "/tmp/recorded-kb-root", "processIdentity": "different-process-identity",
+		"pid": command.Process.Pid, "platformRoot": "/tmp/recorded-kb-root", "processIdentity": "different-process-identity",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -508,18 +658,9 @@ func TestStopDoesNotSignalAReusedPID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), foreignIdentity)
-	configureHostProcess(child)
-	if err := child.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(child.Process.Pid, foreignIdentity)
-		_ = child.Wait()
-	})
+	command := startOwnedFakeHost(t, freePort(t), foreignIdentity)
 	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
-		"pid": child.Process.Pid, "platformRoot": f.runner.PlatformRoot, "installationId": f.runner.InstallationID, "processIdentity": "recorded-owner-token",
+		"pid": command.Process.Pid, "platformRoot": f.runner.PlatformRoot, "installationId": f.runner.InstallationID, "processIdentity": "recorded-owner-token",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +672,7 @@ func TestStopDoesNotSignalAReusedPID(t *testing.T) {
 	if _, err := f.runner.Stop(context.Background()); err == nil {
 		t.Fatal("stop accepted a process whose identity differs from the recorded host")
 	}
-	if !processAlive(child.Process.Pid) {
+	if !processAlive(command.Process.Pid) {
 		t.Fatal("stop signalled the process after its PID identity failed validation")
 	}
 }
@@ -545,19 +686,10 @@ func TestOldHostRecordWithoutIdentityIsDiagnosedAndNeverSignalled(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
-	configureHostProcess(child)
-	if err := child.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(child.Process.Pid, token)
-		_ = child.Wait()
-	})
+	command := startOwnedFakeHost(t, freePort(t), token)
 	// This is the host.pid shape written before processIdentity was required.
 	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
-		"pid": child.Process.Pid, "platformRoot": f.runner.PlatformRoot,
+		"pid": command.Process.Pid, "platformRoot": f.runner.PlatformRoot,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +703,7 @@ func TestOldHostRecordWithoutIdentityIsDiagnosedAndNeverSignalled(t *testing.T) 
 	} else if failure, ok := err.(*diag.Diag); !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
 		t.Fatalf("old host record stop diagnostic = %#v", err)
 	}
-	if !processAlive(child.Process.Pid) {
+	if !processAlive(command.Process.Pid) {
 		t.Fatal("stop signalled the process for an old record without identity")
 	}
 }
@@ -585,18 +717,9 @@ func TestX26RecordWithoutInstallationIDFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
-	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
-	configureHostProcess(child)
-	if err := child.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		KillProcessGroupIfIdentity(child.Process.Pid, token)
-		_ = child.Wait()
-	})
+	command := startOwnedFakeHost(t, freePort(t), token)
 	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
-		"pid": child.Process.Pid, "processIdentity": token, "platformRoot": f.runner.PlatformRoot,
+		"pid": command.Process.Pid, "processIdentity": token, "platformRoot": f.runner.PlatformRoot,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +736,7 @@ func TestX26RecordWithoutInstallationIDFailsClosed(t *testing.T) {
 			if !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
 				t.Fatalf("x26 record diagnostic = %#v", err)
 			}
-			if !processAlive(child.Process.Pid) {
+			if !processAlive(command.Process.Pid) {
 				t.Fatal("operation signalled the live process from an x26-format record")
 			}
 		})
@@ -1019,8 +1142,16 @@ func TestNewRunnerRejectsAnInstallationWithoutAValidHost(t *testing.T) {
 			root := t.TempDir()
 			writeReceipt(t, root, spec)
 			_, err := NewRunner(root)
-			if code := launcherCode(t, err); code != "KB_HOST_SPEC_INVALID" {
+			if code := launcherCode(t, err); code != contracts.CodeHostSpecInvalid {
 				t.Fatalf("code %s", code)
+			}
+			var failure *diag.Diag
+			if !errors.As(err, &failure) {
+				t.Fatalf("invalid host error is not structured: %v", err)
+			}
+			wire, marshalErr := diag.ToEnvelope(failure)
+			if marshalErr != nil || wire.Code != contracts.CodeHostSpecInvalid {
+				t.Fatalf("invalid host diagnostic cannot be serialized: envelope=%+v error=%v", wire, marshalErr)
 			}
 		})
 	}

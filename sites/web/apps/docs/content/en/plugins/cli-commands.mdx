@@ -17,11 +17,11 @@ Every CLI command has:
 2. **A flag schema** — typed declaration of the command's flags, built with `defineFlags` or `defineCommandFlags`.
 3. **A handler** — the actual function that runs when the command is invoked, built with `defineCommand`.
 
-All three live in your plugin's entry package. The canonical example is [commit plugin](plugins/commit/entry/src/).
+Commands, flags, and their handlers live in the plugin package under `src/cli/`. The canonical example is [Commit](https://github.com/kb-labs/kb-labs/tree/main/plugins/commit/src/cli).
 
 ## 1 — The manifest entry
 
-From [commit plugin manifest](plugins/commit/entry/src/manifest.ts):
+From [commit plugin manifest](plugins/commit/src/manifest.ts):
 
 ```ts
 cli: {
@@ -52,7 +52,7 @@ cli: {
 
 ### `id`
 
-Format: `<group>:<action>` or just `<action>`. The group prefix is what a user types first (`pnpm kb commit commit` or `pnpm kb commit generate`); the runtime dispatches by exact ID match.
+Format: `<group>:<action>` or just `<action>`. The group prefix is what a user types first (`pnpm kb commit commit` or `pnpm kb commit plan create`); the runtime dispatches by exact ID match.
 
 IDs must be unique across all installed plugins. Two plugins declaring `commit:commit` is a conflict — the registry warns and keeps the first one loaded.
 

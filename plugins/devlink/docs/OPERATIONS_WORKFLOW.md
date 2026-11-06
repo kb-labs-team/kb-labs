@@ -39,16 +39,16 @@ package.json files ──freeze──> lock.json ──apply──> package.json
 **Commands:**
 ```bash
 # Create lock with caret pinning (default)
-kb devlink freeze --pin=caret
+kb devlink lock create --pin=caret
 
 # Replace existing lock completely
-kb devlink freeze --replace
+kb devlink lock create --replace
 
 # Remove entries not in current manifests
-kb devlink freeze --prune
+kb devlink lock create --prune
 
 # Preview changes
-kb devlink freeze --dry-run
+kb devlink lock create --dry-run
 ```
 
 **What gets backed up:**
@@ -114,7 +114,7 @@ kb devlink apply --yes
 
 ```bash
 # 1. Freeze current state (create snapshot)
-kb devlink freeze --pin=caret
+kb devlink lock create --pin=caret
 
 # 2. Apply with local links (switch to development mode)
 kb devlink apply --mode=local
@@ -122,7 +122,7 @@ kb devlink apply --mode=local
 # 3. Work on code (edits propagate via link:)
 
 # 4. When done, undo back to workspace protocol
-kb devlink undo
+kb devlink rollback
 ```
 
 ### Workflow 2: Update Dependencies
@@ -131,7 +131,7 @@ kb devlink undo
 # 1. Update package.json manually (add/remove deps)
 
 # 2. Freeze to capture new dependencies
-kb devlink freeze
+kb devlink lock create
 
 # 3. Apply to sync all consumers
 kb devlink apply
@@ -198,16 +198,16 @@ Backups are automatically cleaned up based on:
 
 ```bash
 # List all
-kb devlink backups
+kb devlink backup list
 
 # Filter by type
-kb devlink backups --type freeze
+kb devlink backup list --type freeze
 
 # Limit output
-kb devlink backups --limit 10
+kb devlink backup list --limit 10
 
 # JSON format
-kb devlink backups --json
+kb devlink backup list --json
 ```
 
 Output:
@@ -217,31 +217,31 @@ Output:
   2025-10-19T14-39-33.311Z  •  5m ago  •  freeze  •  331 deps ✓ lock
   2025-10-19T14-37-35.449Z  •  2m ago  •  apply   •  24 manifests
 
-💡 Use: kb devlink undo --backup <timestamp>
-💡 Cleanup: kb devlink backups --prune
+💡 Use: kb devlink rollback --backup <timestamp>
+💡 Cleanup: kb devlink backup list --prune
 ```
 
 ### Protect Important Backups
 
 ```bash
 # Mark as protected (won't auto-delete)
-kb devlink backups --protect 2025-10-19T14-39-33.311Z
+kb devlink backup list --protect 2025-10-19T14-39-33.311Z
 
 # Remove protection
-kb devlink backups --unprotect 2025-10-19T14-39-33.311Z
+kb devlink backup list --unprotect 2025-10-19T14-39-33.311Z
 ```
 
 ### Manual Cleanup
 
 ```bash
 # Preview cleanup
-kb devlink backups --prune --dry-run
+kb devlink backup list --prune --dry-run
 
 # Cleanup old backups
-kb devlink backups --prune
+kb devlink backup list --prune
 
 # Custom retention
-kb devlink backups --prune --keep 10 --keep-days 7
+kb devlink backup list --prune --keep 10 --keep-days 7
 ```
 
 ## Undo Operations
@@ -250,10 +250,10 @@ kb devlink backups --prune --keep 10 --keep-days 7
 
 ```bash
 # Preview undo
-kb devlink undo --dry-run
+kb devlink rollback --dry-run
 
 # Undo last operation
-kb devlink undo
+kb devlink rollback
 ```
 
 **Behavior:**
@@ -321,7 +321,7 @@ Example:
 🧭 Context
   Mode:           local via plan
   Last operation: freeze  •  5m ago
-  Undo available: yes    →  kb devlink undo
+  Undo available: yes    →  kb devlink rollback
   Backup:         2025-10-19T14-39-33Z
 
 🔒 Lock
@@ -337,25 +337,25 @@ kb devlink status
 
 ### 2. Use Dry-Run for Safety
 ```bash
-kb devlink freeze --dry-run      # Preview changes
+kb devlink lock create --dry-run      # Preview changes
 kb devlink apply --dry-run       # Preview changes
-kb devlink undo --dry-run        # Preview undo
+kb devlink rollback --dry-run        # Preview undo
 ```
 
 ### 3. Protect Important Snapshots
 ```bash
 # Before release
-kb devlink freeze --pin=exact
-kb devlink backups --protect $(kb devlink backups --limit 1 --json | jq -r '.backups[0].timestamp')
+kb devlink lock create --pin=exact
+kb devlink backup list --protect $(kb devlink backup list --limit 1 --json | jq -r '.backups[0].timestamp')
 ```
 
 ### 4. Regular Cleanup
 ```bash
 # Check what would be removed
-kb devlink backups --prune --dry-run
+kb devlink backup list --prune --dry-run
 
 # Cleanup
-kb devlink backups --prune
+kb devlink backup list --prune
 ```
 
 ## Troubleshooting
@@ -373,10 +373,10 @@ rm .kb/devlink/.lock
 Backup missing or corrupted:
 ```bash
 # List available backups
-kb devlink backups
+kb devlink backup list
 
 # Validate backups
-kb devlink backups --validate --all
+kb devlink backup list --validate --all
 ```
 
 ### Manifest Differs from Lock
@@ -387,7 +387,7 @@ Status shows LOCK_MISMATCH warning:
 kb devlink apply-lock --yes
 
 # Option 2: Update lock from manifests
-kb devlink freeze
+kb devlink lock create
 ```
 
 ## Technical Details

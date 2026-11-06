@@ -17,7 +17,7 @@ import (
 
 func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
 	cause := errors.New("invalid config: token=top-secret-value")
-	value := (&RequestValidationError{Code: CodeInputRequired, Field: "platformRoot", Cause: cause}).Diagnostic()
+	value := (&RequestValidationError{Field: "platformRoot", Cause: cause}).Diagnostic()
 	if value.Code != CodeInputRequired || value.Unwrap() != cause {
 		t.Fatalf("diag = %#v; cause was not kept internal", value)
 	}
@@ -82,6 +82,34 @@ func TestNewDiagRejectsMissingCauseForCauseRequiredInstallCodes(t *testing.T) {
 	}
 }
 
+func TestNewUpdateIncompatibleRequiresCatalogDetailFields(t *testing.T) {
+	for _, details := range []UpdateIncompatibleDetails{
+		{Kind: "plugin", ID: "commit"},
+		{Kind: "plugin", ID: "commit", SelectedVersion: "1.0.0"},
+		{Kind: "plugin", ID: "commit", RequiredRange: "<2.0.0"},
+	} {
+		func() {
+			defer func() {
+				if recovered := recover(); recovered == nil {
+					t.Fatalf("NewUpdateIncompatible accepted incomplete details: %+v", details)
+				}
+			}()
+			NewUpdateIncompatible(details)
+		}()
+	}
+
+	failure := NewUpdateIncompatible(UpdateIncompatibleDetails{
+		ID: "commit", Kind: "plugin", RequiredRange: "<2.0.0", SelectedVersion: "2.0.0",
+	})
+	envelope, err := diag.ToEnvelope(failure)
+	if err != nil {
+		t.Fatalf("complete update incompatibility does not satisfy catalog contract: %v", err)
+	}
+	if envelope.Message == "" || envelope.Hint == "" || envelope.Details["id"] != "commit" {
+		t.Fatalf("update incompatibility did not render catalog text and details: %+v", envelope)
+	}
+}
+
 func TestNewProjectRegistrationFailureBuildsCauseFromLocalContext(t *testing.T) {
 	status := 502
 	failure := NewProjectRegistrationFailure("login", "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", &status,
@@ -92,6 +120,19 @@ func TestNewProjectRegistrationFailureBuildsCauseFromLocalContext(t *testing.T) 
 		failure.Meta["requestStage"] != "login" || failure.Meta["httpStatus"] != status ||
 		failure.Meta["remoteCorrelationId"] != "0123456789abcdef0123456789abcdef" {
 		t.Fatalf("registration failure = %#v", failure)
+	}
+}
+
+func TestMarketplaceInstallDiagnosticPreservesCauseAndUsesInstallSpecRetry(t *testing.T) {
+	failure := MarketplaceInstallDiagnostic("@kb-labs/commit", "npm", errors.New("KB_PLUGIN_NOT_FOUND: package spec unavailable"))
+	if failure.Code != CodeMarketplaceInstallFailed || !strings.Contains(failure.Message, "@kb-labs/commit") || !strings.Contains(failure.Message, "npm") {
+		t.Fatalf("Marketplace diagnostic = %#v", failure)
+	}
+	if failure.Cause != "KB_PLUGIN_NOT_FOUND: package spec unavailable" || failure.Reason != failure.Cause {
+		t.Fatalf("Marketplace cause = %q, reason = %q", failure.Cause, failure.Reason)
+	}
+	if !strings.Contains(failure.Hint, "kb marketplace install @kb-labs/commit") || !strings.Contains(failure.Hint, "--scope platform") {
+		t.Fatalf("Marketplace retry hint omitted the install spec or platform scope: %q", failure.Hint)
 	}
 }
 

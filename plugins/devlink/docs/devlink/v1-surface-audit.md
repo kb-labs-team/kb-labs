@@ -1,10 +1,10 @@
 # DevLink v1 Surface Audit
 
-This document captures the public surfaces of `@kb-labs/devlink` that we keep for the v1 contract migration. It is aligned with the contract definitions in `@kb-labs/devlink-contracts` and the runtime in `packages/core/src` (November 2025).
+This document captures the public surfaces of `@kb-labs/devlink` that we keep for the v1 contract migration. It is aligned with the contract definitions in `@kb-labs/devlink/contracts` and the runtime in `packages/core/src` (November 2025).
 
 ## CLI Commands
 
-All commands are registered through the manifest derived from `@kb-labs/devlink-contracts`. The table summarises the public flags that must remain stable.
+All commands are registered through the manifest derived from `@kb-labs/devlink/contracts`. The table summarises the public flags that must remain stable.
 
 - `devlink:plan` → `./cli/plan#run` — plan workspace linking operations
   - Flags: `cwd`, `json`, `container`, `mode`, `roots`, `strict`

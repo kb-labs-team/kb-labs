@@ -2,7 +2,7 @@ name: Release — deliver immutable candidate
 
 # Delivery accepts only a bundle produced by release-build-candidate.yml. It
 # does not build, stage, version or resolve anything. The workflow engine
-# supplies the candidate run and target after its own approval transition. CI
+# supplies the candidate run and channel after its own approval transition. CI
 # publishes only to the non-installable candidate npm tag and never advances a
 # public channel pointer.
 
@@ -17,6 +17,14 @@ on:
         description: Candidate identifier to verify against provenance
         required: true
         type: string
+      expected_digest:
+        description: Trusted bundle digest shown in the hosted build run summary
+        required: true
+        type: string
+      commit_sha:
+        description: Expected full source commit shown in the hosted build run summary
+        required: true
+        type: string
       flow:
         description: Release flow in the bundle
         required: true
@@ -26,8 +34,8 @@ on:
         description: Exact release version in the bundle
         required: true
         type: string
-      target:
-        description: Delivery target selected by the workflow engine
+      channel:
+        description: Candidate release channel selected by the workflow engine
         required: true
         type: choice
         options: [canary, stable]
@@ -37,14 +45,26 @@ permissions:
   actions: read
 
 concurrency:
-  group: release-delivery-${{ inputs.candidate_id }}-${{ inputs.target }}
+  group: release-delivery-${{ inputs.candidate_id }}-${{ inputs.channel }}
   cancel-in-progress: false
 
 jobs:
   deliver:
-    name: Deliver ${{ inputs.candidate_id }} to ${{ inputs.target }}
+    name: Deliver ${{ inputs.candidate_id }} from ${{ inputs.channel }} channel
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    services:
+      verdaccio:
+        image: verdaccio/verdaccio:5
+        ports:
+          - 4873:4873
+        volumes:
+          - ${{ github.workspace }}/.kb/verdaccio/config.yaml:/verdaccio/conf/config.yaml:ro
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:4873/-/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     steps:
       - name: Download immutable candidate bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -54,27 +74,10 @@ jobs:
           name: release-candidate-${{ inputs.candidate_id }}
           path: ${{ runner.temp }}/candidate-bundle
 
-      - name: Resolve candidate commit before checkout
-        env:
-          EXPECTED_ID: ${{ inputs.candidate_id }}
-          EXPECTED_FLOW: ${{ inputs.flow }}
-          EXPECTED_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const p = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/candidate-bundle/provenance.json`, 'utf8'));
-          for (const [key, expected] of [['candidateId', process.env.EXPECTED_ID], ['flow', process.env.EXPECTED_FLOW], ['version', process.env.EXPECTED_VERSION]]) {
-            if (p[key] !== expected) throw new Error(`candidate ${key} mismatch: ${p[key]} != ${expected}`);
-          }
-          if (!/^[a-f0-9]{40}$/i.test(p.commit ?? '')) throw new Error(`invalid candidate commit: ${p.commit}`);
-          fs.appendFileSync(process.env.GITHUB_ENV, `CANDIDATE_COMMIT=${p.commit}\n`);
-          NODE
-
       - name: Checkout candidate delivery tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ env.CANDIDATE_COMMIT }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           clean: true
 
@@ -103,31 +106,6 @@ jobs:
         run: go build -o kb-devkit .
         working-directory: tools/kb-devkit
 
-      - name: Verify candidate identity and bundle digest
-        env:
-          EXPECTED_ID: ${{ inputs.candidate_id }}
-          EXPECTED_FLOW: ${{ inputs.flow }}
-          EXPECTED_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          test -s .kb/release/bundle/provenance.json
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const crypto = require('node:crypto');
-          const p = JSON.parse(fs.readFileSync('.kb/release/bundle/provenance.json', 'utf8'));
-          for (const [key, expected] of [['candidateId', process.env.EXPECTED_ID], ['flow', process.env.EXPECTED_FLOW], ['version', process.env.EXPECTED_VERSION]]) {
-            if (p[key] !== expected) throw new Error(`candidate ${key} mismatch: ${p[key]} != ${expected}`);
-          }
-          const lines = fs.readFileSync('.kb/release/bundle/bundle.sha256', 'utf8').trim().split(/\r?\n/).filter(Boolean);
-          for (const line of lines) {
-            const match = line.match(/^([a-f0-9]{64})  (.+)$/);
-            if (!match) throw new Error(`invalid bundle checksum line: ${line}`);
-            const actual = crypto.createHash('sha256').update(fs.readFileSync(`.kb/release/bundle/${match[2]}`)).digest('hex');
-            if (actual !== match[1]) throw new Error(`bundle checksum mismatch: ${match[2]}`);
-          }
-          if (!fs.existsSync('.kb/release/bundle/bundle.modes')) throw new Error('candidate bundle is missing bundle.modes');
-          NODE
-
       - name: Install delivery tooling
         run: pnpm install --frozen-lockfile
 
@@ -135,30 +113,37 @@ jobs:
         # Delivery only invokes the CLI and release plugin. Building the full
         # workspace here needlessly serializes hundreds of unrelated packages
         # and can exhaust the runner before immutable artifacts are delivered.
-        run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release-manager-cli --no-cache
+        run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release --no-cache
 
-      - name: Deliver exact npm tarballs
+      - name: Resolve declared channel delivery target
+        id: delivery-target
+        env:
+          FLOW: ${{ inputs.flow }}
+          CHANNEL: ${{ inputs.channel }}
+        run: node .kb/workflows/scripts/resolve-candidate-gate.mjs --flow "$FLOW" --channel "$CHANNEL"
+
+      - name: Deliver exact candidate tarballs
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          TARGET: ${{ inputs.target }}
           FLOW: ${{ inputs.flow }}
           VERSION: ${{ inputs.version }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          EXPECTED_DIGEST: ${{ inputs.expected_digest }}
           CANDIDATE_TAG: candidate-${{ inputs.candidate_id }}
+          TARGET: ${{ steps.delivery-target.outputs.target }}
         run: |
           set -euo pipefail
-          set +e
-          pnpm kb release deliver \
+          pnpm kb release artifact publish \
             --flow "$FLOW" \
-            --release-tag "${FLOW}-v${VERSION}" \
-            --artifacts-dir .kb/release/bundle/npm \
-            --target npm \
+            --bundle-dir .kb/release/bundle \
+            --expected-digest "$EXPECTED_DIGEST" \
+            --candidate-id "$CANDIDATE_ID" \
+            --commit "$COMMIT_SHA" \
+            --version "$VERSION" \
+            --target "$TARGET" \
             --tag "$CANDIDATE_TAG" \
             --json
-          status=$?
-          set -e
-          if [ "$status" -ne 0 ] && [ "$status" -ne 134 ]; then
-            exit "$status"
-          fi
 
       - name: Deliver exact binary assets
         if: inputs.flow == 'platform'

@@ -28,9 +28,12 @@ workflow only verifies and publishes that bundle. For a platform candidate:
 2. `release-build-candidate.yml` builds packages and Go binaries once, stages
    exact npm tarballs and generates the binary manifest from GoReleaser's
    checksums;
-3. the same workflow seals `.kb/release/release-index.json` and uploads one
-   immutable candidate bundle with provenance and digests;
-4. `release-deliver-candidate.yml` downloads and verifies that exact bundle;
+3. the same workflow seals `.kb/release/release-index.json`, uploads one
+   immutable candidate bundle, and exposes its trusted identity and semantic
+   digest in the run summary outside the bundle;
+4. `release-deliver-candidate.yml` downloads the bundle, verifies the GitHub
+   artifact archive digest, and checks the extracted bytes against the trusted
+   summary values;
 5. it publishes the exact npm tarballs and binary assets to the requested
    channel;
 6. it runs a clean `kb-create apply` against the public candidate and asserts

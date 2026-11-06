@@ -10,7 +10,7 @@ const snippet = readFileSync(snippetPath, 'utf8')
 describe('CLAUDE.md.snippet', () => {
   it('does not reference the nonexistent `kb plugins list` command', () => {
     // The real command is under the marketplace plugin's `plugins` subgroup
-    // (plugins/marketplace/entry/src/manifest.ts: 'marketplace plugins list').
+    // (cli/commands/src/commands/system/marketplace/index.ts: 'marketplace plugins list').
     // `kb plugins list` was never a registered command and fails with
     // "Did you mean: kb marketplace plugins list".
     expect(snippet).not.toMatch(/`kb plugins list`/)

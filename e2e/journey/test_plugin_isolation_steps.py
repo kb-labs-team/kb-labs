@@ -25,8 +25,18 @@ class PluginIsolationStepsTest(unittest.TestCase):
             env = {"HOME": directory, "KB_PLATFORM_ROOT": str(platform)}
 
             red = Journey("local", "plugin-isolation-red")
+            staged_fixture = False
 
             def available(command, **_kwargs):
+                nonlocal staged_fixture
+                if command[:3] == ["git", "-C", str(project_b)]:
+                    if command[3] == "add":
+                        staged_fixture = True
+                    elif command[3] == "reset":
+                        staged_fixture = False
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                if "review" in command and Path(_kwargs.get("cwd", "")) == project_b and not staged_fixture:
+                    return subprocess.CompletedProcess(command, 1, "", "No changed files found")
                 return subprocess.CompletedProcess(command, 0, "", "")
 
             run_project_plugin_availability_steps(red, "kb", project_a, project_b, env, runner=available)
@@ -36,12 +46,22 @@ class PluginIsolationStepsTest(unittest.TestCase):
             ])
 
             green = Journey("local", "plugin-isolation-green")
+            staged_fixture = False
 
             def unavailable(command, **_kwargs):
+                nonlocal staged_fixture
+                if command[:3] == ["git", "-C", str(project_b)]:
+                    if command[3] == "add":
+                        staged_fixture = True
+                    elif command[3] == "reset":
+                        staged_fixture = False
+                    return subprocess.CompletedProcess(command, 0, "", "")
                 if "review" in command and Path(_kwargs.get("cwd", "")) == project_b:
+                    if not staged_fixture:
+                        return subprocess.CompletedProcess(command, 1, "", "No changed files found")
                     payload = {"findings": [], "metadata": {"mode": "heuristic", "analyzedFiles": 1}}
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": payload}), "")
-                package = "@kb-labs/review-entry" if "review" in command else "@kb-labs/commit-entry"
+                package = "@kb-labs/review" if "review" in command else "@kb-labs/commit"
                 output = f"KB_PLUGIN_NOT_FOUND: {package} is not installed. Run kb marketplace install {package}."
                 return subprocess.CompletedProcess(command, 1, "", output)
 

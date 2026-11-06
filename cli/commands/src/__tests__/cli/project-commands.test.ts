@@ -5,7 +5,7 @@
  * project folders; the real HOME / ~/.kb is never touched.
  */
 
-import { mkdirSync, mkdtempSync, existsSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, existsSync, readdirSync, realpathSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,7 +19,12 @@ let cwd: string;
 
 type Payload = Record<string, unknown> & {
   ok?: boolean;
-  data?: { projects?: Array<{ id: string; name: string; path: string; pathExists: boolean }>; project?: { id: string; name: string; path: string }; [key: string]: unknown };
+  data?: {
+    projects?: Array<{ id: string; name: string; path: string; pathExists: boolean }>;
+    diagnostics?: Array<{ path: string; code: string; message: string; severity: string; hint: string }>;
+    project?: { id: string; name: string; path: string };
+    [key: string]: unknown;
+  };
   error?: { code: string; hint: string; message: string };
 };
 
@@ -41,8 +46,13 @@ function makeCtx(): { ctx: PluginContextV3; json: Payload[]; text: string[] } {
       error: (e: unknown) => {
         text.push(String(e));
       },
-      warn: (m: string) => {
+      warn: (m: string, options) => {
         text.push(m);
+        if (options?.title) text.push(options.title);
+        for (const section of options?.sections ?? []) {
+          if (section.header) text.push(section.header);
+          for (const item of section.items) text.push(typeof item === 'string' ? item : item.text);
+        }
       },
       info: (m: string) => {
         text.push(m);
@@ -125,8 +135,55 @@ describe('project add / list', () => {
   it('does not print human text beside the JSON envelope for an empty registry', async () => {
     const list = await run(projectList, []);
     expect(list.code).toBe(0);
-    expect(list.json).toEqual([{ ok: true, data: { projects: [], total: 0 } }]);
+    expect(list.json).toEqual([{ ok: true, data: { projects: [], total: 0, diagnostics: [] } }]);
     expect(list.text).toEqual([]);
+  });
+
+  // case: S-124.12
+  it('lists identity-corrupt registry records as structured diagnostics and human warnings', async () => {
+    const validPath = makeProject('valid-project', false);
+    const anotherValidPath = makeProject('another-valid-project', false);
+    const corruptPath = makeProject('corrupt-project', false);
+    const valid = await run(projectAdd, [validPath]);
+    const anotherValid = await run(projectAdd, [anotherValidPath]);
+    const corrupt = await run(projectAdd, [corruptPath]);
+    const validId = dataOf(valid.json[0])?.project?.id;
+    const anotherValidId = dataOf(anotherValid.json[0])?.project?.id;
+    const corruptId = dataOf(corrupt.json[0])?.project?.id;
+    expect(validId).toBeTruthy();
+    expect(anotherValidId).toBeTruthy();
+    expect(corruptId).toBeTruthy();
+
+    const registryFile = join(kbHome, 'projects.json');
+    const registry = JSON.parse(readFileSync(registryFile, 'utf8'));
+    const badRecord = registry.projects.find((project: { id: string }) => project.id === corruptId);
+    expect(badRecord).toBeDefined();
+    badRecord.id = 'prj_0000000000000000';
+    writeFileSync(registryFile, JSON.stringify(registry));
+    const corruptBytes = readFileSync(registryFile);
+
+    const jsonList = await run(projectList, []);
+    expect(jsonList.code).toBe(0);
+    const data = dataOf(jsonList.json[0]);
+    expect(data?.projects?.map((project) => project.id)).toEqual(expect.arrayContaining([validId, anotherValidId]));
+    expect(data?.projects?.map((project) => project.id)).not.toContain(badRecord.id);
+    expect(data?.diagnostics).toEqual([expect.objectContaining({
+      path: corruptPath,
+      code: 'KB_PROJECT_REGISTRY_CORRUPT',
+      severity: 'warning',
+      message: expect.stringContaining(badRecord.id),
+      hint: expect.stringContaining('kb project add'),
+    })]);
+    expect(data?.diagnostics?.[0]).not.toHaveProperty('id');
+
+    const human = await run(projectList, [], { json: false });
+    expect(human.code).toBe(0);
+    expect(human.text.join('\n')).toContain('Project registry warnings');
+    expect(human.text.join('\n')).toContain(badRecord.id);
+    expect(human.text.join('\n')).toContain(corruptPath);
+    expect(human.text.join('\n')).toContain(data?.diagnostics?.[0]?.message ?? '');
+    expect(human.text.join('\n')).toContain(data?.diagnostics?.[0]?.hint ?? '');
+    expect(readFileSync(registryFile)).toEqual(corruptBytes);
   });
 
   it('registers the current folder without requiring or creating .kb/', async () => {

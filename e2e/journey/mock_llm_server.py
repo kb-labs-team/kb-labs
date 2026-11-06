@@ -25,19 +25,41 @@ def valid_openai_request(request: dict) -> bool:
     )
 
 
-def openai_stream_chunks(request: dict):
+def openai_stream_chunks(request: dict, *, fail_after_chunk: bool = False):
     """Yield OpenAI chat-completion SSE chunks, including the terminal marker."""
     model = request.get("model", "journey-mock-model")
     completion_id = "journey-mock-stream"
     common = {"id": completion_id, "object": "chat.completion.chunk", "created": 1, "model": model}
     first = {**common, "choices": [{"index": 0, "delta": {"content": "OPENAI_MOCK_RESPONSE"}, "finish_reason": None}]}
     yield f"data: {json.dumps(first)}\n\n"
-    if model == "journey-provider-stream-error":
+    if fail_after_chunk:
         yield "data: {malformed provider stream frame\n\n"
         return
     final = {**common, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
     yield f"data: {json.dumps(final)}\n\n"
     yield "data: [DONE]\n\n"
+
+
+def vibeproxy_stream_chunks(request: dict, *, fail_after_chunk: bool = False):
+    """Yield VibeProxy Messages SSE events, optionally ending with a provider error."""
+    model = request.get("model", "journey-mock-model")
+    message = {
+        "id": "journey-mock-stream", "type": "message", "role": "assistant",
+        "model": model, "content": [], "stop_reason": None, "stop_sequence": None,
+        "usage": {"input_tokens": 1, "output_tokens": 0},
+    }
+    yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': message})}\n\n"
+    yield "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+    yield "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"VIBEPROXY_MOCK_RESPONSE\"}}\n\n"
+    if fail_after_chunk:
+        error = {"type": "error", "error": {
+            "type": "api_error", "message": "The mock provider is temporarily unavailable.",
+        }}
+        yield f"event: error\ndata: {json.dumps(error)}\n\n"
+        return
+    yield "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+    yield "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n"
+    yield "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 
 
 def commit_tool_completion(request: dict) -> dict | None:
@@ -82,6 +104,19 @@ def commit_tool_completion(request: dict) -> dict | None:
     }
 
 
+FAILURE_MODES = {
+    "journey-provider-401": "authentication",
+    "journey-provider-stream-error": "provider-unavailable",
+}
+
+
+def failure_mode(request: dict, messages_text: str) -> str | None:
+    for trigger, mode in FAILURE_MODES.items():
+        if request.get("model") == trigger or trigger in messages_text:
+            return mode
+    return None
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/healthz":
@@ -112,23 +147,46 @@ class Handler(BaseHTTPRequestHandler):
             message.get("content", "") if isinstance(message.get("content"), str) else ""
             for message in messages if isinstance(message, dict)
         )
-        if not is_vibeproxy and (
-            request.get("model") == "journey-provider-401" or "journey-provider-401" in messages_text
-        ):
-            body = json.dumps({"error": {
-                "message": "The mock provider rejected the journey API key.",
-                "type": "authentication_error",
-                "param": None,
-                "code": "invalid_api_key",
-            }}).encode()
+        mode = failure_mode(request, messages_text)
+        if mode == "authentication":
+            error = {"message": "The mock provider rejected the journey API key."}
+            if is_vibeproxy:
+                error.update({"type": "authentication_error", "request_id": "journey-mock-auth"})
+                response = {"type": "error", "error": error}
+            else:
+                error.update({"type": "authentication_error", "param": None, "code": "invalid_api_key"})
+                response = {"error": error}
+            body = json.dumps(response).encode()
             self.send_response(401)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
             return
-        if not is_vibeproxy and request.get("stream") is True:
-            body = "".join(openai_stream_chunks(request)).encode()
+        if mode == "provider-unavailable":
+            if request.get("stream") is True:
+                stream = vibeproxy_stream_chunks if is_vibeproxy else openai_stream_chunks
+                body = "".join(stream(request, fail_after_chunk=True)).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "close")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            body = json.dumps({"type": "error", "error": {
+                "type": "api_error", "message": "The mock provider is temporarily unavailable.",
+            }}).encode()
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if request.get("stream") is True:
+            stream = vibeproxy_stream_chunks if is_vibeproxy else openai_stream_chunks
+            body = "".join(stream(request)).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")

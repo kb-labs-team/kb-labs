@@ -44,6 +44,9 @@ type Operation struct {
 	// KeepStopped leaves the host stopped after a successful Change
 	// (uninstall: there is no host left to run).
 	KeepStopped bool
+	// KeepStoppedIf is evaluated after Change when its result determines whether
+	// the host can safely resume (for example, a repair still needs user input).
+	KeepStoppedIf func() bool
 }
 
 // Outcome describes a completed operation.
@@ -67,18 +70,19 @@ func Run(ctx context.Context, host Host, op Operation) (Outcome, error) {
 	recoveryPoint, changeErr := op.Change(ctx, wasRunning)
 	outcome.RecoveryPoint = recoveryPoint
 	if changeErr != nil {
-		failure := contracts.NewDiag(contracts.CodeUpdateApplyFailed,
-			fmt.Sprintf("The %s could not be applied; the previous version %s was restored.", op.Name, op.PreviousVersion),
-			"Inspect the local log and the diagnostic dossier, fix the reported cause and run the command again.", changeErr)
-		failure.Meta = map[string]any{"version": op.PreviousVersion}
+		cause := changeErr
 		if wasRunning {
 			if resumeErr := host.Resume(recovery); resumeErr != nil {
-				failure.Meta["hostRestart"] = resumeErr.Error()
+				cause = errors.Join(changeErr, fmt.Errorf("restart the previous host: %w", resumeErr))
 			}
 		}
+		failure := contracts.NewDiag(contracts.CodeUpdateApplyFailed,
+			fmt.Sprintf("The %s could not be applied; the previous version %s was restored.", op.Name, op.PreviousVersion),
+			"Inspect the local log and the diagnostic dossier, fix the reported cause and run the command again.", cause)
+		failure.Meta = map[string]any{"version": op.PreviousVersion}
 		return outcome, failure
 	}
-	if op.KeepStopped || !wasRunning {
+	if op.KeepStopped || op.KeepStoppedIf != nil && op.KeepStoppedIf() || !wasRunning {
 		return outcome, nil
 	}
 	resumeErr := host.Resume(ctx)

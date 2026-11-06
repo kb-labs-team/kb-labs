@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
-import type { IEntityRegistry } from "@kb-labs/core-registry";
+import type { IEntityRegistry } from "@kb-labs/plugin-contracts";
 import { platform } from "@kb-labs/core-runtime";
 import type { RestApiConfig } from "@kb-labs/rest-api-core";
 import { registerPluginRouteNotFoundHandler } from "../plugin-route-not-found.js";
@@ -73,7 +73,7 @@ describe("plugin route not-found response", () => {
       code: "KB_PLUGIN_NOT_INSTALLED",
       hint: "Run `kb marketplace plugins list` to discover available plugins.",
     });
-    expect(JSON.stringify(response.json())).not.toContain("@kb-labs/mistyped-entry");
+    expect(JSON.stringify(response.json())).not.toContain("@kb-labs/mistyped");
   });
 
   // case: S-203.2

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from '../checks/lib/check-result.mjs';
 import { spawnSync } from 'node:child_process';
 
 const workspaceRoot = process.env.KB_DEVKIT_WORKSPACE_ROOT ?? process.cwd();
@@ -19,5 +20,5 @@ const issues = result.status === 0 ? [] : [{
   fix: `Rerun with: ${rerunCommand}`,
   file: workspaceRoot,
 }];
-process.stdout.write(`${JSON.stringify({ issues })}\n`);
+writeCheckResult(issues);
 process.exitCode = result.status === 0 ? 0 : 1;

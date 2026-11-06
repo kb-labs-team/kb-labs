@@ -37,7 +37,10 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 	if err != nil {
 		t.Fatalf("discover workspace packages: %v", err)
 	}
-	pkgs := expandBuildDependencyClosure(ws.Packages, ws.Packages)
+	pkgs, err := expandBuildDependencyClosure(ws.Packages, ws.Packages)
+	if err != nil {
+		t.Fatal(err)
+	}
 	nodes, err := buildDAG(pkgs, []string{"build"}, cfg, ws)
 	if err != nil {
 		t.Fatalf("build workspace task DAG: %v", err)
@@ -49,7 +52,7 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 	byName := make(map[string]workspace.Package, len(ws.Packages))
 	for _, pkg := range ws.Packages {
 		byName[pkg.Name] = pkg
-		def := ResolveTaskDef(cfg, "build", pkg.Category)
+		def := ResolvePackageTaskDef(ws, cfg, "build", pkg)
 		if def == nil {
 			if _, scheduled := nodes[nodeKey{pkg.Name, "build"}]; scheduled {
 				t.Errorf("package %s has a build node without a matching task definition", pkg.Name)
@@ -62,11 +65,18 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 	}
 
 	for key, node := range nodes {
-		def := ResolveTaskDef(cfg, "build", node.pkg.Category)
+		if key.task != "build" {
+			continue
+		}
+		def := ResolvePackageTaskDef(ws, cfg, "build", node.pkg)
 		if def == nil || !containsTask(def.Deps, "^build") {
 			continue
 		}
-		for _, depName := range readWorkspaceDeps(node.pkg.Dir, byName) {
+		depNames, err := WorkspaceDeps(node.pkg.Dir, byName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, depName := range depNames {
 			if depName == node.pkg.Name {
 				continue
 			}
@@ -77,7 +87,7 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 			}
 			found := false
 			for _, actual := range node.deps {
-				if actual == depKey {
+				if actual.to == depKey {
 					found = true
 					break
 				}
@@ -105,7 +115,10 @@ func TestBuildPkgDepMapFiltersSelfReference(t *testing.T) {
 		"@kb/devkit": pkgs[0],
 	}
 
-	depMap := buildPkgDepMap(pkgs, pkgByName)
+	depMap, err := buildPkgDepMap(pkgs, pkgByName)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if deps, ok := depMap["@kb/devkit"]; ok && len(deps) > 0 {
 		t.Fatalf("self-reference not filtered: got deps %v for @kb/devkit", deps)
@@ -134,13 +147,111 @@ func TestBuildPkgDepMapKeepsLegitDeps(t *testing.T) {
 		"@kb/app":   pkgs[1],
 	}
 
-	depMap := buildPkgDepMap(pkgs, pkgByName)
+	depMap, err := buildPkgDepMap(pkgs, pkgByName)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// @kb/app should depend on @kb/types but NOT on itself
 	deps := depMap["@kb/app"]
-	if len(deps) != 1 || deps[0] != "@kb/types" {
-		t.Fatalf("@kb/app deps = %v, want [@kb/types]", deps)
+	if len(deps) != 1 || deps[0].Name != "@kb/types" || deps[0].Kind != DependenciesKind {
+		t.Fatalf("@kb/app deps = %v, want [@kb/types dependencies]", deps)
 	}
+}
+
+func TestAffectedPackagesSelectsFullGraphForUnownedPaths(t *testing.T) {
+	root := t.TempDir()
+	writeRootWorkspace(t, root)
+	core := newPkg(t, root, "packages/core", "@fixture/core", `{"name":"@fixture/core"}`)
+	app := newPkg(t, root, "apps/app", "@fixture/app", `{"name":"@fixture/app","dependencies":{"@fixture/core":"workspace:*"}}`)
+	cfg := &config.DevkitConfig{
+		Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{{Name: "packages", Category: config.CategoryConfig{Match: []string{"packages/*", "apps/*"}, Preset: "node-lib"}}}},
+		Tasks:     map[string]config.TaskConfig{"build": {{Command: "echo build"}}},
+	}
+	ws, err := workspace.New(root, cfg)
+	if err != nil {
+		t.Fatalf("workspace.New error: %v", err)
+	}
+	t.Run("mixed package and root configuration", func(t *testing.T) {
+		selection, err := selectAffectedPackages(ws, []string{filepath.Join(core.Dir, "src", "index.ts"), filepath.Join(root, "tsconfig.base.json")}, cfg.Affected.FullInputs)
+		if err != nil {
+			t.Fatalf("AffectedPackages error: %v", err)
+		}
+		if len(selection.Packages) != len(ws.Packages) || selection.Reason != "full: unowned path tsconfig.base.json" {
+			t.Fatalf("selection = (%v, %q), want full graph and root-path reason", packageNames(selection.Packages), selection.Reason)
+		}
+	})
+
+	t.Run("root only", func(t *testing.T) {
+		selection, err := selectAffectedPackages(ws, []string{filepath.Join(root, "pnpm-workspace.yaml")}, cfg.Affected.FullInputs)
+		if err != nil {
+			t.Fatalf("AffectedPackages error: %v", err)
+		}
+		if len(selection.Packages) != len(ws.Packages) || selection.Reason != "full: unowned path pnpm-workspace.yaml" {
+			t.Fatalf("selection = (%v, %q), want full graph and root-path reason", packageNames(selection.Packages), selection.Reason)
+		}
+	})
+
+	t.Run("package only", func(t *testing.T) {
+		selection, err := selectAffectedPackages(ws, []string{filepath.Join(core.Dir, "src", "index.ts")}, cfg.Affected.FullInputs)
+		if err != nil {
+			t.Fatalf("AffectedPackages error: %v", err)
+		}
+		if len(selection.Packages) != 2 || selection.Reason != "" {
+			t.Fatalf("selection = (%v, %q), want changed package and dependent without full-selection reason", packageNames(selection.Packages), selection.Reason)
+		}
+	})
+	t.Run("configured shared package input", func(t *testing.T) {
+		sharedInput := "packages/core/shared-catalog.json"
+		selection, err := selectAffectedPackages(ws, []string{filepath.Join(root, filepath.FromSlash(sharedInput))}, []string{sharedInput})
+		if err != nil {
+			t.Fatalf("AffectedPackages error: %v", err)
+		}
+		if len(selection.Packages) != len(ws.Packages) || selection.Reason != "full: configured shared input "+sharedInput {
+			t.Fatalf("selection = (%v, %q), want full graph and configured-input reason", packageNames(selection.Packages), selection.Reason)
+		}
+	})
+	t.Run("workspace policy files select the full graph", func(t *testing.T) {
+		for _, relative := range []string{"pnpm-lock.yaml", "package.json", "pnpm-workspace.yaml", "devkit.yaml", "tsconfig.base.json", "scripts/ci/remote-verify.mjs"} {
+			t.Run(relative, func(t *testing.T) {
+				selection, err := selectAffectedPackages(ws, []string{filepath.Join(root, filepath.FromSlash(relative))}, cfg.Affected.FullInputs)
+				if err != nil {
+					t.Fatalf("AffectedPackages error: %v", err)
+				}
+				if len(selection.Packages) != len(ws.Packages) || selection.Reason != "full: unowned path "+relative {
+					t.Fatalf("selection = (%v, %q), want full graph for %s", packageNames(selection.Packages), selection.Reason, relative)
+				}
+			})
+		}
+	})
+	_ = app
+}
+
+func TestAffectedPackagesFromFilesUsesWorkspaceOwnership(t *testing.T) {
+	root := t.TempDir()
+	writeRootWorkspace(t, root)
+	core := newPkg(t, root, "packages/core", "@fixture/core", `{"name":"@fixture/core"}`)
+	app := newPkg(t, root, "apps/app", "@fixture/app", `{"name":"@fixture/app","dependencies":{"@fixture/core":"workspace:*"}}`)
+	cfg := &config.DevkitConfig{
+		Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{{Name: "packages", Category: config.CategoryConfig{Match: []string{"packages/*", "apps/*"}, Preset: "node-lib"}}}},
+		Tasks:     map[string]config.TaskConfig{"build": {{Command: "echo build"}}},
+	}
+	ws, err := workspace.New(root, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := AffectedPackagesFromFiles(ws, []string{"packages/core/src/index.ts"}, cfg.Affected.FullInputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selection.Packages) != 2 || selection.Reason != "" {
+		t.Fatalf("selection = (%v, %q), want core and dependent app", packageNames(selection.Packages), selection.Reason)
+	}
+	if _, err := AffectedPackagesFromFiles(ws, []string{""}, cfg.Affected.FullInputs); err == nil {
+		t.Fatal("empty changed-file path was accepted")
+	}
+	_ = core
+	_ = app
 }
 
 // case: S-179.37
@@ -189,7 +300,10 @@ func TestExpandBuildDependencyClosureAddsUpstreamPackages(t *testing.T) {
 		{Name: "@kb/core", Dir: coreDir},
 		{Name: "@kb/app", Dir: appDir},
 	}
-	closure := expandBuildDependencyClosure(all[1:], all)
+	closure, err := expandBuildDependencyClosure(all[1:], all)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(closure) != 2 || closure[0].Name != "@kb/core" || closure[1].Name != "@kb/app" {
 		t.Fatalf("closure = %v, want [@kb/core @kb/app]", closure)
@@ -244,7 +358,7 @@ func TestBuildDAGSelfDepDoesNotCreateCycle(t *testing.T) {
 
 	// @kb/core depends on @kb/devkit only
 	coreNode := nodes[nodeKey{"@kb/core", "build"}]
-	if len(coreNode.deps) != 1 || coreNode.deps[0].pkg != "@kb/devkit" {
+	if len(coreNode.deps) != 1 || coreNode.deps[0].to.pkg != "@kb/devkit" {
 		t.Fatalf("@kb/core deps = %v, want [{@kb/devkit build}]", coreNode.deps)
 	}
 
@@ -256,7 +370,7 @@ func TestBuildDAGSelfDepDoesNotCreateCycle(t *testing.T) {
 	for k, n := range nodes {
 		_ = k
 		for _, dep := range n.deps {
-			inDegree[nodeKey{dep.pkg, dep.task}]++
+			inDegree[dep.to]++
 		}
 	}
 

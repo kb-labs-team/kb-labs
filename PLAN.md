@@ -12,11 +12,11 @@ PIPELINE_STATUS: NEEDS_IMPLEMENTATION
 Because job-level status is the only retry granularity today, and even after a hypothetical job split the run-seeding gap would still break cross-job template references, the fix must happen at the `rerunWorkflow`/engine level regardless of whether `task-to-pr.yaml` is split.
 
 ## Implementation steps
-1. **`plugins/workflow/engine/src/engine.ts`** — Decide the seeding mechanism:
+1. **`services/workflow/engine/src/engine.ts`** — Decide the seeding mechanism:
    - Either extend `runFromSpec`'s input type to accept an optional `stepOutputs: Record<string, Record<string, unknown>>` (and initial job/step statuses) that `createRun` threads into the new run's interpolation context, or
    - Route `failedOnly` reruns through `replayRun(sourceRunId, { fromStepId, stepOutputs })` instead of `runFromSpec`, computing `fromStepId` as the first failed step's id and `stepOutputs` from the source run's completed (non-filtered) jobs.
    - Recommend the `replayRun` route since that machinery (marking prior steps `success`, resuming interpolation context) already exists and is tested — avoids duplicating logic in two places.
-2. **`plugins/workflow/daemon/src/host/workflow-host-service.ts`** (`rerunWorkflow`, ~lines 315-382) — For the `failedOnly` case:
+2. **`services/workflow/daemon/src/host/workflow-host-service.ts`** (`rerunWorkflow`, ~lines 315-382) — For the `failedOnly` case:
    - Collect `stepOutputs` from `sourceRun`'s steps belonging to jobs that are NOT in the failed/interrupted set (the currently-filtered-out successful jobs).
    - Instead of building a trimmed `spec.jobs` + calling `engine.runFromSpec`, call `engine.replayRun(sourceRun.id, { fromStepId: <first failed step id>, stepOutputs })`.
    - Keep a fallback to the current fresh-run behavior if no source-run snapshot/history is available (e.g., very old runs without stored outputs).

@@ -21,4 +21,4 @@ echo "  - app  (app.kblabs.dev):  http://localhost:3002"
 echo
 echo "Press Ctrl+C to stop all services."
 
-pnpm dev
+pnpm dev:all

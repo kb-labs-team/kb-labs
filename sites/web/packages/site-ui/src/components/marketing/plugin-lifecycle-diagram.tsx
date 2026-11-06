@@ -5,6 +5,7 @@ import { cn } from '../../lib/utils';
 
 export interface PluginLifecycleDiagramProps {
   className?: string;
+  subtitles: Record<'manifest' | 'install' | 'discover' | 'register' | 'execute', string>;
 }
 
 // ── Stage definitions ──────────────────────────────────────────────────────
@@ -13,7 +14,7 @@ const STAGES = [
   {
     id:     'manifest',
     label:  'manifest.ts',
-    sub:    'единый источник правды',
+    subtitle: 'manifest',
     kind:   'source' as const,
     chips:  [
       { label: "schema: 'kb.plugin/3'", color: 'accent' },
@@ -24,7 +25,7 @@ const STAGES = [
   {
     id:     'install',
     label:  'Install',
-    sub:    'kb marketplace install @scope/plugin',
+    subtitle: 'install',
     kind:   'step' as const,
     chips:  [
       { label: 'pnpm install',          color: 'neutral' },
@@ -35,7 +36,7 @@ const STAGES = [
   {
     id:     'discover',
     label:  'Discover',
-    sub:    'читает lock при каждом старте',
+    subtitle: 'discover',
     kind:   'step' as const,
     chips:  [
       { label: 'enabled check',     color: 'neutral' },
@@ -46,7 +47,7 @@ const STAGES = [
   {
     id:     'register',
     label:  'Register',
-    sub:    'extractEntityKinds() — 7 типов сущностей',
+    subtitle: 'register',
     kind:   'fanout' as const,
     chips:  [
       { label: 'cli-command',   color: 'emerald' },
@@ -61,7 +62,7 @@ const STAGES = [
   {
     id:     'execute',
     label:  'Execute',
-    sub:    'backend выбирается per-invocation',
+    subtitle: 'execute',
     kind:   'backends' as const,
     chips:  [
       { label: 'in-process',         color: 'neutral' },
@@ -97,7 +98,7 @@ const STAGE_CLS: Record<StageKind, string> = {
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export function PluginLifecycleDiagram({ className }: PluginLifecycleDiagramProps) {
+export function PluginLifecycleDiagram({ className, subtitles }: PluginLifecycleDiagramProps) {
   const [visCount, setVisCount] = React.useState(0);
 
   const rootRef    = React.useRef<HTMLDivElement>(null);
@@ -151,7 +152,7 @@ export function PluginLifecycleDiagram({ className }: PluginLifecycleDiagramProp
                   <span className="font-mono text-[0.95rem] font-bold text-kb-text">
                     {stage.label}
                   </span>
-                  <span className="font-mono text-[0.7rem] text-muted/60 dark:text-muted/45">{stage.sub}</span>
+                  <span className="font-mono text-[0.7rem] text-muted/60 dark:text-muted/45">{subtitles[stage.subtitle]}</span>
                 </div>
 
                 {/* Chips */}

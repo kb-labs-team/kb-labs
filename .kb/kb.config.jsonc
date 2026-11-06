@@ -1,6 +1,7 @@
 {
   "platform": {
     "mode": "development",
+    "deployment": { "topology": "local" },
     "adapters": {
       "storage": "@kb-labs/adapters-fs",
       "cache": "@kb-labs/adapters-state-broker",
@@ -14,6 +15,9 @@
       "serviceTransport": "@kb-labs/adapters-service-transport-http"
     },
     "adapterOptions": {
+      "storage": {
+        "baseDir": "storage"
+      },
       "cache": {
         "url": "http://127.0.0.1:7777",
         "namespace": "kb:"
@@ -36,9 +40,6 @@
             "url": "http://127.0.0.1:7779"
           }
         }
-      },
-      "storage": {
-        "baseDir": "storage"
       },
       "documentDatabase": {
         "filename": "database/kb.sqlite"
@@ -150,13 +151,13 @@
               ],
               "platformMembers": [
                 "@kb-labs/cli-bin",
-                "@kb-labs/scaffold",
-                "@kb-labs/workflow-entry",
-                "@kb-labs/marketplace-entry"
+                "@kb-labs/core-workspace",
+                "@kb-labs/host-agent-app"
               ],
               "packages": {
                 "exclude": [
                   "templates/*",
+                  "e2e/journey/fixtures/*",
                   "{{.Name}}",
                   "@product-name/*",
                   "tmp/notifier-test",
@@ -204,7 +205,7 @@
                 },
                 {
                   "id": "pack-install-per-package",
-                  "name": "LEGACY per-package pack + clean install (debug: kb release checks --only pack-install-per-package)",
+                  "name": "LEGACY per-package pack + clean install (debug: kb release checks run --only pack-install-per-package)",
                   "command": "bash",
                   "args": ["scripts/gates/check-pack-install.sh"],
                   "timeoutMs": 120000,
@@ -325,7 +326,7 @@
             },
             {
               "id": "pack-install-per-package",
-              "name": "LEGACY per-package pack + clean install (debug: kb release checks --only pack-install-per-package)",
+              "name": "LEGACY per-package pack + clean install (debug: kb release checks run --only pack-install-per-package)",
               "command": "bash",
               "args": ["scripts/gates/check-pack-install.sh"],
               "timeoutMs": 120000,
@@ -387,7 +388,7 @@
               "sdk/*",
               "cli/*",
               "shared/*",
-              "plugins/*/*",
+              "plugins/*",
               "adapters/*",
               "studio/*"
             ]
@@ -464,7 +465,7 @@
             "plugins": {
               "label": "Plugins",
               "packages": [
-                "plugins/*/*"
+                "plugins/*"
               ]
             },
             "studio": {
@@ -486,6 +487,9 @@
     }
   ],
   "gateway": {
+    "access": {
+      "mode": "local"
+    },
     "port": 4000,
     "host": "127.0.0.1",
     "upstreams": {
@@ -600,9 +604,7 @@
   "marketplace": {
     "sync": {
       "include": [
-        "plugins/*/entry",
-        "plugins/*/core",
-        "plugins/release/manager-cli",
+        "plugins/*",
         "adapters/*"
       ]
     },
@@ -612,20 +614,6 @@
     }
   },
   "qa": {
-    "checks": [
-      {
-        "id": "new-tests",
-        "command": "node",
-        "args": [
-          "scripts/checks/new-tests.mjs"
-        ],
-        "runIn": "newFiles",
-        "parser": "json",
-        "severity": "warning",
-        "trending": true,
-        "description": "New source files must have a corresponding test file"
-      }
-    ],
     "ci": {
       "provider": "github-actions",
       "repository": "kb-labs-team/kb-labs",

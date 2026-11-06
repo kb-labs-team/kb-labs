@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -374,6 +375,132 @@ func TestHandoffCrashBoundariesKeepCompleteActiveAndRecoveryRoots(t *testing.T) 
 				t.Fatalf("recorded recovery root is missing: %v", err)
 			}
 		})
+	}
+}
+
+func TestUpdateActivationFailuresAfterLinkSwitchRestorePriorVersionAndMetadata(t *testing.T) {
+	points := CrashPoints()
+	start := -1
+	for index, point := range points {
+		if point == HandoffBeforeActiveRootSync {
+			start = index
+			break
+		}
+	}
+	if start < 0 || start >= len(points) {
+		t.Fatalf("post-switch activation handoffs are missing from CrashPoints(): %v", points)
+	}
+	points = points[start:]
+	for _, point := range points {
+		t.Run(string(point), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "platform")
+			layout, v1 := initialLayout(t, root, "1.0.0")
+			if err := layout.RecordHealthy(); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(v1, "transaction-marker"), []byte("version-one"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			treeBefore := snapshotVersionrootTree(t, v1)
+			if err := layout.writeUpdateMetadata(UpdateMetadata{SnapshotID: "prior-snapshot", LogPath: "prior.log"}); err != nil {
+				t.Fatal(err)
+			}
+			metadataBefore, err := os.ReadFile(layout.updateMetadataPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			stage := stageVersion(t, layout, "2.0.0")
+			target := filepath.Join(layout.VersionsDir(), versionKey("2.0.0", "plan-2"))
+			injected := errors.New("injected post-switch activation failure")
+			_, err = layout.activate(stage, "2.0.0", "plan-2", "", &UpdateMetadata{SnapshotID: "new-snapshot"}, func(current HandoffPoint) error {
+				if current == point {
+					return injected
+				}
+				return nil
+			})
+			if !errors.Is(err, injected) {
+				t.Fatalf("activation error = %v, want injected failure", err)
+			}
+			active, err := layout.Active()
+			if err != nil || active != v1 {
+				t.Fatalf("active version = %q, %v; want %q", active, err, v1)
+			}
+			installed, err := receipt.Read(active)
+			if err != nil || installed.ID != "receipt-1.0.0" {
+				t.Fatalf("restored receipt = %#v, %v", installed, err)
+			}
+			marker, err := os.ReadFile(filepath.Join(v1, "transaction-marker"))
+			if err != nil || string(marker) != "version-one" {
+				t.Fatalf("prior version tree marker = %q, %v", marker, err)
+			}
+			if treeAfter := snapshotVersionrootTree(t, v1); !equalVersionrootSnapshots(treeAfter, treeBefore) {
+				t.Fatalf("prior version tree changed during failed activation: before=%v after=%v", treeBefore, treeAfter)
+			}
+			metadataAfter, err := os.ReadFile(layout.updateMetadataPath())
+			if err != nil || !bytes.Equal(metadataAfter, metadataBefore) {
+				t.Fatalf("recovery metadata changed: before=%q after=%q error=%v", metadataBefore, metadataAfter, err)
+			}
+			if _, err := os.Lstat(target); !os.IsNotExist(err) {
+				t.Fatalf("failed activation left finalized target %q: %v", target, err)
+			}
+		})
+	}
+}
+
+func TestCrashPointsEnumeratesEveryProducedHandoff(t *testing.T) {
+	layout, err := New(filepath.Join(t.TempDir(), "platform"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observed []HandoffPoint
+	record := func(point HandoffPoint) error {
+		observed = append(observed, point)
+		return nil
+	}
+	stage, err := layout.stageInitial(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, stage, "1.0.0", "enumeration-initial")
+	if _, err := layout.activateInitial(stage, "1.0.0", "enumeration-initial", record); err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.RecordHealthy(); err != nil {
+		t.Fatal(err)
+	}
+	stage, err = layout.stage(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, stage, "2.0.0", "enumeration-update")
+	if _, err := layout.activate(stage, "2.0.0", "enumeration-update", "", &UpdateMetadata{SnapshotID: "enumeration"}, record); err != nil {
+		t.Fatal(err)
+	}
+	if points := CrashPoints(); !reflect.DeepEqual(points, observed) {
+		t.Fatalf("CrashPoints() = %v, observed handoff producers = %v", points, observed)
+	}
+}
+
+func TestUpdateActiveLinkSwitchIOFailureRestoresPriorVersion(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	layout, v1 := initialLayout(t, root, "1.0.0")
+	stage := stageVersion(t, layout, "2.0.0")
+	_, err := layout.activate(stage, "2.0.0", "plan-2", "", nil, func(point HandoffPoint) error {
+		if point == HandoffLinkPrepared {
+			return os.Remove(filepath.Join(layout.InstallerStateDir(), "current-next"))
+		}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "switch active version") {
+		t.Fatalf("activation error = %v, want actual active-link rename failure", err)
+	}
+	active, err := layout.Active()
+	if err != nil || active != v1 {
+		t.Fatalf("active version = %q, %v; want %q after actual link switch I/O failure", active, err, v1)
+	}
+	installed, err := receipt.Read(active)
+	if err != nil || installed.ID != "receipt-1.0.0" {
+		t.Fatalf("restored receipt = %#v, %v", installed, err)
 	}
 }
 
@@ -1230,7 +1357,7 @@ func TestPreActivationUpdateHandoffsLeaveSharedStateAndRunningVersionUntouched(t
 				stage, err = layout.Stage()
 				if err == nil {
 					writeReceipt(t, stage, "2.0.0", "receipt-2.0.0")
-					_, err = layout.activate(stage, "2.0.0", "plan-2.0.0", active, nil, func(current HandoffPoint) error {
+					_, err = layout.activate(stage, "2.0.0", "plan-2.0.0", active, &UpdateMetadata{SnapshotID: "crash-test"}, func(current HandoffPoint) error {
 						if current == point {
 							return interrupt
 						}
@@ -1365,7 +1492,7 @@ func interruptAtPoint(t *testing.T, point HandoffPoint) Layout {
 		t.Fatal(err)
 	}
 	writeReceipt(t, stage, "2.0.0", "receipt-update")
-	_, err = layout.activate(stage, "2.0.0", "update-plan", "", nil, func(current HandoffPoint) error {
+	_, err = layout.activate(stage, "2.0.0", "update-plan", "", &UpdateMetadata{SnapshotID: "crash-test"}, func(current HandoffPoint) error {
 		if current == point {
 			return crash
 		}
@@ -1533,7 +1660,8 @@ func TestInstallRootContainerKeepsLifecycleWritesInsideTheChosenDirectory(t *tes
 	}
 	current := filepath.Join(root, "current")
 	link, err := os.Readlink(current)
-	if err != nil || filepath.IsAbs(link) || !strings.HasPrefix(filepath.Clean(filepath.Join(root, link)), filepath.Join(root, "versions")+string(filepath.Separator)) {
+	inside, containmentErr := contracts.PathWithin(filepath.Join(root, "versions"), filepath.Join(root, link))
+	if err != nil || containmentErr != nil || filepath.IsAbs(link) || !inside || filepath.Clean(filepath.Join(root, link)) == filepath.Join(root, "versions") {
 		t.Fatalf("current link = %q, %v; want relative link into install-root versions", link, err)
 	}
 	entries, err := os.ReadDir(parent)
@@ -1600,8 +1728,11 @@ func assertOnlyInstallRoot(t *testing.T, parent string) {
 func TestUnsupportedOperatingSystemIsCataloguedBeforeStaging(t *testing.T) {
 	err := supportedOS("windows")
 	var diagnostic *diag.Diag
-	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeInstallLayoutUnsupported {
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeUnsupportedPlatform {
 		t.Fatalf("unsupported operating-system error = %#v", err)
+	}
+	if diagnostic.Message != "windows/"+runtime.GOARCH+" is not a supported platform." || !strings.Contains(diagnostic.Hint, "Linux or macOS") {
+		t.Fatalf("unsupported operating-system message or hint = %q / %q", diagnostic.Message, diagnostic.Hint)
 	}
 }
 

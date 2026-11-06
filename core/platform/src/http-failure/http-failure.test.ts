@@ -19,6 +19,29 @@ describe('shared HTTP failure boundary', () => {
     });
   });
 
+  it('retains the failing field for structured HTTP validation errors', () => {
+    const result = normalizeHttpFailure({
+      code: 'FST_ERR_VALIDATION',
+      statusCode: 400,
+      validation: [{
+        instancePath: '/events',
+        schemaPath: '#/properties/events/maxItems',
+        keyword: 'maxItems',
+        params: { limit: 500 },
+        message: 'must NOT have more than 500 items',
+      }],
+    }, { correlationId: 'request-validation', statusCode: 400 });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        correlationId: 'request-validation',
+        details: { field: 'events' },
+      },
+    });
+  });
+
   it('normalizes a plain known code and rejects a catalog code without an HTTP status', () => {
     expect(normalizeHttpFailure({ error: { code: 'KB_RUNTIME_INPUT_INVALID' } }, { correlationId: 'request-2', statusCode: 500 })).toMatchObject({
       ok: false,
@@ -29,9 +52,20 @@ describe('shared HTTP failure boundary', () => {
     });
 
     expect(statusForHttpFailure(new Error('upstream'), 502)).toBe(502);
-    expect(() => statusForHttpFailure({ code: 'KB_AUTH_CLOCK_SKEW' }, 401)).toThrow(
-      'Catalogued error "KB_AUTH_CLOCK_SKEW" reached an HTTP boundary without httpStatus',
-    );
+    expect(statusForHttpFailure({ code: 'KB_AUTH_CLOCK_SKEW' }, 401)).toBe(500);
+  });
+
+  it('classifies an aborted HTTP request as a warning-level client cancellation', () => {
+    const abort = new DOMException('Request aborted', 'AbortError');
+    const failure = normalizeHttpFailure(abort, { correlationId: 'request-aborted', statusCode: 500 });
+
+    expect(codeForHttpFailure(abort, 500)).toBe('KB_RUNTIME_REQUEST_CANCELLED');
+    expect(statusForHttpFailure(abort, 500)).toBe(499);
+    expect(failure.error).toMatchObject({
+      code: 'KB_RUNTIME_REQUEST_CANCELLED',
+      severity: 'warning',
+      correlationId: 'request-aborted',
+    });
   });
 
   it('preserves a validated product failure and keeps the transport HTTP status', () => {

@@ -1,0 +1,23 @@
+{
+  "name": "@kb-labs/fixture-adapter",
+  "version": "1.0.0",
+  "description": "Journey package used to verify adapter update compatibility checks",
+  "type": "module",
+  "main": "./dist/manifest.js",
+  "files": [
+    "dist/manifest.js",
+    "dist/manifest.json"
+  ],
+  "kb": {
+    "adapter": {
+      "manifest": "./dist/manifest.js"
+    },
+    "requiredOutputs": [
+      "./dist/manifest.json"
+    ]
+  },
+  "peerDependencies": {
+    "@kb-labs/sdk": "^2.120.0"
+  },
+  "license": "UNLICENSED"
+}

@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { writeCheckResult } from '../../../../../scripts/checks/lib/check-result.mjs';
 
 import { syncDocSources } from '../lib/expand-doc-sources.mjs';
 import { collectGeneratedSources, getDocsDir } from './docs-source-sync.mjs';
@@ -7,8 +8,7 @@ import { collectGeneratedSources, getDocsDir } from './docs-source-sync.mjs';
 const docsDir = getDocsDir();
 const repoRoot = path.resolve(docsDir, '../../../..');
 const contentRoot = path.join(docsDir, 'content');
-const workflowManifest = path.join(repoRoot, 'plugins/workflow/entry/src/manifest.ts');
-const workflowRunSource = path.join(repoRoot, 'plugins/workflow/entry/src/commands/workflow-run.ts');
+const workflowRunSource = path.join(repoRoot, 'services/workflow/entry/src/commands/workflow-run.ts');
 const generatedSourcesPath = path.join(docsDir, 'generated/doc-source-snippets.json');
 const failures = [];
 const sourceReferences = [];
@@ -24,22 +24,10 @@ function walk(dir) {
 }
 
 function deprecatedCommandRules() {
-  const text = readFileSync(workflowManifest, 'utf8');
-  const rules = [];
-  // Scope path and describe to one command object. A bounded lookahead across
-  // the manifest can pair a new command with a later deprecated description.
-  for (const entry of text.split(/\n\s{6}\},\s*\n/)) {
-    const pathMatch = entry.match(/\bpath\s*:\s*(['"])([^'"]+)\1/);
-    const describeMatch = entry.match(/\bdescribe\s*:\s*(['"])(\(Deprecated\)[^'"]*Use:\s*kb\s+([^'"]+))\1/);
-    if (pathMatch && describeMatch) {
-      rules.push({ command: `kb ${pathMatch[2]}`, replacement: `kb ${describeMatch[3].trim()}` });
-    }
-  }
-
   const runText = readFileSync(workflowRunSource, 'utf8');
   const warning = runText.match(/['"](--[\w-]+) is deprecated; use (--[\w-]+) instead['"]/);
   const flagRules = warning ? [{ flag: warning[1], replacement: warning[2] }] : [];
-  return { commands: rules, flags: flagRules };
+  return { commands: [], flags: flagRules };
 }
 
 function main() {
@@ -106,6 +94,7 @@ function main() {
   if (process.env.GITHUB_STEP_SUMMARY) {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
   }
+  writeCheckResult(failures.map((message) => ({ check: 'docs-source-check', severity: 'error', message, file: 'sites/web/apps/docs' })));
   process.stdout.write(summary);
   if (failures.length) {
     process.stderr.write(`${failures.map((failure) => `- ${failure}`).join('\n')}\n`);

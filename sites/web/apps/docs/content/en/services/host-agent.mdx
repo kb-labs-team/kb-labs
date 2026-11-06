@@ -1,13 +1,13 @@
 ---
 title: "Host Agent"
 description: "Daemon on the developer's machine that bridges local filesystem and git to cloud-hosted workflows."
-updatedAt: "2026-10-02"
+updatedAt: "2026-10-21"
 order: 6
 ---
 
 The host agent is a daemon you run on your own machine. It connects to a remote KB Labs Gateway over an authenticated WebSocket tunnel and exposes local capabilities — filesystem reads and writes, git operations — to server-side workflows and plugins. It's the bridge between "I'm running my tools on a cloud agent somewhere" and "the code lives on my laptop".
 
-Source lives in [plugins/host-agent/](plugins/host-agent/). There's no `ServiceManifest` for it — the host agent is not managed by `kb-dev` because it's meant to run on end-user machines, not inside the platform's service stack.
+The process source lives in [services/host-agent/](services/host-agent/). The host agent runs as a separate process on the registered machine; the platform CLI provides its `workspace` command group.
 
 ## Why it exists
 
@@ -37,7 +37,7 @@ Developer's machine:
 
 ## Packages
 
-The host agent is its own mini-monorepo:
+The host agent packages are owned by the platform workspace:
 
 | Package | Purpose |
 |---|---|
@@ -66,7 +66,7 @@ Stored at `~/.kb/agent.json` after a one-time registration:
 ## Registration
 
 ```bash
-kb agent register --gateway https://gateway.example.com
+kb workspace register --gateway https://gateway.example.com
 ```
 
 One-time setup. Generates a new keypair, registers with the gateway, writes `~/.kb/agent.json`. You do this once per machine per gateway.
@@ -87,9 +87,9 @@ On startup:
 ## Running the daemon
 
 ```bash
-kb agent start                 # start in background
-kb agent status                # check connection
-kb agent stop                  # stop the daemon
+kb-host-agent                   # start the registered Workspace Agent process
+kb workspace status             # check connection
+kb workspace list               # list connected agents
 ```
 
 `kb agent status` output:
@@ -101,7 +101,7 @@ kb agent stop                  # stop the daemon
 For debugging, run in the foreground:
 
 ```bash
-node apps/host-agent-app/dist/index.js
+kb-host-agent
 ```
 
 ## Capabilities

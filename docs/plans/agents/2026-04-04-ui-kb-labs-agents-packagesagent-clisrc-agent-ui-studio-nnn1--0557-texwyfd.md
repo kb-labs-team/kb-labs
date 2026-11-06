@@ -174,16 +174,16 @@ Phase 1 → Phase 2 → Phase 3 → Phase 4 (опц.)
 
 ```bash
 # Собрать agent-cli после изменений
-pnpm --filter @kb-labs/agent-cli build
+pnpm --filter @kb-labs/agents/cli build
 
 # Запустить тесты
-pnpm --filter @kb-labs/agent-cli test
+pnpm --filter @kb-labs/agents/cli test
 
 # TypeScript-проверка (нет сломанных импортов, нет any)
-pnpm --filter @kb-labs/agent-cli typecheck
+pnpm --filter @kb-labs/agents/cli typecheck
 
 # Убедиться что commit-plugin не сломан
-pnpm --filter @kb-labs/commit-cli build
+pnpm --filter @kb-labs/commit/cli build
 
 # Проверить отсутствие мёртвых CSS-классов после Phase 3
 grep -r "cv-changes-btn\|cv-copy-path\|cv-tool-header--clickable" plugins/kb-labs-agents/packages/agent-cli/src/

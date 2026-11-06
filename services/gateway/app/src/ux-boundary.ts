@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { codeForHttpFailure, createErrorEnvelope, normalizeHttpFailure, statusForHttpFailure, toErrorEnvelope, type ILogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope, normalizeHttpFailure, statusForHttpFailure, toErrorEnvelope, type ILogger } from '@kb-labs/core-platform';
 import { createUxFailureResult, createUxSuccessResult, isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import { registerGatewayRouteSchemas } from './route-schema.js';
 
@@ -25,22 +25,23 @@ export function registerGatewayUxErrorResponses(
     const transportStatus = error && typeof error === 'object' && 'statusCode' in error && typeof error.statusCode === 'number'
       ? error.statusCode
       : 500;
-    const errorCode = codeForHttpFailure(error, transportStatus);
-    const statusCode = statusForHttpFailure(error, transportStatus);
     const correlationId = String(request.id || randomUUID());
-    const requestLogger = request.kbLogger ?? logger;
-    requestLogger?.error('HTTP route failed', error instanceof Error ? error : new Error(String(error)), {
-      correlationId, statusCode, errorCode,
-    });
-    const errorValue = normalizeHttpFailure(error, {
+    const failure = normalizeHttpFailure(error, {
       correlationId,
-      statusCode,
-      ...(statusCode === 413 && options.bodyLimitBytes !== undefined
+      statusCode: transportStatus,
+      ...(transportStatus === 413 && options.bodyLimitBytes !== undefined
         ? { limitBytes: options.bodyLimitBytes }
         : {}),
-    }).error;
+    });
+    const errorCode = failure.error.code;
+    const statusCode = statusForHttpFailure(failure, transportStatus);
+    const requestLogger = request.kbLogger ?? logger;
+    const log = failure.error.severity === 'error' ? requestLogger?.error : requestLogger?.warn;
+    log?.call(requestLogger, 'HTTP route failed', error instanceof Error ? error : new Error(String(error)), {
+      correlationId, statusCode, errorCode,
+    });
     reply.serializer((payload) => JSON.stringify(payload));
-    reply.code(statusCode).send({ error: errorValue });
+    reply.code(statusCode).send({ error: failure.error });
   });
   app.addHook('onSend', async (request, reply, payload) => {
     if (reply.statusCode < 400) return payload;

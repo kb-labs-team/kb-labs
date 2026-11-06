@@ -2,7 +2,7 @@ import { createErrorEnvelope, type DetailsFor } from "@kb-labs/core-platform";
 import { createUxFailureResult } from "@kb-labs/core-platform/ux-result";
 import { platform } from "@kb-labs/core-runtime";
 import { resolvePluginBasePath } from "@kb-labs/plugin-contracts";
-import type { IEntityRegistry, RegistrySnapshotManifestEntry } from "@kb-labs/core-registry";
+import type { IEntityRegistry, RegistrySnapshotManifestEntry } from '@kb-labs/plugin-contracts';
 import type { FastifyInstance } from "fastify";
 import type { RestApiConfig } from "@kb-labs/rest-api-core";
 

@@ -110,7 +110,7 @@ func TestDiagnosticJSONPreservesCatalogDeclaredRecoveryDetails(t *testing.T) {
 	original := New("KB_UPDATE_HOST_NOT_HEALTHY", "The update recovery did not complete.",
 		WithMeta(map[string]any{
 			"version": "1.2.3", "recoveryStage": "restore last healthy root",
-			"nextCommand": "kb-create doctor --platform-root '/tmp/KB Labs'",
+			"nextCommand":   "kb-create doctor --platform-root '/tmp/KB Labs'",
 			"failureReason": "restore failed",
 		}))
 	encoded, err := json.Marshal(original)

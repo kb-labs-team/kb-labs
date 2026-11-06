@@ -10,34 +10,34 @@
 ## 1. Namespace Audit
 
 ### System namespaces (reserved — plugins cannot register)
-`auth`, `platform`, `info`, `logs`, `docs`, `registry`, `completion`, `__complete`, `__internal`
+`auth`, `platform`, `info`, `logs`, `docs`, `registry`, `marketplace`, `completion`, `__complete`, `__internal`
 
 ### Plugin namespaces
 
 | Namespace | Package | Status |
 |---|---|---|
-| `agent` | agent-entry | ✅ |
-| `clickup` | clickup-entry | ✅ subcommands need refactoring |
-| `commit` | commit-entry | ✅ accepted exception: verb-first |
-| `devlink` | devlink-entry | ⚠️ opaque name |
-| `workspace` | host-agent-entry | ✅ |
+| `agent` | agents | ✅ |
+| `clickup` | clickup | ✅ subcommands need refactoring |
+| `commit` | commit | ✅ accepted exception: verb-first |
+| `devlink` | devlink | ⚠️ opaque name |
+| `workspace` | host-agents | ✅ |
 | `impact` | impact-core | ⚠️ abstract name |
-| `infra-worker` | infra-worker-core | ❌ kebab at top level + internal concept leaked |
-| `marketplace` | marketplace-entry | ✅ broader concept, not just plugins |
-| `mind` | mind-entry | ⚠️ internal term + kebab subcommands |
+| `infra-worker` | infra-worker | ❌ kebab at top level + internal concept leaked |
+| `mind` | mind | ⚠️ internal term + kebab subcommands |
 | `policy` | policy-core | ✅ |
-| `qa` | qa-entry | ✅ devkit metrics domain |
-| `quality` | quality-entry | ⚠️ kebab subcommands |
-| `release` | release-manager-cli | ✅ accepted exception: verb-first |
-| `review` | review-entry | ✅ accepted exception: verb-first |
+| `qa` | qa | ✅ devkit metrics domain |
+| `quality` | quality | ⚠️ kebab subcommands |
+| `release` | release | ✅ accepted exception: verb-first |
+| `review` | review | ✅ accepted exception: verb-first |
 | `scaffold` | scaffold | ✅ accepted exception: verb-first |
 | `workflow` | workflow-entry | ✅ subcommands need refactoring |
 
 ### marketplace collision resolved
 
-`marketplace-registry-entry` is an internal daemon — not a user-facing tool.
-Its CLI commands (`publish`, `yank`, `deprecate`) move into `marketplace-entry`.
-The daemon package stays as separate infrastructure.
+Consumer management is the built-in platform command group `kb marketplace`;
+its handlers live in `cli/commands`. The separate publisher CLI remains the
+`hub` plugin (`@kb-labs/marketplace-registry`), and its backend is an
+optional self-hosted service.
 
 ---
 
@@ -57,21 +57,15 @@ Accepted verb-first exceptions (document, don't extend the pattern):
 
 ### Rule 2 — Second-level is a verb from the standard vocabulary
 
-Do not invent new verbs. Standard set:
-
-| Category | Allowed verbs |
-|---|---|
-| Data | `list`, `get`, `create`, `update`, `delete` |
-| Lifecycle | `run`, `start`, `stop`, `apply`, `sync` |
-| Publishing | `publish`, `yank`, `deprecate`, `share` |
-| Info | `status`, `health`, `logs`, `diag` |
-| Setup | `init`, `install`, `uninstall`, `link`, `unlink` |
-| Dev | `check`, `verify`, `build`, `watch`, `generate` |
+Do not invent new verbs. The closed vocabulary lives in
+`docs/architecture/target/06-command-naming.md` section 2 (this draft table predated it;
+`yank`, `deprecate`, `share`, `check`, `verify`, `generate` did not survive the review) and is
+enforced by `scripts/checks/check-manifest-command-naming.mjs` (`VERBS`).
 
 ### Rule 3 — No kebab-case in path segments
 
 ```
-✗ quality check-layers   →  ✓ quality check layers
+✗ quality check-layers   →  ✓ quality check layers run
 ✗ workflow runs-list     →  ✓ workflow runs list
 ✗ mind rag-query         →  ✓ mind search
 ```
@@ -102,15 +96,15 @@ Documented in `scripts/checks/check-cli-naming.mjs` and `cli/commands/src/regist
 | # | What | Problem | Fix |
 |---|---|---|---|
 | R1 | `infra-worker` | kebab top-level + internal concept | Rename namespace to `infra` |
-| R2 | `marketplace-registry-entry` CLI | namespace collision | Move CLI commands into `marketplace-entry` |
+| R2 | `marketplace` was registered as a plugin | Marketplace is part of platform use | ✅ Fixed — register `kb marketplace` as a built-in system group; keep publisher commands in `hub` |
 
 ### 🟡 Should fix
 
 | # | What | Fix |
 |---|---|---|
-| R3 | `quality`: `check-layers`, `fix-deps`, `dead-code`, `check-types`, `check-builds`, `check-tests`, `build-order` | Restructure as subgroups: `quality check layers`, `quality fix deps` |
+| R3 | `quality`: `check-layers`, `fix-deps`, `dead-code`, `check-types`, `check-builds`, `check-tests`, `build-order` | Restructure as subgroups: `quality check layers run`, `quality deps update` |
 | R4 | `workflow`: `runs-list`, `runs-view`, `runs-watch`, `runs-rerun`, `job-run` | `workflow runs list`, `workflow runs view`, `workflow job run` |
-| R5 | `mind`: `rag-index`, `rag-query`, `sync-add`, `sync-update`, `sync-delete`, `sync-list`, `sync-status` | `mind index`, `mind search`, `mind sync add`, `mind sync list` |
+| R5 | `mind`: `rag-index`, `rag-query`, `sync-add`, `sync-update`, `sync-delete`, `sync-list`, `sync-status` | `mind index update`, `mind search`, `mind sync add`, `mind sync list` |
 | R6 | `clickup`: `comment-list`, `comment-add` | `clickup task comments list`, `clickup task comments add` |
 | R7 | `registry` system command | Keep `kb diag` top-level; assess registry command separately |
 

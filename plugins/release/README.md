@@ -57,7 +57,7 @@ CI or debugging.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/release-entry
+pnpm kb marketplace install @kb-labs/release
 ```
 
 ---
@@ -81,32 +81,32 @@ kb release run --skip-checks --skip-build
 kb release plan                          # detect changes + compute version bumps
 kb release plan --bump minor --json
 
-kb release verify                        # validate release readiness
-kb release verify --fail-if-empty --fail-on-breaking
+kb release validate                        # validate release readiness
+kb release validate --fail-if-empty --fail-on-breaking
 
-kb release checks                        # run pre-release checks from config
+kb release checks run                        # run pre-release checks from config
 
-kb release changelog                     # generate from conventional commits
-kb release changelog --from v1.0.0 --format md
-kb release changelog --template corporate-ai
-kb release changelog --breaking-only
+kb release changelog show                     # generate from conventional commits
+kb release changelog show --from v1.0.0 --format md
+kb release changelog show --template corporate-ai
+kb release changelog show --breaking-only
 
-kb release build                         # safe atomic build
-kb release pack                          # verify npm artifacts
-kb release version                       # bump package.json versions
-kb release version --dry-run
+kb release build run                         # safe atomic build
+kb release pack validate                          # verify npm artifacts
+kb release version update                       # bump package.json versions
+kb release version update --dry-run
 
 kb release publish                       # publish to npm
 kb release publish --otp 123456 --tag next
 
-kb release git                           # commit + tag + push
-kb release git --no-verify
+kb release git commit                           # commit + tag + push
+kb release git commit --no-verify
 ```
 
 ### History and recovery
 
 ```bash
-kb release report                        # last release report
+kb release report show                        # last release report
 kb release rollback                      # restore from pre-release backup
 ```
 
@@ -116,15 +116,15 @@ kb release rollback                      # restore from pre-release backup
 |---------|-------------|
 | `kb release run` | Full release pipeline |
 | `kb release plan` | Compute version bumps |
-| `kb release verify` | Validate release readiness |
-| `kb release checks` | Run configured pre-release checks |
-| `kb release changelog` | Generate changelog |
-| `kb release build` | Safe atomic build |
-| `kb release pack` | Verify npm artifacts |
-| `kb release version` | Bump package.json versions |
+| `kb release validate` | Validate release readiness |
+| `kb release checks run` | Run configured pre-release checks |
+| `kb release changelog show` | Generate changelog |
+| `kb release build run` | Safe atomic build |
+| `kb release pack validate` | Verify npm artifacts |
+| `kb release version update` | Bump package.json versions |
 | `kb release publish` | Publish to npm |
-| `kb release git` | Commit, tag, push |
-| `kb release report` | Show last release report |
+| `kb release git commit` | Commit, tag, push |
+| `kb release report show` | Show last release report |
 | `kb release rollback` | Restore pre-release snapshot |
 
 ---

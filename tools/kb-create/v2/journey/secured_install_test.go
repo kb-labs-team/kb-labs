@@ -646,7 +646,7 @@ func TestFreshFixtureInstallRendersInternalSecretForEveryConsumer(t *testing.T) 
 			consumers = append(consumers, patch.Services...)
 		}
 	}
-	want := []string{"gateway", "rest", "marketplace-registry"}
+	want := []string{"gateway", "rest"}
 	if !reflect.DeepEqual(consumers, want) {
 		t.Fatalf("internal-secret consumers = %v, want %v", consumers, want)
 	}

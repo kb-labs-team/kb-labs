@@ -1,0 +1,77 @@
+{
+  "case_run": {
+    "mode": "local",
+    "claims": []
+  },
+  "steps": [
+    {
+      "name": "create project agent session",
+      "capability": "agents",
+      "mode": "local",
+      "status": "FAIL",
+      "duration_seconds": 2.112,
+      "message": "agent session creation returned HTTP 500",
+      "cases": [
+        "S-141.1"
+      ],
+      "stepId": "case:S-141.1"
+    },
+    {
+      "name": "list project agent sessions",
+      "capability": "agents",
+      "mode": "local",
+      "status": "FAIL",
+      "duration_seconds": 0.422,
+      "message": "agent session list cannot run because session creation failed",
+      "cases": [
+        "S-141.2"
+      ],
+      "stepId": "case:S-141.2"
+    },
+    {
+      "name": "inspect project agent session",
+      "capability": "agents",
+      "mode": "local",
+      "status": "FAIL",
+      "duration_seconds": 0.431,
+      "message": "agent session inspection cannot run because session creation failed",
+      "cases": [
+        "S-141.3"
+      ],
+      "stepId": "case:S-141.3"
+    },
+    {
+      "name": "apply a secret through an environment reference",
+      "capability": "platform.install",
+      "mode": "local",
+      "status": "FAIL",
+      "duration_seconds": 69.075,
+      "message": "secondary apply did not record its automatically allocated Gateway address",
+      "cases": [
+        "S-181.3",
+        "PC-001.10"
+      ],
+      "stepId": "case:PC-001.10,S-181.3"
+    },
+    {
+      "name": "refuse undeclared secret environment inputs before writing state",
+      "capability": "platform.install",
+      "mode": "local",
+      "status": "BLOCKED",
+      "duration_seconds": 0.0,
+      "message": "step prerequisites failed: step:apply a secret through an environment reference ended FAIL: secondary apply did not record its automatically allocated Gateway address",
+      "cases": [
+        "S-181.6"
+      ],
+      "details": {
+        "requires": [
+          "step:case:PC-001.10,S-181.3"
+        ],
+        "prerequisiteFailures": [
+          "step:apply a secret through an environment reference ended FAIL: secondary apply did not record its automatically allocated Gateway address"
+        ]
+      },
+      "stepId": "case:S-181.6"
+    }
+  ]
+}

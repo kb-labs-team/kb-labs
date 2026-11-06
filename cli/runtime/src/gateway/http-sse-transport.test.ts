@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HttpSseGatewayTransport } from './http-sse-transport.js';
-import { AuthSessionOwner } from './auth-session.js';
-import { authRequiredForGateway } from './auth-origin.js';
+import { AuthSessionOwner } from '@kb-labs/sdk/gateway';
+import { authRequiredForGateway } from '@kb-labs/sdk/gateway';
 import { ErrorEnvelopeError, createErrorEnvelope } from '@kb-labs/core-platform';
 
 describe('HttpSseGatewayTransport credential origin', () => {

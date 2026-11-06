@@ -23,7 +23,7 @@ CI — see `e2e/install-flow/test.sh`'s "Step 1f").
 
 While validating it, a related gap surfaced: a plugin declares the platform
 capabilities it needs via its manifest's `platform.requires`/`optional`
-fields (e.g. `plugins/release/manager-cli/src/manifest.ts` declares
+fields (e.g. `plugins/release/src/cli/manifest.ts` declares
 `requires: ['storage','cache']`), but **capability/role names live in three
 places that don't talk to each other**, and nothing lets an install caller
 say which real adapter package should back a role:
@@ -68,7 +68,7 @@ was asked for, validates every ID against the manifest catalog
 (`tools/kb-create/internal/manifest/manifest.json`) **before** any network
 action, and reuses the existing non-interactive defaulting path
 (`wizard.Run(Yes: true)`) rather than re-implementing it. `release` is now a
-registered catalog entry (`@kb-labs/release-manager-cli`).
+registered catalog entry (`@kb-labs/release`).
 
 ### Install-time flow (as shipped)
 
@@ -407,7 +407,7 @@ All shipped:
 ### Remaining deferred item
 
 - Validating adapter roles when installing a plugin onto an
-  already-running platform via the marketplace (`plugins/marketplace`) — a
+  already-running platform via the marketplace (`services/marketplace`) — a
   different install mechanism entirely, not `kb-create install`. Not
   addressed by this ADR or any of its follow-up PRs; tracked here so it
   isn't lost.

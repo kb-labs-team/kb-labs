@@ -25,7 +25,7 @@ import { registerAuthHealthRoute } from '../src/auth/health-route.js';
 import { registerUserAuthRoutes } from '../src/auth/user-routes.js';
 import { registerGatewayUxBoundary } from '../src/ux-boundary.js';
 import { createProjectsRoutes } from '../../../host/app/src/projects-routes.js';
-import { createProjectRegistry } from '../../../../core/project-registry/dist/index.js';
+import { createProjectRegistry } from '@kb-labs/core-project-registry';
 import type { ProjectRuntimeManager } from '../../../host/app/src/project-runtime/manager.js';
 
 const HOUR = 60 * 60 * 1000;

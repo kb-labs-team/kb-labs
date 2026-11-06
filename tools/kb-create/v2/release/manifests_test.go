@@ -22,7 +22,7 @@ func TestEnrichWithManifestsRejectsPluginIdentityMismatch(t *testing.T) {
 	manifest := installed.Manifest{
 		Schema: installed.ManifestSchema,
 		ID: "@kb-labs/manifest-id",
-		Package: "@kb-labs/plugin-entry",
+		Package: "@kb-labs/plugin",
 		Version: "1.0.0",
 	}
 	data, err := json.Marshal(manifest)

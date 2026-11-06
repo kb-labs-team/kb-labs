@@ -6,7 +6,7 @@
 {{- end }}
 {{- end }}
 {{- if and (eq $name "workflow") (gt (int $svc.replicas) 1) }}
-{{- fail (printf "services.workflow.replicas is %d, must stay 1: JobBroker/CronScheduler run in-process (plugins/workflow/daemon/src/bootstrap.ts) and a second replica double-fires every scheduled job. See docs/adr/0037-containers-are-canonical-cloud-delivery.md." (int $svc.replicas)) }}
+{{- fail (printf "services.workflow.replicas is %d, must stay 1: JobBroker/CronScheduler run in-process (services/workflow/daemon/src/bootstrap.ts) and a second replica double-fires every scheduled job. See docs/adr/0037-containers-are-canonical-cloud-delivery.md." (int $svc.replicas)) }}
 {{- end }}
 ---
 apiVersion: apps/v1
@@ -79,24 +79,18 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
-          {{- if or $.Values.config $.Values.marketplaceLock }}
           volumeMounts:
-            {{- if $.Values.config }}
             - name: composition
-              mountPath: /app/.kb/kb.config.json
-              subPath: kb.config.json
-            {{- end }}
+              mountPath: /app/.kb/kb.config.override.json
+              subPath: kb.config.override.json
             {{- if $.Values.marketplaceLock }}
             - name: composition
               mountPath: /app/.kb/marketplace.lock
               subPath: marketplace.lock
             {{- end }}
-          {{- end }}
-      {{- if or $.Values.config $.Values.marketplaceLock }}
       volumes:
         - name: composition
           configMap:
             name: {{ $.Release.Name }}-composition
-      {{- end }}
 {{- end }}
 {{- end }}

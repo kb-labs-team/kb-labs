@@ -21,7 +21,6 @@
 
 import type { FastifyInstance } from "fastify";
 import type {
-  IProjectRegistry,
   ProjectEntry,
   ProjectRuntimeInfo,
   ProjectRuntimeState,
@@ -34,6 +33,7 @@ import {
   projectErrorEnvelope,
   showProject,
 } from "@kb-labs/core-project-registry";
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import type { HostRoutes } from "@kb-labs/gateway-app";
 import { invalidBody, sendData, sendEnvelope } from "./envelope.js";
 import type { ProjectRuntimeManager } from "./project-runtime/manager.js";
@@ -85,8 +85,8 @@ export function createProjectsRoutes(
 
   return async function projectsRoutes(app: FastifyInstance) {
     app.get("/api/v1/projects", async (_request, reply) => {
-      const summaries = await listProjects(registry);
-      return sendData(reply, summaries.map((summary) => toEntry(manager, summary)));
+      const { projects } = await listProjects(registry);
+      return sendData(reply, projects.map((summary) => toEntry(manager, summary)));
     });
 
     app.get<{ Params: { id: string } }>(

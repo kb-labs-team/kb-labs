@@ -18,6 +18,7 @@ import type {
   EventsStats,
   IAnalytics,
 } from '../../adapters/analytics.js';
+import { createErrorEnvelope } from '../../error-envelope/index.js';
 
 const DEFAULT_CAPACITY = 1000;
 
@@ -109,12 +110,17 @@ export class InMemoryAnalyticsBuffer implements IAnalytics {
       if (!from || e.ts < from) { from = e.ts; }
       if (!to || e.ts > to) { to = e.ts; }
     }
+    const { message, hint } = createErrorEnvelope('KB_ANALYTICS_PERSISTENCE_VOLATILE');
     return {
       totalEvents: this.events.length,
       byType,
       bySource,
       byActor,
       timeRange: { from, to },
+      persistence: {
+        kind: 'ephemeral',
+        notice: { message, hint },
+      },
     };
   }
 

@@ -25,11 +25,12 @@ import (
 )
 
 type installCommandInput struct {
-	Index, RequestFile, ScenarioID, Answers, SecretEnv, Registry, Executable string
-	TelemetryEndpoint                                                        string
-	Direct                                                                   directRequest
-	Resume, JSON, TelemetryConsent                                           bool
-	BootstrapRegistrationWindow                                              bool
+	Index, RequestFile, ScenarioID, Answers, SecretEnv, Executable string
+	TelemetryEndpoint                                              string
+	Direct                                                         directRequest
+	Resume, JSON, TelemetryConsent                                 bool
+	BootstrapRegistrationWindow                                    bool
+	Arguments                                                      []string
 }
 
 func executeInstall(ctx context.Context, installInput installCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {
@@ -56,7 +57,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	}
 	index := input.Index
 	if index == "" {
-		index = filepath.Join(home, ".local", "share", "kb-create", "release-index.json")
+		index = savedReleaseIndex(home)
 	}
 	root := input.Direct.PlatformRoot
 	if root == "" {
@@ -113,7 +114,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the direct install fields and rerun `kb-create install`.", err)
 	}
 	started := time.Now()
-	resolved, failure := resolvePlan(planInput{Operation: "install", Index: index, Request: &request, Executable: input.Executable, KnownGateways: knownGatewayRoots(input.Executable)})
+	resolved, failure := resolvePlan(planInput{Operation: "install", Index: index, Request: &request, Direct: input.Direct, Executable: input.Executable, KnownGateways: knownGatewayRoots(input.Executable)})
 	if failure != nil {
 		return applyCommandResult{}, failure
 	}
@@ -145,7 +146,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		return applyCommandResult{}, progressWriteFailure(err, "install")
 	}
 	deps.Runtime.Progress = &humanProgress{out: out, started: map[string]time.Time{}}
-	result, failure := executeApply(ctx, applyCommandInput{Resolved: &resolved, Registry: input.Registry, SecretEnv: input.SecretEnv,
+	result, failure := executeApply(ctx, applyCommandInput{Resolved: &resolved, Arguments: input.Arguments, SecretEnv: input.SecretEnv,
 		PendingSecrets: pendingSecrets,
 		Executable:     input.Executable, Progress: deps.Runtime.Progress, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent,
 		AllowBootstrapRegistration: !bootstrapCompleted}, deps)
@@ -226,6 +227,9 @@ func mergeDirectRequest(request contracts.InstallRequest, direct directRequest) 
 	if direct.GatewayURL != "" {
 		request.GatewayURL = fields.GatewayURL
 	}
+	if direct.MarketplaceRegistryURL != "" || direct.MarketplaceSigningKeyEnv != "" || direct.MarketplaceTokenEnv != "" || direct.MarketplaceNpmURL != "" {
+		request.MarketplaceSources = fields.MarketplaceSources
+	}
 	if direct.Plugins != "" {
 		request.Plugins = fields.Plugins
 	}
@@ -246,13 +250,13 @@ func mergeDirectRequest(request contracts.InstallRequest, direct directRequest) 
 
 func installJSON(ctx context.Context, input installCommandInput, deps commandDependencies) (streamCompletion, *diag.Diag) {
 	writer := stream.New(clikitcommand.StreamWriter(deps.Command))
-	if input.Index == "" || (input.RequestFile == "" && input.Direct.PlatformRoot == "") {
-		failure := contracts.NewDiag(contracts.CodeInputRequired, "install needs a release index and an install request", "Supply `--index` and either a readable request file with `--input` or a target directory with `--platform-root`, then rerun `kb-create install --json`.", nil)
+	if input.RequestFile == "" && input.Direct.PlatformRoot == "" {
+		failure := contracts.NewDiag(contracts.CodeInputRequired, "install needs an install request", "Supply either a readable request file with `--input` or a target directory with `--platform-root`, then rerun `kb-create install --json`.", nil)
 		return finishInstallStreamFailure(writer, failure)
 	}
 	resolved, failure := resolvePlan(planInput{Operation: "install", Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
 		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable,
-		KnownGateways: knownGatewayRoots(input.Executable)})
+		KnownGateways: knownGatewayRoots(input.Executable), Arguments: input.Arguments})
 	if failure != nil {
 		return finishInstallStreamFailure(writer, failure)
 	}
@@ -337,7 +341,7 @@ func finishInstallStreamFailure(writer *stream.Writer, failure *diag.Diag) (stre
 }
 
 func executeApplyPlanJSON(ctx context.Context, input installCommandInput, resolved resolvedPlan, deps commandDependencies) (applyCommandResult, *diag.Diag) {
-	return executeApply(ctx, applyCommandInput{Resolved: &resolved, Registry: input.Registry, SecretEnv: input.SecretEnv,
+	return executeApply(ctx, applyCommandInput{Resolved: &resolved, Arguments: input.Arguments, SecretEnv: input.SecretEnv,
 		Executable: input.Executable, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent,
 		AllowBootstrapRegistration: input.BootstrapRegistrationWindow}, deps)
 }

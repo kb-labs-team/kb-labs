@@ -1,10 +1,10 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it } from 'vitest';
-import validSuccess from '../../../../../contracts/ux-result/fixtures/valid/success.json';
-import validFailure from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
-import invalidFailure from '../../../../../contracts/ux-result/fixtures/invalid/failure-missing-hint.json';
-import invalidMixedEnvelope from '../../../../../contracts/ux-result/fixtures/invalid/mixed-success-and-error.json';
-import invalidSuccess from '../../../../../contracts/ux-result/fixtures/invalid/success-missing-data.json';
+import validSuccess from '@kb-labs/core-platform/contracts/ux-result/fixtures/valid/success.json';
+import validFailure from '@kb-labs/core-platform/contracts/ux-result/fixtures/valid/failure.json';
+import invalidFailure from '@kb-labs/core-platform/contracts/ux-result/fixtures/invalid/failure-missing-hint.json';
+import invalidMixedEnvelope from '@kb-labs/core-platform/contracts/ux-result/fixtures/invalid/mixed-success-and-error.json';
+import invalidSuccess from '@kb-labs/core-platform/contracts/ux-result/fixtures/invalid/success-missing-data.json';
 import { gatewayBaseFromApiBase, HttpClient } from '../http-client.js';
 import { createEnvelopeInterceptor } from '../envelope-interceptor.js';
 

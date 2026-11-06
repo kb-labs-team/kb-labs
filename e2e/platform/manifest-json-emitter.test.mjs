@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { emitManifestJson } from '../../infra/devkit/tsup/emit-manifest-json.mjs';
+import { emitManifestJson } from '@kb-labs/devkit/tsup/emit-manifest-json.mjs';
 
 test('shared manifest emitter serializes only the named manifest export', async () => {
   const fixture = mkdtempSync(join(tmpdir(), 'kb-manifest-json-emitter-'));
@@ -32,10 +32,10 @@ test('adapter manifest emission derives kb-create credential requirements from c
       configSchema: {
         apiKey: {
           type: 'string', required: true, secret: true, env: 'OPENAI_API_KEY',
-          doctor: {
-            id: 'openai.apiKey', optional: true, severity: 'warning', services: ['gateway'],
+          doctor: [{
+            slot: 'llm', id: 'openai.apiKey', optional: true, severity: 'warning', services: ['gateway'],
             action: 'set OPENAI_API_KEY to enable LLM features', hint: 'set OPENAI_API_KEY',
-          },
+          }],
         },
       },
     };

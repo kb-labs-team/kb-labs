@@ -38,7 +38,7 @@ Use --dry-run to preview what would be changed.`,
 		}
 
 		registry := checks.Build(cfg, ws.Root, "check")
-		results := checks.RunAll(ws, cfg, registry, nil)
+		results := checks.RunAll(ws, cfg, registry, nil, nil)
 		modes := selectedFixCapabilities(cfg)
 
 		fixCount := 0

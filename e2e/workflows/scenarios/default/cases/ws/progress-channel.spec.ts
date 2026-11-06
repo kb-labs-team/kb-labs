@@ -1,13 +1,15 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 import { withWs, expectWsMessage } from '@kb-labs/shared-testing-e2e';
 import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
 import { getAccessToken } from '@kb-labs/e2e-shared/auth.js';
+import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
 
 const GATEWAY_WS = GATEWAY.replace(/^http/, 'ws');
+const projectId = process.env.KB_PROJECT_ID;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-async function startRun(request: Parameters<Parameters<typeof test>[1]>[0]['request']): Promise<string> {
+async function startRun(request: APIRequestContext): Promise<string> {
   const catalogRes = await request.get(`${WORKFLOW}/api/v1/workflows`);
   const catalog = await catalogRes.json();
   const workflows: Array<{ id?: string; name?: string }> =
@@ -24,12 +26,12 @@ async function startRun(request: Parameters<Parameters<typeof test>[1]>[0]['requ
 }
 
 function progressWsUrl(jobId: string): string {
-  return `${GATEWAY_WS}/api/v1/ws/plugins/workflow/progress/${jobId}`;
+  return `${GATEWAY_WS}${projectWorkflowRoute(projectId!, `ws/progress/${encodeURIComponent(jobId)}`)}`;
 }
 
 // WS upgrade requests go through the gateway like any other route since the
 // GHSA-75rf-rhxh-2p52 fix — a valid token is required here too.
-async function authHeaders(request: Parameters<Parameters<typeof test>[1]>[0]['request']) {
+async function authHeaders(request: APIRequestContext) {
   const token = await getAccessToken(request);
   return { headers: { Authorization: `Bearer ${token}` } };
 }
@@ -43,6 +45,7 @@ async function authHeaders(request: Parameters<Parameters<typeof test>[1]>[0]['r
 // (stub response) and silently change behaviour once the real implementation lands.
 // Re-enable once the engine emits real step events.
 test('WS-P01: subscribe → server acknowledges', async ({ request }) => {
+  expect(projectId, 'KB_PROJECT_ID must identify the registered workflow project').toBeTruthy();
   const runId = await startRun(request);
 
   await withWs(progressWsUrl(runId), async (ws) => {
@@ -62,6 +65,7 @@ test('WS-P01: subscribe → server acknowledges', async ({ request }) => {
 });
 
 test('WS-P02: unknown jobId → error message, no hang', async ({ request }) => {
+  expect(projectId, 'KB_PROJECT_ID must identify the registered workflow project').toBeTruthy();
   const fakeJobId = 'nonexistent-job-xyz';
 
   await withWs(progressWsUrl(fakeJobId), async (ws) => {

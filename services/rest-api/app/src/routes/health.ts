@@ -6,7 +6,7 @@ import { withUxErrorResponses } from './route-schema.js';
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/core-registry';
+import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/plugin-contracts';
 import { CANONICAL_OBSERVABILITY_METRICS } from '@kb-labs/core-contracts';
 import { normalizeBasePath, resolvePaths } from './path-helpers';
 import type { ReadinessState } from './readiness';

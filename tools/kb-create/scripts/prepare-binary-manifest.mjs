@@ -4,7 +4,7 @@
 // unified release-index input. It never resolves a channel or a "latest"
 // release; the tag and asset bytes are explicit inputs.
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { resolve } from 'node:path';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -18,6 +18,7 @@ const required = name => {
 };
 
 const checksumsPath = required('--checksums');
+const artifactsPath = required('--artifacts');
 const repository = required('--repository');
 const releaseTag = required('--release-tag');
 const version = required('--version');
@@ -38,18 +39,28 @@ if (assetBaseURL) {
 // index lists only what the launcher may install. kb-dev in particular is how
 // platform authors run services from the monorepo, never how a user runs one.
 const AUTHOR_AND_OPS_TOOLS = new Set(['kb-dev', 'kb-devkit', 'kb-env', 'kb-deploy', 'kb-monitor']);
-const entries = readFileSync(checksumsPath, 'utf8').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+const checksums = new Map();
+for (const line of readFileSync(checksumsPath, 'utf8').split(/\r?\n/).map(value => value.trim()).filter(Boolean)) {
+  const match = line.match(/^([a-f0-9]{64})\s+\*?(.+)$/i);
+  if (!match) continue;
+  const [, sha256, filename] = match;
+  if (checksums.has(filename)) throw new Error(`duplicate checksum asset ${filename}`);
+  checksums.set(filename, sha256.toLowerCase());
+}
+const artifacts = JSON.parse(readFileSync(artifactsPath, 'utf8'));
+if (!Array.isArray(artifacts)) throw new Error('GoReleaser artifacts output must be an array');
 const binaries = [];
 const seen = new Set();
 
-for (const line of entries) {
-  const match = line.match(/^([a-f0-9]{64})\s+(.+)$/i);
-  if (!match) continue;
-  const [, sha256, rawFilename] = match;
-  const filename = rawFilename.replace(/^\*+/, '');
-  const target = filename.match(/^(kb-[a-z0-9-]+)-(darwin|linux)-(amd64|arm64)$/);
-  if (!target) continue;
-  const [, id, os, arch] = target;
+for (const artifact of artifacts) {
+  if (artifact.type !== 'Binary' || !artifact.extra?.Checksum) continue;
+  const { name: filename, path: artifactPath, goos: os, goarch: arch, extra } = artifact;
+  const id = extra.Binary;
+  const sha256 = checksums.get(filename);
+  if (!id || !os || !arch || !artifactPath) {
+    throw new Error(`GoReleaser binary artifact ${filename} lacks its identity or output path`);
+  }
+  if (!sha256) throw new Error(`GoReleaser binary artifact ${filename} is missing from checksums`);
   if (AUTHOR_AND_OPS_TOOLS.has(id)) continue;
   const key = `${id}:${os}/${arch}`;
   if (seen.has(key)) throw new Error(`duplicate binary asset ${key}`);
@@ -60,8 +71,8 @@ for (const line of entries) {
     os,
     arch,
     filename,
-    sha256: sha256.toLowerCase(),
-    sizeBytes: statSync(join(dirname(checksumsPath), filename)).size,
+    sha256,
+    sizeBytes: statSync(resolve(artifactPath)).size,
     url: assetBaseURL
       ? `${assetBaseURL.replace(/\/$/, '')}/${filename}`
       : `https://github.com/${repository}/releases/download/${releaseTag}/${filename}`,

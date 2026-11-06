@@ -31,14 +31,15 @@
   "dependencies": {
     "@kb-labs/core-config": "workspace:*",
     "@kb-labs/core-contracts": "workspace:*",
-    "@kb-labs/core-discovery": "workspace:*",
     "@kb-labs/core-ipc": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/core-project-registry": "workspace:*",
+    "@kb-labs/core-registry": "workspace:*",
     "@kb-labs/core-resource-broker": "workspace:*",
     "@kb-labs/core-workspace": "workspace:*",
     "@kb-labs/llm-router": "workspace:*",
     "@kb-labs/plugin-execution-factory": "workspace:*",
+    "@kb-labs/plugin-contracts": "workspace:*",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -47,7 +48,8 @@
     "rimraf": "^6.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@kb-labs/core-discovery": "workspace:*"
   },
   "engines": {
     "node": "24.x",
@@ -65,5 +67,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "kbLabs": {
+    "catalogRole": "reader"
   }
 }

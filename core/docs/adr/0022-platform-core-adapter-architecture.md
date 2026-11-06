@@ -426,7 +426,7 @@ export async function run(ctx: PluginContext) {
 - Repository `kb-labs-mind` → packages `@kb-labs/mind-*`
   - `@kb-labs/mind-engine`
   - `@kb-labs/mind-orchestrator`
-  - `@kb-labs/mind-cli`
+  - `@kb-labs/mind/cli`
 
 - Repository `kb-labs-shared` → packages `@kb-labs/shared-*`
   - `@kb-labs/shared-cli-ui`

@@ -4,6 +4,7 @@
  */
 
 import OpenAI from "openai";
+import { AdapterCredentialsMissingError } from "@kb-labs/sdk";
 import type { IEmbeddings } from "@kb-labs/sdk/adapters";
 
 /**
@@ -37,11 +38,14 @@ export interface OpenAIEmbeddingsConfig {
 export class OpenAIEmbeddings implements IEmbeddings {
   private client: OpenAI;
   private model: EmbeddingModel;
+  private readonly hasApiKey: boolean;
   readonly dimensions: number;
 
   constructor(config: OpenAIEmbeddingsConfig = {}) {
+    const apiKey = config.apiKey ?? process.env.OPENAI_API_KEY;
+    this.hasApiKey = typeof apiKey === "string" && apiKey.length > 0;
     this.client = new OpenAI({
-      apiKey: config.apiKey ?? process.env.OPENAI_API_KEY,
+      apiKey: apiKey ?? "missing-openai-api-key",
       baseURL: config.baseURL,
       organization: config.organization,
     });
@@ -50,6 +54,7 @@ export class OpenAIEmbeddings implements IEmbeddings {
   }
 
   async embed(text: string): Promise<number[]> {
+    this.assertCredentials();
     const response = await this.client.embeddings.create({
       model: this.model,
       input: text,
@@ -66,6 +71,7 @@ export class OpenAIEmbeddings implements IEmbeddings {
     if (texts.length === 0) {
       return [];
     }
+    this.assertCredentials();
 
     // OpenAI supports batching natively
     const response = await this.client.embeddings.create({
@@ -85,6 +91,16 @@ export class OpenAIEmbeddings implements IEmbeddings {
   async getDimensions(): Promise<number> {
     return this.dimensions;
   }
+
+  private assertCredentials(): void {
+    if (!this.hasApiKey) {
+      throw new AdapterCredentialsMissingError(
+        "embeddings",
+        "OPENAI_API_KEY",
+        "platform.adapterOptions.embeddings.apiKey",
+      );
+    }
+  }
 }
 
 /**
@@ -96,6 +112,7 @@ export function createAdapter(
 ): OpenAIEmbeddings {
   return new OpenAIEmbeddings(config);
 }
+
 
 // Re-export manifest for adapter loading
 export { manifest } from "./embeddings-manifest.js";

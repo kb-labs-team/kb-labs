@@ -28,8 +28,9 @@ release-id agreement.
 
 ## Running
 
-Requires Docker + docker-compose + Go 1.24, and Node.js matching the policy in
-the root `package.json` `engines.node` field.
+Requires Docker Compose v2 (`docker compose`) or standalone `docker-compose`,
+Go 1.24, and Node.js matching the policy in the root `package.json`
+`engines.node` field.
 
 ```sh
 # From this directory:
@@ -43,7 +44,8 @@ still skips this test. To inspect the resolved build args without building,
 run `./scripts/run.sh config --format json`.
 
 `KEEP_STACK=1` leaves the compose stack up after the test for manual
-inspection. Tear down with `docker-compose down -v` from this dir.
+inspection. Tear down with `docker compose down -v` (or `docker-compose down -v`)
+from this dir.
 
 ## What is stubbed
 
@@ -69,8 +71,8 @@ inspection. Tear down with `docker-compose down -v` from this dir.
 ## Troubleshooting
 
 - **"dial 127.0.0.1:XX: connection refused"** — a compose service is not up
-  or a host port is in use. Run `docker-compose ps` and `docker-compose logs
-  target-1` from this dir.
+  or a host port is in use. Run `docker compose ps` and `docker compose logs
+  target-1` (or use standalone `docker-compose`) from this dir.
 - **"ERR_PNPM_FETCH_404"** — fixtures did not publish. Re-run
   `bash scripts/publish-fixtures.sh` manually and check the Verdaccio page
   at http://localhost:4873.

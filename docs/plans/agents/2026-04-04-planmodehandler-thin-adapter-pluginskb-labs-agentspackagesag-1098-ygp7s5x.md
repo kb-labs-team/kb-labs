@@ -99,19 +99,19 @@ async execute(task, config, toolRegistry): Promise<TaskResult> {
 После каждой фазы убеждаемся, что сборка не ломается:
 
 ```
-pnpm --filter @kb-labs/agent-core build
+pnpm --filter @kb-labs/agents/core build
 ```
 
 После всех фаз — полный набор тестов пакета:
 
 ```
-pnpm --filter @kb-labs/agent-core test
+pnpm --filter @kb-labs/agents/core test
 ```
 
 Смоук-тест plan mode end-to-end (ожидаемый результат — в stdout появляется markdown план с `## Task` и `## Verification`):
 
 ```
-pnpm --filter @kb-labs/agent-cli run dev -- --mode plan --task "list all exports in src/modes/"
+pnpm --filter @kb-labs/agents/cli run dev -- --mode plan --task "list all exports in src/modes/"
 ```
 
 Контроль размера handler (ожидаем ≤ 100 строк):

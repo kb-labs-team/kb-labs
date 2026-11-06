@@ -1,12 +1,14 @@
 package cache
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/kb-labs/clikit/toolchain"
 )
 
 // FormatVersion is part of every task fingerprint. Bump it only when the
@@ -19,14 +21,15 @@ const FormatVersion = "kb-devkit-cas-v1"
 // deterministic for commands that do not require Node or Go.
 func RuntimeFingerprint() string {
 	parts := []string{FormatVersion, runtime.Version()}
-	for _, command := range [][]string{{"node", "--version"}, {"pnpm", "--version"}, {"go", "version"}} {
-		output, err := exec.Command(command[0], command[1:]...).Output()
+	for _, command := range [][]string{{"node", "--version"}, {"go", "version"}} {
+		output, err := toolchain.Run(context.Background(), toolchain.Invocation{Tool: command[0], Executable: command[0], Args: command[1:], Operation: toolchain.OperationVersionProbe})
 		if err != nil {
 			parts = append(parts, command[0]+":missing")
 			continue
 		}
-		parts = append(parts, command[0]+":"+strings.TrimSpace(string(output)))
+		parts = append(parts, command[0]+":"+strings.TrimSpace(output.Stdout))
 	}
+	parts = append(parts, "pnpm:"+toolchain.SupportedPnpm)
 
 	// The executable hash invalidates entries when the devkit implementation
 	// changes even if devkit.yaml stays identical.

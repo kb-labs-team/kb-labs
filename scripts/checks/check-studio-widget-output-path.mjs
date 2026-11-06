@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { access, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -148,7 +149,7 @@ async function main() {
   if (!comparedManifest && !issues.some(issue => issue.severity === 'error')) {
     addIssue('workspace', workspaceRoot, 'no built plugin-entry manifest declared a Studio surface; the output path contract was not exercised', 'warning');
   }
-  process.stdout.write(JSON.stringify({ issues }));
+  writeCheckResult(issues);
 }
 
 function readStdin() {

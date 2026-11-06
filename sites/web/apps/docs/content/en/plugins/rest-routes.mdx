@@ -19,7 +19,7 @@ Every REST route has:
 2. **A handler file** — exports a `defineRoute(...)` result as default.
 3. **Zod schemas** referenced by the manifest via `{ zod: '@pkg#Schema' }` notation.
 
-The canonical example is [commit plugin manifest](plugins/commit/entry/src/manifest.ts) which declares 14 routes — browse that for a production-grade reference.
+The canonical example is [commit plugin manifest](plugins/commit/src/manifest.ts) which declares 14 routes — browse that for a production-grade reference.
 
 ## 1 — The manifest entry
 
@@ -35,10 +35,10 @@ rest: {
       path: '/generate',
       handler: './rest/handlers/generate-handler.js#default',
       input: {
-        zod: '@kb-labs/commit-contracts#GenerateRequestSchema',
+        zod: '@kb-labs/commit/contracts#GenerateRequestSchema',
       },
       output: {
-        zod: '@kb-labs/commit-contracts#GenerateResponseSchema',
+        zod: '@kb-labs/commit/contracts#GenerateResponseSchema',
       },
       timeoutMs: 300000,
       description: 'Generate a commit plan using LLM',
@@ -150,8 +150,8 @@ The REST host invokes `onConnect`, then keeps the connection alive. `onError` re
 Input and output schemas are referenced by string, not imported directly:
 
 ```ts
-input:  { zod: '@kb-labs/commit-contracts#GenerateRequestSchema' },
-output: { zod: '@kb-labs/commit-contracts#GenerateResponseSchema' },
+input:  { zod: '@kb-labs/commit/contracts#GenerateRequestSchema' },
+output: { zod: '@kb-labs/commit/contracts#GenerateResponseSchema' },
 ```
 
 The format is `<package-name>#<export-name>`. At load time, the runtime dynamically imports the package, reads the named export, and wires it into Fastify's request/response validation.
@@ -163,14 +163,16 @@ The format is `<package-name>#<export-name>`. At load time, the runtime dynamica
 Convention: put Zod schemas in your plugin's `contracts` package, separate from the CLI and core packages:
 
 ```
-packages/
-├── commit-cli/           # CLI + REST handlers + manifest
-├── commit-core/          # Business logic (framework-free)
-└── commit-contracts/     # Zod schemas, types, constants
+plugins/commit/src/
+├── manifest.ts           # plugin manifest
+├── cli/                  # CLI commands
+├── rest/                 # REST handlers
+├── core/                 # business logic (framework-free)
+└── contracts/            # Zod schemas, types, constants
 ```
 
 ```ts
-// packages/commit-contracts/src/generate.ts
+// plugins/commit/src/contracts/generate.ts
 import { z } from 'zod';
 
 export const GenerateRequestSchema = z.object({
@@ -208,9 +210,9 @@ Use this when you have an external OpenAPI document you want to reference. Most 
 Handlers are built with `defineRoute` from `@kb-labs/sdk`:
 
 ```ts
-// packages/commit-entry/src/rest/handlers/generate-handler.ts
+// plugins/commit/src/rest/handlers/generate-handler.ts
 import { defineRoute, useLLM, useLogger } from '@kb-labs/sdk';
-import type { GenerateRequest, GenerateResponse } from '@kb-labs/commit-contracts';
+import type { GenerateRequest, GenerateResponse } from '@kb-labs/commit/contracts';
 
 export default defineRoute<unknown, GenerateRequest>({
   path: '/generate',

@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from invocations import _catalog_exit_status, read_kb_create_cli_result
+import jsonl
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,7 +31,14 @@ def read_recorded_fixtures(root: Path) -> int:
             raise AssertionError(f"recorded CLI result {status_file} has no JSON output")
         command = command_file.read_text(encoding="utf-8").strip()
         returncode = int(status_file.read_text(encoding="utf-8").strip())
-        stdout = output_path.read_text(encoding="utf-8")
+        if output_path.suffix == ".jsonl":
+            rows = jsonl.read_jsonl(output_path)
+            malformed = next((row for row in rows if row.error is not None), None)
+            if malformed is not None:
+                raise AssertionError(f"recorded CLI JSONL {output_path} has invalid line {malformed.line_number}: {malformed.error}")
+            stdout = jsonl.encode_jsonl_records(row.value for row in rows)
+        else:
+            stdout = output_path.read_text(encoding="utf-8")
         result = subprocess.CompletedProcess(["kb-create", command, "--json"], returncode, stdout, "")
         read_kb_create_cli_result(command, result)
         checked += 1

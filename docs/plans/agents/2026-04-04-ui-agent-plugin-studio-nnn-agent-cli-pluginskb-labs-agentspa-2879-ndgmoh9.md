@@ -151,16 +151,16 @@ import {
 
 ```bash
 # TypeScript проверка agent-cli — убеждаемся что все новые импорты корректны
-pnpm --filter @kb-labs/agent-cli typecheck
+pnpm --filter @kb-labs/agents/cli typecheck
 
 # Сборка agent-cli — убеждаемся что нет ошибок компиляции
-pnpm --filter @kb-labs/agent-cli build
+pnpm --filter @kb-labs/agents/cli build
 
 # Сборка всего agents плагина — проверяем интеграцию
 pnpm --filter @kb-labs/kb-labs-agents build
 
 # Проверка что commit-plugin (референс) не сломался
-pnpm --filter @kb-labs/commit-cli build
+pnpm --filter @kb-labs/commit/cli build
 
 # Визуальная проверка в Studio dev-режиме:
 # - открыть Agent page, убедиться что conversation view рендерится корректно

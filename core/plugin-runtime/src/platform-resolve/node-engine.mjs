@@ -2,25 +2,22 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '@kb-labs/plugin-contracts/node-engine-policy';
 
-const nodePolicyPattern = /^(0|[1-9]\d*)\.x$/;
-
-export function parseNodeEnginePolicy(value) {
-  if (typeof value !== 'string') {
-    throw new Error('The platform must declare engines.node as MAJOR.x.');
-  }
-  const match = nodePolicyPattern.exec(value);
-  if (!match) {
-    throw new Error(`Unsupported Node.js engine declaration "${value}"; use exactly MAJOR.x.`);
-  }
-  return { requiredMajor: Number(match[1]) };
-}
-
+/**
+ * @param {number | string} requiredMajor
+ * @param {string} actualVersion
+ * @returns {boolean}
+ */
 export function nodeVersionSupported(requiredMajor, actualVersion) {
   const actualMajor = parseNodeMajor(actualVersion);
   return actualMajor === Number(requiredMajor);
 }
 
+/**
+ * @param {string} version
+ * @returns {number}
+ */
 function parseNodeMajor(version) {
   if (typeof version !== 'string') throw new Error(`Invalid Node.js version "${version}".`);
   const majorText = version.trim().replace(/^v/, '').split('.')[0];
@@ -31,32 +28,34 @@ function parseNodeMajor(version) {
   return major;
 }
 
+/**
+ * @param {string} packageManifest
+ * @returns {{ requiredMajor: number }}
+ */
 export function readNodeEnginePolicy(packageManifest) {
   const parsed = readManifest(packageManifest);
   if (parsed.name !== '@kb-labs/plugin-runtime') {
     throw new Error(`Runtime engine manifest ${packageManifest} declares ${JSON.stringify(parsed.name)}.`);
   }
-  return parseNodeEnginePolicy(parsed.engines?.node);
+  return parseNodeEnginePolicy(parsed.engines?.node, 'platform');
 }
 
-export function readNodeEngineDeclaration(packageManifest) {
-  const parsed = readManifest(packageManifest);
-  const policy = parsed.engines?.node;
-  if (policy === undefined) return undefined;
-  if (typeof policy !== 'string') {
-    throw new Error(`Node.js engine declaration in ${packageManifest} must be a string.`);
-  }
-  return policy;
-}
-
+/**
+ * @param {string} packageManifest
+ * @returns {{ name?: unknown, engines?: { node?: unknown } }}
+ */
 function readManifest(packageManifest) {
   try {
     return JSON.parse(readFileSync(packageManifest, 'utf8'));
   } catch (error) {
-    throw new Error(`Cannot read package manifest ${packageManifest}: ${error.message}`);
+    throw new Error(`Cannot read package manifest ${packageManifest}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
+/**
+ * @param {string | URL} moduleURL
+ * @returns {string}
+ */
 export function runtimePackageManifest(moduleURL) {
   let directory = dirname(fileURLToPath(moduleURL));
   for (;;) {
@@ -72,9 +71,14 @@ export function runtimePackageManifest(moduleURL) {
   throw new Error(`Cannot locate the installed @kb-labs/plugin-runtime/package.json from ${moduleURL}.`);
 }
 
+/**
+ * @param {string} rootManifest
+ * @param {NodeJS.ProcessEnv} [environment]
+ * @returns {string}
+ */
 export function selectNodeExecutable(rootManifest, environment = process.env) {
   const declaration = readNodeEngineDeclaration(rootManifest);
-  const { requiredMajor } = parseNodeEnginePolicy(declaration);
+  const { requiredMajor } = parseNodeEnginePolicy(declaration, 'platform');
   const candidates = new Set((environment.PATH ?? '').split(delimiter).map((directory) => join(directory || '.', 'node')));
   const rejected = [];
   for (const candidate of candidates) {
@@ -83,7 +87,7 @@ export function selectNodeExecutable(rootManifest, environment = process.env) {
     try {
       version = execFileSync(candidate, ['--version'], { encoding: 'utf8', timeout: 5000 }).trim();
     } catch (error) {
-      rejected.push(`${candidate} (could not read version: ${error.message})`);
+      rejected.push(`${candidate} (could not read version: ${error instanceof Error ? error.message : String(error)})`);
       continue;
     }
     if (nodeVersionSupported(requiredMajor, version)) return candidate;
@@ -100,16 +104,16 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   } else if (process.argv[2] === '--required-major') {
     try {
       const declaration = readNodeEngineDeclaration(process.argv[3]);
-      process.stdout.write(`${parseNodeEnginePolicy(declaration).requiredMajor}\n`);
+      process.stdout.write(`${parseNodeEnginePolicy(declaration, 'platform').requiredMajor}\n`);
     } catch (error) {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
       process.exitCode = 2;
     }
   } else {
     try {
       process.stdout.write(`${selectNodeExecutable(process.argv[3])}\n`);
     } catch (error) {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
       process.exitCode = 2;
     }
   }

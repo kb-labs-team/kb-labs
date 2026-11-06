@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildDiagnosticReport, formatDiagnosticReport } from '../diagnostics/reporter.js';
-import type { DiagnosticEvent } from '@kb-labs/core-discovery';
+import { buildDiagnosticReport } from '../diagnostics/reporter.js';
+import type { DiagnosticEvent } from '@kb-labs/plugin-contracts';
 
 function makeEvent(
   severity: DiagnosticEvent['severity'],
@@ -54,29 +54,5 @@ describe('buildDiagnosticReport', () => {
     expect(report.byPlugin['@kb-labs/a']).toHaveLength(2);
     expect(report.byPlugin['@kb-labs/b']).toHaveLength(1);
     expect(report.byPlugin['__global__']).toHaveLength(1);
-  });
-});
-
-describe('formatDiagnosticReport', () => {
-  it('formats empty report', () => {
-    const report = buildDiagnosticReport([], 0, 0);
-    const text = formatDiagnosticReport(report);
-    expect(text).toContain('0/0 plugins loaded');
-  });
-
-  it('includes error details', () => {
-    const events = [
-      {
-        ...makeEvent('error', 'MANIFEST_NOT_FOUND', '@kb-labs/broken'),
-        remediation: 'Run kb marketplace install',
-      },
-    ];
-
-    const report = buildDiagnosticReport(events, 1, 0);
-    const text = formatDiagnosticReport(report);
-    expect(text).toContain('ERR');
-    expect(text).toContain('MANIFEST_NOT_FOUND');
-    expect(text).toContain('@kb-labs/broken');
-    expect(text).toContain('Fix: Run kb marketplace install');
   });
 });

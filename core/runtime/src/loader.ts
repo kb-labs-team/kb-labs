@@ -14,15 +14,18 @@ import { platform } from './container.js';
 import { createAnalyticsContext } from './analytics-context.js';
 import { AdapterLoader } from './adapter-loader.js';
 import type { AdapterConfig, LoadedAdapterModule } from './adapter-loader.js';
-import { configuredAdapterLoadError, loadDiscoveredAdapterModule } from './adapter-module-loader.js';
+import { configuredAdapterLoadError, loadCatalogAdapterEntries, loadDiscoveredAdapterModule } from './adapter-module-loader.js';
 import { EnvironmentManager } from './environment-manager.js';
 import { WorkspaceManager } from './workspace-manager.js';
 import { SnapshotManager } from './snapshot-manager.js';
 import { RunExecutor } from './run-executor.js';
 import { RunOrchestrator } from './run-orchestrator.js';
 import { createDefaultExecutionPolicyLLM } from './wrappers/default-execution-policy-llm.js';
-import { resolveInstalledAdapterDefaults } from './default-adapters.js';
+import { configuredAdapterForSlot, resolveDiscoveredAdapterDefaults } from './default-adapters.js';
 import { resolvePlatformDataPath, resolvePlatformDataRoot } from '@kb-labs/core-project-registry';
+import { openCatalog } from '@kb-labs/core-registry';
+import { resolvePlatformVersion } from './platform-version.js';
+import type { IEntityRegistry, CatalogOpenOptions } from '@kb-labs/plugin-contracts';
 
 import { ResourceManager } from './core/resource-manager.js';
 import { JobScheduler } from './core/job-scheduler.js';
@@ -197,7 +200,7 @@ export function fillAdapterFallbacksAndRecord(
       continue;
     }
     const desc = ADAPTER_DEFAULTS[slot];
-    const configuredPkg = getPrimaryAdapter(adapters[slot]);
+    const configuredPkg = getPrimaryAdapter(configuredAdapterForSlot(slot, adapters)?.value);
     const hasPresent = container.hasAdapter(slot);
 
     const failure = failures.get(slot);
@@ -227,7 +230,7 @@ export function fillAdapterFallbacksAndRecord(
         correlationId: failure.correlationId,
         action: failure.action,
         recordedAt: now(),
-      });
+      }, adapters);
       continue;
     }
 
@@ -239,7 +242,7 @@ export function fillAdapterFallbacksAndRecord(
         implementation: configuredPkg,
         configuredPackage: configuredPkg,
         recordedAt: now(),
-      });
+      }, adapters);
       continue;
     }
 
@@ -257,7 +260,7 @@ export function fillAdapterFallbacksAndRecord(
         mode: 'real',
         implementation: 'HybridLogReader',
         recordedAt: now(),
-      });
+      }, adapters);
       continue;
     }
 
@@ -281,7 +284,7 @@ export function fillAdapterFallbacksAndRecord(
         implementation: implName,
         reason: 'not-configured',
         recordedAt: now(),
-      });
+      }, adapters);
       continue;
     }
 
@@ -305,7 +308,7 @@ export function fillAdapterFallbacksAndRecord(
         implementation: Object.getPrototypeOf(impl as object)?.constructor?.name ?? 'unknown',
         reason: 'not-configured',
         recordedAt: now(),
-      });
+      }, adapters);
       container.logger.warn(
         `Adapter "${slot}" using InMemory fallback — data lives in-process only`,
         { slot, reason: 'not-configured' },
@@ -329,7 +332,7 @@ export function fillAdapterFallbacksAndRecord(
       implementation: Object.getPrototypeOf(impl as object)?.constructor?.name ?? 'unknown',
       reason: 'not-configured',
       recordedAt: now(),
-    });
+    }, adapters);
     container.logger.warn(
       `Adapter "${slot}" using NoOp fallback — calls will throw AdapterUnavailableError`,
       { slot, reason: 'not-configured' },
@@ -525,14 +528,22 @@ export async function initPlatform(
       adapterConfig: Partial<Record<string, unknown>>,
     ) => Partial<Record<string, unknown>>;
     workspaceDevelopment?: boolean;
+    workspaceRoot?: string;
     hostServiceEnvironment?: HostServiceEnvironment;
+    catalog?: IEntityRegistry;
   } = {},
 ): Promise<PlatformContainer> {
   const {
     assemblyHook,
     workspaceDevelopment = false,
+    workspaceRoot,
     hostServiceEnvironment,
+    catalog: suppliedCatalog,
   } = options;
+
+  if (workspaceDevelopment && !workspaceRoot) {
+    throw new Error('Workspace development requires the root supplied by its CLI or service launcher.');
+  }
 
   // ✅ Idempotent: If already initialized, return existing singleton
   // This prevents duplicate adapter instances across CLI and service startup.
@@ -549,10 +560,27 @@ export async function initPlatform(
   const installedPlatform = Boolean(platformRoot) || await fs.access(path.join(adapterRoot, '.kb', 'marketplace.lock'))
     .then(() => true)
     .catch(() => false);
-  const defaultedConfig = await resolveInstalledAdapterDefaults({
+  const configuredPackages = Object.entries(config.adapters ?? {}).flatMap(([slot, value]) =>
+    normalizeAdapterValue(value as AdapterValue).map(modulePath => ({
+      packageName: modulePath.split('/').slice(0, 2).join('/'),
+      slot,
+    })),
+  );
+  const workspaceAdapters: CatalogOpenOptions['workspaceAdapters'] = workspaceDevelopment
+    ? { development: true, workspaceRoot: workspaceRoot!, configuredPackages }
+    : { development: false, configuredPackages };
+  const catalog = suppliedCatalog ?? await openCatalog({ platformRoot: adapterRoot, projectRoot: cwd }, {
+    resolvePlatformVersion: () => resolvePlatformVersion(adapterRoot, {
+      sameLocation: true,
+      rawConfig: { platform: { mode: workspaceDevelopment ? 'development' : 'installed' } },
+    }),
+    workspaceAdapters,
+  });
+  const discoveredAdapters = await loadCatalogAdapterEntries(catalog.adapters(), workspaceAdapters);
+  const defaultedConfig = resolveDiscoveredAdapterDefaults({
     adapters: (config.adapters ?? {}) as Record<string, unknown>,
     adapterOptions: config.adapterOptions ?? {},
-  }, adapterRoot, cwd);
+  }, discoveredAdapters, cwd);
   const adapters = defaultedConfig.adapters as NonNullable<PlatformConfig['adapters']>;
   const adapterOptions = defaultedConfig.adapterOptions as NonNullable<PlatformConfig['adapterOptions']>;
 
@@ -600,19 +628,6 @@ export async function initPlatform(
     // Module loader function - defined before loop so we can pre-load manifests
     const loadModule = async (modulePath: string): Promise<LoadedAdapterModule> => {
       try {
-        const { discoverAdapters } = await import('./discover-adapters.js');
-        const discovered = await discoverAdapters(
-          platformRoot ?? cwd,
-          {
-            development: workspaceDevelopment,
-            configuredPackages: Object.entries(adapters).flatMap(([slot, value]) =>
-              normalizeAdapterValue(value as AdapterValue).map(modulePath => ({
-                packageName: modulePath.split('/').slice(0, 2).join('/'),
-                slot,
-              })),
-            ),
-          },
-        );
 
         // Parse module path into base package and subpath (same logic as resolveAdapter)
         const basePkgName = modulePath.split('/').slice(0, 2).join('/'); // "@kb-labs/adapters-openai"
@@ -621,7 +636,7 @@ export async function initPlatform(
             ? modulePath.split('/').slice(2).join('/')
             : null; // "embeddings" or null
 
-        const adapter = discovered.get(basePkgName);
+        const adapter = discoveredAdapters.get(basePkgName);
 
         if (adapter && subpath) {
           return await loadDiscoveredAdapterModule(adapter, modulePath);
@@ -724,8 +739,23 @@ export async function initPlatform(
       const channels: Record<string, unknown> = {};
       for (const [id, channelConfig] of Object.entries(options.channels ?? {})) {
         try {
-          const { loadAdapterChannelFactory } = await import('./discover-adapters.js');
-          const createChannel = await loadAdapterChannelFactory(channelConfig.type, platformRoot ?? cwd, workspaceDevelopment);
+          const matches = [...discoveredAdapters.values()].filter(({ module }) => {
+            const implementsValue = module.manifest.implements;
+            const interfaces = Array.isArray(implementsValue) ? implementsValue : [implementsValue];
+            return module.manifest.channelType === channelConfig.type && interfaces.includes('INotifierChannel');
+          });
+          if (matches.length !== 1) {
+            const reason = matches.length === 0
+              ? 'no installed adapter manifest matches this channel type'
+              : 'multiple adapter manifests match this channel type';
+            throw new Error(`Notifier channel type "${channelConfig.type}" is unavailable: ${reason}.`);
+          }
+          const module = matches[0]!.module;
+          const factory = module.createChannel ?? module.default;
+          if (typeof factory !== 'function') {
+            throw new Error(`Notifier channel type "${channelConfig.type}" does not export createChannel.`);
+          }
+          const createChannel = factory as (config: unknown, channelId: string) => unknown;
           channels[id] = createChannel(channelConfig, id);
         } catch (channelError) {
           platform.logger.warn('initPlatform: failed to load notifier channel', {

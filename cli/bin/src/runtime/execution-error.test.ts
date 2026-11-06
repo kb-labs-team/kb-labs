@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ServicePortConfigError, createErrorEnvelope } from '@kb-labs/core-platform';
 import type { Presenter } from '@kb-labs/cli-runtime';
-import { AuthSessionOwner, HttpSseGatewayTransport } from '@kb-labs/cli-runtime/gateway';
+import { AuthSessionOwner } from '@kb-labs/sdk/gateway';
+import { HttpSseGatewayTransport } from '@kb-labs/cli-runtime/gateway';
 import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactive';
 import { defineSystemCommand } from '@kb-labs/shared-command-kit';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
@@ -13,6 +14,29 @@ describe('handleExecutionError', () => {
 
   async function missingGatewayCredentialsFailure(): Promise<unknown> {
     vi.spyOn(AuthSessionOwner.prototype, 'load').mockResolvedValue(null);
+    const transport = new HttpSseGatewayTransport({ gatewayUrl: 'https://gateway.test', credentialKind: 'either' });
+    try {
+      for await (const event of transport.execute({ pluginId: '@example/plugin', handlerRef: 'dist/index.js', input: {} })) {
+        void event;
+      }
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  }
+
+  async function noExecutionHostFailure(): Promise<unknown> {
+    vi.spyOn(AuthSessionOwner.prototype, 'load').mockResolvedValue({
+      kind: 'session', gatewayUrl: 'https://gateway.test', accessToken: 'session-token',
+      refresh: vi.fn(), save: vi.fn(),
+    });
+    const envelope = createErrorEnvelope('KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE', {
+      correlationId: 'gateway-dispatch-123',
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: false, error: envelope }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    })));
     const transport = new HttpSseGatewayTransport({ gatewayUrl: 'https://gateway.test', credentialKind: 'either' });
     try {
       for await (const event of transport.execute({ pluginId: '@example/plugin', handlerRef: 'dist/index.js', input: {} })) {
@@ -40,6 +64,19 @@ describe('handleExecutionError', () => {
         hint: createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'https://gateway.test' } }).hint,
       }),
     });
+  });
+
+  it('preserves the Gateway execution-host code, hint, and correlation in CLI JSON output', async () => {
+    const json = vi.fn();
+    const presenter = { isJSON: true, json, error: vi.fn() } as unknown as Presenter;
+    const envelope = createErrorEnvelope('KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE', {
+      correlationId: 'gateway-dispatch-123',
+    });
+
+    const exitCode = handleExecutionError(await noExecutionHostFailure(), presenter);
+
+    expect(exitCode).toBe(1);
+    expect(json).toHaveBeenCalledWith({ ok: false, error: envelope });
   });
 
   // case: S-007.4

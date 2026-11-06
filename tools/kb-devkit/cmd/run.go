@@ -3,10 +3,12 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
@@ -65,13 +67,9 @@ Examples:
 		var pkgs []workspace.Package
 		switch {
 		case runAffected:
-			pkgs, err = engine.AffectedPackages(ws, cfg)
+			pkgs, err = engine.AffectedRunPackages(ws, cfg, args, cacheRoot, runDiffOnly)
 			if err != nil {
 				return fmt.Errorf("affected: %w", err)
-			}
-			if !runDiffOnly {
-				dirty := engine.DirtyPackages(ws, args, cacheRoot)
-				pkgs = engine.UnionPackages(ws, pkgs, dirty)
 			}
 			if len(pkgs) == 0 {
 				o := newOutput()
@@ -89,6 +87,7 @@ Examples:
 		opts := engine.RunOptions{
 			Tasks:       args,
 			Packages:    pkgs,
+			Affected:    runAffected,
 			NoCache:     runNoCache,
 			LiveOutput:  runLive,
 			Concurrency: runConcurrency,
@@ -100,8 +99,19 @@ Examples:
 
 		if !jsonMode {
 			clikitcommand.Println()
+			var outputMu sync.Mutex
+			progressWriter := clikitcommand.FromCommand(cmd).ProgressWriter()
+			if !stdoutIsTerminal() {
+				opts.OnHeartbeat = func(packageName, taskName string, elapsed time.Duration) {
+					outputMu.Lock()
+					defer outputMu.Unlock()
+					fmt.Fprintf(progressWriter, "  [RUN ] %s:%s elapsed %s\n", packageName, taskName, elapsed.Round(time.Second))
+				}
+			}
 			opts.OnResult = func(r engine.TaskResult, done, total int) {
-				printTaskResult(o, r, done, total)
+				outputMu.Lock()
+				defer outputMu.Unlock()
+				printTaskResult(progressWriter, o, r, done, total)
 			}
 		}
 
@@ -109,9 +119,25 @@ Examples:
 		result, err := engine.Run(ws, cfg, opts)
 		elapsed := time.Since(start)
 		if err != nil {
+			var cycleErr *engine.TaskCycleError
+			if errors.As(err, &cycleErr) {
+				return taskCycleFailure(cycleErr, args)
+			}
 			var graphErr *engine.TaskGraphError
 			if errors.As(err, &graphErr) {
 				return taskGraphFailure(graphErr)
+			}
+			var accountingErr *engine.RunAccountingError
+			if errors.As(err, &accountingErr) {
+				return taskAccountingFailure(accountingErr, args)
+			}
+			return err
+		}
+		summary, err := result.Summary()
+		if err != nil {
+			var accountingErr *engine.RunAccountingError
+			if errors.As(err, &accountingErr) {
+				return taskAccountingFailure(accountingErr, args)
 			}
 			return err
 		}
@@ -119,7 +145,7 @@ Examples:
 		if jsonMode {
 			payload := map[string]any{
 				"results": result.Results,
-				"summary": result.Summary(),
+				"summary": summary,
 				"elapsed": elapsed.String(),
 			}
 			if !result.OK {
@@ -129,25 +155,26 @@ Examples:
 		}
 
 		// Summary line.
-		s := result.Summary()
-		clikitcommand.Printf("\n  %s scheduled  %s  %s  %s  %s  — %s\n\n",
+		s := summary
+		clikitcommand.Printf("\n  %s scheduled  %s  %s  %s  %s  %s not affected  — %s\n\n",
 			o.dim.Render(fmt.Sprintf("%d", s.Scheduled)),
 			o.healthy.Render(fmt.Sprintf("%d passed", s.Passed)),
 			o.dim.Render(fmt.Sprintf("%d cached", s.Cached)),
 			colorCount(s.Failed, o),
-			o.warning.Render(fmt.Sprintf("%d skipped", s.Skipped)),
+			o.warning.Render(fmt.Sprintf("%d blocked", s.Blocked)),
+			o.dim.Render(fmt.Sprintf("%d", s.NotAffected)),
 			elapsed.Round(time.Millisecond),
 		)
 		if len(s.BlockedTasks) <= 10 {
 			for _, blocked := range s.BlockedTasks {
-				clikitcommand.Printf("  %s\n", o.dim.Render(fmt.Sprintf("%s:%s blocked %d dependents", blocked.Package, blocked.Task, blocked.Dependents)))
+				clikitcommand.Printf("  %s\n", o.dim.Render(fmt.Sprintf("%s:%s blocked-by %s:%s", blocked.Package, blocked.Task, blocked.BlockedByPackage, blocked.BlockedByTask)))
 			}
 		} else if len(s.BlockedTasks) > 10 {
 			clikitcommand.Printf("  %s\n", o.dim.Render("Blocked task details omitted; rerun with --json for the full list."))
 		}
 
 		if !result.OK {
-			return taskFailure(failedTaskResult(result.Results), result.Summary())
+			return taskFailure(failedTaskResult(result.Results), summary)
 		}
 		return nil
 	},
@@ -179,7 +206,7 @@ func colorCount(n int, o output) string {
 	return o.errStyle.Render(fmt.Sprintf("%d failed", n))
 }
 
-func printTaskResult(o output, r engine.TaskResult, done, total int) {
+func printTaskResult(w io.Writer, o output, r engine.TaskResult, done, total int) {
 	counter := o.dim.Render(fmt.Sprintf("[%3d/%-3d]", done, total))
 	var icon, result, cache, elapsed string
 	if r.OK {
@@ -202,7 +229,7 @@ func printTaskResult(o output, r engine.TaskResult, done, total int) {
 		name = "…" + name[len(name)-41:]
 	}
 
-	clikitcommand.Printf("  %s %s %-42s  %-12s  %-9s  %-7s  %s\n",
+	fmt.Fprintf(w, "  %s %s %-42s  %-12s  %-9s  %-7s  %s\n",
 		counter,
 		icon,
 		name,
@@ -216,11 +243,11 @@ func printTaskResult(o output, r engine.TaskResult, done, total int) {
 	if !r.OK && !r.Cached {
 		lines, hidden := failureTail(r.Stdout, r.Stderr, failLineLimit())
 		if hidden > 0 {
-			clikitcommand.Printf("           %s\n", o.dim.Render(
+			fmt.Fprintf(w, "           %s\n", o.dim.Render(
 				fmt.Sprintf("… %d earlier lines hidden (KB_DEVKIT_FAIL_LINES=0 for all)", hidden)))
 		}
 		for _, line := range lines {
-			clikitcommand.Printf("           %s\n", o.dim.Render(line))
+			fmt.Fprintf(w, "           %s\n", o.dim.Render(line))
 		}
 	}
 }

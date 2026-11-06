@@ -34,6 +34,7 @@
       "import": "./dist/ux-result/index.js",
       "require": "./dist/ux-result/index.cjs"
     },
+    "./contracts/ux-result/*": "./contracts/ux-result/*",
     "./core": {
       "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.js",
@@ -71,7 +72,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "contracts/ux-result"
   ],
   "scripts": {
     "build": "tsup",

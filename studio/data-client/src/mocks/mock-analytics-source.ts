@@ -142,6 +142,7 @@ export class MockAnalyticsSource implements AnalyticsDataSource {
         from: new Date(oldestTs).toISOString(),
         to: new Date(newestTs).toISOString(),
       },
+      persistence: { kind: 'durable' },
     };
   }
 

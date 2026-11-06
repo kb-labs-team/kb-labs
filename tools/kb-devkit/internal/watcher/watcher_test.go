@@ -1,6 +1,7 @@
 package watcher
 
 import (
+	"github.com/kb-labs/devkit/internal/testdeadline"
 	"os"
 	"path/filepath"
 	"testing"
@@ -54,7 +55,7 @@ func TestHandleFSEventDebouncesPerPackage(t *testing.T) {
 		if ev.Event != EventRecheck || ev.Package != "@kb/app" || ev.File != file2 {
 			t.Fatalf("unexpected watch event: %+v", ev)
 		}
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(testdeadline.Budget(t)):
 		t.Fatal("timed out waiting for debounced watch event")
 	}
 }
@@ -93,6 +94,6 @@ func TestHandleFSEventIgnoresUnknownPaths(t *testing.T) {
 	select {
 	case ev := <-w.Events():
 		t.Fatalf("unexpected event for unrelated path: %+v", ev)
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(testdeadline.Budget(t)):
 	}
 }

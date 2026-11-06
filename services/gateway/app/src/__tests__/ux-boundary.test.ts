@@ -2,13 +2,14 @@ import Fastify from 'fastify';
 import { Readable } from 'node:stream';
 import { createErrorEnvelope, type ICache, type ILogger } from '@kb-labs/core-platform';
 import { createUxFailureResult, isUxResult } from '@kb-labs/core-platform/ux-result';
-import successFixture from '../../../../../contracts/ux-result/fixtures/valid/success.json';
-import failureFixture from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
-import gatewayAuthHealthFixture from '../../../../../contracts/ux-result/fixtures/valid/gateway-auth-health.json';
+import successFixture from '@kb-labs/core-platform/contracts/ux-result/fixtures/valid/success.json';
+import failureFixture from '@kb-labs/core-platform/contracts/ux-result/fixtures/valid/failure.json';
+import gatewayAuthHealthFixture from '@kb-labs/core-platform/contracts/ux-result/fixtures/valid/gateway-auth-health.json';
 import { GatewayAuthHealthResponseSchema } from '@kb-labs/gateway-contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerGatewayUxBoundary } from '../ux-boundary.js';
 import { registerAuthHealthRoute } from '../auth/health-route.js';
+import { registerTelemetryRoutes } from '../telemetry/routes.js';
 import { createAuthMiddleware } from '../auth/middleware.js';
 
 describe('Gateway UX boundary', () => {
@@ -30,6 +31,31 @@ describe('Gateway UX boundary', () => {
     const response = await app.inject({ method: 'GET', url: '/raw-response' });
     expect(response.body).toBe('studio shell');
     expect(response.headers['content-type']).toContain('text/plain');
+  });
+
+  // case: S-190.2
+  it('preserves the invalid field in the catalogued telemetry limit error', async () => {
+    const app = Fastify({ logger: false });
+    apps.push(app);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() } as unknown as ILogger;
+    registerGatewayUxBoundary(app, logger);
+    registerTelemetryRoutes(app, logger);
+    await app.ready();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/telemetry/v1/ingest',
+      payload: { events: Array.from({ length: 501 }, (_, index) => ({ source: 'case', type: `event.${index}` })) },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        details: { field: 'events' },
+      },
+    });
   });
 
   // case: S-203.2
@@ -196,5 +222,24 @@ describe('Gateway UX boundary', () => {
     expect(stream.statusCode).toBe(200);
     expect(stream.body).toBe('stream response');
     expect(stream.headers['content-type']).toContain('text/plain');
+  });
+
+  it('logs an aborted client request as a warning', async () => {
+    const app = Fastify({ logger: false });
+    apps.push(app);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() } as unknown as ILogger;
+    registerGatewayUxBoundary(app, logger);
+    app.get('/aborted-request', async () => { throw new DOMException('Request aborted', 'AbortError'); });
+    await app.ready();
+
+    const response = await app.inject({ method: 'GET', url: '/aborted-request' });
+
+    expect(response.statusCode).toBe(499);
+    expect(response.json().error).toMatchObject({ code: 'KB_RUNTIME_REQUEST_CANCELLED', severity: 'warning' });
+    expect(logger.warn).toHaveBeenCalledWith('HTTP route failed', expect.any(DOMException), expect.objectContaining({
+      statusCode: 499,
+      errorCode: 'KB_RUNTIME_REQUEST_CANCELLED',
+    }));
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });

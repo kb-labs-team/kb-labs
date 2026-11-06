@@ -227,7 +227,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     // eventEmitter sends log lines to parent pool via IPC.
     // Routes by event name — 'log.line' (ui/shell) vs 'logger.line' (ctx.logger.*).
-    // See: plugins/workflow/docs/adr/0019-log-stream-separation.md
+    // See: services/workflow/docs/adr/0019-log-stream-separation.md
     const eventEmitter = async (name: string, payload?: unknown) => {
       const isLogLine = name === 'log.line' || name.endsWith(':log.line');
       const isLoggerLine = name === 'logger.line' || name.endsWith(':logger.line');

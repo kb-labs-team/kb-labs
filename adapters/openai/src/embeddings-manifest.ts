@@ -27,7 +27,19 @@ export const manifest: AdapterManifest = {
   configSchema: {
     apiKey: {
       type: "string",
+      secret: true,
+      env: "OPENAI_API_KEY",
+      required: true,
       description: "OpenAI API key (defaults to OPENAI_API_KEY env var)",
+      doctor: [{
+        slot: "embeddings",
+        id: "openai.embeddings.apiKey",
+        optional: true,
+        severity: "warning",
+        services: ["gateway"],
+        action: "set OPENAI_API_KEY to enable embeddings",
+        hint: "Set OPENAI_API_KEY or run kb config set --scope platform platform.adapterOptions.embeddings.apiKey '${OPENAI_API_KEY}' --allow-missing-env",
+      }],
     },
     model: {
       type: "string",

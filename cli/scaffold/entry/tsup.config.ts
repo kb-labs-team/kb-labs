@@ -1,0 +1,15 @@
+import { defineConfig } from 'tsup';
+import nodePreset from '@kb-labs/devkit/tsup/node';
+
+export default defineConfig({
+  ...nodePreset,
+  tsconfig: 'tsconfig.build.json',
+  entry: [
+    'src/index.ts',
+    'src/commands/scaffold.ts',
+    'src/commands/doctor.ts',
+  ],
+  dts: { resolve: true, skipLibCheck: true },
+  clean: true,
+  sourcemap: true,
+});

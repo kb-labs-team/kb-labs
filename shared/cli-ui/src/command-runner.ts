@@ -8,16 +8,6 @@ import {
 } from './artifacts-display';
 import { TimingTracker } from './timing-tracker';
 
-// Optional analytics types - using interface to avoid type resolution errors
-// when @kb-labs/analytics-sdk-node is not installed
-interface AnalyticsRunScope {
-  (options: { runId?: string; actor?: unknown; ctx?: Record<string, unknown> }, fn: (emit: AnalyticsEmit) => Promise<unknown>): Promise<unknown>;
-}
-
-interface AnalyticsEmit {
-  (event: Partial<{ type: string; payload: Record<string, unknown> }>): Promise<unknown>;
-}
-
 export interface CommandPresenter {
   info(message: string): void;
   warn?(message: string): void;
@@ -42,16 +32,8 @@ export interface CommandExecutionResult {
   data?: Record<string, unknown>;
 }
 
-export interface AnalyticsConfig {
-  actor: string;
-  started: string;
-  finished: string;
-  getPayload?: (flags: Record<string, unknown>, result?: CommandExecutionResult) => Record<string, unknown>;
-}
-
 export interface CommandRunnerOptions {
   title: string;
-  analytics?: AnalyticsConfig;
   execute: (ctx: CommandContext, flags: Record<string, unknown>, tracker: TimingTracker) => Promise<CommandExecutionResult>;
 }
 
@@ -60,25 +42,6 @@ export function createCommandRunner(options: CommandRunnerOptions) {
     const tracker = new TimingTracker();
     const jsonMode = flags.json === true;
     const quietMode = flags.quiet === true;
-    let runScope: AnalyticsRunScope | null = null;
-    if (options.analytics !== undefined) {
-      try {
-        // Dynamic import with type assertion to avoid TypeScript errors
-        // @kb-labs/analytics-sdk-node is an optional dependency
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore - optional dependency, types may not be available
-        const analyticsModule = await import('@kb-labs/analytics-sdk-node') as {
-          runScope?: AnalyticsRunScope;
-        };
-        if (analyticsModule.runScope) {
-          runScope = analyticsModule.runScope;
-        }
-      } catch {
-        // Analytics SDK not available, continue without it
-        runScope = null;
-      }
-    }
-
     const execute = async (): Promise<number> => {
       tracker.checkpoint('start');
       try {
@@ -99,52 +62,7 @@ export function createCommandRunner(options: CommandRunnerOptions) {
         return 1;
       }
     };
-
-    if (!runScope || !options.analytics) {
-      return execute();
-    }
-
-    const totalStart = Date.now();
-    const result = await runScope(
-      {
-        actor: options.analytics.actor as never,
-        ctx: { workspace: ctx.cwd },
-      },
-      async (emit: AnalyticsEmit) => {
-        await emit({
-          type: options.analytics!.started,
-          payload: options.analytics!.getPayload?.(flags) ?? {},
-        });
-
-        let exitCode = 0;
-        try {
-          exitCode = await execute();
-          await emit({
-            type: options.analytics!.finished,
-            payload: {
-              ...(options.analytics!.getPayload?.(flags) ?? {}),
-              durationMs: Date.now() - totalStart,
-              result: exitCode === 0 ? 'success' : 'error',
-            },
-          });
-        } catch (error) {
-          await emit({
-            type: options.analytics!.finished,
-            payload: {
-              ...(options.analytics!.getPayload?.(flags) ?? {}),
-              durationMs: Date.now() - totalStart,
-              result: 'error',
-              error: error instanceof Error ? error.message : String(error),
-            },
-          });
-          throw error;
-        }
-
-        return exitCode;
-      },
-    );
-
-    return result as number;
+    return execute();
   };
 }
 

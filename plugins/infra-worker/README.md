@@ -39,7 +39,7 @@ Platform permissions required: `environment` (create/read/destroy), `workspace` 
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/infra-worker-entry
+pnpm kb marketplace install @kb-labs/infra-worker
 ```
 
 ---

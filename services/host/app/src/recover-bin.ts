@@ -73,7 +73,11 @@ async function main(): Promise<number> {
     loaded.platformRoot,
     undefined,
     undefined,
-    { assemblyHook: makeAssemblyHook(), workspaceDevelopment: isWorkspaceDevelopmentMode(loaded) },
+    {
+      assemblyHook: makeAssemblyHook(),
+      workspaceDevelopment: isWorkspaceDevelopmentMode(loaded),
+      catalog: loaded.catalog,
+    },
   );
   try {
     const config = loaded.effectiveConfig ?? loaded.rawConfig;

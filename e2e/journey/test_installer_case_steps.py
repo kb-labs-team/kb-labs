@@ -15,6 +15,7 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
+import jsonl
 import installer_case_steps
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import (_add_installed_manifest_requirement, _data, _seed_installed_fixture,
@@ -32,7 +33,9 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
                                   run_uninstall_decline_step, run_missing_project_request_steps, _service_ids_match,
                                   _snapshot_installation_owned_tree, shim_owner_matches,
                                   assert_foreign_shim_diagnosis, assert_other_shim_diagnosis,
-                                  assert_gateway_index_diagnosis, verify_installation_spellings)
+                                  assert_gateway_index_diagnosis, verify_installation_spellings,
+                                  add_installed_host_stop_case_step)
+from installer_case_steps import verify_package_manager_failure_diagnostic
 from installer_case_steps import read_gateway_index_refusal
 from installer_case_steps import (verify_primary_installation_spellings,
                                   verify_stable_installation_spellings)
@@ -41,6 +44,49 @@ from installer_case_steps import (assert_immutable_publish_conflict,
                                   assert_provenance_mismatch_refusal)
 from invocations import PtyCommandTimeout, decode_ux_error_result, read_kb_create_cli_result
 from journey_resources import active_platform_root, case_catalog_root
+from service_steps import Journey
+from installed_fixture import layout_value
+
+
+class InstalledHostStopJourneyTests(unittest.TestCase):
+    def test_stop_case_runs_installed_stop_then_confirms_stopped_status(self):
+        with tempfile.TemporaryDirectory(prefix="journey-installed-stop-") as directory:
+            root = Path(directory)
+            calls = []
+
+            def runner(command, **kwargs):
+                calls.append((command, kwargs))
+                if command[1] == "stop":
+                    data = {"operation": "stop"}
+                else:
+                    data = {"running": False, "host": {layout_value("sharedStateDirectory"): "stopped"}}
+                return subprocess.CompletedProcess(command, 0,
+                                                   json.dumps({"ok": True, "data": data}), "")
+
+            journey = Journey("local", "installed-stop")
+            add_installed_host_stop_case_step(journey, root, {"HOME": directory}, runner=runner)
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0], ["kb-create", "stop", "--platform-root", str(root), "--json"])
+        self.assertEqual(calls[1][0], ["kb-create", "status", "--platform-root", str(root), "--json"])
+        self.assertEqual(journey.steps[-1].cases, ["PC-002.4"])
+        self.assertEqual(journey.steps[-1].status, "PASS")
+
+    def test_stop_case_fails_when_status_still_reports_running(self):
+        with tempfile.TemporaryDirectory(prefix="journey-installed-stop-running-") as directory:
+            root = Path(directory)
+
+            def runner(command, **kwargs):
+                data = {"operation": "stop"} if command[1] == "stop" else {
+                    "running": True, "host": {layout_value("sharedStateDirectory"): "running"}}
+                return subprocess.CompletedProcess(command, 0,
+                                                   json.dumps({"ok": True, "data": data}), "")
+
+            journey = Journey("local", "installed-stop-running")
+            add_installed_host_stop_case_step(journey, root, {"HOME": directory}, runner=runner)
+
+        self.assertEqual(journey.steps[-1].status, "FAIL")
+        self.assertIn("status", journey.steps[-1].message)
 from test_install_layout import create_test_install_container, move_test_platform_into_container
 from test_catalog_exit_status import catalogued_exit
 from service_steps import Journey, record_candidate_provenance
@@ -50,7 +96,7 @@ from service_port_assertions import assert_service_ports_preserved
 def kb_create_stream(envelope: dict, exit_code: int) -> str:
     terminal = {"ok": True, "data": None,
                 "meta": {"stream": {"terminal": True, "exitCode": exit_code}}}
-    return "\n".join((json.dumps(envelope), json.dumps(terminal))) + "\n"
+    return jsonl.encode_jsonl_records((envelope, terminal))
 
 
 def fake_product_install(args: list[str]) -> None:
@@ -101,7 +147,7 @@ def layout_owned_path_literals(source: str, layout: dict) -> list[str]:
     paths.update((layout["platformDataRoot"]["platformPath"], layout["platformDataRoot"]["statePath"]))
     for projection in layout["sharedRuntimePaths"]:
         paths.update((projection["platformPath"], projection["statePath"]))
-    paths.update(layout["versionStatePaths"])
+    paths.update(entry["path"] for entry in layout["versionStatePaths"])
     paths.update(layout["runtimeStatePaths"])
     paths.update(value for key, value in layout["installerRecords"].items() if key != "snapshotRetention")
 
@@ -150,6 +196,72 @@ def journey_layout_path_violations(journey_root: Path, layout: dict, owner_modul
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_package_manager_failure_diagnostic_requires_exit_stderr_and_transcript(self):
+        with tempfile.TemporaryDirectory(prefix="journey-pnpm-failure-") as temporary:
+            home = Path(temporary)
+            platform_root = home / "kb-platform"
+            platform_root.mkdir()
+            index = home / "release-index.json"
+            index.write_text("{}\n")
+            failure_root = platform_root.parent / "pc001-pnpm-failure-root"
+            stderr = "x149-pnpm-fixture: registry unavailable"
+            log = home / "apply.log"
+            log.write_text(stderr + "\n")
+            diagnostic = home / "apply.json"
+            diagnostic.write_text("{}\n")
+
+            def run_command(args, **kwargs):
+                if args[1] == "plan":
+                    payload = {"ok": True, "data": {"plan": {"request": {
+                        "platformRoot": str(failure_root),
+                    }}}}
+                    return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+                self.assertEqual(args[1], "apply")
+                self.assertIn(str(home / "pc001-pnpm-failure-bin"), kwargs["env"]["PATH"])
+                error = {
+                    "code": "KB_INSTALL_APPLY_FAILED",
+                    "message": "The operation did not reach a verified installation.",
+                    "hint": "Inspect the local log.",
+                    "correlationId": "a" * 32,
+                    "details": {
+                        "packageManagerExitCode": "47",
+                        "packageManagerStderrTail": stderr,
+                        "logPath": str(log),
+                        "diagnosticPath": str(diagnostic),
+                    },
+                }
+                return subprocess.CompletedProcess(args, 1, json.dumps({"ok": False, "error": error}), "")
+
+            verify_package_manager_failure_diagnostic(
+                launcher="kb-create", stable_index=index, platform_root=platform_root,
+                registry="http://registry.test", run_command=run_command,
+            )
+
+            def dropped_stderr(args, **kwargs):
+                result = run_command(args, **kwargs)
+                if args[1] == "apply":
+                    response = json.loads(result.stdout)
+                    response["error"]["details"].pop("packageManagerStderrTail")
+                    result.stdout = json.dumps(response)
+                return result
+
+            with self.assertRaisesRegex(RuntimeError, "exit code or stderr tail"):
+                verify_package_manager_failure_diagnostic(
+                    launcher="kb-create", stable_index=index, platform_root=platform_root,
+                    registry="http://registry.test", run_command=dropped_stderr,
+                )
+
+    def test_diagnostic_hint_contains_the_command_declared_in_details(self):
+        command = "next-step"
+        self.assertTrue(installer_case_steps.diagnostic_hint_has_next_command({
+            "details": {"nextCommand": command},
+            "hint": f"Run `{command}`.",
+        }))
+        self.assertFalse(installer_case_steps.diagnostic_hint_has_next_command({
+            "details": {"nextCommand": command},
+            "hint": "Choose a fresh writable path.",
+        }))
+
     def test_active_platform_path_resolves_through_the_product_current_link(self):
         with tempfile.TemporaryDirectory(prefix="journey-active-platform-path-") as temporary:
             root = Path(temporary)
@@ -165,7 +277,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                     run_command=install, label="active path fixture")
             config = active_path(platform, "sharedRuntimePaths.kb_kb_config_jsonc.platformPath")
             self.assertTrue(config.is_file())
-            self.assertEqual(config, platform / "versions/1.0.0/.kb/kb.config.jsonc")
+            self.assertEqual(config.resolve(), (platform / "versions/1.0.0/.kb/kb.config.jsonc").resolve())
 
     def test_immutable_publish_conflict_assertion_uses_catalogue_and_compares_digests(self):
         package = "@kb-labs/sample"
@@ -240,6 +352,23 @@ class InstallerCaseStepsTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "installed executed package dist digests differ"):
                 installer_case_steps.verify_installed_candidate_provenance(root)
 
+    def test_installed_candidate_provenance_rejects_missing_shipped_package(self):
+        with tempfile.TemporaryDirectory(prefix="journey-installed-missing-package-") as temporary:
+            root = Path(temporary)
+            (root / ".kb/v2").mkdir(parents=True)
+            (root / ".kb/v2/installed-provenance.json").write_text(json.dumps({
+                "packages": [{"name": "@kb-labs/sample", "version": "1.0.0",
+                              "integrity": "sha512-sample", "installedPath": "node_modules/@kb-labs/sample",
+                              "sourceRevision": "revision", "contentDigest": "sample-digest"}]}))
+            (root / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {"artifacts": [
+                {"package": "@kb-labs/sample", "version": "1.0.0",
+                 "provenance": {"distSha256": "sample-digest"}},
+                {"package": "@kb-labs/cli-bin", "version": "1.0.0",
+                 "provenance": {"distSha256": "cli-digest"}},
+            ]}}))
+            with self.assertRaisesRegex(RuntimeError, "installed package closure differs"):
+                installer_case_steps.verify_installed_candidate_provenance(root)
+
     def test_journey_steps_resolve_layout_paths_by_identity(self):
         journey_root = Path(__file__).parents[2]
         layout = json.loads((journey_root / "tools/kb-create/v2/contracts/platform-layout.json").read_text())
@@ -299,7 +428,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             launcher.parent.mkdir(parents=True)
             (launcher.parent / "kb").symlink_to(install_root / "current/.kb/v2/bin/kb")
             first_owner = [install_root]
-            registry = home / ".kb" / "launcher" / "gateway-roots.json"
+            registry = home / ".local" / "share" / "kb-create" / "gateway-roots.json"
             registry.parent.mkdir(parents=True)
             writer_fixture = Path(__file__).parent / "testdata" / "gateway-roots-schema2.json"
             writer_registry = json.loads(writer_fixture.read_text())
@@ -503,11 +632,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
         journey = Journey("local")
         envelope = {"code": "KB_INSTALL_LAYOUT_UNSUPPORTED", "message": "foreign target",
                     "cause": "foreign bytes found", "hint": "choose a fresh writable path"}
-        stdout = "\n".join((
-            json.dumps({"ok": False, "error": envelope}),
-            json.dumps({"ok": True, "data": None,
-                        "meta": {"stream": {"terminal": True, "exitCode": 1}}}),
-        )) + "\n"
+        stdout = jsonl.encode_jsonl_records((
+            {"ok": False, "error": envelope},
+            {"ok": True, "data": None,
+             "meta": {"stream": {"terminal": True, "exitCode": 1}}},
+        ))
 
         parsed = installer_case_steps.parse_install_refusal(
             subprocess.CompletedProcess(["kb-create", "install", "--json"], 1, stdout, ""))
@@ -701,7 +830,10 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 receipt = {"plan": {"request": {
                     "platformRoot": args[args.index("--platform-root") + 1],
                     "providerPreferences": {"cache": "state-broker"},
-                }}}
+                    "scenarioId": "commit",
+                }, "artifacts": []}, "marketplaceInstalls": [
+                    {"spec": "@kb-labs/commit", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+                ]}
                 apply_result = {"operation": "apply", "receipt": receipt, "logPath": "/tmp/apply.log"}
                 return subprocess.CompletedProcess(args, 0,
                     json.dumps({"ok": True, "data": apply_result}), "")
@@ -719,6 +851,30 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 "--scenario", "commit",
                 "--scenario-answers", '{"cache":"state-broker"}',
             ])
+
+    def test_commit_scenario_receipt_rejects_release_index_plugin(self):
+        receipt = {"plan": {"request": {"scenarioId": "commit"}, "artifacts": [
+            {"id": "@kb-labs/commit"},
+        ]}, "marketplaceInstalls": [
+            {"spec": "@kb-labs/commit", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+        ]}
+        with self.assertRaisesRegex(RuntimeError, "incorrectly resolved from the release index"):
+            installer_case_steps.assert_commit_marketplace_receipt(receipt)
+
+    def test_commit_scenario_receipt_requires_requested_spec(self):
+        receipt = {"plan": {"request": {"scenarioId": "commit"}, "artifacts": []},
+                   "marketplaceInstalls": [{"id": "@kb-labs/commit", "version": "1.2.3", "source": "npm"}]}
+        with self.assertRaisesRegex(RuntimeError, "requested spec"):
+            installer_case_steps.assert_commit_marketplace_receipt(receipt)
+
+    def test_apply_shim_owner_uses_the_canonical_platform_root(self):
+        with tempfile.TemporaryDirectory(prefix="journey-apply-shim-owner-") as temp:
+            root = Path(temp)
+            installer_case_steps.assert_apply_shim_owner(
+                {"shim": {"linked": True, "owner": str(root.resolve())}}, root)
+            with self.assertRaisesRegex(RuntimeError, "canonical platform root"):
+                installer_case_steps.assert_apply_shim_owner(
+                    {"shim": {"linked": False, "owner": str(root.resolve())}}, root)
 
     # case: S-039.1
     def test_apply_scenario_claim_rejects_receipt_with_wrong_provider(self):
@@ -829,6 +985,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 calls.append(args)
                 if args[1] == "install":
                     install_root = Path(args[args.index("--platform-root") + 1])
+                    self.assertTrue(install_root.is_dir(), "JSON installer fixture root must exist before install")
                     try:
                         active = active_platform_root(install_root)
                     except FileNotFoundError:
@@ -1077,6 +1234,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 (root / ".kb/v2/bin/kb").touch()
                 (root / ".kb/v2/receipt.json").write_text(json.dumps({
                     "installationId": installation,
+                    "plan": {"request": {"gatewayUrl": f"http://127.0.0.1:{port}"}},
                     "verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"},
                 }))
             for root in (primary, secondary):
@@ -1129,6 +1287,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(len(adapter_calls), 2)
         login_calls = [(args, kwargs) for args, kwargs in calls if "login" in args]
         self.assertEqual(len(login_calls), 1)
+        self.assertEqual(login_calls[0][0][login_calls[0][0].index("--gateway-url") + 1], "http://127.0.0.1:4100")
         self.assertNotIn("fixture-admin-secret", repr(login_calls[0][0]))
 
     # case: S-054.23
@@ -1292,7 +1451,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     {"ok": True, "data": payload, "meta": {"stream": {"result": True}}},
                     {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 0}}},
                 ]
-                return subprocess.CompletedProcess(args, 0, "\n".join(json.dumps(record) for record in records) + "\n", "")
+                return subprocess.CompletedProcess(args, 0, jsonl.encode_jsonl_records(records), "")
 
             journey = run_gateway_allocation_step(mode="local", launcher="kb-create", stable_index=index,
                                                   primary_root=primary, automatic_root=automatic,
@@ -1310,6 +1469,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="journey-port-conflict-") as temp:
             root = Path(temp) / "platform"
             root.mkdir()
+            conflict_root = root.parent / "pc001-port-conflict-root"
             index = Path(temp) / "release-index.json"
             index.write_text("{}")
             calls = []
@@ -1322,7 +1482,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
                 error = {"code": "KB_INSTALL_PORT_IN_USE", "area": "install", "stage": "preflight",
                          "severity": "error", "retryable": False, "message": "port is in use",
-                         "hint": "Stop process 42 (fixture) and rerun `kb-create apply`.",
+                         "hint": "Stop process 42 (fixture), then rerun `kb-create apply --platform-root '" + str(conflict_root) + "'`. Use `kb-create apply --platform-root '" + str(conflict_root) + "' --gateway-url 'http://127.0.0.1:4273'`.",
                          "details": {"port": "4173", "pid": "42", "command": "fixture"}}
                 return subprocess.CompletedProcess(args, 1,
                     json.dumps({"ok": False, "error": error}), "")
@@ -1698,13 +1858,16 @@ class InstallerCaseStepsTest(unittest.TestCase):
             source = root / "KB Labs ' primary"
             receipt = source / ".kb/v2/receipt.json"
             receipt.parent.mkdir(parents=True)
-            receipt.write_text(json.dumps({"plan": {"artifacts": [
+            main_gateway_health_url = "http://127.0.0.1:4100/health"
+            receipt.write_text(json.dumps({"verification": {"hostHealthUrl": main_gateway_health_url},
+                                           "plan": {"artifacts": [
                 {"kind": "platform", "id": "platform", "package": "@kb/platform", "version": "1.0.0"},
             ]}}))
             move_test_platform_into_container(source)
             calls = []
-            primary_running = True
+            primary_running = False
             fixture_running = {}
+            installed_at_cross_root_start = False
 
             def run_command(args):
                 nonlocal primary_running
@@ -1726,6 +1889,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     primary_running = True
                     output = {"ok": True, "data": {"operation": "start"}}
                 elif args[1] == "start":
+                    requested_root = Path(args[args.index("--platform-root") + 1])
+                    nonlocal installed_at_cross_root_start
+                    installed_at_cross_root_start = (requested_root / "current/.kb/v2/receipt.json").is_file()
+                    if not installed_at_cross_root_start:
+                        output = {"ok": False, "error": {"code": "KB_INSTALL_LAYOUT_UNSUPPORTED",
+                                   "message": "the requested platform root has no installed receipt",
+                                   "hint": "install the platform before starting it"}}
+                        return subprocess.CompletedProcess(args, 1, json.dumps(output), "")
                     output = {"ok": False, "error": {"code": "KB_HOST_ALREADY_RUNNING",
                                "message": f"The KB Labs host for platform root {source.resolve()} is already running (pid 42).",
                                "hint": f"Stop that platform first with `kb-create stop --platform-root {shlex.quote(str(source.resolve()))}`.",
@@ -1756,12 +1927,19 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].cases, ["S-025.7"])
         self.assertEqual(journey.steps[0].status, "PASS")
+        self.assertGreaterEqual(sum(call[1] == "start" and str(source) in call for call in calls), 2)
         self.assertEqual(journey.steps[1].cases, ["S-025.8"])
         self.assertEqual(journey.steps[1].status, "PASS")
-        self.assertEqual(len(calls), 17)
-        self.assertEqual(calls[0][1], "install")
-        self.assertIn("--gateway-url", calls[0])
-        self.assertNotEqual(calls[0][calls[0].index("--gateway-url") + 1], "http://127.0.0.1:4100")
+        isolated_installs = [call for call in calls if call[1] == "install"
+                             and "s025-root-isolation" in call[call.index("--platform-root") + 1]]
+        self.assertEqual(len(isolated_installs), 2,
+                         "S-025.8 must create its own installed fixture when selected independently")
+        self.assertTrue(installed_at_cross_root_start)
+        fixture_install = isolated_installs[1]
+        self.assertIn("--gateway-url", fixture_install)
+        self.assertEqual(fixture_install[fixture_install.index("--gateway-url") + 1],
+                         main_gateway_health_url.removesuffix("/health"),
+                         "S-025.8 must make B claim A's receipt-recorded Gateway URL")
         self.assertEqual(calls[-1][1], "uninstall")
 
     def test_fixture_seeder_uses_product_install_and_requirement_is_an_explicit_fault(self):
@@ -1878,7 +2056,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
             owners = {claim: step.name for step in journey.steps for claim in step.cases}
-            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "PC-001.19", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
+            expected = {"PC-001.2", "PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "PC-001.19", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-025.1", "S-025.2", "S-054.23",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",

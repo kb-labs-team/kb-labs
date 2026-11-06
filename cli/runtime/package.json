@@ -45,7 +45,8 @@
     "cli-table3": "^0.6.5",
     "colorette": "^2.0.20",
     "yaml": "^2.8.0",
-    "@kb-labs/shared-cli-ui": "workspace:*"
+    "@kb-labs/shared-cli-ui": "workspace:*",
+    "@kb-labs/sdk": "workspace:*"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

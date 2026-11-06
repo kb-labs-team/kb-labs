@@ -1,5 +1,6 @@
 import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { gatewayApiFetch, readGatewaySuccessData, resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch, readGatewaySuccessData } from '@kb-labs/sdk/gateway';
+import { resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 

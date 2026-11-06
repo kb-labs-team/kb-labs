@@ -8,7 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { PlatformConfigResponse, PlatformConfigPayload } from '@kb-labs/rest-api-contracts';
 import { normalizeBasePath, resolvePaths } from './path-helpers';
-import { readKbConfig } from '@kb-labs/core-config';
+import { readRawKbConfig } from '@kb-labs/core-config';
 import { platform } from '@kb-labs/core-runtime';
 import { restDomainOperationMetrics } from '../middleware/metrics.js';
 
@@ -64,7 +64,7 @@ async function loadPlatformConfig(repoRoot: string): Promise<{
   execution: { mode: string };
 }> {
   try {
-    const configResult = await readKbConfig(repoRoot);
+    const configResult = await readRawKbConfig(repoRoot);
 
     if (!configResult || !configResult.data) {
       // Return empty/default values if config not found

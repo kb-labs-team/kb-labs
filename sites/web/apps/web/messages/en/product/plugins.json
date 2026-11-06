@@ -70,6 +70,13 @@
     "ecoEyebrow": "Ecosystem",
     "ecoTitle": "Build and publish your own plugin",
     "sdkDocsBtn": "SDK documentation",
-    "ctaEyebrow": "Try it now"
+    "ctaEyebrow": "Try it now",
+    "lifecycleDiagram": {
+      "manifest": "single source of truth",
+      "install": "kb marketplace install @scope/plugin",
+      "discover": "reads lock on every start",
+      "register": "extractEntityKinds() — 7 entity types",
+      "execute": "backend chosen per invocation"
+    }
   }
 }

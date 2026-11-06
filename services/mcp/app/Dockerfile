@@ -14,6 +14,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 # deploy/ produced on CI by: pnpm deploy --filter @kb-labs/mcp-app --prod .kb/deploy/mcp-app
 COPY --chown=kb:nodejs .kb/deploy/mcp-app/node_modules ./node_modules
 COPY --chown=kb:nodejs .kb/deploy/mcp-app/dist ./dist
+COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json
 
 # No config baked: only the optional `analytics` adapter is referenced
 # (src/server.ts), and it falls back to NoOp/InMemory cleanly. Auth is

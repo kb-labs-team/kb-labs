@@ -9,7 +9,7 @@ State Broker provides a unified interface for key-value storage with TTL support
 ### Features
 
 - **Zero external dependencies**: Pure Node.js implementation
-- **Multiple backends**: In-memory, HTTP daemon, future: Redis, SQLite
+- **Multiple backends**: In-memory, HTTP client, host-managed append-only journal
 - **Automatic TTL cleanup**: Background cleanup of expired entries
 - **Graceful degradation**: Falls back to in-memory if daemon unavailable
 - **Namespace isolation**: Permission-based access control
@@ -42,6 +42,12 @@ State Broker provides a unified interface for key-value storage with TTL support
                 ┌──────────────┐
                 │ State Daemon │
                 │ (localhost)  │
+                └──────────────┘
+                      ↓
+                ┌──────────────┐
+                │ Journal under│
+                │ platform data│
+                │ root          │
                 └──────────────┘
 ```
 
@@ -222,11 +228,12 @@ const broker = new InMemoryStateBroker(
 
 ### HTTPStateBroker
 
-**Use case:** Production, persistent cross-invocation state.
+**Use case:** Host-managed StateDaemon access across invocations.
 
 **Features:**
-- ✅ Persistent across CLI invocations
+- ✅ Values with unexpired TTL survive StateDaemon and host restarts
 - ✅ Shared across processes
+- ✅ Mutations are appended and synced before the StateBroker promise resolves
 - ✅ Graceful degradation if daemon down
 - ❌ Requires daemon process
 - ❌ Network overhead (~0.1-0.5ms on localhost)
@@ -239,6 +246,17 @@ import { createStateBroker } from '@kb-labs/core-state-broker';
 
 const broker = createStateBroker({ backend: 'http' });
 ```
+
+The host resolves the platform data root from the platform layout contract and
+passes it to StateDaemon. The daemon stores its journal below
+`<platform-data-root>/state-broker/`. Journal records keep absolute wall-clock
+expiry timestamps, so restarting the daemon does not extend a value's TTL.
+Omitting `ttl` continues to use the existing five-minute default.
+
+Each mutation is appended and `fsync`ed before its promise resolves. A resolved
+write has no process-crash loss window. A write still in progress when a process
+crashes may be absent; a host or power failure can also lose the latest write
+if the filesystem or storage device does not honor `fsync`.
 
 ## Error Handling
 

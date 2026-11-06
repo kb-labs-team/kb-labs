@@ -31,6 +31,7 @@ vi.mock("@kb-labs/core-platform", async (importOriginal) => ({
 }));
 
 vi.mock("@kb-labs/core-runtime", () => ({
+  resolveDeploymentTopology: () => 'local',
   requireProjectContext: (projectRoot: string | undefined) => {
     if (!projectRoot) throw new Error('Project root required by test fixture');
     return projectRoot;
@@ -107,6 +108,8 @@ vi.mock("@kb-labs/shared-daemon", () => ({
       port: 4000,
       host: "127.0.0.1",
       logger,
+      runtime: { effectiveConfig: { platform: { deployment: { topology: 'local' } } } },
+      netOffset: 0,
     });
   }),
 }));

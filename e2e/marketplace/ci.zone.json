@@ -1,1 +1,1 @@
-{"zone":"marketplace","watch":["plugins/marketplace/**","e2e/marketplace/**"],"suites":["e2e-marketplace"]}
+{"zone":"marketplace","watch":["services/marketplace/**","services/marketplace-registry/**","cli/commands/src/commands/system/marketplace/**","e2e/marketplace/**"],"suites":["e2e-marketplace"]}

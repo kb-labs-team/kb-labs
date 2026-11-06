@@ -167,6 +167,23 @@ export class InMemoryStateBroker implements StateBroker {
     this.store.clear();
   }
 
+  protected hasLiveEntry(key: string): boolean {
+    const entry = this.store.get(key);
+    if (!entry) return false;
+    if (Date.now() > entry.expiresAt) {
+      this.store.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  protected snapshotEntries(): Array<{ key: string; value: unknown; expiresAt: number }> {
+    const now = Date.now();
+    return [...this.store].flatMap(([key, entry]) => entry.expiresAt < now
+      ? []
+      : [{ key, value: entry.value, expiresAt: entry.expiresAt }]);
+  }
+
   /**
    * Cleanup expired entries
    */

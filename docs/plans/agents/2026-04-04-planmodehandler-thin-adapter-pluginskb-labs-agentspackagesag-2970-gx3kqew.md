@@ -123,13 +123,13 @@ export const PLAN_RUN_EVALUATOR: RunEvaluator = { ... }
 ## Verification
 
 ```bash
-pnpm --filter @kb-labs/agent-core build
+pnpm --filter @kb-labs/agents/core build
 ```
 ```bash
-pnpm --filter @kb-labs/agent-core test
+pnpm --filter @kb-labs/agents/core test
 ```
 ```bash
-pnpm --filter @kb-labs/agent-core exec tsc --noEmit
+pnpm --filter @kb-labs/agents/core exec tsc --noEmit
 ```
 ```bash
 grep -n "implements ModeHandler" plugins/kb-labs-agents/packages/agent-core/src/modes/plan-mode-handler.ts

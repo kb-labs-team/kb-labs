@@ -1,0 +1,43 @@
+{
+  "name": "@kb-labs/marketplace-registry-core",
+  "description": "Registry service for KB Labs Marketplace Registry",
+  "version": "2.120.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "clean": "rimraf dist",
+    "dev": "tsup --watch",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "test": "vitest run --passWithNoTests -c ../../vitest.config.ts",
+    "test:watch": "vitest -c ../../vitest.config.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/plugin-contracts": "workspace:*",
+    "@kb-labs/marketplace-registry-contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
+    "tsup": "^8.5.0",
+    "typescript": "^5",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": "24.x",
+    "pnpm": ">=9.0.0"
+  },
+  "sideEffects": false
+}

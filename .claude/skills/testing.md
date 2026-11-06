@@ -20,7 +20,7 @@ What are you testing?
 │
 ├── CLI command logic (flags, output format, error messages, exit codes)
 │   → Handler test (Vitest + vi.mock + createCapturedUI)
-│   → File: plugins/*/entry/src/__tests__/cli/<command>.cli.test.ts
+│   → File: plugins/*/src/__tests__/cli/<command>.cli.test.ts
 │   → Run:  pnpm --filter <pkg> run test:cli
 │   → No daemon required. Fast (<5s total).
 │
@@ -37,7 +37,7 @@ What are you testing?
 │   → Requires live gateway + daemon.
 │
 ├── HTTP API contract (status codes, payload shape, validation errors)
-│   → Already covered in plugins/workflow/daemon/src/api/__tests__/api-contract.integration.test.ts
+│   → Already covered in services/workflow/daemon/src/api/__tests__/api-contract.integration.test.ts
 │   → Do NOT duplicate. Use Fastify inject pattern from that file.
 │
 └── Multi-step user scenario (run → watch → view → logs)
@@ -163,9 +163,10 @@ test('SE-02: already-terminal run closes stream immediately', async ({ request }
 // e2e/<domain>/specs/ws/<channel>.spec.ts
 import { test, expect } from '@playwright/test';
 import { withWs, expectWsMessage, expectWsClose } from '@kb-labs/shared-testing-e2e';
+import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
 
 test('WS-L01: subscribe → receive log stream', async () => {
-  await withWs(`${GATEWAY_WS}/v1/ws/plugins/workflow/logs/${jobId}`, async (ws) => {
+  await withWs(`${GATEWAY_WS}${projectWorkflowRoute(projectId, `ws/logs/${jobId}`)}`, async (ws) => {
     ws.send({ type: 'subscribe', jobId, level: 'info' });
 
     const msg = await expectWsMessage<{ type: string; level: string; message: string }>(

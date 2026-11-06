@@ -8,8 +8,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from platform_update_variant_steps import _install_vibeproxy_adapter, run_platform_update_variant_steps
+from platform_update_variant_steps import _file_fingerprints, _install_vibeproxy_adapter, run_platform_update_variant_steps
 from service_steps import Journey
+from installed_fixture import layout_relative, layout_value
+from journey_resources import workspace_resource
+from invocations import catalogued_error_hint, catalogued_error_message
 
 
 def _versioned_platform(root: Path, version: str) -> Path:
@@ -29,6 +32,44 @@ def _versioned_platform(root: Path, version: str) -> Path:
 
 
 class PlatformUpdateVariantStepsTests(unittest.TestCase):
+    def test_preservation_fingerprints_cover_owned_files_but_not_mutable_database_or_caches(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "platform"
+            project = Path(directory) / "project"
+            project.mkdir()
+            current = root / layout_value("currentLink")
+            current.mkdir(parents=True)
+            layout = json.loads(workspace_resource(
+                "tools", "kb-create", "v2", "contracts", "platform-layout.json").read_text())
+            protected = [
+                current / projection["platformPath"]
+                for projection in layout["sharedRuntimePaths"]
+                if projection.get("preserveUserState") is True and projection.get("kind") == "file"
+            ]
+            protected.extend(
+                current / entry["path"] for entry in layout["versionStatePaths"]
+                if entry.get("preserveUserState") is True and entry.get("kind") == "file"
+            )
+            self.assertTrue(protected, "platform layout must identify preserved user-state files")
+            for path in protected:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("preserve me")
+            (project / ".kb").mkdir()
+            (project / ".kb" / "project.json").write_text("project identity")
+            database = root / layout_value("sharedStateDirectory") / "data" / "analytics.sqlite"
+            database.parent.mkdir(parents=True)
+            database.write_bytes(b"sqlite bytes can change while durable rows remain")
+            cache = root / layout_relative("sharedStateDirectory", "package-manager/xdg-data/pnpm/index.db")
+            cache.parent.mkdir(parents=True)
+            cache.write_bytes(b"package cache")
+
+            fingerprints = _file_fingerprints(root, (project,))
+
+        self.assertTrue(all(str(path) in fingerprints for path in protected))
+        self.assertIn(str(project / ".kb" / "project.json"), fingerprints)
+        self.assertNotIn(str(database), fingerprints)
+        self.assertNotIn(str(cache), fingerprints)
+
     def test_update_fixture_installs_vibeproxy_through_platform_marketplace(self) -> None:
         calls = []
 
@@ -75,10 +116,18 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
                 registered.append((name, list(cases), check, tuple(requires)))
 
             def fake_runner(args, cwd):
-                if args[1] == "update":
+                if args[1] == "commit":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {}}), "")
+                if args[1] in ("--version", "version"):
+                    code = "KB_CLI_PLATFORM_VERSION_UNAVAILABLE"
                     return subprocess.CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
-                        "code": "KB_UPDATE_CHECKSUM_MISMATCH", "message": "Artifact checksum mismatch.",
-                        "hint": "Replace the artifact and rerun the update."}}), "")
+                        "code": code, "message": catalogued_error_message(code),
+                        "hint": catalogued_error_hint(code)}}), "")
+                if args[1] == "update":
+                    code = "KB_INSTALL_APPLY_FAILED"
+                    return subprocess.CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
+                        "code": code, "message": catalogued_error_message(code),
+                        "hint": catalogued_error_hint(code)}}), "")
                 if args[1] == "status":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
                         "runningVersion": "3.2.0", "installedVersion": "3.2.0"}}), "")
@@ -105,7 +154,7 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
             claims = {case for _, cases, _, _ in registered for case in cases}
             self.assertTrue({"S-023.9", "S-023.10", "S-023.11", "S-023.12", "S-023.13",
                              "S-023.14", "S-023.15", "S-024.6", "S-194.7"}.issubset(claims))
-            self.assertEqual(len(registered), 12)
+            self.assertEqual(len(registered), 13)
             fixture_step = next(requires for name, _, _, requires in registered
                                 if name == "prepare update preservation baseline")
             self.assertEqual(fixture_step, ("state:project-registered",))
@@ -115,6 +164,9 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
             checksum_step = next(check for name, _, check, _ in registered
                                  if name == "reject corrupted sealed binary without changing N")
             checksum_step()
+            missing_owner_step = next(check for name, _, check, _ in registered
+                                      if name == "refuse CLI version when the platform receipt is missing")
+            missing_owner_step()
 
     def test_n_plus_two_plan_requires_every_intervening_sealed_note(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -142,7 +194,6 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
             def fake_runner(args, cwd):
                 if args[1] == "plan":
                     response = {"ok": True, "data": {"updateSummary": {"releaseNotes": [
-                        {"version": "3.0.0", "notes": "Release 3.0.0 notes."},
                         {"version": "3.0.1", "notes": "Release 3.0.1 notes."},
                         {"version": "3.0.2", "notes": "Release 3.0.2 notes."},
                     ]}}}

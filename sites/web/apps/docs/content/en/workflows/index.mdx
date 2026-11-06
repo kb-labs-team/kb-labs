@@ -9,7 +9,7 @@ Workflows are how KB Labs orchestrates multi-step work. A workflow is a declarat
 
 A plugin command handles "do one thing". A workflow handles "do several things in sequence, with dependencies, retries, approval gates, and artifacts". Use plugin commands for single operations that the user invokes directly; use workflows when you need orchestration across multiple operations.
 
-Source of truth: [plugins/workflow/contracts/src/schemas.ts](plugins/workflow/contracts/src/schemas.ts).
+Source of truth: [services/workflow/contracts/src/schemas.ts](services/workflow/contracts/src/schemas.ts).
 
 ## The three things
 
@@ -186,7 +186,7 @@ See [Steps](/workflows/steps) for the full reference.
 
 ## Run lifecycle
 
-A workflow run goes through well-defined states defined in [`workflow-constants`](plugins/workflow/constants/src/index.ts):
+A workflow run goes through well-defined states defined in [`workflow-constants`](services/workflow/constants/src/index.ts):
 
 ```ts
 type RunState = 'queued' | 'running' | 'success' | 'failed' | 'cancelled' | 'skipped' | 'dlq';
@@ -204,7 +204,7 @@ Jobs have the same states plus `'interrupted'` (restart mid-flight). Steps add `
 
 ## Expression language
 
-A tiny embedded expression language runs inside `if` conditions and `${{ … }}` interpolation in string fields. Source: [expressions.ts](plugins/workflow/contracts/src/expressions.ts).
+A tiny embedded expression language runs inside `if` conditions and `${{ … }}` interpolation in string fields. Source: [expressions.ts](services/workflow/contracts/src/expressions.ts).
 
 Supported:
 

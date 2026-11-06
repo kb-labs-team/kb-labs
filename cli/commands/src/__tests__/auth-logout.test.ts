@@ -14,7 +14,7 @@ const mockCredClear = vi.fn();
 const mockSessionLoad = vi.fn();
 const mockSessionClear = vi.fn();
 const mockLogout = vi.fn();
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({
+vi.mock('@kb-labs/sdk/gateway', () => ({
   AuthSessionOwner: class { logout = mockLogout; },
 }));
 

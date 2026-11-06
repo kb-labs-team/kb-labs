@@ -78,7 +78,7 @@ describe('kb-create.requirements.json', () => {
       secret: true,
       generate: true,
       env: 'GATEWAY_INTERNAL_SECRET',
-      services: ['gateway', 'rest', 'marketplace-registry'],
+      services: ['gateway', 'rest'],
     });
   });
 

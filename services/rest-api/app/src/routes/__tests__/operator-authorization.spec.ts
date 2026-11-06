@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { forwardedIdentityHeaders } from '@kb-labs/gateway-contracts';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { ICronManager } from '@kb-labs/core-platform';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';

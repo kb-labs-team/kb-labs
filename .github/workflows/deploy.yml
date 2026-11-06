@@ -6,7 +6,7 @@ on:
     paths:
       - 'sites/web/**'
       - 'services/gateway/**'
-      - 'plugins/marketplace-registry/**'
+      - 'services/marketplace-registry/**'
       - 'adapters/openai/**'
       - 'adapters/redis/**'
       - 'adapters/sqlite/**'

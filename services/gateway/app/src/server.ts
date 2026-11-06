@@ -146,6 +146,7 @@ export async function createServer(
   installationIdentity?: { installationId?: string },
   projectServices?: readonly ProjectServiceDeclaration[],
   projectServiceTransport?: Pick<IServiceTransport, "resolveProjectService">,
+  readinessControlAddress?: string,
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -573,13 +574,15 @@ export async function createServer(
 
     scope.get(
       "/health",
-      { schema: { tags: ["System"], summary: "Gateway health check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { status: { type: 'string', enum: ['healthy', 'degraded', 'unhealthy'] }, version: { type: 'string' }, uptime: { type: 'number' }, timestamp: { type: 'string', format: 'date-time' }, adapters: { type: 'object', additionalProperties: { type: 'object', properties: { available: { type: 'boolean' }, latencyMs: { type: 'number' } }, required: ['available'] } }, upstreams: { type: 'object', additionalProperties: { type: 'object', properties: { status: { type: 'string' }, latencyMs: { type: 'number' } }, required: ['status'] } }, projectRuntimes: { type: 'object', properties: { limit: { type: 'number' }, active: { type: 'number' }, runtimes: { type: 'array', items: { type: 'object', properties: { projectId: { type: 'string' }, state: { type: 'string' }, lastUsedAt: { type: 'string', format: 'date-time' }, inflight: { type: 'number' }, restarts: { type: 'number' }, keptRunningSchedules: { type: 'number' } }, required: ['projectId', 'state', 'lastUsedAt', 'inflight', 'restarts'], additionalProperties: false } } }, required: ['limit', 'active', 'runtimes'], additionalProperties: false } }, required: ['status', 'version', 'uptime', 'timestamp', 'adapters', 'upstreams'] } } } },
-      async () => {
+      { schema: { tags: ["System"], summary: "Gateway health check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { studio: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'], additionalProperties: false }, status: { type: 'string', enum: ['healthy', 'degraded', 'unhealthy'] }, version: { type: 'string' }, uptime: { type: 'number' }, timestamp: { type: 'string', format: 'date-time' }, adapters: { type: 'object', additionalProperties: { type: 'object', properties: { available: { type: 'boolean' }, latencyMs: { type: 'number' } }, required: ['available'] } }, upstreams: { type: 'object', additionalProperties: { type: 'object', properties: { status: { type: 'string' }, latencyMs: { type: 'number' } }, required: ['status'] } }, projectRuntimes: { type: 'object', properties: { limit: { type: 'number' }, active: { type: 'number' }, runtimes: { type: 'array', items: { type: 'object', properties: { projectId: { type: 'string' }, state: { type: 'string' }, lastUsedAt: { type: 'string', format: 'date-time' }, inflight: { type: 'number' }, restarts: { type: 'number' }, keptRunningSchedules: { type: 'number' } }, required: ['projectId', 'state', 'lastUsedAt', 'inflight', 'restarts'], additionalProperties: false } } }, required: ['limit', 'active', 'runtimes'], additionalProperties: false } }, required: ['status', 'version', 'uptime', 'timestamp', 'adapters', 'upstreams'] } } } },
+      async (request, reply) => {
+        if (readinessControlAddress) reply.header("x-kb-host-active-work-address", readinessControlAddress);
         const snapshot = await collectHealthSnapshot();
-        // Runtime state changes faster than the cached snapshot lives: read it live.
-        return projectRouting
-          ? { ...snapshot, projectRuntimes: projectRouting.status() }
-          : snapshot;
+        return {
+          ...snapshot,
+          ...(studioStatic ? { studio: { url: `${request.protocol}://${request.host}/` } } : {}),
+          ...(projectRouting ? { projectRuntimes: projectRouting.status() } : {}),
+        };
       },
     );
 

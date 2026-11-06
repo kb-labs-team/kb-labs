@@ -88,7 +88,7 @@ def run_worktree_steps(
                           env=step_env,
                           capture_output=True, text=True, check=False, timeout=90)
             if lint.returncode != 0:
-                return fail_and_remove(f"workflow plugin command failed from worktree: {(lint.stderr or lint.stdout).strip()}")
+                return fail_and_remove(f"built-in workflow command failed from worktree: {(lint.stderr or lint.stdout).strip()}")
 
             run = runner([str(cli), "workflow", "run", "--workflow-id=worktree-probe", "--json"], cwd=checkout,
                          env=step_env, capture_output=True, text=True, check=False, timeout=180)

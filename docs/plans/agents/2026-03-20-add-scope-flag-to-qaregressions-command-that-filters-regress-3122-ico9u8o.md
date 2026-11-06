@@ -26,7 +26,7 @@ Here's what we're starting from (all confirmed by reading the actual files):
 
 - **`plugins/kb-labs-qa-plugin/packages/qa-contracts/src/types/rest-api.ts:167`** — `QARegressionsRequestSchema = z.object({})` is completely empty; `QARegressionsResponseSchema` (line 177) has no `scope` field either.
 - **`plugins/kb-labs-qa-plugin/packages/qa-contracts/src/types/history.ts:84`** — `RegressionResult` interface has no `scope` field.
-- **`plugins/kb-labs-qa-plugin/packages/qa-core/src/history/regression-detector.ts:8`** — `detectRegressions(history: HistoryEntry[])` takes only history; it iterates `HistoryEntry.failedPackages` which is a `Record<CheckType, string[]>` of bare package names like `@kb-labs/qa-core`. No filtering mechanism exists today.
+- **`plugins/kb-labs-qa-plugin/packages/qa-core/src/history/regression-detector.ts:8`** — `detectRegressions(history: HistoryEntry[])` takes only history; it iterates `HistoryEntry.failedPackages` which is a `Record<CheckType, string[]>` of bare package names like `@kb-labs/qa/core`. No filtering mechanism exists today.
 - **`plugins/kb-labs-qa-plugin/packages/qa-cli/src/cli/commands/flags.ts:101`** — `qaRegressionsFlags` only defines `{ json }`.
 - **`plugins/kb-labs-qa-plugin/packages/qa-cli/src/cli/commands/qa-regressions.ts:18`** — `detectRegressions(history)` called with no scope.
 - **`plugins/kb-labs-qa-plugin/packages/qa-cli/src/rest/handlers/regressions-handler.ts:16`** — `detectRegressions(history)` called with no scope.
@@ -106,8 +106,8 @@ This is the core logic change. The challenge: `HistoryEntry.failedPackages` stor
 Add an optional second parameter `options?: DetectRegressionsOptions`. When `scope` and `rootDir` are both provided, call `getWorkspacePackages(rootDir, { repo: scope })` to resolve the set of package names in the scope, then filter `prevFailed` and `currFailed` before computing deltas. When neither is provided, behavior is identical to today — fully backward compatible:
 
 ```ts
-import type { HistoryEntry, RegressionResult } from '@kb-labs/qa-contracts';
-import { CHECK_TYPES } from '@kb-labs/qa-contracts';
+import type { HistoryEntry, RegressionResult } from '@kb-labs/qa/contracts';
+import { CHECK_TYPES } from '@kb-labs/qa/contracts';
 import { getWorkspacePackages } from '../runner/workspace.js';
 
 export interface DetectRegressionsOptions {
@@ -252,19 +252,19 @@ After implementing all three phases, validate with:
 
 ```bash
 # 1. Build qa-contracts — confirm schema/type changes compile cleanly
-pnpm --filter @kb-labs/qa-contracts build
+pnpm --filter @kb-labs/qa/contracts build
 
 # 2. Build qa-core — confirm detectRegressions new signature compiles
-pnpm --filter @kb-labs/qa-core build
+pnpm --filter @kb-labs/qa/core build
 
 # 3. Build qa-cli — confirm flag + handler wiring compiles
-pnpm --filter @kb-labs/qa-cli build
+pnpm --filter @kb-labs/qa/cli build
 
 # 4. Run qa-core unit tests (regression-detector is covered in history tests)
-pnpm --filter @kb-labs/qa-core test
+pnpm --filter @kb-labs/qa/core test
 
 # 5. Run qa-cli tests
-pnpm --filter @kb-labs/qa-cli test
+pnpm --filter @kb-labs/qa/cli test
 
 # 6. Run the full qa-plugin test suite
 pnpm --filter "@kb-labs/qa-*" test

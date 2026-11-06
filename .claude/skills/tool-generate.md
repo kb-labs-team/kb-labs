@@ -26,7 +26,7 @@ Currently registered:
 
 | Template | Path | Use for |
 |----------|------|---------|
-| `node-lib` | `templates/node-lib` | TypeScript library (`core/*`, `plugins/*/*`, `adapters/*`, etc.) |
+| `node-lib` | `templates/node-lib` | TypeScript library (`core/*`, `plugins/*`, `adapters/*`, etc.) |
 | `go-binary` | `templates/go-binary` | Go CLI binary (cobra + lipgloss, same pattern as `kb-devkit`/`kb-dev`) |
 
 ## Template Variables
@@ -43,20 +43,15 @@ Available in file contents and file names:
 
 ## Common Workflows
 
-### New plugin (3 packages)
+### New plugin (one package)
 
-Plugin = `contracts/` + `core/` + `entry/`. Generate each separately:
+Use the plugin scaffold to create one package whose package name matches its manifest ID:
 
 ```bash
-kb-devkit generate plugin-contracts --dest plugins/my-plugin/contracts --name @kb-labs/my-plugin-contracts
-kb-devkit generate plugin-core      --dest plugins/my-plugin/core      --name @kb-labs/my-plugin-core
-kb-devkit generate plugin-entry     --dest plugins/my-plugin/entry     --name @kb-labs/my-plugin-entry
+kb scaffold run plugin my-plugin --yes
 ```
 
-Or if `plugin` template generates the full tree at once:
-```bash
-kb-devkit generate plugin --dest plugins/my-plugin --name my-plugin
-```
+The package lives under `.kb/plugins/my-plugin`; its CLI, REST, contracts, and core modules live in `src/`.
 
 ### New adapter
 

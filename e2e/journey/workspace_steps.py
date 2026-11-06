@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from installed_fixture import configure_hermetic_cli_fixture, layout_relative, layout_value
+from marketplace_sync_fixture import start_marketplace_sync_fixture, stop_marketplace_sync_fixture
 
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -22,6 +24,8 @@ def workspace_checkout_problem(repo_root: Path) -> str | None:
     required = (
         "cli/bin/dist/bin.js",
         "core/project-registry/dist/index.js",
+        "plugins/marketplace-registry/dist/manifest.js",
+        "plugins/marketplace-registry/dist/commands/publish.js",
         layout_value('versionStatePaths.kb_marketplace_lock'),
         "plugins",
     )
@@ -54,6 +58,20 @@ def workspace_checkout_problem(repo_root: Path) -> str | None:
     return None
 
 
+def _stage_workspace_checkout(repo_root: Path, stage_root: Path) -> Path:
+    """Stage a writable workspace root whose platform and registered project identities coincide."""
+    stage_root.mkdir(parents=True)
+    for entry in repo_root.iterdir():
+        if entry.name in {".git", ".kb", "node_modules"}:
+            continue
+        (stage_root / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+    staged_kb = stage_root / ".kb"
+    staged_kb.mkdir()
+    shutil.copy2(repo_root / ".kb" / "marketplace.lock", staged_kb / "marketplace.lock")
+    (staged_kb / "kb.config.jsonc").symlink_to(repo_root / ".kb" / "kb.config.jsonc")
+    return stage_root
+
+
 def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bool = False) -> None:
     if not prechecked:
         problem = workspace_checkout_problem(repo_root)
@@ -63,7 +81,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                 "workspace-cli",
                 lambda: problem,
                 cases=[
-                    "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13",
+                    "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13", "S-179.33",
                     "S-142.5", "S-203.1", "S-203.19", "S-204.7",
                 ],
             )
@@ -71,12 +89,15 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
 
     cli = repo_root / "cli/bin/dist/bin.js"
     with tempfile.TemporaryDirectory(prefix="kb-workspace-cli-home-") as home:
+        workspace_root = _stage_workspace_checkout(repo_root, Path(home) / "workspace")
         env = configure_hermetic_cli_fixture(
-            Path(home), env=os.environ, workspace_root=repo_root)
+            Path(home), env=os.environ, workspace_root=workspace_root,
+            platform_root=workspace_root, source_config=workspace_root / ".kb" / "kb.config.jsonc")
         env["GATEWAY_PORT"] = "1"
+        cli = workspace_root / "cli/bin/dist/bin.js"
 
         def run(*args: str) -> CompletedProcess[str]:
-            return run_command(["node", str(cli), *args], cwd=env["KB_PROJECT_ROOT"], env=env, timeout=120)
+            return run_command(["node", str(cli), *args], cwd=workspace_root, env=env, timeout=120)
 
         def register_checkout() -> str | None:
             result = run_command(
@@ -84,10 +105,10 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                     "node", "--input-type=module", "-e",
                     "const { createProjectRegistry } = await import(process.argv[1]); "
                     "await createProjectRegistry({ env: process.env }).add(process.argv[2]);",
-                    str(repo_root / "core/project-registry/dist/index.js"),
-                    env["KB_PROJECT_ROOT"],
+                    str(workspace_root / "core/project-registry/dist/index.js"),
+                    str(workspace_root),
                 ],
-                cwd=env["KB_PROJECT_ROOT"],
+                cwd=workspace_root,
                 env=env,
                 capture_output=True,
                 text=True,
@@ -230,7 +251,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
         def unavailable_locked_workspace_plugin() -> str | None:
             fixture_root = Path(home) / "unbuilt-workspace"
             kb_dir = fixture_root / ".kb"
-            package_dir = fixture_root / "plugins/release/manager-cli"
+            package_dir = fixture_root / "plugins/release"
             kb_dir.mkdir(parents=True)
             for source in repo_root.iterdir():
                 if source.name in {".kb", ".git", "plugins"}:
@@ -242,17 +263,16 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                 if source.name == "release":
                     continue
                 (fixture_plugins / source.name).symlink_to(source, target_is_directory=True)
-            (fixture_plugins / "release").mkdir()
+            package_dir.mkdir()
             for source in (repo_root / "plugins/release").iterdir():
-                if source.name != "manager-cli":
-                    (fixture_plugins / "release" / source.name).symlink_to(source, target_is_directory=True)
-            package_dir.mkdir(parents=True)
+                if source.name not in {"package.json", "dist"}:
+                    (package_dir / source.name).symlink_to(source, target_is_directory=source.is_dir())
             (package_dir / "package.json").write_text(json.dumps({
-                "name": "@kb-labs/release-manager-cli",
+                "name": "@kb-labs/release",
                 "kb": {"manifest": "./dist/manifest.js"},
             }), encoding="utf-8")
             locked = json.loads((repo_root / layout_value('versionStatePaths.kb_marketplace_lock')).read_text())
-            locked["plugins"]["@kb-labs/release"]["link"] = "./plugins/release/manager-cli"
+            locked["plugins"]["@kb-labs/release"]["link"] = "./plugins/release"
             config_source = repo_root / ".kb/kb.config.json"
             if not config_source.exists():
                 config_source = repo_root / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')
@@ -317,10 +337,29 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                      verify_agent_command_namespaces, cases=["S-142.5"])
 
         def verify_synced_workspace_lock() -> str | None:
+            process, marketplace_url, startup_error = start_marketplace_sync_fixture(workspace_root, env)
+            if startup_error:
+                return startup_error
+            if process is None or marketplace_url is None:
+                return "Marketplace sync fixture did not return a process and URL"
+            previous_url = env.get("KB_MARKETPLACE_URL")
+            env["KB_MARKETPLACE_URL"] = marketplace_url
             try:
-                lock = json.loads((repo_root / layout_value('versionStatePaths.kb_marketplace_lock')).read_text())
+                sync = run("marketplace", "sync", "--scope", "project", "--json")
+            finally:
+                if previous_url is None:
+                    env.pop("KB_MARKETPLACE_URL", None)
+                else:
+                    env["KB_MARKETPLACE_URL"] = previous_url
+                cleanup_error = stop_marketplace_sync_fixture(process)
+            if cleanup_error:
+                return cleanup_error
+            if sync.returncode != 0:
+                return f"workspace marketplace sync failed (exit {sync.returncode}): {sync.stderr or sync.stdout}"
+            try:
+                lock = json.loads((workspace_root / layout_value('versionStatePaths.kb_marketplace_lock')).read_text())
             except (OSError, json.JSONDecodeError) as error:
-                return f"workspace marketplace lock could not be read: {error}"
+                return f"staged workspace marketplace lock could not be read: {error}"
             expected_plugins = ("@kb-labs/release", "@kb-labs/review", "@kb-labs/mind", "@kb-labs/agents")
             missing_plugins = [plugin for plugin in expected_plugins if plugin not in lock.get("plugins", {})]
             adapters = lock.get("adapters", {})
@@ -332,4 +371,4 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                 return "workspace marketplace lock has no machine-level adapter entries"
             return None
 
-        journey.step("verify synced workspace plugins and adapters in the v3 lock", "workspace-cli", verify_synced_workspace_lock, cases=["S-179.4"])
+        journey.step("verify synced workspace plugins and adapters in the v3 lock", "workspace-cli", verify_synced_workspace_lock, cases=["S-179.4", "S-179.33"])

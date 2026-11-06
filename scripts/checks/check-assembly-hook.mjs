@@ -1,10 +1,11 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 /**
  * check-assembly-hook — verifies all service bootstrap.ts files import makeAssemblyHook.
  *
- * Devkit external check (TypedCheckOutput v2). Self-filters to @kb-labs/devkit
- * so it runs exactly once (workspace-wide check, same pattern as check-ports).
- *   Input:  KB_DEVKIT_PACKAGE_NAME env or JSON on stdin
+ * Devkit external check (TypedCheckOutput v2). Its anchor package is declared
+ * on the custom check in devkit.yaml.
+ *   Input:  workspace files and service bootstrap sources
  *   Output: { issues: [{ check, severity, message, file }] }
  *
  * Rule: any bootstrap.ts in services/<pkg>/app/src/ or plugins/<pkg>/daemon/src/ that
@@ -19,7 +20,6 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const CHECK_NAME = 'check-assembly-hook';
-const ANCHOR_PACKAGE = '@kb-labs/devkit';
 const DEVKIT_MODE = Boolean(process.env.KB_DEVKIT_MODE);
 
 const ROOT = new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
@@ -47,7 +47,7 @@ function findBootstrapFiles() {
       const candidates = [
         join(pkgDir, 'app', 'src', 'bootstrap.ts'),
         join(pkgDir, 'daemon', 'src', 'bootstrap.ts'),
-        // nested daemon (e.g. plugins/state/daemon/core-state-daemon/src/bootstrap.ts)
+        // nested daemon (e.g. services/state/daemon/core-state-daemon/src/bootstrap.ts)
         ...findNestedBootstraps(pkgDir),
       ];
 
@@ -116,29 +116,8 @@ function printHuman(issues) {
 }
 
 if (DEVKIT_MODE) {
-  let pkgName = process.env.KB_DEVKIT_PACKAGE_NAME ?? '';
-  if (!pkgName) {
-    try {
-      const chunks = [];
-      process.stdin.resume();
-      process.stdin.setEncoding('utf-8');
-      await new Promise((resolve) => {
-        process.stdin.on('data', (c) => chunks.push(c));
-        process.stdin.on('end', () => resolve());
-        setTimeout(() => resolve(), 50);
-      });
-      const raw = chunks.join('');
-      if (raw) pkgName = JSON.parse(raw)?.name ?? '';
-    } catch { /* no JSON on stdin */ }
-  }
-
-  if (pkgName !== ANCHOR_PACKAGE) {
-    process.stdout.write(JSON.stringify({ issues: [] }) + '\n');
-    process.exit(0);
-  }
-
   const issues = validate();
-  process.stdout.write(JSON.stringify({ issues }) + '\n');
+  writeCheckResult(issues);
   process.exit(0); // devkit aggregates severity; never hard-fail the runner
 } else {
   const issues = validate();

@@ -42,6 +42,7 @@ const DEFAULT_MAX_TOKENS = 16_384;
 interface VibeProxyMessagesRequest {
   model: string;
   max_tokens: number;
+  stream?: boolean;
   messages: Array<{
     role: "user" | "assistant";
     content:
@@ -64,6 +65,13 @@ interface VibeProxyMessagesRequest {
     | { type: "auto" }
     | { type: "any" }
     | { type: "tool"; name: string };
+}
+
+class VibeProxyHttpError extends Error {
+  constructor(message: string, readonly status: number, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = 'VibeProxyHttpError';
+  }
 }
 
 /**
@@ -119,8 +127,7 @@ export class VibeProxyLLM implements ILLM {
         protocol: "explicit_handle",
         scopes: ["prefix", "segments", "full_request"],
       },
-      // Current implementation yields complete() as one chunk (not true streaming)
-      stream: { supported: false },
+      stream: { supported: true },
     };
   }
 
@@ -147,21 +154,33 @@ export class VibeProxyLLM implements ILLM {
         signal: controller.signal,
       });
 
-      if (!response.ok) {
-        const errorBody = (await response
-          .json()
-          .catch(() => ({ error: { message: response.statusText } }))) as {
-          error?: { message?: string };
-        };
-        throw new Error(
-          `VibeProxy error: ${errorBody.error?.message ?? response.statusText}`,
-        );
-      }
+      if (!response.ok) throw await this.providerHttpError(response);
 
       return response.json() as Promise<T>;
     } finally {
       clearTimeout(timeoutId);
     }
+  }
+
+  private async providerHttpError(response: Response): Promise<VibeProxyHttpError> {
+    const errorBody = await response.text();
+    let message = response.statusText;
+    if (errorBody) {
+      try {
+        const payload = JSON.parse(errorBody) as { error?: { message?: string } };
+        message = payload.error?.message ?? response.statusText;
+      } catch (cause) {
+        return new VibeProxyHttpError(
+          `VibeProxy error: ${response.statusText}`,
+          response.status,
+          cause,
+        );
+      }
+    }
+    return new VibeProxyHttpError(
+      `VibeProxy error: ${message}`,
+      response.status,
+    );
   }
 
   private buildExecutionHeaders(execution?: LLMExecutionPolicy): Record<string, string> {
@@ -352,10 +371,72 @@ export class VibeProxyLLM implements ILLM {
   }
 
   async *stream(prompt: string, options?: LLMOptions): AsyncIterable<string> {
-    // VibeProxy supports streaming via SSE, but for simplicity we'll use non-streaming
-    // and yield the full response. Can be enhanced later with proper SSE support.
-    const response = await this.complete(prompt, options);
-    yield response.content;
+    const requestBody: VibeProxyMessagesRequest = {
+      model: options?.model ?? this.defaultModel,
+      max_tokens: options?.maxTokens ?? this.defaultMaxTokens,
+      messages: [{ role: "user", content: prompt }],
+      stream: true,
+    };
+    if (options?.systemPrompt) requestBody.system = options.systemPrompt;
+    if (options?.temperature !== undefined) requestBody.temperature = options.temperature;
+    if (options?.stop) requestBody.stop_sequences = options.stop;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const response = await fetch(`${this.baseURL}/v1/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": this.apiKey,
+          ...this.buildExecutionHeaders(options?.execution),
+          ...this.buildTraceHeaders(options),
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw await this.providerHttpError(response);
+      if (!response.body) {
+        throw new Error("VibeProxy stream response did not contain a body.");
+      }
+
+      reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = "";
+      while (true) {
+        const result = await reader.read();
+        pending += decoder.decode(result.value, { stream: !result.done });
+        let boundary = /\r?\n\r?\n/.exec(pending);
+        while (boundary) {
+          const frame = pending.slice(0, boundary.index).replace(/\r\n/g, "\n");
+          pending = pending.slice(boundary.index + boundary[0].length);
+          const event = frame.split("\n").find((line) => line.startsWith("event: "))?.slice(7);
+          const data = frame.split("\n").filter((line) => line.startsWith("data: "))
+            .map((line) => line.slice(6)).join("\n");
+          if (data) {
+            const payload = JSON.parse(data) as {
+              type?: string;
+              delta?: { type?: string; text?: string };
+              error?: { message?: string };
+            };
+            if (event === "error" || payload.type === "error") {
+              throw new Error(payload.error?.message ?? "VibeProxy stream failed.");
+            }
+            if (payload.type === "content_block_delta" && payload.delta?.type === "text_delta"
+              && typeof payload.delta.text === "string") {
+              yield payload.delta.text;
+            }
+          }
+          boundary = /\r?\n\r?\n/.exec(pending);
+        }
+        if (result.done) break;
+      }
+    } finally {
+      reader?.releaseLock();
+      controller.abort();
+      clearTimeout(timeoutId);
+    }
   }
 
   /**

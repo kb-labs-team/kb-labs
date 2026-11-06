@@ -5,51 +5,39 @@
  *
  * Priority:
  *   1. Host Agent IPC socket (~/.kb/agent.sock) — for workspace agent / same-host deployment
- *   2. KB_GATEWAY_URL env var — explicit execution gateway (CI/CD, remote platform)
- *   3. null — no gateway configured; caller falls back to local execution
+ *   2. Gateway address resolved by the CLI bootstrap owner
  *
  * NOTE: credentials.json is intentionally NOT used for execution routing.
  * It is a registry/identity credential file (tokens, handle) — not platform topology config.
- * The execution gateway URL must be provided explicitly via KB_GATEWAY_URL or IPC socket.
+ * The execution gateway URL must be provided by the CLI bootstrap resolver.
  * Auth tokens for the HTTP transport are still loaded from credentials.json when available.
  */
 
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as net from 'node:net';
-import type { IGatewayClient } from './types.js';
+import type { IGatewayClient } from '@kb-labs/sdk/gateway';
 import { HttpSseGatewayTransport } from './http-sse-transport.js';
 import { HostAgentTransport } from './host-agent-transport.js';
-import { getHostServiceAddress, HostServiceAddressError } from '@kb-labs/core-platform';
+import { getHostServiceAddress } from '@kb-labs/core-platform';
 
 /** Default Host Agent IPC socket path */
 const HOST_AGENT_SOCKET = path.join(os.homedir(), '.kb', 'agent.sock');
 
 /**
- * Resolve the best available transport for CLI → Gateway communication.
- * Returns null when no gateway is configured — callers fall back to local execution.
+ * Resolve the execution transport for a Gateway selected by the CLI bootstrap owner.
  */
-export async function resolveTransport(): Promise<IGatewayClient | null> {
+export async function resolveTransport(gatewayUrl: string): Promise<IGatewayClient> {
   // 1. Host Agent IPC socket (same-host deployment, workspace agent)
   if (await isSocketAlive(HOST_AGENT_SOCKET)) {
     return new HostAgentTransport(HOST_AGENT_SOCKET);
   }
 
-  // 2. Explicit execution gateway via KB_GATEWAY_URL
-  let gatewayUrl: string | undefined;
-  try {
-    gatewayUrl = getHostServiceAddress('gateway');
-  } catch (error) {
-    if (!(error instanceof HostServiceAddressError) || error.reason !== 'missing') {
-      throw error;
-    }
-  }
-  if (gatewayUrl) {
-    return new HttpSseGatewayTransport({ gatewayUrl, credentialKind: 'either' });
-  }
-
-  // 3. No gateway configured — fall back to local execution
-  return null;
+  // 2. Gateway address selected by the single CLI topology owner.
+  return new HttpSseGatewayTransport({
+    gatewayUrl: getHostServiceAddress('gateway', { KB_GATEWAY_URL: gatewayUrl }),
+    credentialKind: 'either',
+  });
 }
 
 /**

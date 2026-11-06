@@ -22,12 +22,12 @@ const CREDS = {
 const { mockLoad, mockFetch, gatewayApiFetch, resolveActiveGateway } = vi.hoisted(() => ({
   mockLoad: vi.fn(), mockFetch: vi.fn(), gatewayApiFetch: vi.fn(), resolveActiveGateway: vi.fn(),
 }));
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  CredentialsManager: class {
-    load = mockLoad;
-  },
-  readGatewaySuccessData: async (response: Response) => (await response.json() as { data: unknown }).data,
+vi.mock('@kb-labs/sdk/gateway', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@kb-labs/sdk/gateway')>()),
   gatewayApiFetch,
+}));
+vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@kb-labs/cli-runtime/gateway')>()),
   resolveActiveGateway,
 }));
 

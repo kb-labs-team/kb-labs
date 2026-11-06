@@ -61,7 +61,7 @@ targets:
 
   kb-marketplace-registry:
     watch:
-      - plugins/marketplace-registry/**
+      - services/marketplace-registry/**
       - adapters/s3/**
       - adapters/redis/**
       - adapters/pino/**
@@ -69,7 +69,7 @@ targets:
       - core/**
       - shared/**
     image: kb-marketplace-registry
-    dockerfile: plugins/marketplace-registry/app/Dockerfile
+    dockerfile: services/marketplace-registry/app/Dockerfile
     context: .
     ssh:
       host: ${SSH_HOST}

@@ -258,8 +258,8 @@ func TestEmittedKbCreateDiagnosticsMatchPlatformErrorSchema(t *testing.T) {
 			t.Fatalf("install exit = %d, want 2; stdout=%s stderr=%s", code.Code(), stdout.String(), stderr.String())
 		}
 		lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-		if len(lines) != 2 {
-			t.Fatalf("install JSONL records = %d, want error plus terminal: %s", len(lines), stdout.String())
+		if len(lines) != 1 {
+			t.Fatalf("install JSONL records = %d, want terminal error: %s", len(lines), stdout.String())
 		}
 		var failure struct {
 			Error json.RawMessage `json:"error"`
@@ -269,20 +269,21 @@ func TestEmittedKbCreateDiagnosticsMatchPlatformErrorSchema(t *testing.T) {
 		}
 		assertPlatformEnvelope(t, schema, decodeEnvelope(t, failure.Error))
 		var terminal struct {
-			OK   bool `json:"ok"`
-			Data any  `json:"data"`
-			Meta struct {
+			OK    bool            `json:"ok"`
+			Error json.RawMessage `json:"error"`
+			Meta  struct {
 				Stream struct {
 					Terminal bool `json:"terminal"`
 					ExitCode int  `json:"exitCode"`
 				} `json:"stream"`
 			} `json:"meta"`
 		}
-		if err := json.Unmarshal([]byte(lines[1]), &terminal); err != nil {
+		if err := json.Unmarshal([]byte(lines[0]), &terminal); err != nil {
 			t.Fatal(err)
 		}
-		if !terminal.OK || terminal.Data != nil || !terminal.Meta.Stream.Terminal || terminal.Meta.Stream.ExitCode != 2 {
-			t.Fatalf("install terminal record = %s", lines[1])
+		if terminal.OK || len(terminal.Error) == 0 || !terminal.Meta.Stream.Terminal || terminal.Meta.Stream.ExitCode != 2 {
+			t.Fatalf("install terminal record = %s", lines[0])
 		}
+		assertPlatformEnvelope(t, schema, decodeEnvelope(t, terminal.Error))
 	})
 }

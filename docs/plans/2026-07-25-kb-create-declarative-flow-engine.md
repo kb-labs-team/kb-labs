@@ -317,7 +317,7 @@ that mismatch explicit rather than silently choosing one.
     "plugin:@kb-labs/commit": {
       "kind": "plugin",
       "manifestId": "@kb-labs/commit",
-      "package": "@kb-labs/commit-entry",
+      "package": "@kb-labs/commit",
       "packageVersion": "2.107.0",
       "manifestDigest": "sha256:..."
     }
@@ -1448,7 +1448,7 @@ only direct install, and no old flow is reachable.
 - [ ] Audit stdout/stderr/JSON/NDJSON and stable exit codes.
 - [ ] Audit secret redaction across state, plans, journals, events, diffs, and
       logs.
-- [ ] Run clean-machine Linux/macOS/Windows coverage as supported by current
+- [ ] Run clean-machine Linux/macOS coverage for the currently supported
       release targets.
 
 Exit criteria: every failure has an actionable structured outcome, every mode

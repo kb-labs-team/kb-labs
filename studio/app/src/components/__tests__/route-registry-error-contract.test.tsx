@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { isValidElement, type ReactNode } from 'react';
 import type { RouteObject } from 'react-router-dom';
 import { render, screen } from '@testing-library/react';
-import typedFailure from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
+import typedFailure from '@kb-labs/core-platform/contracts/ux-result/fixtures/valid/failure.json';
 import { router } from '../../router.js';
 import { ErrorBoundary } from '../error-boundary.js';
 

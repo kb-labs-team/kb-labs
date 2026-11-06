@@ -22,6 +22,7 @@
     "ctaInstallBtn": "Install",
     "aiTitle": "OpenAI-compatible. No vendor lock-in.",
     "heroDescription": "Any HTTP service gets LLM, EventBus, Cache, and Storage through a single endpoint. Providers swap in config — consumers stay untouched.",
-    "ctaTitle": "One port. All capabilities."
+    "ctaTitle": "One port. All capabilities.",
+    "adapterDiagramCaption": "the contract defines the interface · the adapter implements it"
   }
 }

@@ -34,7 +34,7 @@ Class `state` = runtime state, `declaration` = stays in `.kb/`.
 | `runtime/snapshots` | `adapters/snapshot-localfs` (default) | same | state | moved |
 | `traces/incremental/*` | `plugins/agents` `IncrementalTraceWriter`, run and generate-spec handlers | `loadTrace` and the trace commands | state | moved |
 | `plugins/*/.kb/cache/*`, `sdk/sdk/.kb/cache/*`, `services/*/.kb/cache/*`, `tools/*/.kb/cache/*` | old versions of the two cache writers | none | state | files were tracked by mistake; untracked |
-| `plugins/host-agent/entry` build script that unlinked `../../../.kb/cache/cli-manifests.json` | build hook | none | state | hook removed: it only cleared the old file, and the cache self-invalidates by manifest integrity |
+| `cli/commands/src/commands/system/workspace-agent` build script that unlinked `../../../.kb/cache/cli-manifests.json` | build hook | none | state | hook removed: it only cleared the old file, and the cache self-invalidates by manifest integrity |
 | `.kb/logs/tmp/*`, `.kb/tmp/*` (kb-dev `logs_dir`, `pid_dir`, net-offset cache) | `tools/kb-dev` (Go) | kb-dev, `shared/testing-e2e` | state | **remains**, see below |
 | `.kb/logs/*` install transcript | `tools/kb-create/v2/logs/transcript.go` (platform root) | humans | state | **remains**: install log of the platform, not of a project |
 | `<platform data root>/database/kb.sqlite` (`documentDatabase`, `kvStore`, `logs`) | sqlite adapters, path from platform adapter options | `kb logs *` via `platform.logs` | platform state | resolves from `.kb/data` in development or install `state/data`; project defaults remain under project state |

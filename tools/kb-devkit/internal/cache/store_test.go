@@ -36,7 +36,7 @@ func TestLocalStorePutGetAndRestoreFile(t *testing.T) {
 	}
 
 	restorePath := filepath.Join(t.TempDir(), "restored", "artifact.txt")
-	if err := store.RestoreFile(sha, restorePath); err != nil {
+	if err := store.RestoreFile(sha, restorePath, 0o644); err != nil {
 		t.Fatalf("RestoreFile error: %v", err)
 	}
 	restored, err := os.ReadFile(restorePath)
@@ -183,6 +183,112 @@ func TestHashInputsDepPatternWithNilDepDirsIsNoop(t *testing.T) {
 	if hashWithDep != hashLocalOnly {
 		t.Fatal("nil depDirs: ^dist/** should contribute nothing, hashes must match")
 	}
+}
+
+func TestHashInputsWithOwnershipTracksPackageAndDependencyDigests(t *testing.T) {
+	root := t.TempDir()
+	packageInput := filepath.Join(root, "packages", "lib", "tests", "input.test.ts")
+	dependencyInput := filepath.Join(root, "packages", "base", "tsconfig.base.json")
+	mustWriteFile(t, packageInput, "expect(true).toBe(true)\n")
+	mustWriteFile(t, dependencyInput, `{"compilerOptions":{"strict":true}}`)
+	own, err := ContentDigest(root, []string{packageInput}, testTrackedFiles(packageInput))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := ContentDigest(root, []string{dependencyInput}, testTrackedFiles(dependencyInput))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := HashInputsWithOwnership(root, nil, nil, "test-task", "global", own, CombineContentDigests(map[string]string{"@fixture/base": dep}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, packageInput, "expect(false).toBe(true)\n")
+	own, err = ContentDigest(root, []string{packageInput}, testTrackedFiles(packageInput))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := HashInputsWithOwnership(root, nil, nil, "test-task", "global", own, CombineContentDigests(map[string]string{"@fixture/base": dep}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("task hash unchanged after package-owned test file changed")
+	}
+	mustWriteFile(t, dependencyInput, `{"compilerOptions":{"strict":false}}`)
+	dep, err = ContentDigest(root, []string{dependencyInput}, testTrackedFiles(dependencyInput))
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := HashInputsWithOwnership(root, nil, nil, "test-task", "global", own, CombineContentDigests(map[string]string{"@fixture/base": dep}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == third {
+		t.Fatal("task hash unchanged after workspace dependency digest changed")
+	}
+}
+
+func TestContentDigestTracksProvidedContentOnly(t *testing.T) {
+	root := t.TempDir()
+	lockfile := filepath.Join(root, "pnpm-lock.yaml")
+	untracked := filepath.Join(root, "untracked.txt")
+	mustWriteFile(t, lockfile, "lockfileVersion: 9\n")
+	mustWriteFile(t, untracked, "first\n")
+
+	first, err := ContentDigest(root, []string{lockfile}, testTrackedFiles(lockfile))
+	if err != nil {
+		t.Fatalf("global input digest: %v", err)
+	}
+	mustWriteFile(t, untracked, "second\n")
+	second, err := ContentDigest(root, []string{lockfile}, testTrackedFiles(lockfile))
+	if err != nil {
+		t.Fatalf("global input digest after untracked change: %v", err)
+	}
+	if first != second {
+		t.Fatal("global digest changed when only an untracked path changed")
+	}
+	mustWriteFile(t, lockfile, "lockfileVersion: 9\n# tracked edit\n")
+	third, err := ContentDigest(root, []string{lockfile}, testTrackedFiles(lockfile))
+	if err != nil {
+		t.Fatalf("global input digest after tracked content change: %v", err)
+	}
+	if second == third {
+		t.Fatal("global digest unchanged after tracked lockfile content changed")
+	}
+}
+
+func TestContentDigestFramesRecordsWithoutNULCollisions(t *testing.T) {
+	root := t.TempDir()
+	singlePath := filepath.Join(root, "a")
+	if err := os.WriteFile(singlePath, []byte{'x', 0, 'b', 0, '1', '0', '0', '6', '4', '4', 0, 'y'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	single, err := ContentDigest(root, []string{singlePath}, testTrackedFiles(singlePath))
+	if err != nil {
+		t.Fatalf("digest single-file collision fixture: %v", err)
+	}
+
+	pairRoot := t.TempDir()
+	pathA := filepath.Join(pairRoot, "a")
+	pathB := filepath.Join(pairRoot, "b")
+	mustWriteFile(t, pathA, "x")
+	mustWriteFile(t, pathB, "y")
+	pair, err := ContentDigest(pairRoot, []string{pathA, pathB}, testTrackedFiles(pathA, pathB))
+	if err != nil {
+		t.Fatalf("digest two-file collision fixture: %v", err)
+	}
+	if single == pair {
+		t.Fatalf("different tracked-file sets produced the same digest %s", single)
+	}
+}
+
+func testTrackedFiles(paths ...string) map[string]TrackedFile {
+	tracked := make(map[string]TrackedFile, len(paths))
+	for _, path := range paths {
+		tracked[filepath.Clean(path)] = TrackedFile{Mode: 0100644, ObjectID: "fixture-object"}
+	}
+	return tracked
 }
 
 func mustWriteFile(t *testing.T, path, content string) {

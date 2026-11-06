@@ -44,7 +44,7 @@ backups before applying, and lets you undo or restore to a specific snapshot.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/devlink-entry
+pnpm kb marketplace install @kb-labs/devlink
 ```
 
 ---
@@ -54,10 +54,10 @@ pnpm kb marketplace install @kb-labs/devlink-entry
 ### Switch modes
 
 ```bash
-kb devlink switch --mode=local          # switch all cross-repo deps to link:
-kb devlink switch --mode=npm            # switch to pinned npm versions (CI)
-kb devlink switch --mode=npm --dry-run  # preview without applying
-kb devlink switch --mode=local --repos=kb-labs-cli,kb-labs-core  # specific repos only
+kb devlink mode set --mode=local          # switch all cross-repo deps to link:
+kb devlink mode set --mode=npm            # switch to pinned npm versions (CI)
+kb devlink mode set --mode=npm --dry-run  # preview without applying
+kb devlink mode set --mode=local --repos=kb-labs-cli,kb-labs-core  # specific repos only
 ```
 
 > Run `pnpm install` after switching.
@@ -75,22 +75,22 @@ kb devlink status --json
 ### Backups and snapshots
 
 ```bash
-kb devlink freeze                       # save current state to lock file
-kb devlink backups                      # list all available backups
-kb devlink backups --restore <id>       # restore specific backup
-kb devlink undo                         # restore last backup (quick undo)
+kb devlink lock create                       # save current state to lock file
+kb devlink backup list                      # list all available backups
+kb devlink backup list --restore <id>       # restore specific backup
+kb devlink rollback                         # restore last backup (quick undo)
 ```
 
 **Full command reference**
 
 | Command | Description |
 |---------|-------------|
-| `kb devlink switch` | Switch cross-repo deps between modes |
+| `kb devlink mode set` | Switch cross-repo deps between modes |
 | `kb devlink plan` | Preview mode switch |
 | `kb devlink status` | Show current linking state |
-| `kb devlink freeze` | Freeze current state to lock |
-| `kb devlink undo` | Restore last backup |
-| `kb devlink backups` | List and restore backups |
+| `kb devlink lock create` | Freeze current state to lock |
+| `kb devlink rollback` | Restore last backup |
+| `kb devlink backup list` | List and restore backups |
 
 ---
 

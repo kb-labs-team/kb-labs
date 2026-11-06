@@ -9,7 +9,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 from invocations import print_report_text, write_report_json, write_report_text
+import jsonl
 from journey_dependencies import Dependency
+from scoreboard_contract import RELEASE_GATING_MODES
 
 CASE_STEP = re.compile(r"^\|\s*((?:S|PC)-\d+\.\d+)\s*\|", re.MULTILINE)
 CLAIM_TAG = re.compile(r"@(S|PC)-(\d+\.\d+)")
@@ -125,7 +127,7 @@ def load_evidence(directory: Path, modes: Iterable[str]) -> dict[str, dict[str, 
             continue
         if not isinstance(data, dict):
             continue
-        if data.get("case_run", {}).get("partial") is True:
+        if data.get("case_run", {}).get("selection"):
             continue
         if path.name.startswith("studio-playwright-"):
             mode = "secured" if "secured" in path.stem else "local"
@@ -168,6 +170,29 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
     """Rank failed journey steps by the claims reachable through their declared dependencies."""
     steps_by_file: dict[str, list[dict]] = {}
     states_by_file: dict[str, dict] = {}
+    invocation_errors: dict[str, set[tuple[str, str, str | None]]] = defaultdict(set)
+    unreadable_invocation_rows = []
+    calls_path = directory / "invocations" / "calls.jsonl"
+    if calls_path.is_file():
+        for row in jsonl.read_jsonl(calls_path, errors="replace"):
+            if row.error is not None:
+                unreadable_invocation_rows.append(row.line_number)
+                continue
+            call = row.value
+            if not isinstance(call, dict):
+                continue
+            step_ids = call.get("step_id")
+            envelope = call.get("error_envelope")
+            if not isinstance(step_ids, str) or not isinstance(envelope, dict):
+                continue
+            code = envelope.get("code")
+            area = envelope.get("area")
+            stage = envelope.get("stage")
+            if not isinstance(code, str) or not isinstance(area, str):
+                continue
+            identity = (code, area, stage if isinstance(stage, str) else None)
+            for step_id in step_ids.split(","):
+                invocation_errors[step_id].add(identity)
     if directory.is_dir():
         for path in sorted(directory.glob("*.json")):
             try:
@@ -175,8 +200,8 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
             except (OSError, UnicodeError, json.JSONDecodeError):
                 continue
             if (not isinstance(data, dict)
-                    or data.get("schema") == "kb.journey-case-scoreboard/v1"
-                    or data.get("case_run", {}).get("partial") is True):
+                    or data.get("schema") == "kb.journey-case-scoreboard/v2"
+                    or data.get("case_run", {}).get("selection")):
                 continue
             file_mode = data.get("case_run", {}).get("mode")
             steps = data.get("steps", [])
@@ -277,12 +302,23 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
             error = details.get("error") if isinstance(details.get("error"), dict) else {}
             error_code = error.get("code") if isinstance(error.get("code"), str) else None
             error_message = error.get("message") if isinstance(error.get("message"), str) else None
-            failure = (f"{error_code}: {' '.join(error_message.split())}"
-                       if error_code and error_message else "structured error unavailable")
+            recorded_message = root_step.get("message")
+            failure = (f"{error_code}: {error_message}"
+                       if error_code and error_message else
+                       recorded_message if isinstance(recorded_message, str) and recorded_message else
+                       "failure message unavailable")
+            failure = " ".join(failure.split())
             failure = failure[:FAILURE_MAX_LENGTH]
+            if root_id.startswith("case:"):
+                invocation_step_ids = root_id.removeprefix("case:").split(",")
+            else:
+                invocation_step_ids = [root_id]
+            error_envelopes = {identity for step_id in invocation_step_ids
+                               for identity in invocation_errors.get(step_id, set())}
             roots.append({"mode": mode, "source": filename, "stepId": root_id,
                           "step": root_step.get("name", root_id),
                           "failure": failure,
+                          "errorEnvelopes": error_envelopes,
                           "layer": 0 if state_root else 1, "stateRoot": state_root,
                           "unblockedClaims": len(affected_claims),
                           "claims": sorted(affected_claims, key=claim_sort_key),
@@ -302,6 +338,7 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
             continue
         existing["_failureMessages"].add(root["failure"])
         existing["claims"] = sorted(set(existing["claims"]) | set(root["claims"]), key=claim_sort_key)
+        existing["errorEnvelopes"].update(root["errorEnvelopes"])
         existing["unblockedClaims"] = len(existing["claims"])
         existing["blockedCaseIds"] = sorted(set(existing["blockedCaseIds"]) | set(root["blockedCaseIds"]))
         existing["blockedStepIds"] = sorted(set(existing["blockedStepIds"]) | set(root["blockedStepIds"]))
@@ -312,6 +349,25 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
     roots = list(deduplicated.values())
     for root in roots:
         root["failure"] = " | ".join(sorted(root.pop("_failureMessages")))[:FAILURE_MAX_LENGTH]
+    grouped_roots: dict[tuple[str, str, str | None] | None, dict] = {}
+    for root in roots:
+        identities = root["errorEnvelopes"] or {None}
+        for identity in identities:
+            group = grouped_roots.setdefault(identity, {"error": None if identity is None else {
+                "code": identity[0], "area": identity[1], **({"stage": identity[2]} if identity[2] else {})},
+                "rootStepIds": [], "claims": set()})
+            group["rootStepIds"].append(root["stepId"])
+            group["claims"].update(root["claims"])
+    root_groups = [{**group, "rootStepIds": sorted(set(group["rootStepIds"])),
+                    "claims": sorted(group["claims"], key=claim_sort_key),
+                    "unblockedClaims": len(group["claims"])}
+                   for group in grouped_roots.values()]
+    root_groups.sort(key=lambda group: (-group["unblockedClaims"],
+                                        group["error"]["code"] if group["error"] else "",
+                                        group["error"]["area"] if group["error"] else "",
+                                        group["error"].get("stage", "") if group["error"] else ""))
+    for root in roots:
+        root.pop("errorEnvelopes", None)
     roots.sort(key=lambda item: (item["blockedStepCount"] == 0,
                                  (item["blockedCaseIds"] or [""])[0] if item["blockedStepCount"] == 0 else "",
                                  item["layer"], -item["unblockedClaims"], item["step"], item["source"]))
@@ -326,7 +382,8 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
                     for results in observed.values())
     fully_green = sum(_status(case["claims"], evidence, [mode])[0] == "Fully green"
                       for case in applicable)
-    return {"mode": mode, "blockingRoots": roots, "unclaimedCases": unclaimed,
+    return {"mode": mode, "blockingRoots": roots, "rootGroups": root_groups,
+            "unreadableInvocationRows": unreadable_invocation_rows, "unclaimedCases": unclaimed,
             "unresolvedStateOwners": unresolved_owners,
             "unresolvedDependencies": unresolved_dependencies,
             "headline": {"activeCasesFullyGreen": {"count": fully_green, "total": len(applicable)},
@@ -351,8 +408,7 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
             except (OSError, UnicodeError, json.JSONDecodeError):
                 continue
             case_run = data.get("case_run", {}) if isinstance(data, dict) else {}
-            if case_run.get("partial") is True:
-                partial_selections.extend(case_run.get("selection", []))
+            partial_selections.extend(case_run.get("selection", []))
     if partial_selections:
         evidence = {mode: defaultdict(list) for mode in modes}
     rows = []
@@ -374,16 +430,20 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
         rows.append({**case, "caseStatus": case["status"], "status": status, "passingClaims": passing,
                      "claimedCount": sum(bool(evidence.get(mode, {}).get(claim_id)) for mode in relevant for claim_id in case["claims"]),
                      "claimCount": len(case["claims"])})
-    release_cases = [row for row in rows if row["release"]]
+    gated_modes = [mode for mode in modes if mode in RELEASE_GATING_MODES]
+    release_cases = [case for case in cases
+                     if case["status"] == "active" and case["release"]
+                     and any(mode in case["modes"] for mode in gated_modes)]
     mode_reports = {mode: _blocking_report(directory, cases, mode, evidence) for mode in modes}
     result = {
-        "schema": "kb.journey-case-scoreboard/v1",
+        "schema": "kb.journey-case-scoreboard/v2",
         "modes": modes,
-        "partial": bool(partial_selections),
+        "releaseGate": {"modes": list(RELEASE_GATING_MODES), "gating": bool(gated_modes)},
         "selection": sorted(set(partial_selections)),
         "observedModes": observed_modes,
-        "releaseCases": {"fullyGreen": sum(row["status"] == "Fully green" for row in release_cases),
-                         "total": len(release_cases)},
+        "releaseCases": {"fullyGreen": sum(
+            _status(case["claims"], evidence, gated_modes)[0] == "Fully green"
+            for case in release_cases), "total": len(release_cases)},
         "activeCases": {"fullyGreen": sum(row["status"] == "Fully green" for row in rows),
                         "total": len(rows)},
         "plannedCount": planned_count,
@@ -398,16 +458,34 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
 
 def _render_mode_report(mode: str, report: dict) -> list[str]:
     headline = report["headline"]
-    lines = [f"## {mode}: platform coverage", "",
+    gate_label = "" if mode in RELEASE_GATING_MODES else " (non-gating for Release 1)"
+    lines = [f"## {mode}: platform coverage{gate_label}", "",
              f"All active cases fully green: **{headline['activeCasesFullyGreen']['count']} / {headline['activeCasesFullyGreen']['total']}**.",
              f"Claims passing: **{headline['claimsPassing']['count']} / {headline['claimsPassing']['total']}**.",
              f"Claims reachable (not BLOCKED): **{headline['claimsReachable']['count']} / {headline['claimsReachable']['total']}**.",
-             "", "### Blocking roots", ""]
+             "", "### Root groups", ""]
+    if report.get("rootGroups"):
+        lines.extend(["| Error | Unblocked claims | Root step IDs |", "|---|---:|---|"])
+        for group in report["rootGroups"]:
+            error = group["error"]
+            label = ("no envelope" if error is None else
+                     f"{error['code']} ({error['area']}" +
+                     (f"/{error['stage']}" if error.get("stage") else "") + ")")
+            lines.append(f"| {label} | {group['unblockedClaims']} | " +
+                         (", ".join(f"`{step_id}`" for step_id in group["rootStepIds"]) or "none") + " |")
+    else:
+        lines.append("No failed roots.")
+    if report.get("unreadableInvocationRows"):
+        lines.extend(["", "### Unreadable invocation records", "",
+                      ", ".join(f"`invocations/calls.jsonl:{line}`"
+                                for line in report["unreadableInvocationRows"])])
+    lines.extend(["", "### Blocking roots", ""])
     if report["blockingRoots"]:
-        lines.extend(["| Layer | Step ID | Step | Impacted claims | Blocked cases | Failure |",
-                      "|---:|---|---|---:|---|---|"])
+        lines.extend(["| Layer | Step ID | Step | Impacted claims | Blocked steps | Blocked cases | Failure |",
+                      "|---:|---|---|---:|---|---|---|"])
         for root in report["blockingRoots"]:
             lines.append(f"| {root['layer']} | `{root['stepId']}` | {root['step']} | {root['unblockedClaims']} | "
+                         f"{', '.join(f'`{step_id}`' for step_id in root['blockedStepIds']) or 'none'} | "
                          f"{', '.join(root['blockedCaseIds']) or 'none'} | {root['failure']} |")
     else:
         lines.append("No failed roots.")
@@ -434,8 +512,11 @@ def render_markdown(scoreboard: dict) -> str:
         counts[case["status"]] += 1
     release = scoreboard["releaseCases"]
     active = scoreboard["activeCases"]
-    lines = [f"# Product case scoreboard ({modes})", "",
-             (f"**Partial run**; selection: {', '.join(scoreboard['selection'])}." if scoreboard.get("partial") else "Full run.")]
+    gate_modes = ", ".join(scoreboard["releaseGate"]["modes"])
+    gate_status = (f"Release 1 gate modes: {gate_modes}." if scoreboard["releaseGate"]["gating"]
+                   else f"Release 1 gate modes: {gate_modes}; this scoreboard is non-gating.")
+    lines = [f"# Product case scoreboard ({modes})", "", gate_status,
+             (f"**Partial run**; selection: {', '.join(scoreboard['selection'])}." if scoreboard["selection"] else "Full run.")]
     for mode, report in scoreboard.get("modeReports", {}).items():
         lines.extend(["", *_render_mode_report(mode, report)])
     lines.extend(["", f"Release cases: **{release['fullyGreen']} / {release['total']}** fully green.",
@@ -514,7 +595,7 @@ def render_delta(previous_dir: Path, current_dir: Path) -> str:
             continue
         previous = json.loads(previous_path.read_text(encoding="utf-8"))
         current = json.loads(current_path.read_text(encoding="utf-8"))
-        if previous.get("partial") or current.get("partial"):
+        if previous.get("selection") or current.get("selection"):
             selection = sorted(set(previous.get("selection", [])) | set(current.get("selection", [])))
             lines.extend(["", f"{mode}: delta omitted because a scoreboard is partial (selection: {', '.join(selection)})."])
             continue

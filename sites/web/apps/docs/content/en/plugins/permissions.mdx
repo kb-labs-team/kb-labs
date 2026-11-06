@@ -368,7 +368,7 @@ Handler-level permissions are a replacement, not an addition. If you need the pl
 
 ## Example: a realistic plugin
 
-From [plugins/commit/entry/src/manifest.ts](plugins/commit/entry/src/manifest.ts):
+From [plugins/commit/src/manifest.ts](plugins/commit/src/manifest.ts):
 
 ```ts
 import {
@@ -376,7 +376,7 @@ import {
   gitWorkflowPreset,
   kbPlatformPreset,
 } from '@kb-labs/sdk';
-import { COMMIT_ENV_VARS, COMMIT_CACHE_PREFIX } from '@kb-labs/commit-contracts';
+import { COMMIT_ENV_VARS, COMMIT_CACHE_PREFIX } from '@kb-labs/commit/contracts';
 
 const pluginPermissions = combinePermissions()
   .with(gitWorkflowPreset)

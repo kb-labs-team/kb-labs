@@ -38,29 +38,10 @@ test('SA-02: MF manifest — valid JSON with remotes map', async ({ request }) =
   expect(hasContent).toBe(true)
 })
 
-// SA-03: MF chunk for workflow plugin resolves (no 404)
-test('SA-03: MF chunk for workflow plugin resolves', async ({ request }) => {
-  // Fetch manifest first to find an actual chunk URL
-  const manifestRes = await request.get(`${GATEWAY}/mf-manifest.json`)
-  test.skip(manifestRes.status() === 404, 'Studio MF manifest not exposed')
-
-  const manifest = await manifestRes.json()
-  // Find a URL that looks like a JS chunk
-  const urls: string[] = []
-  function collectUrls(obj: unknown, depth = 0): void {
-    if (depth > 4 || typeof obj !== 'object' || !obj) return
-    for (const val of Object.values(obj as Record<string, unknown>)) {
-      if (typeof val === 'string' && val.endsWith('.js')) urls.push(val)
-      else collectUrls(val, depth + 1)
-    }
-  }
-  collectUrls(manifest)
-  test.skip(urls.length === 0, 'No JS chunks found in MF manifest')
-
-  // Verify the first chunk URL loads (200 or 304 = fine)
-  const chunkUrl = urls[0].startsWith('http') ? urls[0] : `${GATEWAY}${urls[0]}`
-  const chunkRes = await request.get(chunkUrl)
-  expect([200, 304]).toContain(chunkRes.status())
+// SA-03: built-in workflow route resolves in the Studio application.
+test('SA-03: built-in workflow runs page loads', async ({ page }) => {
+  await page.goto(`${GATEWAY}/p/workflows/runs`)
+  await expect(page.getByRole('heading', { name: 'Workflow Runs', exact: true })).toBeVisible()
 })
 
 // SA-04: REST /api/v1/status — used by studio to determine backend readiness

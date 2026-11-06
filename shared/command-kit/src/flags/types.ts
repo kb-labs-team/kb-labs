@@ -24,6 +24,8 @@ export interface BaseFlagSchema<T extends FlagType = FlagType> {
   default?: unknown;
   /** Whether flag is required */
   required?: boolean;
+  /** Whether CLI output and diagnostics must redact this flag's value */
+  secret?: boolean;
   /** Flags that conflict with this flag */
   conflicts?: string[];
   /** Flags that this flag depends on */

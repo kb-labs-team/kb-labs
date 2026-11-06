@@ -28,7 +28,7 @@ jobs:
         with: { run_install: false }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 24
+          node-version-file: package.json
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
@@ -37,9 +37,11 @@ jobs:
       - name: Build kb-devkit
         run: make build -C tools/kb-devkit
       - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
+        run: e2e/journey/install-workspace-dependencies.sh
       - name: Build affected workspace packages
         run: ./tools/kb-devkit/kb-devkit run build --affected
+      - name: Verify packed SDK consumer contract
+        run: pnpm --filter @kb-labs/sdk test:packed-consumer
       - name: Validate QA cases and test claims
         run: pnpm kb qa cases validate
       - name: Restore packed package cache
@@ -48,6 +50,7 @@ jobs:
         with:
           path: e2e/packages/
           key: journey-tgz-v1-${{ runner.os }}-${{ hashFiles('**/dist/**/*.js', '**/dist/**/*.d.ts', '**/package.json') }}
+      - uses: ./.github/actions/install-goreleaser
       - name: Pack artifacts and seal the candidate release index
         env:
           KB_JOURNEY_PACKAGES_READY: ${{ steps.tgz-cache.outputs.cache-hit == 'true' && '1' || '0' }}
@@ -61,6 +64,7 @@ jobs:
           path: |
             e2e/packages/*.tgz
             .journey/release/**
+            .journey/runner-inputs/**
           if-no-files-found: error
           retention-days: 1
           include-hidden-files: true
@@ -117,7 +121,7 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 24
+          node-version-file: package.json
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
@@ -138,7 +142,7 @@ jobs:
         with: { run_install: false }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 24
+          node-version-file: package.json
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
@@ -153,8 +157,8 @@ jobs:
       - name: Build the case coverage CLI
         run: |
           make build -C tools/kb-devkit
-          pnpm install --frozen-lockfile
-          ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/qa-entry
+          e2e/journey/install-workspace-dependencies.sh
+          ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/qa
       - name: Enforce local and secured release case coverage
         run: |
           run_files=$(find .journey/reports -type f -name 'service-*.json' -print | sort | paste -sd, -)

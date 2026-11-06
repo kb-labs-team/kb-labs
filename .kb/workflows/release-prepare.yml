@@ -21,11 +21,11 @@
 # pack-install verifies internal cross-package dependencies against (see
 # scripts/gates/check-pack-install.sh):
 #   pnpm kb release plan --flow <flow>          # writes .kb/release/plans/root/current/plan.json
-#   pnpm kb release stage plan --flow <flow> --plan-path <planPath> --registry http://localhost:4873
+#   pnpm kb release candidate publish --flow <flow> --plan-path <planPath> --registry http://localhost:4873
 #   RELEASE_PLAN_PATH=<planPath> KB_RELEASE_STAGING_REGISTRY=http://localhost:4873 \
-#     pnpm kb release checks --flow <flow> --json
+#     pnpm kb release checks run --flow <flow> --json
 # and don't treat the release as verified until that's green. (Add --preflight to
-# `release checks` to run the preflight first from the same command.)
+# `release checks run` to run the preflight first from the same command.)
 
 name: release-prepare
 version: 1.0.0
@@ -137,18 +137,18 @@ jobs:
           NET_OFFSET="${KB_NET_OFFSET:-0}"
           REGISTRY="http://localhost:$((4873 + NET_OFFSET))"
           ./tools/kb-dev/kb-dev ensure verdaccio --config .kb/devservices.dev.yaml --net-offset "$NET_OFFSET"
-          pnpm kb release stage plan --flow ${{ inputs.flow }} --plan-path "$RELEASE_PLAN_PATH" --registry "$REGISTRY" --json
+          pnpm kb release candidate publish --flow ${{ inputs.flow }} --plan-path "$RELEASE_PLAN_PATH" --registry "$REGISTRY" --json
           echo "::kb-output::{\"stagingRegistry\":\"$REGISTRY\"}"
 
       - name: Checks
         id: checks
         phase: checks
-        # pack-static verifies the tarballs `release stage plan` already produced in one
+        # pack-static verifies the tarballs `release candidate publish` already produced in one
         # process; pack-install does ONE aggregated clean install from the staging registry
         # plus isolated installs only for public standalone/changed packages (see
-        # plugins/release/manager-core/src/pack-verify.ts). Expected 5-10 minutes instead of
+        # plugins/release/src/core/pack-verify.ts). Expected 5-10 minutes instead of
         # ~40-80; the two-hour budget is kept as a ceiling. Debug the old per-package gate with
-        # `pnpm kb release checks --flow <flow> --only pack-install-per-package`.
+        # `pnpm kb release checks run --flow <flow> --only pack-install-per-package`.
         timeoutMs: 7200000
         if: ${{ !inputs.skipChecks }}
         env:
@@ -160,7 +160,7 @@ jobs:
           # while this step's outer timeout (meant to be the real ceiling) never gets a
           # chance to matter. Match the two so the step-level budget above is authoritative.
           KB_RELEASE_CHECKS_TIMEOUT_MS: "7200000"
-        run: pnpm kb release checks --flow ${{ inputs.flow }} --json
+        run: pnpm kb release checks run --flow ${{ inputs.flow }} --json
 
       - name: Prepare release review
         id: review
@@ -198,7 +198,7 @@ jobs:
         run: |
           set -e
           if [ "${{ inputs.channel }}" = "stable" ]; then
-            pnpm kb release changelog --flow ${{ inputs.flow }}
+            pnpm kb release changelog show --flow ${{ inputs.flow }}
           fi
           RELEASE_CHANNEL="${{ inputs.channel }}" node .kb/workflows/scripts/release-review-artifacts.mjs
 
@@ -214,7 +214,7 @@ jobs:
         phase: prepare
         if: ${{ inputs.channel == 'stable' }}
         timeoutMs: 1200000
-        run: pnpm kb release version --flow ${{ inputs.flow }} --bump ${{ inputs.bump }} --channel ${{ inputs.channel }} --json
+        run: pnpm kb release version update --flow ${{ inputs.flow }} --bump ${{ inputs.bump }} --channel ${{ inputs.channel }} --json
 
       - name: Verify release branch before git operations
         id: git-branch
@@ -233,7 +233,7 @@ jobs:
         phase: git
         if: ${{ inputs.channel == 'stable' }}
         timeoutMs: 1200000
-        run: pnpm kb release git --flow ${{ inputs.flow }} --bump ${{ inputs.bump }} --channel ${{ inputs.channel }} --json
+        run: pnpm kb release git commit --flow ${{ inputs.flow }} --bump ${{ inputs.bump }} --channel ${{ inputs.channel }} --json
 
       - name: Build immutable candidate in controlled CI
         id: candidate

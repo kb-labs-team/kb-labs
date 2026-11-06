@@ -36,8 +36,8 @@ describe('parseJsonc', () => {
   });
 
   it('preserves slash-star sequences inside quoted glob strings', () => {
-    expect(parseJsonc('{ "include": ["plugins/*/entry"] }')).toEqual({
-      include: ['plugins/*/entry'],
+    expect(parseJsonc('{ "include": ["plugins/*"] }')).toEqual({
+      include: ['plugins/*'],
     });
   });
 

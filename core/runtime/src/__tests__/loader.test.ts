@@ -12,7 +12,7 @@
  * - Reset and re-initialization
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -23,6 +23,9 @@ import { platform } from '../container.js';
 import { getAdapterStatusFor, resetAdapterStatus } from '../adapter-status.js';
 import { AdapterUnavailableError, type IEnvironmentProvider } from '@kb-labs/core-platform';
 import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
+import { writeTestPlatformReceipt } from './platform-version-fixture.js';
+
+vi.mock('../platform-version.js', () => ({ resolvePlatformVersion: async () => 'test' }));
 
 describe('Platform Loader', () => {
   beforeEach(() => {
@@ -85,6 +88,7 @@ describe('Platform Loader', () => {
         await mkdir(adapterRoot, { recursive: true });
         await mkdir(telegramRoot, { recursive: true });
         await mkdir(isolatedHome, { recursive: true });
+        writeTestPlatformReceipt(workspaceRoot);
         await writeFile(path.join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n');
         await writeFile(path.join(adapterRoot, 'package.json'), await readFile(path.join(repoRoot, 'adapters/notifier-router/package.json')));
         await symlink(path.join(repoRoot, 'adapters/notifier-router/dist'), path.join(adapterRoot, 'dist'));
@@ -116,7 +120,7 @@ describe('Platform Loader', () => {
                 routing: [{ match: { severity: ['info'] }, channels: ['ops'] }],
               },
             },
-          }, ${JSON.stringify(workspaceRoot)}, undefined, undefined, { workspaceDevelopment: true });
+          }, ${JSON.stringify(workspaceRoot)}, undefined, undefined, { workspaceDevelopment: true, workspaceRoot: ${JSON.stringify(workspaceRoot)} });
           await platform.notifier.notify({ severity: 'info', title: 'loader test', body: 'bound' });
           console.log('C01_RESULT ' + JSON.stringify({ real: platform.isReal('notifier'), telegramRequests, brokerRegistrations, brokerReadyAtRegistration }));
           process.exit(0);

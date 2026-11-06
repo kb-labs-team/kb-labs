@@ -1,6 +1,9 @@
 package artifacts
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,6 +14,69 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 )
+
+func TestStaticPackageProvenanceCoversWholePackageAndDetectsChanges(t *testing.T) {
+	archivePath := filepath.Join(t.TempDir(), "static.tgz")
+	manifest := []byte(`{"name":"@kb-labs/static-config","version":"1.0.0","exports":{"./config.json":"./config.json"},"files":["config.json"]}`)
+	var archive bytes.Buffer
+	compressed := gzip.NewWriter(&archive)
+	tarWriter := tar.NewWriter(compressed)
+	for _, entry := range []struct {
+		name string
+		data []byte
+	}{{"package/package.json", manifest}, {"package/config.json", []byte(`{"mode":"safe"}`)}} {
+		if err := tarWriter.WriteHeader(&tar.Header{Name: entry.name, Mode: 0o644, Size: int64(len(entry.data))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tarWriter.Write(entry.data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archivePath, archive.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := SealPackageProvenance(filepath.Dir(archivePath), []PackageManifestInput{{Package: "@kb-labs/static-config", Version: "1.0.0", Tarball: filepath.Base(archivePath)}}, "revision-1")
+	if err != nil {
+		t.Fatalf("seal static package: %v", err)
+	}
+	if len(sealed) != 1 || sealed[0].ContentScope != "package" || sealed[0].PackageSHA256 == "" || sealed[0].DistSHA256 != "" {
+		t.Fatalf("static package provenance = %#v", sealed)
+	}
+	root := t.TempDir()
+	packageRoot := filepath.Join(root, "node_modules", "@kb-labs", "static-config")
+	if err := os.MkdirAll(packageRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(packageRoot, "config.json")
+	if err := os.WriteFile(config, []byte(`{"mode":"safe"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	item := contracts.Artifact{Package: "@kb-labs/static-config", Version: "1.0.0", Provenance: contracts.ArtifactProvenance{
+		SourceRevision: sealed[0].SourceRevision, Integrity: sealed[0].Integrity,
+		ContentScope: sealed[0].ContentScope, PackageSHA256: sealed[0].PackageSHA256,
+	}}
+	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), []byte("lockfileVersion: '9.0'\npackages:\n  '@kb-labs/static-config@1.0.0':\n    resolution:\n      integrity: "+item.Provenance.Integrity+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyInstalledProvenance(root, []contracts.Artifact{item}); err != nil {
+		t.Fatalf("verify unchanged static package: %v", err)
+	}
+	if err := os.WriteFile(config, []byte(`{"mode":"unsafe"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyInstalledProvenance(root, []contracts.Artifact{item}); err == nil {
+		t.Fatal("changed static package file passed provenance verification")
+	}
+}
 
 func TestVerifyInstalledProvenanceRejectsChangedDist(t *testing.T) {
 	root := t.TempDir()
@@ -33,7 +99,7 @@ func TestVerifyInstalledProvenanceRejectsChangedDist(t *testing.T) {
 		t.Fatal(err)
 	}
 	item := contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0", Provenance: contracts.ArtifactProvenance{
-		SourceRevision: "revision-1", Integrity: "sha512-expected", DistSHA256: digest,
+		SourceRevision: "revision-1", Integrity: "sha512-expected", DistSHA256: digest, ContentScope: contracts.ProvenanceScopeDist,
 	}}
 	manifest, err := VerifyInstalledProvenance(root, []contracts.Artifact{item})
 	if err != nil {
@@ -92,7 +158,7 @@ func TestVerifyInstalledProvenanceMatchesPnpmFileOverrideByPackageVersion(t *tes
 		t.Fatal(err)
 	}
 	item := contracts.Artifact{Package: "@kb-labs/sample", Version: "1.0.0", Provenance: contracts.ArtifactProvenance{
-		SourceRevision: "test-revision", Integrity: integrity, DistSHA256: digest,
+		SourceRevision: "test-revision", Integrity: integrity, DistSHA256: digest, ContentScope: contracts.ProvenanceScopeDist,
 	}}
 	if _, err := VerifyInstalledProvenance(root, []contracts.Artifact{item}); err != nil {
 		t.Fatalf("installed package with pnpm file override was refused: %v", err)
@@ -169,7 +235,7 @@ func TestVerifyInstalledProvenanceReportsStructuredMismatchFields(t *testing.T) 
 				t.Fatal(err)
 			}
 			item := contracts.Artifact{Package: "@kb-labs/sample", Version: "1.0.0", Provenance: contracts.ArtifactProvenance{
-				SourceRevision: "revision-1", Integrity: "sha512-sealed", DistSHA256: expectedDigest,
+				SourceRevision: "revision-1", Integrity: "sha512-sealed", DistSHA256: expectedDigest, ContentScope: contracts.ProvenanceScopeDist,
 			}}
 			_, err = VerifyInstalledProvenance(root, []contracts.Artifact{item})
 			var failure *diag.Diag
@@ -193,7 +259,7 @@ func TestVerifyInstalledProvenanceReportsStructuredMismatchFields(t *testing.T) 
 				t.Fatal(err)
 			}
 			var output struct {
-				Details map[string]string `json:"details"`
+				Details map[string]any `json:"details"`
 			}
 			if err := json.Unmarshal(encoded, &output); err != nil {
 				t.Fatal(err)
@@ -242,7 +308,7 @@ func TestVerifyInstalledProvenanceReportsAbsentLockIntegrity(t *testing.T) {
 				t.Fatal(err)
 			}
 			item := contracts.Artifact{Package: "@kb-labs/sample", Version: "1.0.0", Provenance: contracts.ArtifactProvenance{
-				SourceRevision: "revision-1", Integrity: "sha512-sealed", DistSHA256: strings.Repeat("a", 64),
+				SourceRevision: "revision-1", Integrity: "sha512-sealed", DistSHA256: strings.Repeat("a", 64), ContentScope: contracts.ProvenanceScopeDist,
 			}}
 			_, err := VerifyInstalledProvenance(root, []contracts.Artifact{item})
 			var failure *diag.Diag
@@ -270,17 +336,17 @@ func TestVerifyInstalledProvenanceReportsAbsentLockIntegrity(t *testing.T) {
 				t.Fatal(err)
 			}
 			var output struct {
-				Details map[string]string `json:"details"`
+				Details map[string]any `json:"details"`
 			}
 			if err := json.Unmarshal(encoded, &output); err != nil {
 				t.Fatal(err)
 			}
-			for key, value := range map[string]string{
+			for key, value := range map[string]any{
 				"field": "integrity", "expected": "sha512-sealed", "actual": actual,
-				"actualPresent": "false", "packagePath": packagePath, "digestVersion": DistDigestVersion,
+				"actualPresent": false, "packagePath": packagePath, "digestVersion": DistDigestVersion,
 			} {
 				if output.Details[key] != value {
-					t.Errorf("JSON details[%q] = %q, want %q; envelope: %s", key, output.Details[key], value, encoded)
+					t.Errorf("JSON details[%q] = %#v, want %#v; envelope: %s", key, output.Details[key], value, encoded)
 				}
 			}
 		})
@@ -307,7 +373,7 @@ func TestVerifyInstalledProvenanceRejectsDistSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	item := contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0", Provenance: contracts.ArtifactProvenance{
-		SourceRevision: "revision-1", Integrity: "sha512-expected", DistSHA256: strings.Repeat("0", 64),
+		SourceRevision: "revision-1", Integrity: "sha512-expected", DistSHA256: strings.Repeat("0", 64), ContentScope: contracts.ProvenanceScopeDist,
 	}}
 	_, err := VerifyInstalledProvenance(root, []contracts.Artifact{item})
 	var failure *diag.Diag
@@ -342,7 +408,7 @@ func TestRestoreRejectsChangedDistBeforeAcceptingRestoredPackages(t *testing.T) 
 		t.Fatal(err)
 	}
 	item := contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0", Provenance: contracts.ArtifactProvenance{
-		SourceRevision: "revision-1", Integrity: "sha512-expected", DistSHA256: expected,
+		SourceRevision: "revision-1", Integrity: "sha512-expected", DistSHA256: expected, ContentScope: contracts.ProvenanceScopeDist,
 	}}
 	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), []byte("lockfileVersion: '9.0'\npackages:\n  '@kb-labs/sample@1.0.0':\n    resolution:\n      integrity: sha512-expected\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -377,7 +443,7 @@ func TestDistDigestUsedByInstalledVerifier(t *testing.T) {
 		t.Fatal(err)
 	}
 	item := contracts.Artifact{Package: "@kb-labs/sample", Version: "1.0.0", Provenance: contracts.ArtifactProvenance{
-		SourceRevision: "test-revision", Integrity: integrity, DistSHA256: digest,
+		SourceRevision: "test-revision", Integrity: integrity, DistSHA256: digest, ContentScope: contracts.ProvenanceScopeDist,
 	}}
 	verified, err := VerifyInstalledProvenance(installRoot, []contracts.Artifact{item})
 	if err != nil {

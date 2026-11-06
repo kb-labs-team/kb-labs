@@ -13,6 +13,10 @@
     "./kv": {
       "types": "./dist/kv.d.ts",
       "import": "./dist/kv.js"
+    },
+    "./vector-store": {
+      "types": "./dist/vector-store.d.ts",
+      "import": "./dist/vector-store.js"
     }
   },
   "files": [

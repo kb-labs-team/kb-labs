@@ -110,7 +110,7 @@ export function checkRequires(
       
       if (hasExportsError || errorMessage.includes('Cannot resolve')) {
         // Package might exist - try to verify by checking for package.json
-        // Parse scoped package name (e.g., @kb-labs/devlink-core -> kb-labs/devlink-core)
+        // Parse scoped package name (e.g., @kb-labs/devlink/core -> kb-labs/devlink-core)
         const parts = dep.startsWith('@') 
           ? dep.slice(1).split('/')
           : [dep];

@@ -21,7 +21,7 @@
         },
         {
           "label": "Re-index trigger",
-          "value": "Developer workspace: kb-dev start or pnpm kb mind reindex"
+          "value": "Developer workspace: kb-dev start or pnpm kb mind index create"
         },
         {
           "label": "Search mode",
@@ -69,11 +69,11 @@
           "note": "Agent-mode output: JSON lines with sources and confidence."
         },
         {
-          "cmd": "pnpm kb mind reindex",
+          "cmd": "pnpm kb mind index create",
           "note": "Force full re-index of the codebase into the vector store."
         },
         {
-          "cmd": "pnpm kb mind reindex --affected",
+          "cmd": "pnpm kb mind index create --affected",
           "note": "Re-index only files changed since last index run."
         },
         {

@@ -1,7 +1,7 @@
 {
   "commands": {
     "workflow run": {
-      "source": "plugins/workflow/entry/src/manifest.ts",
+      "source": "services/workflow/contracts/src/service-commands.ts",
       "examples": [
         "kb workflow run --workflow-id=release-manager/create-release",
         "kb workflow run --workflow-id=release-manager/create-release --isolation=strict --target-namespace=team-a/prod",
@@ -10,7 +10,7 @@
       ]
     },
     "workflow runs list": {
-      "source": "plugins/workflow/entry/src/manifest.ts",
+      "source": "services/workflow/contracts/src/service-commands.ts",
       "examples": [
         "kb workflow runs list",
         "kb workflow runs list --status=failed",
@@ -19,7 +19,7 @@
       ]
     },
     "workflow runs logs": {
-      "source": "plugins/workflow/entry/src/manifest.ts",
+      "source": "services/workflow/contracts/src/service-commands.ts",
       "examples": [
         "kb workflow runs logs <runId>",
         "kb workflow runs logs <runId> --log-failed",
@@ -28,7 +28,7 @@
       ]
     },
     "workflow runs status": {
-      "source": "plugins/workflow/entry/src/manifest.ts",
+      "source": "services/workflow/contracts/src/service-commands.ts",
       "examples": [
         "kb workflow runs status <runId>",
         "kb workflow runs status --run-id=<runId>",

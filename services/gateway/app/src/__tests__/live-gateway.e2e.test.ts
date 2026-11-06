@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import { KbDevController } from '@kb-labs/shared-testing-e2e';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 
 // ── Config (populated in beforeAll via kb-dev) ────────────────────────────────
 
@@ -448,8 +449,13 @@ describe.sequential('Live Gateway — POST /api/v1/execute (ndjson streaming)', 
     }, accessToken);
 
     expect(res.status).toBe(503);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe('No execution host connected');
+    const body = await res.json() as { ok: false; error: { code: string; hint: string; correlationId: string } };
+    expect(body.ok).toBe(false);
+    expect(body.error).toEqual(createErrorEnvelope('KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE', {
+      correlationId: body.error.correlationId,
+    }));
+    expect(body.error.code).toBe('KB_RUNTIME_EXECUTION_HOST_UNAVAILABLE');
+    expect(body.error.correlationId).toEqual(expect.any(String));
   }, 8000);
 
   it('returns 401 without token', async () => {

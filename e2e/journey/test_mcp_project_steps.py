@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_tool_names
 from mcp_project_steps import (apply_commit_plan, commit_tool_schema, invalid_arguments, local_auth,
                                mcp_ux_result_contract, project_isolation, project_plugin_catalog_isolation,
                                project_readonly_tool_isolation,
@@ -48,7 +49,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             root = Path(__file__).resolve().parents[2]
             paths = {
                 ("ux-result", "machine-result.schema.json"):
-                    root / "contracts/ux-result/machine-result.schema.json",
+                    root / "core/platform/contracts/ux-result/machine-result.schema.json",
                 ("error-envelope.schema.json",):
                     root / "core/platform/src/error-envelope/error-envelope.schema.json",
             }
@@ -102,12 +103,16 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         red = journey.result()
         self.assertEqual(red.status, "FAIL")
         self.assertEqual({claim["claimId"] for claim in red.case_run["claims"]}, {
-            "S-141.1", "S-141.2", "S-141.3", "S-141.4", "S-141.5", "S-141.6",
+            "S-141.1", "S-141.4", "S-141.5", "S-141.6",
         })
         self.assertEqual(
             request_mock.call_args_list[0].args[0],
             "/api/v1/projects/prj_a/rest/plugins/agents/sessions",
         )
+        self.assertEqual(red.steps[1]["status"], "BLOCKED")
+        self.assertEqual(red.steps[1]["details"]["requires"], ["step:case:S-141.1"])
+        self.assertEqual(red.steps[2]["status"], "BLOCKED")
+        self.assertEqual(red.steps[2]["details"]["requires"], ["step:case:S-141.1"])
 
         session = {"id": "session-1", "agentId": "orchestrator",
                    "task": "Summarize the project", "status": "pending"}
@@ -117,8 +122,11 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (200, {"data": {"session": session}}, {}),
             (200, {"data": {"turns": []}}, {}),
             (200, {"data": {"sessionId": "session-1", "plan": None}}, {}),
-            (404, {"error": {"message": "session-does-not-exist not found"}}, {}),
-            (404, {"error": {"code": "KB_AGENT_NOT_FOUND", "message": "Agent ID agent-does-not-exist is not registered."}}, {}),
+            (404, {"error": {
+                "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
+                "details": {"sessionId": "session-does-not-exist"},
+            }}, {}),
+            (404, {"error": {"code": "KB_AGENT_NOT_FOUND", "details": {"agentId": "agent-does-not-exist"}}}, {}),
             (404, {"error": {
                 "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
                 "message": "REST route GET /api/v1/plugins/agents/unknown-route was not found for plugin @kb-labs/agents.",
@@ -138,7 +146,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
     def test_project_catalog_isolation_rejects_fake_failure_then_proves_project_scoped_tool(self):
         journey = Journey("local", "project-catalog-isolation")
         with patch("service_runner.request_mcp", side_effect=[
-            (500, {}, {}), (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_apply"}]}}, {}),
+            (500, {}, {}), (200, {"result": {"tools": [{"name": commit_tool("commit plan apply")}]}}, {}),
         ]):
             journey.step("project catalog isolation", "mcp",
                          lambda: project_plugin_catalog_isolation("prj_a", "prj_b", "token"),
@@ -149,8 +157,8 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         journey = Journey("local", "project-catalog-isolation")
         responses = [
-            (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_apply"}]}}, {}),
-            (200, {"result": {"tools": [{"name": "kb-labs-workflow__workflow_run"}]}}, {}),
+            (200, {"result": {"tools": [{"name": commit_tool("commit plan apply")}]}}, {}),
+            (200, {"result": {"tools": [{"name": next(iter(service_tool_names(DEFAULT_ENABLED_SERVICES)))}]}}, {}),
         ]
         with patch("service_runner.request_mcp", side_effect=responses):
             journey.step("project catalog isolation", "mcp",
@@ -178,7 +186,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         }}
         responses = [
             (401, auth_error, {}),
-            (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_apply"}]}}, {}),
+            (200, {"result": {"tools": [{"name": commit_tool("commit plan apply")}]}}, {}),
             (401, auth_error, {}),
             (200, {"result": {"tools": [{"name": "kb-labs-review__review_run"}]}}, {}),
         ]
@@ -202,11 +210,12 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         success = {"result": {"isError": False, "structuredContent": {"hasPlan": True}, "content": []}}
         unknown = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown tool.", "Use tools/list.")
         green = Journey("local", "readonly-tool-isolation")
-        with patch("service_runner.request_mcp", side_effect=[(200, success, {}), (200, unknown, {})]):
+        with patch("service_runner.request_mcp", side_effect=[(200, success, {}), (200, unknown, {})]) as request:
             green.step("project MCP read-only tool isolation", "mcp",
                        lambda: project_readonly_tool_isolation("prj_a", "prj_b", "token"),
                        cases=["S-199.4"])
         self.assertEqual(green.result().status, "PASS", green.result().first_failure)
+        self.assertEqual(request.call_args_list[0].kwargs["payload"]["params"]["name"], commit_tool("commit plan show"))
 
     def test_live_registry_ux_step_is_registered_as_s203_claim(self):
         step = "MCP UX result contract from live registry"
@@ -498,29 +507,29 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         tools = [
             {"name": name}
             for name in (
-                "kb-labs-commit__commit_commit",
-                "kb-labs-workflow__workflow_run",
+                commit_tool("commit commit"),
+                *service_tool_names(DEFAULT_ENABLED_SERVICES),
                 "kb-labs__mcp_diagnostics",
             )
         ]
         with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})) as request:
-            self.assertIsNone(local_auth("prj_a"))
+            self.assertIsNone(local_auth("prj_a", DEFAULT_ENABLED_SERVICES))
         self.assertEqual(request.call_args.kwargs["token"], "")
 
     def test_local_auth_rejects_a_catalog_from_another_project(self):
         tools = [{"name": "kb-labs__mcp_diagnostics"}]
         with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
-            self.assertIn("omitted selected project tools", local_auth("prj_a"))
+            self.assertIn("served=", local_auth("prj_a", DEFAULT_ENABLED_SERVICES))
 
     def test_commit_tool_schema_checks_the_manifest_argument_type(self):
-        tools = [{"name": "kb-labs-commit__commit_apply", "inputSchema": {
+        tools = [{"name": commit_tool("commit plan apply"), "inputSchema": {
             "type": "object", "properties": {"force": {"type": "boolean"}, "json": {"type": "boolean"}},
         }}]
         with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
             self.assertIsNone(commit_tool_schema("prj_a", "token"))
 
     def test_commit_tool_schema_reports_a_missing_or_wrong_schema(self):
-        tools = [{"name": "kb-labs-commit__commit_apply", "inputSchema": {"type": "object", "properties": {}}}]
+        tools = [{"name": commit_tool("commit plan apply"), "inputSchema": {"type": "object", "properties": {}}}]
         with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
             self.assertIn("force and json", commit_tool_schema("prj_a", "token"))
 
@@ -539,14 +548,15 @@ class ProjectMcpJourneyTests(unittest.TestCase):
              patch("mcp_project_steps.run_command", return_value=history) as git_log:
             self.assertIsNone(apply_commit_plan("prj_a", "token", "/tmp/project-a"))
         payload = request.call_args.kwargs["payload"]
-        self.assertEqual(payload["params"]["name"], "kb-labs-commit__commit_apply")
+        self.assertEqual(payload["params"]["name"], commit_tool("commit plan apply"))
         self.assertEqual(payload["params"]["arguments"], {})
+        self.assertEqual(git_log.call_args_list[0].args[0], ["kb", "commit", "plan", "show", "--json"])
         self.assertEqual(git_log.call_args.args[0][-1], "--all")
 
     def test_project_isolation_checks_catalog_then_typed_unknown_call(self):
         response = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown MCP tool", "Call tools/list to discover tools.")
         with tempfile.TemporaryDirectory() as directory, patch("service_runner.request_mcp", side_effect=[
-            (200, {"result": {"tools": [{"name": "workflow__workflow_run"}]}}, {}),
+            (200, {"result": {"tools": [{"name": next(iter(service_tool_names(DEFAULT_ENABLED_SERVICES)))}]}}, {}),
             (200, response, {}),
         ]) as request:
             self.assertIsNone(project_isolation("prj_a", "prj_b", str(Path(directory).resolve()), "token"))

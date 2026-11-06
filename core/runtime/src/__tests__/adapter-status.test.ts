@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { ADAPTER_CONFIG_KEYS } from '../config.js';
 import {
   getAdapterStatus,
   getAdapterStatusFor,
@@ -25,6 +26,13 @@ function row(slot: string, overrides: Partial<AdapterSlotStatus> = {}): AdapterS
   };
 }
 
+const adapterStatusProjectionCases: Array<{ slot: string; key: string | undefined; projection: 'package' | 'composite' }> =
+  Object.entries(ADAPTER_CONFIG_KEYS).reduce((cases, [slot, mapping]) => {
+    if (mapping.keys.length === 0) {cases.push({ slot, key: undefined, projection: mapping.projection });}
+    for (const key of mapping.keys) {cases.push({ slot, key, projection: mapping.projection });}
+    return cases;
+  }, [] as Array<{ slot: string; key: string | undefined; projection: 'package' | 'composite' }>);
+
 describe('adapter-status registry', () => {
   beforeEach(() => {
     resetAdapterStatus();
@@ -37,16 +45,34 @@ describe('adapter-status registry', () => {
 
     it('writes a status and reads it back via list()', () => {
       const reg = getAdapterStatusRegistry();
-      reg.record(row('cache'));
+      reg.record(row('cache'), {});
       const list = getAdapterStatus();
       expect(list).toHaveLength(1);
       expect(list[0]!.slot).toBe('cache');
     });
 
+    it.each(adapterStatusProjectionCases)('projects $slot for doctor from mapped config key $key', ({ slot, key, projection }) => {
+      const reg = getAdapterStatusRegistry();
+      const configured = '@kb-labs/adapters-selected';
+      const host = projection === 'composite' ? 'HybridLogReader' : '@kb-labs/adapters-stale';
+      reg.record(row(slot, {
+        implementation: host,
+        configuredPackage: host,
+      }), key === undefined ? {} : { [key]: configured });
+
+      const expectedImplementation = projection === 'package' && key !== undefined ? configured : host;
+      const expectedConfiguredPackage = projection === 'package' && key !== undefined ? configured : host;
+      expect(getAdapterStatusFor(slot as AdapterSlotStatus['slot'])).toMatchObject({
+        implementation: expectedImplementation,
+        configuredPackage: expectedConfiguredPackage,
+        mode: 'real',
+      });
+    });
+
     it('overwrites a slot when record() is called twice', () => {
       const reg = getAdapterStatusRegistry();
-      reg.record(row('cache', { mode: 'inmemory', implementation: 'InMemoryCache' }));
-      reg.record(row('cache', { mode: 'real', implementation: '@kb-labs/adapters-redis' }));
+      reg.record(row('cache', { mode: 'inmemory', implementation: 'InMemoryCache' }), {});
+      reg.record(row('cache', { mode: 'real', implementation: '@kb-labs/adapters-redis' }), {});
       expect(getAdapterStatus()).toHaveLength(1);
       expect(getAdapterStatusFor('cache')!.mode).toBe('real');
       expect(getAdapterStatusFor('cache')!.implementation).toBe('@kb-labs/adapters-redis');
@@ -65,7 +91,7 @@ describe('adapter-status registry', () => {
         implementation: 'NoOpLLM',
         reason: 'not-configured',
       });
-      reg.record(status);
+      reg.record(status, {});
       expect(getAdapterStatusFor('llm')).toEqual(status);
     });
   });
@@ -73,8 +99,8 @@ describe('adapter-status registry', () => {
   describe('resetAdapterStatus()', () => {
     it('clears all records', () => {
       const reg = getAdapterStatusRegistry();
-      reg.record(row('cache'));
-      reg.record(row('llm', { mode: 'noop', implementation: 'NoOpLLM' }));
+      reg.record(row('cache'), {});
+      reg.record(row('llm', { mode: 'noop', implementation: 'NoOpLLM' }), {});
       expect(getAdapterStatus()).toHaveLength(2);
       resetAdapterStatus();
       expect(getAdapterStatus()).toEqual([]);
@@ -83,14 +109,14 @@ describe('adapter-status registry', () => {
 
   describe('singleton behaviour', () => {
     it('multiple getAdapterStatusRegistry() calls return views on the same store', () => {
-      getAdapterStatusRegistry().record(row('cache'));
+      getAdapterStatusRegistry().record(row('cache'), {});
       // Different handle, same backing store.
       const list = getAdapterStatusRegistry().list();
       expect(list).toHaveLength(1);
     });
 
     it('survives across distinct callers via globalThis singleton', () => {
-      getAdapterStatusRegistry().record(row('storage'));
+      getAdapterStatusRegistry().record(row('storage'), {});
       // Re-import equivalent via top-level helpers
       expect(getAdapterStatusFor('storage')).toBeDefined();
     });
@@ -99,9 +125,9 @@ describe('adapter-status registry', () => {
   describe('mode types are exhaustive in practice', () => {
     it('accepts each documented mode', () => {
       const reg = getAdapterStatusRegistry();
-      reg.record(row('cache', { mode: 'real' }));
-      reg.record(row('llm', { mode: 'noop' }));
-      reg.record(row('documentDatabase', { mode: 'inmemory' }));
+      reg.record(row('cache', { mode: 'real' }), {});
+      reg.record(row('llm', { mode: 'noop' }), {});
+      reg.record(row('documentDatabase', { mode: 'inmemory' }), {});
       expect(getAdapterStatusFor('cache')!.mode).toBe('real');
       expect(getAdapterStatusFor('llm')!.mode).toBe('noop');
       expect(getAdapterStatusFor('documentDatabase')!.mode).toBe('inmemory');

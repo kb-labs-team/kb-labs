@@ -119,13 +119,13 @@ export class PlanModeHandler implements ModeHandler {
 
 ```bash
 # Сборка пакета после рефакторинга
-pnpm --filter @kb-labs/agent-core build
+pnpm --filter @kb-labs/agents/core build
 
 # Запуск тестов пакета
-pnpm --filter @kb-labs/agent-core test
+pnpm --filter @kb-labs/agents/core test
 
 # Проверка типов без сборки
-pnpm --filter @kb-labs/agent-core exec tsc --noEmit
+pnpm --filter @kb-labs/agents/core exec tsc --noEmit
 
 # Убедиться, что дубликат shouldEnablePlanDelegation удалён из handler
 grep -n "shouldEnablePlanDelegation" plugins/kb-labs-agents/packages/agent-core/src/modes/plan-mode-handler.ts

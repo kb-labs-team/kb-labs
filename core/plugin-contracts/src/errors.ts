@@ -9,33 +9,46 @@ import type {
   DetailsFor,
   PlatformErrorCode,
   ProductErrorCode,
+  ErrorCode,
   ValidatedErrorEnvelope,
 } from '@kb-labs/core-platform/error-envelope';
-import { createProductErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { createProductErrorEnvelope, getCatalogEntry, isErrorCode } from '@kb-labs/core-platform/error-envelope';
 
-type PluginErrorArguments<C extends PlatformErrorCode> = [...DetailsArgumentFor<C>, hint?: string];
+type PluginErrorArguments<C extends ErrorCode> = C extends PlatformErrorCode
+  ? [code: C, ...DetailsArgumentFor<C>, hint?: string]
+  : [code: C, statusCode: number, details?: Record<string, string>, hint?: string];
+type PluginErrorDetails<C extends ErrorCode> = C extends PlatformErrorCode ? DetailsFor<C> : Record<string, string>;
 
 /**
  * Base plugin error class
  */
-export class PluginError<C extends PlatformErrorCode> extends Error {
+export class PluginError<C extends ErrorCode = PlatformErrorCode> extends Error {
   /**
    * Error code for programmatic handling
    */
   public readonly code: C;
+  /** HTTP response status derived from the platform error catalog. */
+  public readonly statusCode: number;
 
   /**
    * Additional error details
    */
-  public readonly details?: DetailsFor<C>;
+  public readonly details?: PluginErrorDetails<C>;
   public readonly hint?: string;
 
-  constructor(message: string, code: C, ...args: PluginErrorArguments<C>);
-  constructor(message: string, code: C, details?: DetailsFor<C>, hint?: string) {
+  constructor(message: string, ...args: PluginErrorArguments<C>);
+  constructor(message: string, ...args: [C, ...unknown[]]) {
+    const [code, ...values] = args;
+    if (typeof code !== 'string') throw new TypeError('PluginError requires a validated error code.');
+    const platformCode = isErrorCode(code) ? code : undefined;
+    const details = platformCode ? values[0] as DetailsFor<PlatformErrorCode> | undefined : values[1] as Record<string, string> | undefined;
+    const hint = platformCode ? values[1] as string | undefined : values[2] as string | undefined;
+    const statusCode = platformCode ? getCatalogEntry(platformCode).httpStatus : values[0] as number;
     super(message);
     this.name = 'PluginError';
-    this.code = code;
-    this.details = details;
+    this.code = code as C;
+    this.statusCode = statusCode;
+    this.details = details as PluginErrorDetails<C> | undefined;
     this.hint = hint;
 
     // Ensure prototype chain is correct
@@ -45,19 +58,14 @@ export class PluginError<C extends PlatformErrorCode> extends Error {
 }
 
 /** Product failures use their independently validated flat-detail contract. */
-export class ProductPluginError extends Error {
-  readonly code: ProductErrorCode;
-  readonly details?: Record<string, string>;
-  readonly hint: string;
+export class ProductPluginError extends PluginError<ProductErrorCode> {
   readonly envelope: ValidatedErrorEnvelope & { code: ProductErrorCode };
 
-  constructor(message: string, code: ProductErrorCode, details: Record<string, string> | undefined, hint: string) {
-    super(message);
+  constructor(message: string, code: ProductErrorCode, statusCode: number, details: Record<string, string> | undefined, hint: string) {
+    const envelope = createProductErrorEnvelope({ code, message, details, hint, retryable: false });
+    super(message, envelope.code, statusCode, details, envelope.hint);
     this.name = 'ProductPluginError';
-    this.envelope = createProductErrorEnvelope({ code, message, details, hint, retryable: false });
-    this.code = this.envelope.code;
-    this.details = this.envelope.details;
-    this.hint = this.envelope.hint;
+    this.envelope = envelope;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
@@ -152,6 +160,6 @@ export class PlatformError extends PluginError<'KB_HOST_ADAPTER_UNAVAILABLE'> {
 /**
  * Check if an error is a PluginError
  */
-export function isPluginError(error: unknown): error is PluginError<PlatformErrorCode> | ProductPluginError {
-  return error instanceof PluginError || error instanceof ProductPluginError;
+export function isPluginError(error: unknown): error is PluginError<ErrorCode> {
+  return error instanceof PluginError;
 }

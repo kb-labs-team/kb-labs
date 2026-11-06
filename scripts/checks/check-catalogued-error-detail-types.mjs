@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import ts from 'typescript';
@@ -9,7 +10,7 @@ const root = input.workspaceRoot;
 const packages = input.workspace?.packages;
 const issues = [];
 if (typeof root !== 'string' || !Array.isArray(packages)) {
-  process.stdout.write(JSON.stringify({ issues: [{ check: checkName, severity: 'error', message: 'catalogued error detail rail requires kb-devkit workspace package data', file: root ?? '.' }] }));
+  writeCheckResult([{ check: checkName, severity: 'error', message: 'catalogued error detail rail requires kb-devkit workspace package data', file: root ?? '.' }]);
   process.exit(0);
 }
 
@@ -161,7 +162,7 @@ for (const sourceFile of program.getSourceFiles()) {
   visit(sourceFile);
 }
 
-process.stdout.write(JSON.stringify({ issues }));
+writeCheckResult(issues);
 
 function readStdin() {
   return new Promise((resolve, reject) => {

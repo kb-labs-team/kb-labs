@@ -4,8 +4,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from container_outcomes import collect_container_outcomes, decode_engine_log_stream
+from container_outcomes import DockerCLI, collect_container_outcomes, decode_engine_log_stream
+import jsonl
 
 
 class DockerModel:
@@ -31,6 +33,16 @@ class DockerModel:
 
 
 class ContainerOutcomeTests(unittest.TestCase):
+    def test_docker_events_use_lf_jsonl_framing_for_unicode_separators(self):
+        unusual = "NEL\x85 LS\u2028 FS\x1c"
+        output = jsonl.encode_jsonl_records(({
+            "Action": "die", "Actor": {"Attributes": {"note": unusual}},
+        },))
+        backend = DockerCLI()
+        with patch.object(backend, "_run", return_value=output):
+            events = backend.events("2026-10-14T09:00:00Z")
+        self.assertEqual(events[0]["Actor"]["Attributes"]["note"], unusual)
+
     # case: S-262.2
     def test_engine_log_stream_keeps_stdout_and_stderr_distinct_and_rejects_truncation(self):
         def frame(channel, payload):

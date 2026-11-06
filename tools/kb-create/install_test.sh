@@ -279,7 +279,7 @@ test_pinned_version() {
 # ── Local candidate download base override ──────────────────────────────────
 
 test_download_base_override() {
-  FAKE_CHECKSUM_LINE="${FAKE_SHA256}  ${BINARY_FILE}"
+  FAKE_CHECKSUM_LINE="$(printf '%s  %s\n%s  release-index.json' "$FAKE_SHA256" "$BINARY_FILE" "$FAKE_SHA256")"
   RUN_HOME="$(mktemp -d)"
   local fakebin log
   fakebin="$(mktemp -d)"
@@ -299,6 +299,14 @@ test_download_base_override() {
      ! grep -Fq "http://candidate.test/releases/journey-candidate/checksums.txt" "$log" || \
      ! grep -Fq "http://candidate.test/releases/journey-candidate/release-index.json" "$log"; then
     fail "download base override" "installer did not fetch candidate assets from the override. URLs:\n$(cat "$log" 2>/dev/null)"
+    return
+  fi
+  if [ ! -f "$RUN_HOME/.local/share/kb-create/binary-source" ] || [ "$(cat "$RUN_HOME/.local/share/kb-create/binary-source")" != "http://candidate.test/releases" ]; then
+    fail "download base override" "verified index did not retain its download source"
+    return
+  fi
+  if [ -e "$RUN_HOME/.local/share/kb-create/bin-dir" ]; then
+    fail "download base override" "installer wrote an unused destination record"
     return
   fi
   pass "download base override: pinned binary, checksums and release index use the local origin"
@@ -438,6 +446,28 @@ test_unknown_argument() {
   pass "unknown argument: rejected with a clear error"
 }
 
+test_download_source_rejects_credentials() {
+  local tmp_home fakebin output exit_code
+  tmp_home="$(mktemp -d)"; fakebin="$(mktemp -d)"
+  write_fake_curl "$fakebin"; curated_path "$fakebin"
+  output="$(HOME="$tmp_home" PATH="$fakebin" FAKE_BIN_CONTENT="$FAKE_BIN_CONTENT" FAKE_CHECKSUM_LINE="${FAKE_SHA256}  ${BINARY_FILE}" KB_CREATE_DOWNLOAD_BASE_URL="http://user:secret-password@candidate.test" "$SYS_BASH" "$INSTALL_SH" --version journey-candidate 2>&1)"; exit_code=$?
+  if [ "$exit_code" -eq 0 ] || [ -e "$tmp_home/.local/share/kb-create/binary-source" ]; then fail "credential source" "installer accepted and recorded URL credentials"; return; fi
+  case "$output" in *secret-password*) fail "credential source" "installer disclosed URL credentials"; return;; esac
+  pass "credential source: credentials refused without disclosure"
+}
+
+test_xdg_saved_index() {
+  local data
+  data="$(mktemp -d)"
+  FAKE_CHECKSUM_LINE="$(printf '%s  %s\n%s  release-index.json' "$FAKE_SHA256" "$BINARY_FILE" "$FAKE_SHA256")"
+  XDG_DATA_HOME="$data" run_install --version v1.2.3
+  if [ "$RUN_CODE" -ne 0 ] || [ ! -f "$data/kb-create/release-index.json" ] || [ ! -f "$data/kb-create/binary-source" ]; then
+    fail "XDG launcher data" "index and source not saved under XDG_DATA_HOME: $RUN_OUT"
+    return
+  fi
+  pass "XDG launcher data: saved index and source share the requested directory"
+}
+
 # ── run everything ───────────────────────────────────────────────────────────
 
 if [ ! -f "$INSTALL_SH" ]; then
@@ -454,7 +484,9 @@ case "$(uname -s)" in
 esac
 
 test_success_path
+test_xdg_saved_index
 test_download_base_override
+test_download_source_rejects_credentials
 test_checksum_mismatch
 test_missing_checksum_entry
 test_no_checksum_tool

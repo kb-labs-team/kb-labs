@@ -1,0 +1,46 @@
+{
+  "name": "@kb-labs/marketplace-registry-app",
+  "description": "KB Labs Marketplace Registry daemon",
+  "version": "2.120.1",
+  "type": "module",
+  "main": "./dist/bootstrap.js",
+  "bin": {
+    "marketplace-registry-app": "./dist/bootstrap.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "kb": {
+    "manifest": "./dist/manifest.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "clean": "rimraf dist",
+    "dev": "tsx watch src/bootstrap.ts",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "start": "node dist/bootstrap.js",
+    "test": "vitest run --passWithNoTests -c ../../vitest.config.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kb-labs/plugin-contracts": "workspace:*",
+    "@kb-labs/plugin-runtime": "workspace:*",
+    "@kb-labs/shared-daemon": "workspace:*",
+    "@kb-labs/marketplace-registry-api": "workspace:*",
+    "@kb-labs/marketplace-registry-core": "workspace:*",
+    "@kb-labs/shared-http": "workspace:*"
+  },
+  "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
+    "@types/node": "^24.3.3",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": "24.x",
+    "pnpm": ">=9.0.0"
+  }
+}

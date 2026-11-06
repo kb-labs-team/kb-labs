@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { runExternalCheck } from './lib/run-external-check.mjs';
 
 const checker = fileURLToPath(new URL('./check-adapter-manifest.mjs', import.meta.url));
 
@@ -69,7 +69,10 @@ async function writeFixturePackage(packageRoot, name, manifest) {
     name,
     version: '1.0.0',
     type: 'module',
-    kb: { manifest: './dist/manifest.js' },
+    kb: {
+      manifest: './dist/manifest.js',
+      adapter: { manifest: './dist/manifest.js' },
+    },
   }));
   await writeFile(path.join(packageRoot, 'dist', 'manifest.js'), manifest);
 }
@@ -81,13 +84,13 @@ function adapterManifest(fields) {
 }
 
 async function runCheck(input) {
-  const result = spawnSync(process.execPath, [checker], {
+  const result = runExternalCheck(checker, [], {
     cwd: path.dirname(checker),
     input: JSON.stringify(input),
     encoding: 'utf8',
   });
-  assert.equal(result.status, 0, result.stderr);
-  return JSON.parse(result.stdout).issues;
+  assert.equal(result.exitCode, 0, result.stderr);
+  return result.result.issues;
 }
 
 function assertIssue(issues, packageName, message, file) {

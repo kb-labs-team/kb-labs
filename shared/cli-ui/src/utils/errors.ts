@@ -1,13 +1,21 @@
 import { toErrorEnvelope } from '@kb-labs/plugin-contracts';
 import type { CommandFailure } from '@kb-labs/plugin-contracts';
 import type { CommandError } from '@kb-labs/plugin-contracts';
+import type { PlatformDiagnostic } from '@kb-labs/core-platform';
+
+/** Render diagnostics using the exact row format shared by error envelopes. */
+export function renderErrorDiagnostics(diagnostics: readonly PlatformDiagnostic[]): string[] {
+  return diagnostics.map((item) =>
+    `  - ${item.code} (${item.severity})${item.path ? ` ${item.path}${item.line ? `:${item.line}` : ''}` : ''}: ${item.message}${item.hint ? ` — ${item.hint}` : ''}`,
+  );
+}
 
 /** Render a platform failure consistently for system and plugin CLI commands. */
 export function renderErrorEnvelope(envelope: CommandError): string {
   return [
     `${envelope.message} [${envelope.code}]`,
     ...(envelope.cause ? [`  Cause: ${envelope.cause}`] : []),
-    ...(envelope.diagnostics ?? []).map((item) => `  - ${item.code} (${item.severity})${item.path ? ` ${item.path}${item.line ? `:${item.line}` : ''}` : ''}: ${item.message}${item.hint ? ` — ${item.hint}` : ''}`),
+    ...renderErrorDiagnostics(envelope.diagnostics ?? []),
     ...Object.entries(envelope.details ?? {}).map(([key, value]) => `  ${key}: ${value}`),
     `  Hint:  ${envelope.hint}`,
     ...(envelope.correlationId ? [`  Correlation ID: ${envelope.correlationId}`] : []),

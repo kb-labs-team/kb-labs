@@ -3,12 +3,19 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "test": "node ../scripts/build-pack-extras.mjs ../.. && node --test *.test.mjs",
     "e2e": "kb-labs-e2e-runner"
   },
   "devDependencies": {
     "@kb-labs/e2e-shared": "workspace:*",
+    "@kb-labs/core-discovery": "workspace:*",
+    "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/devkit": "workspace:*",
+    "@kb-labs/marketplace-api": "workspace:*",
+    "@kb-labs/marketplace-core": "workspace:*",
     "@kb-labs/rest-api-app": "workspace:*",
     "@kb-labs/rest-api-core": "workspace:*",
+    "kb-create": "workspace:*",
     "@playwright/test": "^1.52.0",
     "typescript": "^5.4.0"
   }

@@ -1,7 +1,7 @@
 /**
  * Real-embedder benchmark harness for the e2e/mind domain.
  *
- * Unlike the in-process deterministic harness in `@kb-labs/mind-core`
+ * Unlike the in-process deterministic harness in `@kb-labs/mind/core`
  * (toy bag-of-words embedder → `neutral` verdict on semantic features), this
  * runs the golden query-set against the LIVE Mind REST surface backed by the
  * platform's configured adapters (OpenAI embeddings + Qdrant). That is the only
@@ -41,7 +41,7 @@ export const DEGRADED_SCOPE = 'e2e/mind/.degraded/core'
  * file. That divergence is what exercises semantic retrieval (and HyDE);
  * keyword-only queries over terse schemas can't.
  */
-export const BENCH_SCOPE = 'plugins/mind/core/src'
+export const BENCH_SCOPE = 'plugins/mind/src/core'
 
 /** Real-embedder bench only runs when explicitly opted in (needs API key + Qdrant). */
 export const BENCH_ENABLED = process.env.MIND_BENCH_REAL === '1'

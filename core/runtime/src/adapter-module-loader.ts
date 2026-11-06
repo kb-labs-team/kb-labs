@@ -2,6 +2,7 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import type { DiscoveredAdapter } from './discover-adapters.js';
+import type { CatalogAdapter, CatalogOpenOptions } from '@kb-labs/plugin-contracts';
 import type { LoadedAdapterModule } from './adapter-loader.js';
 import { AdapterUnavailableError } from '@kb-labs/core-platform';
 
@@ -101,6 +102,83 @@ export function configuredWorkspaceAdapterInvalidError(
       },
     },
   );
+}
+
+/** Load catalog declarations into runtime adapters; all executable module loading stays here. */
+export async function loadCatalogAdapterEntries(
+  entries: ReadonlyMap<string, CatalogAdapter>,
+  options: CatalogOpenOptions['workspaceAdapters'],
+): Promise<Map<string, DiscoveredAdapter>> {
+  const discovered = new Map<string, DiscoveredAdapter>();
+  const configured = new Map((options?.development ? options.configuredPackages : []).map(({ packageName, slot }) => [packageName, slot]));
+
+  for (const [id, entry] of entries) {
+    const slot = entry.source === 'workspace' ? configured.get(id) : undefined;
+    if (entry.manifest.kind !== 'adapter') {
+      if (slot) {
+        if (entry.manifest.kind === 'failed' && entry.manifest.modulePath) {
+          try {
+            await fs.access(entry.manifest.modulePath);
+          } catch {
+            throw configuredWorkspaceAdapterNotBuiltError(slot, id);
+          }
+        }
+        throw configuredWorkspaceAdapterInvalidError(slot, id, entry.manifest.reason);
+      }
+      continue;
+    }
+
+    let mainPath = 'dist/index.js';
+    let packageName = id;
+    try {
+      const metadata = JSON.parse(await fs.readFile(path.join(entry.packageRoot, 'package.json'), 'utf-8')) as { main?: string; name?: string };
+      mainPath = metadata.main || mainPath;
+      packageName = metadata.name || packageName;
+    } catch {
+      // The previous discovery boundary used the lock identity and default entry point when package metadata was absent.
+    }
+
+    const modulePath = path.join(entry.packageRoot, mainPath);
+    if (entry.source === 'workspace') {
+      try {
+        await fs.access(modulePath);
+      } catch {
+        if (slot) throw configuredWorkspaceAdapterNotBuiltError(slot, id);
+        continue;
+      }
+    }
+
+    let loaded: Record<string, unknown>;
+    try {
+      loaded = await import(pathToFileURL(modulePath).href) as Record<string, unknown>;
+    } catch (error) {
+      if (entry.source === 'workspace') throw error;
+      continue;
+    }
+
+    if (entry.source === 'workspace' && slot && typeof loaded.createAdapter !== 'function') {
+      throw configuredWorkspaceAdapterInvalidError(slot, id, 'its module does not export createAdapter');
+    }
+    const createAdapter = loaded.createAdapter;
+    if (typeof createAdapter !== 'function') continue;
+
+    const adapter: DiscoveredAdapter = {
+      packageName,
+      pkgRoot: entry.packageRoot,
+      createAdapter: (config?: unknown) => createAdapter(config, {}),
+      module: { ...loaded, manifest: entry.manifest.manifest },
+      entrypointManifests: { '': entry.manifest.manifest },
+    };
+    for (const entrypoint of Object.values(entry.manifest.manifest.defaultFor ?? {})) {
+      const subpath = entrypoint.join('/');
+      if (!subpath || adapter.entrypointManifests[subpath]) {continue;}
+      const entrypointModule = await loadDiscoveredAdapterModule(adapter, `${packageName}/${subpath}`);
+      adapter.entrypointManifests[subpath] = entrypointModule.manifest;
+    }
+    discovered.set(id, adapter);
+    discovered.set(packageName, adapter);
+  }
+  return discovered;
 }
 
 /** Load an adapter from its discovered package, preserving requested subpaths. */

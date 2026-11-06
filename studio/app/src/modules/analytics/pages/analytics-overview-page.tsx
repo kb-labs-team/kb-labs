@@ -10,6 +10,7 @@ import {
   useAnalyticsStats,
   useAdaptersLLMUsage,
   useAdaptersEmbeddingsUsage,
+  KBError,
 } from '@kb-labs/studio-data-client';
 import { useDataSources } from '../../../providers/data-sources-provider';
 import { useNavigate } from 'react-router-dom';
@@ -49,11 +50,11 @@ export function AnalyticsOverviewPage() {
   const { data: llmStats, isLoading: llmLoading } = useAdaptersLLMUsage(sources.adapters);
   const { data: embeddingsStats, isLoading: embeddingsLoading } = useAdaptersEmbeddingsUsage(sources.adapters);
 
-  // Check if analytics is not configured
+  // Check whether the catalogued analytics stats error needs setup guidance.
   const analyticsNotConfigured =
     isStatsError &&
-    statsError instanceof Error &&
-    statsError.message.includes('not support');
+    statsError instanceof KBError &&
+    statsError.code === 'KB_ANALYTICS_STATS_UNSUPPORTED';
 
   if (analyticsNotConfigured) {
     return (
@@ -64,7 +65,7 @@ export function AnalyticsOverviewPage() {
         />
         <UIAlert
           message="Analytics Not Configured"
-          description="Analytics adapter is not configured. Configure an analytics adapter in kb.config.json to track events and metrics."
+          description={statsError.hint}
           variant="info"
           showIcon
           style={{ marginTop: 16 }}
@@ -94,6 +95,9 @@ export function AnalyticsOverviewPage() {
     { label: 'Sources', value: statsData ? Object.keys(statsData.bySource).length : 0 },
     { label: 'Actors', value: statsData ? Object.keys(statsData.byActor).length : 0 },
   ];
+  const persistenceNotice = statsData?.persistence.kind === 'ephemeral'
+    ? statsData.persistence.notice
+    : undefined;
 
   const adapters: AdapterCardConfig[] = [
     {
@@ -128,6 +132,16 @@ export function AnalyticsOverviewPage() {
         title="Analytics Overview"
         description="High-level product event and usage metrics"
       />
+
+      {persistenceNotice && (
+        <UIAlert
+          message={persistenceNotice.message}
+          description={persistenceNotice.hint}
+          variant="info"
+          showIcon
+          style={{ marginTop: 16 }}
+        />
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 8 }}>
         <AnalyticsSummaryStrip metrics={summary} loading={statsLoading} />

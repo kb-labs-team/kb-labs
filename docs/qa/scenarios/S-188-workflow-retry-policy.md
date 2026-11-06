@@ -5,7 +5,7 @@ persona: workflow-author
 area: workflows
 priority: P0
 status: planned
-release: true
+release: false
 modes: [local, secured]
 surfaces: [cli]
 ---
@@ -17,7 +17,7 @@ failure, and ensure cancellation prevents a pending retry from executing.
 
 ## Prerequisites
 
-- [ ] A registered project with the workflow plugin and a deterministic clock.
+- [ ] A registered project with the built-in workflow service and a deterministic clock.
 - [ ] A fixture job that can fail once with a classified `network` failure,
       fail on every attempt, or block while a retry is pending.
 
@@ -34,9 +34,9 @@ failure, and ensure cancellation prevents a pending retry from executing.
 
 The retry policy schema is `max`, `backoff` (`exp` or `lin`),
 `initialIntervalMs`, optional `maxIntervalMs`, and optional failure-kind `on`
-(`plugins/workflow/contracts/src/schemas.ts:36-52`); job-level policy is
+(`services/workflow/contracts/src/schemas.ts:36-52`); job-level policy is
 `retries` (`:180-188`) and step-level policy is `retry` (`:115-123`). The
 engine increments the attempt, applies `max + 1` total-attempt semantics,
 records `willRetry`, schedules the retry, and drops a stale retry when
-cancellation changed job state (`plugins/workflow/engine/src/engine.ts:358-410,412-460`).
-The CLI shows `attempt N` and the original job error (`plugins/workflow/entry/src/commands/runs-view.ts:86-96`), but does not currently identify terminal failure as “retries exhausted.” Keep this case planned until the retry journey exposes a clear exhaustion message and verifies cancellation with a deterministic clock.
+cancellation changed job state (`services/workflow/engine/src/engine.ts:358-410,412-460`).
+The CLI shows `attempt N` and the original job error (`services/workflow/entry/src/commands/runs-view.ts:86-96`), but does not currently identify terminal failure as “retries exhausted.” Keep this case planned until the retry journey exposes a clear exhaustion message and verifies cancellation with a deterministic clock.

@@ -4,7 +4,7 @@
  */
 
 import type { CliFlagDecl, ManifestV3 } from '@kb-labs/plugin-contracts';
-import type { DiscoveryOrigin, DiscoveryScope } from '@kb-labs/core-discovery';
+import type { DiscoveryOrigin, DiscoveryScope } from '@kb-labs/plugin-contracts';
 
 export interface CommandManifest {
   manifestVersion: '1.0';

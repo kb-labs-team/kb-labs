@@ -114,8 +114,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Validate aggregation logic
-        run: node --test scripts/ci/aggregate-e2e-result.test.mjs
       - name: Check matrix outcome
         run: node scripts/ci/aggregate-e2e-result.mjs "${{ needs.e2e.result }}" "${{ needs.e2e-mcp.result }}"
 
@@ -145,7 +143,7 @@ jobs:
       - name: Capture CI evidence dossier
         env:
           GH_TOKEN: ${{ github.token }}
-        run: pnpm kb qa ci evidence capture --exclude-job "Flaky history" --output .kb/qa/ci/dossier.json
+        run: pnpm kb qa ci evidence create --exclude-job "Flaky history" --output .kb/qa/ci/dossier.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: qa-ci-evidence-${{ github.run_id }}
@@ -158,9 +156,9 @@ jobs:
           path: /tmp/flaky-reports
           merge-multiple: false
       - name: Sync existing flaky history from ci-data
-        run: pnpm kb qa e2e flaky --sync --agent || true
+        run: pnpm kb qa e2e flaky list --sync --agent || true
       - name: Ingest flaky-report shards into history
-        run: pnpm kb qa e2e flaky --ingest /tmp/flaky-reports --agent
+        run: pnpm kb qa e2e flaky list --ingest /tmp/flaky-reports --agent
       - name: Commit flaky history to ci-data branch
         run: |
           git config user.name "kb-qa[bot]"

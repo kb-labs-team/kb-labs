@@ -21,6 +21,8 @@
  */
 
 import type { IContextLogger } from "@kb-labs/core-platform";
+import type { ActiveWorkItem } from "@kb-labs/shared-daemon";
+import { RUNTIME_ACTIVE_WORK_PATH, RUNTIME_TOKEN_HEADER } from "@kb-labs/project-runtime-app/protocol";
 import { runtimeLimitReached, runtimeReloadFailed, runtimeStartFailed } from "./errors.js";
 
 export interface RuntimeProject {
@@ -129,6 +131,14 @@ export interface ProjectRuntimeManagerOptions {
   getPluginSetDigest?: (project: RuntimeProject) => Promise<string>;
   /** Clock, injectable for tests. */
   now?: () => number;
+}
+
+const ACTIVE_WORK_KINDS = ["workflow", "job", "service-job", "long-command"] as const;
+
+function isActiveWorkItem(value: unknown): value is ActiveWorkItem {
+  if (typeof value !== "object" || value === null || !("kind" in value) || !("id" in value) || !("owningService" in value)) return false;
+  return typeof value.kind === "string" && (ACTIVE_WORK_KINDS as readonly string[]).includes(value.kind)
+    && typeof value.id === "string" && typeof value.owningService === "string";
 }
 
 const READY_WAIT_SLACK_MS = 5000;
@@ -301,6 +311,25 @@ export class ProjectRuntimeManager {
       const lease = await this.acquire(project);
       lease.release();
     }
+  }
+
+  async listActiveWork(): Promise<ActiveWorkItem[]> {
+    const active = [...this.entries.values()].filter((entry) => entry.process && entry.state !== "stopping");
+    const grouped = await Promise.all(active.map(async (entry) => {
+      const runtime = entry.process!;
+      const response = await fetch(`http://${runtime.address.host}:${runtime.address.port}${RUNTIME_ACTIVE_WORK_PATH}`, {
+        headers: { [RUNTIME_TOKEN_HEADER]: runtime.token },
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!response.ok) throw new Error(`Project runtime ${entry.project.id} active-work query returned HTTP ${response.status}.`);
+      const items: unknown = await response.json();
+      if (!Array.isArray(items)) throw new Error(`Project runtime ${entry.project.id} returned an invalid active-work response.`);
+      return items.map((value): ActiveWorkItem => {
+        if (!isActiveWorkItem(value)) throw new Error(`Project runtime ${entry.project.id} returned an invalid active-work item.`);
+        return { ...value, owningService: `project:${entry.project.id}/${value.owningService}` };
+      });
+    }));
+    return grouped.flat();
   }
 
   status(): ManagerSnapshot {

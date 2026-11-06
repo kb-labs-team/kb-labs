@@ -13,6 +13,7 @@ import type { DetailedDiscovery } from '../../registry/discover.js';
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
 const discoverState = vi.hoisted(() => ({ diagnostics: [] as unknown[] }));
+const catalogState = vi.hoisted(() => ({ lock: vi.fn(async () => null as unknown), diagnostics: [] as unknown[] }));
 
 vi.mock('../../registry/discover.js', () => {
   const discoverManifests = vi.fn(async (..._args: unknown[]): Promise<unknown[]> => []);
@@ -53,16 +54,6 @@ const mockCollectorInstance = {
   countBySeverity: vi.fn(() => ({})),
 };
 
-vi.mock('@kb-labs/core-discovery', () => ({
-  readMarketplaceLock: vi.fn(async () => null),
-  DiagnosticCollector: class {
-    constructor() {
-      return mockCollectorInstance;
-    }
-  },
-  computeManifestIntegrity: vi.fn(),
-}));
-
 vi.mock('node:fs/promises', () => ({
   access: vi.fn(async () => undefined),
   readFile: vi.fn(async () => '{}'),
@@ -98,7 +89,13 @@ function makeCtx(overrides: Partial<PluginContextV3['ui']> = {}): PluginContextV
     platform: makeMockPlatform() as never,
     runtime: { fs: {} as never, fetch: vi.fn(), env: vi.fn() },
     api: {} as never,
-    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
+    hostContext: {
+      host: 'cli' as const,
+      binaryName: 'kb',
+      argv: [],
+      flags: {},
+      resolvePlatformVersion: async () => 'test',
+    },
     trace: noopTraceContext,
   };
 }
@@ -131,8 +128,18 @@ async function setDiscoveryResult(results: unknown[], diagnostics = discoverStat
 }
 
 async function getLockMock() {
-  const mod = await import('@kb-labs/core-discovery');
-  return mod.readMarketplaceLock as unknown as ReturnType<typeof vi.fn>;
+  return catalogState.lock as unknown as ReturnType<typeof vi.fn>;
+}
+
+async function setCatalog(): Promise<void> {
+  const state = await import('../../registry/discovery-state.js');
+  state.setResolvedCatalog({
+    marketplaceLocks: async () => {
+      const lock = await catalogState.lock();
+      return lock ? new Map([['/test/workspace', lock]]) : new Map();
+    },
+    discovery: () => ({ diagnostics: mockCollectorInstance.getEvents() }),
+  } as never);
 }
 
 async function getFsMock() {
@@ -145,9 +152,11 @@ async function getFsMock() {
 describe('diag — base (no --command)', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    catalogState.lock = vi.fn(async () => null);
     mockCollectorInstance.getEvents.mockReturnValue([]);
     discoverState.diagnostics = [];
     await setDiscoveryResult([]);
+    await setCatalog();
     const discovery = await getDiscoverMock();
     discovery.discoverManifests.mockReset();
     discovery.discoverManifests.mockResolvedValue([]);
@@ -174,7 +183,7 @@ describe('diag — base (no --command)', () => {
         hint: 'pnpm add @kb-labs/review-engine',
         shadowed: false,
         source: 'workspace',
-        packageName: '@kb-labs/review-entry',
+        packageName: '@kb-labs/review',
       },
     ]);
 
@@ -218,9 +227,9 @@ describe('diag — base (no --command)', () => {
     const discover = await getDiscoverMock();
     const discovered = [
       {
-        packageName: '@kb-labs/quality-entry',
-        manifestPath: '/test/workspace/plugins/quality/entry/dist/manifest.js',
-        pkgRoot: '/test/workspace/plugins/quality/entry',
+        packageName: '@kb-labs/quality',
+        manifestPath: '/test/workspace/plugins/{plugin}/dist/manifest.js',
+        pkgRoot: '/test/workspace/plugins/{plugin}',
         source: 'workspace',
         scope: 'platform',
         manifests: [
@@ -229,7 +238,7 @@ describe('diag — base (no --command)', () => {
             segments: ['quality', 'manifest:quality-entry'],
             id: 'manifest:quality-entry',
             group: 'quality',
-            describe: 'Commands from @kb-labs/quality-entry are unavailable',
+            describe: 'Commands from @kb-labs/quality are unavailable',
             schema: 'kb.adapter/1', manifestVersion: '1.0',
             loader: async () => { throw new Error('Cannot load'); },
           },
@@ -261,7 +270,7 @@ describe('diag — base (no --command)', () => {
         hint: 'pnpm add @kb-labs/review-engine',
         shadowed: false,
         source: 'workspace',
-        packageName: '@kb-labs/review-entry',
+        packageName: '@kb-labs/review',
       },
     ]);
 
@@ -288,33 +297,33 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({
       type: 'command',
       command: {
-        manifest: { segments: ['marketplace', 'plugins', 'list'], _synthetic: false },
+        manifest: { segments: ['commit', 'status'], _synthetic: false },
         available: true,
         shadowed: false,
         source: 'workspace',
-        packageName: '@kb-labs/marketplace-entry',
+        packageName: '@kb-labs/commit',
       },
       rest: [],
     });
     await setDiscoveryResult([{
-      packageName: '@kb-labs/marketplace-entry',
-      manifestPath: '/test/node_modules/@kb-labs/marketplace-entry/dist/manifest.js',
-      pkgRoot: '/test/node_modules/@kb-labs/marketplace-entry',
+      packageName: '@kb-labs/commit',
+      manifestPath: '/test/node_modules/@kb-labs/commit/dist/manifest.js',
+      pkgRoot: '/test/node_modules/@kb-labs/commit',
       source: 'linked',
       scope: 'platform',
-      manifests: [{ _synthetic: false, group: 'marketplace', segments: ['marketplace', 'plugins', 'list'], id: 'list', describe: 'List plugins', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
+      manifests: [{ _synthetic: false, group: 'commit', segments: ['commit', 'status'], id: 'list', describe: 'List plugins', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
     }]);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
       plugins: {
-        '@kb-labs/marketplace-entry': { enabled: true, resolvedPath: '/test/node_modules/@kb-labs/marketplace-entry' },
+        '@kb-labs/commit': { enabled: true, resolvedPath: '/test/node_modules/@kb-labs/commit' },
       },
     });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
-    const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'marketplace plugins list' });
+    const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'commit status' });
 
     expect(code).toBe(0);
     const result = readData<{ status: string; stages: Array<{ code: string; status: string }>; verdict: { rootCause: string } }> (jsonSpy);
@@ -326,20 +335,20 @@ describe('diag --command', () => {
 
   it('reports when the shared discovered command is missing from the dispatch registry', async () => {
     const reg = await getRegistryMock();
-    reg.resolve.mockReturnValue({ type: 'not-found', input: ['commit', 'open'], suggestions: [] });
+    reg.resolve.mockReturnValue({ type: 'not-found', input: ['commit', 'plan', 'show'], suggestions: [] });
     const { discoverManifestsDetailed } = await import('../../registry/discover.js');
     await setDiscoveryResult([{
-        packageName: '@kb-labs/commit-entry',
-        manifestPath: '/project/.kb/plugins/commit-entry/dist/manifest.json',
-        pkgRoot: '/project/.kb/plugins/commit-entry',
+        packageName: '@kb-labs/commit',
+        manifestPath: '/project/.kb/plugins/commit/dist/manifest.json',
+        pkgRoot: '/project/.kb/plugins/commit',
         source: 'linked',
         scope: 'project',
-        manifests: [{ _synthetic: false, group: 'commit', segments: ['commit', 'open'], id: 'open', describe: 'Open a change', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
+        manifests: [{ _synthetic: false, group: 'commit', segments: ['commit', 'plan', 'show'], id: 'show', describe: 'Show current plan', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
       }]);
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
-    await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'commit open' });
+    await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'commit plan show' });
 
     const result = readData<{ status: string; stages: Array<{ code: string }> }>(jsonSpy);
     expect(result.status).toBe('unhealthy');
@@ -358,7 +367,7 @@ describe('diag --command', () => {
         hint: 'pnpm add @kb-labs/review-engine',
         shadowed: false,
         source: 'workspace',
-        packageName: '@kb-labs/review-entry',
+        packageName: '@kb-labs/review',
       },
       rest: [],
     });
@@ -386,7 +395,7 @@ describe('diag --command', () => {
         available: true,
         shadowed: true,
         source: 'linked',
-        packageName: '@kb-labs/deploy-entry',
+        packageName: '@kb-labs/deploy',
       },
       rest: [],
     });
@@ -395,7 +404,7 @@ describe('diag --command', () => {
         manifest: { segments: ['deploy', 'run'] },
         available: true,
         shadowed: false,
-        packageName: '@kb-labs/infra-worker-entry',
+        packageName: '@kb-labs/infra-worker',
       },
     ]);
 
@@ -406,7 +415,7 @@ describe('diag --command', () => {
     const result = readData<{ stages: Array<{ code: string; details?: Record<string, unknown> }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'SHADOWED_BY');
     expect(stage).toBeDefined();
-    expect(stage?.details?.ownerPackage).toBe('@kb-labs/infra-worker-entry');
+    expect(stage?.details?.ownerPackage).toBe('@kb-labs/infra-worker');
   });
 
   it('reports REGISTRY_NOT_FOUND + NOT_IN_LOCK when command is completely unknown', async () => {
@@ -457,9 +466,9 @@ describe('diag --command', () => {
     const discover = await getDiscoverMock();
     const discovered = [
       {
-        packageName: '@kb-labs/quality-entry',
-        manifestPath: '/test/workspace/plugins/quality/entry/dist/manifest.js',
-        pkgRoot: '/test/workspace/plugins/quality/entry',
+        packageName: '@kb-labs/quality',
+        manifestPath: '/test/workspace/plugins/{plugin}/dist/manifest.js',
+        pkgRoot: '/test/workspace/plugins/{plugin}',
         source: 'workspace',
         scope: 'platform',
         manifests: [
@@ -468,7 +477,7 @@ describe('diag --command', () => {
             group: 'quality',
             segments: ['quality', 'manifest:quality-entry'],
             id: 'manifest:quality-entry',
-            describe: 'Commands from @kb-labs/quality-entry are unavailable',
+            describe: 'Commands from @kb-labs/quality are unavailable',
             schema: 'kb.adapter/1', manifestVersion: '1.0',
             loader: async () => { throw new Error('Cannot load'); },
           },
@@ -481,7 +490,7 @@ describe('diag --command', () => {
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
       plugins: {
-        '@kb-labs/quality-entry': { enabled: true, resolvedPath: '/test/workspace/plugins/quality/entry' },
+        '@kb-labs/quality': { enabled: true, resolvedPath: '/test/workspace/plugins/{plugin}' },
       },
     });
 
@@ -545,7 +554,7 @@ describe('diag --command', () => {
     const discover = await getDiscoverMock();
     const discovered = [
       {
-        packageName: '@kb-labs/myplug-entry',
+        packageName: '@kb-labs/myplug',
         manifestPath: '/test/dist/manifest.js',
         pkgRoot: '/test',
         source: 'workspace',
@@ -567,7 +576,7 @@ describe('diag --command', () => {
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      plugins: { '@kb-labs/myplug-entry': { enabled: true, resolvedPath: '/test' } },
+      plugins: { '@kb-labs/myplug': { enabled: true, resolvedPath: '/test' } },
     });
 
     const jsonSpy = vi.fn();
@@ -620,7 +629,7 @@ describe('diag --command', () => {
     const discover = await getDiscoverMock();
     const discovered = [
       {
-        packageName: '@kb-labs/state-entry',
+        packageName: '@kb-labs/state',
         manifestPath: '/missing/dist/manifest.js',
         pkgRoot: '/missing',
         source: 'workspace',
@@ -635,7 +644,7 @@ describe('diag --command', () => {
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      plugins: { '@kb-labs/state-entry': { enabled: true, resolvedPath: '/missing/node_modules/@kb-labs/state-entry' } },
+      plugins: { '@kb-labs/state': { enabled: true, resolvedPath: '/missing/node_modules/@kb-labs/state' } },
     });
 
     // resolvedPath does not exist
@@ -663,7 +672,7 @@ describe('diag --command', () => {
         hint: 'pnpm add @kb-labs/review-engine',
         shadowed: false,
         source: 'workspace',
-        packageName: '@kb-labs/review-entry',
+        packageName: '@kb-labs/review',
       },
       rest: [],
     });
@@ -690,7 +699,7 @@ describe('diag --command', () => {
         hint: 'pnpm add @kb-labs/review-engine',
         shadowed: false,
         source: 'workspace',
-        packageName: '@kb-labs/review-entry',
+        packageName: '@kb-labs/review',
       },
       rest: [],
     });
@@ -735,7 +744,7 @@ describe('diag --command (review-fix scenarios)', () => {
         available: true,
         shadowed: false,
         source: 'workspace',
-        packageName: '@kb-labs/myplug-entry',
+        packageName: '@kb-labs/myplug',
       },
       rest: [],
     });
@@ -792,7 +801,7 @@ describe('diag --command (review-fix scenarios)', () => {
     // reset to clear any previous mockResolvedValue, then set fresh
     discoverMod.discoverManifests.mockReset();
     const discovered = [{
-      packageName: '@kb-labs/bigplug-entry',
+      packageName: '@kb-labs/bigplug',
       manifestPath: '/test/dist/manifest.js',
       pkgRoot: '/test',
       source: 'workspace' as const,
@@ -803,7 +812,7 @@ describe('diag --command (review-fix scenarios)', () => {
     await setDiscoveryResult(discovered);
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ plugins: { '@kb-labs/bigplug-entry': { enabled: true, resolvedPath: '/test' } } });
+    lockMock.mockResolvedValue({ plugins: { '@kb-labs/bigplug': { enabled: true, resolvedPath: '/test' } } });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
@@ -844,7 +853,7 @@ describe('diag --command (review-fix scenarios)', () => {
 
     const discover = await getDiscoverMock();
     const discovered = [{
-      packageName: '@kb-labs/nopathplug-entry',
+      packageName: '@kb-labs/nopathplug',
       manifestPath: '/test/dist/manifest.js',
       pkgRoot: '/test',
       source: 'workspace',
@@ -856,7 +865,7 @@ describe('diag --command (review-fix scenarios)', () => {
 
     const lockMock = await getLockMock();
     // Entry exists but resolvedPath is empty string
-    lockMock.mockResolvedValue({ plugins: { '@kb-labs/nopathplug-entry': { enabled: true, resolvedPath: '' } } });
+    lockMock.mockResolvedValue({ plugins: { '@kb-labs/nopathplug': { enabled: true, resolvedPath: '' } } });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();

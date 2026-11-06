@@ -5,9 +5,9 @@
 
 import { loadRestApiConfig } from "@kb-labs/rest-api-core";
 import { createServer } from "./server";
-import { createHealthContributor, createRegistry, type IEntityRegistry } from "@kb-labs/core-registry";
+import type { IEntityRegistry } from "@kb-labs/plugin-contracts";
 import type { IServiceTransport } from "@kb-labs/core-platform";
-import { requireProjectContext } from "@kb-labs/core-runtime";
+import { requireProjectContext, platform as runtimePlatform } from "@kb-labs/core-runtime";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { requireEnvironmentSecret, runService, type ServiceContext } from "@kb-labs/shared-daemon";
 import { getListenOptions } from "@kb-labs/shared-http";
@@ -18,9 +18,6 @@ import {
 } from "./middleware/metrics.js";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
-
-// Singleton CLI API instance for cleanup
-let registryInstance: IEntityRegistry | null = null;
 
 // System metrics collector instance for cleanup
 let metricsCollector: SystemMetricsCollector | null = null;
@@ -41,6 +38,7 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
     hostEnvVar: "REST_API_HOST",
     platform: {
       assemblyHook: makeAssemblyHook(),
+      executionHealth: () => runtimePlatform.executionBackend.health(),
     },
     setup,
   });
@@ -53,6 +51,7 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
  */
 export async function setup({
   platform,
+  runtime,
   host,
   projectRoot: repoRoot,
   platformRoot,
@@ -96,26 +95,11 @@ export async function setup({
   // Initialize entity registry
   bootstrapLogger.info("Initializing entity registry");
 
-  const isDevelopment = process.env.NODE_ENV !== "production";
-  const snapshotTTL = isDevelopment
-    ? 10 * 60 * 1000 // 10 minutes for development
-    : 60 * 60 * 1000; // 1 hour for production
-
   // Project root is always the primary source for plugin discovery.
   // In installed mode (platform.dir set), the platform lock fills gaps —
   // but project marketplace.lock wins on conflict (project overrides platform).
   const registryInitStart = performance.now();
-  const registry = await createRegistry({
-    root: projectRoot,
-    platformRoot: platformRoot !== projectRoot ? platformRoot : undefined,
-    cache: {
-      ttlMs: snapshotTTL,
-      adapter: platform.cache,
-    },
-    healthContributors: platform.hasExecutionBackend
-      ? [createHealthContributor('execution', () => platform.executionBackend.health())]
-      : [],
-  });
+  const registry = runtime.catalog;
   restDomainOperationMetrics.recordOperation(
     "registry.init",
     performance.now() - registryInitStart,
@@ -127,8 +111,6 @@ export async function setup({
     pluginsFound: plugins.length,
     pluginIds: plugins.map((p) => `${p.id}@${p.version}`),
   });
-
-  registryInstance = registry;
 
   registry.onChange((diff) => {
     restDomainOperationMetrics.recordOperation("registry.refresh", 0, "ok");
@@ -176,12 +158,6 @@ export async function setup({
     if (metricsCollector) {
       metricsCollector.stop();
       metricsCollector = null;
-    }
-
-    // Dispose CLI API
-    if (registryInstance) {
-      await registryInstance.dispose();
-      registryInstance = null;
     }
 
     // Close server

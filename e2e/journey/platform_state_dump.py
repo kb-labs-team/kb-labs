@@ -18,6 +18,7 @@ from typing import Any
 from journey_resources import active_platform_root, installer_record_path
 from kb_invocation import kb_command, kb_shell_text
 import redaction
+import jsonl
 
 MAX_DUMP_BYTES = 5 * 1024 * 1024
 CONTENT_BUDGET = MAX_DUMP_BYTES - 64 * 1024
@@ -215,7 +216,7 @@ def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, platfo
             encoded_records = []
             category_bytes = 0
             for record in records:
-                line = (json.dumps(record, separators=(",", ":")) + "\n").encode()
+                line = jsonl.encode_jsonl_record(record)
                 if used + category_bytes + len(line) > SERVICE_LOG_BUDGET:
                     break
                 encoded_records.append(line)

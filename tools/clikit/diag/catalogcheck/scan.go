@@ -15,35 +15,17 @@ import (
 
 var kbCodeLiteral = regexp.MustCompile(`^KB_[A-Z0-9_]+$`)
 
-// These exact names are environment-variable keys, not diagnostic codes.
-var nonDiagnosticKBNames = map[string]struct{}{
-	"KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO": {},
-	"KB_CREATE_PROCESS_IDENTITY":                    {},
-	"KB_DEPLOY_BASE_REF":                            {},
-	"KB_DEVKIT_FAIL_LINES":                          {},
-	"KB_DEV_INSTANCE":                               {},
-	"KB_DEV_PROJECT_ID":                             {},
-	"KB_DEV_PROJECT_ROOT":                           {},
-	"KB_DEV_RUNTIME_DIR":                            {},
-	"KB_DEV_SERVICE":                                {},
-	"KB_ENV_HOME":                                   {},
-	"KB_ENV_OFFSET":                                 {},
-	"KB_ENV_SHELL":                                  {},
-	"KB_HOME":                                       {},
-	"KB_NET_OFFSET":                                 {},
-	"KB_PLATFORM_ROOT":                              {},
-	"KB_PROJECT_ROOT":                               {},
-	"KB_SOCKET_HASH":                                {},
-	"KB_SOCKET_PATH":                                {},
-}
-
 type SourceScan struct {
 	Files []string
 	Codes map[string][]string
 }
 
-func Scan(sourceRoot string) (SourceScan, error) {
+func Scan(sourceRoot string, environmentVariables []string) (SourceScan, error) {
 	scan := SourceScan{Codes: make(map[string][]string)}
+	environmentNames := make(map[string]struct{}, len(environmentVariables))
+	for _, name := range environmentVariables {
+		environmentNames[name] = struct{}{}
+	}
 	err := filepath.WalkDir(sourceRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -72,7 +54,7 @@ func Scan(sourceRoot string) (SourceScan, error) {
 			if err != nil || !kbCodeLiteral.MatchString(code) {
 				return true
 			}
-			if _, envName := nonDiagnosticKBNames[code]; !envName {
+			if _, envName := environmentNames[code]; !envName {
 				scan.Codes[code] = append(scan.Codes[code], source)
 			}
 			return true

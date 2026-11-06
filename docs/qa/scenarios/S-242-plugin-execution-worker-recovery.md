@@ -5,7 +5,7 @@ persona: solo-developer
 area: plugin-execution
 priority: P0
 status: planned
-release: false
+release: true
 modes: [local, secured]
 surfaces: [cli, api]
 ---

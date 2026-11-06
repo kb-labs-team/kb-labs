@@ -9,18 +9,6 @@
       "@kb-labs/devkit/*": [
         "../../infra/devkit/src/*"
       ],
-      "@kb-labs/plugin-runtime": [
-        "../../core/plugin-runtime/src/index.ts"
-      ],
-      "@kb-labs/plugin-runtime/*": [
-        "../../core/plugin-runtime/src/*"
-      ],
-      "@kb-labs/plugin-template-contracts": [
-        "packages/plugin-template-contracts/src/index.ts"
-      ],
-      "@kb-labs/plugin-template-contracts/*": [
-        "packages/plugin-template-contracts/src/*"
-      ],
       "@kb-labs/sdk": [
         "../../sdk/sdk/src/index.ts"
       ],

@@ -25,11 +25,11 @@ Not a path an agent can complete — the promote step needs an interactive npm O
 
 Compared to the agent's `stage`/`deliver` CI path: this re-packs from source at publish time instead of shipping one pre-verified tarball, and doesn't verify post-publish against real npm — fine for a one-off local release or registry sanity-check, but `stage`+`deliver` is the more rigorous path for anything that matters.
 
-**Constraint:** `config.registry` (the `release` key in `.kb/kb.config.json`) is config-only — no `--registry` CLI override for `release run`. It controls where a `channel: stable` run publishes (normally Verdaccio here). `kb release promote` *does* accept a `--registry` override (defaults to `config.publish.npmRegistry`) since it's a separate, later step.
+**Constraint:** `config.registry` (the `release` key in `.kb/kb.config.json`) is config-only — no `--registry` CLI override for `release run`. It controls where a `channel: stable` run publishes (normally Verdaccio here). `kb release stable publish` *does* accept a `--registry` override (defaults to `config.publish.npmRegistry`) since it's a separate, later step.
 
 ### Verdaccio setup (one-time)
 
-Separate from the checked-in `verdaccio` kb-dev service (`.kb/devservices.dev.yaml` + `.kb/verdaccio/config.yaml`) that `release-prepare.yml`'s "Stage internal deps to Verdaccio" step brings up automatically for the `pack-install` Checks gate — that one is zero-config and ephemeral (planned versions only, for the duration of one Checks run). The manual setup below is for this section's separate use case: an actual local `channel: stable` release publish. You can reuse the same checked-in config/container for this too (`./tools/kb-dev/kb-dev ensure verdaccio --config .kb/devservices.dev.yaml --net-offset 0`) instead of steps 1-2 below — it already allows anonymous publish — but you still need step 3 (npmrc auth token) since this path shells out to `pnpm`/`npm publish` directly rather than through `release stage plan`'s own token handling.
+Separate from the checked-in `verdaccio` kb-dev service (`.kb/devservices.dev.yaml` + `.kb/verdaccio/config.yaml`) that `release-prepare.yml`'s "Stage internal deps to Verdaccio" step brings up automatically for the `pack-install` Checks gate — that one is zero-config and ephemeral (planned versions only, for the duration of one Checks run). The manual setup below is for this section's separate use case: an actual local `channel: stable` release publish. You can reuse the same checked-in config/container for this too (`./tools/kb-dev/kb-dev ensure verdaccio --config .kb/devservices.dev.yaml --net-offset 0`) instead of steps 1-2 below — it already allows anonymous publish — but you still need step 3 (npmrc auth token) since this path shells out to `pnpm`/`npm publish` directly rather than through `release candidate publish`'s own token handling.
 
 ```bash
 # 1. Start Verdaccio
@@ -89,11 +89,11 @@ npm install @kb-labs/core-platform --registry http://localhost:4873
 unset NPM_TOKEN NODE_AUTH_TOKEN
 
 # 3. Promote exactly what step 1 committed — no re-bump, no rebuild, no re-plan.
-pnpm kb release promote --scope @kb-labs/sdk
+pnpm kb release stable publish --scope @kb-labs/sdk
 
 # --tag/--registry override config.publish.stableTag/npmRegistry for
 # one-off or emergency promotes:
-pnpm kb release promote --scope @kb-labs/sdk --tag next
+pnpm kb release stable publish --scope @kb-labs/sdk --tag next
 ```
 
 Promote is idempotent — safe to rerun after a partial failure (already-published versions count as success).
@@ -127,7 +127,7 @@ Read-only, no side effects. Answers "what is actually stable vs. candidate right
 
 **Already wired into `release-prepare`'s review** — the "Prepare release review" step calls this automatically and injects a "Current release status" section into the review artifact shown at `waiting_approval`, before the package table. A warning there is about the *existing* baseline, not the candidate being reviewed — it means "what you're releasing on top of isn't fully clean," not "this candidate is broken." A status-check failure (network, `gh` not authed) never blocks the review from rendering.
 
-Source: `plugins/release/manager-core/src/status.ts` (`computeFlowReleaseStatus`), `plugins/release/manager-cli/src/cli/commands/status.ts`, wired into `.kb/workflows/scripts/release-review-artifacts.mjs`.
+Source: `plugins/release/src/core/status.ts` (`computeFlowReleaseStatus`), `plugins/release/src/cli/cli/commands/status.ts`, wired into `.kb/workflows/scripts/release-review-artifacts.mjs`.
 
 ## `release:*:prepare` fallback scripts
 
@@ -236,16 +236,16 @@ Go binaries are built and sealed as part of the **`platform`** flow's own candid
 
 | Package | Role |
 |---------|------|
-| `@kb-labs/release-manager-core` | `planRelease()`, `runReleasePipeline()`, `mergeConfigWithFlow()`, versioning strategies, `resolvePublishTag`/`resolvePublishRegistry` (`channel.ts`), `verifyAgainstRegistry` with retry (`verdaccio-verify.ts`), `buildReleaseTag`/`resolveFlowFromTag` (`tag.ts`) |
-| `@kb-labs/release-manager-changelog` | Commit parsing, template rendering (`corporate-ai`) |
-| `@kb-labs/release-manager-cli` | CLI commands (`plan`, `run`, `changelog`, `publish`, `promote`, `stage`, `deliver`), REST handlers. `stage`/`deliver` are the CI-thin pack-once/ship pair used by the agent path. `pack` (verification-only, `npm pack` + static checks) is a different, older command — don't confuse it with `stage` |
-| `@kb-labs/release-manager-contracts` | Zod schemas, TypeScript types for REST API (`ReleaseChannelSchema`, etc.) |
+| `@kb-labs/release/core` | `planRelease()`, `runReleasePipeline()`, `mergeConfigWithFlow()`, versioning strategies, `resolvePublishTag`/`resolvePublishRegistry` (`channel.ts`), `verifyAgainstRegistry` with retry (`verdaccio-verify.ts`), `buildReleaseTag`/`resolveFlowFromTag` (`tag.ts`) |
+| `@kb-labs/release/changelog` | Commit parsing, template rendering (`corporate-ai`) |
+| `@kb-labs/release` | CLI commands (`plan`, `run`, `changelog`, `publish`, `promote`, `stage`, `deliver`), REST handlers. `stage`/`deliver` are the CI-thin pack-once/ship pair used by the agent path. `pack` (verification-only, `npm pack` + static checks) is a different, older command — don't confuse it with `stage` |
+| `@kb-labs/release/contracts` | Zod schemas, TypeScript types for REST API (`ReleaseChannelSchema`, etc.) |
 
 ## Build after changes
 
 ```bash
-pnpm --filter @kb-labs/release-manager-contracts build
-pnpm --filter @kb-labs/release-manager-core build
-pnpm --filter @kb-labs/release-manager-cli build
+pnpm --filter @kb-labs/release/contracts build
+pnpm --filter @kb-labs/release/core build
+pnpm --filter @kb-labs/release build
 ```
 Order matters: contracts → core → cli.

@@ -50,7 +50,7 @@ async function expectRuntimeError(
 }
 
 describe("ProjectRuntimeManager (real child processes, fake runtime script)", () => {
-  // case: S-124.12
+  // case: S-226.2
   it("preserves a typed project identity mismatch for the host response", () => {
     const failure = runtimeStartFailed(
       "prj_1234567890123456",
@@ -231,13 +231,18 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     const busyPid = pidOf(subject, a.id);
     idle.release();
 
-    await waitFor(() => !isAlive(idlePid), "the idle runtime to stop");
+    await waitFor(() => {
+      const runtimeIds = subject.status().runtimes.map((runtime) => runtime.projectId);
+      return !isAlive(idlePid) && runtimeIds.length === 1 && runtimeIds[0] === a.id;
+    }, "the idle runtime process group to stop and leave manager status");
     expect(subject.status().runtimes.map((r) => r.projectId)).toEqual([a.id]);
     // The busy one outlived several idle periods.
     expect(isAlive(busyPid)).toBe(true);
 
     busy.release();
-    await waitFor(() => !isAlive(busyPid), "the released runtime to stop");
+    await waitFor(() => {
+      return !isAlive(busyPid) && subject.status().runtimes.length === 0;
+    }, "the released runtime PID to exit and leave manager status");
     expect(subject.status().runtimes).toEqual([]);
   });
 

@@ -19,7 +19,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		registry := checks.Build(cfg, ws.Root, "check")
-		results := checks.RunAll(ws, cfg, registry, nil)
+		results := checks.RunAll(ws, cfg, registry, nil, nil)
 
 		if jsonMode {
 			return outputStatusJSON(results)

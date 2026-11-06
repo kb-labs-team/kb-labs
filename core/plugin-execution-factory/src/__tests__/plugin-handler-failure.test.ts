@@ -33,6 +33,42 @@ const logContext = {
 };
 
 describe('normalizePluginHandlerFailure', () => {
+  // S-243.8: module-load failures keep the catalogued plugin/command/specifier contract.
+  it('classifies handler module resolution failures as plugin load failures', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const serializedError = {
+      name: 'Error',
+      message: "Cannot find package '@kb-labs/shared-command-kit'",
+      moduleResolution: {
+        code: 'ERR_MODULE_NOT_FOUND' as const,
+        specifier: '@kb-labs/shared-command-kit',
+      },
+    };
+    const executionEnvelope = createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+      correlationId: 'module-load-correlation',
+      details: {
+        plugin: '@kb-labs/commit', command: 'commit plan delete', failureReason: 'failed unexpectedly',
+      },
+    });
+
+    const envelope = normalizePluginHandlerFailure(executionEnvelope, {
+      pluginId: '@kb-labs/commit', command: 'commit plan delete', correlationId: 'module-load-correlation',
+      pluginVersion: '2.122.1', serializedError, executionEnvelope,
+      logger: loggerFor(records), logContext,
+    });
+
+    expect(envelope).toMatchObject({
+      code: 'KB_PLUGIN_LOAD_FAILED',
+      correlationId: 'module-load-correlation',
+      details: {
+        plugin: '@kb-labs/commit', command: 'commit plan delete',
+        specifier: '@kb-labs/shared-command-kit',
+      },
+    });
+    expect(envelope.hint).toBeTruthy();
+    expect(envelope.message).not.toContain('malformed error field');
+  });
+
   it.each([
     new ErrorEnvelopeError(createProductErrorEnvelope({
       code: 'MIND_NOT_FOUND', retryable: false, message: 'Mind result was not found.',
@@ -122,13 +158,13 @@ describe('normalizePluginHandlerFailure', () => {
     });
   });
 
-  it('never logs source message or hint values for a plugin contract violation', () => {
+  it('logs and returns source failure identity without exposing malformed hint values', () => {
     const records: Array<Record<string, unknown>> = [];
     const sourceMessage = 'private-source-message-marker';
     const sourceHint = 'private-source-hint-marker';
     const candidate = { code: 'MIND_INVALID', message: sourceMessage, hint: { token: sourceHint } };
 
-    normalizePluginHandlerFailure(candidate, {
+    const envelope = normalizePluginHandlerFailure(candidate, {
       pluginId: '@kb-labs/test-plugin',
       pluginVersion: '1.0.0',
       command: 'test run',
@@ -141,8 +177,15 @@ describe('normalizePluginHandlerFailure', () => {
 
     expect(records).toHaveLength(1);
     const serializedEvent = JSON.stringify(records[0]);
-    expect(serializedEvent).not.toContain(sourceMessage);
+    expect(serializedEvent).toContain(sourceMessage);
     expect(serializedEvent).not.toContain(sourceHint);
+    expect(envelope.details).toMatchObject({
+      sourceCode: 'MIND_INVALID',
+      sourceErrorClass: 'Object',
+      sourceMessage,
+      failureMode: 'returned',
+    });
+    expect(envelope.details?.sourceMessage).not.toContain(sourceHint);
     expect(records[0]).not.toHaveProperty('malformedFieldPreview');
     expect(records[0]).not.toHaveProperty('serializedError');
     expect(records[0]).not.toHaveProperty('error');
@@ -184,7 +227,9 @@ describe('normalizePluginHandlerFailure', () => {
     const record = JSON.stringify(records[0]);
     expect(record).not.toContain(secret);
     expect(JSON.stringify(envelope.details)).not.toContain(secret);
-    expect((envelope.details?.observedValuePreview ?? '').length).toBeLessThanOrEqual(256);
+    const observedValuePreview = envelope.details?.observedValuePreview;
+    if (typeof observedValuePreview !== 'string') throw new Error('observed value preview must be a string');
+    expect(observedValuePreview.length).toBeLessThanOrEqual(256);
   });
 
   it('preserves diagnostic detail violations with redacted field evidence in the envelope and correlated log', () => {
@@ -230,7 +275,7 @@ describe('normalizePluginHandlerFailure', () => {
   });
 
   it.each([
-    { pluginId: '@kb-labs/commit', command: 'commit open', hint: { key: 'errors.commit.open', params: { path: 'plan.json' } } },
+    { pluginId: '@kb-labs/commit', command: 'commit plan show', hint: { key: 'errors.commit.open', params: { path: 'plan.json' } } },
     { pluginId: '@kb-labs/workflow', command: 'workflow defs list', hint: undefined },
     { pluginId: '@kb-labs/review', command: 'review run', hint: { message: 'Review failed', interpolation: { file: 'src/a.ts' } } },
   ])('keeps malformed hints attributable through the shared SDK failure helper for $command', ({ pluginId, command, hint }) => {
@@ -256,6 +301,10 @@ describe('normalizePluginHandlerFailure', () => {
       details: {
         field: 'hint',
         observedType: hint === undefined ? 'undefined' : 'object',
+        sourceCode: returnedFailure.error.code,
+        sourceErrorClass: 'Object',
+        sourceMessage: returnedFailure.error.message,
+        failureMode: 'returned',
       },
     });
     expect(records).toHaveLength(1);
@@ -264,7 +313,51 @@ describe('normalizePluginHandlerFailure', () => {
       correlationId: 'sdk-helper-correlation',
       malformedField: 'hint',
       malformedFieldType: hint === undefined ? 'undefined' : 'object',
+      sourceErrorClass: 'Object',
+      sourceMessage: returnedFailure.error.message,
+      failureMode: 'returned',
     });
+  });
+
+  it('retains redacted bounded source identity for a malformed error thrown by a handler', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const secret = 'x105-source-message-secret';
+    const logger = loggerFor(records);
+    logger.registerSensitiveValues([secret]);
+    const source = new Error(`provider failed ${secret}${'x'.repeat(400)}`);
+    const envelope = normalizePluginHandlerFailure(source, {
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '2.122.1',
+      command: 'provider invoke',
+      correlationId: 'thrown-malformed-correlation',
+      logger,
+      logContext,
+    });
+
+    expect(envelope).toMatchObject({
+      code: 'KB_PLUGIN_COMMAND_FAILED',
+      details: {
+        sourceErrorClass: 'Error',
+        sourceMessage: expect.stringContaining('[REDACTED]'),
+        failureMode: 'thrown',
+      },
+    });
+    const sourceMessage = envelope.details?.sourceMessage;
+    if (typeof sourceMessage !== 'string') throw new Error('source message must be a string');
+    expect(sourceMessage.length).toBeLessThanOrEqual(256);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      event: 'plugin.handler.failed',
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '2.122.1',
+      command: 'provider invoke',
+      correlationId: 'thrown-malformed-correlation',
+      sourceErrorClass: 'Error',
+      sourceMessage: expect.stringContaining('[REDACTED]'),
+      failureMode: 'thrown',
+    });
+    expect(JSON.stringify(envelope)).not.toContain(secret);
+    expect(JSON.stringify(records[0])).not.toContain(secret);
   });
 
   it('reports the invalid field from the canonical envelope schema', () => {
@@ -343,6 +436,32 @@ describe('normalizePluginHandlerFailure', () => {
       message: `provider rejected [REDACTED]`,
       cause: { name: 'NonErrorThrown', message: '[object Object]' },
     });
+  });
+
+  // case: S-203.25
+  it('logs the returned typed failure message instead of the coerced object message', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const returnedFailureError = {
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      message: 'Marketplace doctor found issues',
+      hint: 'Run the marketplace doctor command again.',
+    };
+    const envelope = normalizePluginHandlerFailure(new Error('[object Object]'), {
+      pluginId: '@kb-labs/marketplace',
+      pluginVersion: '1.0.0',
+      command: 'marketplace plugins doctor',
+      correlationId: 'marketplace-doctor-correlation',
+      returnedFailure: true,
+      returnedFailureError,
+      serializedError: { name: 'NonErrorThrown', message: '[object Object]' },
+      logger: loggerFor(records),
+      logContext,
+    });
+
+    expect(envelope.correlationId).toBe('marketplace-doctor-correlation');
+    expect(records).toHaveLength(1);
+    expect(records[0]?.serializedError).toMatchObject({ message: 'Marketplace doctor found issues' });
+    expect(JSON.stringify(records[0])).not.toContain('[object Object]');
   });
 
   it('redacts process secrets from a typed envelope returned to the caller', () => {

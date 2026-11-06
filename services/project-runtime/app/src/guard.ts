@@ -25,7 +25,9 @@ import {
 } from "node:http";
 import { connect } from "node:net";
 import type { IContextLogger } from "@kb-labs/core-platform";
+import type { ActiveWorkItem } from "@kb-labs/shared-daemon";
 import {
+  RUNTIME_ACTIVE_WORK_PATH,
   RUNTIME_HEALTH_PATH,
   RUNTIME_PROJECT_HEADER,
   RUNTIME_TOKEN_HEADER,
@@ -44,6 +46,7 @@ export interface RuntimeGuardOptions {
   /** Module id -> loopback address of that module. */
   modules: Readonly<Record<string, GuardModuleAddress>>;
   logger: IContextLogger;
+  listActiveWork: () => Promise<readonly ActiveWorkItem[]>;
 }
 
 export interface RuntimeGuard {
@@ -198,6 +201,13 @@ export function createRuntimeGuard(options: RuntimeGuardOptions): RuntimeGuard {
     const pathname = url.split("?", 1)[0]!;
     if (pathname === RUNTIME_HEALTH_PATH) {
       void health(res);
+      return;
+    }
+    if (pathname === RUNTIME_ACTIVE_WORK_PATH && req.method === "GET") {
+      void options.listActiveWork().then((items) => sendJson(res, 200, items), (error: unknown) => {
+        logger.error("Runtime could not list active work", error instanceof Error ? error : undefined);
+        sendJson(res, 500, { error: "active_work_unavailable" });
+      });
       return;
     }
     const match = /^\/([A-Za-z0-9_-]+)(\/.*)?$/.exec(pathname);

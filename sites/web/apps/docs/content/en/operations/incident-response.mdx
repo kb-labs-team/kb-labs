@@ -160,7 +160,7 @@ Tail the logs and look for:
 
 - **Broker deadlock** — all workers stuck waiting on a specific job. Rare; usually a plugin handler in an infinite loop.
 - **State daemon unreachable** — if `core.resourceBroker.distributed: true` and the state daemon is down, the workflow daemon can't acquire rate limit slots.
-- **Workspace adapter failing** — check warnings in logs about workspace adapter missing (see [workflow-daemon bootstrap](plugins/workflow/daemon/src/bootstrap.ts) for the exact warning).
+- **Workspace adapter failing** — check warnings in logs about workspace adapter missing (see [workflow-daemon bootstrap](services/workflow/daemon/src/bootstrap.ts) for the exact warning).
 - **Runaway job consuming workers** — inspect `kb_workflow_jobs_in_flight` by pluginId and cancel the offender.
 
 Cancel a specific run:

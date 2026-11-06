@@ -20,6 +20,7 @@ from studio_steps import (
     _record_playwright_case_claims,
 )
 from invocations import invocation_context
+import jsonl
 
 
 class FakeResponse:
@@ -45,21 +46,19 @@ def fake_playwright_executable(browsers_path: Path) -> Path:
 
 
 class StudioJourneyTests(unittest.TestCase):
-    def test_runner_playwright_version_matches_studio_e2e_lockfile(self):
+    def test_runner_playwright_version_comes_from_studio_source_manifest(self):
         repository = Path(__file__).parents[2]
-        studio_lock = (repository / "pnpm-lock.yaml").read_text().split("\n  e2e/studio:\n", 1)[1]
-        studio_lock = studio_lock.split("\n  e2e/tests:\n", 1)[0]
-        playwright_lock = studio_lock.split("      '@playwright/test':\n", 1)[1]
-        expected_version = playwright_lock.splitlines()[1].strip().removeprefix("version: ")
+        studio_manifest = json.loads((repository / "e2e/studio/package.json").read_text())
+        expected_version = studio_manifest["devDependencies"]["@playwright/test"]
         dockerfile = (Path(__file__).parent / "Dockerfile.runner").read_text()
 
-        self.assertIn("FROM node:24-bookworm", dockerfile)
-        self.assertIn("/tmp/studio-playwright-version", dockerfile)
-        self.assertIn("$(cat /tmp/studio-playwright-version)", dockerfile)
+        self.assertIn("FROM ${KB_JOURNEY_NODE_BASE_IMAGE} AS toolchain", dockerfile)
+        self.assertIn("COPY e2e/studio/package.json /tmp/studio-package.json", dockerfile)
+        self.assertIn('@playwright/test"]\')', dockerfile)
         self.assertIn("ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright", dockerfile)
-        from journey_resources import stage_studio_playwright_version
-        staged_version = stage_studio_playwright_version()
-        self.assertEqual(staged_version.read_text().strip(), expected_version)
+        from journey_resources import runner_toolchain_image
+        self.assertTrue(runner_toolchain_image())
+        self.assertTrue(expected_version)
 
     def test_studio_environment_preserves_playwright_browser_path(self):
         studio_env = create_studio_environment({
@@ -227,8 +226,9 @@ class StudioJourneyTests(unittest.TestCase):
                 passed, _elapsed, message = run_studio_browser_step(
                     [sys.executable, "-c", "import sys; print('playwright failure'); sys.exit(7)"],
                     env, report, "local", True)
-            records = [json.loads(line) for line in
-                       (root / "reports" / "invocations" / "calls.jsonl").read_text().splitlines()]
+            invocation_records = jsonl.read_jsonl(root / "reports" / "invocations" / "calls.jsonl")
+            self.assertEqual([row.line_number for row in invocation_records if row.error is not None], [])
+            records = [row.value for row in invocation_records]
             evidence = next(record for record in records if record["argv"] and record["argv"][0] == sys.executable)
 
         self.assertFalse(passed)

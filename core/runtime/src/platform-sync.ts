@@ -23,12 +23,7 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import {
-  readMarketplaceLock,
-  computePackageIntegrity,
-  DiagnosticCollector,
-  type MarketplaceLock,
-} from '@kb-labs/core-discovery';
+import type { IEntityRegistry, MarketplaceLock } from '@kb-labs/plugin-contracts';
 import type { ILogger } from '@kb-labs/core-platform';
 import {
   createPnpmInstaller,
@@ -42,6 +37,8 @@ import {
 export type PlatformSyncMode = 'validate' | 'reconcile' | 'auto';
 
 export interface PlatformSyncOptions {
+  /** Resolved platform catalog shared with the caller's process composition. */
+  catalog: IEntityRegistry;
   /** Workspace root where `.kb/marketplace.lock` lives */
   root: string;
   /**
@@ -117,7 +114,7 @@ export async function platformSync(
     lockMissing: false,
   };
 
-  const lock = await loadLock(root);
+  const lock = (await options.catalog.marketplaceLocks()).get(root) ?? null;
   if (!lock) {
     result.lockMissing = true;
     return result;
@@ -208,7 +205,7 @@ export async function platformSync(
 
     let computed: string;
     try {
-      computed = await computePackageIntegrity(absPath);
+      computed = await options.catalog.computePackageIntegrity(absPath);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       result.errors.push({ packageId, message });
@@ -247,11 +244,6 @@ async function resolveMode(
     }
   }
   return 'reconcile';
-}
-
-async function loadLock(root: string): Promise<MarketplaceLock | null> {
-  const diag = new DiagnosticCollector();
-  return readMarketplaceLock(root, diag, 'platform');
 }
 
 async function pathExists(p: string): Promise<boolean> {

@@ -3,12 +3,7 @@
  * Structured diagnostic collector for the discovery pipeline.
  */
 
-import type {
-  DiagnosticEvent,
-  DiagnosticSeverity,
-  DiagnosticCode,
-  EntityKind,
-} from './types.js';
+import type { DiagnosticEvent, DiagnosticSeverity, DiagnosticCode, EntityKind } from '@kb-labs/plugin-contracts';
 
 /**
  * Collects diagnostic events during discovery.

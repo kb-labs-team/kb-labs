@@ -9,17 +9,29 @@
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev:all
 ```
+
+The root package starts `@kb-labs/web-site` and `@kb-labs/docs-site` together.
+For one app, run its workspace script directly, such as
+`pnpm --filter @kb-labs/docs-site dev`.
 
 ## Quality gates
 
 Run before opening a PR:
 
 ```bash
-pnpm lint
-pnpm typecheck
-pnpm build
+pnpm lint:all
+pnpm typecheck:all
+pnpm build:all
+```
+
+For just the docs app, run:
+
+```bash
+pnpm --filter @kb-labs/docs-site lint
+pnpm --filter @kb-labs/docs-site typecheck
+pnpm --filter @kb-labs/docs-site build
 ```
 
 ## Scope

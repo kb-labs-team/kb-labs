@@ -9,19 +9,19 @@ export interface PluginSurfaceDiagramProps {
 
 const PLUGINS = [
   {
-    pkg:    '@kb-labs/review-entry',
+    pkg:    '@kb-labs/review',
     cli:    { cmd: 'kb review --staged',       sub: 'kb review run' },
     rest:   { endpoint: 'POST /api/review',    sub: 'GET /api/review/runs' },
     studio: { path: '/p/review' },
   },
   {
-    pkg:    '@kb-labs/commit-entry',
+    pkg:    '@kb-labs/commit',
     cli:    { cmd: 'kb commit',                sub: 'kb commit plan' },
     rest:   { endpoint: 'POST /api/commit',    sub: 'POST /api/commit/apply' },
     studio: { path: '/p/commit' },
   },
   {
-    pkg:    '@kb-labs/release-entry',
+    pkg:    '@kb-labs/release',
     cli:    { cmd: 'kb release plan',          sub: 'kb release publish' },
     rest:   { endpoint: 'POST /api/release',   sub: 'POST /api/release/publish' },
     studio: { path: '/p/release' },

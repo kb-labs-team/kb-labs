@@ -6,7 +6,6 @@ This guide explains how to create standardized command handlers for KB Labs CLI 
 
 All plugin commands should follow a consistent pattern that includes:
 - **TimingTracker** for performance measurement
-- **Analytics** integration for tracking command usage
 - **Box formatting** for structured output
 - **Artifact discovery** for showing created files
 - **Consistent error handling** and diagnostics
@@ -16,7 +15,7 @@ All plugin commands should follow a consistent pattern that includes:
 The KB Labs CLI plugin system provides **flexible helper functions** that you can use or ignore:
 
 - **Simple plugins**: Use `createCommandRunner` and `discoverArtifacts` helpers to reduce boilerplate code and get started quickly
-- **Complex plugins**: Write everything yourself for full control over the execution flow, timing, analytics, and output formatting
+- **Complex plugins**: Write everything yourself for full control over the execution flow, timing, and output formatting
 
 Both approaches are valid and produce consistent output. Choose based on your needs:
 - Need quick setup? Use helpers
@@ -100,11 +99,6 @@ import { createCommandRunner, discoverArtifacts } from '@kb-labs/shared-cli-ui';
 
 export const run = createCommandRunner({
   title: 'My Command',
-  analytics: {
-    actor: 'my-plugin',
-    started: 'MY_COMMAND_STARTED',
-    finished: 'MY_COMMAND_FINISHED',
-  },
   async execute(ctx, flags, tracker) {
     tracker.checkpoint('start');
     
@@ -432,18 +426,13 @@ const artifacts = await discoverArtifacts('.kb/mind', [
 
 ### `createCommandRunner`
 
-Create a standardized command runner with timing, analytics, and output formatting:
+Create a standardized command runner with timing and output formatting:
 
 ```typescript
 import { createCommandRunner } from '@kb-labs/shared-cli-ui';
 
 export const run = createCommandRunner({
   title: 'My Command',
-  analytics: {
-    actor: 'my-plugin',
-    started: 'MY_COMMAND_STARTED',
-    finished: 'MY_COMMAND_FINISHED',
-  },
   async execute(ctx, flags, tracker) {
     // Command logic
     return {
@@ -456,7 +445,7 @@ export const run = createCommandRunner({
 ## When to Use Helpers vs. Custom Implementation
 
 ### Use `createCommandRunner` when:
-- ✅ Your command follows the standard pattern (timing, analytics, box output)
+- ✅ Your command follows the standard pattern (timing and box output)
 - ✅ You want to reduce boilerplate code
 - ✅ You need quick setup and consistent output
 - ✅ Your command logic is straightforward

@@ -19,7 +19,8 @@ import type {
 } from './types.js';
 import { catalogRequiredHintTemplateParameters, catalogRequiredMessageTemplateParameters, catalogStructuredDetailFields, catalogTemplateParameterNames } from './error-codes.generated.js';
 import type { CatalogHintTemplateParameters, CatalogMessageTemplateParameters, CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from './error-codes.generated.js';
-import type { CatalogDetailsFor } from './error-codes.generated.js';
+import type { CatalogDetailsFor, CatalogErrorRequest } from './error-codes.generated.js';
+export type { CatalogErrorRequest } from './error-codes.generated.js';
 
 /** Catalogue-derived detail fields accepted by a bridge for a specific code. */
 export type DetailsFor<C extends PlatformErrorCode> = C extends PlatformErrorCode ? CatalogDetailsFor[C] : never;
@@ -48,8 +49,12 @@ export function isErrorCode(code: string): code is PlatformErrorCode {
   return byCode.has(code);
 }
 
-export function getCatalogEntry(code: PlatformErrorCode): ErrorCatalogEntry | undefined {
-  return byCode.get(code);
+export function getCatalogEntry(code: PlatformErrorCode): ErrorCatalogEntry {
+  const entry = byCode.get(code);
+  if (!entry) {
+    throw new Error(`Catalogued error ${code} is missing from errors.catalog.json`);
+  }
+  return entry;
 }
 
 /** Map catalogued command failures to the CLI usage exit code at shared boundaries. */
@@ -165,8 +170,13 @@ export function createErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOp
   return buildErrorEnvelope(code, options);
 }
 
-/** Dynamic error bridge. Unknown codes and detail maps are validated before an envelope is built. */
-export function createValidatedErrorEnvelope(
+/** Constructs an internal producer diagnostic from a catalog-generated request. */
+export function createCatalogErrorEnvelope(request: CatalogErrorRequest): ValidatedErrorEnvelope {
+  return buildErrorEnvelope(request.code, request);
+}
+
+/** Validates an error received across an untrusted execution or serialization boundary. */
+export function createUntrustedErrorEnvelope(
   code: unknown,
   options: EnvelopeOptionFields & { details?: unknown; templateValues?: unknown } = {},
 ): ValidatedErrorEnvelope {
@@ -174,6 +184,12 @@ export function createValidatedErrorEnvelope(
     return createErrorEnvelope('KB_RUNTIME_UNEXPECTED');
   }
   return buildErrorEnvelope(code, options);
+}
+
+function toDetailMap(value: unknown): Record<string, unknown> | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  return { ...value };
 }
 
 function toStringMap(value: unknown): Record<string, string> | undefined | null {
@@ -187,35 +203,58 @@ function toStringMap(value: unknown): Record<string, string> | undefined | null 
   return result;
 }
 
+function matchesCatalogSchema(value: unknown, schema: { type: string; [key: string]: unknown }): boolean {
+  if (schema.type === 'string') return typeof value === 'string';
+  if (schema.type === 'array') return Array.isArray(value) && value.every((item) => matchesCatalogSchema(item, schema.items as { type: string; [key: string]: unknown }));
+  if (schema.type === 'object') {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    const properties = schema.properties as Record<string, { type: string; [key: string]: unknown }>;
+    const required = schema.required as string[] ?? [];
+    if (required.some((name) => !(name in record))) return false;
+    if (schema.additionalProperties === false && Object.keys(record).some((name) => !(name in properties))) return false;
+    return Object.entries(record).every(([name, item]) => properties[name] !== undefined && matchesCatalogSchema(item, properties[name]!));
+  }
+  return false;
+}
+
 function buildErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOptionFields & { details?: unknown; templateValues?: unknown }): ValidatedErrorEnvelope {
   const entry = byCode.get(code);
   if (!entry) {
     throw new Error(`Unknown error code "${code}": add it to errors.catalog.json`);
   }
-  const parsedDetails = toStringMap(options.details);
+  const parsedDetails = toDetailMap(options.details);
   const parsedTemplateValues = toStringMap(options.templateValues);
   if (parsedDetails === null || parsedTemplateValues === null) {
     throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers', options.details);
   }
   const details = parsedDetails ?? {};
   const templateValuesInput = parsedTemplateValues ?? {};
-  for (const [key, value] of Object.entries(details)) {
-    if (typeof value !== 'string') {
-      throw createErrorDetailsContractViolation(key, 'must be a string identifier', value);
-    }
-    if (isSerializedStructuredValue(value)) {
-      throw createErrorDetailsContractViolation(key, 'contains serialized JSON', value);
-    }
-  }
   const parameterNames = catalogTemplateParameterNames[code];
   const allowedDetails = new Set([...parameterNames, ...catalogStructuredDetailFields[code]]);
   const templateValues: Record<string, string> = {
-    ...details,
+    ...Object.fromEntries(Object.entries(details).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
     ...templateValuesInput,
     ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   };
+  const structuredFields = new Set(catalogStructuredDetailFields[code]);
+  for (const [key, value] of Object.entries(details)) {
+    const schema = entry.structuredDetailSchemas?.[key];
+    if (typeof value === 'string' && isSerializedStructuredValue(value)) {
+      throw createErrorDetailsContractViolation(key, 'contains serialized JSON', value);
+    }
+    if (typeof value !== 'string' && (!structuredFields.has(key) || schema === undefined || !matchesCatalogSchema(value, schema))) {
+      throw createErrorDetailsContractViolation(key, 'must be a string identifier or match its catalogued structured schema', value);
+    }
+  }
   const violationFields = [
     ...Object.keys(details).filter((key) => !allowedDetails.has(key)),
+    ...Object.entries(details).filter(([key, value]) => {
+      const schema = entry.structuredDetailSchemas?.[key];
+      return (parameterNames.includes(key) && typeof value !== 'string')
+        || (typeof value !== 'string' && (!structuredFields.has(key) || schema === undefined))
+        || (schema !== undefined && !matchesCatalogSchema(value, schema));
+    }).map(([key]) => key),
     ...Object.keys(templateValuesInput).filter((key) => !parameterNames.includes(key)),
   ];
   const requiredParameters = [
@@ -224,6 +263,9 @@ function buildErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOptionFiel
   ];
   for (const name of requiredParameters) {
     if (templateValues[name] === undefined || templateValues[name].trim() === '') violationFields.push(name);
+  }
+  for (const name of entry.requiredStructuredDetailFields ?? []) {
+    if (!Object.hasOwn(details, name)) violationFields.push(name);
   }
   if (violationFields.length > 0) {
     const field = [...new Set(violationFields)].sort()[0]!;

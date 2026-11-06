@@ -88,7 +88,7 @@ flowchart TB
 | **Services** | `services/gateway,mcp,rest-api` + `plugins/{workflow,marketplace,state}/daemon` | Долгоживущие процессы: Gateway (единый внешний порт, ADR-0020), REST, MCP, Workflow, Marketplace, State daemon | `.kb/devservices.yaml` |
 | **Plugins** | `plugins/*` | Продуктовая функциональность поверх SDK (список ниже) | см. §4 |
 | **Studio** | `studio/*` | Web UI: app, ui-kit/ui-core, data-client, federation (плагинные страницы), event-bus | по именам |
-| **Marketplace** | `plugins/marketplace`, `marketplace-registry/` | Установка/включение сущностей (плагины, адаптеры…) через lock-файл; реестр опубликованных пакетов | ADR-0012/0026 |
+| **Marketplace** | `services/marketplace`, `services/marketplace-registry` (optional) | Установка/включение сущностей (плагины, адаптеры…) через lock-файл; публикационный реестр разворачивается отдельно | ADR-0012/0026 |
 | **kb-create** | `tools/kb-create` (Go) | Единственный лаунчер: `plan/apply/update/uninstall/rollback/doctor/wizard` по релиз-индексу; ставит платформу и рендерит `kb.config` + `devservices` | README, ADR-0027/0035 |
 | **kb-dev** | `tools/kb-dev` (Go) | Локальный менеджер сервисов: процессы, health-пробы, порядок старта, watchdog | README |
 | **kb-deploy** | `tools/kb-deploy` (Go) | Деплой на флот; мигрирует к контейнерам как каноническому пути (ADR-0037) | ADR-0014/0037 |
@@ -106,7 +106,7 @@ flowchart TB
 | `commit`, `review`, `qa`, `quality` | коммиты, ревью, QA, проверки качества |
 | `release` | планирование и проведение релизов |
 | `workflow` | движок/демон воркфлоу (одновременно и сервис) |
-| `marketplace`, `marketplace-registry` | управление и реестр сущностей |
+| `marketplace`, `marketplace-registry` | управление сущностями; публикационный реестр устанавливается отдельно |
 | `state` | state-daemon |
 | `gateway`, `rest-api`, `host-agent`, `infra-worker` | сервисы, оформленные как плагины ? |
 | `devlink`, `impact`, `inbox`, `steward`, `policy`, `scaffold` | ? нужны твои определения |

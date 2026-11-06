@@ -10,7 +10,7 @@
  *   The base logger already persists entries to SQLite. Using a distinct event
  *   name lets the execution host route these entries to onLoggerLog (SSE only)
  *   vs onLog (ui/shell entries that need both SQLite + SSE).
- *   See: plugins/workflow/docs/adr/0019-log-stream-separation.md
+ *   See: services/workflow/docs/adr/0019-log-stream-separation.md
  *
  * trace and debug levels are NOT streamed — too noisy for UI.
  */

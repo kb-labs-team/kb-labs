@@ -52,21 +52,16 @@ esac
 # ── workflow.replicas cannot exceed 1 ───────────────────────────────────
 OUT="$(helm template t . --set image.tag=1.0.0 --set internalSecretSecretName=internal-secret --set services.workflow.replicas=3 2>&1)" || true
 case "$OUT" in
-  *"must stay 1"*) pass "workflow.replicas>1 fails the render" ;;
+  *"must stay 1"*) pass "workflow.replicas>1 fails the render"; echo "[CLAIM] S-267.5 PASS" ;;
   *) fail "workflow.replicas>1 fails the render" "got: $OUT" ;;
 esac
 
-# ── config unset -> no ConfigMap, no volumeMounts anywhere ─────────────
+# ── default render owns topology and secured gateway mode ───────────────
 OUT="$(helm template t . --set image.tag=1.0.0 --set internalSecretSecretName=internal-secret 2>&1)"
-if echo "$OUT" | grep -q "kind: ConfigMap"; then
-  fail "no config -> no ConfigMap rendered" "a ConfigMap was rendered with no config/marketplaceLock set"
+if printf '%s\n' "$OUT" | grep -q '"topology":"k8s"' && printf '%s\n' "$OUT" | grep -q '"mode":"secured"'; then
+  pass "default topology and secured access render"
 else
-  pass "no config -> no ConfigMap rendered"
-fi
-if echo "$OUT" | grep -q "volumeMounts:"; then
-  fail "no config -> no volumeMounts rendered" "a volumeMount was rendered with no config/marketplaceLock set"
-else
-  pass "no config -> no volumeMounts rendered"
+  fail "default topology and secured access render" "topology ConfigMap or secured access is missing"
 fi
 
 # ── config set -> ConfigMap + volumeMount appear ────────────────────────
@@ -76,8 +71,8 @@ case "$OUT" in
   *) fail "config set -> ConfigMap carries it" "ConfigMap missing or content wrong" ;;
 esac
 case "$OUT" in
-  *"mountPath: /app/.kb/kb.config.json"*) pass "config set -> volumeMount appears" ;;
-  *) fail "config set -> volumeMount appears" "no volumeMount for kb.config.json" ;;
+  *"mountPath: /app/.kb/kb.config.override.json"*) pass "config set -> volumeMount appears" ;;
+  *) fail "config set -> volumeMount appears" "no volumeMount for the Helm config overlay" ;;
 esac
 
 # ── disabling a service removes both its Deployment and Service ────────
@@ -88,8 +83,8 @@ else
   pass "disabled service is fully absent"
 fi
 
-# ── marketplace-registry waits for state-daemon ─────────────────────────
-OUT="$(helm template t . --set image.tag=1.0.0 --set internalSecretSecretName=internal-secret --show-only templates/deployment.yaml 2>&1)"
+# ── registry is optional and waits for state-daemon when enabled ────────
+OUT="$(helm template t . --set image.tag=1.0.0 --set internalSecretSecretName=internal-secret --set services.marketplace-registry.enabled=true --show-only templates/deployment.yaml 2>&1)"
 case "$OUT" in
   *"wait-for-state-daemon"*) pass "marketplace-registry has a wait-for-state-daemon initContainer" ;;
   *) fail "marketplace-registry has a wait-for-state-daemon initContainer" "initContainer not found" ;;
@@ -103,11 +98,12 @@ case "$OUT" in
 esac
 OUT="$(helm template t . --set image.tag=1.0.0 --set internalSecretSecretName=internal-secret 2>&1)"
 SECRET_ENV_COUNT="$(printf '%s\n' "$OUT" | grep -c 'name: GATEWAY_INTERNAL_SECRET' || true)"
-if [ "$SECRET_ENV_COUNT" -eq 3 ] && printf '%s\n' "$OUT" | grep -q 'name: internal-secret'; then
-  pass "gateway, REST API, and marketplace-registry receive GATEWAY_INTERNAL_SECRET"
+if [ "$SECRET_ENV_COUNT" -eq 2 ] && printf '%s\n' "$OUT" | grep -q 'name: internal-secret'; then
+  pass "gateway and REST API receive GATEWAY_INTERNAL_SECRET by default"
 else
   fail "gateway, REST API, and marketplace-registry receive GATEWAY_INTERNAL_SECRET" "found $SECRET_ENV_COUNT secret env entries"
 fi
 
 summary
 [ "$FAIL" -eq 0 ]
+node ./verify_topology.mjs

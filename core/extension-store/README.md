@@ -9,11 +9,11 @@ import { createExtensionStore } from '@kb-labs/core-extension-store';
 
 const store = createExtensionStore(); // honors KB_HOME
 const { packageRoot, entry } = await store.resolve({
-  name: '@kb-labs/commit-entry',
+  name: '@kb-labs/commit',
   version: '2.120.1',
   kind: 'plugin',
 });
-// packageRoot: <KB_HOME>/store/entries/@kb-labs+commit-entry@2.120.1/node_modules/@kb-labs/commit-entry
+// packageRoot: <KB_HOME>/store/entries/@kb-labs+commit@2.120.1/node_modules/@kb-labs/commit
 ```
 
 `resolve` installs the version into the store on first use and is safe under concurrent callers

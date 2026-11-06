@@ -37,23 +37,22 @@ The rest of this page is the mental model — what files exist, what the manifes
 
 ## Package layout
 
-By convention a plugin is a mini-monorepo with three packages:
+Each plugin is one package whose name matches the manifest ID:
 
 ```
-kb-labs-my-plugin/
-├── packages/
-│   ├── my-plugin-entry/         # CLI commands + manifest + handlers
-│   │   └── src/
-│   │       ├── manifest.ts    # exports default ManifestV3
-│   │       ├── cli/commands/  # one file per command
-│   │       └── rest/handlers/ # one file per route
-│   ├── my-plugin-core/        # business logic (framework-free)
-│   └── my-plugin-contracts/   # shared types, Zod schemas, constants
-├── package.json
-└── tsconfig.json
+plugins/my-plugin/
+├── package.json               # name matches the plugin manifest ID
+├── tsconfig.json
+├── tsup.config.ts
+└── src/
+    ├── manifest.ts            # exports default ManifestV3
+    ├── cli/commands/          # one file per command
+    ├── rest/handlers/         # one file per route
+    ├── core/                  # business logic (framework-free)
+    └── contracts/             # shared types, schemas, and constants
 ```
 
-The split isn't enforced — the runtime only cares about the manifest and the handler paths it points at. But every first-party plugin follows this layout, so copy it and save yourself the thinking. [commit plugin](plugins/commit/entry/) is the canonical reference.
+The package's public subpaths expose contracts and helpers that other packages need. Plugins use `@kb-labs/sdk` for platform APIs. [Commit](https://github.com/kb-labs/kb-labs/tree/main/plugins/commit) is the canonical reference.
 
 <Callout type="tip">
 Copy configs (`tsup.config.ts`, `tsconfig.json`, `package.json`) from an existing plugin — don't roll your own. The build outputs need to match what the runtime expects, and matching an existing plugin is the cheapest way to guarantee that.
@@ -61,10 +60,10 @@ Copy configs (`tsup.config.ts`, `tsconfig.json`, `package.json`) from an existin
 
 ## The manifest
 
-Every plugin exports a `ManifestV3` from its CLI package. It's a plain TypeScript object (no decorators, no class), typically authored as `src/manifest.ts` and re-exported as the package default:
+Every plugin exports a `ManifestV3` from its package. It's a plain TypeScript object (no decorators, no class), typically authored as `src/manifest.ts` and exported by the package's manifest subpath:
 
 ```ts
-// packages/my-plugin-entry/src/manifest.ts
+// plugins/my-plugin/src/manifest.ts
 import { defineCommandFlags, combinePermissions, kbPlatformPreset } from '@kb-labs/sdk';
 import { greetFlags } from './cli/commands/flags';
 
@@ -108,7 +107,7 @@ The `handler` string format is `<path-relative-to-package-root>#<exportName>`. T
 Every capability in the manifest points at a handler file. A handler's default export is the result of a `define*` helper from `@kb-labs/sdk`. For a CLI command that means `defineCommand`:
 
 ```ts
-// packages/my-plugin-entry/src/cli/commands/greet.ts
+// plugins/my-plugin/src/cli/commands/greet.ts
 import { defineCommand, useLogger, type PluginContextV3 } from '@kb-labs/sdk';
 import type { CLIInput } from '@kb-labs/sdk';
 
@@ -293,11 +292,11 @@ When a handler is triggered, the runner creates a context, enforces permissions 
 
 ## Checklist for your first plugin
 
-- [ ] Copy the structure from [commit plugin](plugins/commit/entry/).
-- [ ] Update `package.json` and `tsconfig.json` in all three sub-packages.
+- [ ] Copy the structure from [commit plugin](plugins/commit/).
+- [ ] Set one package name equal to the manifest ID and declare `@kb-labs/sdk` as its runtime API.
 - [ ] Write `manifest.ts` with your `id`, a minimal `cli.commands[0]`, and `permissions: combinePermissions().with(minimalPreset).build()`.
 - [ ] Implement the handler with `defineCommand({ id, handler: { async execute(ctx, input) { ... } } })`.
-- [ ] Build: `pnpm --filter your-plugin run build`.
+- [ ] Build: `pnpm --filter @kb-labs/your-plugin run build`.
 - [ ] Link: `kb marketplace plugins add ./path/to/your-plugin`.
 - [ ] Run: `pnpm kb your-plugin:your-command`.
 

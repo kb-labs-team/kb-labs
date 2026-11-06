@@ -1,0 +1,9 @@
+name: Install GoReleaser
+description: Install the version used for release candidates.
+runs:
+  using: composite
+  steps:
+    - uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29
+      with:
+        version: v2.20.0
+        install-only: true

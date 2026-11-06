@@ -45,7 +45,7 @@ export function storeLockPath(storeRoot: string): string {
 
 /**
  * Entry key: package name with every `/` replaced by `+`, then `@` + the exact
- * version, e.g. `@kb-labs/commit-entry` @ `2.120.1` -> `@kb-labs+commit-entry@2.120.1`.
+ * version, e.g. `@kb-labs/commit` @ `2.120.1` -> `@kb-labs+commit@2.120.1`.
  */
 export function encodeEntryKey(name: string, version: string): string {
   assertSafeSegment(name, 'name');
@@ -65,12 +65,12 @@ export function entryPackagePath(entryDir: string, name: string): string {
 
 function assertSafeSegment(name: string, field: string): void {
   if (!name || name.startsWith('.') || name.split('/').some((part) => !part || !SAFE_SEGMENT.test(part))) {
-    throw new ExtensionStoreError('KB_RUNTIME_INPUT_INVALID', { field });
+    throw new ExtensionStoreError({ code: 'KB_RUNTIME_INPUT_INVALID', details: { field } });
   }
 }
 
 function assertSafeVersion(version: string): void {
   if (!version || !SAFE_SEGMENT.test(version) || version.includes('..')) {
-    throw new ExtensionStoreError('KB_RUNTIME_INPUT_INVALID', { field: 'version' });
+    throw new ExtensionStoreError({ code: 'KB_RUNTIME_INPUT_INVALID', details: { field: 'version' } });
   }
 }

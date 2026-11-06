@@ -62,7 +62,7 @@ plugins/steward/
     src/cli/commands/*.ts тонкие адаптеры → core
 ```
 
-- `contracts` — plain interface для доменных моделей, zod + `z.infer` для всего, что пересекает границу (входы команд). Паттерн из `plugins/qa/contracts`.
+- `contracts` — plain interface для доменных моделей, zod + `z.infer` для всего, что пересекает границу (входы команд). Паттерн из `plugins/qa/src/contracts`.
 - `entry` не импортирует `IDocumentDatabase` напрямую — только через `core`.
 - CLI-хендлеры не содержат бизнес-условий: парсинг флагов → вызов `core` → форматирование.
 
@@ -228,7 +228,7 @@ Event {
 
 - [ADR-0012 / ADR-0013](../../../../docs/adr/) — слоёная конфигурация
 - `plugins/inbox` — референс атомарного агент-ориентированного плагина
-- `plugins/qa/contracts` — референс структуры пакета контрактов
+- `plugins/qa/src/contracts` — референс структуры пакета контрактов
 - `.claude/skills/kb-labs-create-plugin/` — канонический scaffold
 
 ---

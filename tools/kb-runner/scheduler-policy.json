@@ -1,0 +1,14 @@
+{
+  "integration_branch": "agent/j90-integration",
+  "risk_zones": [
+    "scripts/ci/**",
+    ".github/**",
+    "tools/clikit/proc/**",
+    "tools/kb-runner/**",
+    "tools/kb-create/**",
+    "tools/release/**",
+    "plugins/release/**",
+    "services/gateway/auth/**",
+    "services/gateway/contracts/src/auth.ts"
+  ]
+}

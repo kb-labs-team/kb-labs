@@ -296,6 +296,7 @@ class FileAnalytics implements IAnalytics {
         from: new Date(oldestTs).toISOString(),
         to: new Date(newestTs).toISOString(),
       },
+      persistence: { kind: 'durable' },
     };
 
     // Cache result for 60 seconds (if cache adapter was provided)

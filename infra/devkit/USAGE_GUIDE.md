@@ -387,7 +387,7 @@ npx kb-devkit-visualize --stats
 # Output:
 # Largest Packages (by lines of code):
 #   1. @kb-labs/mind-engine (15,234 lines)
-#   2. @kb-labs/devlink-core (14,803 lines)
+#   2. @kb-labs/devlink/core (14,803 lines)
 
 # 2. Check dependencies
 npx kb-devkit-visualize --package=mind-engine

@@ -17,7 +17,7 @@ import (
 func TestStateHomeIsPerUserAndFollowsKBHome(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv(KBHomeEnv, root)
-	state, err := StateHome()
+	state, err := StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,18 +29,28 @@ func TestStateHomeIsPerUserAndFollowsKBHome(t *testing.T) {
 	}
 }
 
-func TestStateHomeDefaultsToTheUserHome(t *testing.T) {
-	t.Setenv(KBHomeEnv, "  ")
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no user home on this machine")
-	}
-	state, err := StateHome()
+// case: S-285.11
+func TestStateHomeDefaultsToInstallationRoot(t *testing.T) {
+	t.Setenv(KBHomeEnv, "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(t.TempDir(), "install")
+	state, err := StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Dir != filepath.Join(home, ".kb", "launcher") {
+	homePath, err := DefaultKBHome(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Dir != filepath.Join(homePath, "launcher") {
 		t.Fatalf("state dir = %s", state.Dir)
+	}
+	if err := state.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".kb")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected HOME state: %v", err)
 	}
 }
 

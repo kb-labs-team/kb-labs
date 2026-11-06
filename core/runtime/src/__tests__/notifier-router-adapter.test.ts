@@ -11,6 +11,7 @@ describe('notifier-router workspace adapter binding', () => {
     const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
     const adapters = await discoverAdapters(workspaceRoot, {
       development: true,
+      workspaceRoot,
       configuredPackages: [{ packageName: '@kb-labs/notifier-router', slot: 'notifier' }],
     });
     const adapter = adapters.get('@kb-labs/notifier-router');

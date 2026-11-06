@@ -43,6 +43,15 @@ type offlineArtifacts struct {
 	root string
 }
 
+func (a *offlineArtifacts) Prepare(items []contracts.Artifact) (contracts.PreparedArtifacts, error) {
+	return offlinePrepared{install: func() error { return a.Install(items) }}, nil
+}
+
+type offlinePrepared struct{ install func() error }
+
+func (p offlinePrepared) Install(func(string, bool) error) error { return p.install() }
+func (offlinePrepared) Close() error                             { return nil }
+
 func (a *offlineArtifacts) Install(items []contracts.Artifact) error {
 	if a.installErr != nil {
 		return a.installErr
@@ -212,7 +221,7 @@ func TestOfflineApplyCompletesPluginAndWorkflowReadyPath(t *testing.T) {
 				Services: []contracts.Service{{ID: "workflow", Command: "kb-workflow", Port: 7778, Required: true}},
 			}},
 		}},
-		Plugins: []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb-labs/commit-entry", SHA256: "commit", PlatformRange: "^2.0.0"}},
+		Plugins: []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb-labs/commit", SHA256: "commit", PlatformRange: "^2.0.0"}},
 	}
 	primeOfflineCatalog(t, root, &source)
 	plan, err := resolve.Plan(contracts.InstallRequest{

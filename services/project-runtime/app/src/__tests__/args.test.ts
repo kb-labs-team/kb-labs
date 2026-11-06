@@ -83,6 +83,7 @@ describe("parseRuntimeArgs", () => {
     expect(args.projectRoot).toBe(root);
   });
 
+  // case: S-226.2
   it("refuses a project id that does not belong to the root", async () => {
     const { root } = await project();
 

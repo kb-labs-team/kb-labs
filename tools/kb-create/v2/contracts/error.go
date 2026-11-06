@@ -11,7 +11,7 @@ import (
 // Diagnostic converts shared request validation into the platform CLI failure
 // contract, including its input exit code and field metadata.
 func (e *RequestValidationError) Diagnostic() *diag.Diag {
-	failure := NewDiag(e.Code, e.Message, e.Hint, e.Cause)
+	failure := NewDiag(CodeInputRequired, e.Message, e.Hint, e.Cause)
 	failure.Meta = map[string]any{"field": e.Field}
 	return failure
 }
@@ -43,6 +43,7 @@ const (
 	CodePackageManagerKilled      = "KB_INSTALL_PACKAGE_MANAGER_KILLED"
 	CodePortInUse                 = "KB_INSTALL_PORT_IN_USE"
 	CodeIncompatibleComponents    = "KB_INSTALL_INCOMPATIBLE_COMPONENTS"
+	CodeUnsupportedPlatform       = "KB_INSTALL_UNSUPPORTED_PLATFORM"
 	CodeProviderUnresolved        = "KB_INSTALL_PROVIDER_UNRESOLVED"
 	CodeProviderAmbiguous         = "KB_INSTALL_PROVIDER_AMBIGUOUS"
 	CodeInputRequired             = "KB_INSTALL_INPUT_REQUIRED"
@@ -62,6 +63,7 @@ const (
 	CodeArtifactMismatch          = "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH"
 	CodeServiceGraphMismatch      = "KB_INSTALL_SERVICE_GRAPH_MISMATCH"
 	CodeApplyFailed               = "KB_INSTALL_APPLY_FAILED"
+	CodeMarketplaceInstallFailed  = "KB_MARKETPLACE_INSTALL_FAILED"
 	CodeOperationFailed           = "KB_INSTALL_OPERATION_FAILED"
 	CodeRecoveryFailed            = "KB_INSTALL_RECOVERY_FAILED"
 	CodeReceiptUnavailable        = "KB_INSTALL_RECEIPT_UNAVAILABLE"
@@ -81,6 +83,7 @@ const (
 	CodeInstallLayoutUnsupported  = "KB_INSTALL_LAYOUT_UNSUPPORTED"
 	CodeHostSpecInvalid           = "KB_HOST_SPEC_INVALID"
 	CodeHostStateDirUnwritable    = "KB_HOST_STATE_DIR_UNWRITABLE"
+	CodeHostAlreadyRunning        = "KB_HOST_ALREADY_RUNNING"
 	CodeOperationLockUnsupported  = "KB_HOST_OPERATION_LOCK_UNSUPPORTED"
 	CodeHostProcessIdentityStale  = "KB_HOST_PROCESS_IDENTITY_STALE"
 	CodeGatewayIndexUnavailable   = "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE"
@@ -108,6 +111,61 @@ func NewDiag(code, message, hint string, cause error) *diag.Diag {
 		return diag.Wrap(cause, code, message, opts...)
 	}
 	return diag.New(code, message, opts...)
+}
+
+// UnsupportedPlatformDiagnostic renders the catalogued error for an OS or
+// architecture without a KB Labs installer release.
+func UnsupportedPlatformDiagnostic(goos, goarch string) *diag.Diag {
+	failure, err := diag.FromCatalog(CodeUnsupportedPlatform, map[string]string{"os": goos, "arch": goarch})
+	if err != nil {
+		panic(err)
+	}
+	return failure
+}
+
+// UpdateIncompatibleDetails is the complete identity required by the
+// KB_UPDATE_INCOMPATIBLE diagnostic contract.
+type UpdateIncompatibleDetails struct {
+	ID, Kind, RequiredRange, SelectedVersion string
+}
+
+// NewUpdateIncompatible constructs the update-only compatibility diagnostic.
+// Keeping the detail fields together prevents a caller from selecting the
+// catalog code without also supplying its required component identity.
+func NewUpdateIncompatible(details UpdateIncompatibleDetails) *diag.Diag {
+	failure, err := diag.FromCatalog(CodeUpdateIncompatible, map[string]string{
+		"id": details.ID, "kind": details.Kind,
+		"requiredRange": details.RequiredRange, "selectedVersion": details.SelectedVersion,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return failure
+}
+
+// HostSpecDiagnostic supplies the required reason template value for the
+// catalogued host-specification error at every producer boundary.
+func HostSpecDiagnostic(message, hint, reason string, cause error) *diag.Diag {
+	failure := NewDiag(CodeHostSpecInvalid, message, hint, cause)
+	failure.Meta = map[string]any{"reason": reason}
+	return failure
+}
+
+// MarketplaceInstallDiagnostic is the single scenario boundary that wraps a
+// Marketplace failure while preserving its original code, message and cause.
+func MarketplaceInstallDiagnostic(spec, source string, cause error) *diag.Diag {
+	options := []diag.Opt{diag.WithMeta(map[string]any{"source": source})}
+	if cause != nil {
+		options = append(options, diag.WithCauseAndReason(cause.Error()))
+	}
+	failure, err := diag.FromCatalog(CodeMarketplaceInstallFailed, map[string]string{
+		"package": spec, "scope": "platform", "sourceName": source,
+	}, options...)
+	if err != nil {
+		panic(err)
+	}
+	failure.Meta = map[string]any{"package": spec, "scope": "platform", "source": source}
+	return failure
 }
 
 func causeRequired(code string) bool {

@@ -1,4 +1,5 @@
-import { createHealthContributor, createRegistry, type SystemHealthSnapshot } from '@kb-labs/core-registry';
+import type { SystemHealthSnapshot } from '@kb-labs/plugin-contracts';
+import { getResolvedCatalog } from '../../registry/discovery-state.js';
 import { generateExamples } from '../../utils/generate-examples';
 import {
   defineSystemCommand,
@@ -35,13 +36,8 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
     finishEvent: 'HEALTH_FINISHED',
   },
   async handler(ctx, _argv, _flags) {
-    const executionBackend = ctx.executionBackend;
-    const cliApi = await createRegistry({
-      cache: { ttlMs: 5000 },
-      healthContributors: executionBackend
-        ? [createHealthContributor('execution', () => executionBackend.health())]
-        : [],
-    });
+    const cliApi = getResolvedCatalog();
+    if (!cliApi) throw new Error('The CLI catalog was not opened during command registration.');
 
     try {
       ctx.platform?.logger?.info('Health check started');
@@ -58,8 +54,6 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throwSystemCommandError(message, "Run `kb info health --help` to review valid inputs and recovery steps, then retry.");
-    } finally {
-      await cliApi.dispose();
     }
   },
   // eslint-disable-next-line sonarjs/cognitive-complexity -- Complex health status formatting with nested conditions for different health states
@@ -75,7 +69,7 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
         items: [
           `Status: ${result.status}`,
           `KB Labs: ${snapshot.version.kbLabs}`,
-          `CLI: ${ctx.hostContext?.host === 'cli' ? ctx.hostContext.cliVersion : process.env.CLI_VERSION ?? '0.0.0'}`,
+          `CLI: ${snapshot.version.kbLabs}`,
           `REST: ${snapshot.version.rest}`,
           `Git: ${gitInfo}`,
         ],

@@ -1,6 +1,7 @@
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ProjectRegistryFile } from '@kb-labs/core-contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ProjectRegistryError } from '../errors.js';
 import { withFileLock } from '../file-lock.js';
@@ -73,6 +74,50 @@ describe('add / list / get / remove', () => {
     expect(findRegisteredProjectContainingPathSync(project, { root })).toBeUndefined();
   });
 
+  it('throws the registered corruption error when async lookup is inside a mismatched record', async () => {
+    const corruptPath = makeProject('corrupt-async');
+    const registry = createProjectRegistry({ root });
+    const added = await registry.add(corruptPath);
+    const content = JSON.parse(readFileSync(registry.filePath, 'utf8')) as ProjectRegistryFile;
+    content.projects[0]!.id = 'prj_0000000000000000';
+    writeFileSync(registry.filePath, JSON.stringify(content));
+
+    await expect(findProjectContainingPath(registry, corruptPath)).rejects.toMatchObject({
+      code: 'KB_PROJECT_REGISTRY_CORRUPT',
+      details: { file: registry.filePath },
+    });
+    expect(added.project.path).toBe(corruptPath);
+  });
+
+  it('throws the registered corruption error when sync lookup is inside a mismatched record', async () => {
+    const corruptPath = makeProject('corrupt-sync');
+    const registry = createProjectRegistry({ root });
+    await registry.add(corruptPath);
+    const content = JSON.parse(readFileSync(registry.filePath, 'utf8')) as ProjectRegistryFile;
+    content.projects[0]!.id = 'prj_0000000000000000';
+    writeFileSync(registry.filePath, JSON.stringify(content));
+
+    expect(() => findRegisteredProjectContainingPathSync(corruptPath, { root })).toThrowError(
+      expect.objectContaining({ code: 'KB_PROJECT_REGISTRY_CORRUPT' }),
+    );
+  });
+
+  it('ignores corruption outside the path while resolving a valid project', async () => {
+    const validPath = makeProject('valid-beside-corruption');
+    const corruptPath = makeProject('unrelated-corruption');
+    const registry = createProjectRegistry({ root });
+    const valid = await registry.add(validPath);
+    await registry.add(corruptPath);
+    const content = JSON.parse(readFileSync(registry.filePath, 'utf8')) as ProjectRegistryFile;
+    content.projects.find((record) => record.path === corruptPath)!.id = 'prj_0000000000000000';
+    writeFileSync(registry.filePath, JSON.stringify(content));
+
+    await expect(findProjectContainingPath(registry, validPath)).resolves.toMatchObject({
+      project: { id: valid.project.id },
+    });
+    expect(findRegisteredProjectContainingPathSync(validPath, { root })?.id).toBe(valid.project.id);
+  });
+
   it('registers a project, persists it and reports the declaration state', async () => {
     const dir = makeProject('alpha', true);
     const registry = createProjectRegistry({ root, now: () => new Date('2026-09-26T10:00:00.000Z') });
@@ -92,8 +137,9 @@ describe('add / list / get / remove', () => {
     expect(onDisk.schemaVersion).toBe(PROJECT_REGISTRY_SCHEMA_VERSION);
 
     const listed = await registry.list();
-    expect(listed).toHaveLength(1);
-    expect(listed[0]).toMatchObject({ pathExists: true, declaration: 'present', stateDir: projectStateDir(root, project.id) });
+    expect(listed.projects).toHaveLength(1);
+    expect(listed.projects[0]).toMatchObject({ pathExists: true, declaration: 'present', stateDir: projectStateDir(root, project.id) });
+    expect(listed.diagnostics).toEqual([]);
   });
 
   it('never creates anything inside the project folder or the state dir', async () => {
@@ -115,7 +161,7 @@ describe('add / list / get / remove', () => {
     const duplicate = await registry.add(`${dir}/`);
     expect(duplicate.project).toEqual(first.project);
     expect(duplicate.alreadyExisted).toBe(true);
-    expect(await registry.list()).toHaveLength(1);
+    expect((await registry.list()).projects).toHaveLength(1);
     await expect(registry.add(dir, { name: 'different' })).rejects.toMatchObject({ code: 'KB_PROJECT_ALREADY_REGISTERED' });
   });
 
@@ -140,7 +186,7 @@ describe('add / list / get / remove', () => {
     const { project } = await registry.add(dir, { dryRun: true });
 
     expect(project.path).toBe(dir);
-    expect(await registry.list()).toEqual([]);
+    expect((await registry.list()).projects).toEqual([]);
     expect(readdirSync(sandbox)).not.toContain('kb-home');
 
     const committed = await registry.add(dir);
@@ -176,7 +222,7 @@ describe('add / list / get / remove', () => {
     const removed = await registry.remove(project.id);
 
     expect(removed.id).toBe(project.id);
-    expect(await registry.list()).toEqual([]);
+    expect((await registry.list()).projects).toEqual([]);
     expect(readdirSync(dir)).toEqual(['.kb']);
     expect(readFileSync(join(state, 'marker'), 'utf8')).toBe('keep');
     await expect(registry.remove(project.id)).rejects.toMatchObject({ code: 'KB_PROJECT_UNKNOWN' });
@@ -188,9 +234,9 @@ describe('add / list / get / remove', () => {
     await registry.add(dir);
     rmSync(dir, { recursive: true });
 
-    expect((await registry.list())[0]).toMatchObject({ pathExists: false, declaration: 'missing' });
+    expect((await registry.list()).projects[0]).toMatchObject({ pathExists: false, declaration: 'missing' });
     await registry.remove(dir);
-    expect(await registry.list()).toEqual([]);
+    expect((await registry.list()).projects).toEqual([]);
   });
 
   it('touch sets lastUsedAt', async () => {
@@ -215,7 +261,7 @@ describe('add / list / get / remove', () => {
 
   it('starts empty when the registry file does not exist, without creating it on read', async () => {
     const registry = createProjectRegistry({ root });
-    expect(await registry.list()).toEqual([]);
+    expect((await registry.list()).projects).toEqual([]);
     expect(() => readFileSync(registry.filePath)).toThrow();
   });
 });
@@ -228,7 +274,7 @@ describe('concurrent writes', () => {
     await Promise.all(dirs.map((dir, i) => registries[i % registries.length]!.add(dir)));
 
     const listed = await createProjectRegistry({ root }).list();
-    expect(listed.map((v) => v.project.path).sort()).toEqual([...dirs].sort());
+    expect(listed.projects.map((v) => v.project.path).sort()).toEqual([...dirs].sort());
     // No leftover temp or lock files.
     expect(readdirSync(root).sort()).toEqual(['projects.json']);
   });
@@ -245,7 +291,7 @@ describe('concurrent writes', () => {
     ]);
 
     const listed = await registry.list();
-    expect(listed.map((v) => v.project.path).sort()).toEqual([...keep].sort());
+    expect(listed.projects.map((v) => v.project.path).sort()).toEqual([...keep].sort());
   });
 
   it('serializes concurrent duplicate adds and returns the single canonical record', async () => {
@@ -255,7 +301,7 @@ describe('concurrent writes', () => {
     );
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(8);
     expect(results.filter((r) => r.status === 'fulfilled' && r.value.alreadyExisted)).toHaveLength(7);
-    expect(await createProjectRegistry({ root }).list()).toHaveLength(1);
+    expect((await createProjectRegistry({ root }).list()).projects).toHaveLength(1);
   });
 });
 
@@ -309,7 +355,46 @@ describe('unreadable registry file', () => {
     });
   });
 
-  it('rejects a record whose id does not match its path', async () => {
+  // case: S-124.12
+  it('quarantines a record whose id does not match its path and preserves valid records', async () => {
+    mkdirSync(root, { recursive: true });
+    const validPath = makeProject('valid-project');
+    const anotherValidPath = makeProject('another-valid-project');
+    const corruptPath = makeProject('corrupt-project');
+    const registry = createProjectRegistry({ root });
+    const valid = await registry.add(validPath);
+    const anotherValid = await registry.add(anotherValidPath);
+    const corrupt = await registry.add(corruptPath);
+    const original = readFileSync(registry.filePath, 'utf8');
+    const contents = JSON.parse(original) as ProjectRegistryFile;
+    const corruptRecord = contents.projects.find((project) => project.id === corrupt.project.id);
+    if (!corruptRecord) {
+      throw new Error('corrupt project fixture was not persisted');
+    }
+    corruptRecord.id = 'prj_0000000000000000';
+    writeFileSync(registry.filePath, JSON.stringify(contents));
+
+    const listed = await registry.list();
+    expect(listed.projects.map((view) => view.project.id).sort()).toEqual([valid.project.id, anotherValid.project.id].sort());
+    expect(listed.diagnostics).toEqual([expect.objectContaining({
+      path: corruptRecord.path,
+      code: 'KB_PROJECT_REGISTRY_CORRUPT',
+      severity: 'warning',
+      message: expect.stringContaining(corruptRecord.id),
+      hint: expect.stringContaining('kb project add'),
+    })]);
+    expect(listed.diagnostics[0]).not.toHaveProperty('id');
+    await expect(registry.get(corruptRecord.id)).rejects.toMatchObject({
+      code: 'KB_PROJECT_REGISTRY_CORRUPT',
+      details: { file: registry.filePath },
+    });
+    await expect(registry.add(makeProject('another-project'))).rejects.toMatchObject({
+      code: 'KB_PROJECT_REGISTRY_CORRUPT',
+    });
+    expect(readFileSync(registry.filePath, 'utf8')).toBe(JSON.stringify(contents));
+  });
+
+  it('returns a diagnostic for every identity-mismatched record when no valid records remain', async () => {
     mkdirSync(root, { recursive: true });
     writeFileSync(
       join(root, 'projects.json'),
@@ -327,9 +412,17 @@ describe('unreadable registry file', () => {
         ],
       }),
     );
-    await expect(createProjectRegistry({ root }).list()).rejects.toMatchObject({
+    const listed = await createProjectRegistry({ root }).list();
+    expect(listed.projects).toEqual([]);
+    expect(listed.diagnostics).toHaveLength(1);
+    expect(listed.diagnostics[0]).toMatchObject({
+      path: '/some/where',
       code: 'KB_PROJECT_REGISTRY_CORRUPT',
+      severity: 'warning',
+      message: expect.stringContaining('prj_0000000000000000'),
+      hint: expect.stringContaining('kb project add'),
     });
+    expect(listed.diagnostics[0]).not.toHaveProperty('id');
   });
 
   it('reports an unknown schema version distinctly and does not rewrite the file', async () => {

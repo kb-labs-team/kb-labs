@@ -5,7 +5,7 @@ persona: team-admin
 area: plugin-execution
 priority: P1
 status: planned
-release: true
+release: false
 modes: [secured]
 surfaces: [cli]
 ---

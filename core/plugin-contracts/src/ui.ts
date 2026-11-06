@@ -308,7 +308,7 @@ export interface UIFacade {
    * In CLI context: renders as a compact line via logLine() from shared-cli-ui.
    * In JSON mode: emitted as NDJSON to stdout.
    *
-   * See: plugins/workflow/docs/adr/0019-log-stream-separation.md
+   * See: services/workflow/docs/adr/0019-log-stream-separation.md
    */
   log(entry: UILogEntry): void;
 }

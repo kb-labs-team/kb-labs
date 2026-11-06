@@ -66,7 +66,7 @@ studio?: {
 }
 ```
 
-Example from [commit plugin](plugins/commit/entry/src/manifest.ts):
+Example from [commit plugin](plugins/commit/src/manifest.ts):
 
 ```ts
 import type { StudioConfig } from '@kb-labs/sdk/studio';
@@ -210,7 +210,7 @@ import {
   // Types
   type PageContext,
 } from '@kb-labs/sdk/studio';
-import type { CommitStatus } from '@kb-labs/commit-contracts';
+import type { CommitStatus } from '@kb-labs/commit/contracts';
 
 export default function CommitOverview() {
   const { navigate } = useNavigation();
@@ -246,7 +246,7 @@ Key points:
 - **Default export** the component. The `entry` in your manifest (`./CommitOverview`) points to the file; the `default` export is what Studio mounts.
 - **Don't import `antd` directly.** If a component you need isn't in UIKit, either compose from what's there, or file an issue against UIKit.
 - **REST calls go through the gateway.** The `/api/v1/plugins/commit/status` path is the REST route declared in your plugin's manifest. The `useData` hook's fetch wrapper automatically resolves it against the gateway.
-- **Your own plugin contracts are fine** — importing `CommitStatus` from `@kb-labs/commit-contracts` is expected. The rule is about platform-internal packages, not your own types.
+- **Your own plugin contracts are fine** — importing `CommitStatus` from `@kb-labs/commit/contracts` is expected. The rule is about platform-internal packages, not your own types.
 
 ## Step 5 — Runtime loading (how Studio finds your page)
 
@@ -335,7 +335,7 @@ import {
   Alert,
   Table,
 } from '@kb-labs/sdk/studio';
-import type { CommitPlan } from '@kb-labs/commit-contracts';
+import type { CommitPlan } from '@kb-labs/commit/contracts';
 
 export default function CommitPlanView() {
   const { navigate } = useNavigation();

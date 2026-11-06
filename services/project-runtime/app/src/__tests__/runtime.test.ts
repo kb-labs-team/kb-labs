@@ -17,6 +17,7 @@ import {
   deriveProjectId,
 } from "@kb-labs/core-project-registry";
 import { reserveLoopbackPorts, runHost } from "@kb-labs/shared-daemon";
+import { buildServiceTools, mcpToolName } from "@kb-labs/mcp-app/project-module";
 import {
   createProjectRuntimeConfig,
   DEFAULT_PROJECT_MODULES,
@@ -29,6 +30,138 @@ import {
 } from "../protocol.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
+
+describe("project MCP service tools", () => {
+  it("projects tools from enabled shipped service manifests and removes them when workflow is disabled", () => {
+    const enabledManifests = DEFAULT_PROJECT_MODULES.map((module) => module.manifest);
+    const enabledNames = buildServiceTools(enabledManifests).map((tool) => tool.name);
+    expect(enabledNames).toContain(mcpToolName("workflow", "workflow run"));
+
+    const disabledManifests = enabledManifests.filter((manifest) => manifest.id !== "workflow");
+    const disabledNames = buildServiceTools(disabledManifests).map((tool) => tool.name);
+    expect(disabledNames).not.toContain(mcpToolName("workflow", "workflow run"));
+    expect(disabledNames.some((name) => name.startsWith("workflow__"))).toBe(false);
+  });
+
+  // case: S-045.11
+  it("serves the generated service catalog without workflow when its manifest is omitted", async () => {
+    const modules = DEFAULT_PROJECT_MODULES.filter((module) => module.manifest.id !== "workflow");
+    const manifests = modules.map((module) => module.manifest);
+    const expectedServiceNames = buildServiceTools(manifests).map((tool) => tool.name).sort();
+    const servicePrefixes = DEFAULT_PROJECT_MODULES.map((module) =>
+      mcpToolName(module.manifest.id, ""),
+    );
+    const workflowPrefix = mcpToolName("workflow", "");
+    const running = await startRuntime({ modules, env: { KB_MCP_AUTH_MODE: "local" } });
+
+    try {
+      const response = await fetch(`${running.base}/mcp/`, {
+        method: "POST",
+        headers: {
+          [RUNTIME_TOKEN_HEADER]: TOKEN,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: {},
+        }),
+      });
+      expect(response.status).toBe(200);
+      const responseText = await response.text();
+      const frame = responseText.split("\ndata: ")[1]?.trim();
+      expect(frame).toBeDefined();
+      const rpcResult = JSON.parse(frame ?? "{}");
+      const tools = rpcResult.result.tools as Array<{ name: string }>;
+      const servedServiceNames = tools
+        .map((tool) => tool.name)
+        .filter((name) => servicePrefixes.some((prefix) => name.startsWith(prefix)))
+        .sort();
+
+      expect(servedServiceNames).toEqual(expectedServiceNames);
+      expect(tools.some((tool) => tool.name.startsWith(workflowPrefix))).toBe(false);
+    } finally {
+      await running.stop();
+    }
+  });
+});
+
+describe("project MCP calls over the HTTP service transport", () => {
+  // case: S-045.2
+  it("sends empty and filtered GET tool calls without a request body", async () => {
+    const service: ProjectRuntimeModule = {
+      manifest: {
+        schema: "kb.service/1",
+        id: "catalog",
+        name: "Catalog",
+        version: "1.0.0",
+        runtime: { entry: "dist/bin.js", healthCheck: "/health" },
+        projectApi: { serviceId: "catalog", rewritePrefix: "/api/v1" },
+        commands: [
+          {
+            kind: "service", name: "catalog health", description: "Health", scope: "project",
+            jsonTest: {}, category: "catalog", flags: {},
+            route: { method: "GET", path: "/health", mount: "service-root" },
+          },
+          {
+            kind: "service", name: "catalog list", description: "List", scope: "project",
+            jsonTest: {}, category: "catalog", flags: { filter: { type: "string" } },
+            route: { method: "GET", path: "/items", mount: "project-api" },
+          },
+        ],
+      },
+      setup: async (ctx) => {
+        const server: Server = createServer(async (req, res) => {
+          const chunks: Buffer[] = [];
+          for await (const chunk of req) chunks.push(Buffer.from(chunk));
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ method: req.method, url: req.url, body: Buffer.concat(chunks).toString() }));
+        });
+        await new Promise<void>((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(ctx.port, ctx.host, resolve);
+        });
+        return () => new Promise<void>((resolve) => {
+          server.closeAllConnections();
+          server.close(() => resolve());
+        });
+      },
+    };
+    const mcp = DEFAULT_PROJECT_MODULES.find((module) => module.manifest.projectApi?.serviceId === "mcp");
+    expect(mcp).toBeDefined();
+    const running = await startRuntime({ modules: [service, mcp!], env: { KB_MCP_AUTH_MODE: "local" } });
+    try {
+      for (const params of [
+        { name: "catalog__catalog_health", arguments: {} },
+        { name: "catalog__catalog_list", arguments: { filter: "recent" } },
+      ]) {
+        const response = await fetch(`${running.base}/mcp/`, {
+          method: "POST",
+          headers: {
+            [RUNTIME_TOKEN_HEADER]: TOKEN,
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params }),
+        });
+        expect(response.status).toBe(200);
+        const responseText = await response.text();
+        const frame = responseText.split("\ndata: ")[1]?.trim();
+        expect(frame).toBeDefined();
+        const rpcResult = JSON.parse(frame ?? "{}");
+        const serviceResult = JSON.parse(rpcResult.result.content[0].text);
+        expect(serviceResult.body).toBe("");
+        if (params.name === "catalog__catalog_list") {
+          expect(serviceResult.url).toBe("/api/v1/items?filter=recent");
+        }
+      }
+    } finally {
+      await running.stop();
+    }
+  });
+});
 
 /** A module that answers with what it was given: its port, host and project root. */
 function echoModule(id: string): ProjectRuntimeModule {
@@ -88,7 +221,7 @@ async function startRuntime(options: {
   await writeFile(
     join(dir, ".kb", "kb.config.json"),
     JSON.stringify({
-      platform: { adapters: {} },
+      platform: { deployment: { topology: "local" }, adapters: {} },
     }),
   );
   const root = await canonicalizeProjectPath(dir);
@@ -289,6 +422,9 @@ describe("project runtime composition (real runHost, minimal modules)", () => {
   it("serves the explicit registered project when the platform root differs", async () => {
     const other = await mkdtemp(join(tmpdir(), "kb-runtime-other-"));
     await mkdir(join(other, ".kb"), { recursive: true });
+    await writeFile(join(other, ".kb", "kb.config.json"), JSON.stringify({
+      platform: { deployment: { topology: "local" }, adapters: {} },
+    }));
     try {
       const running = await startRuntime({ env: {
           KB_PROJECT_ROOT: await realpath(other),

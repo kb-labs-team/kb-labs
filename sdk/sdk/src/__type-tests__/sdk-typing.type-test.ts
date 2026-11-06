@@ -5,6 +5,8 @@ import type {
   PluginContextV3,
   ProjectEntry,
 } from '../index.js';
+import type { ErrorEnvelope, DetailsOptionFor, PlatformErrorCode } from '../errors/index.js';
+import { createCatalogErrorEnvelope, getCatalogEntry } from '../errors/index.js';
 import type {
   ManifestV3,
   PermissionSpec,
@@ -76,5 +78,12 @@ void llm;
 
 const monitoring = {} as MonitoringSnapshot;
 void monitoring;
+
+const code: PlatformErrorCode = 'KB_CONFIG_INVALID';
+const entry = getCatalogEntry(code);
+const details: DetailsOptionFor<typeof code> = { details: { path: 'config.json' } };
+const error: ErrorEnvelope = createCatalogErrorEnvelope({ code, ...details });
+void entry;
+void error;
 
 export {};

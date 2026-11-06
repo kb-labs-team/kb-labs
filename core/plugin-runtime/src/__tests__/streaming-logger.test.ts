@@ -5,7 +5,7 @@
  *
  * The streaming logger wraps ILogger to also emit 'logger.line' events
  * (NOT 'log.line') through an eventEmitter, enabling routing in execution hosts.
- * See: plugins/workflow/docs/adr/0019-log-stream-separation.md
+ * See: services/workflow/docs/adr/0019-log-stream-separation.md
  */
 
 import { describe, it, expect, vi } from 'vitest';

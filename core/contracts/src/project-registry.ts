@@ -76,24 +76,6 @@ export interface ProjectView {
   stateDir: string;
 }
 
-export interface IProjectRegistry {
-  /** Root of machine-level state (`KB_HOME`, default `~/.kb`). */
-  readonly root: string;
-  /** Absolute path of `projects.json`. */
-  readonly filePath: string;
-  /** Registers an existing folder. Does not create or modify anything inside it. */
-  add(path: string, options?: AddProjectOptions): Promise<AddProjectResult>;
-  list(): Promise<ProjectView[]>;
-  /** Finds a project by id, name or path. Throws `KB_PROJECT_UNKNOWN` when absent. */
-  get(ref: string): Promise<ProjectView>;
-  /** Unregisters a project. Never touches the project folder or its runtime state. */
-  remove(ref: string): Promise<ProjectRecord>;
-  /** Sets `lastUsedAt`. */
-  touch(ref: string): Promise<ProjectRecord>;
-  /** Path helper only; the directory is created by whoever writes runtime state. */
-  stateDir(id: ProjectId): string;
-}
-
 /**
  * A registered project as presented by `kb project list|show` and by the host
  * API (`/api/v1/projects`). One shape for both, so the terminal and Studio show

@@ -4,10 +4,10 @@ import (
 	"fmt"
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"os"
-	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kb-labs/clikit/result"
+	clikitui "github.com/kb-labs/clikit/ui"
 )
 
 // output provides unified CLI formatting with lipgloss.
@@ -30,12 +30,13 @@ type output struct {
 
 func newOutput() output {
 	enabled := colorEnabled()
+	clikitui.ConfigureLipglossColor(enabled)
 	return output{
-		infoTag: lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "14")).Render("[INFO]"),
-		okTag:   lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "10")).Render("[ OK ]"),
-		warnTag: lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "11")).Render("[WARN]"),
-		errTag:  lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "9")).Render("[ERR ]"),
-		label:   lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "8")),
+		infoTag: lipgloss.NewStyle().Bold(enabled).Foreground(color(enabled, "14")).Render("[INFO]"),
+		okTag:   lipgloss.NewStyle().Bold(enabled).Foreground(color(enabled, "10")).Render("[ OK ]"),
+		warnTag: lipgloss.NewStyle().Bold(enabled).Foreground(color(enabled, "11")).Render("[WARN]"),
+		errTag:  lipgloss.NewStyle().Bold(enabled).Foreground(color(enabled, "9")).Render("[ERR ]"),
+		label:   lipgloss.NewStyle().Bold(enabled).Foreground(color(enabled, "8")),
 		value:   lipgloss.NewStyle().Foreground(color(enabled, "14")),
 		dim:     lipgloss.NewStyle().Foreground(color(enabled, "8")),
 		bullet:  lipgloss.NewStyle().Foreground(color(enabled, "10")),
@@ -117,15 +118,10 @@ func color(enabled bool, ansi string) lipgloss.TerminalColor {
 }
 
 func colorEnabled() bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-	if strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		return false
-	}
+	return clikitui.StdoutColorEnabled()
+}
+
+func stdoutIsTerminal() bool {
 	fi, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }

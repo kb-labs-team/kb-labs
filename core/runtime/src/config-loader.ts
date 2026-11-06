@@ -56,18 +56,21 @@ import {
   validateProductConfig,
   type Diagnostic,
   type FieldMergePolicy,
+  interpolateConfig,
 } from "@kb-labs/core-config";
-import { DiscoveryManager } from "@kb-labs/core-discovery";
+import { createHealthContributor, openCatalog } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import { findRegisteredProjectRoot, resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
 import { canonicalizeProjectPath, createProjectRegistry, ProjectRegistryError } from "@kb-labs/core-project-registry";
 import { AdapterProjectScopeError, PlatformConfigError, registerProcessSensitiveValues } from "@kb-labs/core-platform";
 
 import { CONFIG_FIELD_SCOPE, type PlatformConfig } from "./config.js";
-import { interpolateConfig } from "./config-interpolation.js";
 import { requireProjectContext } from "./project-context.js";
 import { applyLocalNetworkOffset } from "./config-net-offset.js";
+import { isWorkspaceDevelopmentMode } from "./platform-mode.js";
+import { resolvePlatformVersion } from './platform-version.js';
 import { PLATFORM_CONFIG_PRODUCT } from "./schema/platform-config-schema.js";
-import { discoverAdapters } from "./discover-adapters.js";
+import type { PlatformContainer } from './container.js';
 
 function collectDeclaredSecretValues(
   value: unknown,
@@ -132,9 +135,15 @@ export interface LoadPlatformConfigOptions {
    * before reading config. Does not override variables already set.
    */
   loadEnvFile?: boolean;
+  /** Execution health is provided by a host after its runtime has initialized. */
+  executionHealth?: () => Promise<Awaited<ReturnType<PlatformContainer['executionBackend']['health']>>>;
+  catalog?: IEntityRegistry;
+  persistCatalogSnapshot?: boolean;
 }
 
 interface LoadPlatformConfigResultBase {
+  /** Resolved catalog opened for this process scope and reused by initialization. */
+  catalog: IEntityRegistry;
   /**
    * Effective `platform` configuration: project config deep-merged on top of
    * platform defaults. Always defined — an empty object when neither layer
@@ -393,13 +402,9 @@ async function readConfigFile(configPath: string): Promise<{
 // ──────────────────────────────────────────────────────────────────────────
 
 async function loadPluginSettingsDefaults(
-  roots: RootsResolution,
-  projectScope: 'required' | 'platform',
+  catalog: IEntityRegistry,
 ): Promise<NonNullable<LoadPlatformConfigResult['pluginSettingsDefaults']>> {
-  const discovery = await new DiscoveryManager({
-    root: projectScope === 'platform' ? roots.platformRoot : roots.projectRoot!,
-    platformRoot: roots.platformRoot,
-  }).discover();
+  const discovery = catalog.discovery();
   const packages = new Map(discovery.plugins.map((plugin) => [plugin.id, plugin]));
   const defaults: NonNullable<LoadPlatformConfigResult['pluginSettingsDefaults']> = [];
 
@@ -477,11 +482,8 @@ export async function loadPlatformConfig(
     const resolvedProjectRoot = await findRegisteredProjectRoot(startDir, env);
     if (registered.project.path !== resolvedProjectRoot) {
       throw new ProjectRegistryError(
-        'KB_PROJECT_RUNTIME_IDENTITY_MISMATCH',
+        { code: 'KB_PROJECT_RUNTIME_IDENTITY_MISMATCH', details: { projectId: options.projectId } },
         `Runtime project ${options.projectId} was started for "${requestedPath}" but the registry maps it to "${registered.project.path}".`,
-        {
-          projectId: options.projectId,
-        },
       );
     }
   }
@@ -557,6 +559,7 @@ export async function loadPlatformConfig(
   let platformDefaults: PlatformConfig | undefined;
   let platformDefaultsSource: string | undefined;
   let rawPlatformConfig: Record<string, unknown> | undefined;
+  let containerConfigOverlay: Record<string, unknown> = {};
 
   const samePath =
     !!platformConfigPath &&
@@ -585,6 +588,17 @@ export async function loadPlatformConfig(
     platformDefaults = platformSection;
     rawPlatformConfig = rawConfig;
     platformDefaultsSource = platformConfigPath;
+  }
+
+  // Container delivery can mount a topology-owned overlay without replacing
+  // the release image's baked composition. The standard config remains the
+  // base; this file is an explicit higher-precedence layer owned by the
+  // container composition producer (currently Helm).
+  const containerConfigOverlayPath = path.join(roots.platformRoot, '.kb', 'kb.config.override.json');
+  if (existsSync(containerConfigOverlayPath)) {
+    const { platformSection, rawConfig } = await readConfigFile(containerConfigOverlayPath);
+    platformDefaults = mergeDefined(platformDefaults ?? {}, platformSection ?? {});
+    containerConfigOverlay = rawConfig ?? {};
   }
 
   // Generated layer (ADR-0047): installer-written `.kb/generated/*.json|jsonc`
@@ -659,16 +673,46 @@ export async function loadPlatformConfig(
     appliedOverlays.push(overlay.path);
   }
 
-  const pluginSettingsDefaults = await loadPluginSettingsDefaults(roots, projectScope);
+  const workspaceDevelopment = isWorkspaceDevelopmentMode({
+    sameLocation: roots.sameLocation,
+    rawConfig: rawProjectConfig,
+    rawPlatformConfig,
+  });
+  const catalog = options.catalog ?? await openCatalog({
+    platformRoot: roots.platformRoot,
+    projectRoot: projectScope === 'platform' ? roots.platformRoot : configRoot,
+  }, {
+    resolvePlatformVersion: () => resolvePlatformVersion(roots.platformRoot, {
+      sameLocation: roots.sameLocation,
+      rawConfig: rawProjectConfig,
+      rawPlatformConfig,
+    }),
+    ...(options.persistCatalogSnapshot !== undefined ? { persistSnapshot: options.persistCatalogSnapshot } : {}),
+    ...(options.executionHealth ? {
+      healthContributors: [createHealthContributor('execution', options.executionHealth)],
+    } : {}),
+    ...(workspaceDevelopment ? { workspaceAdapters: {
+      development: true,
+      workspaceRoot: configRoot,
+      configuredPackages: [],
+      discoverAll: true,
+    } } : {}),
+  });
+  const pluginSettingsDefaults = await loadPluginSettingsDefaults(catalog);
   const defaultsData: Record<string, unknown> = {
     plugins: Object.fromEntries(pluginSettingsDefaults.map(({ configSection, data }) => [configSection, data])),
   };
-  // Effective full config applies defaults, generated config, platform config,
-  // project settings, then the platform-owned scenario overlays.
+  // Effective full config applies defaults, generated config, the selected
+  // base config, then the delivery overlay, project settings, and scenario
+  // overlays. Keep the delivery layer independent of root layout.
   let effectiveConfig: Record<string, unknown> = mergeOverlay(
     defaultsData,
-    mergeOverlay(generatedLayer.data, rawProjectConfig ?? rawPlatformConfig ?? {}),
+    mergeOverlay(
+      generatedLayer.data,
+      rawProjectConfig ?? rawPlatformConfig ?? {},
+    ),
   );
+  effectiveConfig = mergeOverlay(effectiveConfig, containerConfigOverlay);
   if (projectId) {
     effectiveConfig = mergeOverlay(effectiveConfig, projectSettings);
   }
@@ -706,16 +750,17 @@ export async function loadPlatformConfig(
     interpolateConfig(merged, strictInterpolation, env),
     env,
   );
-  const adapterManifests = await discoverAdapters(roots.platformRoot);
+  const adapterManifests = catalog.adapters();
   const secretValues: string[] = [];
   for (const [slot, binding] of Object.entries(effective.adapters ?? {})) {
     const packageNames = Array.isArray(binding) ? binding : typeof binding === 'string' ? [binding] : [];
     for (const packageName of packageNames) {
-      const adapter = adapterManifests.get(packageName) ??
-        [...adapterManifests.values()].find(({ packageName: discoveredName }) => discoveredName === packageName);
-      if (!adapter) continue;
+      const adapter = [...adapterManifests.values()].find((entry) =>
+        entry.id === packageName || (entry.manifest.kind === 'adapter' && entry.manifest.manifest.id === packageName),
+      );
+      if (!adapter || adapter.manifest.kind !== 'adapter') continue;
       const secretFields = new Set(
-        Object.entries(adapter.module.manifest.configSchema ?? {})
+        Object.entries(adapter.manifest.manifest.configSchema ?? {})
           .filter(([, schema]) => schema.secret === true)
           .map(([field]) => field),
       );
@@ -727,14 +772,22 @@ export async function loadPlatformConfig(
   }
   registerProcessSensitiveValues(secretValues);
 
+  const workspaceRootIsConfigRoot = samePath && isWorkspaceDevelopmentMode({
+    sameLocation: roots.sameLocation,
+    rawConfig: rawProjectConfig,
+    rawPlatformConfig,
+  });
+  const resolvedProjectRoot = roots.projectRoot ?? (workspaceRootIsConfigRoot ? roots.platformRoot : undefined);
+  const sameLocation = roots.sameLocation || (workspaceRootIsConfigRoot && resolvedProjectRoot === roots.platformRoot);
   const result: LoadPlatformConfigResultBase = {
+    catalog,
     platformConfig: effective,
     rawConfig: rawProjectConfig,
     rawPlatformConfig,
     effectiveConfig,
     pluginSettingsDefaults,
     platformRoot: roots.platformRoot,
-    sameLocation: roots.sameLocation,
+    sameLocation,
     sources: {
       platformDefaults: platformDefaultsSource,
       projectConfig: projectConfigSource,
@@ -757,7 +810,7 @@ export async function loadPlatformConfig(
     },
   };
   if (projectScope === 'platform') {
-    return { ...result, projectScope, projectRoot: roots.projectRoot };
+    return { ...result, projectScope, projectRoot: resolvedProjectRoot };
   }
   return { ...result, projectScope, projectRoot: configRoot };
 }

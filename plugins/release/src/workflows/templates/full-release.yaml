@@ -1,0 +1,58 @@
+name: Full Release
+version: '1.0.0'
+on:
+  manual: true
+
+inputs:
+  scope:
+    type: string
+    default: platform
+    description: Package scope to release (e.g. platform, @my-org/core)
+  bump:
+    type: string
+    default: auto
+    description: Version bump strategy (patch, minor, major, auto)
+
+jobs:
+  release:
+    runsOn: local
+    steps:
+      - name: Plan
+        id: plan
+        run: pnpm kb release plan --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --json
+
+      - name: Checks
+        id: checks
+        run: pnpm kb release checks run --scope ${{ inputs.scope }} --json
+
+      - name: Build
+        id: build
+        run: pnpm kb release build run --scope ${{ inputs.scope }} --json
+
+      - name: Pack verify
+        id: pack
+        run: pnpm kb release pack validate --scope ${{ inputs.scope }} --json
+
+      - name: Approve release
+        id: approve
+        uses: builtin:approval
+        with:
+          title: 'Approve release ${{ steps.plan.outputs.version }}'
+          instructions: |
+            Review the release plan above and approve to proceed with publishing.
+            Scope: ${{ inputs.scope }}
+            Packages: ${{ steps.plan.outputs.packages }}
+            Bump: ${{ steps.plan.outputs.bump }}
+
+      - name: Bump versions
+        if: ${{ steps.approve.outputs.approved }}
+        run: pnpm kb release version update --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --json
+
+      - name: Publish
+        id: publish
+        if: ${{ steps.approve.outputs.approved }}
+        run: pnpm kb release publish --scope ${{ inputs.scope }} --json
+
+      - name: Git commit & tag
+        if: ${{ steps.approve.outputs.approved }}
+        run: pnpm kb release git commit --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --json

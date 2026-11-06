@@ -37,8 +37,8 @@ class MemoryLoggerSink implements ILogger {
 }
 
 describe('createExecutionBackend returned contract failure diagnostics', () => {
-  // case: S-203.6
-  it('records safe source metadata without logging the returned message or stack', async () => {
+  // case: S-243.6
+  it('preserves the returned source identity without logging its stack', async () => {
     const logger = new MemoryLoggerSink();
     const platform = { logger, getAdapter: () => undefined } as unknown as PlatformServices;
     const fixturePath = fileURLToPath(new URL('./fixtures/returned-serialized-failure-handler.js', import.meta.url));
@@ -68,17 +68,25 @@ describe('createExecutionBackend returned contract failure diagnostics', () => {
     expect(result.error.envelope).toMatchObject({
       code: 'KB_PLUGIN_CONTRACT_VIOLATION',
       correlationId: 'returned-stack-correlation',
+      details: {
+        sourceErrorClass: 'Error',
+        sourceMessage: 'returned handler failure',
+        failureMode: 'returned',
+      },
     });
     const records = logger.queryByCorrelationId('returned-stack-correlation');
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       event: 'plugin.handler.failed',
       correlationId: 'returned-stack-correlation',
-      sourceCode: 'undefined',
+      sourceErrorClass: 'Error',
+      sourceMessage: 'returned handler failure',
+      failureMode: 'returned',
       sourceHintType: 'absent',
       pluginId: '@kb-labs/returned-failure-fixture',
       command: 'fixture failure',
     });
+    expect(JSON.stringify(records[0])).toContain('returned handler failure');
     expect(JSON.stringify(records[0])).not.toContain(returnedStack);
     expect(records[0]).not.toHaveProperty('serializedError');
     expect(records[0]).not.toHaveProperty('error');

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { confirmDestructive, renderDestructiveMessage, type DestructiveAction } from './destructive';
 
 const ACTION: DestructiveAction = {
-  action: 'mind drop',
+  action: 'mind index delete',
   resource: 'index "code"',
   effect: 'deletes all vectors',
   severity: 'high',
@@ -23,7 +23,7 @@ describe('confirmDestructive', () => {
       error: {
         code: 'KB_RUNTIME_CONFIRMATION_REQUIRED',
         kind: 'validation',
-        details: { confirmationRequired: 'true', destructive: 'true', action: 'mind drop' },
+        details: { confirmationRequired: 'true', destructive: 'true', action: 'mind index delete' },
       },
     });
     expect(result).not.toHaveProperty('result');
@@ -42,7 +42,7 @@ describe('confirmDestructive', () => {
       irreversible: 'false',
       reversible: 'true',
       severity: 'high',
-      action: 'mind drop',
+      action: 'mind index delete',
       resource: 'index "code"',
       confirmWith: '--yes',
       blastRadiusCount: '100',
@@ -50,7 +50,7 @@ describe('confirmDestructive', () => {
       blastRadiusScope: 'whole index',
       recovery: 're-index from source',
     });
-    expect(res!.error.message).toContain('mind drop');
+    expect(res!.error.message).toContain('mind index delete');
   });
 
   it('marks irreversible actions and omits a recovery field when none', () => {

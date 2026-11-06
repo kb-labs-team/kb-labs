@@ -17,6 +17,7 @@ import (
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	marketplaceinstallspec "github.com/kb-labs/create/v2/marketplace/install_spec"
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -120,10 +121,10 @@ func IDs() ([]string, error) {
 	return result, nil
 }
 
-// ValidateCatalog resolves every built-in journey against the candidate
-// release index during sealing. This catches absent plugins/adapters and
-// ambiguous capability providers before an index is published, while required
-// operator inputs can remain unanswered until install or update time.
+// ValidateCatalog checks every built-in journey before sealing. Marketplace
+// plugin identities are validated by the scenario contract; only platform
+// capabilities and adapters resolve against the candidate release index, while
+// required operator inputs can remain unanswered until install or update time.
 func ValidateCatalog(source catalog.Catalog) error {
 	ids, err := IDs()
 	if err != nil {
@@ -197,6 +198,11 @@ func Validate(value Scenario) error {
 		return fmt.Errorf("scenario requires schema %q and ID", Schema)
 	}
 	seen := map[string]bool{}
+	for _, spec := range value.Plugins {
+		if err := marketplaceinstallspec.Validate(spec); err != nil {
+			return fmt.Errorf("scenario Marketplace install spec %q is invalid: %w", spec, err)
+		}
+	}
 	for _, field := range allFields(value) {
 		if field.ID == "" || seen[field.ID] {
 			return fmt.Errorf("scenario has missing or duplicate field ID")
@@ -460,7 +466,7 @@ func Compile(value Scenario, state State, base contracts.InstallRequest) (contra
 	}
 	base.Schema = contracts.RequestSchema
 	base.ScenarioID = value.ID
-	base.Plugins = append(base.Plugins, components(value.Plugins)...)
+	base.MarketplaceInstallSpecs = append(base.MarketplaceInstallSpecs, value.Plugins...)
 	base.Adapters = append(base.Adapters, components(value.Adapters)...)
 	if base.Values == nil {
 		base.Values = map[string]string{}

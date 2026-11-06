@@ -1,0 +1,146 @@
+{
+  "name": "@kb-labs/quality",
+  "description": "Quality Plugin CLI commands for monorepo analysis, health checks, and automated fixes.",
+  "version": "2.120.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./plugin-manifest": {
+      "types": "./dist/manifest.d.ts",
+      "import": "./dist/manifest.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts/index.d.ts",
+      "import": "./dist/contracts/index.js"
+    },
+    "./contracts/contract": {
+      "types": "./dist/contracts/contract.d.ts",
+      "import": "./dist/contracts/contract.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./core/stats": {
+      "types": "./dist/core/stats/index.d.ts",
+      "import": "./dist/core/stats/index.js"
+    },
+    "./core/health": {
+      "types": "./dist/core/health/index.d.ts",
+      "import": "./dist/core/health/index.js"
+    },
+    "./core/dependencies": {
+      "types": "./dist/core/dependencies/index.d.ts",
+      "import": "./dist/core/dependencies/index.js"
+    },
+    "./core/graph": {
+      "types": "./dist/core/graph/index.d.ts",
+      "import": "./dist/core/graph/index.js"
+    },
+    "./core/stale": {
+      "types": "./dist/core/stale/index.d.ts",
+      "import": "./dist/core/stale/index.js"
+    },
+    "./core/builds": {
+      "types": "./dist/core/builds/index.d.ts",
+      "import": "./dist/core/builds/index.js"
+    },
+    "./core/types": {
+      "types": "./dist/core/types/index.d.ts",
+      "import": "./dist/core/types/index.js"
+    },
+    "./core/tests": {
+      "types": "./dist/core/tests/index.d.ts",
+      "import": "./dist/core/tests/index.js"
+    },
+    "./core/dead-code": {
+      "types": "./dist/core/dead-code/index.d.ts",
+      "import": "./dist/core/dead-code/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup --config tsup.config.ts && pnpm run build:studio",
+    "build:cli": "tsup --config tsup.config.ts",
+    "build:studio": "rspack build --config rspack.studio.config.mjs",
+    "clean": "rimraf dist",
+    "dev": "tsup --config tsup.config.ts --watch",
+    "dev:studio": "rspack serve --config rspack.studio.config.mjs",
+    "lint": "eslint src --ext .ts,.tsx",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run --passWithNoTests",
+    "test:cli": "vitest run --config vitest.cli.config.ts",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.25.76",
+    "@kb-labs/sdk": "workspace:*",
+    "globby": "^11.0.0",
+    "minimatch": "^10.0.1",
+    "typescript": "^5.6.3"
+  },
+  "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
+    "@types/node": "^24.3.3",
+    "eslint": "^9",
+    "rimraf": "^6.0.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.11",
+    "@kb-labs/studio-plugin-tools": "workspace:*",
+    "@rspack/cli": "^2.1.2",
+    "@rspack/core": "^2.1.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "globby": "^11.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "engines": {
+    "node": "24.x",
+    "pnpm": ">=9.0.0"
+  },
+  "kb": {
+    "manifest": "./dist/manifest.js"
+  },
+  "peerDependencies": {
+    "@ant-design/icons": "^5.4.0",
+    "@tanstack/react-query": "^5.0.0",
+    "antd": "^5.21.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0",
+    "@kb-labs/sdk": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "antd": {
+      "optional": true
+    },
+    "@ant-design/icons": {
+      "optional": true
+    },
+    "@tanstack/react-query": {
+      "optional": true
+    },
+    "react-router-dom": {
+      "optional": true
+    }
+  },
+  "sideEffects": false
+}

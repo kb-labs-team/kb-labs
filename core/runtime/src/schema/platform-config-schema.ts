@@ -24,6 +24,12 @@ export const PLATFORM_CONFIG_SCHEMA = {
     adapterOptions: { type: 'object', additionalProperties: true },
     core: { type: 'object', additionalProperties: true },
     execution: { type: 'object', additionalProperties: true },
+    deployment: {
+      type: 'object',
+      properties: { topology: { enum: ['local', 'cloud', 'k8s'] } },
+      required: ['topology'],
+      additionalProperties: false,
+    },
   },
   additionalProperties: true,
 } as const;

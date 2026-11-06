@@ -22,7 +22,7 @@ Whether it runs an HTTP daemon is an implementation detail, not a boundary.
 
 ```
 plugins/your-plugin/
-├── entry/                  # @kb-labs/your-plugin-entry — thin wiring
+├── entry/                  # @kb-labs/your-plugin — thin wiring
 │   ├── src/
 │   │   ├── index.ts        # registerPlugin() + manifest export
 │   │   ├── cli/            # CLI commands (folders, not a separate package)
@@ -44,7 +44,7 @@ plugins/your-plugin/
 ### Plugin with daemon (+ HTTP service)
 
 ```
-plugins/workflow/
+plugins/your-plugin/
 ├── entry/                  # manifest + CLI + Studio wiring
 ├── contracts/              # types
 ├── core/                   # business logic
@@ -74,7 +74,7 @@ plugins/mind/
 **One package, one import for the platform.**
 
 ```ts
-// Platform does: import { plugin } from '@kb-labs/mind-entry'
+// Platform does: import { plugin } from '@kb-labs/mind'
 export const plugin = definePlugin({
   manifest: { ... },
   commands: [ragQueryCommand, indexCommand],

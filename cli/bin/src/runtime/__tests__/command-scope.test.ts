@@ -5,6 +5,21 @@ import { resolveProjectScope } from '../command-scope';
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
 
 describe('bootstrap command scope resolution', () => {
+  it('resolves the current-project lookup before initializing platform adapters', () => {
+    registerBuiltinSystemCommands();
+    const route = registry.resolve(['project', 'show']);
+
+    expect(route.type).toBe('system-cmd');
+    if (route.type !== 'system-cmd') throw new Error('project show is not a system command');
+    expect(resolveProjectScope(route, {}, ['project', 'show'])).toBe('required');
+
+    const explicit = registry.resolve(['project', 'show', 'project-id']);
+    expect(explicit.type).toBe('system-cmd');
+    if (explicit.type !== 'system-cmd') throw new Error('project show with an ID is not a system command');
+    expect(explicit.rest).toEqual(['project-id']);
+    expect(resolveProjectScope(explicit, {}, ['project', 'show', 'project-id'])).toBe('platform');
+  });
+
   // case: S-124.10
   it('uses each registered system command declaration and keeps plugins project-scoped', () => {
     registerBuiltinSystemCommands();
@@ -36,6 +51,20 @@ describe('bootstrap command scope resolution', () => {
     expect(resolveProjectScope({ type: 'not-found', input: [], suggestions: [] }, { help: true }, [])).toBe('platform');
     expect(resolveProjectScope({ type: 'not-found', input: [], suggestions: [] }, { version: true }, [])).toBe('platform');
     expect(resolveProjectScope({ type: 'not-found', input: ['missing'], suggestions: [] }, {}, ['missing'])).toBe('platform');
+    expect(resolveProjectScope(
+      { type: 'not-found', input: ['commit'], suggestions: [] },
+      { help: true },
+      ['commit'],
+      {},
+      true,
+    )).toBe('required');
+    expect(resolveProjectScope(
+      { type: 'not-found', input: ['missing'], suggestions: [] },
+      {},
+      ['missing'],
+      {},
+      false,
+    )).toBe('platform');
   });
 
   it('lets only registered platform/project scope selectors override project context', () => {

@@ -1,7 +1,7 @@
 import { commandSources, sourceFragmentSources } from './doc-source-map.mjs';
 
 export function renderGeneratedDocSource(command, generatedSources, match) {
-  const source = commandSources[command];
+  const source = commandSources[command]?.source;
   if (!source) {
     throw new Error(`Command "${command}" is not in the docs source allowlist`);
   }

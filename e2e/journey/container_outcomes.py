@@ -11,6 +11,7 @@ from typing import Protocol
 from urllib.parse import quote
 import http.client
 import socket
+import jsonl
 
 
 class DockerBackend(Protocol):
@@ -112,8 +113,10 @@ class DockerCLI:
         result = self._run("events", "--since", since, "--until", until, "--filter", "type=container",
                            "--format", "{{json .}}")
         events = []
-        for line in result.splitlines():
-            event = json.loads(line)
+        for row in jsonl.read_jsonl_text(result):
+            if row.error is not None:
+                raise ValueError(f"Docker events returned invalid JSONL at line {row.line_number}: {row.error}")
+            event = row.value
             if event.get("Action") in {"die", "oom", "kill"}:
                 events.append(event)
         return events
@@ -172,7 +175,11 @@ def collect_container_outcomes(backend: DockerBackend, container_ids: list[str],
         metrics = backend.metrics(identity)
         samples_path = report / "container-metrics.jsonl"
         if samples_path.is_file():
-            samples = [json.loads(line) for line in samples_path.read_text(encoding="utf-8").splitlines() if line]
+            sample_rows = jsonl.read_jsonl(samples_path)
+            malformed = next((row for row in sample_rows if row.error is not None), None)
+            if malformed is not None:
+                raise ValueError(f"container metrics JSONL has invalid row at line {malformed.line_number}: {malformed.error}")
+            samples = [row.value for row in sample_rows]
             samples = [sample for sample in samples if sample.get("containerId") == identity]
             if samples:
                 latest = samples[-1]["metrics"]
@@ -221,8 +228,7 @@ def monitor_container(backend: DockerBackend, container_id: str, report_dir: str
             return
         identity = str(inspected.get("Id") or container_id)
         sample = {"containerId": identity, "metrics": backend.metrics(identity)}
-        with samples_path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(sample) + "\n")
+        jsonl.write_jsonl(samples_path, [sample], append=True)
         time.sleep(0.5)
 
 

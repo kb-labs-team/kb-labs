@@ -19,7 +19,7 @@ import { isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-resul
  * A command failure is the only structured handler result. Success values are
  * always plain command data, even when that data contains an `ok` field.
  */
-function commandFailureError(value: unknown, binaryName?: string): ValidatedErrorEnvelope | undefined {
+function commandFailureError(value: unknown, binaryName: string | undefined, correlationId: string): ValidatedErrorEnvelope | undefined {
   if (!isUxResultCandidate(value) || value.ok !== false || !('error' in value)) {
     return undefined;
   }
@@ -31,7 +31,10 @@ function commandFailureError(value: unknown, binaryName?: string): ValidatedErro
       ((!('hint' in error) || error.hint === undefined) && !isErrorCode(error.code))) {
     return undefined;
   }
-  return toErrorEnvelope(error, binaryName ? { binary: binaryName } : {});
+  return toErrorEnvelope(error, {
+    correlationId,
+    ...(binaryName ? { binary: binaryName } : {}),
+  });
 }
 
 function isFailureClaim(value: unknown): boolean {
@@ -95,7 +98,7 @@ export function wrapCliResult<T>(
   }
 
   const binaryName = descriptor.hostContext.host === 'cli' ? descriptor.hostContext.binaryName : undefined;
-  const failureError = commandFailureError(data, binaryName);
+  const failureError = commandFailureError(data, binaryName, executionMeta.requestId);
   if (isFailureClaim(data) && !failureError) {
     return contractViolation(standardMeta);
   }

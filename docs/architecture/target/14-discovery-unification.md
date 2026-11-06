@@ -2,6 +2,8 @@
 
 Status: implemented in `feat/unified-discovery`. Context: ADR-0048 finding F1, ADR-0012 §6.
 
+The resolved catalog contract and its future host-owned service boundary are defined in [ADR-0055](../../adr/0055-single-resolved-catalog.md).
+
 ## 1. Before: two pipelines
 
 ### (a) Lock pipeline, `core/discovery` `DiscoveryManager`

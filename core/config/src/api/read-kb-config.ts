@@ -6,6 +6,7 @@
 import path from 'node:path';
 import { promises as fsp } from 'node:fs';
 import { findGitRoot, readConfigFile, type ConfigFileResult } from './read-config';
+import { interpolateConfig } from '../env-interpolation.js';
 
 const KB_CONFIG_FILENAMES = [
   'kb.config.jsonc',
@@ -51,7 +52,22 @@ export async function findKbConfig(
   return { path: null, tried };
 }
 
-export async function readKbConfig(cwd: string): Promise<KbConfigResult | null> {
+export interface ReadKbConfigOptions {
+  required?: boolean;
+  env?: NodeJS.ProcessEnv;
+}
+
+/** Read runtime config and resolve the existing `${ENV}` reference syntax. */
+export async function readKbConfig(cwd: string, options: ReadKbConfigOptions = {}): Promise<KbConfigResult | null> {
+  const raw = await readRawKbConfig(cwd);
+  if (!raw) { return null; }
+  const env = options.env ?? process.env;
+  const required = options.required ?? env.NODE_ENV === 'production';
+  return { ...raw, data: interpolateConfig(raw.data, required, env) };
+}
+
+/** Read the config exactly as stored. Use this in every read-modify-write path. */
+export async function readRawKbConfig(cwd: string): Promise<KbConfigResult | null> {
   const { path } = await findKbConfig(cwd);
   if (!path) {
     return null;

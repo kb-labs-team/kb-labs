@@ -3,7 +3,7 @@
  * marketplace plugins list|enable|disable`, over HTTP. Uses a real registry
  * against a temp `KB_HOME` and a stubbed {@link MarketplaceClient} (the real
  * one talks to a live marketplace service; that HTTP contract is exercised by
- * `plugins/marketplace/api`'s own tests).
+ * `services/marketplace/api`'s own tests).
  */
 
 import { mkdtemp, mkdir, rm, realpath } from "node:fs/promises";
@@ -11,8 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
-import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import { createPluginsRoutes } from "../plugins-routes.js";
 import { MarketplaceClientError, type MarketplaceClient } from "../marketplace-client.js";
 
@@ -71,7 +71,7 @@ describe("createPluginsRoutes", () => {
   it("GET lists plugins scoped to the project's path", async () => {
     const marketplace = stubMarketplace({
       listPackages: vi.fn().mockResolvedValue({
-        entries: [{ id: "@kb-labs/commit-entry", version: "1.0.0", source: "workspace", primaryKind: "plugin", provides: ["plugin"], enabled: true, scope: "project" }],
+        entries: [{ id: "@kb-labs/commit", version: "1.0.0", source: "workspace", primaryKind: "plugin", provides: ["plugin"], enabled: true, scope: "project" }],
         total: 1,
       }),
     });
@@ -82,7 +82,7 @@ describe("createPluginsRoutes", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json() as DataBody<Array<{ id: string; enabled: boolean }>>;
     expect(body.data).toHaveLength(1);
-    expect(body.data[0]).toMatchObject({ id: "@kb-labs/commit-entry", enabled: true });
+    expect(body.data[0]).toMatchObject({ id: "@kb-labs/commit", enabled: true });
     expect(marketplace.listPackages).toHaveBeenCalledWith({
       kind: "plugin",
       scope: "project",
@@ -115,14 +115,14 @@ describe("createPluginsRoutes", () => {
     const res = await instance.inject({
       method: "POST",
       url: "/api/v1/plugins/enable",
-      payload: { projectId, packageId: "@kb-labs/commit-entry" },
+      payload: { projectId, packageId: "@kb-labs/commit" },
     });
 
     expect(res.statusCode).toBe(200);
     const body = res.json() as DataBody<{ id: string; enabled: boolean }>;
-    expect(body.data).toEqual({ id: "@kb-labs/commit-entry", enabled: true, scope: "project" });
+    expect(body.data).toEqual({ id: "@kb-labs/commit", enabled: true, scope: "project" });
     expect(marketplace.setEnabled).toHaveBeenCalledWith(
-      { packageId: "@kb-labs/commit-entry", scope: "project", projectRoot: projectDir },
+      { packageId: "@kb-labs/commit", scope: "project", projectRoot: projectDir },
       true,
     );
   });

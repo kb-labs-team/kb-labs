@@ -60,7 +60,7 @@ function makeContext(overrides: Partial<ServiceContext>): ServiceContext {
     port: 4000,
     host: "127.0.0.1",
     netOffset: 0,
-    runtime: {},
+    runtime: { effectiveConfig: { platform: { deployment: { topology: 'local' } } } },
     platformRoot: "/platform",
     projectRoot: "/project",
     ...overrides,

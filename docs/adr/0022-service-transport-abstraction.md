@@ -149,8 +149,8 @@ in `IPlatformAdapters` only, outside `ADAPTER_REGISTRY`.
 | `plugins/gateway/app` | Load transport via `platform.getAdapter<IServiceTransport>('serviceTransport')` |
 | `shared/http` | `getListenOptions(port, host)` — checks `KB_SOCKET_PATH` |
 | `plugins/rest-api/app` | `server.listen(getListenOptions(...))` |
-| `plugins/workflow/daemon` | Same |
-| `plugins/marketplace/daemon` | Same |
+| `services/workflow/daemon` | Same |
+| `services/marketplace/app` | Same |
 | `core/plugin-contracts` | `socket?: string` on `ServiceRuntime` |
 | `tools/kb-dev` | `ProbeUnix`, `ClassifyServiceProbe`, `Socket` config field, `KB_SOCKET_PATH` injection, socket cleanup on stop |
 | `e2e/gateway` | Transport e2e tests (TR-01..TR-07) |

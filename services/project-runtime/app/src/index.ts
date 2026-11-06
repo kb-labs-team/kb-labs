@@ -22,6 +22,7 @@ export {
 export { createRuntimeGuard, tokenMatches, type RuntimeGuard } from "./guard.js";
 export { watchParent, isProcessAlive } from "./watchdog.js";
 export {
+  RUNTIME_ACTIVE_WORK_PATH,
   RUNTIME_ARGS,
   RUNTIME_HEALTH_PATH,
   RUNTIME_PROJECT_HEADER,

@@ -18,7 +18,9 @@ import { configGet } from '../../commands/system/config/get.js';
 import { configSet } from '../../commands/system/config/set.js';
 import { configShow } from '../../commands/system/config/show.js';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
+import { openCatalog as openCatalogWithVersion } from '@kb-labs/core-registry';
 import { resolveConfigRoots, userConfigFileForScope } from '../../commands/system/config/shared.js';
+import { setResolvedCatalog } from '../../registry/discovery-state.js';
 
 // ── Harness ──────────────────────────────────────────────────────────────────
 
@@ -71,6 +73,7 @@ let kbHome: string;
 let platformRoot: string;
 let projectRoot: string;
 let projectId: string;
+let testCatalog: Awaited<ReturnType<typeof openCatalog>> | undefined;
 
 async function write(root: string, rel: string, contents: string): Promise<string> {
   const full = path.join(root, rel);
@@ -108,7 +111,7 @@ async function writeCommitSettingsManifest(): Promise<void> {
   await write(platformRoot, '.kb/marketplace.lock', JSON.stringify({
     schema: 'kb.marketplace/3',
     plugins: {
-      '@kb-labs/commit': { source: 'platform', version: '0.1.0', integrity, package: '@kb-labs/commit-entry', resolvedPath: '.kb/plugins/commit', enabled: true },
+      '@kb-labs/commit': { source: 'platform', version: '0.1.0', integrity, package: '@kb-labs/commit', resolvedPath: '.kb/plugins/commit', enabled: true },
     },
   }));
 }
@@ -133,6 +136,7 @@ async function run(
   flags: Record<string, unknown> = {},
 ): Promise<{ code: number; out: Captured }> {
   const { ctx, out } = makeCtx(projectRoot);
+  await testCatalog?.refresh();
   const code = await command.run(ctx, argv, { json: true, ...flags });
   return { code, out };
 }
@@ -144,6 +148,7 @@ async function runAt(
   flags: Record<string, unknown> = {},
 ): Promise<{ code: number; out: Captured }> {
   const { ctx, out } = makeCtx(cwd);
+  await testCatalog?.refresh();
   const code = await command.run(ctx, argv, { json: true, ...flags });
   return { code, out };
 }
@@ -174,9 +179,15 @@ beforeEach(async () => {
   vi.stubEnv('KB_PLATFORM_ROOT', platformRoot);
   vi.stubEnv('KB_HOME', kbHome);
   projectId = (await createProjectRegistry({ env: process.env }).add(projectRoot)).project.id;
+  testCatalog = await openCatalog({ platformRoot, projectRoot });
+  setResolvedCatalog(testCatalog);
 });
 
 afterEach(async () => {
+  setResolvedCatalog(undefined);
+  const openedCatalog = testCatalog;
+  testCatalog = undefined;
+  await openedCatalog?.dispose();
   vi.unstubAllEnvs();
   delete process.env.KB_SOCKET_HASH;
   await fsp.rm(tmp, { recursive: true, force: true });
@@ -187,6 +198,11 @@ const PLATFORM_FILE = () => path.join(platformRoot, '.kb', 'kb.config.jsonc');
 const PROJECT_SETTINGS_FILE = () => path.join(kbHome, 'state', projectId, 'config.jsonc');
 
 // ── config set ───────────────────────────────────────────────────────────────
+
+const openCatalog = (
+  scope: Parameters<typeof openCatalogWithVersion>[0],
+  options: Omit<Parameters<typeof openCatalogWithVersion>[1], 'resolvePlatformVersion'> = {},
+) => openCatalogWithVersion(scope, { ...options, resolvePlatformVersion: async () => 'test' });
 
 describe('config set', () => {
   it('writes project-owned settings to the platform state directory', async () => {
@@ -422,6 +438,7 @@ describe('config set', () => {
 
     it('human output carries message, cause, hint and the code', async () => {
       const { ctx, out } = makeCtx(projectRoot);
+    await testCatalog?.refresh();
       const code = await configSet.run(ctx, ['platform.adaptors.llm', 'x'], { scope: 'platform' });
       expect(code).toBe(1);
       expect(out.json).toEqual([]);
@@ -646,6 +663,7 @@ describe('config get', () => {
 
   it('prints just the value in human mode', async () => {
     const { ctx, out } = makeCtx(projectRoot);
+    await testCatalog?.refresh();
     const code = await configGet.run(ctx, ['platform.adapters.llm'], {});
     expect(code).toBe(0);
     expect(out.written.join('')).toBe('@kb-labs/adapters-openai\n');
@@ -670,6 +688,7 @@ describe('config show provenance', () => {
 
   it('human output has a LAYER column', async () => {
     const { ctx, out } = makeCtx(projectRoot);
+    await testCatalog?.refresh();
     await configShow.run(ctx, [], {});
     const lines = out.success[0]?.items ?? [];
     expect(lines[0]).toMatch(/SOURCE\s+LAYER\s+FIELD\s+VALUE/);

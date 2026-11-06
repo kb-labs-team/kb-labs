@@ -93,11 +93,7 @@ const CHECKS = {
     command: 'devkit-check-types.mjs',
     emoji: '📝',
   },
-  plugins: {
-    name: 'Plugin Entry Structure',
-    command: 'devkit-check-plugins.mjs',
-    emoji: '🔌',
-  },
+
 };
 
 /**

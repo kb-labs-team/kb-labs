@@ -13,7 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import select_from_cases
-from select_from_cases import read_coverage_result, selection_from_coverage, selectors_from_coverage
+from select_from_cases import (read_coverage_result, runners_for_case_selection,
+                               selection_from_coverage, selectors_from_coverage)
 from service_steps import Journey
 from select_from_cases import _case_declarations
 from installed_fixture import configure_hermetic_cli_fixture, layout_value
@@ -34,6 +35,49 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
 
 
 class CaseJourneySelectionTests(unittest.TestCase):
+    def test_commit_default_and_registry_lane_step_graphs_are_disjoint(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/marketplace_steps.py"
+        declarations = _case_declarations(source, root)
+
+        def coverage_for(case_id: str, step_ids: set[str], release: bool) -> dict:
+            steps = []
+            for step_id in sorted(step_ids):
+                lines = [line for line, declaration in declarations.items()
+                         if step_id in declaration.get("cases", ())]
+                self.assertTrue(lines, f"{step_id} has no journey declaration in {source}")
+                steps.append({"stepId": step_id, "claims": [{
+                    "kind": "journey", "source": source, "line": lines[0],
+                }]})
+            return {"mode": "local", "cases": [{
+                "id": case_id, "status": "active", "release": release, "steps": steps,
+            }]}
+
+        default = selection_from_coverage(
+            [coverage_for("S-047", {"S-047.1"}, release=True)], "S-047.1")
+        registry_steps = {f"S-268.{number}" for number in range(1, 9)}
+        registry = selection_from_coverage(
+            [coverage_for("S-268", registry_steps, release=False)], ",".join(sorted(registry_steps)))
+
+        self.assertEqual(default["steps"], ["S-047.1"])
+        self.assertNotIn("marketplace-registry", default["composeProfiles"])
+        self.assertEqual(set(registry["steps"]), registry_steps)
+        self.assertEqual(registry["runners"], ["service-marketplace-registry:local"])
+        self.assertEqual(registry["composeProfiles"], ["marketplace-registry"])
+
+        from service_runner import service_selection_groups
+        default_groups = service_selection_groups(runner_selector="service-local:explore")
+        registry_groups = service_selection_groups(runner_selector="service-marketplace-registry:local")
+        self.assertIn("S-047.1", default_groups["marketplace-lifecycle"]["cases"])
+        self.assertNotIn("publish and install Commit through Registry",
+                         default_groups["marketplace-lifecycle"]["steps"])
+        self.assertNotIn("verify Commit Registry signature and provenance",
+                         default_groups["marketplace-lifecycle"]["steps"])
+        self.assertIn("publish and install Commit through Registry",
+                      registry_groups["marketplace-registry"]["steps"])
+        self.assertIn("verify Commit Registry signature and provenance",
+                      registry_groups["marketplace-registry"]["steps"])
+
     def test_hermetic_fixture_stages_declared_lock_at_its_shared_root(self):
         repository = Path(__file__).resolve().parents[2]
         lock_path = Path(layout_value("versionStatePaths.kb_marketplace_lock"))
@@ -102,8 +146,27 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 "runners": ["service-local:explore", "service-secured:explore"],
                 "prerequisiteSteps": [], "prerequisiteFlows": [],
                 "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
+                "composeProfiles": [],
                 "selectedOwningSteps": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
             })
+
+    # case: S-262.8
+    def test_selector_main_limits_case_owners_to_the_requested_batch_mode(self):
+        def invoke(command, **_options):
+            mode = command[command.index("--mode") + 1]
+            payload = {"ok": True, "data": coverage(
+                mode, source="e2e/journey/secured_connection_steps.py")}
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+        output = StringIO()
+        with patch.dict(os.environ, {
+                "KB_JOURNEY_CASES": "S-042.1",
+                "KB_JOURNEY_SELECTION_MODE": "local",
+                "KB_JOURNEY_ONLY": "",
+        }, clear=False), patch("hermetic_cli.run_command", side_effect=invoke), redirect_stdout(output):
+            self.assertEqual(select_from_cases.main(), 0)
+
+        self.assertEqual(json.loads(output.getvalue())["runners"], ["agent:commit"])
 
     def test_selector_failure_includes_decoded_cli_error_envelope(self):
         failure = {"ok": False, "error": {
@@ -138,6 +201,77 @@ class CaseJourneySelectionTests(unittest.TestCase):
             ["agent:commit"],
         )
 
+    # case: S-262.8
+    def test_partial_batch_runners_follow_selected_claim_owners_by_mode(self):
+        results = [
+            coverage("local", source="e2e/journey/secured_connection_steps.py"),
+            coverage("secured", source="e2e/journey/secured_connection_steps.py"),
+        ]
+
+        self.assertEqual(runners_for_case_selection(results, "S-042.1", "local"), ["agent:commit"])
+        self.assertEqual(runners_for_case_selection(results, "S-042.1", "secured"),
+                         ["agent-secured:commit"])
+
+    # case: S-262.8
+    def test_partial_batch_filters_claims_owned_by_different_modes(self):
+        source = "e2e/journey/service_runner.py"
+        root = Path(__file__).resolve().parents[2]
+        declarations = _case_declarations(source, root)
+        local_line = next(line for line, declaration in declarations.items()
+                          if "S-045.4" in declaration.get("cases", ()))
+        secured_line = next(line for line, declaration in declarations.items()
+                            if "S-045.5" in declaration.get("cases", ()))
+        results = []
+        for mode in ("local", "secured"):
+            results.append({
+                "mode": mode,
+                "cases": [{
+                    "id": "S-045",
+                    "status": "active",
+                    "release": True,
+                    "steps": [
+                        {"stepId": "S-045.4", "claims": [{
+                            "source": source, "kind": "journey", "line": local_line,
+                        }]},
+                        {"stepId": "S-045.5", "claims": [{
+                            "source": source, "kind": "journey", "line": secured_line,
+                        }]},
+                    ],
+                }],
+            })
+
+        self.assertEqual(runners_for_case_selection(results, "S-045.4,S-045.5", "local"),
+                         ["service-local:explore"])
+        self.assertEqual(runners_for_case_selection(results, "S-045.4,S-045.5", "secured"),
+                         ["service-secured:explore"])
+
+    # case: S-262.8
+    def test_partial_batch_mode_without_selected_owners_returns_empty(self):
+        self.assertEqual(runners_for_case_selection(
+            [coverage("local", source="e2e/journey/secured_connection_steps.py")], "S-042.1", "secured"), [])
+
+    # case: S-262.8
+    def test_partial_batch_keeps_all_same_mode_claim_owners(self):
+        source = "e2e/journey/installer_case_steps.py"
+        root = Path(__file__).resolve().parents[2]
+        line = next(line for line, declaration in _case_declarations(source, root).items()
+                    if "S-187.11" in declaration.get("cases", ()))
+        results = [{
+            "mode": "local",
+            "cases": [{
+                "id": "S-187",
+                "status": "active",
+                "release": True,
+                "steps": [{"stepId": "S-187.11", "claims": [{
+                    "source": source, "kind": "journey", "line": line,
+                }]}],
+            }],
+        }]
+        self.assertEqual(runners_for_case_selection(
+            results, "S-187.11", "local"),
+            ["agent:commit", "service-local:explore"],
+        )
+
     def test_rejects_unknown_coverage_modes(self):
         with self.assertRaisesRegex(ValueError, "unsupported QA coverage mode"):
             selectors_from_coverage([coverage("nightly", source="e2e/journey/service_runner.py")])
@@ -154,6 +288,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
             "runners": ["service-local:explore", "service-secured:explore"],
             "prerequisiteSteps": [], "prerequisiteFlows": [],
             "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
+            "composeProfiles": [],
             "selectedOwningSteps": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
         })
 
@@ -250,7 +385,9 @@ class CaseJourneySelectionTests(unittest.TestCase):
             unclaimed = journey.step("unclaimed helper", "auth", lambda: self.fail("helper must not run"))
             self.assertEqual(unclaimed.status, "SKIPPED")
             self.assertEqual(journey.result().case_run["claims"], [])
-            self.assertTrue(journey.result().case_run["partial"])
+            case_run = journey.result().case_run
+            self.assertNotIn("partial", case_run)
+            self.assertEqual(case_run["selection"], ["S-042"])
 
 if __name__ == "__main__":
     unittest.main()

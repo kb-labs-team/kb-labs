@@ -220,7 +220,7 @@ export class DuckDBAnalytics implements IAnalytics {
         byActor[String(r.actor)] = Number(r.cnt);
       }
 
-      return { totalEvents, byType, bySource, byActor, timeRange: { from, to } };
+      return { totalEvents, byType, bySource, byActor, timeRange: { from, to }, persistence: { kind: 'durable' } };
     });
   }
 

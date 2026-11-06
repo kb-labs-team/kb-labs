@@ -6,7 +6,17 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const catalogPath = resolve(packageRoot, 'src/error-envelope/errors.catalog.json');
 const outputPath = resolve(packageRoot, 'src/error-envelope/error-codes.generated.ts');
 const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
+for (const entry of catalog.codes) {
+  if (!Number.isInteger(entry.httpStatus) || entry.httpStatus < 100 || entry.httpStatus > 599) {
+    throw new Error(`${entry.code} must declare an HTTP status between 100 and 599`);
+  }
+  if (!['input-refusal', 'operation-failure'].includes(entry.processExitClass)) {
+    throw new Error(`${entry.code} must declare a process exit class`);
+  }
+}
 const entries = [...catalog.codes].sort((left, right) => left.code < right.code ? -1 : left.code > right.code ? 1 : 0);
+if (!Array.isArray(catalog.environmentVariables)) throw new Error('environmentVariables must be declared as an array');
+const environmentVariables = [...catalog.environmentVariables].sort();
 const codes = [...new Set(entries.map(({ code }) => code))];
 const templateParameterMetadata = entries.map((entry) => {
   const templates = [entry.message, entry.hint, entry.hintWithoutCorrelationId].filter(Boolean);
@@ -36,6 +46,16 @@ const templateParameterMetadata = entries.map((entry) => {
   };
 });
 const templateParameters = templateParameterMetadata.map(({ type }) => type);
+const schemaType = (schema) => {
+  if (schema.type === 'string') return 'string';
+  if (schema.type === 'array') return `readonly ${schemaType(schema.items)}[]`;
+  if (schema.type === 'object') {
+    const required = new Set(schema.required ?? []);
+    const fields = Object.entries(schema.properties ?? {}).map(([name, value]) => `${JSON.stringify(name)}${required.has(name) ? '' : '?'}: ${schemaType(value)}`);
+    return fields.length ? `{ ${fields.join('; ')} }` : 'Record<string, never>';
+  }
+  throw new Error(`Unsupported structured detail JSON schema type ${schema.type}`);
+};
 const detailParameters = entries.map((entry) => {
   const runtime = entry.runtimeTemplateParameters ?? {};
   const templates = [entry.message, entry.hint, entry.hintWithoutCorrelationId].filter(Boolean);
@@ -43,7 +63,11 @@ const detailParameters = entries.map((entry) => {
   const structured = entry.structuredDetailFields ?? [];
   const fields = [
     ...names.filter((name) => !(name in runtime)).map((name) => `${JSON.stringify(name)}: string`),
-    ...structured.filter((name) => !names.includes(name)).map((name) => `${JSON.stringify(name)}?: string`),
+    ...structured.filter((name) => !names.includes(name)).map((name) => {
+      const schema = entry.structuredDetailSchemas?.[name];
+      const required = (entry.requiredStructuredDetailFields ?? []).includes(name);
+      return `${JSON.stringify(name)}${required ? '' : '?'}: ${schema ? schemaType(schema) : 'string'}`;
+    }),
   ];
   return `  ${JSON.stringify(entry.code)}: ${fields.length ? `{ ${fields.join('; ')} }` : 'Record<string, never>'};`;
 });
@@ -61,7 +85,37 @@ const runtimeTemplateParameters = entries.map((entry) => {
   const type = fields.length === 0 ? 'Record<never, never>' : `{ ${fields.join('; ')} }`;
   return `  ${JSON.stringify(entry.code)}: ${type};`;
 });
+const producerInputs = entries.map((entry, index) => {
+  const metadata = templateParameterMetadata[index];
+  const runtime = entry.runtimeTemplateParameters ?? {};
+  const variants = [];
+  for (const messageOverride of [false, true]) for (const hintOverride of [false, true]) {
+    const required = new Set([
+      ...(messageOverride ? [] : metadata.requiredMessageNames),
+      ...(hintOverride ? [] : metadata.requiredHintNames),
+    ]);
+    const fields = [];
+    const detailNames = metadata.names.filter(name => !(name in runtime));
+    const detailFields = detailNames.map(name => `${JSON.stringify(name)}${required.has(name) ? '' : '?'}: string`);
+    for (const name of metadata.structuredDetailFields.filter(name => !detailNames.includes(name))) {
+      const schema = entry.structuredDetailSchemas?.[name];
+      detailFields.push(`${JSON.stringify(name)}${(entry.requiredStructuredDetailFields ?? []).includes(name) ? '' : '?'}: ${schema ? schemaType(schema) : 'string'}`);
+    }
+    const requiredDetail = detailNames.some(name => required.has(name)) || (entry.requiredStructuredDetailFields ?? []).length > 0;
+    if (detailFields.length) fields.push(`details${requiredDetail ? '' : '?'}: { ${detailFields.join('; ')} }`);
+    else fields.push('details?: Record<string, never>');
+    const runtimeNames = Object.keys(runtime);
+    const requiredRuntime = runtimeNames.some(name => required.has(name));
+    if (runtimeNames.length) fields.push(`templateValues${requiredRuntime ? '' : '?'}: { ${runtimeNames.map(name => `${JSON.stringify(name)}${required.has(name) ? '' : '?'}: string`).join('; ')} }`);
+    else fields.push('templateValues?: Record<string, never>');
+    fields.push(`message${messageOverride ? '' : '?'}: ${messageOverride ? 'string' : 'never'}`);
+    fields.push(`hint${hintOverride ? '' : '?'}: ${hintOverride ? 'string' : 'never'}`);
+    variants.push(`{ ${fields.join('; ')} }`);
+  }
+  return `  ${JSON.stringify(entry.code)}: ${variants.join(' | ')};`;
+});
 const output = [
+  "import type { ErrorAction, ErrorEnvelope, PlatformDiagnostic } from './types.js';",
   '/**',
   ' * Generated from errors.catalog.json by `pnpm generate:error-codes`.',
   ' * Do not edit this file directly; the JSON catalog is the source of truth.',
@@ -74,9 +128,19 @@ const output = [
   ...templateParameters,
   '}',
   '',
+  'export interface CatalogProducerInputFor {',
+  ...producerInputs.map(line => line.replace(': {', ': CatalogProducerCommon & ({').replace(/;$/, ');')),
+  '}',
+  'export type CatalogErrorRequest = { [C in CatalogErrorCode]: { code: C } & CatalogProducerInputFor[C] }[CatalogErrorCode];',
+  'export interface CatalogProducerCommon { cause?: string; correlationId?: string; actions?: ErrorAction[]; docs?: string; diagnostics?: PlatformDiagnostic[]; severity?: ErrorEnvelope[\"severity\"]; }',
+  '',
   'export interface CatalogDetailsFor {',
   ...detailParameters,
   '}',
+  '',
+  'export const catalogEnvironmentVariables = {',
+  ...environmentVariables.map((name) => `  ${JSON.stringify(name)}: ${JSON.stringify(name)},`),
+  '} as const;',
   '',
   'export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {',
   ...templateParameterMetadata.map(({ code, requiredNames }) => `  ${JSON.stringify(code)}: ${JSON.stringify(requiredNames)},`),

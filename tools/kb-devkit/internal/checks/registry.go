@@ -1,7 +1,12 @@
 package checks
 
-import "github.com/kb-labs/devkit/internal/config"
-import "github.com/kb-labs/devkit/internal/workspace"
+import (
+	"sort"
+	"time"
+
+	"github.com/kb-labs/devkit/internal/config"
+	"github.com/kb-labs/devkit/internal/workspace"
+)
 
 var defaultRules []Rule
 
@@ -13,6 +18,7 @@ func init() {
 		&ESLintRule{},
 		&StructureRule{},
 		&DepsRule{},
+		&ReleaseBoundaryRule{},
 	}
 }
 
@@ -35,6 +41,12 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 	if cfg == nil {
 		return r
 	}
+	graphTasks := make([]string, 0, len(cfg.Tasks))
+	for name := range cfg.Tasks {
+		graphTasks = append(graphTasks, name)
+	}
+	sort.Strings(graphTasks)
+	r.Register(&aggregateTaskOwnerRule{cfg: cfg})
 	for _, c := range cfg.Custom {
 		if !matchesPhase(c, phase) {
 			continue
@@ -44,15 +56,19 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 			continue
 		}
 		r.Register(&externalRule{
-			name:          c.Name,
-			run:           c.Run,
-			fix:           c.Fix,
-			phase:         phase,
-			language:      c.Language,
-			categories:    c.Categories,
-			scope:         c.Scope,
-			workspaceRoot: workspaceRoot,
-			checkConfig:   packCfg,
+			name:           c.Name,
+			run:            c.Run,
+			fix:            c.Fix,
+			phase:          phase,
+			language:       c.Language,
+			categories:     c.Categories,
+			anchorPackages: c.AnchorPackages,
+			requiresBuild:  c.RequiresBuild,
+			scope:          c.Scope,
+			workspaceRoot:  workspaceRoot,
+			checkConfig:    packCfg,
+			graphTasks:     graphTasks,
+			timeout:        time.Duration(cfg.Checks.TimeoutMS) * time.Millisecond,
 		})
 	}
 	return r
@@ -67,18 +83,17 @@ func (r *Registry) Register(rule Rule) {
 func (r *Registry) RulesFor(preset config.Preset) []Rule {
 	var result []Rule
 	for _, rule := range r.rules {
-		if external, ok := rule.(*externalRule); ok {
-			if external.scope == "workspace" {
-				result = append(result, rule)
+		if scoped, ok := rule.(interface{ Scope() string }); ok {
+			if scoped.Scope() == "workspace" {
 				continue
 			}
-			if matchesLanguage(config.CustomCheck{Language: external.language}, preset.Language) {
+			if external, ok := rule.(*externalRule); ok && matchesLanguage(config.CustomCheck{Language: external.language}, preset.Language) {
 				result = append(result, rule)
 			}
 			continue
 		}
 		if preset.Language == "go" {
-			if rule.Name() == "structure" {
+			if rule.Name() == "structure" || rule.Name() == "deps" {
 				result = append(result, rule)
 			}
 			continue

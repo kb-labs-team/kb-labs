@@ -220,7 +220,7 @@ if [[ -f "$CLI_BIN" ]]; then
   fi
 else
   # Fallback for contexts where the CLI hasn't been built (e.g. this script
-  # invoked standalone, outside the release checks pipeline) — same checks,
+  # invoked standalone, outside the release checks run pipeline) — same checks,
   # degraded (unexplained) error message on failure.
   CONSUMER="$WORK_DIR/consumer"
   mkdir -p "$CONSUMER"

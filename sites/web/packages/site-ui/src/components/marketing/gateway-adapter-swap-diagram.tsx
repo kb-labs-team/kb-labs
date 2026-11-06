@@ -5,6 +5,7 @@ import { cn } from '../../lib/utils';
 
 export interface GatewayAdapterSwapDiagramProps {
   className?: string;
+  caption: string;
 }
 
 // KB Labs services — shown in a 2×2 grid so they never wrap awkwardly
@@ -58,7 +59,7 @@ const CHIP_CLS: Record<ProviderColor, string> = {
   neutral: 'bg-bg text-muted/55 ring-line',
 };
 
-export function GatewayAdapterSwapDiagram({ className }: GatewayAdapterSwapDiagramProps) {
+export function GatewayAdapterSwapDiagram({ className, caption }: GatewayAdapterSwapDiagramProps) {
   const [visible, setVisible] = React.useState(false);
   const [indices, setIndices] = React.useState([0, 0, 0]);
 
@@ -187,7 +188,7 @@ export function GatewayAdapterSwapDiagram({ className }: GatewayAdapterSwapDiagr
 
       {/* Caption */}
       <p style={fad(visible)} className="mt-3 text-center font-mono text-[0.72rem] text-muted/60 dark:text-muted/30">
-        контракт задаёт интерфейс · адаптер реализует его
+        {caption}
       </p>
     </div>
   );

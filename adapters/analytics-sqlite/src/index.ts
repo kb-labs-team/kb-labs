@@ -368,7 +368,7 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
       byActor[r.actor] = r.cnt;
     }
 
-    return { totalEvents, byType, bySource, byActor, timeRange: { from, to } };
+    return { totalEvents, byType, bySource, byActor, timeRange: { from, to }, persistence: { kind: 'durable' } };
   }
 
   // ─── Read: Time-series ────────────────────────────────────────────────────

@@ -1,9 +1,11 @@
 /** Governed ShellAPI facade. Native spawning belongs to IProcessExecutor. */
 
 import { basename } from 'node:path';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { ShellAPI, ExecResult, ExecOptions, PermissionSpec } from '@kb-labs/plugin-contracts';
 import { matchesPermissionPattern, PermissionError } from '@kb-labs/plugin-contracts';
-import type { IProcessExecutor, ProcessExecutionIdentity } from '@kb-labs/core-platform/adapters';
+import type { IProcessExecutor, ProcessExecutionIdentity, ProcessResult } from '@kb-labs/core-platform/adapters';
+import { GovernedProcessError } from '../process/errors.js';
 
 const BLOCKED_COMMANDS = [
   'rm -rf /', 'rm -rf /*', 'mkfs', 'dd if=', ':(){:|:&};:',
@@ -55,23 +57,40 @@ export function createShellAPI(options: CreateShellAPIOptions): ShellAPI {
 
       const requestedTimeout = execOptions?.timeout ?? quotas.timeoutMs ?? 30_000;
       const timeoutMs = Math.min(requestedTimeout, quotas.timeoutMs ?? requestedTimeout);
-      const result = await executor.execute({
-        identity,
-        command,
-        args,
-        cwd: execOptions?.cwd ?? cwd,
-        env: execOptions?.env,
-        signal: execOptions?.signal ?? options.signal,
-        retry: execOptions?.retry,
-        limits: {
-          timeoutMs,
-          cpuMs: quotas.cpuMs,
-          memoryMb: quotas.memoryMb,
-          maxProcesses: quotas.maxProcesses,
-          maxConcurrent: permissions.shell?.maxConcurrent,
-          maxOutputBytes: execOptions?.maxOutputBytes ?? quotas.maxOutputBytes,
-        },
-      });
+      const processCwd = execOptions?.cwd ?? cwd;
+      let result: ProcessResult;
+      try {
+        result = await executor.execute({
+          identity,
+          command,
+          args,
+          cwd: processCwd,
+          env: execOptions?.env,
+          signal: execOptions?.signal ?? options.signal,
+          retry: execOptions?.retry,
+          limits: {
+            timeoutMs,
+            cpuMs: quotas.cpuMs,
+            memoryMb: quotas.memoryMb,
+            maxProcesses: quotas.maxProcesses,
+            maxConcurrent: permissions.shell?.maxConcurrent,
+            maxOutputBytes: execOptions?.maxOutputBytes ?? quotas.maxOutputBytes,
+          },
+        });
+      } catch (error) {
+        if (error instanceof GovernedProcessError && error.limit) {
+          throw new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_PROCESS_LIMIT_EXCEEDED', {
+            details: {
+              allowed: String(error.limit.allowed),
+              cwd: processCwd,
+              observed: String(error.limit.observed),
+              process: [command, ...args].join(' '),
+              resource: error.limit.resource,
+            },
+          }));
+        }
+        throw error;
+      }
       const output: ExecResult = {
         code: result.code ?? -1,
         stdout: result.stdout,

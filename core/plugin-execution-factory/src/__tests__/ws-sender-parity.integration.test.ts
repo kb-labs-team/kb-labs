@@ -83,7 +83,7 @@ function makeRequest(event: string, id: string): ExecutionRequest {
 }
 
 describe.each(modes)('%s WS sender host-call parity', (mode) => {
-  // case: S-240.1
+  // case: S-244.11
   it('preserves frames, ordering, and close code/reason at the host', async () => {
     const logger = { info() {}, debug() {}, warn() {}, error() {}, fatal() {}, trace() {}, flush: async () => {}, child() { return this; } } as ILogger;
     const host = createHostOperations();

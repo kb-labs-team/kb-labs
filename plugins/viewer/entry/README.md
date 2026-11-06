@@ -1,7 +1,0 @@
-# Viewer plugin entry
-
-`@kb-labs/viewer-entry` registers the Viewer REST routes and Studio page. The page browses the current project's architecture tree, reads linked Markdown and diagrams, previews PDFs, and converts DOC/DOCX files to PDF when LibreOffice is available in the Studio runtime. ZIP import and export use project-local managed storage.
-
-The routes are mounted under `/api/v1/plugins/viewer`. For example, `GET /api/v1/plugins/viewer/index?source=workspace` reads the architecture package under `docs/architecture`.
-
-The entry package depends on the Viewer contracts and core packages and uses the SDK for plugin registration. Build it with `pnpm --filter @kb-labs/viewer-entry build`.

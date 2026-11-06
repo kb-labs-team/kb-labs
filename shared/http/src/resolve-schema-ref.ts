@@ -27,7 +27,7 @@ export type SchemaRef = ZodSchemaRef | JsonSchemaRef;
  * @example
  * ```ts
  * const schema = await resolveSchemaRef({
- *   zod: '@kb-labs/commit-contracts#GenerateRequestSchema'
+ *   zod: '@kb-labs/commit/contracts#GenerateRequestSchema'
  * });
  * // → { type: 'object', properties: { ... }, required: [...] }
  * ```

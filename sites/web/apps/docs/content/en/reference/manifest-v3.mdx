@@ -140,7 +140,7 @@ handler: './cli/commands/run.js#default'
 Most plugins author the manifest in TypeScript for type safety:
 
 ```
-packages/your-plugin-entry/
+plugins/your-plugin/
   src/
     manifest.ts      ← authored here (TypeScript)
   dist/
@@ -169,7 +169,7 @@ Every section of the manifest is documented with examples in [Plugins → Manife
 
 The most exercised real-world manifest in the monorepo is:
 ```
-plugins/commit/entry/src/manifest.ts
+plugins/commit/src/manifest.ts
 ```
 
 It demonstrates permissions via `combinePermissions()`, six CLI commands with typed flags, 14 REST routes with Zod schemas, and a Studio v2 page. Copy it as a starting point.

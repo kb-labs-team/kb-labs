@@ -467,6 +467,9 @@ func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
 	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
 		t.Fatalf("plain doctor changed the installed platform: %v", err)
 	}
+	if _, code, raw := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start host before unresolved-input repair: %s", raw)
+	}
 
 	var fixStdout, fixStderr bytes.Buffer
 	fixCode := clikitcommand.Execute(newRootCommand(), []string{"doctor", "--fix", "--platform-root", inst.root, "--json"}, &fixStdout, &fixStderr)
@@ -477,8 +480,9 @@ func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
 	var response struct {
 		OK   bool `json:"ok"`
 		Data struct {
-			Findings []map[string]any `json:"findings"`
-			Repair   struct {
+			Findings      []map[string]any `json:"findings"`
+			HostRestarted bool             `json:"hostRestarted"`
+			Repair        struct {
 				RequiredInput []map[string]any `json:"requiredInput"`
 			} `json:"repair"`
 		} `json:"data"`
@@ -486,13 +490,17 @@ func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
 	if err := json.Unmarshal([]byte(fixOutput), &response); err != nil {
 		t.Fatalf("doctor --fix response is not JSON: %v: %s", err, fixOutput)
 	}
-	if !response.OK || len(response.Data.Findings) == 0 || len(response.Data.Repair.RequiredInput) != 1 ||
+	if !response.OK || len(response.Data.Findings) == 0 || response.Data.HostRestarted || len(response.Data.Repair.RequiredInput) != 1 ||
 		response.Data.Repair.RequiredInput[0]["component"] != "gateway" ||
 		response.Data.Repair.RequiredInput[0]["path"] != "/gateway/bootstrap/password" {
 		t.Fatalf("doctor --fix omitted required input from the result: %#v; output=%s", response, fixOutput)
 	}
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Fatalf("doctor --fix did not restore the projection: %v", err)
+	}
+	status, statusCode, statusOutput := inst.run("status", "--json")
+	if statusCode != 0 || status["running"] == true {
+		t.Fatalf("doctor --fix did not keep the host stopped while required input remains unresolved: %s", statusOutput)
 	}
 }
 
@@ -712,21 +720,25 @@ func TestDoctorRecoverFailureUsesCataloguedOperationStatus(t *testing.T) {
 // case: PC-001.10, PC-001.12, PC-001.16
 func TestApplyRefusesOnlyTheRunningInstallationRoot(t *testing.T) {
 	inst := newInstallation(t)
-	if failure := refuseRunningHost(inst.root); failure != nil {
+	if reused, failure := reusableApplyHost(contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{}}, inst.root); failure != nil || reused != nil {
 		t.Fatalf("nothing runs yet: %v", failure)
 	}
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start: %s", raw)
 	}
-	failure := refuseRunningHost(inst.root)
-	if failure == nil || failure.Code != "KB_HOST_ALREADY_RUNNING" || failure.Meta["pid"] == "" {
-		t.Fatalf("failure = %#v", failure)
+	active, err := receipt.Read(platformRootForTest(t, inst.root))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if failure.Hint == "" {
-		t.Fatalf("the refusal must have a hint: %#v", failure)
+	reused, failure := reusableApplyHost(active.Plan, inst.root)
+	if failure != nil || reused == nil || reused.ID != active.ID {
+		t.Fatalf("running host was not reused: receipt=%#v failure=%#v", reused, failure)
+	}
+	if failure := refuseRunningHost(inst.root); failure == nil || failure.Code != "KB_HOST_ALREADY_RUNNING" || failure.Meta["pid"] == "" {
+		t.Fatalf("start refusal = %#v", failure)
 	}
 	secondary := filepath.Join(t.TempDir(), "secondary")
-	if failure := refuseRunningHost(secondary); failure != nil {
+	if reused, failure := reusableApplyHost(contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{}}, secondary); failure != nil || reused != nil {
 		t.Fatalf("a different installation root was refused: %v", failure)
 	}
 }
@@ -738,11 +750,11 @@ func TestClientApplyIsAllowedBesideASupervisedHost(t *testing.T) {
 		t.Fatalf("start: %s", raw)
 	}
 	clientPlan := contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{Profile: "client"}}
-	if failure := refuseApplyBesideRunningHost(clientPlan, filepath.Join(t.TempDir(), "client")); failure != nil {
+	if reused, failure := reusableApplyHost(clientPlan, filepath.Join(t.TempDir(), "client")); failure != nil || reused != nil {
 		t.Fatalf("client apply refused beside host: %v", failure)
 	}
 	hostPlan := contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{}}
-	if failure := refuseApplyBesideRunningHost(hostPlan, filepath.Join(t.TempDir(), "other")); failure != nil {
+	if reused, failure := reusableApplyHost(hostPlan, filepath.Join(t.TempDir(), "other")); failure != nil || reused != nil {
 		t.Fatalf("independent host apply refused beside another root: %#v", failure)
 	}
 }

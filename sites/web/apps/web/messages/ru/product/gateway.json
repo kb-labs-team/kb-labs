@@ -22,6 +22,7 @@
     "ctaInstallBtn": "Установить",
     "aiTitle": "OpenAI-compatible. Без привязки к вендору.",
     "heroDescription": "Любой HTTP-сервис получает LLM, EventBus, Cache и Storage через единый endpoint. Провайдеры меняются в конфиге — потребители не трогаются.",
-    "ctaTitle": "Один порт. Все возможности."
+    "ctaTitle": "Один порт. Все возможности.",
+    "adapterDiagramCaption": "контракт задаёт интерфейс · адаптер реализует его"
   }
 }

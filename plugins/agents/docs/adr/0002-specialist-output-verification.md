@@ -299,7 +299,7 @@ export const ResetOutputSchema = z.object({
 // kb-labs-commit-plugin/packages/commit-contracts/src/contract.ts
 'commit:reset': {
   output: {
-    ref: '@kb-labs/commit-contracts/schema#ResetOutput',  // Reference to schema
+    ref: '@kb-labs/commit/contracts/schema#ResetOutput',  // Reference to schema
     format: 'zod'
   }
 }
@@ -310,7 +310,7 @@ export const ResetOutputSchema = z.object({
 ```typescript
 class PluginSchemaLoader {
   async loadSchema(ref: string): Promise<z.ZodSchema | null> {
-    // Parse ref: '@kb-labs/commit-contracts/schema#ResetOutput'
+    // Parse ref: '@kb-labs/commit/contracts/schema#ResetOutput'
     const [packageName, path, exportName] = parseRef(ref);
 
     // Dynamic import

@@ -23,7 +23,9 @@ def check_installed_cli_contract(
             command = kb_command(arguments, executable=executable)
             result = run_command(command, cwd=home, env=env, timeout=30, runner=runner)
             output = f"{result.stdout or ''}\n{result.stderr or ''}"
-            if result.returncode != 0 or "usage:" not in output.lower():
+            has_usage = ("usage:" in output.lower()
+                         or f"{executable.name} <command>" in output)
+            if result.returncode != 0 or not has_usage:
                 return f"{executable.name} {' '.join(arguments)} did not return usage successfully"
 
         command = kb_command(("__kb_journey_unknown_command__",), executable=executable)

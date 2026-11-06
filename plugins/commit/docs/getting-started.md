@@ -121,14 +121,10 @@ export const YourResponseSchema = z.object({
 });
 
 // src/rest/handlers/your-handler.ts
-import { definePluginHandler } from '@kb-labs/plugin-runtime';
+import { defineHandler } from '@kb-labs/sdk';
 
-export const handleYourEndpoint = definePluginHandler({
-  schema: {
-    input: YourRequestSchema,
-    output: YourResponseSchema
-  },
-  async handle(input, ctx) {
+export const handleYourEndpoint = defineHandler({
+  async execute(ctx, input) {
     const result = await yourBusinessLogic(input.input);
     return {
       result,

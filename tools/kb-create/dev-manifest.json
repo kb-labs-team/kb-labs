@@ -2,37 +2,136 @@
   "version": "3.0.0",
   "registryUrl": "https://registry.npmjs.org",
   "core": [
-    { "name": "@kb-labs/cli-bin",           "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/cli/bin" },
-    { "name": "@kb-labs/sdk",               "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/sdk/sdk" },
-    { "name": "@kb-labs/core-runtime",      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/core/runtime" },
-    { "name": "@kb-labs/core-contracts",    "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/core/contracts" },
-    { "name": "@kb-labs/shared-cli-ui",     "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/shared/cli-ui" },
-    { "name": "@kb-labs/core-state-daemon" },
-    { "name": "@kb-labs/adapters-kblabs-gateway", "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/kblabs-gateway" }
+    {
+      "name": "@kb-labs/cli-bin",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/cli/bin"
+    },
+    {
+      "name": "@kb-labs/sdk",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/sdk/sdk"
+    },
+    {
+      "name": "@kb-labs/core-runtime",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/core/runtime"
+    },
+    {
+      "name": "@kb-labs/core-contracts",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/core/contracts"
+    },
+    {
+      "name": "@kb-labs/shared-cli-ui",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/shared/cli-ui"
+    },
+    {
+      "name": "@kb-labs/core-state-daemon"
+    },
+    {
+      "name": "@kb-labs/adapters-kblabs-gateway",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/kblabs-gateway"
+    }
   ],
   "adapters": [
-    { "name": "@kb-labs/data-store",                "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/diskio" },
-    { "name": "@kb-labs/adapters-pino",             "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/pino" },
-    { "name": "@kb-labs/adapters-log-ringbuffer",   "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/log-ringbuffer" },
-    { "name": "@kb-labs/adapters-analytics-file",   "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/analytics-file" },
-    { "name": "@kb-labs/adapters-service-transport-http", "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/service-transport-http" }
+    {
+      "name": "@kb-labs/data-store",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/diskio"
+    },
+    {
+      "name": "@kb-labs/adapters-pino",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/pino"
+    },
+    {
+      "name": "@kb-labs/adapters-log-ringbuffer",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/log-ringbuffer"
+    },
+    {
+      "name": "@kb-labs/adapters-analytics-file",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/analytics-file"
+    },
+    {
+      "name": "@kb-labs/adapters-service-transport-http",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/adapters/service-transport-http"
+    }
   ],
   "services": [
-    { "id": "rest",        "pkg": "@kb-labs/rest-api-app",    "description": "REST API (port 5050)",        "default": true, "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/services/rest-api/app" },
-    { "id": "workflow",    "pkg": "@kb-labs/workflow-daemon",  "description": "Workflow engine (port 7778)", "default": true, "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/workflow/daemon" },
-    { "id": "gateway",     "pkg": "@kb-labs/gateway-app",     "description": "Central router (port 4000)",  "default": true, "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/services/gateway/app" },
-    { "id": "marketplace", "pkg": "@kb-labs/marketplace-app", "description": "Marketplace (port 5070)",     "default": true, "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/marketplace/daemon" },
-    { "id": "studio",      "pkg": "@kb-labs/studio-app",      "description": "Web UI (port 3000)",          "default": true, "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/studio/app" },
-    { "id": "mcp",         "pkg": "@kb-labs/mcp-app",         "description": "MCP Daemon (port 7779)",      "default": true, "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/services/mcp/app" }
+    {
+      "id": "rest",
+      "pkg": "@kb-labs/rest-api-app",
+      "description": "REST API (port 5050)",
+      "default": true,
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/services/rest-api/app"
+    },
+    {
+      "id": "workflow",
+      "pkg": "@kb-labs/workflow-daemon",
+      "description": "Workflow engine (port 7778)",
+      "default": true,
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/services/workflow/daemon"
+    },
+    {
+      "id": "gateway",
+      "pkg": "@kb-labs/gateway-app",
+      "description": "Central router (port 4000)",
+      "default": true,
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/services/gateway/app"
+    },
+    {
+      "id": "marketplace",
+      "pkg": "@kb-labs/marketplace-app",
+      "description": "Marketplace (port 5070)",
+      "default": true,
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/services/marketplace/app"
+    },
+    {
+      "id": "studio",
+      "pkg": "@kb-labs/studio-app",
+      "description": "Web UI (port 3000)",
+      "default": true,
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/studio/app"
+    },
+    {
+      "id": "mcp",
+      "pkg": "@kb-labs/mcp-app",
+      "description": "MCP Daemon (port 7779)",
+      "default": true,
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/services/mcp/app"
+    }
   ],
   "plugins": [
-    { "id": "marketplace", "pkg": "@kb-labs/marketplace-entry", "description": "Install, list, enable plugins", "default": true, "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/marketplace/entry" },
-    { "id": "mind",        "pkg": "@kb-labs/mind-entry",        "description": "AI code search (RAG)",          "default": true, "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/mind/entry" },
-    { "id": "agents",      "pkg": "@kb-labs/agent-entry",       "description": "Autonomous agents",             "default": true, "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/agents/entry" },
-    { "id": "review",      "pkg": "@kb-labs/review-entry",      "description": "AI code review",                "default": true, "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/review/entry" },
-    { "id": "commit",      "pkg": "@kb-labs/commit-entry",      "description": "AI commit generation",          "default": true, "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/commit/entry" }
+    {
+      "id": "mind",
+      "pkg": "@kb-labs/mind",
+      "description": "AI code search (RAG)",
+      "default": true,
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/mind"
+    },
+    {
+      "id": "agents",
+      "pkg": "@kb-labs/agents",
+      "description": "Autonomous agents",
+      "default": true,
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/agents"
+    },
+    {
+      "id": "review",
+      "pkg": "@kb-labs/review",
+      "description": "AI code review",
+      "default": true,
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/review"
+    },
+    {
+      "id": "commit",
+      "pkg": "@kb-labs/commit",
+      "description": "AI commit generation",
+      "default": true,
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/plugins/commit"
+    }
   ],
   "binaries": [
-    { "id": "kb-dev", "name": "kb-dev", "description": "Service manager", "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/tools/kb-dev/kb-dev" }
+    {
+      "id": "kb-dev",
+      "name": "kb-dev",
+      "description": "Service manager",
+      "localPath": "/Users/kirillbaranov/Desktop/work/kb-labs-workspace/tools/kb-dev/kb-dev"
+    }
   ]
 }

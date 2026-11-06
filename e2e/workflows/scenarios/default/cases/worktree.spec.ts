@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type APIRequestContext } from '@playwright/test'
 import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
 
 /**
@@ -29,7 +29,7 @@ interface RunData {
 }
 
 async function findWorkflow(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   name: string,
 ): Promise<{ id?: string; name?: string } | undefined> {
   const res = await request.get(`${WORKFLOW}/api/v1/workflows`)
@@ -40,7 +40,7 @@ async function findWorkflow(
 }
 
 async function startRun(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   workflowId: string,
 ): Promise<string | undefined> {
   const res = await request.post(
@@ -53,7 +53,7 @@ async function startRun(
 }
 
 async function fetchRun(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   runId: string,
 ): Promise<RunData> {
   const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`)
@@ -64,7 +64,7 @@ async function fetchRun(
 
 /** Poll until run reaches a terminal status, then return the final run data. */
 async function waitForRun(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   runId: string,
   timeoutMs = 60_000,
 ): Promise<RunData> {
@@ -97,7 +97,7 @@ function extractStdout(run: RunData): string {
 // ── shared setup: start one run per test ─────────────────────────────────────
 
 async function runTestPathsWorkflow(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
 ): Promise<{ stdout: string; status: string }> {
   const wf = await findWorkflow(request, 'test-paths')
   if (!wf) expect(true, 'test-paths workflow not found — check .kb/workflows/test-paths.yaml').toBe(false)

@@ -275,7 +275,7 @@ export type OnLogCallback = (entry: LogEntry) => void;
  * Execute options.
  *
  * Two log callbacks are provided to implement stream separation.
- * See: plugins/workflow/docs/adr/0019-log-stream-separation.md
+ * See: services/workflow/docs/adr/0019-log-stream-separation.md
  */
 export interface ExecuteOptions {
   signal?: AbortSignal;

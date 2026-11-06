@@ -7,7 +7,7 @@ import Fastify from 'fastify';
 import type { FastifyInstance, RouteOptions } from 'fastify';
 import type { FastifyBaseLogger } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import { registerRoutes } from './routes/index';
 import { registerPluginRouteNotFoundHandler } from './routes/plugin-route-not-found.js';
 import { registerPlugins } from './plugins';

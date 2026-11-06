@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -69,7 +70,7 @@ if (workspaceRoot === undefined) {
   }
 }
 
-process.stdout.write(JSON.stringify({ issues }));
+writeCheckResult(issues);
 
 function isFloatingSpecifier(value) {
   let specifier = value.trim();

@@ -1,26 +1,22 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
-import { invokePackageProvenanceOwner } from './package-provenance.mjs';
+import { invokePackageProvenanceOwner } from 'kb-create/scripts/package-provenance.mjs';
 import { fileURLToPath } from 'node:url';
+import { releaseArtifactPackageNames, shippedPlatformPackageSet } from 'kb-create/scripts/platform-release-config.mjs';
+import { readPackedPackageManifests } from './release-index-package-stage.mjs';
 
-export function releasePackageNames(manifest = registryManifest) {
-  return [...new Set([
-    ...(manifest.core ?? []).map(item => item.name),
-    ...(manifest.services ?? []).map(item => item.pkg),
-    ...(manifest.plugins ?? []).map(item => item.pkg),
-    ...(manifest.adapters ?? []).map(item => item.name),
-  ].filter(Boolean))];
-}
-
-export function deriveCandidateVersion(baseVersion, packagesDir, releaseManifest = registryManifest, digestTool) {
-  const wanted = new Set(releasePackageNames(releaseManifest));
+export function deriveCandidateVersion(baseVersion, packagesDir, releaseManifest, digestTool, platformMembers) {
+  const artifacts = readPackedPackageManifests(packagesDir);
+  const packageManifests = new Map(artifacts.map(({ packageJSON }) => [packageJSON.name, packageJSON]));
+  const wanted = shippedPlatformPackageSet(
+    releaseArtifactPackageNames(releaseManifest, platformMembers),
+    packageManifests,
+  );
   const packages = [];
-  for (const filename of readdirSync(resolve(packagesDir)).filter(name => name.endsWith('.tgz')).sort()) {
-    const path = join(resolve(packagesDir), filename);
-    const packageJSON = JSON.parse(execFileSync('tar', ['-xOzf', path, 'package/package.json'], { encoding: 'utf8' }));
+  for (const { filename, packageJSON } of artifacts) {
     if (wanted.has(packageJSON.name)) {
       packages.push({ name: packageJSON.name, version: packageJSON.version, tarball: filename });
       wanted.delete(packageJSON.name);
@@ -32,7 +28,7 @@ export function deriveCandidateVersion(baseVersion, packagesDir, releaseManifest
   return `${baseVersion}-cand.${digest}`;
 }
 
-// Build a release stage for a journey-only platform version from an existing
+// Build a release artifact set for a journey-only platform version from an existing
 // stage: every selected release artifact is reused unchanged except its
 // package version, which advances to the requested update version. The target
 // holds the same manifest.json the
@@ -40,13 +36,18 @@ export function deriveCandidateVersion(baseVersion, packagesDir, releaseManifest
 // publishDir so the local registry can serve them.
 export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, updateVersion,
   { publishDir, failingServicePackage, requiredConfigPackage, requiredConfig, digestTool,
-    registryManifest: releaseManifest = registryManifest } = {}) {
+    registryManifest: releaseManifest = registryManifest, platformMembers } = {}) {
   if (!digestTool) throw new Error('kb-create-release-index owner is required');
-  const versionedPackages = new Set(releasePackageNames(releaseManifest));
+  const sourceDir = resolve(packagesDir);
+  const packedArtifacts = readPackedPackageManifests(sourceDir);
+  const packageManifests = new Map(packedArtifacts.map(({ packageJSON }) => [packageJSON.name, packageJSON]));
+  const versionedPackages = shippedPlatformPackageSet(
+    releaseArtifactPackageNames(releaseManifest, platformMembers),
+    packageManifests,
+  );
   if (requiredConfig && !versionedPackages.has(requiredConfigPackage)) {
     throw new Error(`staged requirement package is absent from the release manifest: ${requiredConfigPackage}`);
   }
-  const sourceDir = resolve(packagesDir);
   const targetDir = resolve(updatePackagesDir);
   const registryDir = resolve(publishDir ?? packagesDir);
   const manifest = [];
@@ -54,9 +55,7 @@ export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, upd
   mkdirSync(targetDir, { recursive: true });
   const originals = new Map();
   const generatedFiles = [];
-  for (const filename of readdirSync(sourceDir).filter(name => name.endsWith('.tgz'))) {
-    const source = join(sourceDir, filename);
-    const packageJSON = JSON.parse(execFileSync('tar', ['-xOzf', source, 'package/package.json'], { encoding: 'utf8' }));
+  for (const { filename, artifactPath: source, packageJSON } of packedArtifacts) {
     if (versionedPackages.has(packageJSON.name)
         && packageJSON.name !== failingServicePackage
         && !(packageJSON.name === requiredConfigPackage && requiredConfig)) {
@@ -159,6 +158,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const baseVersion = value('--base-version');
   const packagesDir = value('--packages-dir');
   const digestTool = value('--digest-tool');
-  if (!baseVersion || !packagesDir || !digestTool) throw new Error('usage: journey-update-packages.mjs --base-version <version> --packages-dir <dir> --digest-tool <kb-create-release-index>');
-  process.stdout.write(`${deriveCandidateVersion(baseVersion, packagesDir, registryManifest, digestTool)}\n`);
+  const membersArgument = value('--platform-members');
+  if (!baseVersion || !packagesDir || !digestTool || !membersArgument) throw new Error('usage: journey-update-packages.mjs --base-version <version> --packages-dir <dir> --digest-tool <kb-create-release-index> --platform-members <comma-separated-package-names>');
+  process.stdout.write(`${deriveCandidateVersion(baseVersion, packagesDir, registryManifest, digestTool, membersArgument.split(',').filter(Boolean))}\n`);
 }

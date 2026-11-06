@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/kb-labs/clikit/proc/child"
 	"github.com/kb-labs/dev/internal/environ"
 )
 
@@ -43,7 +44,6 @@ func Spawn(opts SpawnOpts) (*SpawnResult, error) {
 	}
 
 	cmd := exec.Command(shellArgs[0], shellArgs[1:]...)
-	setProcAttrs(cmd)
 
 	if opts.Dir != "" {
 		cmd.Dir = opts.Dir
@@ -64,15 +64,12 @@ func Spawn(opts SpawnOpts) (*SpawnResult, error) {
 		// inherits the fd and writes to it. The OS closes it when the process exits.
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := child.Start(cmd, child.ProcessGroup); err != nil {
 		return nil, fmt.Errorf("start process: %w", err)
 	}
 
 	pid := cmd.Process.Pid
-	pgid, err := getPgid(pid)
-	if err != nil {
-		pgid = pid // fallback: use PID as PGID
-	}
+	pgid := pid // child.ProcessGroup makes the PID the process-group ID.
 
 	return &SpawnResult{
 		Process: cmd.Process,

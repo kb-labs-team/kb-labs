@@ -49,15 +49,16 @@ func main() {
 	indexPath := flag.String("index", "", "sealed candidate release index")
 	packageDirectory := flag.String("packages", "", "candidate package tarball directory")
 	installRoot := flag.String("root", "", "temporary installer root")
+	registryURL := flag.String("registry", "", "required shared package registry URL")
 	flag.Parse()
-	if err := run(*indexPath, *packageDirectory, *installRoot); err != nil {
+	if err := run(*indexPath, *packageDirectory, *installRoot, *registryURL); err != nil {
 		command.Exit(diag.ExitCode(diag.FromError(err)))
 	}
 }
 
-func run(indexPath, packageDirectory, installRoot string) (runErr error) {
-	if indexPath == "" || packageDirectory == "" || installRoot == "" {
-		return errors.New("index, packages, and root are required")
+func run(indexPath, packageDirectory, installRoot, sharedRegistryURL string) (runErr error) {
+	if indexPath == "" || packageDirectory == "" || installRoot == "" || sharedRegistryURL == "" {
+		return errors.New("index, packages, root, and registry are required")
 	}
 	source, err := catalog.LoadFile(indexPath)
 	if err != nil {
@@ -131,7 +132,7 @@ func run(indexPath, packageDirectory, installRoot string) (runErr error) {
 		}
 		item.Tarball = baseURL + "/artifact?package=" + url.QueryEscape(item.Package) + "&version=" + url.QueryEscape(item.Version)
 	}
-	installer, err := candidatePackageInstaller(layout, stage)
+	installer, err := candidatePackageInstaller(layout, stage, sharedRegistryURL)
 	if err != nil {
 		return fmt.Errorf("resolve candidate package-manager paths: %w", err)
 	}
@@ -145,7 +146,7 @@ func run(indexPath, packageDirectory, installRoot string) (runErr error) {
 	return nil
 }
 
-func candidatePackageInstaller(layout versionroot.Layout, stage string) (artifacts.Pnpm, error) {
+func candidatePackageInstaller(layout versionroot.Layout, stage, registryURL string) (artifacts.Pnpm, error) {
 	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
 	if err != nil {
 		return artifacts.Pnpm{}, err
@@ -154,6 +155,7 @@ func candidatePackageInstaller(layout versionroot.Layout, stage string) (artifac
 		Root:               stage,
 		CacheRoot:          cacheRoot,
 		PackageManagerRoot: layout.PackageManagerStateDir(),
+		Registry:           registryURL,
 		Log:                os.Stderr,
 	}, nil
 }

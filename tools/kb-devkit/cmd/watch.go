@@ -71,7 +71,7 @@ In --json mode, emits JSONL events (one JSON object per line) for agent consumpt
 				}
 
 				// Run checks on just this package.
-				pkgResults := checks.RunAll(ws, cfg, registry, nil)
+				pkgResults := checks.RunAll(ws, cfg, registry, nil, nil)
 				result, ok := pkgResults[pkg.Name]
 				if !ok {
 					continue

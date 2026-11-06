@@ -28,6 +28,7 @@ import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { promises as fsp } from 'node:fs';
 
 import { generateExamples } from '../../../utils/generate-examples';
+import { requireResolvedCatalog } from '../../../registry/discovery-state.js';
 import {
   CONFIG_SCOPES,
   layerLabel,
@@ -153,7 +154,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
       }
 
       if (!roots.projectId) {
-        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Effective config requires a registered project.', `Run "kb project add ${roots.configRoot}" and retry "kb config get".`, { path: roots.configRoot });
+        throwSystemCataloguedFailure({ code: 'KB_PROJECT_UNKNOWN', message: 'Effective config requires a registered project.', hint: `Run "kb project add ${roots.configRoot}" and retry "kb config get".`, details: { path: roots.configRoot } });
       }
 
       const runtimeConfig = await loadPlatformConfig({
@@ -161,6 +162,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
         startDir: getContextCwd(ctx),
         loadEnvFile: false,
         projectId: roots.projectId,
+        catalog: requireResolvedCatalog(),
       });
       const platform = await loadEffectiveConfig(roots.configRoot, {
         platformRoot: roots.platformRoot,

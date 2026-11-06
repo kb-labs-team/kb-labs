@@ -2,10 +2,19 @@ package checks
 
 import (
 	"sync"
+	"time"
 
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
+
+// ProgressEvent describes one rule invocation while a package check is running.
+type ProgressEvent struct {
+	Package string
+	Check   string
+	Elapsed time.Duration
+	Running bool
+}
 
 // PackageResult holds all issues for a single package.
 type PackageResult struct {
@@ -17,28 +26,53 @@ type PackageResult struct {
 
 // RunAll runs all rules from the registry against all packages in parallel.
 // Circular detection runs once on the full graph and is merged in.
-func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registry, only []string) map[string]PackageResult {
+func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registry, only []string, progress func(ProgressEvent)) map[string]PackageResult {
+	return RunAllForPackages(ws, ws.Packages, cfg, registry, only, progress)
+}
+
+// RunAllForPackages evaluates workspace rules against the full workspace and
+// package rules only for the supplied package lane.
+func RunAllForPackages(ws *workspace.Workspace, packages []workspace.Package, cfg *config.DevkitConfig, registry *Registry, only []string, progress func(ProgressEvent)) map[string]PackageResult {
+	return runForPackages(ws, packages, cfg, registry, only, progress, true)
+}
+
+// RunPackageRulesForPackages evaluates only package-scoped rules for the supplied packages.
+func RunPackageRulesForPackages(ws *workspace.Workspace, packages []workspace.Package, cfg *config.DevkitConfig, registry *Registry, only []string, progress func(ProgressEvent)) map[string]PackageResult {
+	return runForPackages(ws, packages, cfg, registry, only, progress, false)
+}
+
+func runForPackages(ws *workspace.Workspace, packages []workspace.Package, cfg *config.DevkitConfig, registry *Registry, only []string, progress func(ProgressEvent), includeWorkspaceRules bool) map[string]PackageResult {
+	for _, rule := range registry.All() {
+		if aware, ok := rule.(interface{ SetWorkspace(*workspace.Workspace) }); ok {
+			aware.SetWorkspace(ws)
+		}
+	}
+
 	onlySet := make(map[string]bool, len(only))
 	for _, name := range only {
 		onlySet[name] = true
 	}
 
-	// Run circular detection once on full workspace.
+	// Run circular detection once on the full workspace graph.
 	var circularResult CircularResult
-	for _, nc := range cfg.Workspace.Categories {
-		preset, err := config.ResolvePreset(nc.Category.Preset, cfg)
-		if err == nil && preset.Deps.CheckCircular {
-			circularResult = DetectCircular(ws.Packages)
-			break
-		}
+	if includeWorkspaceRules && CircularEnabled(cfg) {
+		circularResult = DetectCircular(ws.Packages)
 	}
+	circularOnly := len(onlySet) == 1 && onlySet["circular"]
 
-	results := make(map[string]PackageResult, len(ws.Packages))
+	results := make(map[string]PackageResult, len(packages))
 	workspaceIssues := make([]Issue, 0)
-	workspaceRules := registry.WorkspaceRules(only)
+	var workspaceRules []Rule
+	if includeWorkspaceRules {
+		workspaceRules = registry.WorkspaceRules(only)
+	}
 	for _, rule := range workspaceRules {
-		external := rule.(*externalRule)
-		workspaceIssues = append(workspaceIssues, external.CheckWorkspace(ws)...)
+		workspaceRule := rule.(interface {
+			CheckWorkspace(*workspace.Workspace) []Issue
+		})
+		workspaceIssues = append(workspaceIssues, runRule(rule, workspace.Package{Name: "workspace"}, progress, func() []Issue {
+			return workspaceRule.CheckWorkspace(ws)
+		})...)
 	}
 	if len(workspaceRules) > 0 {
 		results["workspace"] = PackageResult{
@@ -51,7 +85,7 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8) // max 8 goroutines
 
-	for _, pkg := range ws.Packages {
+	for _, pkg := range packages {
 		pkg := pkg
 		wg.Add(1)
 		go func() {
@@ -68,13 +102,15 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 			}
 
 			rules := registry.ApplicableRulesFor(pkg, preset, only)
-			if len(rules) == 0 {
+			if len(rules) == 0 && !circularOnly {
 				return
 			}
 
 			var issues []Issue
 			for _, rule := range rules {
-				issues = append(issues, rule.Check(pkg, preset)...)
+				issues = append(issues, runRule(rule, pkg, progress, func() []Issue {
+					return rule.Check(pkg, preset)
+				})...)
 			}
 
 			// Merge circular results.
@@ -85,11 +121,49 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 			}
 
 			mu.Lock()
-			results[pkg.Name] = PackageResult{Package: pkg, Issues: issues, ChecksRun: len(rules)}
+			checksRun := len(rules)
+			if circularOnly {
+				checksRun++
+			}
+			results[pkg.Name] = PackageResult{Package: pkg, Issues: issues, ChecksRun: checksRun}
 			mu.Unlock()
 		}()
 	}
 
 	wg.Wait()
 	return results
+}
+
+func runRule(rule Rule, pkg workspace.Package, progress func(ProgressEvent), check func() []Issue) []Issue {
+	started := time.Now()
+	report := func(running bool) {
+		if progress != nil {
+			progress(ProgressEvent{Package: pkg.Name, Check: rule.Name(), Elapsed: time.Since(started), Running: running})
+		}
+	}
+	report(true)
+	stop := make(chan struct{})
+	monitorDone := make(chan struct{})
+	if progress != nil {
+		go func() {
+			defer close(monitorDone)
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					report(true)
+				case <-stop:
+					return
+				}
+			}
+		}()
+	}
+	issues := check()
+	if progress != nil {
+		close(stop)
+		<-monitorDone
+	}
+	report(false)
+	return issues
 }

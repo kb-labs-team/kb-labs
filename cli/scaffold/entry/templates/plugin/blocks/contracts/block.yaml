@@ -1,0 +1,5 @@
+id: contracts
+describe: |
+  Seeds the contracts folder with a second types file (`events.ts`) to
+  demonstrate how to organise multiple type modules. Requires `base`.
+requires: [base]

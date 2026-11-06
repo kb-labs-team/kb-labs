@@ -38,9 +38,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve-gate-policy:
+    name: Resolve declared release gate policy
+    runs-on: ubuntu-latest
+    outputs:
+      required: ${{ steps.policy.outputs.required }}
+      policy: ${{ steps.policy.outputs.policy }}
+      target: ${{ steps.policy.outputs.target }}
+    steps:
+      - name: Checkout exact intent commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 1
+      - name: Resolve flow gate policy
+        id: policy
+        env:
+          FLOW: ${{ inputs.flow }}
+          CHANNEL: ${{ inputs.channel }}
+        run: node .kb/workflows/scripts/resolve-candidate-gate.mjs --flow "$FLOW" --channel "$CHANNEL"
+
   journey-gate:
     name: Clean installer journey gate
     uses: ./.github/workflows/reusable-installer-journey.yml
+    if: needs.resolve-gate-policy.outputs.required == 'true'
+    needs: resolve-gate-policy
     with:
       ref: ${{ inputs.commit_sha }}
     permissions:
@@ -48,7 +70,12 @@ jobs:
 
   build:
     name: Build candidate ${{ inputs.candidate_id }}
-    needs: journey-gate
+    needs: [resolve-gate-policy, journey-gate]
+    if: >-
+      always() &&
+      needs.resolve-gate-policy.result == 'success' &&
+      ((needs.resolve-gate-policy.outputs.required != 'true' && needs.journey-gate.result == 'skipped') ||
+       (needs.resolve-gate-policy.outputs.required == 'true' && needs.journey-gate.result == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -57,319 +84,38 @@ jobs:
         with:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
-
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
-        with:
-          run_install: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: 24
-          cache: pnpm
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        with:
-          go-version: '1.26.8'
-          cache: false
-
-      - name: Build kb-devkit
-        run: go build -o kb-devkit .
-        working-directory: tools/kb-devkit
-
-      - name: Install exact workspace dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Bootstrap KB Labs release tooling
-        # The release plugin owns the governed dependency-order release build
-        # below. Building the whole workspace here duplicates that work and
-        # enters the generic rspack/DTS path that release builds deliberately
-        # avoid. Bootstrap only the platform CLI and release command surface.
-        run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release-manager-cli --no-cache
-
-      - name: Hydrate release plan paths for candidate workspace
-        # All release flows share one scope-derived plan.json path (see
-        # resolve-plan.ts), so the committed artifact checked out at
-        # commit_sha can legitimately belong to whichever flow last had it
-        # committed. That's not stable-channel-safe either: "Commit and
-        # tag" (release git) only ever commits the bumped package.json
-        # files themselves (verified live — see the commit this step is
-        # failing on: two package.json changes, plan.json untouched), so
-        # the checked-out plan.json can be — and routinely is — for a
-        # completely different flow than the one actually tagged at this
-        # commit, on BOTH channels. For canary the fallback is "Apply
-        # planned package versions" below, whose `pnpm kb release version`
-        # call goes through resolvePlan() and already treats a foreign-flow
-        # artifact as unconditionally stale, recomputing fresh via
-        # planRelease(). Stable has no such step (deliberately — re-running
-        # `release version` with any real bump against an already-tagged
-        # commit invents a spurious patch bump, see that step's own
-        # comment) — so regenerate the plan here instead, with
-        # `--bump none` (returns currentVersion unchanged, see
-        # planner.ts's VersionBump handling) so it reflects exactly what
-        # this commit already has on disk without mutating anything, then
-        # let the normal path-hydration below run against that.
-        env:
-          FLOW: ${{ inputs.flow }}
-          CHANNEL: ${{ inputs.channel }}
-          COMMIT_SHA: ${{ inputs.commit_sha }}
-        run: |
-          set -euo pipefail
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const { execFileSync } = require('node:child_process');
-          const root = process.cwd();
-          const planPath = path.join(root, '.kb', 'release', 'plans', 'root', 'current', 'plan.json');
-          let plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
-          if (plan.flow !== process.env.FLOW) {
-            if (process.env.CHANNEL === 'canary') {
-              console.log(`Committed plan.json is for flow "${plan.flow}", not "${process.env.FLOW}" — ` +
-                `skipping hydration; "Apply planned package versions" will recompute it fresh.`);
-              process.exit(0);
-            }
-            console.log(`Committed plan.json is for flow "${plan.flow}", not "${process.env.FLOW}" — ` +
-              `regenerating with --bump none (no version mutation) before hydrating paths.`);
-            execFileSync('node', ['./cli/bin/dist/bin.js', 'release', 'plan',
-              '--flow', process.env.FLOW, '--channel', process.env.CHANNEL, '--bump', 'none', '--json'],
-              { cwd: root, stdio: 'inherit' });
-            plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
-            if (plan.flow !== process.env.FLOW) {
-              throw new Error(`regenerated release plan still has wrong flow: ${plan.flow} != ${process.env.FLOW}`);
-            }
-          }
-          if (process.env.CHANNEL === 'canary') {
-            const short = process.env.COMMIT_SHA.slice(0, 9);
-            for (const item of plan.packages ?? []) {
-              if (typeof item.nextVersion === 'string' && item.nextVersion.includes('-canary.')) {
-                item.nextVersion = item.nextVersion.replace(/-canary\.[^.]+$/, `-canary.${short}`);
-              }
-            }
-          }
-          const packages = new Map();
-          const walk = directory => {
-            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-              if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') continue;
-              const target = path.join(directory, entry.name);
-              if (entry.isDirectory()) walk(target);
-              else if (entry.name === 'package.json') {
-                const manifest = JSON.parse(fs.readFileSync(target, 'utf8'));
-                if (manifest.name) packages.set(manifest.name, path.dirname(target));
-              }
-            }
-          };
-          walk(root);
-          for (const item of plan.packages ?? []) {
-            const packagePath = packages.get(item.name);
-            if (!packagePath) throw new Error(`release plan package is absent from candidate workspace: ${item.name}`);
-            item.path = packagePath;
-          }
-          fs.writeFileSync(planPath, `${JSON.stringify(plan, null, 2)}\n`);
-          NODE
-
-      - name: Apply planned package versions
-        # Only the canary channel needs this step. release-prepare.yml's
-        # "Bump versions"/"Commit and tag" steps run ONLY when
-        # inputs.channel == 'stable' (see .kb/workflows/release-prepare.yml)
-        # — a stable candidate's commit_sha is therefore, by construction,
-        # already at its final released version before this workflow ever
-        # checks it out. Re-running `release version` (bump=auto, default)
-        # against that same commit is not a no-op: `getCommitsSinceTag`
-        # finds the tag this very commit carries, the commit range against
-        # HEAD is empty, and — independent of any manager-core version-bump
-        # fix present on master — the lockstep strategy's `getMaxBump()`
-        # floors at 'patch' whenever no package resolves to
-        # an explicit major/minor bump, so it invents a patch bump on top of
-        # an already-tagged version regardless of the --bump value passed in
-        # (verified directly: `--bump none` against this repo's lockstep
-        # path still floors to a patch bump). That's how 2.119.0 became
-        # 2.119.1 in candidate run 33981110517. A manager-core code fix
-        # cannot help an already-tagged commit either way: "Checkout exact
-        # intent commit" above pins plugins/release/manager-core itself to
-        # that commit's own (possibly pre-fix) source, by design — this
-        # workflow builds exactly what was tagged, immutably.
-        #
-        # canary builds are the opposite: release-prepare deliberately skips
-        # git mutations for canary, so package.json on disk is still at the
-        # PREVIOUS release's version and this step is what actually applies
-        # the plan's canary-suffixed nextVersion (already patched onto
-        # plan.json by "Hydrate release plan paths" above). Keep running it
-        # there.
-        if: inputs.channel != 'stable'
-        env:
-          FLOW: ${{ inputs.flow }}
-          CHANNEL: ${{ inputs.channel }}
-        # --channel must be passed explicitly. release:version's resolvePlan()
-        # reuses the plan.json checked out at commit_sha only when it provably
-        # matches the current working tree (see resolve-plan.ts); for canary
-        # that plan.json is NOT guaranteed fresh — canary deliberately skips
-        # the git commit that would carry a just-computed plan forward (see
-        # "Bump versions"/"Commit and tag" in release-prepare.yml, gated on
-        # channel == stable) — so the checked-out artifact can legitimately
-        # still be whatever a previous release cycle last committed. When
-        # resolvePlan rejects it as stale, it recomputes via planRelease()
-        # fresh; without --channel here that recompute silently defaults to
-        # 'stable' and drops the -canary.<sha> suffix from every package's
-        # version, not just one — this is what produced candidate run
-        # 33991804236's "sealed platform version mismatch: 2.119.1 !=
-        # 2.119.1-canary.9dffabc24" (core-runtime was simply the one package
-        # whose version happens to get compared against inputs.version).
-        run: pnpm kb release version --flow "$FLOW" --channel "$CHANNEL" --json
-
-      - name: Verify pre-versioned stable candidate
-        # For channel == 'stable' this replaces the step above: verify the
-        # invariant instead of trusting it silently. Every package the
-        # hydrated plan tracks must already be on disk at inputs.version —
-        # if that's ever false (a broken release-prepare run, a manually
-        # dispatched commit_sha that was never actually prepared as this
-        # exact version, etc.) fail loudly here rather than build and seal
-        # a candidate under the wrong version number.
-        if: inputs.channel == 'stable'
-        env:
-          EXPECTED_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const planPath = path.join(process.cwd(), '.kb', 'release', 'plans', 'root', 'current', 'plan.json');
-          const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
-          const expected = process.env.EXPECTED_VERSION;
-          const mismatches = [];
-          for (const pkg of plan.packages ?? []) {
-            const pkgJsonPath = path.join(pkg.path, 'package.json');
-            const onDisk = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8')).version;
-            if (onDisk !== expected) mismatches.push(`${pkg.name}: ${onDisk} (expected ${expected})`);
-          }
-          if (mismatches.length > 0) {
-            throw new Error(
-              `stable candidate commit is not already versioned at ${expected} — release-prepare's ` +
-              `"Bump versions"/"Commit and tag" steps should have applied this before dispatch:\n` +
-              mismatches.join('\n'),
-            );
-          }
-          console.log(`Verified ${plan.packages.length} package(s) already at ${expected}; skipping re-bump.`);
-          NODE
-
       - name: Build selected release flow
-        env:
-          FLOW: ${{ inputs.flow }}
-        run: pnpm kb release build --flow "$FLOW" --json
-
-      - name: Stage exact npm artifacts
-        env:
-          FLOW: ${{ inputs.flow }}
-        run: pnpm kb release stage --flow "$FLOW" --out-dir .kb/release/artifacts --json
-
-      - name: Build exact Go binary assets
-        uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29
-        if: inputs.flow == 'platform'
-        env:
-          GORELEASER_CURRENT_TAG: v${{ inputs.version }}-binaries
+        uses: ./.github/actions/release-build-preflight
         with:
-          version: latest
-          args: release --snapshot --clean --skip=publish
-
-      - name: Generate binary manifest from checksums
-        if: inputs.flow == 'platform'
-        env:
-          CANDIDATE_ID: ${{ inputs.candidate_id }}
-          VERSION: ${{ inputs.version }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          test -s dist/checksums.txt
-          node tools/kb-create/scripts/prepare-binary-manifest.mjs \
-            --checksums dist/checksums.txt \
-            --repository "$REPOSITORY" \
-            --release-tag "v${VERSION}-binaries" \
-            --version "$VERSION" \
-            --output .kb/release/binary-manifest.json
-
-      - name: Seal unified release index
-        if: inputs.flow == 'platform'
-        env:
-          FLOW: ${{ inputs.flow }}
-          CHANNEL: ${{ inputs.channel }}
-          SOURCE_REVISION: ${{ inputs.commit_sha }}
-        run: |
-          set -euo pipefail
-          node e2e/platform/package-provenance.mjs \
-            --packages-dir .kb/release/artifacts \
-            --source-revision "$SOURCE_REVISION" \
-            --output .kb/release/provenance.json
-          config_json="$(node --input-type=module -e '
-            import { readPlatformReleaseConfig } from "./tools/kb-create/scripts/platform-release-config.mjs";
-            process.stdout.write(JSON.stringify(readPlatformReleaseConfig("./.kb/kb.config.jsonc")));
-          ')"
-          platform_members="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(d.platformMembers.join(","));' <<< "$config_json")"
-          platform_requires="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(d.platformRequires.join(","));' <<< "$config_json")"
-          platform_adapters="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(JSON.stringify(d.adapters));' <<< "$config_json")"
-          platform_adapter_options="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(JSON.stringify(d.adapterOptions));' <<< "$config_json")"
-          node tools/kb-create/scripts/prepare-release-index.mjs \
-            --flow "$FLOW" \
-            --channel "$CHANNEL" \
-            --artifacts-dir .kb/release/artifacts \
-            --provenance-manifest .kb/release/provenance.json \
-            --binary-manifest .kb/release/binary-manifest.json \
-            --platform-member-packages "$platform_members" \
-            --platform-requires "$platform_requires" \
-            --platform-adapter-config "$platform_adapters" \
-            --platform-adapter-options "$platform_adapter_options" \
-            --output .kb/release/release-index.json
-
-      - name: Verify sealed platform version
-        if: inputs.flow == 'platform'
-        env:
-          EXPECTED_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const index = JSON.parse(fs.readFileSync('.kb/release/release-index.json', 'utf8'));
-          const platform = (index.platforms ?? []).find((artifact) => artifact.id === 'platform');
-          if (!platform) throw new Error('sealed release index has no platform artifact');
-          if (platform.version !== process.env.EXPECTED_VERSION) {
-            throw new Error(`sealed platform version mismatch: ${platform.version} != ${process.env.EXPECTED_VERSION}`);
-          }
-          NODE
-
-      - name: Create candidate provenance
-        env:
-          CANDIDATE_ID: ${{ inputs.candidate_id }}
-          COMMIT_SHA: ${{ inputs.commit_sha }}
-          FLOW: ${{ inputs.flow }}
-          VERSION: ${{ inputs.version }}
-          CHANNEL: ${{ inputs.channel }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          mkdir -p .kb/release/bundle
-          cp -R .kb/release/artifacts .kb/release/bundle/npm
-          if [ -f .kb/release/release-index.json ]; then cp .kb/release/release-index.json .kb/release/bundle/; fi
-          if [ -f .kb/release/binary-manifest.json ]; then cp .kb/release/binary-manifest.json .kb/release/bundle/; fi
-          if [ -d dist ]; then cp -R dist .kb/release/bundle/binaries; fi
-          node -e '
-            const fs = require("node:fs");
-            const out = {
-              schema: "kb.release-provenance/1",
-              candidateId: process.env.CANDIDATE_ID,
-              commit: process.env.COMMIT_SHA,
-              flow: process.env.FLOW,
-              version: process.env.VERSION,
-              channel: process.env.CHANNEL,
-              workflowRunId: process.env.RUN_ID,
-            };
-            fs.writeFileSync(".kb/release/bundle/provenance.json", JSON.stringify(out, null, 2) + "\n");
-          '
-          (
-            cd .kb/release/bundle
-            find . -type f ! -name bundle.sha256 ! -name bundle.sha256.tmp -printf '%m  %p\n' | sort > bundle.modes
-            find . -type f ! -name bundle.sha256 ! -name bundle.sha256.tmp -print0 | sort -z | xargs -0 sha256sum > bundle.sha256.tmp
-            mv bundle.sha256.tmp bundle.sha256
-          )
+          commit-sha: ${{ inputs.commit_sha }}
+          flow: ${{ inputs.flow }}
+          channel: ${{ inputs.channel }}
+          mode: candidate
+          expected-version: ${{ inputs.version }}
+          candidate-id: ${{ inputs.candidate_id }}
+          run-id: ${{ github.run_id }}
+          gate-policy: ${{ needs.resolve-gate-policy.outputs.policy }}
+          gate-result: ${{ needs.journey-gate.result == 'success' && 'passed' || 'skipped' }}
+          gate-run-id: ${{ needs.journey-gate.result == 'success' && github.run_id || '' }}
 
       - name: Upload immutable candidate bundle
+        id: upload-candidate
+        env:
+          RELEASE_PREFLIGHT_COVERAGE: hosted-only
+          RELEASE_PREFLIGHT_HOSTED_ONLY_REASON: GitHub Actions artifact service creates the downloadable immutable archive.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-candidate-${{ inputs.candidate_id }}
           path: .kb/release/bundle
           if-no-files-found: error
           retention-days: 30
+
+      - name: Record hosted artifact digest outside the bundle
+        env:
+          RELEASE_PREFLIGHT_COVERAGE: hosted-only
+          RELEASE_PREFLIGHT_HOSTED_ONLY_REASON: Reads the Actions artifact-digest output and writes to GITHUB_STEP_SUMMARY.
+          ARTIFACT_DIGEST: ${{ steps.upload-candidate.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_DIGEST"
+          printf '\n- **Actions artifact archive digest:** `%s`\n' "$ARTIFACT_DIGEST" >> "$GITHUB_STEP_SUMMARY"

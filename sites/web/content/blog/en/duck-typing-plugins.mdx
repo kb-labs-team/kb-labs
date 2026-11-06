@@ -33,7 +33,7 @@ We tried this. The interface grew to 14 optional methods. Plugins implemented 2â
 A plugin is any npm package whose manifest declares `schema: 'kb.plugin/3'`. The manifest is a plain object â€” not an instance of a class, not a return value from a factory function.
 
 ```typescript
-// plugins/commit/entry/src/manifest.ts
+// plugins/commit/src/manifest.ts
 export const manifest = {
   schema: 'kb.plugin/3',
   id: '@kb-labs/commit',

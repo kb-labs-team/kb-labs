@@ -157,7 +157,7 @@
           },
           {
             "type": "new",
-            "text": "release теперь зарегистрирован как устанавливаемый плагин (@kb-labs/release-manager-cli)"
+            "text": "release теперь зарегистрирован как устанавливаемый плагин (@kb-labs/release/cli)"
           },
           {
             "type": "improved",

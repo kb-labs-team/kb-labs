@@ -73,11 +73,7 @@ export const pluginsCommands = defineSystemCommand<PluginsCommandsFlags, Plugins
     const sortOrder = flags.sort || 'alpha';
     const validSorts = ['alpha', 'count', 'type'];
     if (!validSorts.includes(sortOrder)) {
-      throwSystemCataloguedFailure(
-        'KB_RUNTIME_INPUT_INVALID',
-        `Invalid sort order: ${sortOrder}. Valid options: ${validSorts.join(', ')}`,
-        `Run \`kb marketplace commands --sort ${validSorts[0]}\`, \`--sort ${validSorts[1]}\`, or \`--sort ${validSorts[2]}\`.`,
-      );
+      throwSystemCataloguedFailure({ code: 'KB_RUNTIME_INPUT_INVALID', message: `Invalid sort order: ${sortOrder}. Valid options: ${validSorts.join(', ')}`, hint: `Run \`kb marketplace commands --sort ${validSorts[0]}\`, \`--sort ${validSorts[1]}\`, or \`--sort ${validSorts[2]}\`.` });
     }
 
     // JSON output

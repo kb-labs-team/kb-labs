@@ -1,0 +1,46 @@
+{
+  "enabledServices": [
+    "rest",
+    "workflow",
+    "mcp-daemon"
+  ],
+  "servicePrefixes": {
+    "rest": "rest__",
+    "workflow": "workflow__",
+    "mcp-daemon": "mcp-daemon__"
+  },
+  "services": {
+    "rest": {},
+    "workflow": {
+      "workflow health": "workflow__workflow_health",
+      "workflow metrics": "workflow__workflow_metrics",
+      "workflow run": "workflow__workflow_run",
+      "workflow job status": "workflow__workflow_job_status",
+      "workflow job list": "workflow__workflow_job_list",
+      "workflow job run": "workflow__workflow_job_run",
+      "workflow log show": "workflow__workflow_log_show",
+      "workflow crons list": "workflow__workflow_crons_list",
+      "workflow crons enable": "workflow__workflow_crons_enable",
+      "workflow crons disable": "workflow__workflow_crons_disable",
+      "workflow runs list": "workflow__workflow_runs_list",
+      "workflow runs view": "workflow__workflow_runs_view",
+      "workflow runs rerun": "workflow__workflow_runs_rerun",
+      "workflow runs restart": "workflow__workflow_runs_restart",
+      "workflow runs cancel": "workflow__workflow_runs_cancel",
+      "workflow runs logs": "workflow__workflow_runs_logs",
+      "workflow runs status": "workflow__workflow_runs_status",
+      "workflow runs approve": "workflow__workflow_runs_approve",
+      "workflow defs list": "workflow__workflow_defs_list",
+      "workflow defs view": "workflow__workflow_defs_view"
+    },
+    "mcp-daemon": {}
+  },
+  "commit": {
+    "commit commit": "kb-labs-commit__commit_commit",
+    "commit plan create": "kb-labs-commit__commit_plan_create",
+    "commit plan apply": "kb-labs-commit__commit_plan_apply",
+    "commit publish": "kb-labs-commit__commit_publish",
+    "commit plan show": "kb-labs-commit__commit_plan_show",
+    "commit plan delete": "kb-labs-commit__commit_plan_delete"
+  }
+}

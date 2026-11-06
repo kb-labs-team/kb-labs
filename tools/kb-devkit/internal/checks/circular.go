@@ -6,11 +6,27 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
 
 // CircularResult maps package dir to issues detected from circular dependency analysis.
 type CircularResult map[string][]Issue
+
+// CircularEnabled reports whether any configured workspace category enables
+// the shared circular dependency check.
+func CircularEnabled(cfg *config.DevkitConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, category := range cfg.Workspace.Categories {
+		preset, err := config.ResolvePreset(category.Category.Preset, cfg)
+		if err == nil && preset.Deps.CheckCircular {
+			return true
+		}
+	}
+	return false
+}
 
 // DetectCircular runs Tarjan SCC on the full workspace dependency graph.
 // It runs once and distributes results per-package.
@@ -58,9 +74,10 @@ func readInternalDeps(dir string, nameToDir map[string]string) []string {
 		return nil
 	}
 	var pkg struct {
-		Dependencies     map[string]string `json:"dependencies"`
-		DevDependencies  map[string]string `json:"devDependencies"`
-		PeerDependencies map[string]string `json:"peerDependencies"`
+		Dependencies         map[string]string `json:"dependencies"`
+		DevDependencies      map[string]string `json:"devDependencies"`
+		OptionalDependencies map[string]string `json:"optionalDependencies"`
+		PeerDependencies     map[string]string `json:"peerDependencies"`
 	}
 	if err := json.Unmarshal(data, &pkg); err != nil {
 		return nil
@@ -75,6 +92,14 @@ func readInternalDeps(dir string, nameToDir map[string]string) []string {
 		}
 	}
 	for name := range pkg.DevDependencies {
+		if target, ok := nameToDir[name]; ok {
+			if _, dup := seen[target]; !dup {
+				seen[target] = struct{}{}
+				result = append(result, target)
+			}
+		}
+	}
+	for name := range pkg.OptionalDependencies {
 		if target, ok := nameToDir[name]; ok {
 			if _, dup := seen[target]; !dup {
 				seen[target] = struct{}{}

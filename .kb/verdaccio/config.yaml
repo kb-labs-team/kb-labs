@@ -6,7 +6,7 @@
 # is allowed on purpose: this registry only ever holds the release plan's
 # not-yet-published planned versions for the duration of one `release
 # checks` run (see scripts/gates/check-pack-install.sh and
-# plugins/release/manager-cli/src/cli/commands/stage-plan.ts) — never
+# plugins/release/src/cli/cli/commands/stage-plan.ts) — never
 # real credentials, never promoted to real npm from here.
 storage: /verdaccio/storage
 

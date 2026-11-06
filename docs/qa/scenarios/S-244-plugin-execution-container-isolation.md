@@ -36,6 +36,7 @@ boundary.
 | S-244.8 | Set only `platform.execution.mode` to `container`, then run a fixture that invokes a platform service | Execution and platform RPC use the subprocess framing over attached stdio; no container Gateway secret or URL is required, and the container has no Gateway network channel. |
 | S-244.9 | Run the fixture through subprocess mode and invoke a platform service while emitting a console log | Subprocess and container execution use the same length-prefixed framed stream for control, platform RPC, and logs; console output is delivered as log frames and cannot corrupt the protocol stream. |
 | S-244.10 | Start a long-running fixture in container mode, then terminate the host-side Docker client process while the fixture is running | The runtime observes stdin EOF and exits; Docker removes the `--rm` container. Within the bounded cleanup interval, the unique run ID assigned to the fixture has no matching container in `docker ps -a` output. |
+| S-244.11 | Set `platform.execution.mode` in turn to `in-process`, `subprocess`, `worker-pool`, and `container`; restart after each change; run the same successful fixture request through CLI, REST, REST WebSocket, workflow, Gateway webhook, and MCP | All six planes return the same fixture result for each configured mode. A plane-local backend choice that changes the result fails this claim. |
 
 ## Decision notes
 

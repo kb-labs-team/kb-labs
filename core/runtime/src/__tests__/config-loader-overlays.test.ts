@@ -6,10 +6,12 @@ import os from 'node:os'
 import { AdapterProjectScopeError, PlatformConfigError } from '@kb-labs/core-platform'
 import { createProjectRegistry } from '@kb-labs/core-project-registry'
 import { loadPlatformConfig } from '../config-loader.js'
+import { writeTestPlatformReceipt } from './platform-version-fixture.js'
 
 let tmpDir: string
 
 function makePlatformDir(dir: string, configContents?: unknown): void {
+  writeTestPlatformReceipt(dir)
   mkdirSync(path.join(dir, 'node_modules', '@kb-labs', 'cli-bin'), { recursive: true })
   if (configContents !== undefined) {
     mkdirSync(path.join(dir, '.kb'), { recursive: true })
@@ -25,7 +27,7 @@ async function projectRegistration(projectRoot: string) {
   const env = { KB_HOME: path.join(tmpDir, 'kb-home') }
   const root = realpathSync(projectRoot)
   const registry = createProjectRegistry({ env })
-  const existing = (await registry.list()).find((entry) => entry.project.path === root)
+  const existing = (await registry.list()).projects.find((entry) => entry.project.path === root)
   const project = existing?.project ?? (await registry.add(root)).project
   return { env, projectId: project.id }
 }
@@ -83,6 +85,80 @@ describe('loadPlatformConfig: overlays', () => {
 
     expect(result.platformConfig.adapters).toEqual({ llm: 'openai' })
     expect(result.sources.overlays).toBeUndefined()
+  })
+
+  it('applies a delivery config overlay over the image composition', async () => {
+    const platformRoot = path.join(tmpDir, 'delivery-platform')
+    const projectRoot = path.join(tmpDir, 'delivery-project')
+    makePlatformDir(platformRoot, {
+      platform: { deployment: { topology: 'cloud' }, adapters: { cache: 'redis' } },
+      gateway: { access: { mode: 'secured' }, port: 4000 },
+    })
+    makeProjectDir(projectRoot)
+    writeFileSync(path.join(platformRoot, '.kb', 'kb.config.override.json'), JSON.stringify({
+      platform: { deployment: { topology: 'k8s' } },
+      gateway: { access: { mode: 'secured' } },
+    }))
+
+    const result = await loadConfig({
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot },
+      loadEnvFile: false,
+    })
+
+    expect(result.effectiveConfig?.platform).toMatchObject({
+      deployment: { topology: 'k8s' },
+      adapters: { cache: 'redis' },
+    })
+    expect(result.effectiveConfig?.gateway).toMatchObject({
+      access: { mode: 'secured' },
+      port: 4000,
+    })
+  })
+
+  it('applies a delivery config overlay in a same-directory development checkout', async () => {
+    const platformRoot = path.join(tmpDir, 'delivery-same-root')
+    makePlatformDir(platformRoot, {
+      platform: { deployment: { topology: 'cloud' }, adapters: { cache: 'redis' } },
+      gateway: { access: { mode: 'secured' }, port: 4000 },
+    })
+    writeFileSync(path.join(platformRoot, '.kb', 'kb.config.override.json'), JSON.stringify({
+      platform: { deployment: { topology: 'k8s' } },
+    }))
+
+    const result = await loadConfig({
+      startDir: platformRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot },
+      loadEnvFile: false,
+    })
+
+    expect(result.effectiveConfig).toEqual({
+      plugins: {},
+      platform: {
+        deployment: { topology: 'k8s' },
+        adapters: { cache: 'redis' },
+      },
+      gateway: { access: { mode: 'secured' }, port: 4000 },
+    })
+  })
+
+  it('keeps effective config byte-identical to the image config when the delivery overlay is absent', async () => {
+    const platformRoot = path.join(tmpDir, 'delivery-no-overlay')
+    const projectRoot = path.join(tmpDir, 'delivery-no-overlay-project')
+    const imageConfig = {
+      platform: { deployment: { topology: 'cloud' }, adapters: { cache: 'redis' } },
+      gateway: { access: { mode: 'secured' }, port: 4000 },
+    }
+    makePlatformDir(platformRoot, imageConfig)
+    makeProjectDir(projectRoot)
+
+    const result = await loadConfig({
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot },
+      loadEnvFile: false,
+    })
+
+    expect(JSON.stringify(result.effectiveConfig)).toBe(JSON.stringify({ plugins: {}, ...imageConfig }))
   })
 
   it('applies overlays to platform data while leaving adapter values platform-owned', async () => {

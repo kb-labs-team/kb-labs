@@ -174,7 +174,7 @@ Provider-specific values may also appear as-is for clients that want to branch o
 
 ### No fallback
 
-Unlike `stream()`, there is **no automatic fallback** for tool calling. If `chatWithTools` is missing, the caller has to do text-based tool prompting themselves, or the call throws `'Current adapter does not support chatWithTools'`. The agent system in `@kb-labs/agent-core` has a fallback text-based path for adapters that don't implement native tool calling — see its source if you need to support both.
+Unlike `stream()`, there is **no automatic fallback** for tool calling. If `chatWithTools` is missing, the caller has to do text-based tool prompting themselves, or the call throws `'Current adapter does not support chatWithTools'`. The agent system in `@kb-labs/agents/core` has a fallback text-based path for adapters that don't implement native tool calling — see its source if you need to support both.
 
 ## Execution policy
 

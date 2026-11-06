@@ -18,17 +18,19 @@ Create a working plugin with two CLI commands using the scaffold tool, then cust
 kb scaffold run plugin my-plugin --yes
 ```
 
-This generates a ready-to-build plugin at `.kb/plugins/my-plugin` with three packages:
+This generates a ready-to-build plugin at `.kb/plugins/my-plugin` as one package named `@kb-labs/my-plugin`:
 
-| Package | Purpose |
-|---------|---------|
-| `my-plugin-entry` | Manifest + CLI command handlers |
-| `my-plugin-core` | Business logic (pure functions, no platform deps) |
-| `my-plugin-contracts` | Shared types between entry and core |
+| Path | Purpose |
+|------|---------|
+| `package.json` | Package name matches the plugin manifest ID |
+| `src/manifest.ts` | Manifest and CLI command registry |
+| `src/cli/commands/` | CLI command handlers |
+| `src/core/` | Business logic, kept separate from platform adapters |
+| `src/contracts/` | Types and schemas shared inside the package |
 
 Two commands come out of the box: `hello` (greeting with a `--who` flag) and `ping` (health check).
 
-The scaffold creates the source files. Build them, then explicitly link the entry package into the project's marketplace lock.
+The scaffold creates the source files. Build them, then link the package into the project's marketplace lock.
 
 Use `--dry-run` to preview the file tree without writing anything:
 
@@ -52,15 +54,15 @@ pnpm install
 pnpm build
 ```
 
-You should see `dist/` folders in each sub-package. If the build fails, run `kb scaffold doctor --path .kb/plugins` to diagnose.
+The build writes the package output to `dist/`. If the build fails, run `kb scaffold doctor --path .kb/plugins` to diagnose.
 
 ## 3. Link and run the plugin
 
-Return to the project root and link the built entry package. The relative path is recorded in `.kb/marketplace.lock`:
+Return to the project root and link the built package. The relative path is recorded in `.kb/marketplace.lock`:
 
 ```bash
 cd ../../..
-kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry
+kb marketplace plugins add --link .kb/plugins/my-plugin
 ```
 
 Now run the generated commands:
@@ -87,17 +89,17 @@ kb my-plugin --help
 
 ## What got generated
 
-### Manifest (`my-plugin-entry/src/manifest.ts`)
+### Manifest (`src/manifest.ts`)
 
 The manifest declares the plugin's identity, permissions, and CLI commands. Each command points at a handler file:
 
 ```
-handler: "./commands/hello.js#default"
+handler: "./cli/commands/hello.js#default"
 ```
 
-The path is relative to the entry package root, pointing at the built `.js` output (not `.ts` source). The `#default` suffix tells the runtime to use the default export.
+The path is relative to the package root, pointing at the built `.js` output (not `.ts` source). The `#default` suffix tells the runtime to use the default export.
 
-### Command handler (`my-plugin-entry/src/commands/hello.ts`)
+### Command handler (`src/cli/commands/hello.ts`)
 
 Handlers use `defineCommand` from `@kb-labs/sdk`. They receive a `PluginContextV3` (platform services) and `CLIInput<Flags>` (parsed flags):
 
@@ -115,18 +117,18 @@ export default defineCommand({
 });
 ```
 
-Notice the handler calls into `my-plugin-core` for logic, not the platform directly. This keeps business logic testable without platform mocking.
+Notice the handler calls into `src/core` for logic, not platform internals. This keeps business logic testable without platform mocking.
 
-### Core logic (`my-plugin-core/src/hello.ts`)
+### Core logic (`src/core/hello.ts`)
 
 Pure functions, zero platform imports. The generated file includes commented cookbook examples for LLM calls, caching, and structured logging via `@kb-labs/sdk`.
 
-### Tests (`my-plugin-core/tests/hello.test.ts`)
+### Tests (`src/core/tests/hello.test.ts`)
 
 Unit tests run with vitest, no platform setup needed:
 
 ```bash
-cd packages/my-plugin-core
+cd .kb/plugins/my-plugin
 pnpm test
 ```
 
@@ -134,7 +136,7 @@ pnpm test
 
 Three steps:
 
-**a)** Create `my-plugin-entry/src/commands/status.ts`:
+**a)** Create `src/cli/commands/status.ts`:
 
 ```ts
 import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
@@ -163,8 +165,8 @@ export default defineCommand({
   id: 'status',
   group: 'my-plugin',
   describe: 'Show plugin status',
-  handler: './commands/status.js#default',
-  handlerPath: './commands/status.js',
+  handler: './cli/commands/status.js#default',
+  handlerPath: './cli/commands/status.js',
   flags: [
     { name: 'json', type: 'boolean', description: 'Emit JSON' },
   ],
@@ -177,9 +179,9 @@ export default defineCommand({
 ```ts
 entry: {
   index: 'src/index.ts',
-  'commands/hello': 'src/commands/hello.ts',
-  'commands/ping': 'src/commands/ping.ts',
-  'commands/status': 'src/commands/status.ts',  // new
+  'cli/commands/hello': 'src/cli/commands/hello.ts',
+  'cli/commands/ping': 'src/cli/commands/ping.ts',
+  'cli/commands/status': 'src/cli/commands/status.ts',  // new
 },
 ```
 
@@ -192,7 +194,7 @@ kb my-plugin status
 
 ## 5. Add LLM support
 
-The cookbook in `my-plugin-core/src/hello.ts` has commented examples. To enable LLM access:
+The cookbook in `src/core/hello.ts` has commented examples. To enable LLM access:
 
 **a)** Update permissions in `manifest.ts`:
 

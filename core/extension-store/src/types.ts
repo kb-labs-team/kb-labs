@@ -89,6 +89,8 @@ export interface PackageInstallOptions {
   version: string;
   /** Dependency spec written into the synthetic project's `package.json` (defaults to the exact version). */
   spec?: string;
+  /** Registry integrity for a direct tarball URL. The installer verifies these bytes before installation. */
+  expectedIntegrity?: string;
   /** Directory of the synthetic pnpm project the package is installed into. */
   projectDir: string;
   /** Dedicated pnpm content-addressed store directory (never the user's default store). */

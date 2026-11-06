@@ -1,5 +1,5 @@
 import { createErrorEnvelope, getCatalogEntry, isErrorCode, toErrorEnvelope, type ErrorCode, type ErrorEnvelope } from '../error-envelope/index.js';
-import type { CatalogErrorCode } from '../error-envelope/error-codes.generated.js';
+import type { CatalogDetailsFor } from '../error-envelope/error-codes.generated.js';
 import { createUxFailureResult, type UxFailureResult } from '../ux-result/index.js';
 
 export interface HttpFailureOptions {
@@ -14,12 +14,6 @@ export function statusForHttpFailure(payload: unknown, transportStatusCode: numb
   if (!parts.cataloguedPayload || !isErrorCode(parts.code)) return transportStatusCode;
 
   const entry = getCatalogEntry(parts.code);
-  if (!entry) {
-    throw new Error(`HTTP failure code "${parts.code}" is not in errors.catalog.json`);
-  }
-  if (entry.httpStatus === undefined) {
-    throw new Error(`Catalogued error "${parts.code}" reached an HTTP boundary without httpStatus; add httpStatus to errors.catalog.json`);
-  }
   return entry.httpStatus;
 }
 
@@ -30,6 +24,10 @@ interface HttpFailureParts {
 }
 
 function failureParts(payload: unknown, statusCode: number, limitBytes?: number): HttpFailureParts {
+  if (payload instanceof Error && payload.name === 'AbortError') {
+    const error = createErrorEnvelope('KB_RUNTIME_REQUEST_CANCELLED');
+    return { code: error.code, cataloguedPayload: true, error };
+  }
   const nested = payload && typeof payload === 'object' && 'error' in payload ? payload.error : undefined;
   const candidate = hasCode(nested) ? nested : hasCode(payload) ? payload : undefined;
   if (candidate !== undefined) {
@@ -39,16 +37,54 @@ function failureParts(payload: unknown, statusCode: number, limitBytes?: number)
     }
     const error = toErrorEnvelope(candidate);
     if (statusCode !== 413 || error.area === 'product') {
-      return { code: error.code, cataloguedPayload: isErrorCode(candidate.code), error };
+      const details = statusCode === 400 && !isErrorCode(candidate.code) ? validationDetails(payload) : undefined;
+      const normalizedError = details && error.code === 'KB_RUNTIME_INPUT_INVALID'
+        ? createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+          message: error.message,
+          hint: error.hint,
+          correlationId: error.correlationId,
+          details,
+        })
+        : error;
+      return { code: normalizedError.code, cataloguedPayload: isErrorCode(candidate.code), error: normalizedError };
     }
     const code = fallbackCodeForStatus(statusCode);
     return { code, cataloguedPayload: false, error: createFallbackError(code, limitBytes) };
   }
   const code = fallbackCodeForStatus(statusCode);
-  return { code, cataloguedPayload: false, error: createFallbackError(code, limitBytes) };
+  return { code, cataloguedPayload: false, error: createFallbackError(code, limitBytes, validationDetails(payload)) };
 }
 
-function createFallbackError(code: CatalogErrorCode, limitBytes?: number): ErrorEnvelope {
+function validationDetails(payload: unknown): Record<string, string> | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const source = payload as Record<string, unknown>;
+  const candidates = Array.isArray(source.validation) ? source.validation
+    : Array.isArray(source.issues) ? source.issues
+      : [];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'object' || candidate === null) continue;
+    const issue = candidate as Record<string, unknown>;
+    const path = Array.isArray(issue.path) ? issue.path.filter((part): part is string | number =>
+      typeof part === 'string' || typeof part === 'number')
+      : typeof issue.instancePath === 'string' ? issue.instancePath.split('/').filter(Boolean)
+        : typeof issue.dataPath === 'string' ? issue.dataPath.split('.').filter(Boolean)
+          : [];
+    if (path.length) return { field: path.map(String).join('.') };
+  }
+  return undefined;
+}
+
+type FallbackErrorCode = ReturnType<typeof fallbackCodeForStatus>;
+type FallbackErrorDetails = CatalogDetailsFor[FallbackErrorCode];
+
+function createFallbackError(
+  code: FallbackErrorCode,
+  limitBytes?: number,
+  details?: FallbackErrorDetails,
+): ErrorEnvelope {
+  if (code === 'KB_RUNTIME_INPUT_INVALID') {
+    return createErrorEnvelope(code, details ? { details } : {});
+  }
   if (code === 'KB_AUTH_REQUIRED') {
     return createErrorEnvelope(code, {
       message: 'Authentication is required.',
@@ -81,7 +117,7 @@ function formatByteLimit(limitBytes: number): string {
   return `${size} ${units[unitIndex]}`;
 }
 
-function fallbackCodeForStatus(statusCode: number): CatalogErrorCode {
+function fallbackCodeForStatus(statusCode: number) {
   return statusCode === 401 ? 'KB_AUTH_REQUIRED'
     : statusCode === 403 ? 'KB_AUTH_FORBIDDEN'
       : statusCode === 400 ? 'KB_RUNTIME_INPUT_INVALID'

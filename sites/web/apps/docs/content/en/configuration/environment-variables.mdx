@@ -97,7 +97,7 @@ Each long-running service reads its own port env var plus `NODE_ENV`:
 | `KB_MARKETPLACE_URL` | Direct URL to the marketplace service. When set, the CLI bypasses the gateway. | (unset) |
 | `KB_GATEWAY_URL` | Gateway address used by gateway-aware plugin commands. The CLI resolves it from the same service transport listen address, `GATEWAY_PORT` value or service default, and local network offset used by the daemon. Host-managed child runtimes receive that address from the host. A fresh install does not need a `gateway.port` setting. External API callers can set this variable explicitly. | Platform service transport or Gateway service defaults |
 
-From [`marketplace-cli/src/http.ts`](plugins/marketplace/entry/src/http.ts). `KB_MARKETPLACE_URL` takes precedence when present.
+From [`marketplace-cli/src/http.ts`](cli/commands/src/commands/system/marketplace/http.ts). `KB_MARKETPLACE_URL` takes precedence when present.
 
 ## State broker
 

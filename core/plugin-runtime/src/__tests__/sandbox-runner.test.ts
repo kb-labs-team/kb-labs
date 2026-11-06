@@ -25,6 +25,7 @@ import { createMockUI, createMockPlatform } from './test-mocks.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeFileSync, mkdirSync } from 'node:fs';
+import { installPlatformResolveHook } from '../platform-resolve/index.js';
 
 describe('Sandbox Runner', () => {
   const mockUI = createMockUI();
@@ -38,6 +39,46 @@ describe('Sandbox Runner', () => {
   });
 
   describe('runInProcess - RunResult contract', () => {
+    it('loads platform packages from the platform root for a store-installed handler', async () => {
+      const previousPlatformRoot = process.env.KB_PLATFORM_ROOT;
+      const platformRoot = join(testDir, 'platform');
+      const storeRoot = join(testDir, 'store', 'entries', 'plugin@1.0.0', 'node_modules');
+      const writePackage = (root: string, name: string, source: string): void => {
+        const packageDir = join(root, ...name.split('/'));
+        mkdirSync(packageDir, { recursive: true });
+        writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name, type: 'module', exports: './index.mjs' }));
+        writeFileSync(join(packageDir, 'index.mjs'), source);
+      };
+      writePackage(join(platformRoot, 'node_modules'), '@kb-labs/sdk', "import { owner } from '@kb-labs/shared-command-kit'; export const ownerFromSdk = owner;");
+      writePackage(join(platformRoot, 'node_modules'), '@kb-labs/shared-command-kit', "export const owner = 'platform';");
+      writePackage(storeRoot, '@kb-labs/sdk', "import { owner } from '@kb-labs/shared-command-kit'; export const ownerFromSdk = owner;");
+      const pluginRoot = join(testDir, 'store', 'entries', 'plugin@1.0.0', 'node_modules', 'plugin');
+      mkdirSync(pluginRoot, { recursive: true });
+      writeFileSync(join(pluginRoot, 'package.json'), JSON.stringify({ name: 'plugin', type: 'module' }));
+      const handlerPath = join(pluginRoot, 'handler.mjs');
+      writeFileSync(handlerPath, "import { ownerFromSdk } from '@kb-labs/sdk'; export default { execute: async () => ownerFromSdk };");
+      process.env.KB_PLATFORM_ROOT = platformRoot;
+
+      try {
+        const result = await runInProcess({
+          descriptor: {
+            hostType: 'cli', pluginId: '@kb-labs/test', pluginVersion: '1.0.0',
+            requestId: 'store-entry-resolution', handlerId: 'test:command', permissions: {},
+            hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+          },
+          platform: mockPlatform, ui: mockUI, handlerPath, input: {}, cwd: testDir,
+        });
+        expect(result.data).toBe('platform');
+      } finally {
+        if (previousPlatformRoot === undefined) {
+          delete process.env.KB_PLATFORM_ROOT;
+        } else {
+          process.env.KB_PLATFORM_ROOT = previousPlatformRoot;
+        }
+        installPlatformResolveHook({ platformRoot }).deregister();
+      }
+    });
+
     it('should return RunResult with data and executionMeta', async () => {
       const handlerPath = join(testDir, 'simple-handler.js');
       const handlerCode = `
@@ -84,6 +125,30 @@ describe('Sandbox Runner', () => {
       expect(typeof result.executionMeta.endTime).toBe('number');
       expect(typeof result.executionMeta.duration).toBe('number');
       expect(result.executionMeta.duration).toBeGreaterThanOrEqual(0);
+    });
+
+    it('loads the named export declared by a handler reference', async () => {
+      const handlerPath = join(testDir, 'named-handler.js');
+      writeFileSync(handlerPath, `
+        export const createSessionHandler = {
+          async execute() { return { session: { id: 'session-1' } }; }
+        };
+      `);
+
+      const result = await runInProcess({
+        descriptor: {
+          hostType: 'rest', pluginId: '@kb-labs/agents', pluginVersion: '1.0.0',
+          requestId: 'named-handler', handlerId: 'agents:sessions:create', permissions: {},
+          hostContext: { host: 'rest', method: 'POST', path: '/sessions', query: {}, headers: {}, requestId: 'named-handler', traceId: 'named-handler' },
+        },
+        platform: mockPlatform,
+        ui: mockUI,
+        handlerPath: `${handlerPath}#createSessionHandler`,
+        input: {},
+        cwd: testDir,
+      });
+
+      expect(result.data).toEqual({ session: { id: 'session-1' } });
     });
 
     it('keeps plain data without interpreting success-looking fields', async () => {

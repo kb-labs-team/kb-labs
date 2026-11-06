@@ -1,0 +1,12 @@
+import { defineConfig } from 'tsup';
+import nodePreset from '@kb-labs/devkit/tsup/node';
+
+export default defineConfig({
+  ...nodePreset,
+  tsconfig: 'tsconfig.json',
+  entry: ['src/index.ts', 'src/manifest.ts', 'src/**/*.ts', '!src/**/*.test.ts'],
+  external: ['@kb-labs/sdk'],
+  dts: { resolve: <%= it.mode === 'standalone' ? 'true' : 'false' %>, skipLibCheck: true },
+  clean: true,
+  sourcemap: true,
+});

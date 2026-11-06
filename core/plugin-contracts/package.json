@@ -17,10 +17,24 @@
       "types": "./dist/project-service-path.d.ts",
       "import": "./dist/project-service-path.js",
       "require": "./dist/project-service-path.cjs"
+    },
+    "./node-engine-policy": {
+      "types": "./src/node-engine-policy.d.mts",
+      "import": "./src/node-engine-policy.mjs",
+      "require": "./src/node-engine-policy.mjs"
+    },
+    "./color-policy": {
+      "types": "./src/color-policy.d.mts",
+      "import": "./src/color-policy.mjs",
+      "require": "./src/color-policy.mjs"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src/node-engine-policy.mjs",
+    "src/node-engine-policy.d.mts",
+    "src/color-policy.mjs",
+    "src/color-policy.d.mts"
   ],
   "scripts": {
     "build": "pnpm clean && tsup --config tsup.config.ts",
@@ -30,7 +44,7 @@
     "lint:fix": "eslint . --fix",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit && node ../../scripts/checks/typecheck-authored-esm.mjs"
   },
   "dependencies": {
     "@kb-labs/core-contracts": "workspace:*",

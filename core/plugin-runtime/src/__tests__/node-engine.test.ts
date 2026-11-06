@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createErrorEnvelope, ErrorEnvelopeError, getCatalogEntry } from '@kb-labs/core-platform';
 import { ensureNodeEngineSupported } from '../platform-resolve/node-engine.js';
-import { parseNodeEnginePolicy } from '../platform-resolve/node-engine.mjs';
+import { parseNodeEnginePolicy } from '@kb-labs/plugin-contracts/node-engine-policy';
 
 describe('installed runtime Node.js engine', () => {
   let temporary: string | undefined;

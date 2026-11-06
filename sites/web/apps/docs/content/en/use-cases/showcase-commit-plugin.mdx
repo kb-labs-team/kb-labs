@@ -22,10 +22,10 @@ The Commit Plugin makes "doing it right" the path of least resistance.
 pnpm kb commit commit --scope="@kb-labs/your-package"
 
 # Or step-by-step
-pnpm kb commit generate --scope="src/components/**"   # plan only
-pnpm kb commit open                                    # review the plan
-pnpm kb commit apply                                   # create the commits
-pnpm kb commit push                                    # push (refuses force-push to main)
+pnpm kb commit plan create --scope="src/components/**"   # plan only
+pnpm kb commit plan show                                    # review the plan
+pnpm kb commit plan apply                                   # create the commits
+pnpm kb commit publish                                    # push (refuses force-push to main)
 ```
 
 The plan is stored as an artifact (`.kb/commit/current/plan.json`) so you can edit it before applying — important when the LLM groups things you wanted to keep separate.
@@ -46,7 +46,7 @@ commit:commit
 
 ## KB Labs primitives used
 
-From the [manifest](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/commit/entry/src/manifest.ts), the platform surface is small and focused:
+From the [manifest](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/commit/src/manifest.ts), the platform surface is small and focused:
 
 ```ts
 platform: {
@@ -73,6 +73,6 @@ The two patterns worth stealing:
 
 ## Going deeper
 
-- [Manifest source](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/commit/entry/src/manifest.ts)
+- [Manifest source](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/commit/src/manifest.ts)
 - [Guide: Your First Plugin](/guides/first-plugin)
 - [SDK: Hooks reference](/sdk/hooks)

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DiscoveryManager } from './discovery-manager.js';
 import { resolveMarketplaceLockScope, validateMarketplaceLockAtRoot } from './marketplace-lock-scope.js';
 
 const rootsToRemove: string[] = [];
@@ -38,5 +40,25 @@ describe('marketplace lock root scope', () => {
       reason: 'project lock must not contain adapters',
       scope: 'project',
     });
+  });
+
+  it('validates the shipped workspace lock as platform-owned when both roles share its root', async () => {
+    const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+    const lockPath = path.join(workspaceRoot, '.kb', 'marketplace.lock');
+    const lock: unknown = JSON.parse(await fs.readFile(lockPath, 'utf8'));
+
+    await expect(validateMarketplaceLockAtRoot(
+      lock,
+      { platformRoot: workspaceRoot, projectRoot: workspaceRoot },
+      workspaceRoot,
+    )).resolves.toMatchObject({ valid: true, scope: 'platform' });
+
+    const discovery = await new DiscoveryManager({
+      root: workspaceRoot,
+      platformRoot: workspaceRoot,
+      workspace: false,
+      verifyIntegrity: false,
+    }).discover();
+    expect(discovery.diagnostics.some((event) => event.code === 'LOCK_SCHEMA_INVALID')).toBe(false);
   });
 });

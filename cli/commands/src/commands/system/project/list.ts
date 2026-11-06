@@ -1,7 +1,9 @@
 /** project list — show every registered project. */
 
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { renderErrorDiagnostics } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
+import type { PlatformDiagnostic } from '@kb-labs/core-platform';
 import type { ProjectSummary } from '@kb-labs/core-contracts';
 import { listProjects, projectErrorEnvelope } from '@kb-labs/core-project-registry';
 import { failWithEnvelope, openRegistry } from './project-support';
@@ -13,6 +15,7 @@ type ListFlags = {
 export type ProjectListResult = CommandResult & {
   projects?: ProjectSummary[];
   total?: number;
+  diagnostics?: PlatformDiagnostic[];
 };
 
 function pad(value: string, width: number): string {
@@ -38,7 +41,7 @@ export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
   async handler(ctx, _argv, flags) {
     const json = Boolean(flags.json);
     try {
-      const projects = await listProjects(openRegistry());
+      const { projects, diagnostics } = await listProjects(openRegistry());
       if (projects.length === 0) {
         if (!json) ctx.ui?.write('No projects registered. Add one with: kb project add <path>\n');
       } else if (!json) {
@@ -49,7 +52,17 @@ export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
           ctx.ui?.write(`${pad(p.name, nameWidth)}  ${pad(p.id, 20)}  ${pad(p.status, 8)}  ${p.path}${note}\n`);
         }
       }
-      return {  projects, total: projects.length };
+      if (!json && diagnostics.length > 0) {
+        const renderedDiagnostics = renderErrorDiagnostics(diagnostics);
+        ctx.ui?.warn('Project registry contains corrupt records.', {
+          title: 'Project registry warnings',
+          sections: renderedDiagnostics.map((diagnostic, index) => ({
+            header: `${diagnostics[index]!.code}`,
+            items: [{ text: diagnostic, truncate: 1000 }],
+          })),
+        });
+      }
+      return { projects, total: projects.length, diagnostics };
     } catch (error) {
       return failWithEnvelope(projectErrorEnvelope(error));
     }

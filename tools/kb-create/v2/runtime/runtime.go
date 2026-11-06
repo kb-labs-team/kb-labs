@@ -25,6 +25,7 @@ import (
 )
 
 type ArtifactInstaller interface {
+	Prepare([]contracts.Artifact) (contracts.PreparedArtifacts, error)
 	Install([]contracts.Artifact) error
 	Restore([]contracts.Artifact) error
 }
@@ -63,12 +64,13 @@ type systemClock struct{}
 func (systemClock) Now() time.Time { return time.Now().UTC() }
 
 type Dependencies struct {
-	Artifacts               ArtifactInstaller
-	Host                    HostStarter
-	Probe                   HostProbe
-	PreserveGeneratedConfig bool
-	VerificationConfigRoot  string
-	Clock                   Clock
+	Artifacts                 ArtifactInstaller
+	Host                      HostStarter
+	Probe                     HostProbe
+	PreserveGeneratedConfig   bool
+	VerificationConfigRoot    string
+	MarketplaceLockSourceRoot string
+	Clock                     Clock
 	// CorrelationID is supplied by a frontend; it is persisted verbatim in the
 	// receipt and must be safe to disclose in a diagnostic bundle.
 	CorrelationID string
@@ -87,6 +89,10 @@ func installerSnapshots(platformRoot string) (string, error) {
 // Apply is the one V2 fresh-install operation. It deliberately has no
 // dependency on legacy manifests, state or package scanning.
 func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.InstallReceipt, error) {
+	return apply(ctx, plan, deps, nil)
+}
+
+func apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Dependencies, prepared contracts.PreparedArtifacts) (contracts.InstallReceipt, error) {
 	emit := func(phase string, start bool) error {
 		if deps.Progress != nil {
 			return deps.Progress.Emit(ProgressEvent{Phase: phase, Start: start})
@@ -106,11 +112,15 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 	if err != nil {
 		return contracts.InstallReceipt{}, err
 	}
+	var launchHost *contracts.HostSpec
 	if plan.Host != nil {
-		if plan.Host.Env == nil {
-			plan.Host.Env = map[string]string{}
+		declared := *plan.Host
+		declared.Env = make(map[string]string, len(plan.Host.Env)+1)
+		for key, value := range plan.Host.Env {
+			declared.Env[key] = value
 		}
-		plan.Host.Env["KB_INSTALLATION_ID"] = installationID
+		declared.Env["KB_INSTALLATION_ID"] = installationID
+		launchHost = &declared
 	}
 	if err := verifySecrets(plan, deps.Secrets); err != nil {
 		return contracts.InstallReceipt{}, err
@@ -125,7 +135,9 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 		}
 	}
 	var artifactErr error
-	if phased, ok := deps.Artifacts.(ProgressArtifactInstaller); ok {
+	if prepared != nil {
+		artifactErr = prepared.Install(func(phase string, start bool) error { return emit(phase, start) })
+	} else if phased, ok := deps.Artifacts.(ProgressArtifactInstaller); ok {
 		artifactErr = phased.InstallWithProgress(plan.Artifacts, emit)
 	} else {
 		if err := emit("Download and verify artifacts / install packages", true); err != nil {
@@ -142,7 +154,8 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 	// core-discovery's plugin registry reads .kb/marketplace.lock, not the
 	// resolved plan — without this, every installed plugin/adapter is on
 	// disk but invisible to the running platform (empty registry at /ready).
-	if err := marketplace.WriteLock(plan.Request.PlatformRoot, plan.Artifacts, now(deps.Clock)); err != nil {
+	if err := marketplace.WriteLock(plan.Request.PlatformRoot, deps.MarketplaceLockSourceRoot,
+		plan.Artifacts, now(deps.Clock)); err != nil {
 		_ = previousProjections.Restore()
 		return contracts.InstallReceipt{}, fmt.Errorf("write marketplace lock: %w", err)
 	}
@@ -168,9 +181,9 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 		var stop func() error
 		var startErr error
 		if deps.Host != nil {
-			stop, startErr = deps.Host.Start(ctx, *plan.Host)
+			stop, startErr = deps.Host.Start(ctx, *launchHost)
 		} else if deps.Probe != nil {
-			startErr = deps.Probe.Probe(ctx, *plan.Host)
+			startErr = deps.Probe.Probe(ctx, *launchHost)
 		}
 		if startErr != nil {
 			progressErr := emit("Start host", false)
@@ -336,13 +349,21 @@ func Update(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depend
 	if deps.VerificationConfigRoot != "" {
 		snapshotSourceRoot = deps.VerificationConfigRoot
 	}
+	prepared, err := deps.Artifacts.Prepare(plan.Artifacts)
+	if err != nil {
+		return contracts.InstallReceipt{}, contracts.Snapshot{}, fmt.Errorf("stage and verify sealed artifacts before update snapshot: %w", err)
+	}
 	snapshot, err := lifecycle.Mutate(plan.Request.PlatformRoot, snapshotSourceRoot, snapshotsDirectory, now(deps.Clock), func() error {
 		var applyErr error
-		result, applyErr = Apply(ctx, plan, deps)
+		result, applyErr = apply(ctx, plan, deps, prepared)
 		return applyErr
 	}, nil, restorePlanArtifacts(deps.Artifacts))
+	closeErr := prepared.Close()
 	if err != nil {
-		return contracts.InstallReceipt{}, snapshot, err
+		return contracts.InstallReceipt{}, snapshot, errors.Join(err, closeErr)
+	}
+	if closeErr != nil {
+		return contracts.InstallReceipt{}, snapshot, fmt.Errorf("remove staged update artifacts: %w", closeErr)
 	}
 	result.SnapshotID = snapshot.ID
 	if err := receipt.Write(plan.Request.PlatformRoot, result); err != nil {
@@ -413,7 +434,7 @@ func Rollback(platformRoot, snapshotID string, deps Dependencies) (contracts.Sna
 	if err != nil {
 		return snapshot, fmt.Errorf("rollback: read restored receipt: %w", err)
 	}
-	if _, err := verify.Run(active.Plan, now(deps.Clock)); err != nil {
+	if _, err := verify.RunWithConfigRoot(active.Plan, now(deps.Clock), platformRoot); err != nil {
 		return snapshot, fmt.Errorf("rollback: verify restored installation: %w", err)
 	}
 	return snapshot, nil

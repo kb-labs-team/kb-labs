@@ -21,7 +21,7 @@ Two commands do most of the work:
 
 ```bash
 # Build an index from your codebase
-pnpm kb mind index
+pnpm kb mind index update
 
 # Ask a question
 pnpm kb mind ask --text "How does the state broker handle tenant isolation?" --agent
@@ -42,7 +42,7 @@ mind-cli (commands)
 
 ## KB Labs primitives used
 
-Reading the [manifest](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/mind/entry/src/manifest.ts) tells you the whole story of what Mind needs from the platform:
+Reading the [manifest](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/mind/src/manifest.ts) tells you the whole story of what Mind needs from the platform:
 
 ```ts
 platform: {
@@ -67,6 +67,6 @@ If you're building a plugin that does "search over X with embeddings", the inter
 
 ## Going deeper
 
-- [Reference manifest](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/mind/entry/src/manifest.ts)
-- [mind-core README](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/mind/core/README.md) — hybrid search, anti-hallucination, adaptive weights
+- [Reference manifest](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/mind/src/manifest.ts)
+- [mind-core README](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/mind/src/core/README.md) — hybrid search, anti-hallucination, adaptive weights
 - [Guide: Your First Plugin](/guides/first-plugin) — if Mind inspired you to build something

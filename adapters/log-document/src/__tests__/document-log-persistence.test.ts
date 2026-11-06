@@ -6,7 +6,7 @@
  * mongo or postgres-JSONB the assertions still hold.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSqliteDocumentDatabase } from '@kb-labs/adapters-sqlite';
 import { DocumentLogPersistence } from '../index.js';
 import type { LogRecord } from '@kb-labs/sdk/adapters';
@@ -70,6 +70,81 @@ describe('DocumentLogPersistence (sqlite-backed)', () => {
 
     const result = await shutdownPersistence.query({}, { limit: 100 });
     expect(result.logs.map((log) => log.id).sort()).toEqual(records.map((log) => log.id).sort());
+  });
+
+  // case: S-203.26
+  it('makes an error record queryable before write resolves', async () => {
+    const immediate = new DocumentLogPersistence({
+      documentDatabase: docs,
+      collection: 'error_visibility_test',
+      batchSize: 100,
+      flushInterval: 60_000,
+      retention: { cleanupIntervalMs: 60_000 },
+    });
+    const correlationId = 'rest-error-correlation';
+    try {
+      await immediate.write(record({
+        id: 'rest-error-log',
+        level: 'error',
+        message: 'Plugin handler failed',
+        fields: { correlationId },
+      }));
+
+      const result = await immediate.query({ correlationId }, { limit: 10 });
+      expect(result.logs).toContainEqual(expect.objectContaining({
+        id: 'rest-error-log',
+        level: 'error',
+        fields: expect.objectContaining({ correlationId }),
+      }));
+    } finally {
+      await immediate.close();
+      await docs.deleteMany('error_visibility_test', {});
+    }
+  });
+
+  it('flushes a concurrent error record after an in-flight batch', async () => {
+    let releaseFirstInsert!: () => void;
+    let signalFirstInsert!: () => void;
+    const firstInsertStarted = new Promise<void>((resolve) => { signalFirstInsert = resolve; });
+    const firstInsertReleased = new Promise<void>((resolve) => { releaseFirstInsert = resolve; });
+    const originalInsertMany = docs.insertMany.bind(docs);
+    let firstInsert = true;
+    const insertSpy = vi.spyOn(docs, 'insertMany').mockImplementation(async (...args) => {
+      if (firstInsert) {
+        firstInsert = false;
+        signalFirstInsert();
+        await firstInsertReleased;
+      }
+      return originalInsertMany(...args);
+    });
+    const concurrent = new DocumentLogPersistence({
+      documentDatabase: docs,
+      collection: 'concurrent_error_visibility_test',
+      batchSize: 1,
+      flushInterval: 60_000,
+      retention: { cleanupIntervalMs: 60_000 },
+    });
+    try {
+      await concurrent.writeBatch([record({ id: 'in-flight-info' })]);
+      await firstInsertStarted;
+      const correlationId = 'concurrent-rest-error-correlation';
+      const errorWrite = concurrent.write(record({
+        id: 'concurrent-rest-error',
+        level: 'error',
+        fields: { correlationId },
+      }));
+      releaseFirstInsert();
+      await errorWrite;
+
+      const result = await concurrent.query({ correlationId }, { limit: 10 });
+      expect(insertSpy).toHaveBeenCalledTimes(2);
+      expect(result.logs.map((log) => log.id)).toContain('concurrent-rest-error');
+    } finally {
+      releaseFirstInsert();
+      insertSpy.mockRestore();
+      await concurrent.close();
+      await docs.deleteMany('concurrent_error_visibility_test', {});
+    }
   });
 
   it('writeBatch persists all entries', async () => {

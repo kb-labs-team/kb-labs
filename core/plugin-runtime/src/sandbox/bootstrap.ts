@@ -17,6 +17,7 @@ import { applySandboxPatches, type SandboxMode } from './harden.js';
 import { setGlobalContext, clearGlobalContext } from './context-holder.js';
 import { connectToPlatform, disconnectFromPlatform } from './platform-client.js';
 import type { ExecuteMessage } from './ipc-protocol.js';
+import { installPlatformResolveHook } from '../platform-resolve/index.js';
 
 const rawStdout = process.stdout;
 const writeRawStdout = rawStdout.write.bind(rawStdout);
@@ -126,6 +127,10 @@ async function execute(requestId: string, message: ExecuteMessage): Promise<void
     }
     if (descriptor.pluginId && descriptor.pluginVersion && platform.analytics) {
       platform.analytics.setSource?.({ product: descriptor.pluginId, version: descriptor.pluginVersion });
+    }
+    const platformRoot = process.env.KB_PLATFORM_ROOT;
+    if (platformRoot) {
+      installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
     }
     const handlerModule = await import(handlerPath);
     const handler = handlerModule.default ?? handlerModule;

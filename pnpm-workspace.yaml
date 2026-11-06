@@ -3,23 +3,27 @@ packages:
   - core/*
   - sdk/*
   - cli/*
+  - cli/scaffold/*
   - shared/*
-  - plugins/*/*
+  - plugins/*
   - '!plugins/fixtures/*'
   - services/*/*
   - adapters/*
   - infra/devkit
+  - tools/kb-create
   - studio/*
   - sites/*
   - sites/*/apps/*
   - sites/*/packages/*
   - templates/*
-  - templates/*/packages/*
-  - .kb/plugins/*/packages/*
 
 auditConfig:
   ignoreCves:
     - CVE-2026-14257
+
+minimumReleaseAge: 10080
+strictDepBuilds: true
+blockExoticSubdeps: true
 
 allowBuilds:
   '@parcel/watcher': true

@@ -6,6 +6,7 @@ import os from 'node:os'
 
 import { loadPlatformConfig } from '../config-loader.js'
 import { createProjectRegistry } from '@kb-labs/core-project-registry'
+import { writeTestPlatformReceipt } from './platform-version-fixture.js'
 
 /**
  * Create a minimal platform installation layout at `<dir>`:
@@ -13,6 +14,7 @@ import { createProjectRegistry } from '@kb-labs/core-project-registry'
  *   <dir>/.kb/kb.config.json (optional)
  */
 function makePlatformDir(dir: string, configContents?: unknown): void {
+  writeTestPlatformReceipt(dir)
   mkdirSync(path.join(dir, 'node_modules', '@kb-labs', 'cli-bin'), {
     recursive: true,
   })
@@ -48,7 +50,7 @@ describe('loadPlatformConfig', () => {
     if (env.KB_PLATFORM_ROOT) env.KB_PLATFORM_ROOT = realpathSync(env.KB_PLATFORM_ROOT)
     const startDir = realpathSync(options?.startDir ?? process.cwd())
     const registry = createProjectRegistry({ env })
-    const existing = (await registry.list()).find((entry) => entry.project.path === startDir)
+  const existing = (await registry.list()).projects.find((entry) => entry.project.path === startDir)
     const project = existing?.project ?? (await registry.add(startDir)).project
     return loadPlatformConfig({ ...options, startDir, env, projectId: project.id })
   }
@@ -487,6 +489,7 @@ describe('loadPlatformConfig', () => {
     execFileSync('git', ['add', 'README.md'], { cwd: registeredRoot })
     execFileSync('git', ['commit', '-m', 'fixture'], { cwd: registeredRoot })
     execFileSync('git', ['worktree', 'add', '--detach', worktreeRoot, 'main'], { cwd: registeredRoot })
+    makePlatformDir(worktreeRoot)
     const env = { KB_HOME: platformHome }
     const registered = await createProjectRegistry({ env }).add(realpathSync(registeredRoot))
 

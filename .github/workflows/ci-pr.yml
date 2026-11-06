@@ -39,6 +39,28 @@ jobs:
       - name: Check Single Version Policy (versions + format)
         run: pnpm deps:lint
 
+  # This runs the same versioned release build path used for immutable
+  # candidates, with a throwaway commit-scoped preflight version.
+  release-build-preflight:
+    name: Release build preflight
+    runs-on: ubuntu-latest
+    needs: preflight
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Build platform release flow
+        uses: ./.github/actions/release-build-preflight
+        with:
+          commit-sha: ${{ github.sha }}
+          flow: platform
+          channel: canary
+          mode: preflight
+
   # ── 0a. Resolve E2E ownership from the complete PR diff ──────────────────
   # The same JSON plan drives the selective E2E jobs below.
   e2e-test-plan:
@@ -274,6 +296,14 @@ jobs:
           # resolution needs built JS, not those background DTS workers.
           NODE_ENV: production
         run: ./tools/kb-devkit/kb-devkit run build
+      - name: Archive workspace outputs for repository checks
+        run: find . -path '*/node_modules/*' -prune -o -path '*/.kb/*' -prune -o -type d -name dist -print | tar cf full-dist-artifacts.tar -T -
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: full-dist-for-devkit-checks
+          path: full-dist-artifacts.tar
+          retention-days: 1
+          compression-level: 3
       - name: Run all unit tests
         run: ./tools/kb-devkit/kb-devkit run test --no-cache
       - name: Run all CLI handler tests
@@ -283,7 +313,7 @@ jobs:
   devkit-checks:
     name: Devkit checks
     runs-on: ubuntu-latest
-    needs: [build-tools, build, e2e-test-plan]
+    needs: [build-tools, build, e2e-test-plan, full-unit-tests]
     permissions:
       contents: read
     steps:
@@ -308,23 +338,11 @@ jobs:
           cp tools-bin/kb-devkit tools/kb-devkit/kb-devkit
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: dist
-      - run: tar xf dist-artifacts.tar
+          name: full-dist-for-devkit-checks
+      - run: tar xf full-dist-artifacts.tar
       - run: pnpm install --frozen-lockfile
-      - name: Build the base this job always needs
-        # The dist/ artifact from "Build TS (affected)" only contains packages
-        # actually affected by this PR's diff. `pnpm kb workflow lint` below
-        # is unconditional — every PR runs it — but its two dependencies are
-        # loaded dynamically (cli/bin resolves its own command surface at
-        # runtime; workflow-entry supplies the `workflow lint` command itself
-        # via plugin-manifest discovery, not a static import), so neither is
-        # reliably part of the affected closure. Build exactly this job's
-        # fixed requirement here; everything else stays affected-only.
-        run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/sdk,@kb-labs/cli-bin,@kb-labs/workflow-entry
-      - name: Validate workflow definitions and local step scripts
-        run: |
-          node .kb/workflows/scripts/check-local-script-references.mjs
-          pnpm kb workflow lint --path .kb/workflows --strict
+      - name: Lint workflow definitions
+        run: pnpm kb workflow lint --path .kb/workflows --strict
       - name: Devkit workspace checks (structure, dependencies, boundaries)
         run: ./tools/kb-devkit/kb-devkit check
 

@@ -102,7 +102,7 @@ Agent guidance: [`.claude/skills/deps-hygiene.md`](../../.claude/skills/deps-hyg
 - `deps` CI job added to [`ci.yml`](../../.github/workflows/ci.yml) and [`ci-pr.yml`](../../.github/workflows/ci-pr.yml).
 - All 431 existing mismatches resolved to 0. Locked versions recorded in memory: `memory/project_deps_svp.md`.
 - `pnpm.overrides` added to root `package.json` for the React ecosystem and `zod`.
-- Pre-existing `"*"` and `workspace:^` internal dependencies fixed to `workspace:*` in `sdk/sdk`, `plugins/workflow/studio`, `core/plugin-execution-factory` (these bypassed the policy by resolving to npm-latest).
+- Pre-existing `"*"` and `workspace:^` internal dependencies fixed to `workspace:*` in `sdk/sdk`, `services/workflow/studio`, `core/plugin-execution-factory` (these bypassed the policy by resolving to npm-latest).
 - Scaffolded test plugins in `.kb/plugins/` removed (they pulled npm-published `@kb-labs/*` artifacts with conflicting React 19 peer requirements).
 - `next` downgraded to `^14.2.15` so it coexists with the React 18 studio host. React 19 / Next 15 upgrade deferred to a future migration ADR.
 - Agent skill authored: [`.claude/skills/deps-hygiene.md`](../../.claude/skills/deps-hygiene.md).

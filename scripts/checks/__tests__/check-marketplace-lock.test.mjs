@@ -33,7 +33,7 @@ async function runCheck(lock) {
 test('accepts a v3 project pin without machine paths', async () => {
   const result = await runCheck({
     schema: 'kb.marketplace/3',
-    plugins: { '@scope/plugin': { version: '1.2.3', integrity: 'sha512-abc', package: '@scope/plugin', enabled: true, source: 'marketplace' } },
+    plugins: { '@scope/plugin': { version: '1.2.3', integrity: 'sha512-abc', package: '@scope/plugin', enabled: true, source: 'marketplace', marketplaceSource: 'registry', signatureStatus: 'unsigned' } },
   });
   try {
     assert.equal(result.status, 0, result.stderr);
@@ -44,7 +44,7 @@ test('accepts a v3 project pin without machine paths', async () => {
 test('rejects a v3 marketplace pin without its package name', async () => {
   const result = await runCheck({
     schema: 'kb.marketplace/3',
-    plugins: { '@kb-labs/commit': { version: '1.2.3', integrity: 'sha512-abc', enabled: true, source: 'marketplace' } },
+    plugins: { '@kb-labs/commit': { version: '1.2.3', integrity: 'sha512-abc', enabled: true, source: 'marketplace', marketplaceSource: 'registry', signatureStatus: 'unsigned' } },
   });
   try {
     assert.equal(result.status, 1);
@@ -66,7 +66,7 @@ test('rejects a platform source in a project pin with the runtime scope reason',
 test('rejects malformed integrity with the runtime validation reason and remediation', async () => {
   const result = await runCheck({
     schema: 'kb.marketplace/3',
-    plugins: { '@kb-labs/broken': { version: '1.2.3', integrity: 'sha999-invalid', package: '@kb-labs/broken', enabled: true, source: 'marketplace' } },
+    plugins: { '@kb-labs/broken': { version: '1.2.3', integrity: 'sha999-invalid', package: '@kb-labs/broken', enabled: true, source: 'marketplace', marketplaceSource: 'registry', signatureStatus: 'unsigned' } },
   });
   try {
     assert.equal(result.status, 1);
@@ -86,11 +86,11 @@ test('reports a v2 lock with the regeneration command', async () => {
 test('rejects a machine path in a project pin', async () => {
   const result = await runCheck({
     schema: 'kb.marketplace/3',
-    plugins: { demo: { version: '1.0.0', integrity: 'sha512-abc', package: 'demo-entry', enabled: true, source: 'marketplace', resolvedPath: '/machine/store/demo' } },
+    plugins: { demo: { version: '1.0.0', integrity: 'sha512-abc', package: 'demo-entry', enabled: true, source: 'marketplace', marketplaceSource: 'registry', signatureStatus: 'unsigned', resolvedPath: '/machine/store/demo' } },
   });
   try {
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /field "resolvedPath" is not allowed/);
+    assert.match(result.stderr, /resolvedPath must be a relative path/);
   } finally { await rm(result.root, { recursive: true, force: true }); }
 });
 
@@ -146,7 +146,7 @@ test('accepts the shared workspace lock under platform scope and runtime discove
     const { discoverAdapters } = await import(new URL('../../../core/runtime/dist/index.js', import.meta.url));
     const discovered = await discoverAdapters(workspaceRoot);
 
-    assert.equal(Object.keys(lock.adapters ?? {}).length, 26);
+    assert.ok([...discovered.keys()].every(packageName => Object.hasOwn(lock.adapters ?? {}, packageName)));
     assert.equal(result.status, 0, result.stderr);
     assert.ok(discovered.size > 0, 'platform adapter discovery reads the accepted workspace lock');
   } finally { await rm(isolatedHome, { recursive: true, force: true }); }

@@ -6,6 +6,7 @@
  */
 
 export { projectErrorEnvelope } from './envelope.js';
+export type { IProjectRegistry, ProjectRegistryList } from './interface.js';
 export { ProjectRegistryError, isProjectRegistryError } from './errors.js';
 export { withFileLock, type FileLockOptions } from './file-lock.js';
 export { PROJECT_ID_PREFIX, canonicalizeProjectPath, deriveProjectId, isProjectId } from './project-id.js';

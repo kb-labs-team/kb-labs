@@ -8,7 +8,7 @@ import { sampleManifest } from './fixtures.js';
 
 const baseEntry: StoreEntry = {
   schema: STORE_ENTRY_SCHEMA,
-  name: '@kb-labs/commit-entry',
+  name: '@kb-labs/commit',
   version: '2.120.1',
   kind: 'plugin',
   integrity: 'sha512-abc123',
@@ -25,7 +25,7 @@ describe('parseStoreEntry', () => {
     const entry: StoreEntry = {
       ...baseEntry,
       sdkApiVersion: '^1.0.0',
-      manifest: sampleManifest('@kb-labs/commit-entry', '2.120.1'),
+      manifest: sampleManifest('@kb-labs/commit', '2.120.1'),
     };
     expect(parseStoreEntry(serializeStoreEntry(entry), 'entry.json')).toEqual(entry);
   });

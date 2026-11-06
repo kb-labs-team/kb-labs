@@ -1,3 +1,6 @@
+import { createProductErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { ProductPluginError } from '@kb-labs/plugin-contracts';
+
 /**
  * Error Factory for KB Labs Plugins
  *
@@ -32,7 +35,7 @@ export interface ErrorDefinition {
   /** Actionable next step required by ADR-0049 for product error codes. */
   hint: string;
   /** Optional additional details */
-  details?: Record<string, unknown>;
+  details?: Record<string, string>;
 }
 
 /**
@@ -41,60 +44,11 @@ export interface ErrorDefinition {
 export type ErrorDefinitions = Record<string, ErrorDefinition>;
 
 /**
- * Base error class with HTTP status code support
- */
-export class PluginError extends Error {
-  public readonly statusCode: number;
-  public readonly errorCode: string;
-  public hint?: string;
-  public readonly details?: Record<string, unknown>;
-
-  constructor(
-    errorCode: string,
-    message: string,
-    statusCode: number,
-    details?: Record<string, unknown>
-  ) {
-    super(message);
-    this.name = 'PluginError';
-    this.errorCode = errorCode;
-    this.statusCode = statusCode;
-    this.details = details;
-
-    // Maintains proper stack trace for where our error was thrown (only available on V8)
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, PluginError);
-    }
-  }
-
-  /**
-   * Convert error to JSON for logging/serialization
-   */
-  toJSON() {
-    return {
-      name: this.name,
-      errorCode: this.errorCode,
-      message: this.message,
-      statusCode: this.statusCode,
-      details: this.details,
-      stack: this.stack,
-    };
-  }
-
-  /**
-   * Check if error is a PluginError
-   */
-  static isPluginError(error: unknown): error is PluginError {
-    return error instanceof PluginError;
-  }
-}
-
-/**
  * Type for error constructor created by defineError
  */
 type ErrorConstructor<TArgs extends unknown[] = unknown[]> = {
-  new (details?: Record<string, unknown>): PluginError;
-  new (...args: TArgs): PluginError;
+  new (details?: Record<string, string>): ProductPluginError;
+  new (...args: TArgs): ProductPluginError;
 };
 
 /**
@@ -104,7 +58,7 @@ type ErrorNamespace<TDefs extends ErrorDefinitions> = {
   [K in keyof TDefs]: ErrorConstructor;
 } & {
   /** Check if error is from this namespace */
-  is(error: unknown): error is PluginError;
+  is(error: unknown): error is ProductPluginError;
   /** Check if error has specific error code */
   hasCode(error: unknown, code: keyof TDefs): boolean;
 };
@@ -150,11 +104,17 @@ export function defineError<TDefs extends ErrorDefinitions>(
     const errorCode = `${prefix}_${key.toUpperCase()}`;
 
     // Create error class
-    class DefinedError extends PluginError {
+    class DefinedError extends ProductPluginError {
       constructor(...args: unknown[]) {
         const { message, details } = buildMessageAndDetails(def, args);
-        super(errorCode, message, def.code, details);
-        this.hint = def.hint;
+        const envelope = createProductErrorEnvelope({
+          code: errorCode,
+          message,
+          details,
+          hint: def.hint,
+          retryable: def.code >= 500,
+        });
+        super(message, envelope.code, def.code, details, envelope.hint);
         this.name = `${prefix}Error`;
       }
     }
@@ -163,13 +123,13 @@ export function defineError<TDefs extends ErrorDefinitions>(
   }
 
   // Add helper methods
-  errorNamespace.is = (error: unknown): error is PluginError => {
-    return PluginError.isPluginError(error) && error.errorCode.startsWith(prefix + '_');
+  errorNamespace.is = (error: unknown): error is ProductPluginError => {
+    return error instanceof ProductPluginError && error.code.startsWith(prefix + '_');
   };
 
   errorNamespace.hasCode = (error: unknown, code: keyof TDefs): boolean => {
     const errorCode = `${prefix}_${String(code).toUpperCase()}`;
-    return PluginError.isPluginError(error) && error.errorCode === errorCode;
+    return error instanceof ProductPluginError && error.code === errorCode;
   };
 
   return errorNamespace as ErrorNamespace<TDefs>;
@@ -181,9 +141,9 @@ export function defineError<TDefs extends ErrorDefinitions>(
 function buildMessageAndDetails(
   def: ErrorDefinition,
   args: unknown[]
-): { message: string; details?: Record<string, unknown> } {
+): { message: string; details?: Record<string, string> } {
   let message: string;
-  let details: Record<string, unknown> | undefined;
+  let details: Record<string, string> | undefined;
 
   if (typeof def.message === 'function') {
     // Template message - args are template params
@@ -196,7 +156,7 @@ function buildMessageAndDetails(
       // Last arg is details, rest are template params
       const templateArgs = args.slice(0, -1);
       message = def.message(...templateArgs);
-      details = { ...def.details, ...(lastArg as { details?: Record<string, unknown> }).details };
+      details = { ...def.details, ...(lastArg as { details?: Record<string, string> }).details };
     } else {
       // All args are template params
       message = def.message(...args);
@@ -208,7 +168,7 @@ function buildMessageAndDetails(
 
     // First arg can be details object
     if (args.length > 0 && typeof args[0] === 'object' && args[0] !== null) {
-      details = { ...def.details, ...(args[0] as { details?: Record<string, unknown> }).details };
+      details = { ...def.details, ...(args[0] as { details?: Record<string, string> }).details };
     } else {
       details = def.details;
     }

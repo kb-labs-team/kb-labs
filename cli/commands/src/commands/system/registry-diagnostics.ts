@@ -7,11 +7,9 @@
 
 import { defineSystemCommand } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
-import {
-  createRegistry,
-  formatDiagnosticReport,
-  type DiagnosticReport,
-} from '@kb-labs/core-registry';
+import type { DiagnosticReport } from '@kb-labs/plugin-contracts';
+import { getResolvedCatalog } from '../../registry/discovery-state.js';
+import { formatDiagnosticReport } from '../../registry/format-diagnostic-report.js';
 
 type DiagnosticsFlags = {
   json: { type: 'boolean'; description?: string };
@@ -39,7 +37,8 @@ export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, Diagnos
   async handler(ctx, _argv, flags) {
     const cwd = getContextCwd(ctx);
 
-    const registry = await createRegistry({ root: cwd });
+    const registry = getResolvedCatalog();
+    if (!registry) throw new Error('The CLI catalog was not opened during command registration.');
 
     if (flags.refresh) {
       await registry.refresh();
@@ -47,7 +46,6 @@ export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, Diagnos
 
     const report = registry.getDiagnostics();
 
-    await registry.dispose();
 
     const status = report.summary.errors > 0 ? 'unhealthy' : report.summary.warnings > 0 ? 'degraded' : 'healthy';
     return { ...report, status };

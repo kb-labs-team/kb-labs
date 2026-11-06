@@ -8,7 +8,6 @@ workspace:
   exclude:
     - plugins/fixtures/*   # test fixtures — not real packages, no build/lint/test tasks
     - templates/*          # scaffold templates — not compiled, only copied to new projects
-    - e2e/shared           # shared fixtures package — no runnable tasks, just TS sources
     - e2e/tests            # legacy monolithic e2e bundle — superseded by per-domain packages
   categories:
     # Plugin E2E suites — the per-plugin test matrix. Each domain's SUBJECT is a
@@ -20,35 +19,49 @@ workspace:
     plugin-e2e-suite:
       match:
         - "e2e/mind"          # plugins/mind
-        - "e2e/workflows"     # plugins/workflow (+ release)
-        - "e2e/marketplace"   # plugins/marketplace
+        - "e2e/workflows"     # services/workflow (+ release)
+        - "e2e/marketplace"   # services/marketplace and built-in CLI commands
         - "e2e/plugins"       # plugins/{commit,review,scaffold}
       language: typescript
       preset: e2e-suite
 
-    # Candidate-pack extras live outside pnpm's workspace because they are
-    # installed only by the isolated journey registry. Devkit still discovers
-    # and builds them through this category so a clean release build owns their
-    # generated manifests.
-    e2e-pack-adapter:
+    # Candidate-pack extras are package fixtures, not production libraries.
+    # They need valid package identities for packing but do not carry a
+    # publishable Node library's scripts, tsconfig, tsup, lint, or source layout.
+    # The adapter fixture also owns node:test files, so it gets its own
+    # category for the test task; both share the fixture preset and build.
+    fixture-adapter:
       match:
         - "e2e/fixtures/adapters/*"
       language: javascript
-      preset: node-lib
+      preset: candidate-fixture
 
-    e2e-pack-plugin:
+    fixture:
       match:
         - "e2e/journey/fixtures/*"
       language: javascript
-      preset: node-lib
+      preset: candidate-fixture
 
-    # Infrastructure E2E suites — one package per domain, each runs `playwright
-    # test`. Subject is the platform/gateway/services layer, not a single plugin.
-    # Same preset + the same workspace:* --affected tracking.
+    e2e-node-tests:
+      match:
+        - "e2e/shared"
+        - "e2e/delivery"
+      language: javascript
+      preset: e2e-node-tests
+
+    # The platform package owns node:test files as well as the live Playwright
+    # entrypoint, so it has its own category and participates in both tasks.
+    e2e-platform:
+      match:
+        - "e2e/platform"
+      language: javascript
+      preset: e2e-node-tests
+
+    # Infrastructure E2E suites — Playwright tasks run only through `e2e`,
+    # which requires the platform services to be running.
     e2e-suite:
       match:
         - "e2e/services"
-        - "e2e/platform"
         - "e2e/gateway"
         - "e2e/marketplace-registry"
         - "e2e/studio"
@@ -65,17 +78,16 @@ workspace:
       language: typescript
       preset: spa-app
 
-    # Plugin entry packages — tsup (CLI/REST) + rspack (Studio widgets)
-    # Must come before ts-lib — plugins/*/entry would otherwise match ts-lib first
+    # Plugin roots — one sealed package per manifest identity.
+    # Must come before ts-lib so every plugins/<id> package gets this boundary.
     plugin-entry:
       match:
-        - "plugins/*/entry"
-        - "plugins/release/manager-cli"  # non-standard name, but has rspack studio build
+        - "plugins/*"
       language: typescript
       preset: plugin-entry
 
     # Backend app entrypoints (daemons, servers)
-    # Must come before ts-lib — plugins/*/*  would otherwise match first
+    # Must come before ts-lib — plugin roots are classified by the earlier plugin rule.
     ts-app:
       match:
         - "plugins/*/daemon"
@@ -102,13 +114,20 @@ workspace:
       preset: runtime-core
 
     # TypeScript libraries — full ruleset
+    # The UI kit owns generated component documentation as an explicit build prerequisite.
+    studio-ui-kit:
+      match:
+        - "studio/ui-kit"
+      language: typescript
+      preset: node-lib
+
     ts-lib:
       match:
         - "core/*"
         - "sdk/*"
         - "cli/*"
+        - "cli/*/*"
         - "shared/*"
-        - "plugins/*/*"
         - "services/*/*"
         - "infra/devkit"
         - "studio/*"
@@ -123,6 +142,20 @@ workspace:
       language: typescript
       preset: site
 
+    site-pkg:
+      match:
+        - "sites/*/apps/*"
+        - "sites/*/packages/*"
+      language: typescript
+      preset: site-pkg
+
+    internal-tool:
+      match:
+        - "tools/kb-runner"
+      language: go
+      preset: go-binary
+      releaseLane: internal-tool
+
     go-binary:
       match:
         - "tools/clikit"
@@ -132,7 +165,6 @@ workspace:
         - "tools/kb-deploy"
         - "tools/kb-monitor"
         - "tools/kb-env"
-        - "tools/kb-runner"
       language: go
       preset: go-binary
 
@@ -155,7 +187,19 @@ presets:
       check_links: false
       check_circular: false
 
-  # Plugin entry packages — node-lib + required test:cli script
+  e2e-node-tests:
+    language: javascript
+    package_json:
+      required_scripts:
+        - test
+      required_fields:
+        - name
+        - version
+    dependencies:
+      check_links: false
+      check_circular: false
+
+  # Plugin entry packages — node-lib. CLI test requirements follow the plugin manifest.
   plugin-entry:
     extends: backend-construction-boundary
     language: typescript
@@ -164,7 +208,6 @@ presets:
         - build
         - dev
         - test
-        - test:cli
         - lint
         - type-check
         - clean
@@ -199,6 +242,10 @@ presets:
       check_links: true
       check_circular: true
       check_version_consistency: true
+      allowed_kb_deps:
+        - "@kb-labs/sdk"
+        - "@kb-labs/devkit"
+        - "@kb-labs/studio-plugin-tools"
 
   node-lib:
     extends: backend-construction-boundary
@@ -242,6 +289,14 @@ presets:
       check_links: true
       check_circular: true
       check_version_consistency: true
+
+  # Candidate fixtures only require the manifest identity consumed by packers.
+  candidate-fixture:
+    language: javascript
+    package_json:
+      required_fields:
+        - name
+        - version
 
   # The execution backend constructor is a runtime-owned capability.
   runtime-core:
@@ -323,13 +378,22 @@ presets:
       check_circular: true
 
   # Next.js/Nuxt apps and their utility packages.
-  # Only 'build' is universally required — apps have 'dev', utility packages don't.
+  # Site roots can aggregate app packages; each app package owns its lifecycle scripts.
   site:
     extends: backend-construction-boundary
     language: typescript
     package_json:
-      required_scripts:
-        - build
+      required_fields:
+        - name
+        - version
+    dependencies:
+      check_links: false
+      check_circular: false
+
+  site-pkg:
+    extends: backend-construction-boundary
+    language: typescript
+    package_json:
       required_fields:
         - name
         - version
@@ -357,50 +421,6 @@ presets:
 # ──────────────────────────────────────────────────────────────────────────────
 
 structure_checks:
-  # Every plugin group MUST have entry/, contracts/, core/
-  plugin:
-    scope: "plugins/*"
-    required_packages:
-      - name: entry
-        description: "Plugin entry point — manifest, registerPlugin(), CLI commands, Studio pages"
-        required_files:
-          - src/index.ts
-        must_depend_on:
-          - "@kb-labs/sdk"
-      - name: contracts
-        description: "Type definitions — zero runtime dependencies"
-        required_files:
-          - src/index.ts
-        rules:
-          - no_runtime_deps   # only devDependencies + types allowed
-      - name: core
-        description: "Business logic"
-        required_files:
-          - src/index.ts
-    optional_packages:
-      - name: daemon
-        description: "HTTP service (long-running process with port)"
-        required_files:
-          - src/bootstrap.ts
-        must_depend_on:
-          - "@kb-labs/gateway-contracts"
-    dependency_rules:
-      # contracts has zero internal deps
-      - from: contracts
-        to: []
-      # core depends on contracts only (within the plugin)
-      - from: core
-        to: [contracts]
-      # entry wires everything together
-      - from: entry
-        to: [contracts, core]
-      # daemon depends on core + contracts
-      - from: daemon
-        to: [contracts, core]
-      # nothing depends on entry (it's the leaf)
-      - from: "*"
-        not_to: [entry]
-
   # Core packages MUST have contracts/ (types/) as foundation
   core:
     scope: "core"
@@ -480,6 +500,10 @@ affected:
   # falls through to the same behaviour as the built-in git strategy.
   strategy: command
   command: .devkit/affected.sh
+  # These generated-contract sources affect consumers beyond their owning package.
+  fullInputs:
+    - core/platform/src/error-envelope/errors.catalog.json
+    - core/plugin-contracts/src/color-policy.mjs
 
 # ──────────────────────────────────────────────────────────────────────────────
 # BUILD
@@ -494,9 +518,38 @@ run:
 # ──────────────────────────────────────────────────────────────────────────────
 
 tasks:
+  docs:generate:
+    - categories: [studio-ui-kit]
+      command: tsx scripts/generate-component-docs.ts
+      inputs:
+        - "src/**/*.tsx"
+        - "scripts/generate-component-docs.ts"
+        - "README.md"
+      outputs:
+        - "README.md"
+        - "src/catalog.generated.ts"
+
   build:
+    - categories: [studio-ui-kit]
+      command: tsup
+      inputs:
+        - "src/**"
+        - "scripts/generate-component-docs.ts"
+        - "tsup.config.ts"
+        - "tsup.config.js"
+        - "tsconfig*.json"
+        - "package.json"
+        - "README.md"
+        - "src/catalog.generated.ts"
+        - "^dist/**"
+      outputs:
+        - "dist/**"
+      deps:
+        - "docs:generate"
+        - "^build"
+
     - categories: [plugin-entry]
-      command: pnpm build
+      command: pnpm run build
       inputs:
         - "src/**"
         - "tsup.config.ts"
@@ -510,18 +563,8 @@ tasks:
       deps:
         - "^build"
 
-    - categories: [e2e-pack-adapter]
+    - categories: [fixture, fixture-adapter]
       command: node ../../../scripts/build-pack-extra.mjs
-      inputs:
-        - "manifest.js"
-        - "src/**"
-        - "package.json"
-      outputs:
-        - "dist/**"
-      cache: false
-
-    - categories: [e2e-pack-plugin]
-      command: node ../../../../e2e/scripts/build-pack-extra.mjs
       inputs:
         - "manifest.js"
         - "src/**"
@@ -544,7 +587,7 @@ tasks:
         - "^build"   # deps' build must finish first
 
     - categories: [spa]
-      command: pnpm build
+      command: pnpm run build
       inputs:
         - "src/**"
         - "public/**"
@@ -560,7 +603,7 @@ tasks:
       deps:
         - "^build"
 
-    - categories: [go-binary]
+    - categories: [go-binary, internal-tool]
       command: make build
       inputs:
         - "**/*.go"
@@ -575,28 +618,15 @@ tasks:
         - "kb-deploy"
         - "kb-monitor"
         - "kb-runner"
-
-    - categories: [site]
-      command: pnpm build
-      inputs:
-        - "app/**"
-        - "components/**"
-        - "messages/**"
-        - "public/**"
-        - "next.config.*"
-        - "tailwind.config.*"
-        - "package.json"
-        - "^dist/**"
-      outputs:
-        - ".next/**"
       deps:
-        - "^build"   # wait for ts-lib deps (e.g. @kb-labs/sdk)
+        - "^build"
 
     - categories: [site-pkg]
-      command: tsc --noEmit
+      command: pnpm run build
       inputs:
         - "src/**"
         - "tsconfig*.json"
+        - "package.json"
         - "^dist/**"
       outputs: []
       deps:
@@ -607,24 +637,16 @@ tasks:
       command: eslint src/
       inputs:
         - "src/**"
+        - "tsconfig*.json"
         - "eslint.config.*"
         - ".eslintrc*"
       outputs: []
 
-    - categories: [go-binary]
+    - categories: [go-binary, internal-tool]
       command: go vet ./...
       inputs:
         - "**/*.go"
         - "go.mod"
-      outputs: []
-
-    - categories: [site]
-      command: pnpm lint
-      inputs:
-        - "app/**"
-        - "components/**"
-        - "eslint.config.*"
-        - "package.json"
       outputs: []
 
     - categories: [site-pkg]
@@ -644,18 +666,6 @@ tasks:
       outputs: []
       deps:
         - "^build"   # needs deps' dist/**/*.d.ts
-
-    - categories: [site]
-      command: pnpm typecheck
-      inputs:
-        - "app/**"
-        - "components/**"
-        - "tsconfig*.json"
-        - "package.json"
-        - "^dist/**/*.d.ts"   # dep type declarations affect type resolution
-      outputs: []
-      deps:
-        - "^build"
 
     - categories: [site-pkg]
       command: tsc --noEmit
@@ -680,12 +690,27 @@ tasks:
   # Affected only:
   #   kb-devkit run e2e --affected
   test:
+    - categories: [e2e-node-tests, e2e-platform]
+      command: pnpm run test
+      inputs:
+        - "**/*.test.mjs"
+        - "package.json"
+      outputs: []
+
+    - categories: [fixture-adapter]
+      command: pnpm run test
+      inputs:
+        - "*.test.js"
+        - "package.json"
+      outputs: []
+
     - categories: [ts-lib, ts-app]
       command: vitest run --passWithNoTests
       inputs:
         - "src/**"
         - "test/**"
         - "__tests__/**"
+        - "tsconfig*.json"
         - "vitest.config.*"
         - "^dist/**"   # dep outputs affect test results at runtime
       outputs:
@@ -693,7 +718,7 @@ tasks:
       deps:
         - "build"
 
-    - categories: [go-binary]
+    - categories: [go-binary, internal-tool]
       command: make test
       inputs:
         - "**/*.go"
@@ -701,7 +726,10 @@ tasks:
         - "go.sum"
         - "Makefile"
         - "internal/manifest/manifest.json"
+        - "^dist/**"
       outputs: []
+      deps:
+        - "^build"
 
   test:coverage:
     - categories: [ts-lib, ts-app]
@@ -710,13 +738,14 @@ tasks:
         - "src/**"
         - "test/**"
         - "__tests__/**"
+        - "tsconfig*.json"
         - "vitest.config.*"
       outputs:
         - "coverage/**"
       deps:
         - "build"
 
-    - categories: [go-binary]
+    - categories: [go-binary, internal-tool]
       command: go test -short -coverprofile=coverage.out -covermode=atomic ./...
       inputs:
         - "**/*.go"
@@ -729,12 +758,13 @@ tasks:
   #             kb-devkit run e2e --affected                         (changed only)
   #             kb-devkit run e2e                                    (all)
   # Go:         only kb-create has a real suite; others are no-ops for uniformity.
-  # CLI handler tests — fast, no daemon required.
+  # CLI handler tests — fast, no daemon required. Commandless plugins have no script;
+  # plugin-cli-test-policy requires one for manifests that declare CLI commands.
   # Run: kb-devkit run test:cli
   # Run affected only: kb-devkit run test:cli --affected
   test:cli:
     - categories: [plugin-entry]
-      command: pnpm run test:cli
+      command: pnpm run --if-present test:cli
       inputs:
         - "src/__tests__/cli/**"
         - "src/commands/**"
@@ -744,27 +774,11 @@ tasks:
         - "build"
       cache: false
 
-  # Workspace policy regressions, run from the script package that owns the gate.
-  # Run: kb-devkit run test:node-policy --packages @kb-labs/devkit
-  test:node-policy:
-    - categories: [ts-lib]
-      command: node --test ../../scripts/checks/check-node-engine-policy.test.mjs ../../e2e/delivery/scripts/delivery-invoker.test.mjs
-      inputs:
-        - "package.json"
-        - "../../scripts/checks/**"
-        - "../../e2e/delivery/scripts/**"
-        - "../../e2e/delivery/docker-compose.yml"
-        - "../../e2e/delivery/Dockerfile.target"
-        - "../../core/plugin-runtime/src/platform-resolve/node-engine.mjs"
-        - "../../package.json"
-      outputs: []
-      cache: false
-
   e2e:
-    # Both the infrastructure matrix (e2e-suite) and the per-plugin matrix
-    # (plugin-e2e-suite) run the same `pnpm run e2e`. `--affected` then scopes
-    # to whichever suites' workspace deps changed.
-    - categories: [e2e-suite, plugin-e2e-suite]
+    # The infrastructure matrix (including e2e-platform's node-test category)
+    # and per-plugin matrix run the same `pnpm run e2e`. `--affected` scopes to
+    # whichever suites' workspace deps changed.
+    - categories: [e2e-suite, e2e-platform, plugin-e2e-suite]
       command: pnpm run e2e
       inputs:
         - "specs/**"
@@ -793,12 +807,82 @@ tasks:
 # ──────────────────────────────────────────────────────────────────────────────
 # CUSTOM CHECKS
 # ──────────────────────────────────────────────────────────────────────────────
-# Each entry runs for all packages that match its `categories` filter (or all
-# packages if omitted). The script runs with cwd = package directory and
-# receives the package JSON on stdin. It must exit 0 and print JSON:
-#   { ok: boolean, items: [{ target, message, fix? }] }
+# Each entry runs for packages matching its `categories` filter, or once at
+# workspace scope. External checks receive the check context on stdin and emit
+# the issue shape defined by tools/kb-devkit/internal/checks/types.go.
+
+checks:
+  timeout_ms: 2400000
 
 custom_checks:
+  - name: process-launcher-owner
+    run: go -C tools/kb-devkit run ./cmd/process-launcher-check
+    on: [check]
+    scope: workspace
+
+  - name: new-tests
+    run: node scripts/checks/new-tests.mjs
+    on: [check]
+    scope: workspace
+
+  - name: repository-script-tests
+    run: env -u KB_DEVKIT_MODE node --test "scripts/**/*.test.mjs" "sites/web/apps/docs/scripts/**/*.test.mjs" "e2e/delivery/scripts/**/*.test.mjs" 1>&2 && TMPDIR=/tmp env -u KB_DEVKIT_MODE python3 scripts/local-gate.test.py 1>&2 && node scripts/checks/lib/check-result.mjs
+    on: [check]
+    scope: workspace
+
+  - name: e2e-node-test-coverage
+    run: node scripts/checks/e2e-node-tests.mjs
+    on: [check]
+    scope: workspace
+
+  - name: test-catalog
+    run: node scripts/test-catalog.mjs --check 1>&2 && node scripts/checks/lib/check-result.mjs
+    on: [check]
+    scope: workspace
+
+  - name: local-workflow-script-references
+    run: node .kb/workflows/scripts/check-local-script-references.mjs 1>&2
+    on: [check]
+    scope: workspace
+
+  - name: pr-description
+    run: |
+      if [ -z "${GITHUB_EVENT_PATH:-}" ]; then
+        node scripts/checks/lib/check-result.mjs
+      else
+        event_kind=$(node -e 'const fs = require("node:fs"); const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")); process.stdout.write(event.pull_request ? "pull_request" : "other")')
+        event_status=$?
+        if [ "$event_status" -ne 0 ]; then
+          exit "$event_status"
+        elif [ "$event_kind" != "pull_request" ]; then
+          node scripts/checks/lib/check-result.mjs
+        else
+          node scripts/ci/validate-pr-description.mjs 1>&2
+        fi
+      fi
+    on: [check]
+    scope: workspace
+
+  - name: docs-source-check
+    run: node sites/web/apps/docs/scripts/docs-source-check.mjs 1>&2
+    on: [check]
+    scope: workspace
+
+  - name: product-invariants-document
+    run: node scripts/checks/check-product-invariants.mjs
+    on: [check]
+    scope: workspace
+
+  - name: catalog-package-roles
+    run: node scripts/checks/check-catalog-package-roles.mjs
+    on: [check]
+    scope: workspace
+
+  - name: lifecycle-builds
+    run: node scripts/checks/check-lifecycle-builds.mjs
+    on: [check]
+    scope: workspace
+
   - name: release-build-graph
     run: node scripts/checks/check-release-build-graph.mjs
     on: [check]
@@ -806,6 +890,11 @@ custom_checks:
 
   - name: node-engine-policy
     run: node scripts/checks/check-node-engine-policy.mjs
+    on: [check]
+    scope: workspace
+
+  - name: color-policy-generated
+    run: node tools/clikit/ui/generate-color-policy.mjs --check 1>&2 && node scripts/checks/lib/check-result.mjs
     on: [check]
     scope: workspace
 
@@ -833,6 +922,20 @@ custom_checks:
     run: node scripts/checks/check-adapter-manifest.mjs
     on: [check]
     scope: workspace
+    requires_build: ["@kb-labs/core-platform"]
+
+  - name: plugin-package-identity
+    run: node scripts/checks/check-plugin-package-identity.mjs
+    on: [check]
+    scope: workspace
+
+  # A plugin declares whether it has CLI commands in its manifest. CLI plugins must
+  # provide a non-empty test:cli suite; commandless plugins must not carry a dead script.
+  - name: plugin-cli-test-policy
+    run: node scripts/checks/check-plugin-cli-test-policy.mjs
+    on: [check]
+    scope: workspace
+    requires_build: ["@kb-labs/plugin-contracts"]
 
   - name: ci-clean-machine-lanes
     run: node scripts/ci/ci-clean-machine-lanes-check.mjs
@@ -855,6 +958,12 @@ custom_checks:
     scope: package
     categories: [plugin-entry]
 
+  - name: plugin-dts-policy
+    run: node scripts/checks/check-plugin-dts-policy.mjs
+    on: [check]
+    scope: package
+    categories: [plugin-entry]
+
   - name: studio-widget-output-path
     run: node scripts/checks/check-studio-widget-output-path.mjs
     on: [check]
@@ -864,34 +973,37 @@ custom_checks:
   # Blocks CI on: EN↔RU key mismatch, missing keys, hardcoded Cyrillic in .tsx.
   # UNUSED keys are emitted as warnings (autoFixable — devkit fix removes them).
   # Suppress per-line with: // i18n-ignore
-  # Script self-filters: skips all packages except @kb-labs/web-site.
+  # The four package contexts that receive this check are declared below.
   - name: i18n-check
     run: node sites/web/apps/web/scripts/i18n-check.mjs
     fix: node sites/web/apps/web/scripts/i18n-check.mjs
     on: [check]
     language: typescript
+    anchor_packages: ["@kb-labs/web-site", "@kb-labs/web-site-ui", "@kb-labs/web-og", "@kb-labs/docs-site"]
 
   # Broken-link guard for KB Labs sites (web + docs).
   # Blocks CI on: internal href with no matching Next.js route, or a controlled-domain
   # URL (kblabs.ru, docs.kblabs.ru, status.kblabs.ru) that returns 4xx.
   # 5xx / timeouts are warnings only.
   # Suppress per-line with: // link-ignore
-  # Script self-filters: skips all packages except @kb-labs/web-site.
+  # Runs at the declared @kb-labs/web-site anchor.
   - name: check-links
     run: node sites/web/apps/web/scripts/check-links.mjs
     on: [check]
     language: typescript
+    anchor_packages: ["@kb-labs/web-site"]
 
   # SEO guard for @kb-labs/web-site.
   # Blocks CI on: missing generateMetadata, imageSegment not set, opengraph-image.tsx absent,
   # OG image using non-.meta.* i18n keys, title/description out of length bounds.
   # JSON-LD absence is a warning only (future work).
   # Suppress per-file with: // seo-ignore <rule> (rules: og-image, og-keys, jsonld, title-brand)
-  # Script self-filters: skips all packages except @kb-labs/web-site.
+  # Runs at the declared @kb-labs/web-site anchor.
   - name: seo-check
     run: node sites/web/apps/web/scripts/seo-check.mjs
     on: [check]
     language: typescript
+    anchor_packages: ["@kb-labs/web-site"]
 
   # CLI manifest naming conventions (ADR-0018, docs/plans/cli-naming-audit.md)
   # Rules: no kebab in path segments, no reserved namespaces, single-word top-level.
@@ -914,12 +1026,13 @@ custom_checks:
   # Blocks CI on: slug without MDX file, missing title frontmatter, non-kebab-case names,
   #               directory without index.mdx, depth > 2.
   # Warns on:     orphaned MDX files, missing _meta.json, pages without owners.
-  # Self-filters: skips all packages except @kb-labs/docs-site.
+  # Runs at the declared @kb-labs/docs-site anchor.
   # Standalone:   node sites/web/apps/docs/scripts/docs-audit.mjs
   - name: docs-audit
     run: node sites/web/apps/docs/scripts/docs-audit.mjs
     on: [check]
     language: typescript
+    anchor_packages: ["@kb-labs/docs-site"]
 
   # Port allocation policy (ADR-0024).
   # Blocks CI on: port outside all ranges (UNKNOWN_RANGE), two services sharing a
@@ -928,22 +1041,24 @@ custom_checks:
   #   matching the registry (PROD_PORT_MISMATCH), or a stale docs/ports.md (STALE_PORTS_DOC).
   # Source of truth: infra/port-registry.yaml + .kb/devservices*.yaml.
   # Fix a stale glossary with: pnpm ports:generate
-  # Self-filters: runs once, anchored to @kb-labs/devkit.
+  # Runs once at the declared @kb-labs/devkit anchor.
   # Standalone:   node scripts/checks/check-ports.mjs
   - name: check-ports
     run: node scripts/checks/check-ports.mjs
     on: [check]
+    anchor_packages: ["@kb-labs/devkit"]
 
   # Assembly hook enforcement.
   # Blocks CI if any service bootstrap.ts calls runService without
   # importing from @kb-labs/plugin-runtime (i.e. without makeAssemblyHook).
   # TypeScript enforces this at compile time (assemblyHook is a required field).
   # This check provides a human-readable CI gate with clear error messages.
-  # Self-filters: runs once, anchored to @kb-labs/devkit.
+  # Runs once at the declared @kb-labs/devkit anchor.
   # Standalone:   node scripts/checks/check-assembly-hook.mjs
   - name: check-assembly-hook
     run: node scripts/checks/check-assembly-hook.mjs
     on: [check]
+    anchor_packages: ["@kb-labs/devkit"]
 
   # Tracked Go tool binaries (tools/<name>/<name>) must be rebuilt when their
   # source changes — they ship in git so `pnpm build`/`dev:start` work without a
@@ -953,7 +1068,7 @@ custom_checks:
   - name: tool-binaries-fresh
     run: node scripts/checks/check-tool-binaries.mjs
     on: [check]
-    categories: [go-binary]
+    categories: [go-binary, internal-tool]
 
   # .kb/marketplace.lock hygiene — catches drift (a package dir was deleted
   # or moved but its lock entry wasn't) and corruption (malformed id/path
@@ -961,43 +1076,42 @@ custom_checks:
   # diagnostics test and `kb marketplace doctor` both read.
   # The check resolves the lock's scope from the runtime's platform/project roots.
   # A shared development root is platform-owned; use the reported scope when syncing.
-  # Self-filters: runs once, anchored to @kb-labs/devkit.
+  # Runs once at the declared @kb-labs/devkit anchor.
   # Standalone: node scripts/checks/check-marketplace-lock.mjs
   - name: check-marketplace-lock
     run: node scripts/checks/check-marketplace-lock.mjs
     on: [check]
+    anchor_packages: ["@kb-labs/devkit"]
+    requires_build: ["@kb-labs/core-discovery", "@kb-labs/core-workspace"]
 
   # Architecture boundary + command-naming lints (tasks 0.2, 0.3, 0.5).
   # Pre-existing violations are listed with a date and reason in
   # scripts/checks/boundary-exceptions.json; anything not listed is an error, and an
   # exception whose violation is gone is a warning (delete it). Do not add exceptions
-  # to silence new code. All four self-filter: run once, anchored to @kb-labs/devkit.
+  # to silence new code. These checks use the declared @kb-labs/devkit anchor.
   # Standalone: node scripts/checks/check-<name>.mjs [--json] [--no-exceptions]
   # Tests:      pnpm test:checks
-
-  # Plugins must not import @kb-labs/core-* bypassing @kb-labs/sdk (0.2a).
-  - name: plugin-imports
-    run: node scripts/checks/check-plugin-imports.mjs
-    on: [check]
 
   # services/*, studio/*, plugins/*/daemon must not spawn kb / kb-create / kb-dev / kb-devkit
   # via child_process (0.2b, docs/architecture/target/05-executables.md section 3).
   - name: platform-spawn
     run: node scripts/checks/check-platform-spawn.mjs
     on: [check]
+    anchor_packages: ["@kb-labs/devkit"]
 
-  # Platform packages (@kb-labs/sdk, core-*, cli-*, shared-*, adapters-*, plugin-contracts/runtime/
-  # execution*) must be peerDependencies, not dependencies, in plugins/* and the plugin template (0.3).
-  - name: plugin-peer-deps
-    run: node scripts/checks/check-plugin-peer-deps.mjs
+  # Plugin package membership and both directions of the plugin/platform edge are checked
+  # against the live workspace registry. Runtime imports are parsed as TypeScript AST nodes.
+  - name: plugin-boundaries
+    run: node scripts/checks/check-plugin-boundaries.mjs
     on: [check]
+    scope: workspace
 
   # kb.plugin/3 cli.commands: verb from the closed vocabulary, lowercase kebab-case segments,
   # 'mutate' commands declare --json (0.5, docs/architecture/target/06-command-naming.md 1-3).
   # Reads the build-emitted dist/manifest.json — unbuilt packages only produce a warning,
   # so run it after `kb-devkit run build`.
   - name: manifest-command-naming
-    run: node scripts/checks/check-manifest-command-naming.mjs
+    run: node scripts/checks/check-manifest-command-naming.mjs 1>&2
     on: [check]
 
 # ──────────────────────────────────────────────────────────────────────────────

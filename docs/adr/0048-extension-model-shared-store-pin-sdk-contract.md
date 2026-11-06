@@ -47,7 +47,7 @@ pin). Source: `docs/architecture/target/03-domain-model.md` (variant C) and
   `kb.config` (`cli/commands/src/registry/plugins-state.ts:26-43`) and is not the
   lock.
 - Consequence: a project-scope `kb marketplace install` runs `pnpm add` in
-  `<projectRoot>` (`plugins/marketplace/npm/src/npm-source.ts:48-57`), so the
+  `<projectRoot>` (`services/marketplace/npm/src/npm-source.ts:48-57`), so the
   package lands in `<projectRoot>/node_modules/<id>` (`:66`). REST sees it through
   the lock; the CLI scans only `<platformRoot>/node_modules`, so by code reading
   it does not. (Read from code; not exercised end to end.)
@@ -59,7 +59,7 @@ pin). Source: `docs/architecture/target/03-domain-model.md` (variant C) and
 **F2. Install writes into the user's repository.** `pnpm add <spec>
 --ignore-workspace-root-check` with `cwd = <projectRoot>` rewrites the project's
 own `package.json`, lockfile and `node_modules`
-(`plugins/marketplace/npm/src/npm-source.ts:48-57`; the comment there says
+(`services/marketplace/npm/src/npm-source.ts:48-57`; the comment there says
 kb-create projects are flat). This contradicts ADR-0044 §8 ("never modifies a
 project silently"). The lock entry also stores `installedAt`
 (`marketplace-lock.ts:160`) and an absolute-ish `resolvedPath`, both poor for a
@@ -83,14 +83,14 @@ schema must not reuse that name.
 
 **F4. Manifest detection executes plugin JS inside the host.** At install,
 `PluginStrategy.detectKind/extractProvides/resolveId` call `loadManifest`
-(`plugins/marketplace/core/src/strategies/plugin-strategy.ts:13-30`), which
+(`services/marketplace/core/src/strategies/plugin-strategy.ts:13-30`), which
 `import()`s the plugin's `dist/manifest.js` in the marketplace daemon process
 (`core/discovery/src/manifest-loader.ts:133-141`); adapters are `import()`ed the
 same way (`adapter-strategy.ts:83-90`). The CLI does it again at registration
 (`cli/commands/src/registry/register.ts:~165`, `await import(result.manifestPath)`
 plus `init/register` hooks). So arbitrary plugin code, and the plugin's own copy of
 `@kb-labs/sdk` (a manifest imports helpers from it, e.g.
-`plugins/commit/entry/src/manifest.ts:13-18`), runs in host processes before any
+`plugins/commit/src/manifest.ts:13-18`), runs in host processes before any
 compatibility check. A build-emitted static `dist/manifest.json` already exists
 for the naming lint (`scripts/checks/check-manifest-command-naming.mjs:21`);
 ADR-0026/0030 already treat static manifests as the safe artifact.
@@ -111,7 +111,7 @@ cases:
      the peers inside one graph, so there is one copy. This is why platform scope
      works today.
   2. Project-scope plugin: the SDK is a `dependency` of the plugin
-     (`plugins/commit/entry/package.json`, `plugins/mind/entry/package.json`), the
+     (`plugins/commit/src/package.json`, `plugins/commit/src/package.json`), the
      SDK's own `core-*` are `peerDependencies` with range `>=2.0.0`
      (`sdk/sdk/package.json:158-177`), so a project-local install has to satisfy
      them itself; with pnpm auto-install-peers that means a second, private
@@ -151,7 +151,7 @@ adapters there.
 
 **F8. Versions.** Packages are versioned independently in one release train
 (`@kb-labs/sdk` 2.117.0, `@kb-labs/plugin-runtime` 2.120.1,
-`@kb-labs/commit-entry` 2.120.1). There is no SDK contract version anywhere: no
+`@kb-labs/commit` 2.120.1). There is no SDK contract version anywhere: no
 `sdkApiVersion`/`engines` in `ManifestV3` (`core/plugin-contracts/src/manifest.ts:677-`),
 and the registry's platform version is a hard-coded `'1.0.0'`
 (`core/registry/src/registry.ts:37`). `sdk/sdk/scripts/check-api-removals.mjs`
@@ -214,7 +214,7 @@ $KB_HOME/store/
   cas/                             # dedicated pnpm store-dir for all entries (never the user's default store)
   tmp/<uuid>/                      # staging; entries appear by atomic rename
   entries/
-    @kb-labs+commit-entry@2.120.1/ # key = name with '/' -> '+', then '@' + exact version
+    @kb-labs+commit@2.120.1/ # key = name with '/' -> '+', then '@' + exact version
       entry.json                   # kb.store-entry/1, see below
       package.json                 # synthetic pnpm project: dependencies { "<name>": "<exact version>" }
       pnpm-workspace.yaml          # autoInstallPeers: false
@@ -226,7 +226,7 @@ $KB_HOME/store/
 ```json
 {
   "schema": "kb.store-entry/1",
-  "name": "@kb-labs/commit-entry",
+  "name": "@kb-labs/commit",
   "version": "2.120.1",
   "kind": "plugin",
   "integrity": "sha512-<tarball integrity from the registry or release index>",
@@ -248,7 +248,7 @@ $KB_HOME/store/
   **Gate:** measure real dedup on a registry plugin before 7.2 is accepted.
 - Because the manifest of a version is immutable, the manifest cache becomes
   content-addressed: it lives in `entry.json`. The per-root
-  `.kb/marketplace.manifests.json` (`plugins/marketplace/core/src/manifest-cache.ts:11`)
+  `.kb/marketplace.manifests.json` (`services/marketplace/core/src/manifest-cache.ts:11`)
   and the lock-hash based invalidation of the CLI cache (`discover.ts:1154-1163`)
   are deleted for store entries; the merged-registry cache moves to
   `~/.kb/state/<projectId>/` (ADR-0044 §7).
@@ -283,9 +283,9 @@ absolute paths, sorted keys, so it is stable in git and mergeable.
 {
   "schema": "kb.marketplace/3",
   "plugins": {
-    "@kb-labs/commit-entry": { "version": "2.120.1", "integrity": "sha512-...", "enabled": true },
+    "@kb-labs/commit": { "version": "2.120.1", "integrity": "sha512-...", "enabled": true },
     "acme-deploy":           { "link": "./tools/acme-deploy", "enabled": true },
-    "@kb-labs/mind-entry":   { "platform": true, "enabled": false }
+    "@kb-labs/mind":   { "platform": true, "enabled": false }
   }
 }
 ```
@@ -306,7 +306,7 @@ by the Go launcher) uses the same schema with `resolvedPath` (relative to
 ```json
 {
   "schema": "kb.marketplace/3",
-  "plugins":  { "@kb-labs/commit-entry": { "version": "2.120.1", "resolvedPath": "node_modules/@kb-labs/commit-entry", "enabled": true } },
+  "plugins":  { "@kb-labs/commit": { "version": "2.120.1", "resolvedPath": "node_modules/@kb-labs/commit", "enabled": true } },
   "adapters": { "kblabs-gateway-llm": { "version": "2.120.1", "resolvedPath": "node_modules/@kb-labs/adapters-kblabs-gateway", "enabled": true } }
 }
 ```
@@ -519,7 +519,7 @@ assuming stages 0 and 3 are done.
 |---|---|---|---|
 | 7.6 One discovery on the lock | L | Make CLI discovery use the resolution algorithm D4 in `core-discovery` instead of scanning (`discover.ts`, `register.ts`, `plugins-state.ts` gate); workspace plugins enter as `link` entries; unify enable state; delete duplicated caches. Prerequisite for everything: today two pipelines disagree (F1) | 0.x |
 | 7.2 Shared version store | M | Store layout/`entry.json`/`store.lock`/GC (`kb plugin gc`), pnpm installer with dedicated CAS, staging + atomic rename, integrity, static-manifest install path (no JS import), `KB_PLUGIN_INTEGRITY_MISMATCH`; measure dedup on a real registry plugin | 7.6 |
-| 7.7 Single platform copy | M | Resolve hook in worker/subprocess/in-process/CLI/daemons, `KB_PLUGIN_PLATFORM_DUPLICATE`, tests with two SDK contracts in one process; verify with a real plugin (for example `commit-entry`) in the worker pool | 7.2 |
+| 7.7 Single platform copy | M | Resolve hook in worker/subprocess/in-process/CLI/daemons, `KB_PLUGIN_PLATFORM_DUPLICATE`, tests with two SDK contracts in one process; verify with a real plugin (for example `@kb-labs/commit`) in the worker pool | 7.2 |
 | 7.3 Project pin and lock v3 | L | Schema `kb.marketplace/3` reader/writer in `core-discovery`, Go writer (`lock.go`), `check-marketplace-lock.mjs`, helm/docker checks, e2e roots specs, `discover-adapters` cleanup, project install stops running `pnpm add` in the repo, `kb plugin install/update` flows, `KB_PLUGIN_LOCK_INVALID`, `KB_PLUGIN_STORE_MISSING`, `KB_ADAPTER_PROJECT_SCOPE`. Completion: two projects on two versions of one plugin | 7.7 |
 | 7.4 SDK contract version | M | `SDK_API_VERSION` in `plugin-contracts` + SDK re-export, `sdkApiVersion` in `ManifestV3` and `dist/manifest.json`, checks at install and load, api-removals gate, registry metadata, template update. Separate follow-up S-M: clear the 34 `plugin-platform-dependency` exceptions | 7.1, 0.3 |
 | 7.5 Namespace ownership by scope | M | Pure ownership function, install/enable checks in `marketplace-core`, registry ordering by scope, `kb health`/`kb plugin doctor` lines, retire `SOURCE_PRIORITY` | 7.3 |

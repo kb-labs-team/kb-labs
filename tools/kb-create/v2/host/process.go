@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/proc/child"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -177,7 +179,9 @@ type ProcessRunner struct {
 	identityReader func(int) (string, error)
 	// SecretEnv supplies the host's stored values and any environment entries
 	// that must be suppressed on every Start.
-	SecretEnv func() (secrets.Environment, error)
+	SecretEnv         func() (secrets.Environment, error)
+	ControlCredential string
+	ControlAddress    string
 
 	mu              sync.Mutex
 	pid             int
@@ -253,7 +257,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 			if record.InstallationID != r.InstallationID {
 				return Info{}, RootConflict(record.PlatformRoot, record.PID)
 			}
-			return Info{}, hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `"+contracts.ShellCommand("kb-create", "status", "--platform-root", r.PlatformRoot)+"` to inspect it.", nil, map[string]string{"pid": strconv.Itoa(record.PID), "nextCommand": contracts.ShellCommand("kb-create", "status", "--platform-root", r.PlatformRoot)})
+			return Info{}, hostError(contracts.CodeHostAlreadyRunning, "The KB Labs host is already running.", "Use `"+contracts.ShellCommand("kb-create", "status", "--platform-root", r.PlatformRoot)+"` to inspect it.", nil, map[string]string{"pid": strconv.Itoa(record.PID), "nextCommand": contracts.ShellCommand("kb-create", "status", "--platform-root", r.PlatformRoot)})
 		case ProcessIdentityMismatch:
 			if processAlive(record.PID) {
 				return Info{}, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
@@ -298,10 +302,12 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		return Info{}, r.startFailed(err, nil)
 	}
 	cmd.Env = ProcessEnvironmentWithIdentity(env, processIdentity)
+	if r.ControlCredential != "" {
+		cmd.Env = append(cmd.Env, contracts.HostControlCredentialEnv+"="+r.ControlCredential)
+	}
 	r.stderr = &tailBuffer{limit: startupStderrLimit}
 	cmd.Stdout, cmd.Stderr = logFile, io.MultiWriter(logFile, r.stderr)
-	configureHostProcess(cmd)
-	if err := cmd.Start(); err != nil {
+	if err := child.Start(cmd, child.ProcessGroup); err != nil {
 		_ = logFile.Close()
 		return Info{}, r.startFailed(err, nil)
 	}
@@ -420,7 +426,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 			return Info{}, err
 		}
 	}
-	return Info{Runner: r.Name(), PID: record.PID, HealthURL: r.Spec.HealthURL}, nil
+	return Info{Runner: r.Name(), PID: record.PID, HealthURL: r.Spec.HealthURL, ControlAddress: r.ControlAddress}, nil
 }
 
 // RunTool runs the platform's recovery tool to completion, in the host's
@@ -448,6 +454,13 @@ func (r *ProcessRunner) RunTool(ctx context.Context, tool Tool, extra []string, 
 // platform's secrets, then the spec's explicit values (the release wins).
 func (r *ProcessRunner) environment() ([]string, error) {
 	values := map[string]string{}
+	if r.PlatformRoot != "" {
+		home, err := KBHome(r.PlatformRoot)
+		if err != nil {
+			return nil, err
+		}
+		values[KBHomeEnv] = home
+	}
 	suppressed := map[string]struct{}{}
 	if r.SecretEnv != nil {
 		environment, err := r.SecretEnv()
@@ -481,6 +494,11 @@ func (r *ProcessRunner) environment() ([]string, error) {
 	}
 	for key, value := range values {
 		env = append(env, key+"="+value)
+	}
+	// A locally launched host must resolve adapters against its installation,
+	// even when the caller's current directory belongs to another workspace.
+	if r.PlatformRoot != "" {
+		env = append(env, "KB_PLATFORM_ROOT="+r.PlatformRoot)
 	}
 	r.mu.Lock()
 	r.secrets = r.secrets[:0]
@@ -627,10 +645,60 @@ func (r *ProcessRunner) waitReadyUntil(ctx context.Context, pid int, exited <-ch
 }
 
 type readinessProbe struct {
-	URL     string
-	Status  int
-	Error   string
-	Healthy bool
+	URL       string
+	Status    int
+	Error     string
+	Healthy   bool
+	StudioURL string
+}
+
+func validControlAddress(address string) bool {
+	parsed, err := url.Parse(address)
+	if err != nil || parsed.Scheme != "http" || parsed.Port() == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	ip := net.ParseIP(parsed.Hostname())
+	return ip != nil && ip.IsLoopback()
+}
+
+func (r *ProcessRunner) QueryActiveWork(ctx context.Context) ([]ActiveWorkItem, error) {
+	if r.ControlAddress == "" || r.ControlCredential == "" {
+		return nil, HostUnreachable(r.ControlAddress, errors.New("host control endpoint is unavailable"))
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, r.ControlAddress+"/v1/active-work", nil)
+	if err != nil {
+		return nil, HostUnreachable(r.ControlAddress, err)
+	}
+	request.Header.Set("Authorization", "Bearer "+r.ControlCredential)
+	response, err := r.client().Do(request)
+	if err != nil {
+		return nil, HostUnreachable(r.ControlAddress, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, HostUnreachable(r.ControlAddress, fmt.Errorf("active-work endpoint returned HTTP %d", response.StatusCode))
+	}
+	var items []ActiveWorkItem
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&items); err != nil || items == nil {
+		if err == nil {
+			err = errors.New("active-work endpoint returned a non-array response")
+		}
+		return nil, HostUnreachable(r.ControlAddress, err)
+	}
+	for _, item := range items {
+		if item.ID == "" || item.OwningService == "" || !validActiveWorkKind(item.Kind) {
+			return nil, HostUnreachable(r.ControlAddress, errors.New("active-work endpoint returned an incomplete item"))
+		}
+	}
+	return items, nil
+}
+
+func HostUnreachable(address string, cause error) error {
+	diagnostic, err := diag.FromCatalog("KB_HOST_UNREACHABLE", map[string]string{"address": address}, diag.WithCauseAndReason(cause.Error()))
+	if err != nil {
+		return err
+	}
+	return diagnostic
 }
 
 func (r *ProcessRunner) probe(ctx context.Context) readinessProbe {
@@ -652,6 +720,30 @@ func (r *ProcessRunner) probeURL(ctx context.Context, healthURL string) readines
 	defer response.Body.Close()
 	result.Status = response.StatusCode
 	result.Healthy = response.StatusCode >= 200 && response.StatusCode < 300
+	if result.Healthy && strings.Contains(response.Header.Get("Content-Type"), "application/json") {
+		var health struct {
+			Data struct {
+				Studio *struct {
+					URL string `json:"url"`
+				} `json:"studio"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&health); err != nil {
+			result.Healthy = false
+			result.Error = err.Error()
+		} else if health.Data.Studio != nil {
+			result.StudioURL = health.Data.Studio.URL
+		}
+	}
+	if result.Healthy && r.ControlCredential != "" {
+		address := response.Header.Get(contracts.HostActiveWorkAddressHeader)
+		if !validControlAddress(address) {
+			result.Healthy = false
+			result.Error = "host readiness did not report a valid loopback control address"
+		} else {
+			r.ControlAddress = address
+		}
+	}
 	return result
 }
 
@@ -668,6 +760,9 @@ func readinessDetails(probe readinessProbe, waited time.Duration) map[string]str
 
 func probeDescription(probe readinessProbe) string {
 	if probe.Status != 0 {
+		if probe.Error != "" {
+			return fmt.Sprintf("%s returned HTTP %d but readiness failed: %s", probe.URL, probe.Status, probe.Error)
+		}
 		return fmt.Sprintf("%s returned HTTP %d", probe.URL, probe.Status)
 	}
 	if probe.Error != "" {
@@ -757,7 +852,7 @@ func appendLauncherFailure(state State, failure *diag.Diag) error {
 
 type portOwner struct{ PID, Command string }
 
-func portInUseError(port, address, purpose string, owner portOwner, operation string, cause error) *diag.Diag {
+func portInUseError(port, address, purpose string, owner portOwner, operation, platformRoot string, cause error) *diag.Diag {
 	if operation == "" {
 		operation = "start"
 	}
@@ -765,9 +860,13 @@ func portInUseError(port, address, purpose string, owner portOwner, operation st
 	if purpose != "" {
 		message = "Port " + port + " required by " + purpose + " is already in use."
 	}
-	hint := "Stop the process using port " + port + ", then rerun `" + contracts.ShellCommand("kb-create", operation) + "`."
+	command := []string{"kb-create", operation}
+	if platformRoot != "" {
+		command = append(command, "--platform-root", platformRoot)
+	}
+	hint := "Stop the process using port " + port + ", then rerun `" + contracts.ShellCommand(command...) + "`."
 	if owner.PID != "" && owner.Command != "" {
-		hint = "Stop process " + owner.PID + " (" + owner.Command + ") using port " + port + ", then rerun `" + contracts.ShellCommand("kb-create", operation) + "`."
+		hint = "Stop process " + owner.PID + " (" + owner.Command + ") using port " + port + ", then rerun `" + contracts.ShellCommand(command...) + "`."
 	}
 	meta := map[string]string{"port": port, "pid": owner.PID, "command": owner.Command, "operation": operation}
 	if address != "" {
@@ -795,15 +894,34 @@ func portConflictError(port, address, purpose string, owner portOwner, operation
 			}
 		}
 	}
-	return portInUseError(port, address, purpose, owner, operation, cause)
+	return portInUseError(port, address, purpose, owner, operation, platformRoot, cause)
+}
+
+// GatewayResourceConflict reports a verified live installation holding a
+// Gateway port claimed by another root. Unregistered listeners remain the
+// caller's ordinary address/port conflict, while registered identities use
+// the same ownership verification as other host port conflicts.
+func GatewayResourceConflict(gatewayURL, operation, platformRoot string) *diag.Diag {
+	parsed, err := url.Parse(gatewayURL)
+	if err != nil || parsed.Port() == "" {
+		return nil
+	}
+	port := parsed.Port()
+	owner := listenerOwner(port)
+	if owner.PID == "" {
+		return nil
+	}
+	failure := portConflictError(port, parsed.Host, "gateway", owner, operation, platformRoot,
+		fmt.Errorf("the selected Gateway port %s is already occupied", port))
+	if failure.Code == contracts.CodeHostAlreadyRunning || failure.Code == contracts.CodeHostProcessIdentityStale ||
+		failure.Code == contracts.CodeGatewayIndexUnavailable || failure.Code == contracts.CodeOperationFailed {
+		return failure
+	}
+	return nil
 }
 
 func registeredGatewayRoot(port string, pid int, platformRoot string) (string, string, error) {
-	launcherState, err := StateHome()
-	if err != nil {
-		return "", "", nil
-	}
-	roots, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: platformRoot}).Read()
+	roots, err := (gateway.Registry{OperationRoot: platformRoot}).Read()
 	if err != nil {
 		return "", "", err
 	}
@@ -842,10 +960,6 @@ func registeredGatewayRoot(port string, pid int, platformRoot string) (string, s
 // RegisteredPortConflict prevents status from reporting a stopped host while
 // the installation's previously registered Gateway is still listening.
 func RegisteredPortConflict(platformRoot, operation string) *diag.Diag {
-	state, err := StateHome()
-	if err != nil {
-		return nil
-	}
 	requested, err := filepath.Abs(platformRoot)
 	if err != nil {
 		return nil
@@ -853,7 +967,7 @@ func RegisteredPortConflict(platformRoot, operation string) *diag.Diag {
 	if resolved, resolveErr := filepath.EvalSymlinks(requested); resolveErr == nil {
 		requested = resolved
 	}
-	roots, err := (gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json"), OperationRoot: platformRoot}).Read()
+	roots, err := (gateway.Registry{OperationRoot: platformRoot}).Read()
 	if err != nil {
 		var failure *diag.Diag
 		if errors.As(err, &failure) {
@@ -893,31 +1007,99 @@ func RootConflict(platformRoot string, pid int) *diag.Diag {
 	meta := map[string]string{"platformRoot": platformRoot, "pid": pidText}
 	if platformRoot == "" {
 		meta["nextCommand"] = contracts.ShellCommand("kb-create", "status")
-		return hostError("KB_HOST_ALREADY_RUNNING", "A KB Labs host started by an earlier launcher is already running (pid "+pidText+").", "Stop process "+pidText+", then rerun the command.", nil, meta)
+		return hostError(contracts.CodeHostAlreadyRunning, "A KB Labs host started by an earlier launcher is already running (pid "+pidText+").", "Stop process "+pidText+", then rerun the command.", nil, meta)
 	}
 	command := contracts.ShellCommand("kb-create", "stop", "--platform-root", platformRoot)
 	meta["nextCommand"] = command
-	return hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host for platform root "+platformRoot+" is already running (pid "+pidText+").", "Stop that platform first with `"+command+"`.", nil, meta)
+	return hostError(contracts.CodeHostAlreadyRunning, "The KB Labs host for platform root "+platformRoot+" is already running (pid "+pidText+").", "Stop that platform first with `"+command+"`.", nil, meta)
 }
 
 func listenerOwner(port string) portOwner {
 	output, err := exec.Command("lsof", "-nP", "-iTCP:"+port, "-sTCP:LISTEN", "-Fp", "-Fc").Output()
+	var owner portOwner
+	if err == nil {
+		for _, line := range strings.Split(string(output), "\n") {
+			if len(line) < 2 {
+				continue
+			}
+			switch line[0] {
+			case 'p':
+				owner.PID = line[1:]
+			case 'c':
+				owner.Command = line[1:]
+			}
+		}
+	}
+	if owner.PID != "" && owner.Command != "" {
+		return owner
+	}
+	return linuxListenerOwner(port)
+}
+
+func linuxListenerOwner(port string) portOwner {
+	if runtime.GOOS != "linux" {
+		return portOwner{}
+	}
+	portNumber, err := strconv.ParseUint(port, 10, 16)
 	if err != nil {
 		return portOwner{}
 	}
-	var owner portOwner
-	for _, line := range strings.Split(string(output), "\n") {
-		if len(line) < 2 {
+	wantedPort := fmt.Sprintf("%04X", portNumber)
+	inodes := make(map[string]struct{})
+	for _, table := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		data, err := os.ReadFile(table)
+		if err != nil {
 			continue
 		}
-		switch line[0] {
-		case 'p':
-			owner.PID = line[1:]
-		case 'c':
-			owner.Command = line[1:]
+		for _, line := range strings.Split(string(data), "\n")[1:] {
+			fields := strings.Fields(line)
+			if len(fields) < 10 || fields[3] != "0A" {
+				continue
+			}
+			localAddress := fields[1]
+			separator := strings.LastIndexByte(localAddress, ':')
+			if separator < 0 || strings.ToUpper(localAddress[separator+1:]) != wantedPort {
+				continue
+			}
+			inodes[fields[9]] = struct{}{}
 		}
 	}
-	return owner
+	if len(inodes) == 0 {
+		return portOwner{}
+	}
+	processes, err := os.ReadDir("/proc")
+	if err != nil {
+		return portOwner{}
+	}
+	for _, process := range processes {
+		if !process.IsDir() {
+			continue
+		}
+		if _, err := strconv.Atoi(process.Name()); err != nil {
+			continue
+		}
+		fdEntries, err := os.ReadDir(filepath.Join("/proc", process.Name(), "fd"))
+		if err != nil {
+			continue
+		}
+		for _, fd := range fdEntries {
+			target, err := os.Readlink(filepath.Join("/proc", process.Name(), "fd", fd.Name()))
+			if err != nil || !strings.HasPrefix(target, "socket:[") || !strings.HasSuffix(target, "]") {
+				continue
+			}
+			if _, listening := inodes[strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")]; !listening {
+				continue
+			}
+			commandBytes, _ := os.ReadFile(filepath.Join("/proc", process.Name(), "cmdline"))
+			command := strings.TrimSpace(strings.ReplaceAll(strings.TrimRight(string(commandBytes), "\x00"), "\x00", " "))
+			if command == "" {
+				commandBytes, _ = os.ReadFile(filepath.Join("/proc", process.Name(), "comm"))
+				command = strings.TrimSpace(string(commandBytes))
+			}
+			return portOwner{PID: process.Name(), Command: command}
+		}
+	}
+	return portOwner{}
 }
 
 // CheckPorts reports conflicts in the resolved service graph before package
@@ -956,7 +1138,7 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 		if operation == "plan" || operation == "apply" {
 			if plan.Host != nil {
 				if gatewayURL, suggestionErr := nextGatewayURL(plan.Host.HealthURL); suggestionErr == nil {
-					failure.Hint += " Use `" + contracts.ShellCommand("kb-create", operation, "--gateway-url", gatewayURL) + "`."
+					failure.Hint += " Use `" + contracts.ShellCommand("kb-create", operation, "--platform-root", plan.Request.PlatformRoot, "--gateway-url", gatewayURL) + "`."
 				}
 			}
 		}
@@ -1186,7 +1368,8 @@ func (r *ProcessRunner) Status(ctx context.Context) (Status, error) {
 	status.PID, status.StartedAt = record.PID, &started
 	if record.HealthURL != "" {
 		status.HealthURL = record.HealthURL
-		status.Healthy = r.probeURL(ctx, record.HealthURL).Healthy
+		probe := r.probeURL(ctx, record.HealthURL)
+		status.Healthy, status.StudioURL = probe.Healthy, probe.StudioURL
 	} else {
 		status.Healthy = r.healthy(ctx)
 	}

@@ -3,6 +3,4 @@ import type { GeneratedDocSource, GeneratedSources } from '../lib/expand-doc-sou
 export type { GeneratedDocSource, GeneratedSources };
 export function renderCommandExamples(command: string, generatedSources?: Record<string, GeneratedDocSource>, match?: string): string;
 export function getDocsDir(): string;
-export function sourceFileForCommand(command: string): string | undefined;
-export function sourceFileForNodePolicy(): string;
 export function collectGeneratedSources(): GeneratedSources;

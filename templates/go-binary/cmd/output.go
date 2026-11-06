@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -23,6 +22,7 @@ type output struct {
 
 func newOutput() output {
 	enabled := colorEnabled()
+	configureColor(enabled)
 	return output{
 		infoTag: lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "14")).Render("[INFO]"),
 		okTag:   lipgloss.NewStyle().Bold(true).Foreground(color(enabled, "10")).Render("[ OK ]"),
@@ -91,15 +91,10 @@ func color(enabled bool, ansi string) lipgloss.TerminalColor {
 }
 
 func colorEnabled() bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-	if strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		return false
-	}
 	fi, err := os.Stdout.Stat()
 	if err != nil {
 		return false
 	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
+	forceColor, forceColorSet := os.LookupEnv("FORCE_COLOR")
+	return resolveColorSupport((fi.Mode()&os.ModeCharDevice) != 0, os.Getenv("NO_COLOR"), forceColor, forceColorSet, os.Getenv("TERM"))
 }

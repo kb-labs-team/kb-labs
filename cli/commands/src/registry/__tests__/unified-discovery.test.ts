@@ -17,7 +17,7 @@ import {
   createMarketplaceEntry,
   computePackageIntegrity,
 } from '@kb-labs/core-discovery';
-import { createRegistry as createEntityRegistry } from '@kb-labs/core-registry';
+import { openCatalog as openCatalogWithVersion } from '@kb-labs/core-registry';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import { discoverManifests } from '../discover';
 import { registerManifests } from '../register';
@@ -60,7 +60,8 @@ async function writeLock(
       const packageName = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8')).name as string;
       lock.plugins[id] = source === 'platform'
         ? createMarketplaceEntry({ ...entryOptions, source, package: packageName, resolvedPath: path.relative(root, dir) })
-        : createMarketplaceEntry({ ...entryOptions, source, package: packageName });
+        : createMarketplaceEntry({ ...entryOptions, source, package: packageName,
+            marketplaceSource: 'registry', signatureStatus: 'verified' });
     }
   }
   await writeMarketplaceLock(root, lock);
@@ -81,6 +82,11 @@ async function writeStorePin(kbHome: string, id: string, dir: string): Promise<v
     installedAt: new Date().toISOString(),
   }, null, 2));
 }
+
+const openCatalog = (
+  scope: Parameters<typeof openCatalogWithVersion>[0],
+  options: Omit<Parameters<typeof openCatalogWithVersion>[1], 'resolvePlatformVersion'> = {},
+) => openCatalogWithVersion(scope, { ...options, resolvePlatformVersion: async () => 'test' });
 
 describe('one discovery pipeline: CLI and registry agree', () => {
   let platformRoot: string;
@@ -124,7 +130,8 @@ describe('one discovery pipeline: CLI and registry agree', () => {
   });
 
   async function cliSet(): Promise<Map<string, { source: string; scope: string; manifest: ManifestV3 | undefined }>> {
-    const results = await discoverManifests(projectRoot, { platformRoot, projectRoot });
+    const catalog = await openCatalog({ platformRoot, projectRoot });
+    const results = await discoverManifests(catalog);
     const out = new Map<string, { source: string; scope: string; manifest: ManifestV3 | undefined }>();
     for (const r of results) {
       const manifest = r.manifests[0]?.v3Manifest;
@@ -136,13 +143,26 @@ describe('one discovery pipeline: CLI and registry agree', () => {
   it('returns the same plugins with the same manifests', async () => {
     const cli = await cliSet();
 
-    const entityRegistry = await createEntityRegistry({ root: projectRoot, platformRoot });
+    const entityRegistry = await openCatalog({ platformRoot, projectRoot });
     const restIds = entityRegistry.listPlugins().map(p => p.id).sort();
 
     expect([...cli.keys()].sort()).toEqual(['@x/linked', '@x/plat', '@x/proj', '@x/ws']);
     expect(restIds).toEqual([...cli.keys()].sort());
     for (const id of restIds) {
       expect(cli.get(id)?.manifest).toEqual(entityRegistry.getManifest(id));
+    }
+  });
+
+  it('two readers opened for one scope report the same generation', async () => {
+    const first = await openCatalog({ platformRoot, projectRoot });
+    const second = await openCatalog({ platformRoot, projectRoot });
+    try {
+      expect({ rev: first.snapshot().rev, checksum: first.snapshot().checksum }).toEqual({
+        rev: second.snapshot().rev,
+        checksum: second.snapshot().checksum,
+      });
+    } finally {
+      await Promise.all([first.dispose(), second.dispose()]);
     }
   });
 
@@ -161,7 +181,7 @@ describe('one discovery pipeline: CLI and registry agree', () => {
   });
 
   it('registers commands of every source from the discovery result', async () => {
-    const results = await discoverManifests(projectRoot, { platformRoot, projectRoot });
+    const results = await discoverManifests(await openCatalog({ platformRoot, projectRoot }));
     const commands = createCommandRegistry();
 
     const registered = await registerManifests(results, commands);
@@ -186,7 +206,7 @@ describe('one discovery pipeline: CLI and registry agree', () => {
   });
 
   it('single-root development (KB_PLATFORM_ROOT == project root) keeps working', async () => {
-    const results = await discoverManifests(platformRoot);
+    const results = await discoverManifests(await openCatalog({ platformRoot, projectRoot: platformRoot }));
 
     expect(results.map(r => r.manifests[0]?.v3Manifest?.id).sort()).toEqual(['@x/linked', '@x/plat', '@x/ws']);
   });

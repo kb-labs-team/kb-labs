@@ -47,11 +47,11 @@ const BUILD_AFFECTED_OUTPUT = `$ kb-devkit run build --affected
   @kb-labs/core-types      ●  building   [1.4s]
   @kb-labs/core-platform   ●  building   [2.1s]
   @kb-labs/sdk             ●  building   [3.2s]
-  @kb-labs/commit-core     ●  building   [0.9s]
-  @kb-labs/commit-entry    ●  building   [1.3s]
-  @kb-labs/qa-entry        ◌  cached     [0ms]
-  @kb-labs/quality-entry   ◌  cached     [0ms]
-  @kb-labs/review-entry    ◌  cached     [0ms]
+  @kb-labs/commit/core     ●  building   [0.9s]
+  @kb-labs/commit    ●  building   [1.3s]
+  @kb-labs/qa        ◌  cached     [0ms]
+  @kb-labs/quality   ◌  cached     [0ms]
+  @kb-labs/review    ◌  cached     [0ms]
 
   Done in 9.4s  ·  5 built  ·  113 from cache`;
 
@@ -61,7 +61,7 @@ const BUILD_FULL_OUTPUT = `$ kb-devkit run build
   @kb-labs/core-types      ◌  cached   [0ms]
   @kb-labs/core-platform   ◌  cached   [0ms]
   @kb-labs/sdk             ◌  cached   [0ms]
-  @kb-labs/agent-sdk       ◌  cached   [0ms]
+  @kb-labs/agents/sdk      ◌  cached   [0ms]
   ... 114 more packages
 
   Done in 0.8s  ·  0 built  ·  118 from cache`;
@@ -92,30 +92,6 @@ const STATS_OUTPUT = `$ kb-devkit stats
   ✓ exports field    91%  (101/111)`;
 
 // i18n-ignore
-const IMPACT_OUTPUT = `$ kb impact:check
-
-  📦 Package Impact
-    Direct (1):
-      @kb-labs/core-types — 3 files changed
-    Dependent (4):
-      @kb-labs/core-platform  ← core-types
-      @kb-labs/sdk            ← core-platform
-      @kb-labs/commit-core    ← sdk
-      @kb-labs/commit-entry   ← commit-core
-
-  🔨 Build Impact  (5 packages in order)
-    1. @kb-labs/core-types
-    2. @kb-labs/core-platform
-    3. @kb-labs/sdk
-    4. @kb-labs/commit-core
-    5. @kb-labs/commit-entry
-    → kb-devkit run build --packages ...
-
-  🧪 Test Impact
-    Must run (2):
-      @kb-labs/core-types   — 2 test files  ← changed
-      @kb-labs/commit-core  — 5 test files  ← sdk`;
-
 // i18n-ignore
 const CUSTOM_CHECKS_CONFIG = `# devkit.yaml
 custom_checks:
@@ -129,9 +105,6 @@ custom_checks:
     run: node scripts/check-barrels.js
     language: typescript`;
 
-// i18n-ignore
-const INSTALL_IMPACT = `kb marketplace install @kb-labs/impact-entry`;
-
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function MonorepoOpsPage({ params }: Props) {
@@ -142,7 +115,6 @@ export default async function MonorepoOpsPage({ params }: Props) {
 
   const buildCommands = t.raw('page.buildCommands') as Array<{ cmd: string; note: string }>;
   const healthCommands = t.raw('page.healthCommands') as Array<{ cmd: string; note: string }>;
-  const impactCommands = t.raw('page.impactCommands') as Array<{ cmd: string; note: string }>;
 
   return (
     <>
@@ -268,37 +240,6 @@ export default async function MonorepoOpsPage({ params }: Props) {
           </Container>
         </Section>
 
-        {/* ── Impact ── */}
-        <Section className="border-b border-line">
-          <Container>
-            <div className="grid gap-12 lg:grid-cols-2 lg:items-start">
-              <AnimateOnScroll>
-                <Eyebrow className="mb-3">{t('page.impactEyebrow')}</Eyebrow>
-                <h2 className="mb-4 text-3xl font-bold tracking-tight text-kb-text">
-                  {t('page.impactTitle')}
-                </h2>
-                <p className="mb-6 text-base leading-relaxed text-muted/70">
-                  {t('page.impactLead')}
-                </p>
-                <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
-                  {impactCommands.map((c, i, arr) => (
-                    <div key={c.cmd} className={`flex flex-col gap-1 px-5 py-3.5 sm:flex-row sm:items-baseline sm:gap-4 ${i < arr.length - 1 ? 'border-b border-line' : ''}`}>
-                      <code className="flex-shrink-0 font-mono text-[0.8rem] text-kb-text/85 sm:w-48">{c.cmd}</code>
-                      <span className="text-sm leading-relaxed text-muted/50">{c.note}</span>
-                    </div>
-                  ))}
-                </div>
-              </AnimateOnScroll>
-
-              <AnimateOnScroll delay={80}>
-                <MockupFrame type="terminal" title="kb impact:check">
-                  <pre className="whitespace-pre p-5 font-mono text-[0.73rem] leading-[1.85] text-slate-300">{IMPACT_OUTPUT}</pre>
-                </MockupFrame>
-              </AnimateOnScroll>
-            </div>
-          </Container>
-        </Section>
-
         {/* ── CTA ── */}
         <Section className="bg-bg">
           <Container>
@@ -314,11 +255,6 @@ export default async function MonorepoOpsPage({ params }: Props) {
                   <p className="mx-auto mb-8 max-w-sm text-base text-muted/75 dark:text-muted/60">
                     {t('page.ctaNote')}
                   </p>
-                  <div className="mx-auto mb-8 flex max-w-md items-center justify-between gap-3 rounded-xl border border-line bg-surface/60 px-4 py-3">
-                    {/* i18n-ignore: terminal command */}
-                    <code className="font-mono text-[0.85rem] text-kb-text">kb marketplace install @kb-labs/impact-entry</code>
-                    <CopyButton code="kb marketplace install @kb-labs/impact-entry" className="shrink-0" />
-                  </div>
                   <div className="flex flex-wrap justify-center gap-3">
                     <Button variant="primary" size="lg" href="https://docs.kblabs.ru/services/kb-devkit" target="_blank" rel="noopener noreferrer">
                       {t('page.docsBtn')}

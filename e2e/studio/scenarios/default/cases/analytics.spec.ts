@@ -1,6 +1,32 @@
 import { test, expect } from '@playwright/test'
+import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
+import { errorCatalog } from '@kb-labs/core-platform/error-envelope'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
+const analyticsStatsUnsupported = errorCatalog.codes.find(({ code }) => code === 'KB_ANALYTICS_STATS_UNSUPPORTED')
+
+test('Analytics stats unsupported shows catalog guidance @S-121.8', async ({ page }) => {
+  test.skip(process.env.KB_STUDIO_FRESH_HOST_JOURNEY !== '1', 'Enabled by the fresh-host journey hook')
+  const projectId = process.env.KB_STUDIO_PROJECT_ID
+  expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the project registered by the fresh-host journey').toBeTruthy()
+  expect(analyticsStatsUnsupported, 'KB_ANALYTICS_STATS_UNSUPPORTED must exist in the platform error catalog').toBeDefined()
+  const { httpStatus, processExitClass, ...error } = analyticsStatsUnsupported!
+  void processExitClass
+  await page.addInitScript(id => localStorage.setItem('kb-studio-active-project', id), projectId!)
+  await page.route(`**${projectServicePath(projectId!, 'rest', 'analytics/stats')}`, async route => {
+    await route.fulfill({
+      status: httpStatus,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: false, error }),
+    })
+  })
+
+  await page.goto(`${GATEWAY}/analytics/overview`)
+  await expect(page.getByText('Analytics Not Configured', { exact: true })).toBeVisible()
+  await expect(page.getByText(error.hint, { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Analytics Overview', exact: true })).toHaveCount(0)
+  await expect(page.getByText('Total Events', { exact: true })).toHaveCount(0)
+})
 
 test('Analytics overview excludes raw adapter telemetry and retired pages stay absent @S-121.1 @S-121.7', async ({ page }) => {
   await page.goto(`${GATEWAY}/analytics/overview`)

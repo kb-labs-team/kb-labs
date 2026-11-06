@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 export function trackedDockerfiles(repositoryRoot) {
   const result = spawnSync('git', ['ls-files', '-z', '--', '*Dockerfile*'], {
@@ -18,6 +21,7 @@ export function parseDockerfileFromInstructions(source) {
   const escape = dockerfileEscapeCharacter(lines);
   const instructions = [];
   const globalArgs = new Map();
+  const declaredArgs = new Set();
   let sawFrom = false;
   for (let index = 0; index < lines.length;) {
     const firstLine = index + 1;
@@ -33,7 +37,10 @@ export function parseDockerfileFromInstructions(source) {
     const keyword = tokens.shift().toUpperCase();
     if (keyword === 'ARG' && !sawFrom) {
       const assignment = /^([A-Za-z_][A-Za-z0-9_]*)(?:=(.*))?$/.exec(tokens[0] ?? '');
-      if (assignment?.[2] !== undefined) globalArgs.set(assignment[1], assignment[2]);
+      if (assignment) {
+        declaredArgs.add(assignment[1]);
+        if (assignment[2] !== undefined) globalArgs.set(assignment[1], assignment[2]);
+      }
       continue;
     }
     if (keyword !== 'FROM') continue;
@@ -46,7 +53,13 @@ export function parseDockerfileFromInstructions(source) {
       continue;
     }
     try {
-      instructions.push({ line: firstLine, image: resolveImageArguments(image, globalArgs) });
+      const resolution = resolveImageArguments(image, globalArgs, declaredArgs);
+      const stage = tokens[0]?.toUpperCase() === 'AS' ? tokens[1] : undefined;
+      if (resolution.externalArgs.length > 0) {
+        instructions.push({ line: firstLine, externalImage: image, externalArgs: resolution.externalArgs, ...(stage ? { stage } : {}) });
+      } else {
+        instructions.push({ line: firstLine, image: resolution.image, ...(stage ? { stage } : {}) });
+      }
     } catch (error) {
       instructions.push({ line: firstLine, error: error.message });
     }
@@ -54,14 +67,47 @@ export function parseDockerfileFromInstructions(source) {
   return instructions;
 }
 
-export function nodeImageIssues(repositoryRoot, requiredMajor) {
+export function nodeImageIssues(repositoryRoot, requiredMajor, { includeJourneyRunnerContract = false } = {}) {
   const issues = [];
+  const toolchainContract = includeJourneyRunnerContract ? readToolchainContract() : undefined;
+  const nodePolicy = includeJourneyRunnerContract
+    ? JSON.parse(readFileSync(path.join(repositoryRoot, 'tools/clikit/toolchain/node_policy_gen.json'), 'utf8'))
+    : undefined;
   for (const relativeFile of trackedDockerfiles(repositoryRoot)) {
     const absoluteFile = path.join(repositoryRoot, relativeFile);
     const source = readFileSync(absoluteFile, 'utf8');
-    for (const from of parseDockerfileFromInstructions(source)) {
+    const fromInstructions = parseDockerfileFromInstructions(source);
+    const toolchainStage = toolchainContract
+      ? fromInstructions.find((from) => from.stage === toolchainContract.toolchainStage)
+      : undefined;
+    for (const from of fromInstructions) {
       if (from.error) {
         issues.push({ file: `${relativeFile}:${from.line}`, message: from.error });
+        continue;
+      }
+
+      if (from.externalImage !== undefined) {
+        const isPolicyNodeImage = toolchainContract !== undefined && nodePolicy !== undefined
+          && relativeFile === toolchainContract.dockerfile
+          && from.stage === toolchainContract.toolchainStage
+          && from.externalArgs.length === 1
+          && from.externalArgs[0] === nodePolicy.nodeBaseImageArgument
+          && toolchainStage === from;
+        const isDerivedRunnerImage = toolchainContract !== undefined && nodePolicy !== undefined
+          && relativeFile === toolchainContract.dockerfile
+          && from.externalArgs.length === 1
+          && from.externalArgs[0] === toolchainContract.imageArgument
+          && from.externalImage === `\${${toolchainContract.imageArgument}}`
+          && toolchainStage !== undefined
+          && (toolchainStage.image?.startsWith('node:')
+            || (toolchainStage.externalArgs?.length === 1
+              && toolchainStage.externalArgs[0] === nodePolicy.nodeBaseImageArgument));
+        if (!isDerivedRunnerImage && !isPolicyNodeImage) {
+          issues.push({
+            file: `${relativeFile}:${from.line}`,
+            message: `FROM image ${JSON.stringify(from.externalImage)} is not derived from the checked runner toolchain stage`,
+          });
+        }
         continue;
       }
 
@@ -89,14 +135,30 @@ export function nodeImageIssues(repositoryRoot, requiredMajor) {
   return issues;
 }
 
-function resolveImageArguments(image, globalArgs) {
-  return image.replace(/\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, braced, bare) => {
-    const name = braced ?? bare;
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || !globalArgs.has(name)) {
-      throw new Error(`FROM image ${JSON.stringify(image)} uses an unresolved ARG or variable`);
-    }
-    return globalArgs.get(name);
+function readToolchainContract() {
+  const script = path.join(repositoryRoot, 'e2e/journey/journey_resources.py');
+  const result = spawnSync('python3', [script, '--toolchain-contract'], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
   });
+  if (result.status !== 0) {
+    throw new Error(result.stderr.trim() || `runner toolchain contract exited ${result.status}`);
+  }
+  return JSON.parse(result.stdout);
+}
+
+function resolveImageArguments(image, globalArgs, declaredArgs) {
+  const externalArgs = new Set();
+  const resolvedImage = image.replace(/\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (match, braced, bare) => {
+    const name = braced ?? bare;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || !declaredArgs.has(name)) {
+      throw new Error(`FROM image ${JSON.stringify(image)} uses an undeclared ARG or variable`);
+    }
+    if (globalArgs.has(name)) return globalArgs.get(name);
+    externalArgs.add(name);
+    return match;
+  });
+  return { image: resolvedImage, externalArgs: [...externalArgs].sort() };
 }
 
 function dockerfileEscapeCharacter(lines) {

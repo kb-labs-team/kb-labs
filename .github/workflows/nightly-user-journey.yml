@@ -65,7 +65,7 @@ jobs:
         run: |
           make build -C tools/kb-devkit
           pnpm install --frozen-lockfile
-          ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/qa-entry
+          ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/qa
       - name: Run report and issue-sync unit tests
         run: python3 -m unittest discover -s e2e/journey -p 'test_*.py' -v
       - name: Compute local and secured release case coverage

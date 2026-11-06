@@ -7,7 +7,6 @@
 
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { createHash } from 'node:crypto';
 import {
   enablePlugin as enableInLock,
   disablePlugin as disableInLock,
@@ -102,13 +101,4 @@ export async function recordCrash(root: string, packageName: string): Promise<vo
     state.disabled.push(packageName);
   }
   await savePluginsState(root, state);
-}
-
-export async function computePackageIntegrity(pkgRoot: string): Promise<string> {
-  try {
-    const content = await fs.readFile(path.join(pkgRoot, 'package.json'), 'utf8');
-    return `sha256-${createHash('sha256').update(content).digest('base64')}`;
-  } catch {
-    return '';
-  }
 }

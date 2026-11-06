@@ -3,6 +3,7 @@
 package identity_start
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 )
 
@@ -33,6 +35,7 @@ func TestPostStartIdentityRegression(t *testing.T) {
 		t.Fatal(err)
 	}
 	const starts = 2000
+	testStarted := time.Now()
 	failures := make([]int, 0, 8)
 	failureCount := 0
 	for index := 0; index < starts; index++ {
@@ -43,8 +46,7 @@ func TestPostStartIdentityRegression(t *testing.T) {
 		command := exec.Command(executable, "-test.run=^TestPostStartIdentityRegression$")
 		command.Env = host.ProcessEnvironmentWithIdentity(append(os.Environ(), helperEnv+"=child"), identity)
 		command.Stdout, command.Stderr = io.Discard, io.Discard
-		stdin, err := command.StdinPipe()
-		if err != nil {
+		if _, err := command.StdinPipe(); err != nil {
 			t.Fatal(err)
 		}
 		if err := command.Start(); err != nil {
@@ -57,9 +59,17 @@ func TestPostStartIdentityRegression(t *testing.T) {
 			close(exited)
 		}()
 		identityStatus := host.WaitForProcessIdentityWithReader(command.Process.Pid, identity, exited, time.Now().Add(time.Second), nil)
-		_ = stdin.Close()
+		if (index+1)%100 == 0 {
+			t.Logf("progress child_index=%d children=%d/%d elapsed=%s last_identity_status=%d", index, index+1, starts, time.Since(testStarted).Round(time.Millisecond), identityStatus)
+		}
+		if err := command.Process.Kill(); err != nil {
+			t.Fatalf("kill child %d after identity observation: %v", index, err)
+		}
 		if err := <-waitErr; err != nil {
-			t.Fatalf("child %d exit: %v", index, err)
+			var exitError *exec.ExitError
+			if !errors.As(err, &exitError) || exitError.ProcessState == nil || exitError.ProcessState.ExitCode() != -1 {
+				t.Fatalf("child %d reap after termination: %v", index, err)
+			}
 		}
 		if identityStatus != host.ProcessIdentityMatch && len(failures) < cap(failures) {
 			failures = append(failures, index)
@@ -116,8 +126,16 @@ func TestExecChainIdentityChecks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	startupSpec, err := host.NewSpec(directory, contracts.HostSpec{
+		Command:   scripts[0],
+		HealthURL: "http://127.0.0.1:1/health",
+	})
+	if err != nil {
+		t.Fatalf("construct default host startup budget: %v", err)
+	}
 	const starts = 1000
 	oldUndetermined, oldMismatches, boundedFailures := 0, 0, 0
+	boundedMismatches, boundedUndetermined := 0, 0
 	for index := range starts {
 		identity, err := host.NewProcessIdentityToken()
 		if err != nil {
@@ -148,7 +166,13 @@ func TestExecChainIdentityChecks(t *testing.T) {
 		case host.ProcessIdentityMismatch:
 			oldMismatches++
 		}
-		if got := host.WaitForProcessIdentityWithReader(process.Process.Pid, identity, exited, time.Now().Add(time.Second), nil); got != host.ProcessIdentityMatch {
+		got := host.WaitForProcessIdentityWithReader(process.Process.Pid, identity, exited, time.Now().Add(startupSpec.ReadyTimeout), nil)
+		if got == host.ProcessIdentityMismatch {
+			boundedMismatches++
+		} else if got == host.ProcessIdentityUndetermined {
+			boundedUndetermined++
+		}
+		if got != host.ProcessIdentityMatch {
 			boundedFailures++
 		}
 		_ = stdin.Close()
@@ -156,9 +180,9 @@ func TestExecChainIdentityChecks(t *testing.T) {
 			t.Fatalf("exec chain %d exit: %v", index, err)
 		}
 	}
-	t.Logf("launch chain: old immediate undetermined %d/%d, mismatches %d/%d; bounded check failures %d/%d", oldUndetermined, starts, oldMismatches, starts, boundedFailures, starts)
+	t.Logf("launch chain: old immediate undetermined %d/%d, mismatches %d/%d; bounded check mismatches %d, undetermined %d, failures %d/%d", oldUndetermined, starts, oldMismatches, starts, boundedMismatches, boundedUndetermined, boundedFailures, starts)
 	if boundedFailures != 0 {
-		t.Fatalf("bounded identity verification failed %d/%d chained launches", boundedFailures, starts)
+		t.Fatalf("bounded identity verification failed %d/%d chained launches (mismatches %d, undetermined %d)", boundedFailures, starts, boundedMismatches, boundedUndetermined)
 	}
 }
 

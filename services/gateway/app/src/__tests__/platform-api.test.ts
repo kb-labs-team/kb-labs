@@ -127,6 +127,39 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  // case: S-189.1
+  it('returns the supported adapter method catalog from the platform route owner', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/platform/v1/adapters',
+      headers: { authorization: TEST_AUTH },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      data: {
+        adapters: {
+          llm: ['complete', 'stream', 'chatWithTools'],
+          cache: ['get', 'set', 'delete', 'clear'],
+          vectorStore: ['search', 'upsert', 'delete', 'count'],
+          analytics: ['track', 'identify', 'flush', 'getEvents', 'getStats', 'getDailyStats'],
+          embeddings: ['embed'],
+          storage: ['read', 'write', 'delete', 'list', 'exists'],
+          eventBus: ['publish', 'subscribe'],
+          documentDatabase: [
+            'find', 'findById', 'count', 'insertOne', 'insertMany', 'updateOne', 'updateMany', 'updateById',
+            'deleteMany', 'deleteById', 'bulkWrite', 'ensureCollection', 'ping',
+          ],
+          kvStore: [
+            'get', 'getMany', 'set', 'setMany', 'setIfNotExists', 'delete', 'exists', 'cas', 'incr',
+            'ttl', 'expire', 'persist', 'ping',
+          ],
+        },
+      },
+    });
+  });
+
   it('denies members direct access to machine storage adapters', async () => {
     const memberApp = Fastify({ logger: false });
     await memberApp.register(async (scope) => {
@@ -153,6 +186,7 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe('KB_RUNTIME_RESOURCE_NOT_FOUND');
+    expect(res.json().error.hint).toContain('GET /platform/v1/adapters');
   });
 
   it('returns 403 for disallowed method', async () => {
@@ -164,6 +198,7 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('KB_AUTH_FORBIDDEN');
+    expect(res.json().error.hint).toContain('GET /platform/v1/adapters');
   });
 
   it('returns 503 when adapter not configured', async () => {
@@ -374,12 +409,13 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(healthy.json().ok).toBe(true);
   });
 
-  it('writes a typed terminal SSE error when an LLM stream fails after a chunk and keeps serving', async () => {
+  it.each([
+    { protocol: 'OpenAI-compatible', errorName: 'APIConnectionError', message: 'OpenAI provider disconnected' },
+    { protocol: 'VibeProxy Messages', errorName: 'Error', message: 'VibeProxy provider disconnected' },
+  ])('writes a typed terminal SSE error when a $protocol stream fails after a chunk', async ({ errorName, message }) => {
     async function* failedAfterFirstChunk(): AsyncIterable<string> {
       yield 'partial';
-      throw Object.assign(new Error('provider disconnected'), {
-        name: 'APIConnectionError',
-      });
+      throw Object.assign(new Error(message), { name: errorName });
     }
     mockLLM.stream = vi.fn().mockReturnValueOnce(failedAfterFirstChunk());
 
@@ -398,7 +434,7 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(failed.body).toContain('kb config get platform.adapterOptions.llm.baseURL --scope platform --json');
     expect(failed.body).toContain('"correlationId":"req-1"');
     expect(failed.body).not.toContain('[DONE]');
-    expect(failed.body).not.toContain('provider disconnected');
+    expect(failed.body).not.toContain(message);
 
     const healthy = await app.inject({
       method: 'POST',

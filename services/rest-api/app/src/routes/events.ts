@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/core-registry';
+import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/plugin-contracts';
 import type { ReadinessState } from './readiness';
 import { isReady, resolveReadinessReason } from './readiness';
 import type { EventHub, BroadcastEvent } from '../events/hub';

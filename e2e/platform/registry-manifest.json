@@ -2,33 +2,102 @@
   "version": "3.0.0",
   "registryUrl": "http://verdaccio:4873",
   "core": [
-    { "name": "@kb-labs/cli-bin" },
-    { "name": "@kb-labs/cli-runtime" },
-    { "name": "@kb-labs/host-app" },
-    { "name": "@kb-labs/platform-client" },
-    { "name": "@kb-labs/project-runtime-app" },
-    { "name": "@kb-labs/sdk" },
-    { "name": "@kb-labs/core-runtime" },
-    { "name": "@kb-labs/core-contracts" },
-    { "name": "@kb-labs/core-platform" },
-    { "name": "@kb-labs/core-ipc" },
-    { "name": "@kb-labs/core-project-registry" },
-    { "name": "@kb-labs/core-resource-broker" },
-    { "name": "@kb-labs/core-retry" },
-    { "name": "@kb-labs/core-sys" },
-    { "name": "@kb-labs/llm-router" },
-    { "name": "@kb-labs/perm-presets" },
-    { "name": "@kb-labs/plugin-contracts" },
-    { "name": "@kb-labs/shared-cli-ui" },
-    { "name": "@kb-labs/shared-command-kit" },
-    { "name": "@kb-labs/shared-tool-kit" },
-    { "name": "@kb-labs/studio-devtools" },
-    { "name": "@kb-labs/studio-event-bus" },
-    { "name": "@kb-labs/studio-hooks" },
-    { "name": "@kb-labs/studio-ui-core" },
-    { "name": "@kb-labs/studio-ui-kit" },
-    { "name": "@kb-labs/core-state-daemon" },
-    { "name": "@kb-labs/adapters-kblabs-gateway" }
+    {
+      "name": "@kb-labs/cli-bin"
+    },
+    {
+      "name": "@kb-labs/cli-runtime"
+    },
+    {
+      "name": "@kb-labs/host-app"
+    },
+    {
+      "name": "@kb-labs/platform-client"
+    },
+    {
+      "name": "@kb-labs/project-runtime-app"
+    },
+    {
+      "name": "@kb-labs/sdk"
+    },
+    {
+      "name": "@kb-labs/core-runtime"
+    },
+    {
+      "name": "@kb-labs/core-contracts"
+    },
+    {
+      "name": "@kb-labs/core-platform"
+    },
+    {
+      "name": "@kb-labs/core-ipc"
+    },
+    {
+      "name": "@kb-labs/core-project-registry"
+    },
+    {
+      "name": "@kb-labs/core-resource-broker"
+    },
+    {
+      "name": "@kb-labs/workflow-entry"
+    },
+    {
+      "name": "@kb-labs/core-retry"
+    },
+    {
+      "name": "@kb-labs/core-sys"
+    },
+    {
+      "name": "@kb-labs/llm-router"
+    },
+    {
+      "name": "@kb-labs/perm-presets"
+    },
+    {
+      "name": "@kb-labs/plugin-contracts"
+    },
+    {
+      "name": "@kb-labs/shared-cli-ui"
+    },
+    {
+      "name": "@kb-labs/shared-command-kit"
+    },
+    {
+      "name": "@kb-labs/shared-tool-kit"
+    },
+    {
+      "name": "@kb-labs/studio-devtools"
+    },
+    {
+      "name": "@kb-labs/studio-event-bus"
+    },
+    {
+      "name": "@kb-labs/studio-hooks"
+    },
+    {
+      "name": "@kb-labs/studio-ui-core"
+    },
+    {
+      "name": "@kb-labs/studio-ui-kit"
+    },
+    {
+      "name": "@kb-labs/core-state-daemon"
+    },
+    {
+      "name": "@kb-labs/adapters-kblabs-gateway"
+    },
+    {
+      "name": "@kb-labs/core-workspace"
+    },
+    {
+      "name": "@kb-labs/host-agent-app"
+    },
+    {
+      "name": "@kb-labs/cli-commands"
+    },
+    {
+      "name": "@kb-labs/marketplace-contracts"
+    }
   ],
   "services": [
     {
@@ -47,8 +116,7 @@
       "default": true,
       "port": 7778,
       "gatewayPrefix": "/api/exec",
-      "gatewayRewrite": "",
-      "plugin": "@kb-labs/workflow-entry"
+      "gatewayRewrite": ""
     },
     {
       "id": "gateway",
@@ -66,13 +134,6 @@
       "gatewayPrefix": "/api/v1/marketplace"
     },
     {
-      "id": "marketplace-registry",
-      "pkg": "@kb-labs/marketplace-registry-app",
-      "description": "Marketplace registry (port 5071)",
-      "default": true,
-      "port": 5071
-    },
-    {
       "id": "studio",
       "pkg": "@kb-labs/studio-app",
       "description": "Web UI (port 3000)",
@@ -88,78 +149,89 @@
     }
   ],
   "adapters": [
-    { "name": "@kb-labs/adapters-fs" },
-    { "name": "@kb-labs/adapters-eventbus-cache" },
-    { "name": "@kb-labs/data-store" },
-    { "name": "@kb-labs/adapters-pino" },
-    { "name": "@kb-labs/adapters-log-ringbuffer" },
-    { "name": "@kb-labs/adapters-log-document" },
-    { "name": "@kb-labs/adapters-analytics-sqlite" },
-    { "name": "@kb-labs/adapters-analytics-file" },
-    { "name": "@kb-labs/e2e-llm-deterministic" },
-    { "name": "@kb-labs/adapters-sqlite" },
-    { "name": "@kb-labs/adapters-openai" },
-    { "name": "@kb-labs/adapters-service-transport-http" },
-    { "name": "@kb-labs/adapters-state-broker" }
+    {
+      "name": "@kb-labs/adapters-fs"
+    },
+    {
+      "name": "@kb-labs/adapters-eventbus-cache"
+    },
+    {
+      "name": "@kb-labs/data-store"
+    },
+    {
+      "name": "@kb-labs/adapters-pino"
+    },
+    {
+      "name": "@kb-labs/adapters-log-ringbuffer"
+    },
+    {
+      "name": "@kb-labs/adapters-log-document"
+    },
+    {
+      "name": "@kb-labs/adapters-analytics-sqlite"
+    },
+    {
+      "name": "@kb-labs/adapters-analytics-file"
+    },
+    {
+      "name": "@kb-labs/e2e-llm-deterministic"
+    },
+    {
+      "name": "@kb-labs/adapters-sqlite"
+    },
+    {
+      "name": "@kb-labs/adapters-openai"
+    },
+    {
+      "name": "@kb-labs/adapters-service-transport-http"
+    },
+    {
+      "name": "@kb-labs/adapters-state-broker"
+    },
+    {
+      "name": "@kb-labs/fixture-adapter"
+    }
   ],
   "plugins": [
     {
-      "id": "@kb-labs/workflow",
-      "pkg": "@kb-labs/workflow-entry",
-      "description": "Workflow engine plugin — CLI, REST routes and WS channels for the workflow daemon",
-      "default": true
-    },
-    {
-      "id": "@kb-labs/marketplace",
-      "pkg": "@kb-labs/marketplace-entry",
-      "description": "Install, list, enable plugins",
-      "default": true
-    },
-    {
       "id": "@kb-labs/mind",
-      "pkg": "@kb-labs/mind-entry",
+      "pkg": "@kb-labs/mind",
       "description": "AI code search (RAG)",
       "default": false
     },
     {
       "id": "@kb-labs/agents",
-      "pkg": "@kb-labs/agent-entry",
+      "pkg": "@kb-labs/agents",
       "description": "Autonomous agents",
       "default": false
     },
     {
       "id": "@kb-labs/review",
-      "pkg": "@kb-labs/review-entry",
+      "pkg": "@kb-labs/review",
       "description": "AI code review",
       "default": false
     },
     {
       "id": "@kb-labs/commit",
-      "pkg": "@kb-labs/commit-entry",
+      "pkg": "@kb-labs/commit",
       "description": "AI commit generation",
       "default": false
     },
     {
-      "id": "@kb-labs/scaffold",
-      "pkg": "@kb-labs/scaffold",
-      "description": "Scaffold plugins and adapters",
-      "default": true
-    },
-    {
       "id": "@kb-labs/release",
-      "pkg": "@kb-labs/release-manager-cli",
-      "description": "Release manager — plan, publish, workflow templates",
+      "pkg": "@kb-labs/release",
+      "description": "Release manager \u2014 plan, publish, workflow templates",
       "default": false
     },
     {
       "id": "@kb-labs/quality",
-      "pkg": "@kb-labs/quality-entry",
+      "pkg": "@kb-labs/quality",
       "description": "Code quality, architecture analysis",
       "default": false
     },
     {
       "id": "@kb-labs/steward",
-      "pkg": "@kb-labs/steward-entry",
+      "pkg": "@kb-labs/steward",
       "description": "Project memory and daily review",
       "default": false
     },
@@ -167,6 +239,17 @@
       "id": "@kb-labs/e2e-analytics-emitter",
       "pkg": "@kb-labs/e2e-analytics-emitter",
       "description": "Journey fixture for analytics and LLM provider coverage",
+      "default": false
+    },
+    {
+      "pkg": "fixture-compat",
+      "description": "Journey fixture for installed plugin update compatibility",
+      "default": false
+    },
+    {
+      "id": "@kb-labs/e2e-plugin-error",
+      "pkg": "@kb-labs/e2e-plugin-error",
+      "description": "Journey fixture for correlated plugin handler failure diagnostics",
       "default": false
     }
   ],

@@ -15,6 +15,9 @@
 import type { LogRecord, LogQuery } from "./logger";
 import type { IDocumentDatabase } from "./database.js";
 
+/** Maximum time a normalized plugin failure waits for durable error-log persistence. */
+export const LOG_PERSISTENCE_ERROR_FLUSH_TIMEOUT_MS = 1_000;
+
 /**
  * Persistent log storage for historical queries.
  *

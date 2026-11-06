@@ -5,7 +5,11 @@ export default defineConfig({
     environment: 'node',
     globals: false,
     reporters: ['default'],
-    include: ['src/__tests__/cli/**/*.cli.test.ts'],
+    include: [
+      'src/__tests__/cli/**/*.cli.test.ts',
+      'tests/**/*.cli.test.ts',
+      'tests/**/*.cli.spec.ts',
+    ],
     exclude: [
       '**/node_modules/**',
       '**/dist/**',

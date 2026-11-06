@@ -13,15 +13,15 @@
 
 import { createRequire } from "node:module";
 import { loadEffectiveConfig, validatePlatformAdapterOptions } from "@kb-labs/core-config";
-import { createDiscoveryInputFingerprinter } from "@kb-labs/core-discovery";
-import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import {
   GATEWAY_SERVICE_NETWORK,
   AdapterConfigError,
+  catalogEnvironmentVariables,
   resolveServiceListenAddress,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
-import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import { createProjectRegistry, resolvePlatformDataRoot } from "@kb-labs/core-project-registry";
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import type { PlatformAssemblyHook } from "@kb-labs/core-runtime";
 import {
   isLoopbackHost,
@@ -59,6 +59,7 @@ import { createProjectRouting } from "./project-runtime/routing.js";
 import { findScheduledProjects } from "./project-runtime/workflow-schedules.js";
 import { createProjectsRoutes } from "./projects-routes.js";
 import { createPluginsRoutes } from "./plugins-routes.js";
+import { startHostActiveWorkControl } from "./active-work-control.js";
 import {
   parseHostSettings,
   type HostModuleId,
@@ -82,7 +83,7 @@ interface InternalModuleSpec {
   upstreamName: string;
   prefix: string;
   rewritePrefix?: string;
-  setup: (ctx: ServiceContext) => Promise<Teardown>;
+  setup: (ctx: ServiceContext, platformDataRoot: string) => Promise<Teardown>;
 }
 
 const INTERNAL_MODULES: readonly InternalModuleSpec[] = [
@@ -108,6 +109,7 @@ const INTERNAL_MODULES: readonly InternalModuleSpec[] = [
 interface PreparedHost {
   settings: HostSettings;
   upstreams: GatewayUpstreams;
+  platformDataRoot: string;
   gatewayAddress?: string;
 }
 
@@ -316,7 +318,8 @@ export async function createHostConfig(
           );
           gatewayAddress = `http://${INTERNAL_BIND_HOST}:${listenAddress.port}`;
         }
-        return { settings, upstreams, gatewayAddress };
+        const platformDataRoot = await resolvePlatformDataRoot(ctx.platformRoot);
+        return { settings, upstreams, platformDataRoot, gatewayAddress };
       } catch (error) {
         releaseResolveHook();
         throw error;
@@ -338,7 +341,7 @@ export async function createHostConfig(
       // Internal modules never bind beyond loopback; no host env override.
       defaultHost: INTERNAL_BIND_HOST,
       setup: async (ctx) => {
-        const { settings } = await prepare(ctx);
+        const { settings, platformDataRoot } = await prepare(ctx);
         try {
           const teardown = await (async (): Promise<Teardown> => {
             if (!isSelected(settings, spec.id)) {
@@ -348,7 +351,7 @@ export async function createHostConfig(
               return skipped();
             }
             assertInternalAddress(ctx, spec.serviceId);
-            return spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) });
+            return spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) }, platformDataRoot);
           })();
           return releaseHookBeforeTeardown(teardown);
         } catch (error) {
@@ -372,6 +375,7 @@ export async function createHostConfig(
       }
       const logger = ctx.logger.forComponent("project-runtime");
       const registry = options.projectRegistry ?? createProjectRegistry();
+      const registryWrites = new Set<Promise<void>>();
       const overrides = options.projectRuntime ?? {};
       const launcher =
         overrides.launcher ??
@@ -388,7 +392,7 @@ export async function createHostConfig(
             ? { stopTimeoutMs: overrides.stopTimeoutMs }
             : {}),
         });
-      const fingerprintDiscoveryInputs = createDiscoveryInputFingerprinter();
+      const fingerprintDiscoveryObservations = ctx.runtime.catalog.discoveryObservationFingerprinter();
       const manager = new ProjectRuntimeManager({
         launcher,
         logger,
@@ -410,16 +414,24 @@ export async function createHostConfig(
           ? { sweepIntervalMs: overrides.sweepIntervalMs }
           : {}),
         ...(overrides.restart ? { restart: overrides.restart } : {}),
-        getPluginSetDigest: (project) => fingerprintDiscoveryInputs([ctx.platformRoot, project.root]),
+        getPluginSetDigest: (project) => fingerprintDiscoveryObservations([ctx.platformRoot, project.root]),
         onStarted: (project) => {
-          registry.touch(project.id).catch((error: unknown) => {
-            logger.warn("Could not record project use", {
-              projectId: project.id,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
+          const write = registry.touch(project.id)
+            .then(() => undefined)
+            .catch((error: unknown) => {
+              logger.warn("Could not record project use", {
+                projectId: project.id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            })
+            .finally(() => registryWrites.delete(write));
+          registryWrites.add(write);
         },
       });
+      const hostControlCredential = process.env[catalogEnvironmentVariables.KB_HOST_CONTROL_TOKEN];
+      const activeWorkControl = hostControlCredential
+        ? await startHostActiveWorkControl(hostControlCredential, ctx.activeWork, manager)
+        : undefined;
       const refreshScheduledProjects = async (): Promise<void> => {
         const scheduled = await findScheduledProjects(registry);
         await manager.syncScheduledProjects(scheduled);
@@ -467,6 +479,7 @@ export async function createHostConfig(
             createProjectsRoutes({ registry, manager }),
             ...pluginsRoutes,
           ),
+          ...(activeWorkControl ? { readinessControlAddress: activeWorkControl.address } : {}),
         },
       );
       return releaseHookBeforeTeardown(async () => {
@@ -475,7 +488,12 @@ export async function createHostConfig(
         try {
           await stopGateway();
         } finally {
-          await manager.stopAll();
+          try {
+            await activeWorkControl?.close();
+          } finally {
+            await manager.stopAll();
+            await Promise.all(registryWrites);
+          }
         }
       });
     },

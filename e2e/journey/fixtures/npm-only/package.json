@@ -1,0 +1,11 @@
+{
+  "name": "journey-npm-only-fixture",
+  "version": "1.0.0",
+  "description": "Unscoped npm fallback plugin for the ordered Marketplace source journey",
+  "type": "module",
+  "main": "./dist/manifest.js",
+  "files": ["dist/manifest.js", "dist/manifest.json"],
+  "kb": { "manifest": "./dist/manifest.js", "requiredOutputs": ["./dist/manifest.json"] },
+  "peerDependencies": { "@kb-labs/sdk": "^2.120.1" },
+  "license": "UNLICENSED"
+}

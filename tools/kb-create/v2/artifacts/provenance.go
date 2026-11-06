@@ -23,6 +23,7 @@ import (
 )
 
 const DistDigestVersion = "kb-dist-digest/v1"
+const PackageDigestVersion = "kb-package-digest/v1"
 
 type InstalledPackageProvenance struct {
 	Name           string `json:"name"`
@@ -50,6 +51,8 @@ type PackageSealedProvenance struct {
 	SourceRevision string `json:"sourceRevision"`
 	Integrity      string `json:"integrity"`
 	DistSHA256     string `json:"distSha256"`
+	ContentScope   string `json:"contentScope"`
+	PackageSHA256  string `json:"packageSha256,omitempty"`
 }
 
 type VerifiedArtifactSet struct {
@@ -103,18 +106,27 @@ func VerifyInstalledProvenance(root string, items []contracts.Artifact) (Verifie
 		if identity.Name != item.Package || identity.Version != item.Version {
 			return VerifiedArtifactSet{}, provenanceMismatch(item, packagePath, contracts.ProvenanceIdentityField, expectedIdentity, contracts.PresentProvenanceValue(actualIdentity))
 		}
-		actual, err := PackageDistDigest(filepath.Join(packageRoot, "dist"))
-		if err != nil {
+		var actual string
+		var digestErr error
+		switch item.Provenance.ContentScope {
+		case contracts.ProvenanceScopeDist:
+			actual, digestErr = PackageDistDigest(filepath.Join(packageRoot, "dist"))
+		case contracts.ProvenanceScopePackage:
+			actual, digestErr = PackageContentDigest(packageRoot)
+		default:
+			digestErr = fmt.Errorf("unsupported package content scope %q", item.Provenance.ContentScope)
+		}
+		if digestErr != nil {
 			return VerifiedArtifactSet{}, provenanceMismatch(item, packagePath, contracts.ProvenanceDigestField,
-				item.Provenance.DistSHA256, contracts.MissingProvenanceValue("installed dist: "+err.Error()))
+				provenanceContentDigest(item.Provenance), contracts.MissingProvenanceValue("installed package content: "+digestErr.Error()))
 		}
 		integrity := lockIntegrity(lock.Packages, item.Package, item.Version)
 		if !integrity.Present() || integrity.Value() != item.Provenance.Integrity {
 			return VerifiedArtifactSet{}, provenanceMismatch(item, packagePath, contracts.ProvenanceIntegrityField, item.Provenance.Integrity, integrity)
 		}
-		if actual != item.Provenance.DistSHA256 {
+		if actual != provenanceContentDigest(item.Provenance) {
 			return VerifiedArtifactSet{}, provenanceMismatch(item, packagePath, contracts.ProvenanceDigestField,
-				item.Provenance.DistSHA256, contracts.PresentProvenanceValue(actual))
+				provenanceContentDigest(item.Provenance), contracts.PresentProvenanceValue(actual))
 		}
 		result.Packages = append(result.Packages, InstalledPackageProvenance{
 			Name: item.Package, Version: item.Version, Integrity: integrity.Value(),
@@ -139,7 +151,7 @@ func ValidatePackageProvenance(item contracts.Artifact, packagePath string) erro
 			"package identity in artifact manifest", contracts.MissingProvenanceValue("artifact manifest: package"))
 	}
 	provenance := item.Provenance
-	if provenance.SourceRevision == "" && provenance.Integrity == "" && provenance.DistSHA256 == "" {
+	if provenance.SourceRevision == "" && provenance.Integrity == "" && !provenance.HasContentDigest() {
 		return provenanceMismatch(item, packagePath, contracts.ProvenanceDigestField, "sealed dist digest", contracts.MissingProvenanceValue("sealed provenance record"))
 	}
 	if provenance.SourceRevision == "" {
@@ -148,14 +160,28 @@ func ValidatePackageProvenance(item contracts.Artifact, packagePath string) erro
 	if provenance.Integrity == "" {
 		return provenanceMismatch(item, packagePath, contracts.ProvenanceIntegrityField, "sealed tarball integrity", contracts.MissingProvenanceValue("sealed provenance: integrity"))
 	}
-	if provenance.DistSHA256 == "" {
-		return provenanceMismatch(item, packagePath, contracts.ProvenanceDigestField, DistDigestVersion, contracts.MissingProvenanceValue("sealed provenance: distSha256"))
+	if !provenance.HasContentDigest() {
+		return provenanceMismatch(item, packagePath, contracts.ProvenanceDigestField, "scoped package content digest", contracts.MissingProvenanceValue("sealed provenance: contentScope and matching digest"))
 	}
 	return nil
 }
 
 func provenanceMismatch(item contracts.Artifact, packagePath string, field contracts.ProvenanceField, expected string, actual contracts.ObservedProvenanceValue) error {
-	return contracts.ProvenanceMismatch(item.Package, field, expected, actual, packagePath, DistDigestVersion)
+	return contracts.ProvenanceMismatch(item.Package, field, expected, actual, packagePath, provenanceDigestVersion(item.Provenance.ContentScope))
+}
+
+func provenanceContentDigest(provenance contracts.ArtifactProvenance) string {
+	if provenance.ContentScope == contracts.ProvenanceScopePackage {
+		return provenance.PackageSHA256
+	}
+	return provenance.DistSHA256
+}
+
+func provenanceDigestVersion(scope string) string {
+	if scope == contracts.ProvenanceScopePackage {
+		return PackageDigestVersion
+	}
+	return DistDigestVersion
 }
 
 func packageIdentity(name, version string) string {
@@ -222,6 +248,27 @@ func WriteInstalledProvenance(root string, manifest InstalledProvenanceManifest)
 // versioned `kb-dist-digest/v1\x00` domain separator. Other file mode bits do
 // not affect package identity.
 func DistDigest(root string) (string, error) {
+	return canonicalTreeDigest(root, DistDigestVersion)
+}
+
+// PackageContentDigest hashes a static package tree when its package manifest
+// declares no compiled dist entrypoints.
+func PackageContentDigest(root string) (string, error) {
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("static package contains symlink: %s", path)
+		}
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	return canonicalTreeDigest(root, PackageDigestVersion)
+}
+
+func canonicalTreeDigest(root, version string) (string, error) {
 	entries := make([]distEntry, 0)
 	rootInfo, err := os.Lstat(root)
 	if err != nil {
@@ -273,15 +320,15 @@ func DistDigest(root string) (string, error) {
 	}); err != nil {
 		return "", err
 	}
-	return digestEntries(entries)
+	return digestEntries(entries, version)
 }
 
-func digestEntries(entries []distEntry) (string, error) {
+func digestEntries(entries []distEntry, version string) (string, error) {
 	sort.Slice(entries, func(i, j int) bool {
 		return bytes.Compare([]byte(entries[i].path), []byte(entries[j].path)) < 0
 	})
 	hash := sha256.New()
-	if _, err := io.WriteString(hash, DistDigestVersion+"\x00"); err != nil {
+	if _, err := io.WriteString(hash, version+"\x00"); err != nil {
 		return "", err
 	}
 	for _, entry := range entries {
@@ -302,8 +349,8 @@ func digestEntries(entries []distEntry) (string, error) {
 }
 
 // SealPackageProvenance derives package identity, source revision, archive
-// integrity, and canonical dist digest from packed package tarballs. Release
-// preparation and test fixtures use this same sealing function.
+// integrity, and the declared content-scope digest from packed package
+// tarballs. Release preparation and test fixtures use this same function.
 func SealPackageProvenance(packagesDir string, packages []PackageManifestInput, sourceRevision string) ([]PackageSealedProvenance, error) {
 	if sourceRevision == "" {
 		return nil, fmt.Errorf("source revision is required for package provenance")
@@ -314,14 +361,18 @@ func SealPackageProvenance(packagesDir string, packages []PackageManifestInput, 
 			return nil, fmt.Errorf("package provenance requires package, version, and tarball for every entry")
 		}
 		archivePath := filepath.Join(packagesDir, filepath.FromSlash(item.Tarball))
-		identity, entries, err := packageTarballDistEntries(archivePath)
+		identity, scope, entries, err := packageTarballContentEntries(archivePath)
 		if err != nil {
 			return nil, fmt.Errorf("inspect package tarball %s: %w", item.Tarball, err)
 		}
 		if identity.Name != item.Package || identity.Version != item.Version {
 			return nil, fmt.Errorf("package tarball %s contains %s@%s, expected %s@%s", item.Tarball, identity.Name, identity.Version, item.Package, item.Version)
 		}
-		distDigest, err := digestEntries(entries)
+		digestVersion := DistDigestVersion
+		if scope == contracts.ProvenanceScopePackage {
+			digestVersion = PackageDigestVersion
+		}
+		contentDigest, err := digestEntries(entries, digestVersion)
 		if err != nil {
 			return nil, err
 		}
@@ -331,14 +382,16 @@ func SealPackageProvenance(packagesDir string, packages []PackageManifestInput, 
 		}
 		sealed = append(sealed, PackageSealedProvenance{
 			Package: item.Package, Version: item.Version, SourceRevision: sourceRevision,
-			Integrity: integrity, DistSHA256: distDigest,
+			Integrity: integrity, ContentScope: scope,
+			DistSHA256:    chooseScopeDigest(scope, contentDigest, contracts.ProvenanceScopeDist),
+			PackageSHA256: chooseScopeDigest(scope, contentDigest, contracts.ProvenanceScopePackage),
 		})
 	}
 	return sealed, nil
 }
 
-// PackageSetContentDigest derives candidate identity from packed package dist
-// content by calling the same tarball inspector as SealPackageProvenance.
+// PackageSetContentDigest derives candidate identity from the scoped content
+// of packed packages by calling the same tarball inspector as the sealer.
 func PackageSetContentDigest(packagesDir string, packages []PackageManifestInput) (string, error) {
 	inputs := make([]PackageDigestInput, 0, len(packages))
 	for _, item := range packages {
@@ -346,99 +399,165 @@ func PackageSetContentDigest(packagesDir string, packages []PackageManifestInput
 			return "", fmt.Errorf("package set digest requires package, version, and tarball for every entry")
 		}
 		archivePath := filepath.Join(packagesDir, filepath.FromSlash(item.Tarball))
-		identity, entries, err := packageTarballDistEntries(archivePath)
+		identity, scope, entries, err := packageTarballContentEntries(archivePath)
 		if err != nil {
 			return "", fmt.Errorf("inspect package tarball %s: %w", item.Tarball, err)
 		}
 		if identity.Name != item.Package || identity.Version != item.Version {
 			return "", fmt.Errorf("package tarball %s contains %s@%s, expected %s@%s", item.Tarball, identity.Name, identity.Version, item.Package, item.Version)
 		}
-		digest, err := digestEntries(entries)
+		digestVersion := DistDigestVersion
+		if scope == contracts.ProvenanceScopePackage {
+			digestVersion = PackageDigestVersion
+		}
+		digest, err := digestEntries(entries, digestVersion)
 		if err != nil {
 			return "", err
 		}
-		inputs = append(inputs, PackageDigestInput{Package: item.Package, Digest: digest})
+		inputs = append(inputs, PackageDigestInput{Package: item.Package, Digest: scope + ":" + digest})
 	}
 	return PackageSetDigest(inputs)
 }
 
-func packageTarballDistEntries(archivePath string) (struct {
+func packageTarballContentEntries(archivePath string) (struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
-}, []distEntry, error) {
+}, string, []distEntry, error) {
 	var identity struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	}
+	scope := ""
 	file, err := os.Open(archivePath)
 	if err != nil {
-		return identity, nil, err
+		return identity, scope, nil, err
 	}
 	defer file.Close()
 	compressed, err := gzip.NewReader(file)
 	if err != nil {
-		return identity, nil, err
+		return identity, scope, nil, err
 	}
 	defer compressed.Close()
 	reader := tar.NewReader(compressed)
-	var entries []distEntry
-	manifestFound := false
+	var distEntries []distEntry
+	var packageEntries []distEntry
+	var manifestBytes []byte
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return identity, nil, err
+			return identity, scope, nil, err
 		}
 		name := strings.TrimPrefix(header.Name, "./")
 		clean := path.Clean(name)
 		if path.IsAbs(name) || clean == ".." || strings.HasPrefix(clean, "../") {
-			return identity, nil, fmt.Errorf("package tarball contains unsafe path %q", header.Name)
+			return identity, scope, nil, fmt.Errorf("package tarball contains unsafe path %q", header.Name)
+		}
+		if clean == "package" || !strings.HasPrefix(clean, "package/") {
+			continue
 		}
 		if clean == "package/package.json" {
-			manifest, err := io.ReadAll(reader)
+			manifestBytes, err = io.ReadAll(reader)
 			if err != nil {
-				return identity, nil, err
+				return identity, scope, nil, err
 			}
-			if err := json.Unmarshal(manifest, &identity); err != nil {
-				return identity, nil, fmt.Errorf("invalid package.json: %w", err)
+			if err := json.Unmarshal(manifestBytes, &identity); err != nil {
+				return identity, scope, nil, fmt.Errorf("invalid package.json: %w", err)
 			}
-			manifestFound = true
+			packageEntries = append(packageEntries, distEntry{path: "package.json", kind: 1, payload: manifestBytes})
 			continue
 		}
-		const distPrefix = "package/dist/"
-		if !strings.HasPrefix(clean, distPrefix) || header.Typeflag == tar.TypeDir {
+		if header.Typeflag == tar.TypeDir {
 			continue
 		}
-		relative := strings.TrimPrefix(clean, distPrefix)
+		relative := strings.TrimPrefix(clean, "package/")
 		if relative == "" || strings.ContainsRune(relative, '\\') {
-			return identity, nil, fmt.Errorf("package dist path cannot be represented with slash separators: %q", header.Name)
+			return identity, scope, nil, fmt.Errorf("package path cannot be represented with slash separators: %q", header.Name)
 		}
 		switch header.Typeflag {
 		case tar.TypeReg, tar.TypeRegA:
 			content, err := io.ReadAll(reader)
 			if err != nil {
-				return identity, nil, err
+				return identity, scope, nil, err
 			}
 			mode := byte(0)
 			if header.Mode&0o111 != 0 {
 				mode = 1
 			}
-			entries = append(entries, distEntry{path: relative, kind: 1, mode: mode, payload: content})
+			entry := distEntry{path: relative, kind: 1, mode: mode, payload: content}
+			packageEntries = append(packageEntries, entry)
+			if strings.HasPrefix(relative, "dist/") {
+				distEntries = append(distEntries, distEntry{path: strings.TrimPrefix(relative, "dist/"), kind: 1, mode: mode, payload: content})
+			}
 		case tar.TypeSymlink, tar.TypeLink:
-			return identity, nil, fmt.Errorf("package dist contains symlink: %s", relative)
+			return identity, scope, nil, fmt.Errorf("package tarball contains symlink: %s", relative)
 		default:
-			return identity, nil, fmt.Errorf("package dist contains unsupported entry %s", relative)
+			return identity, scope, nil, fmt.Errorf("package tarball contains unsupported entry %s", relative)
 		}
 	}
-	if !manifestFound || identity.Name == "" || identity.Version == "" {
-		return identity, nil, fmt.Errorf("package tarball is missing a valid package/package.json")
+	if len(manifestBytes) == 0 || identity.Name == "" || identity.Version == "" {
+		return identity, scope, nil, fmt.Errorf("package tarball is missing a valid package/package.json")
 	}
-	if len(entries) == 0 {
-		return identity, nil, fmt.Errorf("package tarball has no files under package/dist")
+	if len(distEntries) > 0 {
+		scope = contracts.ProvenanceScopeDist
+		return identity, scope, distEntries, nil
 	}
-	return identity, entries, nil
+	if packageManifestDeclaresDist(manifestBytes) {
+		return identity, scope, nil, fmt.Errorf("package manifest declares dist entrypoints but package tarball has no files under package/dist")
+	}
+	scope = contracts.ProvenanceScopePackage
+	return identity, scope, packageEntries, nil
+}
+
+func packageManifestDeclaresDist(manifest []byte) bool {
+	var metadata struct {
+		Exports any    `json:"exports"`
+		Main    string `json:"main"`
+		Module  string `json:"module"`
+		Types   string `json:"types"`
+		Typings string `json:"typings"`
+	}
+	if json.Unmarshal(manifest, &metadata) != nil {
+		return true
+	}
+	if exportTargetsDist(metadata.Exports) {
+		return true
+	}
+	for _, target := range []string{metadata.Main, metadata.Module, metadata.Types, metadata.Typings} {
+		if strings.HasPrefix(strings.TrimPrefix(target, "./"), "dist/") {
+			return true
+		}
+	}
+	return false
+}
+
+func exportTargetsDist(value any) bool {
+	switch target := value.(type) {
+	case string:
+		return strings.HasPrefix(strings.TrimPrefix(target, "./"), "dist/")
+	case []any:
+		for _, entry := range target {
+			if exportTargetsDist(entry) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, entry := range target {
+			if exportTargetsDist(entry) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func chooseScopeDigest(scope, digest, selectedScope string) string {
+	if scope == selectedScope {
+		return digest
+	}
+	return ""
 }
 
 // PackageDistDigest hashes exactly the installed package/dist tree. Only
@@ -486,9 +605,9 @@ type PackageDigestInput struct {
 }
 
 // PackageSetDigest returns the canonical content identity for a sorted set of
-// package name and dist digest pairs. The caller must provide one digest per
-// package; each pair is length-prefixed after the `kb-package-set-digest/v1`
-// domain separator.
+// package names and scoped content digests. The caller must provide one digest
+// per package; each pair is length-prefixed after the
+// `kb-package-set-digest/v1` domain separator.
 func PackageSetDigest(packages []PackageDigestInput) (string, error) {
 	rows := append([]PackageDigestInput(nil), packages...)
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Package < rows[j].Package })

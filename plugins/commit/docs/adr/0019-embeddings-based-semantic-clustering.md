@@ -161,7 +161,7 @@ We will integrate `@kb-labs/mind-embeddings` into the commit generation pipeline
 
 ### Configuration Changes
 
-**`@kb-labs/commit-contracts`** - Add clustering options
+**`@kb-labs/commit/contracts`** - Add clustering options
 ```typescript
 semanticClustering?: {
   enabled?: boolean;        // Default: true

@@ -47,17 +47,13 @@ export type YourResponse = z.infer<typeof YourResponseSchema>;
 Create `src/rest/handlers/your-handler.ts`:
 
 ```typescript
-import { definePluginHandler } from '@kb-labs/plugin-runtime';
+import { defineHandler } from '@kb-labs/sdk';
 import { YourRequestSchema, YourResponseSchema } from '../schemas/your-schema.js';
 import type { YourRequest, YourResponse } from '../schemas/your-schema.js';
 import { yourBusinessLogic } from '../../core/your-logic.js';
 
-export const handleYourEndpoint = definePluginHandler<YourRequest, YourResponse>({
-  schema: {
-    input: YourRequestSchema,
-    output: YourResponseSchema
-  },
-  async handle(input, ctx) {
+export const handleYourEndpoint = defineHandler<unknown, YourRequest, YourResponse>({
+  async execute(ctx, input) {
     // 1. Log request
     ctx.output?.info('Processing request', {
       requestId: ctx.requestId,
@@ -132,7 +128,7 @@ describe('handleYourEndpoint', () => {
       requestId: 'req-123'
     };
 
-    const result = await handleYourEndpoint.handle(input, ctx);
+    const result = await handleYourEndpoint.execute(ctx, input);
 
     expect(result.result).toBeDefined();
     expect(result.processedAt).toBeDefined();
@@ -147,7 +143,7 @@ describe('handleYourEndpoint', () => {
     const ctx = {};
 
     await expect(
-      handleYourEndpoint.handle(invalidInput, ctx)
+      handleYourEndpoint.execute(ctx, invalidInput)
     ).rejects.toThrow();
   });
 });
@@ -246,14 +242,13 @@ const Schema = z.object({
 
 ### Validation errors
 
-Zod automatically throws validation errors with detailed messages:
+The route validates input with its declared Zod schema before invoking the handler:
 
 ```typescript
-export const handler = definePluginHandler({
-  schema: { input: RequestSchema, output: ResponseSchema },
-  async handle(input, ctx) {
-    // Input is already validated by Zod
-    // If validation fails, Zod throws ZodError automatically
+export const handler = defineHandler({
+  async execute(ctx, input) {
+    // The route schema validates input before handler execution
+    // Invalid input is rejected at the route boundary
 
     const result = await processInput(input);
     return { result };
@@ -266,9 +261,8 @@ export const handler = definePluginHandler({
 ```typescript
 import { BusinessRuleError, NotFoundError } from '../../utils/errors.js';
 
-export const handler = definePluginHandler({
-  schema: { input: RequestSchema, output: ResponseSchema },
-  async handle(input, ctx) {
+export const handler = defineHandler({
+  async execute(ctx, input) {
     const item = await findItem(input.id);
 
     if (!item) {
@@ -292,9 +286,8 @@ export const handler = definePluginHandler({
 ```typescript
 import { formatErrorForLogging, formatErrorForUser } from '../../utils/errors.js';
 
-export const handler = definePluginHandler({
-  schema: { input: RequestSchema, output: ResponseSchema },
-  async handle(input, ctx) {
+export const handler = defineHandler({
+  async execute(ctx, input) {
     try {
       const result = await riskyOperation(input);
       return { result };
@@ -365,17 +358,8 @@ Declare only what your handler needs:
 
 ```typescript
 // No input validation needed for query params
-export const handleList = definePluginHandler({
-  schema: {
-    input: z.object({}),
-    output: z.object({
-      items: z.array(z.object({
-        id: z.string(),
-        name: z.string()
-      }))
-    })
-  },
-  async handle(input, ctx) {
+export const handleList = defineHandler({
+  async execute(ctx, input) {
     const items = await listItems();
     return { items };
   }
@@ -392,15 +376,8 @@ const CreateUserSchema = z.object({
   metadata: z.record(z.string()).optional()
 });
 
-export const handleCreateUser = definePluginHandler({
-  schema: {
-    input: CreateUserSchema,
-    output: z.object({
-      userId: z.string(),
-      createdAt: z.string()
-    })
-  },
-  async handle(input, ctx) {
+export const handleCreateUser = defineHandler({
+  async execute(ctx, input) {
     const user = await createUser(input);
     return {
       userId: user.id,
@@ -413,9 +390,8 @@ export const handleCreateUser = definePluginHandler({
 ### Endpoint with state caching
 
 ```typescript
-export const handleSearch = definePluginHandler({
-  schema: { input: SearchSchema, output: ResultsSchema },
-  async handle(input, ctx) {
+export const handleSearch = defineHandler({
+  async execute(ctx, input) {
     // Check cache
     const cacheKey = `search:${input.query}`;
     const cached = await ctx.runtime?.state?.get(cacheKey);

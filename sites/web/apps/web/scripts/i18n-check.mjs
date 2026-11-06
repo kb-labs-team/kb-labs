@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from '../../../../../scripts/checks/lib/check-result.mjs';
 /**
  * i18n-check.mjs — translation guard for KB Labs site.
  *
@@ -16,8 +17,9 @@
  *     Human-readable terminal output, exit 0/1.
  *
  *   DEVKIT  (via kb-devkit custom_check, language: typescript):
- *     Triggered when KB_DEVKIT_MODE is set. Runs for every TS package,
- *     self-filters by KB_DEVKIT_PACKAGE_NAME:
+ *     Triggered in the package contexts declared by devkit.yaml. The runner
+ *     owns package applicability; this script selects the workspace-wide or
+ *     satellite hardcoded-only work for the supplied package context:
  *       @kb-labs/web-site     → all 4 checks (owns messages files)
  *       @kb-labs/web-site-ui  → HARDCODED only (kit has user-visible strings)
  *       @kb-labs/web-og       → HARDCODED only
@@ -48,7 +50,6 @@ import {
   readdirSync,
   existsSync,
   writeFileSync,
-  writeSync,
   mkdirSync,
 } from 'node:fs';
 import { join, extname, relative, dirname, basename } from 'node:path';
@@ -62,13 +63,6 @@ const FIX_MODE    = DEVKIT_FIX || process.argv.includes('--fix');
 const DRY_RUN     = process.env.KB_DEVKIT_DRY_RUN === 'true' || process.argv.includes('--dry-run');
 const STRICT      = process.argv.includes('--strict') || (DEVKIT_MODE && !DEVKIT_FIX);
 const NO_COLOR    = process.env.CI === 'true' || process.argv.includes('--no-color') || DEVKIT_MODE;
-
-// Satellite site packages: HARDCODED check only (no messages files).
-const HARDCODED_ONLY_PKGS = new Set([
-  '@kb-labs/web-site-ui',
-  '@kb-labs/web-og',
-  '@kb-labs/docs-site',
-]);
 
 // ─── Shared utilities ─────────────────────────────────────────────────────────
 
@@ -252,7 +246,7 @@ function pruneDeadCollections(node) {
 // ─── Devkit helpers ───────────────────────────────────────────────────────────
 
 function exitWithJson(obj) {
-  writeSync(1, JSON.stringify(obj));
+  writeCheckResult(obj.issues);
   process.exit(0);
 }
 
@@ -267,11 +261,7 @@ if (DEVKIT_MODE) {
   const pkgDir  = process.env.KB_DEVKIT_PACKAGE_DIR  ?? '';
 
   if (pkgName !== '@kb-labs/web-site') {
-    if (!HARDCODED_ONLY_PKGS.has(pkgName)) {
-      exitWithJson({ issues: [] });
-    }
-
-    // Satellite package: HARDCODED check only.
+    // The remaining declared anchors receive the HARDCODED check only.
     const dirs  = ['src', 'app', 'components'].map(d => join(pkgDir, d)).filter(existsSync);
     const files = dirs.flatMap(d => [...walk(d)]);
     const found = files.flatMap(f => extractHardcoded(f));

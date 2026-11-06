@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { builtinModules } from 'node:module';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -21,18 +22,18 @@ function sourceFiles(directory) {
   return result;
 }
 
-function moduleSpecifiers(file) {
+export function moduleSpecifiers(file, includeTypeOnly = false) {
   const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const found = [];
   const visit = (node) => {
-    if (ts.isImportDeclaration(node) && !node.importClause?.isTypeOnly && ts.isStringLiteral(node.moduleSpecifier)) {
+    if (ts.isImportDeclaration(node) && (includeTypeOnly || !node.importClause?.isTypeOnly) && ts.isStringLiteral(node.moduleSpecifier)) {
       const allBindingsAreTypes = node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings)
         && node.importClause.namedBindings.elements.length > 0
         && node.importClause.namedBindings.elements.every((element) => element.isTypeOnly);
-      if (!allBindingsAreTypes) found.push(node.moduleSpecifier.text);
-    } else if (ts.isExportDeclaration(node) && !node.isTypeOnly && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      if (includeTypeOnly || !allBindingsAreTypes) found.push(node.moduleSpecifier.text);
+    } else if (ts.isExportDeclaration(node) && (includeTypeOnly || !node.isTypeOnly) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
       found.push(node.moduleSpecifier.text);
-    } else if (ts.isImportEqualsDeclaration(node) && !node.isTypeOnly
+    } else if (ts.isImportEqualsDeclaration(node) && (includeTypeOnly || !node.isTypeOnly)
       && ts.isExternalModuleReference(node.moduleReference)
       && node.moduleReference.expression && ts.isStringLiteral(node.moduleReference.expression)) {
       found.push(node.moduleReference.expression.text);
@@ -306,9 +307,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const root = path.resolve(input.workspaceRoot ?? process.cwd());
   const packages = input.workspace?.packages;
   if (typeof input.workspaceRoot !== 'string' || !Array.isArray(packages)) {
-    process.stdout.write(JSON.stringify({ issues: [{ check: checkName, severity: 'error', message: 'browser Node-builtin check requires workspace package data on stdin', file: root }] }));
+    writeCheckResult([{ check: checkName, severity: 'error', message: 'browser Node-builtin check requires workspace package data on stdin', file: root }]);
   } else {
     const issues = collect(root, packages).map((finding) => ({ check: checkName, severity: 'error', ...finding }));
-    process.stdout.write(JSON.stringify({ issues }));
+    writeCheckResult(issues);
   }
 }

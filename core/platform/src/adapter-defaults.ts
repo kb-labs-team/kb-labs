@@ -75,8 +75,8 @@ export const ADAPTER_DEFAULTS = {
 
   // ── No honest fallback possible — throw on use ───────────────────────────
   llm:              { defaultFallback: 'noop', implementation: 'NoOpLLM', preferInstalledDefault: false },
-  embeddings:       { defaultFallback: 'noop', implementation: 'NoOpEmbeddings', preferInstalledDefault: false },
-  vectorStore:      { defaultFallback: 'noop', implementation: 'unavailable', preferInstalledDefault: false },
+  embeddings:       { defaultFallback: 'noop', implementation: 'NoOpEmbeddings', preferInstalledDefault: true },
+  vectorStore:      { defaultFallback: 'noop', implementation: 'unavailable', preferInstalledDefault: true },
   logs:             { defaultFallback: 'noop', implementation: 'unavailable', preferInstalledDefault: true },
   snapshotManager:  { defaultFallback: 'noop', implementation: 'unavailable' },
 } as const satisfies Record<AdapterSlot, AdapterDefault>;

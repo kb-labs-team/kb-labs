@@ -33,10 +33,14 @@ export interface ResolvedServiceListenAddress {
 
 export interface GatewayServiceAddressOptions {
   gatewayUrl?: string;
-  sessionGatewayUrl?: string;
   gatewayPort?: string;
   gatewayHost?: string;
   netOffset: number;
+}
+
+export interface CliGatewayAddress {
+  gatewayUrl: string;
+  platformRoot?: string;
 }
 
 export interface CliGatewayTarget {
@@ -45,21 +49,23 @@ export interface CliGatewayTarget {
   installationId?: string;
 }
 
+/** Resolve the selected Gateway URL without requiring a running service. */
+export async function resolveCliGatewayAddress(
+  platformRoot: string | undefined,
+  options: GatewayServiceAddressOptions,
+  transport?: Pick<IServiceTransport, 'listenAddress'>,
+): Promise<CliGatewayAddress> {
+  const { gatewayUrl } = await selectCliGateway(platformRoot, options, transport);
+  return { gatewayUrl, ...(platformRoot ? { platformRoot } : {}) };
+}
+
 /** Resolve and verify the Gateway selected by the active installed platform root. */
 export async function resolveCliGatewayTarget(
   platformRoot: string | undefined,
   options: GatewayServiceAddressOptions,
   transport?: Pick<IServiceTransport, 'listenAddress'>,
 ): Promise<CliGatewayTarget> {
-  validateConfiguredGatewayPort(options);
-  const installation = platformRoot ? await readInstalledPlatformIdentity(platformRoot) : undefined;
-  const gatewayUrl = options.gatewayUrl
-    ? resolveGatewayServiceAddress(undefined, options)
-    : installation
-      ? installation.gatewayUrl
-      : options.sessionGatewayUrl
-        ? resolveGatewayServiceAddress(undefined, { ...options, gatewayUrl: options.sessionGatewayUrl })
-        : resolveGatewayServiceAddress(transport, options);
+  const { gatewayUrl, installation } = await selectCliGateway(platformRoot, options, transport);
 
   if (platformRoot && installation?.id) {
     let response: Response;
@@ -101,6 +107,22 @@ export async function resolveCliGatewayTarget(
     ...(platformRoot ? { platformRoot } : {}),
     ...(installation?.id ? { installationId: installation.id } : {}),
   };
+}
+
+async function selectCliGateway(
+  platformRoot: string | undefined,
+  options: GatewayServiceAddressOptions,
+  transport?: Pick<IServiceTransport, 'listenAddress'>,
+): Promise<{ gatewayUrl: string; installation?: { id: string; gatewayUrl: string } }> {
+  validateConfiguredGatewayPort(options);
+  if (options.gatewayUrl) {
+    return { gatewayUrl: resolveGatewayServiceAddress(undefined, options) };
+  }
+  const installation = platformRoot ? await readInstalledPlatformIdentity(platformRoot) : undefined;
+  if (installation) return { gatewayUrl: installation.gatewayUrl, installation };
+  validateConfiguredGatewayPort(options);
+  const gatewayUrl = resolveGatewayServiceAddress(transport, options);
+  return { gatewayUrl, installation };
 }
 
 export async function readInstalledPlatformIdentity(platformRoot: string): Promise<{ id: string; gatewayUrl: string } | undefined> {

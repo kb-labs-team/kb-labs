@@ -153,9 +153,18 @@ func assertSecretsAbsentFromTrees(t *testing.T, secrets []string, roots ...strin
 			if entry.IsDir() {
 				return nil
 			}
-			info, err := os.Stat(path)
+			info, err := os.Lstat(path)
 			if err != nil {
 				return err
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				info, err = os.Stat(path)
+				if os.IsNotExist(err) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
 			}
 			if info.IsDir() {
 				return nil

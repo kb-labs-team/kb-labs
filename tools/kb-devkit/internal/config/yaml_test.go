@@ -1,6 +1,9 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -47,6 +50,83 @@ tasks:
 	}
 }
 
+func TestYAMLReleaseLaneIsPreservedOnCategory(t *testing.T) {
+	cfg, err := parseYAMLBytes([]byte(`schemaVersion: 2
+workspace:
+  categories:
+    internal-tool:
+      match: ["tools/kb-runner"]
+      preset: go-binary
+      releaseLane: internal-tool
+`))
+	if err != nil {
+		t.Fatalf("parse internal-tool category: %v", err)
+	}
+	category, ok := cfg.Workspace.FindCategory("internal-tool")
+	if !ok || category.ReleaseLane != "internal-tool" {
+		t.Fatalf("internal-tool release lane = %q, found=%t", category.ReleaseLane, ok)
+	}
+}
+
+// case: S-179.27
+func TestChecksTimeoutConfiguration(t *testing.T) {
+	cfg, err := parseYAMLBytes([]byte("checks:\n  timeout_ms: 250\n"))
+	if err != nil {
+		t.Fatalf("parse configured timeout: %v", err)
+	}
+	if cfg.Checks.TimeoutMS != 250 {
+		t.Fatalf("timeout_ms = %d, want configured 250", cfg.Checks.TimeoutMS)
+	}
+
+	root := t.TempDir()
+	configPath := filepath.Join(root, "devkit.yaml")
+	if err := os.WriteFile(configPath, []byte("schemaVersion: 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = LoadFile(configPath)
+	if err != nil {
+		t.Fatalf("load default timeout: %v", err)
+	}
+	if cfg.Checks.TimeoutMS != DefaultCheckTimeoutMS {
+		t.Fatalf("default timeout_ms = %d, want %d", cfg.Checks.TimeoutMS, DefaultCheckTimeoutMS)
+	}
+
+	if _, err := parseYAMLBytes([]byte("checks:\n  timeout_ms: 0\n")); err == nil || !strings.Contains(err.Error(), "checks.timeout_ms must be a positive integer") {
+		t.Fatalf("zero timeout error = %v, want positive-integer validation", err)
+	}
+}
+
+func TestWorkspaceCategoriesMayDeclareOnlyInternalTools(t *testing.T) {
+	defaultGating := "workspace:\n  categories:\n    packages:\n      match: [packages/*]\n      preset: node-lib\n    private:\n      match: [tools/runner]\n      preset: go-binary\n      releaseLane: internal-tool\n"
+	if _, err := parseYAMLBytes([]byte(defaultGating)); err != nil {
+		t.Fatalf("parse default-gating and internal-tool categories: %v", err)
+	}
+	unsupported := strings.Replace(defaultGating, "releaseLane: internal-tool", "releaseLane: outside-release", 1)
+	if _, err := parseYAMLBytes([]byte(unsupported)); err == nil || !strings.Contains(err.Error(), "unsupported releaseLane") {
+		t.Fatalf("unsupported release lane error = %v, want internal-tool-only diagnostic", err)
+	}
+}
+
+// case: S-179.27
+func TestChecksTimeoutInheritedFromExtendedPack(t *testing.T) {
+	root := t.TempDir()
+	packPath := filepath.Join(root, "pack.yaml")
+	configPath := filepath.Join(root, "devkit.yaml")
+	if err := os.WriteFile(packPath, []byte("checks:\n  timeout_ms: 250\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("extends:\n  - ./pack.yaml\nschemaVersion: 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(configPath)
+	if err != nil {
+		t.Fatalf("load config extending timeout pack: %v", err)
+	}
+	if cfg.Checks.TimeoutMS != 250 {
+		t.Fatalf("timeout_ms = %d, want inherited 250", cfg.Checks.TimeoutMS)
+	}
+}
+
 func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 	var cats yamlOrderedCategories
 	if err := yaml.Unmarshal([]byte(`[]`), &cats); err == nil {
@@ -63,7 +143,7 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 			},
 		},
 		Run:      yamlRun{Concurrency: 3},
-		Affected: yamlAffected{Strategy: "command", Command: "./changed.sh"},
+		Affected: yamlAffected{Strategy: "command", Command: "./changed.sh", FullInputs: []string{"core/shared.json"}},
 		Sync: yamlSync{
 			Sources: map[string]yamlSyncSource{
 				"templates": {Type: "local", Path: "./templates"},
@@ -106,13 +186,16 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 			},
 		},
 		Custom: []yamlCustomCheck{
-			{Name: "lint", Run: "pnpm lint", On: []string{"check"}, Language: "typescript", Categories: []string{"adapter"}, Scope: "workspace"},
+			{Name: "lint", Run: "pnpm lint", On: []string{"check"}, Language: "typescript", Categories: []string{"adapter"}, AnchorPackages: []string{"@kb-labs/web-site"}, RequiresBuild: []string{"@kb-labs/core-platform"}, Scope: "workspace"},
 		},
 	}
 
 	cfg := mapYAML(raw)
 	if cfg.Version != 2 || cfg.Run.Concurrency != 3 || cfg.Affected.Command != "./changed.sh" {
 		t.Fatalf("mapped config basics = %+v", cfg)
+	}
+	if len(cfg.Affected.FullInputs) != 1 || cfg.Affected.FullInputs[0] != "core/shared.json" {
+		t.Fatalf("affected full inputs = %v, want [core/shared.json]", cfg.Affected.FullInputs)
 	}
 	if len(cfg.Workspace.Categories) != 1 || cfg.Workspace.Categories[0].Name != "libs" {
 		t.Fatalf("mapped categories = %#v", cfg.Workspace.Categories)
@@ -131,6 +214,9 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 	}
 	if cfg.Custom[0].Scope != "workspace" {
 		t.Fatalf("mapped custom check scope = %q, want workspace", cfg.Custom[0].Scope)
+	}
+	if len(cfg.Custom[0].AnchorPackages) != 1 || cfg.Custom[0].AnchorPackages[0] != "@kb-labs/web-site" || len(cfg.Custom[0].RequiresBuild) != 1 || cfg.Custom[0].RequiresBuild[0] != "@kb-labs/core-platform" {
+		t.Fatalf("mapped package contexts = %#v, want anchor and required build package", cfg.Custom[0])
 	}
 
 	preset := mapPreset(raw.Presets["custom"])
@@ -174,5 +260,27 @@ func TestPresetConfigAndYamlTaskObjectFallback(t *testing.T) {
 	}
 	if len(task) != 1 || task[0].Command != "pnpm build" {
 		t.Fatalf("yamlTask single object = %#v", task)
+	}
+}
+
+func TestLoadAffectedFullInputs(t *testing.T) {
+	cfg, err := parseYAMLBytes([]byte("version: 2\naffected:\n  fullInputs:\n    - core/plugin-contracts/src/color-policy.mjs\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Affected.FullInputs) != 1 || cfg.Affected.FullInputs[0] != "core/plugin-contracts/src/color-policy.mjs" {
+		t.Fatalf("affected full inputs = %v", cfg.Affected.FullInputs)
+	}
+}
+
+func TestWorkspaceAffectedFullInputs(t *testing.T) {
+	_, sourceFile, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "../../../.."))
+	cfg, err := LoadFile(filepath.Join(root, "devkit.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Affected.FullInputs) != 2 {
+		t.Fatalf("workspace affected full inputs = %v", cfg.Affected.FullInputs)
 	}
 }

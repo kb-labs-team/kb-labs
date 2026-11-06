@@ -158,10 +158,26 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
-			t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
+			t.Setenv("KB_HOME", "")
 			t.Setenv(environment, password)
-			root := filepath.Join(home, "platform")
-			port := freeLoopbackPort(t)
+			realRoot := filepath.Join(home, "real")
+			if err := os.Mkdir(realRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(home, "linked")
+			if err := os.Symlink(realRoot, link); err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Join(link, "platform")
+			stateHome, err := host.StateHome(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inside, err := contracts.PathWithin(root, stateHome.Dir)
+			if err != nil || !inside {
+				t.Fatalf("state home is outside install root: %q: %v", stateHome.Dir, err)
+			}
+			port := freeAllocatedGatewayPortWithOffsets(t, 0)
 			source := testReleaseCatalog(t, "2.0.0")
 			source.Platforms[0].Host = &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5}
 			source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}}
@@ -213,7 +229,7 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 			}
 			var stdout, stderr bytes.Buffer
 			if code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &stdout, &stderr).Code(); code != 0 {
-				t.Fatalf("%s command failed with exit %d", test.name, code)
+				t.Fatalf("%s command failed with exit %d: stdout=%q stderr=%q", test.name, code, stdout.String(), stderr.String())
 			}
 			for _, output := range []string{stdout.String(), stderr.String()} {
 				if strings.Contains(output, password) || strings.Contains(output, environment) {
@@ -223,7 +239,7 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 			if !strings.Contains(stdout.String(), "supplied") || strings.Contains(stdout.String(), `"password"`) {
 				t.Fatal("command result did not report the supplied state without a password field")
 			}
-			assertSecretsAbsentFromTrees(t, []string{password, environment}, root, filepath.Join(home, ".kb"), requestPath, indexPath)
+			assertSecretsAbsentFromTrees(t, []string{password, environment}, home)
 			store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
 			if present, err := store.Exists(secrets.BootstrapPassword); err != nil || present {
 				t.Fatal("supplied bootstrap password remains in the secret store")
@@ -246,7 +262,7 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 			if strings.Contains(stdout.String(), password) || strings.Contains(stdout.String(), environment) {
 				t.Fatal("repeat command output exposed supplied secret material")
 			}
-			assertSecretsAbsentFromTrees(t, []string{password, environment}, root, filepath.Join(home, ".kb"), requestPath, indexPath)
+			assertSecretsAbsentFromTrees(t, []string{password, environment}, home)
 		})
 	}
 }
@@ -589,7 +605,7 @@ func TestGatewayBootstrapContractUsesSharedSchemaAndFixture(t *testing.T) {
 	if !reflect.DeepEqual(gatewayBootstrapStatuses[:], want) {
 		t.Fatalf("generated Gateway bootstrap values %v do not match owner schema %v", gatewayBootstrapStatuses, want)
 	}
-	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "contracts", "ux-result", "fixtures", "valid", "gateway-auth-health.json"))
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "core", "platform", "contracts", "ux-result", "fixtures", "valid", "gateway-auth-health.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +697,7 @@ func TestUnknownGatewayBootstrapFailsWithCataloguedDiagnostic(t *testing.T) {
 
 // case: S-222.1
 func TestMissingGatewayRequiredHealthFieldsAreInternalContractFailures(t *testing.T) {
-	fixturePath := filepath.Join("..", "..", "..", "..", "..", "contracts", "ux-result", "fixtures", "valid", "gateway-auth-health.json")
+	fixturePath := filepath.Join("..", "..", "..", "..", "..", "core", "platform", "contracts", "ux-result", "fixtures", "valid", "gateway-auth-health.json")
 	fixture, err := os.ReadFile(fixturePath)
 	if err != nil {
 		t.Fatal(err)
@@ -846,7 +862,7 @@ func TestGatewayFailureEnvelopePreservesDiagnosticWithoutSecrets(t *testing.T) {
 	}
 	var rendered struct {
 		Error struct {
-			Details map[string]string `json:"details"`
+			Details map[string]any `json:"details"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(jsonOutput.Bytes(), &rendered); err != nil || rendered.Error.Details["remoteCorrelationId"] != gatewayCorrelationID {
@@ -1146,7 +1162,7 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 	if err := os.Mkdir(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	port := freeLoopbackPort(t)
+	port := freeAllocatedGatewayPortWithOffsets(t, 0)
 	indexPath := filepath.Join(home, "release-index.json")
 	source := testReleaseCatalog(t, "2.0.0")
 	source.Platforms[0].Host = &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5}

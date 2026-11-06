@@ -2,6 +2,7 @@ package swap
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/kb-labs/clikit/diag"
 	"reflect"
@@ -116,6 +117,39 @@ func TestRunReportsAFailedStopWithoutChangingAnything(t *testing.T) {
 	}
 	if len(recorded.calls) != 0 {
 		t.Fatalf("nothing may change when the host cannot be stopped: %v", recorded.calls)
+	}
+}
+
+func TestRunKeepsRestartFailureInCauseWithoutUndeclaredDetails(t *testing.T) {
+	changeErr := errors.New("repair failed")
+	restartErr := errors.New("required input is unavailable")
+	host := &fakeHost{running: true, resumeErrs: []error{restartErr}}
+	recorded := &steps{changeErr: changeErr}
+	_, err := Run(context.Background(), host, recorded.operation("repair"))
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != contracts.CodeUpdateApplyFailed {
+		t.Fatalf("failure = %v", err)
+	}
+	failure.Meta["diagnosticPath"] = "/tmp/diagnostic.json"
+	failure.Meta["logPath"] = "/tmp/operation.log"
+	if _, err := json.Marshal(failure); err != nil {
+		t.Fatalf("catalogued failure could not be serialized after restart failure: %v", err)
+	}
+	if failure.Meta["hostRestart"] != nil || !strings.Contains(failure.Cause, restartErr.Error()) {
+		t.Fatalf("failure omitted the restart cause or added an undeclared detail: %#v", failure)
+	}
+}
+
+func TestRunCanKeepHostStoppedWhenChangeRevealsRequiredInput(t *testing.T) {
+	host := &fakeHost{running: true}
+	operation := (&steps{}).operation("repair")
+	operation.KeepStoppedIf = func() bool { return true }
+	outcome, err := Run(context.Background(), host, operation)
+	if err != nil || !outcome.WasRunning {
+		t.Fatalf("repair outcome = %#v, %v", outcome, err)
+	}
+	if !reflect.DeepEqual(host.calls, []string{"halt"}) {
+		t.Fatalf("required-input repair restarted a host that must stay stopped: %v", host.calls)
 	}
 }
 

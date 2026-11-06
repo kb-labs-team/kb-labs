@@ -276,8 +276,17 @@ func (d *Diag) UnmarshalJSON(data []byte) error {
 	if envelope.Message == "" || envelope.Hint == "" {
 		return fmt.Errorf("error envelope message and hint are required")
 	}
-	reconstructed, err := FromCatalog(envelope.Code, envelope.Details,
-		WithCause(envelope.Cause), WithCorrelationID(envelope.CorrelationID))
+	templateValues := make(map[string]string, len(envelope.Details))
+	structuredDetails := make(map[string]any)
+	for key, value := range envelope.Details {
+		if text, ok := value.(string); ok {
+			templateValues[key] = text
+		} else {
+			structuredDetails[key] = value
+		}
+	}
+	reconstructed, err := FromCatalog(envelope.Code, templateValues,
+		WithMeta(structuredDetails), WithCause(envelope.Cause), WithCorrelationID(envelope.CorrelationID))
 	if err != nil {
 		fields := "details"
 		var violation *Diag

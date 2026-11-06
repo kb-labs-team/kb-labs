@@ -1,0 +1,11 @@
+/**
+ * Example event shapes — expand as the plugin grows.
+ *
+ * Contracts are deliberately small: put ONLY the types that plugin modules need to agree on here.
+ */
+
+export interface GreetingEmitted {
+  kind: '<%= it.name %>.greeting.emitted';
+  who: string;
+  at: string;
+}

@@ -14,10 +14,12 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/create/v2/artifacts"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/logs"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
@@ -46,10 +48,11 @@ type updateCommandInput struct {
 	Direct                                  directRequest
 	RetryCommand                            string
 	Resume                                  bool
-	Executable, SecretEnv, Registry         string
+	Executable, SecretEnv                   string
 	ArtifactRunner                          artifacts.Runner
 	TelemetryEndpoint                       string
 	TelemetryConsent                        bool
+	Arguments                               []string
 }
 
 func updateActivationRetryHint(input updateCommandInput) string {
@@ -60,10 +63,25 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	if err := commandDeps.NodeCheck(); err != nil {
 		return updateCommandResult{}, sharedtoolchain.NodeCheckDiagnostic(err)
 	}
+	if input.Direct.MarketplaceRegistryURL == "" && input.Direct.MarketplaceSigningKeyEnv == "" && input.Direct.MarketplaceTokenEnv == "" && input.Direct.MarketplaceNpmURL == "" {
+		root := input.Direct.PlatformRoot
+		if root == "" {
+			root = defaultPlatformRoot()
+		}
+		if layout, err := versionroot.ForPlatformPath(root); err == nil {
+			if active, readErr := receipt.Read(layout.PlatformRoot()); readErr == nil && active.Plan.Request.MarketplaceSources != nil {
+				sources := active.Plan.Request.MarketplaceSources
+				input.Direct.MarketplaceRegistryURL = sources.RegistryURL
+				input.Direct.MarketplaceSigningKeyEnv = sources.SigningPublicKeyEnv
+				input.Direct.MarketplaceTokenEnv = sources.RegistryTokenEnv
+				input.Direct.MarketplaceNpmURL = sources.NpmURL
+			}
+		}
+	}
 	resolved, failure := resolvePlan(planInput{Operation: "update", Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
-		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable})
+		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable, Arguments: input.Arguments})
 	if failure != nil {
-		return updateCommandResult{}, updateCompatibilityDiag(failure)
+		return updateCommandResult{}, failure
 	}
 	plan := resolved.Plan
 	secretIDs := make([]string, 0)
@@ -102,7 +120,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	}
 	disposition, err := resolve.ValidateUpdate(active, plan, resolved.Catalog)
 	if err != nil {
-		return updateCommandResult{}, updateCompatibilityDiag(asDiag(err))
+		return updateCommandResult{}, asDiag(err)
 	}
 	if disposition == resolve.UpdateAlreadyUpToDate {
 		registrationNotice, noticeErr := completedBootstrapProjectNotice(active, active.Plan.Request.ProjectRoot, false)
@@ -113,6 +131,11 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		return updateCommandResult{OK: true, Operation: "update", Receipt: active, HostRestarted: false, AlreadyUpToDate: true,
 			ProjectRegistrationNotice: registrationNotice}, nil
 	}
+	plan, failure = planUpdateWithMarketplaceLock(activeRoot, plan, resolved.Catalog, input.RetryCommand)
+	if failure != nil {
+		return updateCommandResult{}, failure
+	}
+	resolved.Plan = plan
 	request, changed, err := requestWithGeneratedSecrets(plan.Request, plan.Artifacts)
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "the install request could not include generated secrets.", "rerun `kb-create install` with the selected platform manifest", err)
@@ -122,9 +145,9 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		if marshalErr != nil {
 			return updateCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "the update request could not be encoded", "rerun `kb-create update` with the same request", marshalErr)
 		}
-		response := transport.PlanWith(encoded, resolved.Catalog, resolve.Options{LauncherVersion: buildVersion})
+		response := transport.PlanWith(encoded, resolved.Catalog, resolve.Options{LauncherVersion: buildVersion, Operation: resolve.OperationUpdate, BinarySource: plan.BinarySource, Registry: plan.Registry})
 		if !response.OK {
-			return updateCommandResult{}, updateCompatibilityDiag(response.Error)
+			return updateCommandResult{}, response.Error
 		}
 		plan = *response.Plan
 	}
@@ -144,13 +167,40 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The installation lifecycle state path could not be resolved.", "Pass the install root used by this installation, then rerun `kb-create update`.", err)
 	}
-	plan.Request.PlatformRoot = platformRoot
 	result, failure := runUpdateCommand(ctx, input, installRoot, plan, lifecycleState, resolved.State, commandDeps.Runtime)
 	if failure != nil {
 		return updateCommandResult{}, failure
 	}
 	result.UpdateSummary = &updateSummary
 	return result, nil
+}
+
+func planUpdateWithMarketplaceLock(activeRoot string, plan contracts.ResolvedInstallPlan,
+	source catalog.Catalog, retryCommand string) (contracts.ResolvedInstallPlan, *diag.Diag) {
+	request := plan.Request
+	changed, err := marketplace.PreserveInstalledComponents(activeRoot, &request)
+	if err != nil {
+		doctor := contracts.ShellCommand("kb-create", "doctor", "--platform-root", activeRoot, "--json")
+		failure := contracts.NewDiag(contracts.CodeOperationFailed,
+			"the active marketplace installation could not be read for update staging",
+			"inspect the installation with `"+doctor+"`, then retry `"+retryCommand+"`", err)
+		return contracts.ResolvedInstallPlan{}, failure
+	}
+	if !changed {
+		return plan, nil
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		failure := contracts.NewDiag(contracts.CodeOperationFailed,
+			"the update request with installed marketplace packages could not be encoded",
+			"retry `"+retryCommand+"` with the same request", err)
+		return contracts.ResolvedInstallPlan{}, failure
+	}
+	response := transport.PlanWith(encoded, source, resolve.Options{LauncherVersion: buildVersion, Operation: resolve.OperationUpdate, BinarySource: plan.BinarySource, Registry: plan.Registry})
+	if !response.OK {
+		return contracts.ResolvedInstallPlan{}, response.Error
+	}
+	return *response.Plan, nil
 }
 
 func updateSecretDiagnostic(root, secret, index, requestFile string) *diag.Diag {
@@ -223,7 +273,8 @@ func requireUpdateSecrets(active contracts.InstallReceipt, plan contracts.Resolv
 
 // runUpdateCommand stages and verifies a complete version root before the
 // stable platform path is atomically switched to it.
-func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot string, plan contracts.ResolvedInstallPlan, state, launcherState host.State, runtimeOverrides *runtime.Dependencies) (updateCommandResult, *diag.Diag) {
+func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot string, plan contracts.ResolvedInstallPlan, state, launcherState host.State, runtimeOverrides *runtime.Dependencies) (commandResult updateCommandResult, failure *diag.Diag) {
+	requestRoot := plan.Request.PlatformRoot
 	layout, err := versionroot.ForPlatformPath(installRoot)
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The install root cannot use the required atomic layout.", "Run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"` on Linux or macOS.", err)
@@ -261,7 +312,12 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	activated := false
 	defer func() {
 		if !activated {
-			_ = os.RemoveAll(stage)
+			if cleanupErr := os.RemoveAll(stage); cleanupErr != nil {
+				failure = contracts.NewDiag(contracts.CodeOperationFailed,
+					"the failed update could not remove its staged version root",
+					updateActivationRetryHint(input), errors.Join(failure, cleanupErr))
+				commandResult = updateCommandResult{}
+			}
 		}
 	}()
 	plan.Request.PlatformRoot = stage
@@ -290,13 +346,14 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	offline := plan.Request.Source == contracts.SourceOffline
-	installer, err := newArtifactExecutor(layout, stage, input.Registry, offline, transcript, input.ArtifactRunner)
+	installer, err := newArtifactExecutor(layout, stage, plan.Registry, offline, transcript, input.ArtifactRunner)
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "the shared artifact cache path could not be resolved", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the update", err)
 	}
 	deps := runtime.Dependencies{Artifacts: installer, CorrelationID: correlationID, Secrets: &store}
 	deps.PreserveGeneratedConfig = true
 	deps.VerificationConfigRoot = activeRoot
+	deps.MarketplaceLockSourceRoot = activeRoot
 	if runtimeOverrides != nil {
 		if runtimeOverrides.Artifacts != nil {
 			deps.Artifacts = runtimeOverrides.Artifacts
@@ -324,7 +381,7 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	if err != nil {
 		return updateCommandResult{}, applyDossier(stage, correlationID, transcript.Path(), plan, redactions, err)
 	}
-	updated.Plan.Request.PlatformRoot = root
+	updated.Plan.Request.PlatformRoot = requestRoot
 	if err := receipt.Write(stage, updated); err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the verified update receipt could not be finalized", "inspect the staged operation log, then rerun `kb-create update`", err)
 	}
@@ -333,51 +390,50 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 			"the verified update could not prepare the kb command for the new version",
 			updateActivationRetryHint(input), err)
 	}
+	if _, err := receipt.Read(stage); err != nil {
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+			"the verified update receipt could not be read back before activation",
+			"inspect the staged operation log, then rerun `kb-create update`", err)
+	}
 	logRelative, err := filepath.Rel(installRoot, transcript.Path())
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the update operation log is outside the installation container", "inspect the staged update and rerun `kb-create update`", err)
 	}
-	runningRoot := ""
-	if priorHost.PID > 0 {
-		runningRoot = priorHost.TreeRoot
-	}
-	_, err = layout.ActivateUpdate(stage, updated.Plan.ServiceGraph.PlatformVersion, updated.Plan.PlanHash, runningRoot,
-		versionroot.UpdateMetadata{SnapshotID: snapshot.ID, LogPath: logRelative})
-	if err != nil {
-		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the verified update could not be atomically activated", updateActivationRetryHint(input), err)
-	}
-	activated = true
-	root = layout.PlatformRoot()
-	if _, err := receipt.Read(root); err != nil {
-		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the active version root does not contain its verified receipt", "inspect the version-root layout and restore the previous version before restarting", err)
-	}
-	activeRoot, err = layout.Active()
 	transcriptPath := transcript.Path()
-	if updated.Plan.Host != nil {
-		origin, originErr := gateway.OriginFromHealthURL(updated.Verification.HostHealthURL)
-		if originErr != nil {
-			return updateCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the updated Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"` after checking the receipt", originErr)
-		}
-		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: installRoot}).Register(root, origin); err != nil {
-			return updateCommandResult{}, asDiag(err)
-		}
-	}
-	outcome, errorCode = "success", ""
 	registrationNotice, noticeErr := completedBootstrapProjectNotice(previousReceipt, previousReceipt.Plan.Request.ProjectRoot, false)
 	if noticeErr != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
 			"the project registration state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"`", noticeErr)
 	}
-	runner, err = host.NewRunner(installRoot)
-	if err != nil {
-		return updateCommandResult{}, asDiag(err)
+	runningRoot := ""
+	if priorHost.PID > 0 {
+		runningRoot = priorHost.TreeRoot
 	}
-	statusCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	statusCtx, cancelStatus := context.WithTimeout(context.Background(), 5*time.Second)
 	running, err := runner.Status(statusCtx)
+	cancelStatus()
 	if err != nil {
 		return updateCommandResult{}, asDiag(err)
 	}
+	activate := func() error {
+		_, activateErr := layout.ActivateUpdate(stage, updated.Plan.ServiceGraph.PlatformVersion, updated.Plan.PlanHash, runningRoot,
+			versionroot.UpdateMetadata{SnapshotID: snapshot.ID, LogPath: logRelative})
+		return activateErr
+	}
+	if updated.Plan.Host != nil {
+		origin, originErr := gateway.OriginFromHealthURL(updated.Verification.HostHealthURL)
+		if originErr != nil {
+			return updateCommandResult{}, contracts.HostSpecDiagnostic("the updated Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"` after checking the receipt", originErr.Error(), originErr)
+		}
+		registry := gateway.Registry{OperationRoot: installRoot}
+		err = registry.Writer(gateway.Update).RegisterForTransaction(root, origin, activate)
+	} else {
+		err = activate()
+	}
+	if err != nil {
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the verified update could not be atomically activated", updateActivationRetryHint(input), err)
+	}
+	activated = true
 	outcome, errorCode = "success", ""
 	return updateCommandResult{OK: true, Operation: "update", Receipt: updated, Snapshot: snapshotSummary(snapshot), HostRestarted: false,
 		PendingRestart: pendingRestart(updated, running, installRoot), LogPath: transcriptPath,

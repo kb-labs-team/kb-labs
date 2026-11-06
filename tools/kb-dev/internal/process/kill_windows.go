@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/kb-labs/clikit/proc/child"
 )
 
 // killGroup terminates the process tree rooted at pid using taskkill /T /F.
@@ -18,11 +20,7 @@ func killGroup(_ int, pid int, _ time.Duration) error {
 	if pid <= 0 {
 		return nil
 	}
-	cmd := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(pid))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("taskkill pid %d: %w (%s)", pid, err, string(out))
-	}
-	return nil
+	return child.KillTree(pid)
 }
 
 // killPort kills all processes in pids using taskkill.

@@ -102,7 +102,7 @@ export function generateDevlinkSuggestions(
   if (warningCodes.has('BACKUP_MISSING')) {
     suggestions.push({
       id: 'CREATE_BACKUP',
-      command: 'kb devlink freeze',
+      command: 'kb devlink lock create',
       args: ['--replace'],
       description: 'Create a fresh backup',
       impact: 'safe',
@@ -114,7 +114,7 @@ export function generateDevlinkSuggestions(
   if (warningCodes.has('STALE_LOCK')) {
     suggestions.push({
       id: 'REFRESH_LOCK',
-      command: 'kb devlink freeze',
+      command: 'kb devlink lock create',
       args: ['--pin=caret'],
       description: 'Refresh lock file',
       impact: 'safe',
@@ -150,7 +150,7 @@ export function generateDevlinkSuggestions(
   if (context.undo?.available) {
     suggestions.push({
       id: 'UNDO_LAST',
-      command: 'kb devlink undo',
+      command: 'kb devlink rollback',
       args: [],
       description: 'Revert last operation',
       impact: 'safe',

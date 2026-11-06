@@ -5,7 +5,7 @@
  */
 
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
-import type { PluginBrief, StudioRegistry, StudioRegistryEntry } from '../types.js';
+import type { PluginBrief, StudioRegistry, StudioRegistryEntry } from '@kb-labs/plugin-contracts';
 
 export function generateStudioRegistry(
   plugins: PluginBrief[],

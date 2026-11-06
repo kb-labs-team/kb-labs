@@ -12,6 +12,7 @@ import workflow_steps
 from installed_fixture import configure_hermetic_cli_fixture
 from service_steps import Journey
 from invocations import catalogued_error_hint, catalogued_error_message
+import jsonl
 
 
 class WorkflowJourneyTests(unittest.TestCase):
@@ -248,7 +249,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                          "KB_JOURNEY_ADMIN_PASSWORD": "admin-password"},
                     project=Path("/tmp/project"),
                 )
-                registry_record = json.loads((report_root / "project-registries.jsonl").read_text())
+                registry_record = jsonl.read_jsonl(report_root / "project-registries.jsonl")[0].value
                 self.assertEqual(registry_record["mode"], "secured")
                 self.assertEqual(registry_record["projects"], [{"path": "/tmp/project"}])
         finally:
@@ -297,7 +298,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                 output = {}
                 if args[:2] == ["marketplace", "install"]:
                     marketplace_install_calls.append(args)
-                    output = {"ok": True, "data": {"installed": [{"id": "@kb-labs/steward-entry"}]}}
+                    output = {"ok": True, "data": {"installed": [{"id": "@kb-labs/steward"}]}}
                 elif args == ["workflow", "create"]:
                     target = cwd / ".kb" / "workflows" / "hello.yml"
                     target.parent.mkdir(parents=True, exist_ok=True)
@@ -431,7 +432,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                     output = {"ok": True, "data": {"enabled": False}}
                 elif args[:3] == ["workflow", "crons", "enable"]:
                     if args[3].startswith("plugin:"):
-                        return CompletedProcess(args, 1, "CronMutationRefused: plugin crons are read-only")
+                        return CompletedProcess(args, 1, "", stderr="CronMutationRefused: plugin crons are read-only")
                     schedule_file = cwd / ".kb" / "crons" / "journey-cron.yml"
                     schedule_file.write_text(schedule_file.read_text().replace("enabled: false", "enabled: true"))
                     output = {"ok": True, "data": {"enabled": True}}
@@ -477,7 +478,7 @@ class WorkflowJourneyTests(unittest.TestCase):
 
         result = journey.result()
         self.assertEqual(result.status, "PASS", result.first_failure)
-        self.assertEqual(marketplace_install_calls, [["marketplace", "install", "@kb-labs/steward-entry", "--json"]])
+        self.assertEqual(marketplace_install_calls, [["marketplace", "install", "@kb-labs/steward", "--json"]])
         self.assertEqual(restart_calls, [
             "kb-create restart --platform-root <platform>",
             "kb-create restart --platform-root <platform>",
@@ -498,7 +499,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             report = Path(directory) / "service-local.json"
             report.write_text(json.dumps({
                 "steps": [],
-                "case_run": {"schema": "kb.qa-case-run/v1", "runId": "base", "mode": "local",
+                "case_run": {"schema": "kb.qa-case-run/v2", "runId": "base", "mode": "local",
                              "claims": [{"claimId": "S-001.1", "kind": "journey", "status": "PASS"}]},
             }))
             merged = workflow_steps.merge_workflow_result(report, result.__dict__)

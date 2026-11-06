@@ -1,0 +1,1 @@
+{"run_id":"base-era","tag":"base-era","pid":1,"started_at":"base-start","command":["/usr/bin/true"],"state_dir":"/tmp/x204-r31-generated-fixture4","status":"completed","enqueued_at":"0001-01-01T00:00:00Z","started_at_time":"0001-01-01T00:00:00Z","last_output_at":"0001-01-01T00:00:00Z","cost_class":"","paused_at":"0001-01-01T00:00:00Z"}

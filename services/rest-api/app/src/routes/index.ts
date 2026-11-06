@@ -5,7 +5,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { ICronManager } from '@kb-labs/core-platform';
 
 type RedisStatus = {
@@ -214,7 +214,7 @@ export async function registerRoutes(
   await registerPluginSnapshotRoutes(server, config, registry);
 
   // Workflow SSE streaming (long-lived connections that can't go through plugin execution)
-  // All CRUD operations are handled by the workflow plugin routes (/plugins/workflow/...)
+  // All CRUD operations are handled by the project-scoped workflow service route.
   await registerWorkflowRoutes(server, config);
 
   // Register jobs management endpoints (scheduled jobs)

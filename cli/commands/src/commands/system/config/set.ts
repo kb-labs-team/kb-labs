@@ -29,6 +29,7 @@ import { defineSystemCommand, throwSystemCataloguedError, throwSystemCataloguedF
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 
 import { generateExamples } from '../../../utils/generate-examples';
+import { requireResolvedCatalog } from '../../../registry/discovery-state.js';
 import {
   CONFIG_SCOPES,
   parseKeyPath,
@@ -130,7 +131,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
 
       const roots = await resolveConfigRoots(getContextCwd(ctx), scope === 'platform' ? 'platform' : 'required');
       if (scope === 'project' && !roots.projectId) {
-        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Project config requires a registered project.', `Run "kb project add ${roots.configRoot}" and retry "kb config set".`, { path: roots.configRoot });
+        throwSystemCataloguedFailure({ code: 'KB_PROJECT_UNKNOWN', message: 'Project config requires a registered project.', hint: `Run "kb project add ${roots.configRoot}" and retry "kb config set".`, details: { path: roots.configRoot } });
       }
       const file = await userConfigFileForScope(roots, scope);
       const runtimeConfig = await loadPlatformConfig({
@@ -138,6 +139,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
         startDir: getContextCwd(ctx),
         loadEnvFile: false,
         projectScope: scope === 'platform' ? 'platform' : 'required',
+        catalog: requireResolvedCatalog(),
         ...(roots.projectId ? { projectId: roots.projectId } : {}),
       });
       const platform = await loadEffectiveConfig(roots.configRoot, {

@@ -28,6 +28,9 @@ class LocalGateExecutionTests(unittest.TestCase):
         (package_dir / "package.json").write_text('{"name":"@test/gate"}\n')
         (self.root / "tools/kb-create").mkdir(parents=True)
         (self.root / "tools/kb-devkit").mkdir(parents=True)
+        cli_bin = self.root / "cli/bin/dist"
+        cli_bin.mkdir(parents=True)
+        (cli_bin / "bin.js").write_text("// built workspace CLI fixture\n")
         journey = self.root / "e2e/journey"
         journey.mkdir(parents=True)
         (journey / "prepare-candidate.sh").write_text(
@@ -88,7 +91,7 @@ class LocalGateExecutionTests(unittest.TestCase):
     def run_gate(self, *args, **failures):
         log = Path(self.temp.name) / "calls.log"
         env = os.environ.copy()
-        env.update({"PATH": f"{self.bin}{os.pathsep}{env['PATH']}", "GATE_LOG": str(log)})
+        env.update({"PATH": f"{self.bin}{os.pathsep}{env['PATH']}", "GATE_LOG": str(log), "TMPDIR": self.temp.name})
         env.update({key: "1" for key in failures})
         result = subprocess.run(
             ["bash", "scripts/local-gate.sh", "batch", *args], cwd=self.root,

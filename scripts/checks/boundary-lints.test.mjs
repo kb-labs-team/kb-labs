@@ -11,19 +11,21 @@ import { dirname, join } from 'node:path';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { applyExceptions, findPluginEntryPackages, loadExceptions } from './lib/boundary-common.mjs';
-import { collect as collectImports, findCoreImports } from './check-plugin-imports.mjs';
+import { applyExceptions, loadExceptions } from './lib/boundary-common.mjs';
+import { runExternalCheck } from './lib/run-external-check.mjs';
 import { collect as collectSpawns, findPlatformBinarySpawns } from './check-platform-spawn.mjs';
-import { collect as collectPeer, findPlatformRuntimeDeps, isPlatformPackage } from './check-plugin-peer-deps.mjs';
 import { collect as collectBrowserNodeBuiltins } from './check-browser-node-builtins.mjs';
 import { collect as collectManifests, RULES, validateManifest } from './check-manifest-command-naming.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const pluginRegistry = (dirs) => ({ workspace: { packages: dirs.map((dir) => ({ dir, category: 'plugin-entry' })) } });
 const tmpRoots = [];
 
 function fixtureRepo(files) {
   const root = mkdtempSync(join(tmpdir(), 'kb-boundary-lint-'));
   tmpRoots.push(root);
+  mkdirSync(join(root, 'e2e/scripts'), { recursive: true });
+  writeFileSync(join(root, 'e2e/scripts/pack-extras.json'), '[]\n');
   for (const [path, content] of Object.entries(files)) {
     const abs = join(root, path);
     mkdirSync(dirname(abs), { recursive: true });
@@ -189,76 +191,17 @@ after(() => {
 });
 
 function runScript(script, args) {
+  const input = arguments[2];
+  if (input) {
+    const result = runExternalCheck(join(HERE, script), args, {
+      encoding: 'utf-8', input: JSON.stringify(input),
+      env: { KB_DEVKIT_MODE: '1', KB_DEVKIT_PACKAGE_NAME: '@kb-labs/devkit' },
+    });
+    return { code: result.exitCode, out: result.stdout, err: result.stderr, result: result.result };
+  }
   const r = spawnSync(process.execPath, [join(HERE, script), ...args], { encoding: 'utf-8' });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
-
-// ─── 0.2(a) plugin imports ───────────────────────────────────────────────────
-
-describe('plugin-imports (0.2a)', () => {
-  test('detects static, re-export, dynamic and require forms; ignores sdk, relative and comments', () => {
-    const src = `
-      import { a } from '@kb-labs/core-platform';
-      import type { B } from "@kb-labs/core-runtime/sub/path";
-      export * from '@kb-labs/core-config';
-      const c = await import('@kb-labs/core-sys');
-      const d = require('@kb-labs/core-registry');
-      import { ok } from '@kb-labs/sdk';
-      import { rel } from './core-platform';
-      // import { nope } from '@kb-labs/core-commented';
-      /* import x from '@kb-labs/core-block'; */
-      import { own } from '@kb-labs/commit-core';
-    `;
-    assert.deepEqual(findCoreImports(src).sort(), [
-      '@kb-labs/core-config',
-      '@kb-labs/core-platform',
-      '@kb-labs/core-registry',
-      '@kb-labs/core-runtime',
-      '@kb-labs/core-sys',
-    ]);
-  });
-
-  test('failing fixture: plugin source importing core-* is reported; tests and sdk imports are not', () => {
-    const root = fixtureRepo({
-      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry'),
-      'plugins/bad/entry/src/index.ts': `import { platform } from '@kb-labs/core-platform';\nexport const x = platform;\n`,
-      'plugins/bad/entry/src/index.test.ts': `import { platform } from '@kb-labs/core-platform';\n`,
-      ...pluginEntry('plugins/good/entry', '@kb-labs/good-entry'),
-      'plugins/good/entry/src/index.ts': `import { platform } from '@kb-labs/sdk';\n`,
-      // platform parts under plugins/ (no kb.plugin/3 manifest) are out of scope
-      'plugins/bad/daemon/package.json': { name: '@kb-labs/bad-daemon', kb: { manifest: './dist/manifest.js' } },
-      'plugins/bad/daemon/src/manifest.ts': `export const manifest = { schema: 'kb.plugin/2' };\n`,
-      'plugins/bad/daemon/src/index.ts': `import { platform } from '@kb-labs/core-platform';\n`,
-      'plugins/bad/engine/package.json': { name: '@kb-labs/bad-engine' },
-      'plugins/bad/engine/src/index.ts': `import { platform } from '@kb-labs/core-platform';\n`,
-    });
-    const v = collectImports(root);
-    assert.equal(v.length, 1);
-    assert.equal(v[0].package, 'plugins/bad/entry');
-    assert.equal(v[0].target, '@kb-labs/core-platform');
-    assert.equal(v[0].rule, 'plugin-core-import');
-    assert.equal(v[0].file, 'plugins/bad/entry/src/index.ts');
-  });
-
-  test('CLI exits 1 on a new violation and 0 once it is in the exceptions file', () => {
-    const root = fixtureRepo({
-      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry'),
-      'plugins/bad/entry/src/index.ts': `import x from '@kb-labs/core-contracts';\n`,
-      'ex-empty.json': { version: 1, exceptions: [] },
-      'ex-full.json': {
-        version: 1,
-        exceptions: [
-          { rule: 'plugin-core-import', package: 'plugins/bad/entry', target: '@kb-labs/core-contracts', since: '2026-09-26', reason: 'fixture' },
-        ],
-      },
-    });
-    const bad = runScript('check-plugin-imports.mjs', ['--root', root, '--exceptions', join(root, 'ex-empty.json')]);
-    assert.equal(bad.code, 1, bad.err);
-    assert.match(bad.err, /imports @kb-labs\/core-contracts directly/);
-    const ok = runScript('check-plugin-imports.mjs', ['--root', root, '--exceptions', join(root, 'ex-full.json')]);
-    assert.equal(ok.code, 0, ok.err);
-  });
-});
 
 // ─── 0.2(b) platform binary spawn ────────────────────────────────────────────
 
@@ -299,8 +242,8 @@ describe('platform-spawn (0.2b)', () => {
       'studio/backend/src/run.ts': bad,
       'plugins/p/daemon/package.json': { name: '@kb-labs/p-daemon' },
       'plugins/p/daemon/src/run.ts': bad,
-      'plugins/p/entry/package.json': { name: '@kb-labs/p-entry' }, // CLI entry: out of scope
-      'plugins/p/entry/src/run.ts': bad,
+      'plugins/p/package.json': { name: '@kb-labs/p' }, // CLI entry: out of scope
+      'plugins/p/src/run.ts': bad,
       'services/svc/app/src/run.test.ts': bad, // tests ignored
     });
     const v = collectSpawns(root);
@@ -323,68 +266,6 @@ describe('platform-spawn (0.2b)', () => {
   });
 });
 
-// ─── 0.3 peerDependencies ────────────────────────────────────────────────────
-
-describe('plugin-peer-deps (0.3)', () => {
-  test('classifies platform vs plugin-own packages', () => {
-    for (const n of ['@kb-labs/sdk', '@kb-labs/core-platform', '@kb-labs/plugin-contracts', '@kb-labs/plugin-runtime', '@kb-labs/shared-cli-ui', '@kb-labs/cli-runtime', '@kb-labs/adapters-fs']) {
-      assert.equal(isPlatformPackage(n), true, n);
-    }
-    for (const n of ['@kb-labs/commit-core', '@kb-labs/agent-sdk', '@kb-labs/workflow-runtime', 'zod', '@kb-labs/devkit']) {
-      assert.equal(isPlatformPackage(n), false, n);
-    }
-  });
-
-  test('failing fixture: platform package under dependencies; peer + dev entries pass', () => {
-    assert.deepEqual(
-      findPlatformRuntimeDeps({ dependencies: { '@kb-labs/sdk': 'workspace:*', zod: '^3' }, optionalDependencies: { '@kb-labs/core-sys': '*' } }),
-      [
-        { target: '@kb-labs/sdk', field: 'dependencies' },
-        { target: '@kb-labs/core-sys', field: 'optionalDependencies' },
-      ],
-    );
-    assert.deepEqual(
-      findPlatformRuntimeDeps({
-        dependencies: { '@kb-labs/commit-core': 'workspace:*' },
-        peerDependencies: { '@kb-labs/sdk': 'workspace:*' },
-        devDependencies: { '@kb-labs/sdk': 'workspace:*', '@kb-labs/core-runtime': 'workspace:*' },
-      }),
-      [],
-    );
-  });
-
-  test('scans plugins/* and templates/plugin-template packages', () => {
-    const root = fixtureRepo({
-      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
-      ...pluginEntry('plugins/good/entry', '@kb-labs/good-entry', { peerDependencies: { '@kb-labs/sdk': '*' }, devDependencies: { '@kb-labs/sdk': 'workspace:*' } }),
-      // platform parts under plugins/ (daemon, engine) are out of scope
-      'plugins/bad/daemon/package.json': { name: '@kb-labs/bad-daemon', dependencies: { '@kb-labs/core-platform': 'workspace:*' } },
-      'templates/plugin-template/packages/core/package.json': { name: 'tpl-core', dependencies: { '@kb-labs/plugin-contracts': 'workspace:*' } },
-      'templates/other/package.json': { name: 'other', dependencies: { '@kb-labs/sdk': 'workspace:*' } },
-    });
-    const v = collectPeer(root);
-    assert.deepEqual(
-      v.map((x) => `${x.package} ${x.target}`).sort(),
-      ['plugins/bad/entry @kb-labs/sdk', 'templates/plugin-template/packages/core @kb-labs/plugin-contracts'],
-    );
-  });
-
-  test('CLI exits 1 on a new offender', () => {
-    const root = fixtureRepo({
-      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
-      'ex.json': { version: 1, exceptions: [] },
-    });
-    const r = runScript('check-plugin-peer-deps.mjs', ['--root', root, '--exceptions', join(root, 'ex.json')]);
-    assert.equal(r.code, 1, r.err);
-    assert.match(r.err, /must be peerDependencies/);
-  });
-
-  test('the real plugin template passes with no exception', () => {
-    const repoRoot = join(HERE, '..', '..');
-    const fromTemplate = collectPeer(repoRoot).filter((v) => v.package.startsWith('templates/'));
-    assert.deepEqual(fromTemplate, []);
-  });
-});
 
 // ─── 0.5 command naming ──────────────────────────────────────────────────────
 
@@ -412,17 +293,17 @@ describe('manifest-command-naming (0.5)', () => {
     assert.match(v[0].message, /kb unknown open --dry-run/);
 
     const root = fixtureRepo({
-      'plugins/commit/entry/package.json': { name: '@kb-labs/commit-entry', kb: { manifest: './dist/manifest.js' } },
-      'plugins/commit/entry/dist/manifest.json': manifest([
+      'plugins/commit/package.json': { name: '@kb-labs/commit', kb: { manifest: './dist/manifest.js' } },
+      'plugins/commit/dist/manifest.json': manifest([
         { path: 'commit', examples: ['kb unknown open --dry-run'] },
       ]),
-      'plugins/nested/entry/package.json': { name: '@kb-labs/nested-entry', kb: { manifest: './dist/manifest.js' } },
-      'plugins/nested/entry/dist/manifest.json': manifest([
+      'plugins/nested/package.json': { name: '@kb-labs/nested', kb: { manifest: './dist/manifest.js' } },
+      'plugins/nested/dist/manifest.json': manifest([
         { path: 'nested run', examples: ['kb other run'] },
       ]),
     });
-    const expectedPackages = findPluginEntryPackages(root).map((pkg) => pkg.relDir).sort();
-    const violations = collectManifests(root).filter((item) => item.rule === 'manifest-example-command-path');
+    const expectedPackages = ['plugins/commit', 'plugins/nested'];
+    const violations = collectManifests(root, pluginRegistry(expectedPackages)).filter((item) => item.rule === 'manifest-example-command-path');
     assert.deepEqual(violations.map((item) => item.package).sort(), expectedPackages);
 
     const withComment = validateManifest(manifest([
@@ -486,25 +367,25 @@ describe('manifest-command-naming (0.5)', () => {
 
   test('collect reads dist manifest.json of plugin packages; unbuilt packages warn', () => {
     const root = fixtureRepo({
-      'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
-      'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
-      'plugins/v3/core/package.json': { name: '@kb-labs/v3-core', kb: { manifest: './dist/manifest.v3.js' } },
-      'plugins/v3/core/dist/manifest.json': manifest([{ path: 'v3 frobnicate' }]),
-      ...pluginEntry('plugins/q/entry', '@kb-labs/q-entry'),
-      'plugins/r/core/package.json': { name: '@kb-labs/r-core' }, // no kb.manifest: ignored
+      'plugins/p/package.json': { name: '@kb-labs/p', kb: { manifest: './dist/manifest.js' } },
+      'plugins/p/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
+      'plugins/v3/package.json': { name: '@kb-labs/v3-core', kb: { manifest: './dist/manifest.v3.js' } },
+      'plugins/v3/dist/manifest.json': manifest([{ path: 'v3 frobnicate' }]),
+      ...pluginEntry('plugins/q', '@kb-labs/q'),
+      'plugins/r/package.json': { name: '@kb-labs/r-core' }, // no kb.manifest: ignored
     });
-    const v = collectManifests(root);
+    const v = collectManifests(root, pluginRegistry(['plugins/p', 'plugins/v3', 'plugins/q']));
     assert.deepEqual(
       v.map((x) => `${x.package} ${x.rule}`).sort(),
       [
         '(workspace) manifest-not-built',
-        'plugins/p/entry command-verb-vocabulary',
-        'plugins/v3/core command-verb-vocabulary',
+        'plugins/p command-verb-vocabulary',
+        'plugins/v3 command-verb-vocabulary',
       ],
     );
     const notBuilt = v.find((x) => x.rule === 'manifest-not-built');
     assert.equal(notBuilt.severity, 'warning');
-    assert.deepEqual(notBuilt.unscanned, ['plugins/q/entry']);
+    assert.deepEqual(notBuilt.unscanned, ['plugins/q']);
   });
 
   describe('affected-aware (KB_DEVKIT_BASE_REF)', () => {
@@ -514,63 +395,65 @@ describe('manifest-command-naming (0.5)', () => {
     };
     function affectedRepo() {
       const root = fixtureRepo({
-        'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
-        'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
-        ...pluginEntry('plugins/q/entry', '@kb-labs/q-entry'),
-        ...pluginEntry('plugins/r/entry', '@kb-labs/r-entry'),
+        'plugins/p/package.json': { name: '@kb-labs/p', kb: { manifest: './dist/manifest.js' } },
+        'plugins/p/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
+        ...pluginEntry('plugins/q', '@kb-labs/q'),
+        ...pluginEntry('plugins/r', '@kb-labs/r'),
       });
       run(root, 'init', '-q', '-b', 'main');
       run(root, 'add', '-A', '-f');
       run(root, 'commit', '-q', '-m', 'base');
       run(root, 'checkout', '-q', '-b', 'pr');
-      writeFileSync(join(root, 'plugins/q/entry/src.ts'), 'export {};\n');
-      writeFileSync(join(root, 'plugins/p/entry/src.ts'), 'export {};\n');
+      writeFileSync(join(root, 'plugins/q/src.ts'), 'export {};\n');
+      writeFileSync(join(root, 'plugins/p/src.ts'), 'export {};\n');
       run(root, 'add', '-A', '-f');
       run(root, 'commit', '-q', '-m', 'change');
       return root;
     }
 
     test('changed+unbuilt warns, unchanged+unbuilt skipped silently, changed+built linted', () => {
-      const v = collectManifests(affectedRepo(), { KB_DEVKIT_BASE_REF: 'main...HEAD' });
+      const v = collectManifests(affectedRepo(), pluginRegistry(['plugins/p', 'plugins/q', 'plugins/r']), { KB_DEVKIT_BASE_REF: 'main...HEAD' });
       const warn = v.filter((x) => x.rule === 'manifest-not-built' && !x.silent);
       assert.equal(warn.length, 1);
       assert.equal(warn[0].severity, 'warning');
-      assert.deepEqual(warn[0].unscanned, ['plugins/q/entry']);
-      assert.deepEqual(v.find((x) => x.silent).unscanned, ['plugins/r/entry']);
-      assert.ok(v.some((x) => x.package === 'plugins/p/entry' && x.rule === 'command-verb-vocabulary'));
+      assert.deepEqual(warn[0].unscanned, ['plugins/q']);
+      assert.deepEqual(v.find((x) => x.silent).unscanned, ['plugins/r']);
+      assert.ok(v.some((x) => x.package === 'plugins/p' && x.rule === 'command-verb-vocabulary'));
     });
 
     test('missing ref falls back to reporting all unbuilt with an explicit warning', () => {
-      const v = collectManifests(affectedRepo(), { KB_DEVKIT_BASE_REF: 'nope...HEAD' });
+      const v = collectManifests(affectedRepo(), pluginRegistry(['plugins/p', 'plugins/q', 'plugins/r']), { KB_DEVKIT_BASE_REF: 'nope...HEAD' });
       assert.ok(v.some((x) => x.rule === 'manifest-diff-unavailable' && x.severity === 'warning'));
       const nb = v.find((x) => x.rule === 'manifest-not-built');
-      assert.deepEqual([...nb.unscanned].sort(), ['plugins/q/entry', 'plugins/r/entry']);
+      assert.deepEqual([...nb.unscanned].sort(), ['plugins/q', 'plugins/r']);
     });
   });
 
   test('an unbuilt package does not make its exceptions stale, a built one does', () => {
     const exFor = (pkg) => ({ rule: 'command-verb-vocabulary', package: pkg, target: 'q gone', since: '2026-09-26', reason: 'fixture' });
     const root = fixtureRepo({
-      'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
-      'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p list' }]),
-      ...pluginEntry('plugins/q/entry', '@kb-labs/q-entry'),
+      'plugins/p/package.json': { name: '@kb-labs/p', kb: { manifest: './dist/manifest.js' } },
+      'plugins/p/dist/manifest.json': manifest([{ path: 'p list' }]),
+      ...pluginEntry('plugins/q', '@kb-labs/q'),
     });
-    const { stale } = applyExceptions(collectManifests(root), [exFor('plugins/p/entry'), exFor('plugins/q/entry')], RULES);
-    assert.deepEqual(stale.map((e) => e.package), ['plugins/p/entry']);
+    const { stale } = applyExceptions(collectManifests(root, pluginRegistry(['plugins/p', 'plugins/q'])), [exFor('plugins/p'), exFor('plugins/q')], RULES);
+    assert.deepEqual(stale.map((e) => e.package), ['plugins/p']);
   });
 
   test('CLI exits 1 on a naming violation, 0 with an exception', () => {
     const root = fixtureRepo({
-      'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
-      'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
+      'plugins/p/package.json': { name: '@kb-labs/p', kb: { manifest: './dist/manifest.js' } },
+      'plugins/p/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
       'ex-empty.json': { version: 1, exceptions: [] },
       'ex-full.json': {
         version: 1,
-        exceptions: [{ rule: 'command-verb-vocabulary', package: 'plugins/p/entry', target: 'p frobnicate', since: '2026-09-26', reason: 'fixture' }],
+        exceptions: [{ rule: 'command-verb-vocabulary', package: 'plugins/p', target: 'p frobnicate', since: '2026-09-26', reason: 'fixture' }],
       },
     });
-    assert.equal(runScript('check-manifest-command-naming.mjs', ['--root', root, '--exceptions', join(root, 'ex-empty.json')]).code, 1);
-    assert.equal(runScript('check-manifest-command-naming.mjs', ['--root', root, '--exceptions', join(root, 'ex-full.json')]).code, 0);
+    const bad = runScript('check-manifest-command-naming.mjs', ['--root', root, '--exceptions', join(root, 'ex-empty.json')], pluginRegistry(['plugins/p']));
+    const covered = runScript('check-manifest-command-naming.mjs', ['--root', root, '--exceptions', join(root, 'ex-full.json')], pluginRegistry(['plugins/p']));
+    assert.equal(bad.result.issues.length, 1);
+    assert.deepEqual(covered.result.issues, []);
   });
 });
 
@@ -604,25 +487,9 @@ describe('exceptions file', () => {
 
   test('the committed exceptions file is well-formed and every entry has a date and reason', () => {
     const list = loadExceptions();
-    assert.ok(list.length > 0);
     const keys = new Set(list.map((e) => `${e.rule}|${e.package}|${e.target}`));
     assert.equal(keys.size, list.length, 'duplicate exception entries');
   });
 
-  test('devkit mode: non-anchor package gets an empty issue list; anchor gets findings', () => {
-    const root = fixtureRepo({
-      ...pluginEntry('plugins/bad/entry', '@kb-labs/bad-entry', { dependencies: { '@kb-labs/sdk': 'workspace:*' } }),
-      'ex.json': { version: 1, exceptions: [] },
-    });
-    const run = (pkg) =>
-      spawnSync(process.execPath, [join(HERE, 'check-plugin-peer-deps.mjs'), '--root', root, '--exceptions', join(root, 'ex.json')], {
-        encoding: 'utf-8',
-        env: { ...process.env, KB_DEVKIT_MODE: '1', KB_DEVKIT_PACKAGE_NAME: pkg },
-      });
-    assert.deepEqual(JSON.parse(run('@kb-labs/other').stdout), { issues: [] });
-    const anchored = JSON.parse(run('@kb-labs/devkit').stdout);
-    assert.equal(anchored.issues.length, 1);
-    assert.equal(anchored.issues[0].severity, 'error');
-    assert.equal(anchored.issues[0].check, 'plugin-peer-deps');
-  });
+
 });

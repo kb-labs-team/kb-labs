@@ -13,6 +13,9 @@
   "bin": {
     "kb-labs-e2e-runner": "./bin/kb-labs-e2e-runner.mjs"
   },
+  "scripts": {
+    "test": "node --test bin/*.test.mjs"
+  },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
     "typescript": "^5.4.0"

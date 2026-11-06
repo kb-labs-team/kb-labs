@@ -301,13 +301,13 @@ function useEnv<T>(schema: EnvSchema<T>): T {
    - Re-exported `defineFlags`, `defineEnv`, and related types
    - Added to public API for plugin developers
 
-3. **`@kb-labs/commit-contracts`**:
+3. **`@kb-labs/commit/contracts`**:
    - Added `src/flags.ts` — flag definitions
    - Added `src/env.ts` — env definitions
    - Removed old `CommitEnv` interface
    - Updated `resolveCommitConfig()` to use typed values
 
-4. **`@kb-labs/commit-cli`**:
+4. **`@kb-labs/commit/cli`**:
    - Migrated `run.ts` to use `commitEnv.parse()`
    - Migrated `generate.ts` to use `commitEnv.parse()`
    - Reduced boilerplate from 5+ lines to 1 line per command
@@ -341,7 +341,7 @@ Verified with commit plugin:
 
 ```bash
 KB_COMMIT_LLM_TEMPERATURE=0.5 KB_COMMIT_LLM_MAX_TOKENS=3000 \
-  pnpm kb commit generate --scope="kb-labs-commit-plugin"
+  pnpm kb commit plan create --scope="kb-labs-commit-plugin"
 ```
 
 Results:
@@ -372,5 +372,5 @@ Results:
 **Packages Modified**:
 - `@kb-labs/shared-cli-ui` — Added `defineFlags()` and `defineEnv()`
 - `@kb-labs/sdk` — Re-exported utilities
-- `@kb-labs/commit-contracts` — Added definitions
-- `@kb-labs/commit-cli` — Migrated commands
+- `@kb-labs/commit/contracts` — Added definitions
+- `@kb-labs/commit/cli` — Migrated commands

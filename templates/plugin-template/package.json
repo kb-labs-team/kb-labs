@@ -10,17 +10,16 @@
   },
   "license": "MIT",
   "scripts": {
-    "// ——— ci/qa": "────────────────────────────────────────",
-    "// ——— cleanup": "────────────────────────────────────────",
-    "// ——— core": "────────────────────────────────────────",
-    "// ——— quality": "────────────────────────────────────────",
-    "build": "pnpm -r --filter ./packages/... run build",
+    "// \u2014\u2014\u2014 ci/qa": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "// \u2014\u2014\u2014 cleanup": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "// \u2014\u2014\u2014 core": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "// \u2014\u2014\u2014 quality": "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+    "build": "tsup --config tsup.config.ts",
     "build:clean": "pnpm -r --filter ./packages/... run clean && pnpm run build",
     "check": "pnpm lint && pnpm type-check && pnpm test",
     "ci": "pnpm clean && pnpm build && pnpm check",
-    "clean": "pnpm -r run clean",
-    "clean:all": "rimraf node_modules packages/*/node_modules apps/*/node_modules dist",
-    "dev": "pnpm -r --parallel --filter ./packages/... run dev",
+    "clean": "rimraf dist",
+    "dev": "tsup --config tsup.config.ts --watch",
     "devkit:check": "node scripts/devkit-sync.mjs --check",
     "devkit:force": "node scripts/devkit-sync.mjs --force",
     "devkit:help": "node scripts/devkit-sync.mjs --help",
@@ -39,7 +38,7 @@
     "test": "vitest run --passWithNoTests",
     "test:coverage": "vitest run --passWithNoTests --coverage",
     "test:watch": "vitest --passWithNoTests",
-    "type-check": "pnpm -r run type-check"
+    "type-check": "tsc --noEmit"
   },
   "bugs": "https://github.com/kirill-baranov/kb-labs-plugin-template/issues",
   "devDependencies": {
@@ -70,8 +69,46 @@
   },
   "packageManager": "pnpm@11.4.0",
   "repository": "kirill-baranov/kb-labs-plugin-template.git",
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ]
+  "workspaces": [],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./plugin-manifest": {
+      "types": "./dist/manifest.v3.d.ts",
+      "import": "./dist/manifest.v3.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    },
+    "./rest": {
+      "types": "./dist/rest/index.d.ts",
+      "import": "./dist/rest/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts/index.d.ts",
+      "import": "./dist/contracts/index.js"
+    },
+    "./lifecycle": {
+      "types": "./dist/lifecycle/index.d.ts",
+      "import": "./dist/lifecycle/index.js"
+    }
+  },
+  "kb": {
+    "manifest": "./dist/manifest.v3.js"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  },
+  "peerDependencies": {
+    "@kb-labs/sdk": "workspace:*"
+  }
 }

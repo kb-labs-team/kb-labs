@@ -12,8 +12,8 @@ Use the installed/local KB Labs CLI. The plugin requires `CLICKUP_API_KEY` and `
 Start by discovering IDs and valid statuses:
 
 ```bash
-kb clickup workspace --json
-kb clickup list statuses <listId> --json
+kb clickup workspace show --json
+kb clickup status list <listId> --json
 kb clickup task search "<query>" --json
 ```
 
@@ -21,7 +21,7 @@ kb clickup task search "<query>" --json
 
 ```bash
 kb clickup task get <taskId> --json
-kb clickup list tasks <listId> --status "in progress" --json
+kb clickup task list <listId> --status "in progress" --json
 kb clickup task create --list <listId> --name "<name>" --desc "<description>"
 kb clickup task update <taskId> --status "done"
 kb clickup task comments list <taskId> --json

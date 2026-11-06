@@ -18,16 +18,25 @@ Monorepo for KB Labs web surfaces:
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev:all
 ```
+
+The root package groups the app commands for local convenience. DevKit schedules
+each app package independently, so use these names when working from `sites/web`.
 
 ## Common commands
 
 ```bash
-pnpm build
-pnpm lint
-pnpm typecheck
-pnpm check
+pnpm build:all
+pnpm lint:all
+pnpm typecheck:all
+```
+
+To work on one app, filter its workspace package directly, for example:
+
+```bash
+pnpm --filter @kb-labs/docs-site dev
+pnpm --filter @kb-labs/docs-site build
 ```
 
 ## UI dependencies

@@ -1,16 +1,55 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createErrorEnvelope } from '@kb-labs/core-platform';
-import { access, mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, cp, mkdtemp, mkdir, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
-import { SessionManager } from '@kb-labs/cli-runtime/gateway';
+import { SessionManager } from '@kb-labs/sdk/gateway';
 
 const CLI_CHILD_PROCESS_TIMEOUT_MS = 60_000;
+
+async function writeTestPlatformReceipt(platformRoot: string): Promise<void> {
+  const receiptPath = path.join(platformRoot, '.kb', 'v2', 'receipt.json');
+  const gatewayUrl = process.env.KB_GATEWAY_URL ?? `http://127.0.0.1:${process.env.GATEWAY_PORT ?? '4000'}`;
+  await mkdir(path.dirname(receiptPath), { recursive: true });
+  await writeFile(receiptPath, JSON.stringify({
+    id: 'test-receipt',
+    installationId: 'test-installation',
+    plan: {
+      request: { gatewayUrl },
+      serviceGraph: { platformVersion: '2.120.1' },
+    },
+    verification: { hostHealthUrl: `${gatewayUrl}/health` },
+  }));
+}
+
+async function writeInstalledAdapterLock(
+  platformRoot: string,
+  workspaceRoot: string,
+  packageNames: readonly string[],
+): Promise<Record<string, unknown>> {
+  const installedPackageRoot = path.join(platformRoot, 'node_modules', '@kb-labs');
+  await mkdir(installedPackageRoot, { recursive: true });
+  for (const packageName of packageNames) {
+    await symlink(
+      path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', '')),
+      path.join(installedPackageRoot, packageName.slice('@kb-labs/'.length)),
+      'dir',
+    );
+  }
+  return Object.fromEntries(packageNames.map(packageName => [packageName, {
+    version: '2.120.1',
+    integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+    resolvedPath: path.relative(platformRoot, path.join(platformRoot, 'node_modules', packageName)),
+    source: 'platform',
+    enabled: true,
+  }]));
+}
 
 describe('installed platform adapter defaults', () => {
   let tempRoot: string | undefined;
@@ -41,6 +80,7 @@ describe('installed platform adapter defaults', () => {
       mkdir(registeredProject, { recursive: true }),
       mkdir(unregisteredProject, { recursive: true }),
     ]);
+    await writeTestPlatformReceipt(platformRoot);
     await writeFile(path.join(platformRoot, '.kb', 'kb.config.jsonc'), JSON.stringify({
       gateway: { access: { mode: 'secured' } },
       platform: { adapters: {} },
@@ -76,7 +116,7 @@ describe('installed platform adapter defaults', () => {
     const run = (args: string[], cwd: string) => new Promise<{
       status: number | null; stdout: string; stderr: string; error?: Error;
     }>((resolve) => {
-      const child = spawn(process.execPath, [cliPath, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn(process.execPath, [cliPath, '--gateway-url', gatewayUrl, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
       let timedOut = false;
@@ -177,6 +217,7 @@ describe('installed platform adapter defaults', () => {
       mkdir(projectRoot, { recursive: true }),
       mkdir(home, { recursive: true }),
     ]);
+    await writeTestPlatformReceipt(platformRoot);
     await writeFile(path.join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({
       gateway: { access: { mode: 'local' } },
       platform: { adapters: {} },
@@ -263,6 +304,7 @@ describe('installed platform adapter defaults', () => {
     const primaryGatewayPort = (primaryGatewayServer.address() as AddressInfo).port;
     await writeFile(path.join(primaryPlatformRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
       installationId: 'installed-root-a', verification: { hostHealthUrl: `http://127.0.0.1:${primaryGatewayPort}/health` },
+      plan: { serviceGraph: { platformVersion: '2.120.1' } },
     }));
 
     gatewayServer = createServer((request, response) => {
@@ -285,8 +327,11 @@ describe('installed platform adapter defaults', () => {
     await new Promise<void>((resolve) => gatewayServer!.listen(0, '127.0.0.1', resolve));
     const gatewayPort = (gatewayServer.address() as AddressInfo).port;
     await mkdir(path.join(platformRoot, '.kb', 'v2'), { recursive: true });
-    await writeFile(path.join(platformRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+    const unifiedVersion = '2.120.2-cand.d84c8f013160';
+    const receiptPath = path.join(platformRoot, '.kb', 'v2', 'receipt.json');
+    await writeFile(receiptPath, JSON.stringify({
       installationId: 'installed-root-b', verification: { hostHealthUrl: `http://127.0.0.1:${gatewayPort}/health` },
+      plan: { serviceGraph: { platformVersion: unifiedVersion } },
     }));
 
     const configPath = path.join(workspaceRoot, '.kb', 'kb.config.jsonc');
@@ -307,16 +352,7 @@ describe('installed platform adapter defaults', () => {
       '@kb-labs/adapters-openai',
       '@kb-labs/adapters-fs',
     ])];
-    const adapters = Object.fromEntries(packages.map(packageName => {
-      const packagePath = path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', ''));
-      return [packageName, {
-        version: '2.120.1',
-        integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-        resolvedPath: path.relative(platformRoot, packagePath),
-        source: 'platform',
-        enabled: true,
-      }];
-    }));
+    const adapters = await writeInstalledAdapterLock(platformRoot, workspaceRoot, packages);
     await writeFile(path.join(platformRoot, '.kb', 'marketplace.lock'), JSON.stringify({
       schema: 'kb.marketplace/3', plugins: {}, adapters,
     }));
@@ -345,10 +381,52 @@ describe('installed platform adapter defaults', () => {
       timeout: 30_000,
     });
     expect(version.status, version.stderr || version.stdout).toBe(0);
-    expect(version.stdout.trim()).not.toBe('');
-    await expect(access(path.join(projectRoot, '.kb'))).rejects.toThrow();
-    await expect(access(path.join(env.KB_HOME!, 'state'))).rejects.toThrow();
+    expect(version.stdout.trim()).toBe(unifiedVersion);
 
+    for (const args of [['--version', '--json'], ['--json', '--version']]) {
+      const globalVersionJSON = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), ...args], {
+        cwd: projectRoot,
+        env,
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      expect(globalVersionJSON.status, globalVersionJSON.stderr || globalVersionJSON.stdout).toBe(0);
+      expect(JSON.stringify(JSON.parse(globalVersionJSON.stdout))).toContain(unifiedVersion);
+    }
+
+    const versionJSON = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'version', '--json'], {
+      cwd: projectRoot,
+      env,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    expect(versionJSON.status, versionJSON.stderr || versionJSON.stdout).toBe(0);
+    expect(JSON.stringify(JSON.parse(versionJSON.stdout))).toContain(unifiedVersion);
+
+    const unavailableReceipt = `${receiptPath}.unavailable`;
+    await rename(receiptPath, unavailableReceipt);
+    try {
+      const expectedVersionError = createErrorEnvelope('KB_CLI_PLATFORM_VERSION_UNAVAILABLE');
+      for (const args of [['--version', '--json'], ['--json', '--version'], ['version', '--json']]) {
+        const missingVersion = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), ...args], {
+          cwd: projectRoot,
+          env,
+          encoding: 'utf8',
+          timeout: 30_000,
+        });
+        expect(missingVersion.status, missingVersion.stderr || missingVersion.stdout).not.toBe(0);
+        expect(JSON.parse(missingVersion.stdout)).toMatchObject({
+          ok: false,
+          error: {
+            code: expectedVersionError.code,
+            message: expectedVersionError.message,
+            hint: expectedVersionError.hint,
+          },
+        });
+      }
+    } finally {
+      await rename(unavailableReceipt, receiptPath);
+    }
     await createProjectRegistry({ env }).add(projectRoot);
 
     const command = await spawnCli(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'adapter', 'list', '--json'], {
@@ -397,17 +475,35 @@ describe('installed platform adapter defaults', () => {
     const installRoot = path.join(tempRoot, 'install');
     const versionRoot = path.join(installRoot, 'versions', 'v1');
     const platformRoot = path.join(installRoot, 'current');
+    const installedCommitRoot = path.join(versionRoot, 'plugins', 'commit');
     const projectRoot = path.join(tempRoot, 'project');
     const secondProjectRoot = path.join(tempRoot, 'project-b');
     const home = path.join(tempRoot, 'home');
     const dataRoot = path.join(installRoot, 'state', 'data');
     await Promise.all([
       mkdir(path.join(versionRoot, '.kb', 'v2'), { recursive: true }),
+      mkdir(path.join(versionRoot, 'node_modules', '@kb-labs'), { recursive: true }),
+      mkdir(path.join(installedCommitRoot, 'node_modules', '@kb-labs'), { recursive: true }),
       mkdir(dataRoot, { recursive: true }),
       mkdir(projectRoot, { recursive: true }),
       mkdir(secondProjectRoot, { recursive: true }),
       mkdir(home, { recursive: true }),
     ]);
+    await symlink(
+      path.join(workspaceRoot, 'sdk/sdk'),
+      path.join(versionRoot, 'node_modules', '@kb-labs', 'sdk'),
+      'dir',
+    );
+    await symlink(
+      path.join(versionRoot, 'node_modules', '@kb-labs', 'sdk'),
+      path.join(installedCommitRoot, 'node_modules', '@kb-labs', 'sdk'),
+      'dir',
+    );
+    await symlink(
+      path.join(workspaceRoot, 'plugins/commit/src/core'),
+      path.join(installedCommitRoot, 'node_modules', '@kb-labs', 'commit-core'),
+      'dir',
+    );
     const initialized = spawnSync('git', ['init', '--quiet', projectRoot], { encoding: 'utf8' });
     expect(initialized.status, initialized.stderr).toBe(0);
     const gitRepositories = new Set([projectRoot]);
@@ -440,6 +536,7 @@ describe('installed platform adapter defaults', () => {
     await writeFile(path.join(versionRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
       installationId: 'platform-data-root-test',
       verification: { hostHealthUrl: `http://127.0.0.1:${gatewayPort}/health` },
+      plan: { serviceGraph: { platformVersion: '2.120.1' } },
     }));
 
     const configPath = path.join(versionRoot, '.kb', 'kb.config.jsonc');
@@ -476,28 +573,38 @@ describe('installed platform adapter defaults', () => {
       '@kb-labs/adapters-pino',
       '@kb-labs/adapters-log-ringbuffer',
       '@kb-labs/adapters-log-document',
+      '@kb-labs/adapters-openai',
     ];
-    const adapters = Object.fromEntries(adapterPackages.map(packageName => {
-      const packagePath = path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', ''));
-      return [packageName, {
-        version: '2.120.1',
-        integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-        resolvedPath: path.relative(platformRoot, packagePath),
-        source: 'platform',
-        enabled: true,
-      }];
-    }));
-    const commitRoot = path.join(workspaceRoot, 'plugins/commit/entry');
+    const adapters = await writeInstalledAdapterLock(platformRoot, workspaceRoot, adapterPackages);
+    const commitRoot = path.join(workspaceRoot, 'plugins/commit');
     const commitPackageJSON = await readFile(path.join(commitRoot, 'package.json'));
-    const commitPackage = JSON.parse(commitPackageJSON.toString('utf8')) as { version: string };
+    await cp(path.join(commitRoot, 'dist'), path.join(installedCommitRoot, 'dist'), { recursive: true });
+    await writeFile(path.join(installedCommitRoot, 'package.json'), commitPackageJSON);
+    expect(await realpath(path.join(installedCommitRoot, 'node_modules', '@kb-labs', 'sdk')))
+      .toBe(await realpath(path.join(versionRoot, 'node_modules', '@kb-labs', 'sdk')));
+    const commitPackage = JSON.parse(commitPackageJSON.toString('utf8')) as {
+      version: string;
+      dependencies: Record<string, string>;
+    };
+    for (const dependency of Object.keys(commitPackage.dependencies)) {
+      const dependencyPath = path.join(installedCommitRoot, 'node_modules', dependency);
+      try {
+        await access(dependencyPath);
+        continue;
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+      await mkdir(path.dirname(dependencyPath), { recursive: true });
+      await symlink(path.join(commitRoot, 'node_modules', dependency), dependencyPath, 'dir');
+    }
     await writeFile(path.join(versionRoot, '.kb', 'marketplace.lock'), JSON.stringify({
       schema: 'kb.marketplace/3',
       plugins: {
         '@kb-labs/commit': {
           version: commitPackage.version,
           integrity: `sha256-${createHash('sha256').update(commitPackageJSON).digest('base64')}`,
-          package: '@kb-labs/commit-entry',
-          resolvedPath: path.relative(platformRoot, commitRoot),
+          package: '@kb-labs/commit',
+          resolvedPath: path.relative(versionRoot, installedCommitRoot),
           source: 'platform',
           enabled: true,
         },
@@ -584,7 +691,7 @@ describe('installed platform adapter defaults', () => {
     await rm(path.join(versionRoot, '.kb', 'v2', 'receipt.json'));
     const pluginEnv = { ...env };
     delete pluginEnv.KB_GATEWAY_URL;
-    const pluginCommand = spawnSync(process.execPath, [cliPath, 'commit', 'reset', '--json'], {
+    const pluginCommand = spawnSync(process.execPath, [cliPath, 'commit', 'plan', 'delete', '--json'], {
       cwd: projectRoot, env: pluginEnv, encoding: 'utf8', timeout: CLI_CHILD_PROCESS_TIMEOUT_MS,
     });
     expect(pluginCommand.status, pluginCommand.stderr || pluginCommand.stdout).toBe(0);
@@ -617,6 +724,12 @@ describe('installed platform adapter defaults', () => {
     const home = path.join(tempRoot, 'home');
     await Promise.all([mkdir(projectRoot), mkdir(home)]);
     await mkdir(path.join(platformRoot, '.kb'), { recursive: true });
+    await mkdir(path.join(platformRoot, '.kb', 'data'), { recursive: true });
+    await mkdir(path.join(platformRoot, '.kb', 'v2'), { recursive: true });
+    await writeFile(
+      path.join(platformRoot, '.kb', 'v2', 'platform-layout.json'),
+      await readFile(path.join(workspaceRoot, 'tools/kb-create/v2/contracts/platform-layout.json')),
+    );
     await mkdir(path.join(projectRoot, '.kb'));
     const workspaceConfig = await readFile(path.join(workspaceRoot, '.kb', 'kb.config.jsonc'), 'utf8');
     const releaseConfig = workspaceConfig.replace(/"mode":\s*"development",\s*/, '');
@@ -633,26 +746,24 @@ describe('installed platform adapter defaults', () => {
       '@kb-labs/adapters-openai',
       '@kb-labs/adapters-fs',
     ])];
-    const adapters = Object.fromEntries(packages.map(packageName => {
-      const packagePath = path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', ''));
-      return [packageName, {
-        version: '2.120.1',
-        integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-        resolvedPath: path.relative(platformRoot, packagePath),
-        source: 'platform',
-        enabled: true,
-      }];
-    }));
-    const pluginRoot = path.join(workspaceRoot, 'plugins/marketplace/entry');
-    const pluginPackageJSON = await readFile(path.join(pluginRoot, 'package.json'));
+    const adapters = await writeInstalledAdapterLock(platformRoot, workspaceRoot, packages);
+    const commitPackageRoot = path.join(workspaceRoot, 'plugins/commit');
+    const commitManifestModule = await import(pathToFileURL(path.join(commitPackageRoot, 'dist/manifest.js')).href) as {
+      manifest: { id: string; version: string };
+    };
+    const commitPackageJSON = await readFile(path.join(commitPackageRoot, 'package.json'));
+    const commitPackage = JSON.parse(commitPackageJSON.toString('utf8')) as { name: string; version: string };
+    await mkdir(path.join(platformRoot, 'plugins'), { recursive: true });
+    await symlink(commitPackageRoot, path.join(platformRoot, 'plugins', 'commit'), 'dir');
+    const mismatchedPluginId = `${commitManifestModule.manifest.id}-fixture-mismatch`;
     await writeFile(path.join(platformRoot, '.kb', 'marketplace.lock'), JSON.stringify({
       schema: 'kb.marketplace/3',
       plugins: {
-        marketplace: {
-          version: '2.120.1',
-          integrity: `sha256-${createHash('sha256').update(pluginPackageJSON).digest('base64')}`,
-          package: '@kb-labs/marketplace-entry',
-          resolvedPath: path.relative(platformRoot, pluginRoot),
+        [mismatchedPluginId]: {
+          version: commitPackage.version,
+          integrity: `sha256-${createHash('sha256').update(commitPackageJSON).digest('base64')}`,
+          package: commitPackage.name,
+          resolvedPath: 'plugins/commit',
           source: 'platform',
           enabled: true,
         },

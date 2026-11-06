@@ -11,6 +11,7 @@ import { defineSystemCommand, throwSystemCommandError, type CommandResult } from
 import { platformSync, type PlatformSyncMode, type PlatformSyncResult } from '@kb-labs/core-runtime';
 import { generateExamples } from '../../../utils/generate-examples';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
+import { getResolvedCatalog } from '../../../registry/discovery-state.js';
 
 type PlatformSyncFlags = {
   json: { type: 'boolean'; description?: string };
@@ -74,6 +75,7 @@ export const platformSyncCommand = defineSystemCommand<PlatformSyncFlags, Platfo
 
     const result = await platformSync({
       root,
+      catalog: getResolvedCatalog()!,
       mode,
       dryRun,
       logger,

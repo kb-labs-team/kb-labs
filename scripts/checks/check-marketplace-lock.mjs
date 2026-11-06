@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 /**
  * check-marketplace-lock — validates the workspace lock under the scope
  * assigned to its root by the runtime root resolver.
@@ -12,7 +13,6 @@ const { validateMarketplaceLockAtRoot } = await import('@kb-labs/core-discovery'
 const { resolveRoots } = await import('../../core/workspace/dist/index.js');
 
 const CHECK_NAME = 'check-marketplace-lock';
-const ANCHOR_PACKAGE = '@kb-labs/devkit';
 const DEVKIT_MODE = Boolean(process.env.KB_DEVKIT_MODE);
 const WORKSPACE_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const LOCK_ROOT = process.env.KB_MARKETPLACE_LOCK_ROOT ?? WORKSPACE_ROOT;
@@ -60,19 +60,7 @@ async function main() {
   });
 
   if (DEVKIT_MODE) {
-    let pkgName = process.env.KB_DEVKIT_PACKAGE_NAME ?? '';
-    if (!pkgName) {
-      const chunks = [];
-      process.stdin.setEncoding('utf-8');
-      for await (const chunk of process.stdin) {chunks.push(chunk);}
-      const raw = chunks.join('');
-      if (raw) {pkgName = JSON.parse(raw)?.name ?? '';}
-    }
-    if (pkgName !== ANCHOR_PACKAGE) {
-      process.stdout.write(JSON.stringify({ issues: [] }) + '\n');
-    } else {
-      process.stdout.write(JSON.stringify({ issues: await checkMarketplaceLock(LOCK_ROOT, roots) }) + '\n');
-    }
+    writeCheckResult(await checkMarketplaceLock(LOCK_ROOT, roots));
   } else {
     const issues = await checkMarketplaceLock(LOCK_ROOT, roots);
     printHuman(issues);

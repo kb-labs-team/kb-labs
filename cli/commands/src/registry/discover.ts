@@ -7,26 +7,13 @@
  * CLI registry registers. It scans nothing itself.
  */
 
-import {
-  DiscoveryManager,
-  type DiscoveryResult as CoreDiscoveryResult,
-  type DiscoveredPlugin,
-  type DiagnosticEvent,
-} from '@kb-labs/core-discovery';
-import type { ManifestV3 } from '@kb-labs/plugin-contracts';
+import type { DiscoveryResult as CoreDiscoveryResult, DiscoveredPlugin, DiagnosticEvent, IEntityRegistry, ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { CommandManifest, DiscoveryResult } from './types';
 import { manifestToCommands, createUnavailableManifest } from './manifest-commands';
 import { toPosixPath } from '../utils/path';
 
 // Discovery errors always go to stderr; warnings are opt-in. Neither affects --json output.
 const DEBUG_MODE = process.env.DEBUG_SANDBOX === '1' || process.env.KB_DISCOVERY_DEBUG === '1';
-
-export interface DiscoverManifestsOptions {
-  /** Platform installation root. Defaults to `cwd`. */
-  platformRoot?: string;
-  /** User project root. Defaults to `cwd`. */
-  projectRoot?: string;
-}
 
 function pluginToResult(
   plugin: DiscoveredPlugin,
@@ -128,17 +115,12 @@ export interface DetailedDiscovery {
 /**
  * Discover CLI command manifests, keeping the pipeline diagnostics.
  *
- * @param cwd      Fallback for both roots.
- * @param options  `platformRoot` (KB_PLATFORM_ROOT) and `projectRoot` (KB_PROJECT_ROOT).
+ * @param catalog  The resolved catalog opened by the CLI composition root.
  */
 export async function discoverManifestsDetailed(
-  cwd: string,
-  options: DiscoverManifestsOptions = {},
+  catalog: IEntityRegistry,
 ): Promise<DetailedDiscovery> {
-  const platformRoot = options.platformRoot ?? cwd;
-  const projectRoot = options.projectRoot ?? cwd;
-
-  const discovered = await new DiscoveryManager({ root: projectRoot, platformRoot }).discover();
+  const discovered = catalog.discovery();
 
   for (const event of discovered.diagnostics) {
     if (event.severity === 'error' || (DEBUG_MODE && event.severity === 'warning')) {
@@ -154,8 +136,7 @@ export async function discoverManifestsDetailed(
 
 /** Discover CLI command manifests. See {@link discoverManifestsDetailed}. */
 export async function discoverManifests(
-  cwd: string,
-  options: DiscoverManifestsOptions = {},
+  catalog: IEntityRegistry,
 ): Promise<DiscoveryResult[]> {
-  return (await discoverManifestsDetailed(cwd, options)).results;
+  return (await discoverManifestsDetailed(catalog)).results;
 }

@@ -25,10 +25,7 @@ async function openWorkflowRuns(page: import('@playwright/test').Page, selectedP
 /**
  * Studio workflow pages smoke tests.
  *
- * Checks that:
- * 1. The MF manifest exposes a workflow plugin entry
- * 2. The Studio SPA shell loads for all workflow routes (no hard 404)
- * 3. The workflow daemon API endpoints consumed by Studio pages respond correctly
+ * Checks that the built-in Studio workflow route and daemon API are available.
  *
  * Missing Studio or workflow routes fail because both are required services.
  */
@@ -59,23 +56,9 @@ async function workflowIsUp(
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-test('SW-01: MF manifest contains a workflow plugin entry', async ({ request }) => {
-  const manifestRes = await request.get(`${GATEWAY}/mf-manifest.json`);
-  expect(manifestRes.status() === 404, 'Studio MF manifest not available').toBe(false);
-  expect(manifestRes.status()).toBe(200);
-
-  const manifest = await manifestRes.json();
-
-  // Collect all keys to search for a workflow-related entry
-  const keys = Object.keys(manifest?.remotes ?? manifest?.modules ?? manifest ?? {});
-  const hasWorkflow = keys.some((k) =>
-    k.toLowerCase().includes('workflow') || k.toLowerCase().includes('wf'),
-  );
-
-  // Not every installation will have the workflow plugin loaded in the manifest,
-  // but if manifest has entries, workflow should be among them.
-  expect(keys.length === 0, 'Manifest has no remote entries — single-bundle mode').toBe(false);
-  expect(hasWorkflow).toBe(true);
+test('SW-01: built-in Studio serves the workflow runs page', async ({ page }) => {
+  await page.goto(`${GATEWAY}/p/workflows/runs`);
+  await expect(page.getByRole('heading', { name: 'Workflow Runs', exact: true })).toBeVisible();
 });
 
 test('SW-02: Studio SPA shell responds for /workflows route', async ({ request }) => {

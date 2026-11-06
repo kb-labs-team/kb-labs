@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,11 +16,13 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/contracts"
 )
 
 func main() {
@@ -35,6 +38,7 @@ func run() diag.ExitStatus {
 	delay := flag.Duration("delay", 0, "wait before listening")
 	dumpEnv := flag.String("dump-env", "", "write the process environment to this file at start")
 	stderrLine := flag.String("stderr-line", "", "write one line to stderr before listening")
+	activeWorkJSON := flag.String("active-work-json", "[]", "test response for the authenticated active-work endpoint")
 	flag.Parse()
 	if *startupError {
 		if token := os.Getenv("API_TOKEN"); token != "" {
@@ -69,10 +73,37 @@ func run() diag.ExitStatus {
 		return diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "The fake host could not start its test listener.", diag.WithCauseAndReason(err.Error()), diag.WithHint("Check the test listener address and rerun the test.")))
 	}
 	mux := http.NewServeMux()
+	var ready atomic.Bool
+	var controlServer *http.Server
+	controlCredential := os.Getenv(contracts.HostControlCredentialEnv)
+	var controlAddress string
+	if controlCredential != "" {
+		controlListener, controlErr := net.Listen("tcp", "127.0.0.1:0")
+		if controlErr != nil {
+			fmt.Fprintln(os.Stderr, "fakehost: control listener unavailable")
+			return diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "The fake host control listener could not start.", diag.WithCauseAndReason(controlErr.Error()), diag.WithHint("Check the test listener address and rerun the test.")))
+		}
+		controlAddress = "http://" + controlListener.Addr().String()
+		controlMux := http.NewServeMux()
+		controlMux.HandleFunc("/v1/active-work", func(w http.ResponseWriter, request *http.Request) {
+			if request.Header.Get("Authorization") != "Bearer "+controlCredential {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, *activeWorkJSON)
+		})
+		controlServer = &http.Server{Handler: controlMux}
+		go func() { _ = controlServer.Serve(controlListener) }()
+	}
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		if *unhealthy {
 			http.Error(w, "unhealthy", http.StatusInternalServerError)
 			return
+		}
+		ready.Store(true)
+		if controlAddress != "" {
+			w.Header().Set(contracts.HostActiveWorkAddressHeader, controlAddress)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"ok":true,"data":{"upstreams":{},"adapters":{}}}`)
@@ -81,6 +112,36 @@ func run() diag.ExitStatus {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"ok":true,"data":[{"slot":"storage","mode":"real","implementation":"@kb-labs/adapters-fs"}]}`)
 	})
+	mux.HandleFunc("/api/v1/marketplace/packages/install", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var request struct {
+			Specs []string `json:"specs"`
+			Scope string   `json:"scope"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid Marketplace install request", http.StatusBadRequest)
+			return
+		}
+		if request.Scope != "platform" || len(request.Specs) == 0 {
+			http.Error(w, "invalid Marketplace install scope or identities", http.StatusBadRequest)
+			return
+		}
+		if !ready.Load() {
+			http.Error(w, "host is not ready", http.StatusServiceUnavailable)
+			return
+		}
+		installed := make([]contracts.MarketplaceInstallRecord, 0, len(request.Specs))
+		for _, spec := range request.Specs {
+			installed = append(installed, contracts.MarketplaceInstallRecord{
+				ID: spec, Spec: spec, Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"installed": installed, "scope": request.Scope})
+	})
 	server := &http.Server{Handler: mux}
 	go func() { _ = server.Serve(listener) }()
 	fmt.Fprintln(os.Stderr, "fakehost: ready")
@@ -88,6 +149,9 @@ func run() diag.ExitStatus {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_ = server.Shutdown(ctx)
+	if controlServer != nil {
+		_ = controlServer.Shutdown(ctx)
+	}
 	return diag.SuccessStatus()
 }
 
