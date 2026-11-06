@@ -166,11 +166,10 @@ esac
 
 if [ "$VERSION" = "latest" ]; then
   # `binaries-stable`/`binaries-canary` are tiny mutable GitHub Release assets
-  # maintained by the workflow-engine release delivery path. Using the direct
-  # asset URL avoids GitHub REST API lookup and
-  # cannot accidentally select a platform/npm release.
-  CHANNEL_JSON="$(curl -fsSL "https://github.com/${REPO}/releases/download/binaries-${CHANNEL}/channel.json" 2>/dev/null)" || {
-    err "Unable to resolve the ${CHANNEL} binaries channel from GitHub Releases."
+  # maintained by the workflow-engine release delivery path. Resolve it from
+  # the same origin as the versioned assets.
+  CHANNEL_JSON="$(curl -fsSL "${DOWNLOAD_BASE_URL}/binaries-${CHANNEL}/channel.json" 2>/dev/null)" || {
+    err "Unable to resolve the ${CHANNEL} binaries channel from the configured download base."
     exit 1
   }
   RESOLVED_VERSION="$(printf '%s\n' "$CHANNEL_JSON" | sed -n 's/.*"tag":[[:space:]]*"\([^"]*-binaries\)".*/\1/p' | head -n 1)"

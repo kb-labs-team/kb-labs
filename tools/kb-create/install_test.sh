@@ -468,6 +468,20 @@ test_xdg_saved_index() {
   pass "XDG launcher data: saved index and source share the requested directory"
 }
 
+test_channel_from_configured_base() {
+  local log
+  log="$(mktemp)"
+  export FAKE_CURL_LOG="$log" KB_CREATE_DOWNLOAD_BASE_URL="http://fixture.test/releases"
+  FAKE_CHECKSUM_LINE="${FAKE_SHA256}  ${BINARY_FILE}"
+  run_install --channel canary
+  unset FAKE_CURL_LOG KB_CREATE_DOWNLOAD_BASE_URL
+  if [ "$RUN_CODE" -ne 0 ] || ! grep -Fx 'http://fixture.test/releases/binaries-canary/channel.json' "$log" >/dev/null; then
+    fail "configured channel base" "pointer was not resolved from the configured base: $(cat "$log")"
+    return
+  fi
+  pass "configured channel base: pointer and assets use the same origin"
+}
+
 # ── run everything ───────────────────────────────────────────────────────────
 
 if [ ! -f "$INSTALL_SH" ]; then
@@ -483,6 +497,7 @@ case "$(uname -s)" in
     ;;
 esac
 
+test_channel_from_configured_base
 test_success_path
 test_xdg_saved_index
 test_download_base_override

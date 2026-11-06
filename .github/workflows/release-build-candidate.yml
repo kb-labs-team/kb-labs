@@ -7,6 +7,11 @@ name: Release — build immutable candidate
 on:
   workflow_dispatch:
     inputs:
+      deliver_canary:
+        description: Publish this canary candidate to the canary endpoints
+        required: false
+        type: boolean
+        default: false
       candidate_id:
         description: Immutable candidate identifier from the workflow engine
         required: true
@@ -34,7 +39,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-candidate-${{ inputs.candidate_id }}
+  group: ${{ inputs.deliver_canary && 'release-candidate-canary-delivery' || format('release-candidate-{0}', inputs.candidate_id) }}
   cancel-in-progress: false
 
 jobs:
@@ -119,3 +124,19 @@ jobs:
           set -euo pipefail
           test -n "$ARTIFACT_DIGEST"
           printf '\n- **Actions artifact archive digest:** `%s`\n' "$ARTIFACT_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deliver canary
+        if: inputs.deliver_canary
+        env:
+          RELEASE_PREFLIGHT_COVERAGE: hosted-only
+          RELEASE_PREFLIGHT_HOSTED_ONLY_REASON: Publishes to protected canary endpoints using hosted secrets.
+          NPM_TOKEN: ${{ secrets.CANARY_NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.CANARY_NPM_TOKEN }}
+          CANARY_RELEASES_SSH_KEY: ${{ secrets.CANARY_RELEASES_SSH_KEY }}
+          CANARY_RELEASES_KNOWN_HOSTS: ${{ secrets.CANARY_RELEASES_KNOWN_HOSTS }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          FLOW: ${{ inputs.flow }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+        run: bash scripts/deliver-canary-ci.sh

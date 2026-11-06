@@ -6,6 +6,10 @@ export const platformFlowPolicies = {
         registry: 'http://127.0.0.1:4873',
         kind: 'test',
       },
+      canary: {
+        registry: 'https://npm.kblabs.ru',
+        kind: 'test',
+      },
       npm: {
         registry: 'https://registry.npmjs.org',
         kind: 'public',
