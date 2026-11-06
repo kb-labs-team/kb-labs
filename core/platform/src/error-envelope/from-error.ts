@@ -8,7 +8,7 @@
 
 import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, getAdapterConfigurationCommand, PlatformConfigError, PlatformLayoutContractError, ServicePortConfigError, type TypedPlatformError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
-import { createErrorDetailsContractViolation, createErrorEnvelope, createValidatedErrorEnvelope, describeContractValue, getCatalogEntry, isErrorCode, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
+import { createErrorDetailsContractViolation, createErrorEnvelope, createUntrustedErrorEnvelope, describeContractValue, getCatalogEntry, isErrorCode, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
 import { ErrorEnvelopeError, type ErrorEnvelope, type ProductErrorCode } from './types.js';
 import { markValidatedErrorEnvelope, type ValidatedErrorEnvelope } from './validated-envelope.js';
 import { isErrorEnvelope, validateErrorEnvelope } from './validate.js';
@@ -252,7 +252,7 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
     const templateValues = options.binary && entry?.runtimeTemplateParameters?.binary === 'required'
       ? { binary: options.binary }
       : undefined;
-    return createValidatedErrorEnvelope(code, {
+    return createUntrustedErrorEnvelope(code, {
       ...options,
       ...(templateValues ? { templateValues } : {}),
       ...(cause ? { cause } : {}),
@@ -302,7 +302,7 @@ export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEn
       const templateValues = options.binary && entry?.runtimeTemplateParameters?.binary === 'required'
         ? { binary: options.binary }
         : undefined;
-      return assertCanonicalEnvelope(createValidatedErrorEnvelope(envelope.code, {
+      return assertCanonicalEnvelope(createUntrustedErrorEnvelope(envelope.code, {
         ...options,
         ...fields,
         ...(templateValues ? { templateValues } : {}),
@@ -349,7 +349,7 @@ export function decodeErrorEnvelope(envelope: unknown, options: DecodeEnvelopeOp
   const details = envelope.details ?? {};
 
   try {
-    const reconstructed = createValidatedErrorEnvelope(envelope.code, {
+    const reconstructed = createUntrustedErrorEnvelope(envelope.code, {
       ...envelopeOptions,
       ...(envelope.correlationId ? { correlationId: envelope.correlationId } : {}),
       ...(envelope.cause ? { cause: envelope.cause } : {}),

@@ -13,6 +13,7 @@ import type { ErrorEnvelope, DetailsOptionFor } from '@kb-labs/sdk/errors';
 import {
   createReleaseError,
   type ReleaseErrorCode,
+  type CreateReleaseErrorInput,
 } from './error-codes';
 
 export type PreflightCheckId =
@@ -80,15 +81,15 @@ export interface PreflightOptions {
 }
 
 const DEFAULT_VERDACCIO_PORT = 4873;
-const PROBE_FAILURE_CODE: Record<PreflightCheckId, ReleaseErrorCode> = {
-  branch: 'KB_RELEASE_BRANCH_NOT_MASTER',
-  'clean-tree': 'KB_RELEASE_TREE_DIRTY',
-  docker: 'KB_RELEASE_DOCKER_UNAVAILABLE',
-  'staging-registry': 'KB_RELEASE_REGISTRY_UNREACHABLE',
-  'npm-registry': 'KB_RELEASE_REGISTRY_UNREACHABLE',
-  'github-auth': 'KB_RELEASE_TOKEN_MISSING',
-  'baseline-drift': 'KB_RELEASE_BASELINE_DRIFT',
-};
+const PROBE_FAILURE_CODE = {
+  branch: { code: 'KB_RELEASE_BRANCH_NOT_MASTER' },
+  'clean-tree': { code: 'KB_RELEASE_TREE_DIRTY' },
+  docker: { code: 'KB_RELEASE_DOCKER_UNAVAILABLE' },
+  'staging-registry': { code: 'KB_RELEASE_REGISTRY_UNREACHABLE' },
+  'npm-registry': { code: 'KB_RELEASE_REGISTRY_UNREACHABLE' },
+  'github-auth': { code: 'KB_RELEASE_TOKEN_MISSING' },
+  'baseline-drift': { code: 'KB_RELEASE_BASELINE_DRIFT' },
+} as const satisfies Record<PreflightCheckId, { code: ReleaseErrorCode }>;
 const DEFAULT_NPM_REGISTRY = 'https://registry.npmjs.org';
 
 export function resolveStagingRegistry(opts: Pick<PreflightOptions, 'stagingRegistry' | 'netOffset' | 'env'>): string {
@@ -121,17 +122,9 @@ export function preflightCommand(flow?: string): string {
   return flow ? `pnpm kb release doctor --flow ${flow}` : 'pnpm kb release doctor';
 }
 
-type FailedOutcome<C extends ReleaseErrorCode> = {
-  ok: false;
-  message: string;
-  code: C;
-  cause: string;
-  hint: string;
-} & DetailsOptionFor<C>;
-
 type Outcome =
   | { ok: true; message: string; warnings?: string[] }
-  | { [C in ReleaseErrorCode]: FailedOutcome<C> }[ReleaseErrorCode]
+  | { ok: false; message: string; request: Extract<CreateReleaseErrorInput, { code: typeof PROBE_FAILURE_CODE[PreflightCheckId]['code'] }> }
   | { skipped: true; message: string };
 
 export async function runReleasePreflight(opts: PreflightOptions): Promise<PreflightResult> {
@@ -156,22 +149,17 @@ export async function runReleasePreflight(opts: PreflightOptions): Promise<Prefl
       const res = await opts.shell.exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: opts.cwd, timeout });
       const branch = res.stdout.trim();
       if (!res.ok || !branch) {
-        return { ok: false, message: 'Could not determine the current branch', code: 'KB_RELEASE_BRANCH_NOT_MASTER', cause: 'git rev-parse failed.', hint: `Run from inside the repository, then \`${rerun}\`.` };
+        return { ok: false, message: 'Could not determine the current branch', request: { code: 'KB_RELEASE_BRANCH_NOT_MASTER', cause: 'git rev-parse failed.', hint: `Run from inside the repository, then \`${rerun}\`.` } };
       }
       if (branch !== expectedBranch) {
-        return {
-          ok: false, message: `On branch ${branch}`, code: 'KB_RELEASE_BRANCH_NOT_MASTER',
-          cause: `Current branch is '${branch}', releases start from '${expectedBranch}'.`,
-          hint: `Switch with \`git switch ${expectedBranch}\` and pull, then \`${rerun}\`.`,
-          details: { branch, expected: expectedBranch },
-        };
+        return { ok: false, message: `On branch ${branch}`, request: { code: 'KB_RELEASE_BRANCH_NOT_MASTER', cause: `Current branch is '${branch}', releases start from '${expectedBranch}'.`, hint: `Switch with \`git switch ${expectedBranch}\` and pull, then \`${rerun}\`.`, details: { branch, expected: expectedBranch } } };
       }
       return { ok: true, message: `On ${branch}` };
     }],
     ['clean-tree', async () => {
       const res = await opts.shell.exec('git', ['status', '--porcelain'], { cwd: opts.cwd, timeout });
       if (!res.ok) {
-        return { ok: false, message: 'Could not read git status', code: 'KB_RELEASE_TREE_DIRTY', cause: 'git status failed.', hint: `Run from inside the repository, then \`${rerun}\`.` };
+        return { ok: false, message: 'Could not read git status', request: { code: 'KB_RELEASE_TREE_DIRTY', cause: 'git status failed.', hint: `Run from inside the repository, then \`${rerun}\`.` } };
       }
       const all = res.stdout.split('\n').filter(l => l.trim()).map(porcelainPath);
       const generated = all.filter(isToolGeneratedPath);
@@ -179,12 +167,7 @@ export async function runReleasePreflight(opts: PreflightOptions): Promise<Prefl
       if (blocking.length > 0) {
         const listed = blocking.slice(0, MAX_LISTED_PATHS).join(', ');
         const more = blocking.length > MAX_LISTED_PATHS ? ` and ${blocking.length - MAX_LISTED_PATHS} more` : '';
-        return {
-          ok: false, message: `${blocking.length} uncommitted change(s)`, code: 'KB_RELEASE_TREE_DIRTY',
-          cause: `Working tree has ${blocking.length} modified or untracked path(s) outside .kb/: ${listed}${more}.`,
-          hint: `Commit, stash or discard them (\`git status\` lists them), then \`${rerun}\`.`,
-          details: { changes: String(blocking.length), toolGenerated: String(generated.length) },
-        };
+        return { ok: false, message: `${blocking.length} uncommitted change(s)`, request: { code: 'KB_RELEASE_TREE_DIRTY', cause: `Working tree has ${blocking.length} modified or untracked path(s) outside .kb/: ${listed}${more}.`, hint: `Commit, stash or discard them (\`git status\` lists them), then \`${rerun}\`.`, details: { changes: String(blocking.length), toolGenerated: String(generated.length) } } };
       }
       if (generated.length > 0) {
         const warning = `${generated.length} tool-generated .kb file(s) modified or untracked (ignored)`;
@@ -195,11 +178,7 @@ export async function runReleasePreflight(opts: PreflightOptions): Promise<Prefl
     ['docker', async () => {
       const res = await opts.shell.exec('docker', ['info', '--format', '{{.ServerVersion}}'], { cwd: opts.cwd, timeout });
       if (!res.ok) {
-        return {
-          ok: false, message: 'Docker daemon not reachable', code: 'KB_RELEASE_DOCKER_UNAVAILABLE',
-          cause: '`docker info` failed: Docker is not installed or its daemon is not running.',
-          hint: `Start Docker, then \`${rerun}\`.`,
-        };
+        return { ok: false, message: 'Docker daemon not reachable', request: { code: 'KB_RELEASE_DOCKER_UNAVAILABLE', cause: '`docker info` failed: Docker is not installed or its daemon is not running.', hint: `Start Docker, then \`${rerun}\`.` } };
       }
       return { ok: true, message: `Docker ${res.stdout.trim() || 'available'}` };
     }],
@@ -207,24 +186,14 @@ export async function runReleasePreflight(opts: PreflightOptions): Promise<Prefl
       const r = await ping(staging);
       if (!r.ok) {
         const offset = opts.netOffset ?? 0;
-        return {
-          ok: false, message: `${staging} unreachable`, code: 'KB_RELEASE_REGISTRY_UNREACHABLE',
-          cause: `Local staging registry ${staging} did not answer /-/ping (${r.reason}).`,
-          hint: `Start it: \`./tools/kb-dev/kb-dev ensure verdaccio --config .kb/devservices.dev.yaml --net-offset ${offset}\`, then \`${rerun}\`.`,
-          details: { target: 'staging', registry: staging },
-        };
+        return { ok: false, message: `${staging} unreachable`, request: { code: 'KB_RELEASE_REGISTRY_UNREACHABLE', cause: `Local staging registry ${staging} did not answer /-/ping (${r.reason}).`, hint: `Start it: \`./tools/kb-dev/kb-dev ensure verdaccio --config .kb/devservices.dev.yaml --net-offset ${offset}\`, then \`${rerun}\`.`, details: { target: 'staging', registry: staging } } };
       }
       return { ok: true, message: `${staging} reachable` };
     }],
     ['npm-registry', async () => {
       const r = await ping(npm);
       if (!r.ok) {
-        return {
-          ok: false, message: `${npm} unreachable`, code: 'KB_RELEASE_REGISTRY_UNREACHABLE',
-          cause: `npm registry ${npm} did not answer /-/ping (${r.reason}).`,
-          hint: `Check network/proxy access to ${npm}, then \`${rerun}\`.`,
-          details: { target: 'npm', registry: npm },
-        };
+        return { ok: false, message: `${npm} unreachable`, request: { code: 'KB_RELEASE_REGISTRY_UNREACHABLE', cause: `npm registry ${npm} did not answer /-/ping (${r.reason}).`, hint: `Check network/proxy access to ${npm}, then \`${rerun}\`.`, details: { target: 'npm', registry: npm } } };
       }
       return { ok: true, message: `${npm} reachable` };
     }],
@@ -233,11 +202,7 @@ export async function runReleasePreflight(opts: PreflightOptions): Promise<Prefl
       if (fromEnv) { return { ok: true, message: `Token present via ${fromEnv}` }; }
       const res = await opts.shell.exec('gh', ['auth', 'status'], { cwd: opts.cwd, timeout });
       if (res.ok) { return { ok: true, message: 'gh is authenticated' }; }
-      return {
-        ok: false, message: 'No GitHub token or gh login', code: 'KB_RELEASE_TOKEN_MISSING',
-        cause: 'Neither GH_TOKEN/GITHUB_TOKEN is set nor is `gh` authenticated; candidate dispatch needs one.',
-        hint: `Run \`gh auth login\` (or export GH_TOKEN), then \`${rerun}\`.`,
-      };
+      return { ok: false, message: 'No GitHub token or gh login', request: { code: 'KB_RELEASE_TOKEN_MISSING', cause: 'Neither GH_TOKEN/GITHUB_TOKEN is set nor is `gh` authenticated; candidate dispatch needs one.', hint: `Run \`gh auth login\` (or export GH_TOKEN), then \`${rerun}\`.` } };
     }],
     ['baseline-drift', async (): Promise<Outcome> => {
       if (!opts.baseline) { return { skipped: true, message: 'Baseline source not provided' }; }
@@ -252,20 +217,10 @@ export async function runReleasePreflight(opts: PreflightOptions): Promise<Prefl
       }
       const tag = b.npmStableDistTag;
       if (b.npmDrift) {
-        return {
-          ok: false, message: `Packages disagree on npm "${tag}"`, code: 'KB_RELEASE_BASELINE_DRIFT',
-          cause: `Sampled packages resolve to different versions under npm "${tag}".`,
-          hint: 'Inspect with `pnpm kb release status`; reconcile the dist-tags before releasing.',
-          details: { distTag: tag },
-        };
+        return { ok: false, message: `Packages disagree on npm "${tag}"`, request: { code: 'KB_RELEASE_BASELINE_DRIFT', cause: `Sampled packages resolve to different versions under npm "${tag}".`, hint: 'Inspect with `pnpm kb release status`; reconcile the dist-tags before releasing.', details: { distTag: tag } } };
       }
       if (b.gitVersion && b.npmStableVersion && b.gitVersion !== b.npmStableVersion) {
-        return {
-          ok: false, message: `git ${b.gitVersion} vs npm ${b.npmStableVersion}`, code: 'KB_RELEASE_BASELINE_DRIFT',
-          cause: `Latest stable git tag ${b.gitTag ?? ''} (${b.gitVersion}) does not match npm "${tag}" (${b.npmStableVersion}).`,
-          hint: 'Inspect with `pnpm kb release status`; a half-finished release or manual publish left the baseline inconsistent.',
-          details: { gitVersion: b.gitVersion, npmVersion: b.npmStableVersion },
-        };
+        return { ok: false, message: `git ${b.gitVersion} vs npm ${b.npmStableVersion}`, request: { code: 'KB_RELEASE_BASELINE_DRIFT', cause: `Latest stable git tag ${b.gitTag ?? ''} (${b.gitVersion}) does not match npm "${tag}" (${b.npmStableVersion}).`, hint: 'Inspect with `pnpm kb release status`; a half-finished release or manual publish left the baseline inconsistent.', details: { gitVersion: b.gitVersion, npmVersion: b.npmStableVersion } } };
       }
       return { ok: true, message: b.gitVersion ? `git and npm agree on ${b.gitVersion}` : 'No stable tag yet; nothing to compare' };
     }],
@@ -281,10 +236,8 @@ export async function runReleasePreflight(opts: PreflightOptions): Promise<Prefl
       return {
         id, status: 'failed', durationMs, message: out.message,
         error: createReleaseError({
-          code: out.code,
-          cause: out.cause,
-          hint: out.hint,
-          details: { check: id, classification: 'environment', ...out.details },
+          ...out.request,
+          details: { check: id, classification: 'environment', ...out.request.details },
           actions: [{ id: 'rerun-preflight', label: 'Re-run preflight', command: rerun }],
         }),
       };
@@ -292,7 +245,7 @@ export async function runReleasePreflight(opts: PreflightOptions): Promise<Prefl
       return {
         id, status: 'failed', durationMs: Date.now() - t, message: 'Probe threw',
         error: createReleaseError({
-          code: PROBE_FAILURE_CODE[id],
+          ...PROBE_FAILURE_CODE[id],
           cause: `Probe '${id}' threw: ${err instanceof Error ? err.message : String(err)}`,
           hint: `Re-run \`${rerun}\`; if it repeats, run the underlying tool by hand.`,
           details: { check: id, classification: 'environment' },

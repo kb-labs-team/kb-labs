@@ -11,9 +11,5 @@ export function requireProjectContext(
   currentPath: string = process.cwd(),
 ): string {
   if (projectRoot) return projectRoot;
-  throw new ErrorEnvelopeError(projectErrorEnvelope(new ProjectRegistryError(
-    'KB_PROJECT_UNKNOWN',
-    'This operation requires a registered project context.',
-    { path: currentPath },
-  )));
+  throw new ErrorEnvelopeError(projectErrorEnvelope(new ProjectRegistryError({ code: 'KB_PROJECT_UNKNOWN', details: { path: currentPath } }, 'This operation requires a registered project context.')));
 }

@@ -56,11 +56,7 @@ function dynamicScript(shell: string): string | null {
 }
 
 function unsupportedShell(shell: string): never {
-  throwSystemCataloguedFailure(
-    'KB_RUNTIME_INPUT_INVALID',
-    `Unsupported shell: ${shell}. Supported: bash, zsh, fish`,
-    'Run `kb completion bash`, `kb completion zsh`, or `kb completion fish`.',
-  );
+  throwSystemCataloguedFailure({ code: 'KB_RUNTIME_INPUT_INVALID', message: `Unsupported shell: ${shell}. Supported: bash, zsh, fish`, hint: 'Run `kb completion bash`, `kb completion zsh`, or `kb completion fish`.' });
 }
 
 // ─── Static zsh script generator ─────────────────────────────────────────────

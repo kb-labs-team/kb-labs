@@ -197,7 +197,7 @@ export function buildReleaseRunReport(input: BuildRunReportInput): ReleaseRunRep
       const packagePath = f.path ?? f.details.packagePath;
       const pkg = packagePath ? (names.get(packagePath) ?? basename(packagePath)) : '(repository)';
       const error = createReleaseError({
-        code: verdict.code,
+        ...verdict.request,
         cause: verdict.rootCause,
         hint: verdict.hint,
         severity: optional ? 'warning' : 'error',

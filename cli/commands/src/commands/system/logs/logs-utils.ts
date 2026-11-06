@@ -48,11 +48,7 @@ export function parseRelativeTime(input: string): number {
     return date.getTime();
   }
 
-  throwSystemCataloguedFailure(
-    'KB_RUNTIME_INPUT_INVALID',
-    `Invalid time format: "${input}". Use relative (1h, 30m, 2d) or ISO date.`,
-    'Use `--since 1h`, `--since 30m`, `--since 2d`, or an ISO date, then retry the logs command.',
-  );
+  throwSystemCataloguedFailure({ code: 'KB_RUNTIME_INPUT_INVALID', message: `Invalid time format: "${input}". Use relative (1h, 30m, 2d) or ISO date.`, hint: 'Use `--since 1h`, `--since 30m`, `--since 2d`, or an ISO date, then retry the logs command.' });
 }
 
 // ─── Log Formatting ─────────────────────────────────────────────────────────

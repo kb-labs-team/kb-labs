@@ -46,7 +46,7 @@ export interface ProjectRegistryOptions {
 
 interface IdentityMismatchRecord {
   record: ProjectRecord;
-  error: ProjectRegistryError<'KB_PROJECT_REGISTRY_CORRUPT'>;
+  error: ProjectRegistryError;
 }
 
 interface RegistrySnapshot {
@@ -54,21 +54,21 @@ interface RegistrySnapshot {
   identityMismatches: IdentityMismatchRecord[];
 }
 
-class ProjectRecordIdentityMismatch extends ProjectRegistryError<'KB_PROJECT_REGISTRY_CORRUPT'> {
+class ProjectRecordIdentityMismatch extends ProjectRegistryError {
   readonly record: ProjectRecord;
 
   constructor(file: string, index: number, record: ProjectRecord) {
     const reason = `projects[${index}].id ${record.id} does not match registered path ${record.path}`;
-    super('KB_PROJECT_REGISTRY_CORRUPT', `Project registry ${file} is invalid: ${reason}`, { file, reason });
+    super({ code: 'KB_PROJECT_REGISTRY_CORRUPT', details: { file, reason } }, `Project registry ${file} is invalid: ${reason}`);
     this.record = record;
   }
 }
 
 function corrupt(file: string, reason: string): ProjectRegistryError {
-  return new ProjectRegistryError('KB_PROJECT_REGISTRY_CORRUPT', `Project registry ${file} is invalid: ${reason}`, {
+  return new ProjectRegistryError({ code: 'KB_PROJECT_REGISTRY_CORRUPT', details: {
     file,
     reason,
-  });
+  } }, `Project registry ${file} is invalid: ${reason}`);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -127,11 +127,7 @@ function parseRegistrySnapshot(raw: string, file: string, recoverIdentityMismatc
     throw corrupt(file, 'schemaVersion is missing or not an integer');
   }
   if (schemaVersion !== PROJECT_REGISTRY_SCHEMA_VERSION) {
-    throw new ProjectRegistryError(
-      'KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED',
-      `Project registry ${file} has schemaVersion ${schemaVersion}; this build supports ${PROJECT_REGISTRY_SCHEMA_VERSION}.`,
-      { file, found: String(schemaVersion), supported: String(PROJECT_REGISTRY_SCHEMA_VERSION) },
-    );
+    throw new ProjectRegistryError({ code: 'KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED', details: { file, found: String(schemaVersion), supported: String(PROJECT_REGISTRY_SCHEMA_VERSION) } }, `Project registry ${file} has schemaVersion ${schemaVersion}; this build supports ${PROJECT_REGISTRY_SCHEMA_VERSION}.`);
   }
   if (!Array.isArray(projects)) {
     throw corrupt(file, 'projects is not an array');
@@ -290,7 +286,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
   };
 
   const unknown = (ref: string): ProjectRegistryError =>
-    new ProjectRegistryError('KB_PROJECT_UNKNOWN', `No registered project matches "${ref}".`, { path: ref });
+    new ProjectRegistryError({ code: 'KB_PROJECT_UNKNOWN', details: { path: ref } }, `No registered project matches "${ref}".`);
 
   const view = async (project: ProjectRecord): Promise<ProjectView> => {
     const exists = await pathExists(project.path);
@@ -310,11 +306,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
       const canonical = await canonicalizeProjectPath(input);
       const requestedName = addOptions.name?.trim();
       if (requestedName !== undefined && !NAME_PATTERN.test(requestedName)) {
-        throw new ProjectRegistryError(
-          'KB_RUNTIME_INPUT_INVALID',
-          `Invalid project name "${requestedName}": use letters, digits, ".", "_" or "-" (max 64, starting with a letter or digit).`,
-          { field: 'name' },
-        );
+        throw new ProjectRegistryError({ code: 'KB_RUNTIME_INPUT_INVALID', details: { field: 'name' } }, `Invalid project name "${requestedName}": use letters, digits, ".", "_" or "-" (max 64, starting with a letter or digit).`);
       }
       const id = deriveProjectId(canonical);
       const apply = addOptions.dryRun ? preview : mutate;
@@ -323,18 +315,18 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
         const existing = file.projects.find((p) => p.id === id);
         if (existing) {
           if (requestedName !== undefined && requestedName !== existing.name) {
-            throw new ProjectRegistryError('KB_PROJECT_ALREADY_REGISTERED', `Project already registered: ${canonical}`, {
+            throw new ProjectRegistryError({ code: 'KB_PROJECT_ALREADY_REGISTERED', details: {
               path: canonical,
-            });
+            } }, `Project already registered: ${canonical}`);
           }
           alreadyExisted = true;
           return existing;
         }
         const taken = new Set(file.projects.map((p) => p.name));
         if (requestedName !== undefined && taken.has(requestedName)) {
-          throw new ProjectRegistryError('KB_PROJECT_NAME_TAKEN', `Project name "${requestedName}" is taken.`, {
+          throw new ProjectRegistryError({ code: 'KB_PROJECT_NAME_TAKEN', details: {
             name: requestedName,
-          });
+          } }, `Project name "${requestedName}" is taken.`);
         }
         const record: ProjectRecord = {
           id,

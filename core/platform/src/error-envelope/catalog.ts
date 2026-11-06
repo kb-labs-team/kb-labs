@@ -19,7 +19,8 @@ import type {
 } from './types.js';
 import { catalogRequiredHintTemplateParameters, catalogRequiredMessageTemplateParameters, catalogStructuredDetailFields, catalogTemplateParameterNames } from './error-codes.generated.js';
 import type { CatalogHintTemplateParameters, CatalogMessageTemplateParameters, CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from './error-codes.generated.js';
-import type { CatalogDetailsFor } from './error-codes.generated.js';
+import type { CatalogDetailsFor, CatalogErrorRequest } from './error-codes.generated.js';
+export type { CatalogErrorRequest } from './error-codes.generated.js';
 
 /** Catalogue-derived detail fields accepted by a bridge for a specific code. */
 export type DetailsFor<C extends PlatformErrorCode> = C extends PlatformErrorCode ? CatalogDetailsFor[C] : never;
@@ -169,8 +170,13 @@ export function createErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOp
   return buildErrorEnvelope(code, options);
 }
 
-/** Dynamic error bridge. Unknown codes and detail maps are validated before an envelope is built. */
-export function createValidatedErrorEnvelope(
+/** Constructs an internal producer diagnostic from a catalog-generated request. */
+export function createCatalogErrorEnvelope(request: CatalogErrorRequest): ValidatedErrorEnvelope {
+  return buildErrorEnvelope(request.code, request);
+}
+
+/** Validates an error received across an untrusted execution or serialization boundary. */
+export function createUntrustedErrorEnvelope(
   code: unknown,
   options: EnvelopeOptionFields & { details?: unknown; templateValues?: unknown } = {},
 ): ValidatedErrorEnvelope {

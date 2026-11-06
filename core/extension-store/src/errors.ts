@@ -1,4 +1,4 @@
-import { createValidatedErrorEnvelope, type DetailsFor, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
+import { createCatalogErrorEnvelope, type DetailsFor, type ErrorEnvelope, type PlatformErrorCode, type CatalogErrorRequest } from '@kb-labs/core-platform';
 
 export type ExtensionStoreErrorCode =
   | 'KB_PLUGIN_INTEGRITY_MISMATCH'
@@ -8,20 +8,20 @@ export type ExtensionStoreErrorCode =
 /**
  * Typed store failure. `code` is a stable catalog code; `details` holds the
  * secret-free values that fill the catalog message/hint templates. Command
- * layers convert it to an error envelope with `createErrorEnvelope`.
+ * layers convert it to an error envelope with `createCatalogErrorEnvelope`.
  */
-export class ExtensionStoreError<C extends ExtensionStoreErrorCode> extends Error {
-  readonly code: C;
+export class ExtensionStoreError extends Error {
+  readonly code: ExtensionStoreErrorCode;
   readonly envelope: ErrorEnvelope;
-  readonly details: DetailsFor<C & PlatformErrorCode>;
+  readonly details: DetailsFor<ExtensionStoreErrorCode & PlatformErrorCode>;
 
-  constructor(code: C, details: DetailsFor<C & PlatformErrorCode>, cause?: string) {
-    const envelope = createValidatedErrorEnvelope(code, { details, cause });
+  constructor(request: Extract<CatalogErrorRequest, { code: ExtensionStoreErrorCode }> & { details: DetailsFor<ExtensionStoreErrorCode & PlatformErrorCode> }) {
+    const envelope = createCatalogErrorEnvelope(request);
     super(`${envelope.code}: ${envelope.message} ${envelope.hint}`);
     this.name = 'ExtensionStoreError';
-    this.code = code;
+    this.code = request.code;
     this.envelope = envelope;
-    this.details = details;
+    this.details = request.details;
   }
 }
 
@@ -30,12 +30,10 @@ export class ExtensionStoreError<C extends ExtensionStoreErrorCode> extends Erro
  * (a project's pin, or the value observed right after install). Carries
  * `KB_PLUGIN_INTEGRITY_MISMATCH`.
  */
-export class IntegrityMismatchError extends ExtensionStoreError<'KB_PLUGIN_INTEGRITY_MISMATCH'> {
+export class IntegrityMismatchError extends ExtensionStoreError {
   constructor(details: { plugin: string; expected: string; actual: string }) {
     super(
-      'KB_PLUGIN_INTEGRITY_MISMATCH',
-      details,
-      `Store entry for "${details.plugin}" has integrity ${details.actual}, expected ${details.expected}.`,
+      { code: 'KB_PLUGIN_INTEGRITY_MISMATCH', details, cause: `Store entry for "${details.plugin}" has integrity ${details.actual}, expected ${details.expected}.` },
     );
     this.name = 'IntegrityMismatchError';
   }
@@ -45,13 +43,13 @@ export class IntegrityMismatchError extends ExtensionStoreError<'KB_PLUGIN_INTEG
  * The package manager failed to install a version into the store (network,
  * registry, or a bad spec). Carries `KB_PLUGIN_INSTALL_FAILED`.
  */
-export class StoreInstallError extends ExtensionStoreError<'KB_PLUGIN_INSTALL_FAILED'> {
+export class StoreInstallError extends ExtensionStoreError {
   constructor(details: { plugin: string }, cause: string) {
-    super('KB_PLUGIN_INSTALL_FAILED', details, cause);
+    super({ code: 'KB_PLUGIN_INSTALL_FAILED', details, cause });
     this.name = 'StoreInstallError';
   }
 }
 
-export function isExtensionStoreError(value: unknown): value is ExtensionStoreError<ExtensionStoreErrorCode> {
+export function isExtensionStoreError(value: unknown): value is ExtensionStoreError {
   return value instanceof ExtensionStoreError;
 }

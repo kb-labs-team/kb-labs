@@ -3,17 +3,17 @@ import { ServiceNotConfiguredError } from './helpers/platform.js';
 import { ValidationError } from './helpers/validation.js';
 
 function validCataloguedFailure(): never {
-  return throwSystemCataloguedFailure('KB_CONFIG_INVALID', 'Invalid config.', 'Repair the config.', { path: 'someSection.key' });
+  return throwSystemCataloguedFailure({ code: 'KB_CONFIG_INVALID', message: 'Invalid config.', hint: 'Repair the config.', details: { path: 'someSection.key' } });
 }
 
 function undeclaredCataloguedFailureDetail(): never {
   // @ts-expect-error A catalogued command bridge cannot emit undeclared details.
-  return throwSystemCataloguedFailure('KB_CONFIG_INVALID', 'Invalid config.', 'Repair the config.', { path: 'someSection.key', reason: 'project-scope-path' });
+  return throwSystemCataloguedFailure({ code: 'KB_CONFIG_INVALID', message: 'Invalid config.', hint: 'Repair the config.', details: { path: 'someSection.key', reason: 'project-scope-path' } });
 }
 
 function missingRequiredCataloguedFailureDetail(): never {
   // @ts-expect-error The required path template detail cannot be omitted.
-  return throwSystemCataloguedFailure('KB_CONFIG_INVALID', 'Invalid config.', 'Repair the config.');
+  return throwSystemCataloguedFailure({ code: 'KB_CONFIG_INVALID' });
 }
 
 function validCommandFailure(): never {

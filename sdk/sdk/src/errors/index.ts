@@ -5,6 +5,7 @@
 
 export type {
   ErrorEnvelope,
+  CatalogErrorRequest,
   ErrorAction,
   ErrorCatalogEntry,
   PlatformErrorCode,
@@ -15,5 +16,6 @@ export {
   errorCatalog,
   getCatalogEntry,
   isErrorCode,
-  createValidatedErrorEnvelope,
+  createErrorEnvelope,
+  createCatalogErrorEnvelope,
 } from '@kb-labs/core-platform/error-envelope';

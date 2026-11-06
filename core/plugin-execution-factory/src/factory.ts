@@ -184,6 +184,7 @@ class NormalizingExecutionBackend implements ExecutionBackend {
       correlationId,
       logger: this.logger,
       diagnosticStack: executionDiagnostics?.errorStack,
+      workerDiagnostic: executionDiagnostics?.worker,
       serializedError: executionError.error,
       returnedFailureError,
       executionEnvelope,

@@ -56,7 +56,7 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       });
     } catch (error) {
       logger.error('[workflows-api] Failed to refresh workflows', error instanceof Error ? error : undefined);
-      return fail(reply, 'KB_RUNTIME_WORKFLOW_REFRESH_FAILED', error instanceof Error ? error.message : String(error));
+      return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_REFRESH_FAILED', message: error instanceof Error ? error.message : String(error) });
     }
   };
 
@@ -76,7 +76,7 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       return ok(response);
     } catch (error) {
       logger.error('[workflows-api] Error listing workflows', error instanceof Error ? error : undefined);
-      return fail(reply, 'KB_RUNTIME_WORKFLOW_LIST_FAILED', error instanceof Error ? error.message : 'Failed to list workflows');
+      return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_LIST_FAILED', message: error instanceof Error ? error.message : 'Failed to list workflows' });
     }
   });
 
@@ -88,12 +88,12 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       const { id } = request.params;
       const workflow = await observability.observeOperation('workflow.catalog.get', () => hostService.getWorkflow(id));
       if (!workflow) {
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_NOT_FOUND', 'Workflow not found');
+        return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_NOT_FOUND', message: 'Workflow not found' });
       }
       return ok(workflow);
     } catch (error) {
       logger.error('[workflows-api] Error getting workflow', error instanceof Error ? error : undefined);
-      return fail(reply, 'KB_RUNTIME_WORKFLOW_GET_FAILED', error instanceof Error ? error.message : 'Failed to get workflow');
+      return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_GET_FAILED', message: error instanceof Error ? error.message : 'Failed to get workflow' });
     }
   });
 
@@ -115,7 +115,7 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       return ok(response);
     } catch (error) {
       logger.error('[workflows-api] Error listing workflow runs', error instanceof Error ? error : undefined);
-      return fail(reply, 'KB_RUNTIME_WORKFLOW_RUNS_LIST_FAILED', error instanceof Error ? error.message : 'Failed to list workflow runs');
+      return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUNS_LIST_FAILED', message: error instanceof Error ? error.message : 'Failed to list workflow runs' });
     }
   });
 
@@ -131,14 +131,14 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to run workflow';
       if (message === 'Workflow not found') {
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_NOT_FOUND', message);
+        return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_NOT_FOUND', message: message });
       }
       // Invalid request payload (e.g. missing required inputs) is a client error.
       if (message.startsWith('Missing required input')) {
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_INPUT_INVALID', message);
+        return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_INPUT_INVALID', message: message });
       }
       logger.error('[workflows-api] Error running workflow', error instanceof Error ? error : undefined);
-      return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_START_FAILED', message);
+      return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_START_FAILED', message: message });
     }
   });
 
@@ -154,13 +154,13 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       const message = error instanceof Error ? error.message : 'Failed to cancel run';
       if (message === 'Run not found') {
         const runId = request.params.runId;
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', `Workflow run ${runId} was not found.`, undefined, { runId });
+        return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', message: `Workflow run ${runId} was not found.`, details: { runId } });
       }
       if (message.startsWith('Cannot cancel run')) {
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT');
+        return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT' });
       }
       logger.error('[workflows-api] Error cancelling run', error instanceof Error ? error : undefined);
-      return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_CANCEL_FAILED', message);
+      return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_CANCEL_FAILED', message: message });
     }
   });
 
@@ -180,15 +180,15 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       if (message === 'Run not found' || message === 'Workflow not found') {
         if (message === 'Run not found') {
           const runId = request.params.runId;
-          return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', `Workflow run ${runId} was not found.`, undefined, { runId });
+          return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', message: `Workflow run ${runId} was not found.`, details: { runId } });
         }
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_NOT_FOUND', message);
+        return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_NOT_FOUND', message: message });
       }
       if (message === 'No failed jobs to rerun') {
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_RERUN_NOT_APPLICABLE', message);
+        return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RERUN_NOT_APPLICABLE', message: message });
       }
       logger.error('[workflows-api] Error rerunning workflow', error instanceof Error ? error : undefined);
-      return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_RERUN_FAILED', message);
+      return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_RERUN_FAILED', message: message });
     }
   });
 
@@ -208,15 +208,15 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       if (message.includes('not found') || message.includes('snapshot not available')) {
         if (message.toLowerCase().includes('run not found')) {
           const runId = request.params.runId;
-          return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', `Workflow run ${runId} was not found.`, undefined, { runId });
+          return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', message: `Workflow run ${runId} was not found.`, details: { runId } });
         }
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_SNAPSHOT_NOT_FOUND', message);
+        return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_SNAPSHOT_NOT_FOUND', message: message });
       }
       if (message.startsWith('Cannot restart an active run')) {
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_RESTART_CONFLICT', message);
+        return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_RESTART_CONFLICT', message: message });
       }
       logger.error('[workflows-api] Error restarting run', error instanceof Error ? error : undefined);
-      return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_RESTART_FAILED', message);
+      return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_RESTART_FAILED', message: message });
     }
   });
 
@@ -237,7 +237,7 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       return ok(response);
     } catch (error) {
       logger.error('[workflows-api] Error listing runs', error instanceof Error ? error : undefined);
-      return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_LIST_FAILED', error instanceof Error ? error.message : 'Failed to list runs');
+      return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_LIST_FAILED', message: error instanceof Error ? error.message : 'Failed to list runs' });
     }
   });
 
@@ -249,12 +249,12 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       const { runId } = request.params;
       const run = await observability.observeOperation('workflow.run.get', () => hostService.getRun(runId));
       if (!run) {
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', `Workflow run ${runId} was not found.`, undefined, { runId });
+        return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', message: `Workflow run ${runId} was not found.`, details: { runId } });
       }
       return ok({ run });
     } catch (error) {
       logger.error('[workflows-api] Error getting run', error instanceof Error ? error : undefined);
-      return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_GET_FAILED', error instanceof Error ? error.message : 'Failed to get run');
+      return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_GET_FAILED', message: error instanceof Error ? error.message : 'Failed to get run' });
     }
   });
 
@@ -282,10 +282,10 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to get run logs';
         if (message === 'Run not found') {
-          return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', `Workflow run ${runId} was not found.`, undefined, { runId });
+          return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', message: `Workflow run ${runId} was not found.`, details: { runId } });
         }
         logger.error('[workflows-api] Error getting run logs', error instanceof Error ? error : undefined);
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_LOGS_FAILED', message);
+        return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_LOGS_FAILED', message: message });
       }
     },
   );
@@ -340,7 +340,7 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
     if (closed) {return;}
     if (!run) {
       cleanup();
-      return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', `Workflow run ${runId} was not found.`, undefined, { runId });
+      return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', message: `Workflow run ${runId} was not found.`, details: { runId } });
     }
 
     // SSE response

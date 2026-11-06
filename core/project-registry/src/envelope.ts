@@ -7,7 +7,7 @@
  */
 
 import { homedir } from 'node:os';
-import { createValidatedErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { createCatalogErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { isProjectRegistryError } from './errors.js';
 
 /** Replaces the active process HOME prefix with `~` so envelopes never carry fixture or user home paths. */
@@ -19,8 +19,12 @@ function redactHome(value: string): string {
 /** A registry failure keeps its catalog code; anything else becomes the generic unexpected-error envelope. */
 export function projectErrorEnvelope(error: unknown): ErrorEnvelope {
   if (isProjectRegistryError(error)) {
-    const details = Object.fromEntries(Object.entries(error.details).map(([k, v]) => [k, redactHome(v)]));
-    return createValidatedErrorEnvelope(error.code, { details });
+    const request = structuredClone(error.request);
+    const details = request.details;
+    for (const [key, value] of Object.entries(details)) {
+      Object.defineProperty(details, key, { value: redactHome(value), writable: true, enumerable: true, configurable: true });
+    }
+    return createCatalogErrorEnvelope(request);
   }
   return toErrorEnvelope(error);
 }

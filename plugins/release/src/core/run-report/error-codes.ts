@@ -1,8 +1,7 @@
 import {
-  createValidatedErrorEnvelope,
+  createCatalogErrorEnvelope,
   getCatalogEntry,
-  type DetailsOptionFor,
-  type ErrorAction,
+  type CatalogErrorRequest,
   type ErrorCatalogEntry,
   type ErrorEnvelope,
   type PlatformErrorCode,
@@ -18,26 +17,10 @@ export function describeReleaseError(code: ReleaseErrorCode): ErrorCatalogEntry 
   return entry;
 }
 
-export type CreateReleaseErrorInput<C extends ReleaseErrorCode = ReleaseErrorCode> = {
-  code: C;
-  message?: string;
-  cause?: string;
-  hint?: string;
-  actions?: ErrorAction[];
-  severity?: 'error' | 'warning';
-  correlationId?: string;
-} & DetailsOptionFor<C>;
+export type CreateReleaseErrorInput = Extract<CatalogErrorRequest, { code: ReleaseErrorCode }>;
 
 /** Build a release failure from the shared platform catalog. */
-export function createReleaseError<C extends ReleaseErrorCode>(input: CreateReleaseErrorInput<C>): ErrorEnvelope {
+export function createReleaseError(input: CreateReleaseErrorInput): ErrorEnvelope {
   describeReleaseError(input.code);
-  return createValidatedErrorEnvelope(input.code, {
-    ...(input.message !== undefined ? { message: input.message } : {}),
-    ...(input.cause !== undefined ? { cause: input.cause } : {}),
-    ...(input.hint !== undefined ? { hint: input.hint } : {}),
-    ...(input.actions !== undefined ? { actions: input.actions } : {}),
-    ...(input.correlationId !== undefined ? { correlationId: input.correlationId } : {}),
-    ...(input.details !== undefined ? { details: input.details } : {}),
-    ...(input.severity !== undefined ? { severity: input.severity } : {}),
-  });
+  return createCatalogErrorEnvelope(input);
 }

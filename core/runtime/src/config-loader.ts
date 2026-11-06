@@ -482,11 +482,8 @@ export async function loadPlatformConfig(
     const resolvedProjectRoot = await findRegisteredProjectRoot(startDir, env);
     if (registered.project.path !== resolvedProjectRoot) {
       throw new ProjectRegistryError(
-        'KB_PROJECT_RUNTIME_IDENTITY_MISMATCH',
+        { code: 'KB_PROJECT_RUNTIME_IDENTITY_MISMATCH', details: { projectId: options.projectId } },
         `Runtime project ${options.projectId} was started for "${requestedPath}" but the registry maps it to "${registered.project.path}".`,
-        {
-          projectId: options.projectId,
-        },
       );
     }
   }

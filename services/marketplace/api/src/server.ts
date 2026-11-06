@@ -11,7 +11,7 @@ import {
   type ObservabilityCollectorLike,
 } from '@kb-labs/shared-http';
 import type { IContextLogger } from '@kb-labs/core-platform';
-import { createErrorEnvelope, createValidatedErrorEnvelope, getCatalogEntry, isErrorCode, toErrorEnvelope, type ErrorCode } from '@kb-labs/core-platform';
+import { createErrorEnvelope, createCatalogErrorEnvelope, getCatalogEntry, isErrorCode, toErrorEnvelope, type CatalogErrorRequest } from '@kb-labs/core-platform';
 import type { ServiceHealthStatus, ObservabilityCheckStatus } from '@kb-labs/core-contracts';
 import { registerRoutes } from './routes/index.js';
 import { MarketplaceInstallRollbackError, MarketplaceVersionError, type MarketplaceService } from '@kb-labs/marketplace-core';
@@ -126,84 +126,69 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
     };
   }
 
-  let code: ErrorCode = 'KB_RUNTIME_UNEXPECTED';
+  type Diagnostic = CatalogErrorRequest;
+  let diagnostic: Diagnostic = { code: 'KB_RUNTIME_UNEXPECTED', details: {} };
   let message: string | undefined;
   let hint: string | undefined;
-  let details: Record<string, string> | undefined;
 
   if ('validation' in err) {
-    code = 'KB_RUNTIME_INPUT_INVALID';
+    diagnostic = { code: 'KB_RUNTIME_INPUT_INVALID', details: {} };
     message = err.message;
   } else if (err instanceof ScopeRequestError || err instanceof ScopeResolutionError || err instanceof AdapterScopeError) {
-    code = 'KB_RUNTIME_INPUT_INVALID';
+    diagnostic = { code: 'KB_RUNTIME_INPUT_INVALID', details: {} };
     message = err.message;
   } else if (err instanceof InvalidEntityError || err instanceof PackageClassificationError) {
-    code = 'KB_MARKETPLACE_PACKAGE_INVALID';
+    diagnostic = { code: 'KB_MARKETPLACE_PACKAGE_INVALID', details: {} };
     message = err.message;
     hint = err instanceof PackageClassificationError ? err.hint : undefined;
   } else if (err instanceof PlatformArtifactPinsError) {
-    code = 'KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING';
+    diagnostic = { code: 'KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING', details: {} };
     message = err.message;
     hint = err.hint;
   } else if (err instanceof PackageMetadataError) {
     if (err.code === 'PACKAGE_NOT_FOUND') {
-      code = 'KB_PLUGIN_NOT_FOUND';
-      details = { plugin: err.packageId };
+      diagnostic = { code: 'KB_PLUGIN_NOT_FOUND', details: { plugin: err.packageId } };
     } else if (err.code === 'AUTH_FAILED') {
-      code = 'KB_MARKETPLACE_AUTH_FAILED';
-      details = { package: err.packageId, scope };
+      diagnostic = { code: 'KB_MARKETPLACE_AUTH_FAILED', details: { package: err.packageId, scope } };
     } else if (err.code === 'TRANSPORT_FAILED') {
-      code = 'KB_MARKETPLACE_TRANSPORT_FAILED';
-      details = { package: err.packageId, scope };
+      diagnostic = { code: 'KB_MARKETPLACE_TRANSPORT_FAILED', details: { package: err.packageId, scope } };
     } else {
-      code = 'KB_MARKETPLACE_RESOLUTION_FAILED';
-      details = { package: err.packageId, scope };
+      diagnostic = { code: 'KB_MARKETPLACE_RESOLUTION_FAILED', details: { package: err.packageId, scope } };
     }
   } else if (err instanceof RegistryPackageError) {
-    details = { package: err.identity, scope };
-    if (err.code === 'SIGNATURE_INVALID') { code = 'KB_MARKETPLACE_SIGNATURE_INVALID'; }
-    else if (err.code === 'INTEGRITY_MISMATCH') { code = 'KB_MARKETPLACE_INTEGRITY_MISMATCH'; }
-    else if (err.code === 'AUTH_FAILED') { code = 'KB_MARKETPLACE_AUTH_FAILED'; }
-    else if (err.code === 'TRANSPORT_FAILED') { code = 'KB_MARKETPLACE_TRANSPORT_FAILED'; }
-    else if (err.code === 'IDENTITY_RESERVED') { code = 'KB_MARKETPLACE_IDENTITY_RESERVED'; }
-    else { code = 'KB_MARKETPLACE_RESOLUTION_FAILED'; }
+    if (err.code === 'SIGNATURE_INVALID') { diagnostic = { code: 'KB_MARKETPLACE_SIGNATURE_INVALID', details: { package: err.identity, scope } }; }
+    else if (err.code === 'INTEGRITY_MISMATCH') { diagnostic = { code: 'KB_MARKETPLACE_INTEGRITY_MISMATCH', details: { package: err.identity, scope } }; }
+    else if (err.code === 'AUTH_FAILED') { diagnostic = { code: 'KB_MARKETPLACE_AUTH_FAILED', details: { package: err.identity, scope } }; }
+    else if (err.code === 'TRANSPORT_FAILED') { diagnostic = { code: 'KB_MARKETPLACE_TRANSPORT_FAILED', details: { package: err.identity, scope } }; }
+    else if (err.code === 'IDENTITY_RESERVED') { diagnostic = { code: 'KB_MARKETPLACE_IDENTITY_RESERVED', details: { package: err.identity, scope } }; }
+    else { diagnostic = { code: 'KB_MARKETPLACE_RESOLUTION_FAILED', details: { package: err.identity, scope } }; }
   } else if (err instanceof PackageInstallError) {
     if (err.code === 'NOT_FOUND') {
-      code = 'KB_PLUGIN_NOT_FOUND';
-      details = { plugin: err.spec };
+      diagnostic = { code: 'KB_PLUGIN_NOT_FOUND', details: { plugin: err.spec } };
     } else if (err.code === 'RELEASE_TOO_FRESH') {
-      code = 'KB_MARKETPLACE_PACKAGE_TOO_FRESH';
-      details = { package: err.spec, scope };
+      diagnostic = { code: 'KB_MARKETPLACE_PACKAGE_TOO_FRESH', details: { package: err.spec, scope } };
     } else if (err.code === 'INTEGRITY_MISMATCH') {
-      code = 'KB_MARKETPLACE_INTEGRITY_MISMATCH';
-      details = { package: err.spec, scope };
+      diagnostic = { code: 'KB_MARKETPLACE_INTEGRITY_MISMATCH', details: { package: err.spec, scope } };
     } else {
-      code = 'KB_MARKETPLACE_INSTALL_FAILED';
-      details = { package: err.spec, scope, source: 'npm' };
+      diagnostic = { code: 'KB_MARKETPLACE_INSTALL_FAILED', details: { package: err.spec, scope, source: 'npm' }, cause: err.message, templateValues: { sourceName: 'npm' } };
     }
   } else if (err instanceof MarketplaceVersionError) {
-    details = {
-      package: err.packageId,
-      installedVersion: err.installedVersion,
-      requestedVersion: err.requestedVersion,
-      scope,
-    };
     if (err.code === 'INTEGRITY_MISMATCH') {
-      code = 'KB_MARKETPLACE_VERSION_IMMUTABLE';
+      diagnostic = { code: 'KB_MARKETPLACE_VERSION_IMMUTABLE', details: { package: err.packageId, installedVersion: err.installedVersion, requestedVersion: err.requestedVersion, scope } };
       message = err.message;
       hint = `Do not replace ${err.packageId}@${err.installedVersion}; publish a higher version, then run "kb marketplace install ${err.packageId}@latest --scope ${scope}".`;
     } else if (err.code === 'VERSION_NOT_HIGHER') {
-      code = 'KB_MARKETPLACE_VERSION_NOT_HIGHER';
+      diagnostic = { code: 'KB_MARKETPLACE_VERSION_NOT_HIGHER', details: { package: err.packageId, installedVersion: err.installedVersion, requestedVersion: err.requestedVersion, scope } };
       message = err.message;
       hint = `Only a version higher than ${err.installedVersion} can be installed. Publish one, then run "kb marketplace update ${err.packageId} --scope ${scope}".`;
     } else {
-      code = 'KB_MARKETPLACE_RESOLUTION_FAILED';
+      diagnostic = { code: 'KB_MARKETPLACE_RESOLUTION_FAILED', details: { package: err.packageId, scope } };
       message = err.message;
       hint = `Check the registry version metadata for ${err.packageId}, then retry the Marketplace operation.`;
     }
   }
 
-  if (code === 'KB_RUNTIME_UNEXPECTED') {
+  if (diagnostic.code === 'KB_RUNTIME_UNEXPECTED') {
     const catalogued = toErrorEnvelope(err, { correlationId });
     if (catalogued.code !== 'KB_RUNTIME_UNEXPECTED' && isErrorCode(catalogued.code)) {
       const catalogEntry = getCatalogEntry(catalogued.code);
@@ -213,22 +198,14 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
     }
   }
 
-  const entry = getCatalogEntry(code);
-  if (!entry?.httpStatus) {
-    code = 'KB_RUNTIME_UNEXPECTED';
-    message = undefined;
-    hint = undefined;
-    details = undefined;
-  }
-  const statusCode = getCatalogEntry(code)?.httpStatus ?? 500;
-  return {
-    statusCode,
-    envelope: createValidatedErrorEnvelope(code, {
-      correlationId, details, message, hint,
-      ...(code === 'KB_MARKETPLACE_INSTALL_FAILED' && err instanceof PackageInstallError
-        ? { cause: err.message }
-        : {}),
-      ...(code === 'KB_MARKETPLACE_INSTALL_FAILED' && details?.source ? { templateValues: { sourceName: details.source } } : {}),
-    }),
-  };
+  const entry = getCatalogEntry(diagnostic.code);
+  const contextual = { ...diagnostic, correlationId };
+  const envelope = message !== undefined && hint !== undefined
+    ? createCatalogErrorEnvelope({ ...contextual, message, hint })
+    : message !== undefined
+      ? createCatalogErrorEnvelope({ ...contextual, message })
+      : hint !== undefined
+        ? createCatalogErrorEnvelope({ ...contextual, hint })
+        : createCatalogErrorEnvelope(contextual);
+  return { statusCode: entry.httpStatus, envelope };
 }

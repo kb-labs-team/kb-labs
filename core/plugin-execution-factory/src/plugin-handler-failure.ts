@@ -24,6 +24,7 @@ export interface PluginHandlerFailureContext {
   logContext: PlatformLogContext;
   returnedFailure?: boolean;
   diagnosticStack?: string;
+  workerDiagnostic?: import('@kb-labs/core-platform').ExecutionDiagnostics['worker'];
   serializedError?: SerializedError;
   returnedFailureError?: unknown;
   executionEnvelope?: ErrorEnvelope;
@@ -62,6 +63,7 @@ function recordPluginFailure(
       command: context.command,
       failureReason: reason,
       correlationId: context.correlationId,
+      ...(context.workerDiagnostic ? { worker: context.workerDiagnostic } : {}),
       ...(sourceFailure ? {
         ...(sourceFailure.sourceCode ? { sourceCode: sourceFailure.sourceCode } : {}),
         sourceErrorClass: sourceFailure.sourceErrorClass,

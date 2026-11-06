@@ -121,11 +121,7 @@ async function acquire(lockPath: string, options: Required<FileLockOptions>): Pr
       continue;
     }
     if (Date.now() >= deadline) {
-      throw new ProjectRegistryError(
-        'KB_PROJECT_REGISTRY_LOCKED',
-        `Timed out after ${options.timeoutMs}ms waiting for the registry lock.`,
-        { timeoutMs: String(options.timeoutMs) },
-      );
+      throw new ProjectRegistryError({ code: 'KB_PROJECT_REGISTRY_LOCKED', details: { timeoutMs: String(options.timeoutMs) } }, `Timed out after ${options.timeoutMs}ms waiting for the registry lock.`);
     }
     await sleep(options.retryMs + Math.floor(Math.random() * options.retryMs));
   }

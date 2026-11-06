@@ -262,9 +262,9 @@ export class McpDaemonServer {
         try {
           if (params.name === DIAGNOSTICS_TOOL.name) {
             if (!permits) {
-              result = mcpToolError('KB_AUTH_REQUIRED', {
+              result = mcpToolError({ code: 'KB_AUTH_REQUIRED', details: {
                 gatewayUrl: this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL ?? '<url>',
-              });
+              } });
             } else {
               const validationError = validateToolArguments(
                 DIAGNOSTICS_TOOL.inputSchema,
@@ -278,11 +278,11 @@ export class McpDaemonServer {
             const serviceTool = this.serviceTools.find((tool) => tool.name === params.name);
             if (serviceTool) {
               if (!permits) {
-                result = mcpToolError('KB_AUTH_REQUIRED', {
+                result = mcpToolError({ code: 'KB_AUTH_REQUIRED', details: {
                   gatewayUrl: this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL ?? '<url>',
-                });
+                } });
               } else if (!permits('execute', serviceTool.serviceId)) {
-                result = mcpToolError('KB_AUTH_FORBIDDEN', { permission: 'execute' });
+                result = mcpToolError({ code: 'KB_AUTH_FORBIDDEN', details: { permission: 'execute' } });
               } else if (!this.opts.serviceTransport) {
                 result = unexpectedMcpResult(new Error(`Service transport is unavailable for ${serviceTool.serviceId}.`), reqLogger);
               } else {
