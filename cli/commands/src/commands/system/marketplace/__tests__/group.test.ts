@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createValidatedErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import { createMockContext } from '@kb-labs/shared-testing-e2e/cli';
 import { marketplaceGroup } from '../index.js';
 
@@ -20,7 +20,7 @@ describe('marketplace system command group', () => {
     vi.stubEnv('HOME', isolatedHome);
     vi.stubEnv('KB_HOME', path.join(isolatedHome, '.kb'));
     vi.stubEnv('KB_PLATFORM_ROOT', isolatedHome);
-    const envelope = createValidatedErrorEnvelope('KB_PLUGIN_INTEGRITY_MISMATCH', {
+    const envelope = createErrorEnvelope('KB_PLUGIN_INTEGRITY_MISMATCH', {
       details: {
         plugin: '@kb-labs/commit',
         expected: 'sha512-registry-pin',

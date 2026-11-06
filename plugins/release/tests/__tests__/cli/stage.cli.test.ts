@@ -6,6 +6,8 @@ vi.mock('../../../src/core/index.js', () => ({
   verifyExtractedTarball: vi.fn(() => []),
 }));
 
+vi.mock('../../../src/core/verifier.js', () => ({ verifyPackageTarball: vi.fn(() => []) }));
+
 vi.mock('@kb-labs/sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@kb-labs/sdk')>();
   return {

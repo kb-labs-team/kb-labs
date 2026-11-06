@@ -4,13 +4,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
-import { createValidatedErrorEnvelope, type DetailsFor, type PlatformErrorCode } from "@kb-labs/core-platform";
+import { createCatalogErrorEnvelope, type CatalogErrorRequest } from "@kb-labs/core-platform";
 import { registerProjectRoutes } from "../project-routing.js";
 
 const PROJECT_SERVICES = [{ serviceId: "rest", rewritePrefix: "/api/v1", healthCheck: "/health" }];
 
-function catalogueText<C extends PlatformErrorCode>(code: C, details: DetailsFor<C>): { message: string; hint: string } {
-  const envelope = createValidatedErrorEnvelope(code, { details });
+function catalogueText(request: CatalogErrorRequest): { message: string; hint: string } {
+  const envelope = createCatalogErrorEnvelope(request);
   return { message: envelope.message, hint: envelope.hint };
 }
 
@@ -174,10 +174,10 @@ describe("registerProjectRoutes", () => {
     });
 
     expect(res.statusCode).toBe(404);
-    const expectedText = catalogueText("KB_PROJECT_SERVICE_NOT_FOUND", {
+    const expectedText = catalogueText({ code: "KB_PROJECT_SERVICE_NOT_FOUND", details: {
       projectId: "prj_a",
       serviceId: "unknown-service",
-    });
+    } });
     expect(res.json()).toMatchObject({
       ok: false,
       error: {
@@ -196,10 +196,10 @@ describe("registerProjectRoutes", () => {
     }), undefined, [{ serviceId: "mcp", rewritePrefix: "/", healthCheck: "/health" }]);
 
     const res = await app!.inject({ method: "POST", url: "/api/v1/projects/p/mcp", payload: '{"jsonrpc":"2.0","id":1,"method":"initialize"}' });
-    const expectedText = catalogueText("KB_PROJECT_RUNTIME_START_FAILED", {
+    const expectedText = catalogueText({ code: "KB_PROJECT_RUNTIME_START_FAILED", details: {
       projectId: "p",
       serviceId: "mcp",
-    });
+    } });
 
     expect(res.statusCode).toBe(502);
     expect(res.json()).toMatchObject({
@@ -220,10 +220,10 @@ describe("registerProjectRoutes", () => {
     }), undefined, [{ serviceId: "mcp", rewritePrefix: "/", healthCheck: "/health" }]);
 
     const response = await app!.inject({ method: "POST", url: "/api/v1/projects/p/mcp", payload: "{}" });
-    const expectedText = catalogueText("KB_PROJECT_RUNTIME_START_FAILED", {
+    const expectedText = catalogueText({ code: "KB_PROJECT_RUNTIME_START_FAILED", details: {
       projectId: "p",
       serviceId: "mcp",
-    });
+    } });
 
     expect(response.statusCode).toBe(502);
     expect(response.json()).toMatchObject({
@@ -301,10 +301,10 @@ describe("registerProjectRoutes", () => {
     }), { statusCode: 200, body: '{"schema":"kb.health/1","status":"unhealthy"}' });
 
     const response = await app!.inject({ method: "GET", url: "/api/v1/projects/prj_a/rest/health" });
-    const expectedText = catalogueText("KB_PROJECT_RUNTIME_START_FAILED", {
+    const expectedText = catalogueText({ code: "KB_PROJECT_RUNTIME_START_FAILED", details: {
       projectId: "prj_a",
       serviceId: "rest",
-    });
+    } });
 
     expect(response.statusCode).toBe(502);
     expect(response.json()).toMatchObject({
@@ -328,10 +328,10 @@ describe("registerProjectRoutes", () => {
     }));
 
     const response = await app!.inject({ method: "GET", url: "/api/v1/projects/prj_a/rest/health" });
-    const expectedText = catalogueText("KB_PROJECT_RUNTIME_START_FAILED", {
+    const expectedText = catalogueText({ code: "KB_PROJECT_RUNTIME_START_FAILED", details: {
       projectId: "prj_a",
       serviceId: "rest",
-    });
+    } });
 
     expect(response.statusCode).toBe(502);
     expect(response.json()).toMatchObject({
@@ -408,7 +408,7 @@ describe("registerProjectRoutes", () => {
     const res = await app!.inject({ method: "GET", url: "/api/v1/projects/p/rest/api/v1/plugins/agents/sessions" });
 
     expect(res.statusCode).toBe(404);
-    const expectedText = catalogueText("KB_RUNTIME_RESOURCE_NOT_FOUND", {});
+    const expectedText = catalogueText({ code: "KB_RUNTIME_RESOURCE_NOT_FOUND", details: {} });
     expect(res.json()).toMatchObject({
       ok: false,
       error: {
@@ -430,7 +430,7 @@ describe("registerProjectRoutes", () => {
     const res = await app.inject({ method: "GET", url: "/api/v1/projects/p/rest/api/v1/private" });
 
     expect(res.statusCode).toBe(403);
-    const expectedText = catalogueText("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", {});
+    const expectedText = catalogueText({ code: "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", details: {} });
     expect(res.json()).toMatchObject({
       ok: false,
       error: {

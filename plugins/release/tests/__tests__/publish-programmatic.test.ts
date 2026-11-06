@@ -203,7 +203,7 @@ describe('publishPackagesProgrammatic — tarballPath (release artifact publish)
     });
 
     expect(capturedArgs).toHaveLength(1);
-    expect(capturedArgs[0]).toEqual(['publish', tarballPath]);
+    expect(capturedArgs[0]).toEqual(['publish', '--no-update-notifier', tarballPath, '--ignore-scripts']);
     expect(capturedShell).toEqual([false]);
   });
 
@@ -218,7 +218,7 @@ describe('publishPackagesProgrammatic — tarballPath (release artifact publish)
     });
 
     expect(capturedShell).toEqual([false]);
-    expect(capturedArgs[0]).toEqual(['publish', maliciousTarball]);
+    expect(capturedArgs[0]).toEqual(['publish', '--no-update-notifier', maliciousTarball, '--ignore-scripts']);
     expect(result.results[0]?.success).toBe(true);
     expect(JSON.stringify(result)).not.toContain(sentinel);
     expect(capturedNpmrc.join('\n')).not.toContain(sentinel);
@@ -247,7 +247,7 @@ describe('publishPackagesProgrammatic — tarballPath (release artifact publish)
       token: 'npm-token',
     });
 
-    expect(capturedArgs[0]).toEqual(['publish', '--no-git-checks']);
+    expect(capturedArgs[0]).toEqual(['publish', '--no-update-notifier', '--no-git-checks']);
   });
 });
 

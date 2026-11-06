@@ -14,7 +14,8 @@ import {
   ERROR_STAGES,
   ErrorEnvelopeError,
   createErrorEnvelope,
-  createValidatedErrorEnvelope,
+  createCatalogErrorEnvelope,
+  createUntrustedErrorEnvelope,
   decodeErrorEnvelope,
   errorCatalog,
   getCatalogEntry,
@@ -383,7 +384,7 @@ describe('createErrorEnvelope', () => {
   });
 
   it('returns a catalogued producer-contract diagnostic for undeclared details', () => {
-    const envelope = createValidatedErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+    const envelope = createUntrustedErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
       details: { undeclaredEvidence: 'unexpected' },
     });
     expect(envelope.code).toBe('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION');
@@ -438,7 +439,7 @@ describe('structured error diagnostics', () => {
 
   it.each(['{"findings":[]}', '[{"message":"bad"}]'])('rejects serialized structured detail values: %s', (value) => {
     try {
-      createValidatedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', { templateValues: { binary: 'test-cli' }, details: { report: value } });
+      createUntrustedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', { templateValues: { binary: 'test-cli' }, details: { report: value } });
       throw new Error('expected serialized JSON detail to be rejected');
     } catch (error) {
       expect(error).toMatchObject({ code: 'KB_PLUGIN_CONTRACT_VIOLATION', hint: expect.stringContaining('error.diagnostics') });
@@ -454,7 +455,7 @@ describe('structured error diagnostics', () => {
   });
 
   it('rejects non-string details in the builder with a catalogued contract violation', () => {
-    expect(() => createValidatedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+    expect(() => createUntrustedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
       templateValues: { binary: 'test-cli' },
       details: { report: ['finding'] },
     })).toThrow(expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }));
@@ -807,4 +808,20 @@ describe('toErrorEnvelope (platform errors)', () => {
   it('rejects codes that are not in the catalog', () => {
     expect(isErrorCode('KB_NOPE_NOPE')).toBe(false);
   });
+});
+
+
+it('constructs a command diagnostic with its catalogued runtime template', () => {
+  const envelope = createCatalogErrorEnvelope({ code: 'KB_RUNTIME_COMMAND_FAILED', templateValues: { binary: 'kb' } });
+  expect(envelope.code).toBe('KB_RUNTIME_COMMAND_FAILED');
+  expect(envelope.hint).toContain('kb');
+});
+
+it('validates required runtime parameters and honors catalog overrides', () => {
+  // @ts-expect-error This deliberately exercises runtime validation of an invalid producer request.
+  const missing = createCatalogErrorEnvelope({ code: 'KB_RUNTIME_COMMAND_FAILED' });
+  expect(missing.code).toBe('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION');
+  const overridden = createCatalogErrorEnvelope({ code: 'KB_RUNTIME_COMMAND_FAILED', hint: 'Retry the command.' });
+  expect(overridden.code).toBe('KB_RUNTIME_COMMAND_FAILED');
+  expect(overridden.hint).toBe('Retry the command.');
 });

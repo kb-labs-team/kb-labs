@@ -16,10 +16,13 @@
  * responds — so the timeout has to fire against a genuinely running OS
  * process, the same as it would in production.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { Worker } from '../backends/worker-pool/worker.js';
+import { normalizeExecutionFailure } from '../utils.js';
+import { createNormalizedExecutionBackend } from '../factory.js';
+import type { ILogger } from '@kb-labs/core-platform';
 import type { ExecutionRequest } from '../types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -71,9 +74,11 @@ describe('Worker — execution timeout (real forked child process)', () => {
     worker = new Worker({ workerScript: HANGING_SCRIPT });
     await worker.spawn();
 
+    const request = makeRequest({ handlerRef: './dist/checks.js', executionId: 'execution-distinct' });
+    request.descriptor.requestId = 'request-distinct';
     let caught: unknown;
     try {
-      await worker.execute(makeRequest({ handlerRef: './dist/checks.js' }), 300);
+      await worker.execute(request, 300);
     } catch (error) {
       caught = error;
     }
@@ -81,6 +86,25 @@ describe('Worker — execution timeout (real forked child process)', () => {
     expect(caught).toBeInstanceOf(Error);
     const error = caught as Error & { code?: string; details?: Record<string, unknown> };
     expect(error.code).toBe('TIMEOUT');
+    const failure = normalizeExecutionFailure(caught, request);
+    expect(failure.diagnostics).toMatchObject({ worker: { workerId: worker.id, executionId: 'execution-distinct', requestId: 'request-distinct', pluginId: '@kb-labs/release', handlerRef: './dist/checks.js' } });
+    const records: Array<Record<string, unknown>> = [];
+    const logger: ILogger = {
+      trace() {}, debug() {}, info() {}, warn() {},
+      error(_message, _error, fields) { if (fields) records.push(fields); },
+      fatal() {}, child() { return logger; }, async flush() {},
+    };
+    const backend = {
+      execute: vi.fn(async () => ({ ok: false, ...failure, executionTimeMs: 300 })),
+      health: vi.fn(), stats: vi.fn(), shutdown: vi.fn(),
+    };
+    await createNormalizedExecutionBackend(backend, logger, 'worker-pool').execute(request);
+    expect(records).toEqual(expect.arrayContaining([expect.objectContaining({
+      worker: expect.objectContaining({ workerId: worker.id, executionId: 'execution-distinct', requestId: 'request-distinct', pluginId: '@kb-labs/release', handlerRef: './dist/checks.js' }),
+    })]));
+    const normalized = failure.error;
+    expect(normalized.code).toBe('KB_RUNTIME_TIMEOUT');
+    expect(normalized.details).toEqual({ timeoutMs: '300' });
     expect(error.details).toMatchObject({
       timeoutMs: 300,
       handlerRef: './dist/checks.js',
