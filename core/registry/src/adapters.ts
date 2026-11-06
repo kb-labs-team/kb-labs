@@ -26,12 +26,10 @@ export async function resolveCatalogAdapters(
   if (workspace?.development) {
     const packages = await findWorkspacePackages(workspace.workspaceRoot);
     const configured = new Map(workspace.configuredPackages.map(({ packageName, slot }) => [packageName, slot]));
-    const candidates = workspace.discoverAll
-      ? packages
-      : packages.filter(({ packageName }) => configured.has(packageName));
-    for (const candidate of candidates) {
+    for (const candidate of packages) {
       const manifest = await loadAdapterManifest({ packageRoot: candidate.packageRoot });
-      if (manifest.kind !== 'adapter' && !configured.has(candidate.packageName) && !workspace.discoverAll) continue;
+      const declaresDefault = manifest.kind === 'adapter' && Object.keys(manifest.manifest.defaultFor ?? {}).length > 0;
+      if (!workspace.discoverAll && !configured.has(candidate.packageName) && !declaresDefault) continue;
       result.set(candidate.packageName, {
         id: candidate.packageName,
         packageRoot: candidate.packageRoot,
