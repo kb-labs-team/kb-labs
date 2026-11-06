@@ -3,6 +3,8 @@ package engine
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1032,13 +1034,43 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 				changed = append(changed, p)
 				break
 			}
-			if state.InputHash != inputHash {
+			if state.InputHash != inputHash || !taskOutputsMatch(p.Dir, *def, cache.NewManifestStore(cacheRoot), inputHash, p.Name) {
 				changed = append(changed, p)
 				break
 			}
 		}
 	}
 	return packagesAndDependents(ws, changed)
+}
+
+// taskOutputsMatch checks the content and modes owned by the successful cache manifest.
+func taskOutputsMatch(pkgDir string, def TaskDef, manifests *cache.ManifestStore, inputHash, pkgName string) bool {
+	if len(def.Outputs) == 0 {
+		return true
+	}
+	manifest, ok := manifests.Get(pkgName, def.Name, inputHash)
+	if !ok || manifest.ExitCode != 0 || len(manifest.Outputs) == 0 {
+		return false
+	}
+	for _, ref := range manifest.Outputs {
+		if ref.Mode == nil {
+			return false
+		}
+		file := filepath.Join(pkgDir, ref.Path)
+		info, err := os.Stat(file)
+		if err != nil || !info.Mode().IsRegular() || uint32(info.Mode().Perm()) != *ref.Mode {
+			return false
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return false
+		}
+		hash := sha256.Sum256(data)
+		if hex.EncodeToString(hash[:]) != ref.Object {
+			return false
+		}
+	}
+	return true
 }
 
 func workspaceInputDigests(ws *workspace.Workspace) (string, map[string]string, map[string]string, error) {

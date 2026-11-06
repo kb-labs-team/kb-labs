@@ -197,3 +197,51 @@ func TestDirtyPackagesEmptyTasks(t *testing.T) {
 		t.Fatalf("DirtyPackages with empty tasks = %v, want []", got)
 	}
 }
+
+func TestDirtyPackagesDetectsChangedAndMissingOutputs(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	pkgDir := filepath.Join(root, "packages", "app")
+	writeFile(t, filepath.Join(pkgDir, "package.json"), `{"name":"@kb/app"}`)
+	writeFile(t, filepath.Join(pkgDir, "input.txt"), "original")
+	initTrackedFixture(t, root)
+	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{{Name: "app", Category: config.CategoryConfig{Match: []string{"packages/app"}, Preset: "node-lib"}}}}, Tasks: map[string]config.TaskConfig{"build": {{Command: "cp input.txt out.txt", Outputs: []string{"out.txt"}}}}}
+	ws := mustWorkspace(t, root, cfg)
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	store, err := cache.NewLocalStore(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := NewExecutor(store, cache.NewManifestStore(cacheRoot), cache.NewStateStore(cacheRoot), root, cacheRoot, false)
+	executor.globalInputDigest, executor.ownedInputDigests, executor.dependencyDigests, err = workspaceInputDigests(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := ResolvePackageTaskDef(ws, cfg, "build", ws.Packages[0])
+	if result := executor.Run(ws.Packages[0], *def, false, nil); !result.OK {
+		t.Fatalf("build: %+v", result)
+	}
+	for _, content := range []string{"modified", ""} {
+		if content == "" {
+			if err := os.Remove(filepath.Join(pkgDir, "out.txt")); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			writeFile(t, filepath.Join(pkgDir, "out.txt"), content)
+		}
+		got, err := DirtyPackages(ws, cfg, []string{"build"}, cacheRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("changed output %q: got %v, want package selected", content, got)
+		}
+		if result := executor.Run(ws.Packages[0], *def, false, nil); !result.OK {
+			t.Fatalf("restore: %+v", result)
+		}
+		restored, err := os.ReadFile(filepath.Join(pkgDir, "out.txt"))
+		if err != nil || string(restored) != "original" {
+			t.Fatalf("restored output = %q, error %v; want original", restored, err)
+		}
+	}
+}

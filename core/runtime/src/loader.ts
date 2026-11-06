@@ -185,6 +185,8 @@ export function fillAdapterFallbacksAndRecord(
   adapters: Record<string, AdapterValue | undefined>,
   installedPlatform = false,
   failures: ReadonlyMap<string, AdapterLoadFailureRecord> = new Map(),
+  platformRoot = process.cwd(),
+  workspaceDevelopment = false,
 ): void {
   const status = getAdapterStatusRegistry();
   const now = (): string => new Date().toISOString();
@@ -265,10 +267,15 @@ export function fillAdapterFallbacksAndRecord(
     }
 
     if (installedPlatform && 'preferInstalledDefault' in desc && desc.preferInstalledDefault && !configuredPkg) {
-      throw new Error(
-        `Platform startup aborted: installed platform has no configured or manifest-discovered local default for "${slot}". ` +
-          `Install a local adapter for this slot, then bind it with \`kb adapter bind ${slot} <package>\`.`,
-      );
+      const command = workspaceDevelopment
+        ? 'kb-devkit run build --affected'
+        : `kb-create doctor --platform-root ${JSON.stringify(platformRoot)}`;
+      const message = `Platform startup aborted: no configured or manifest-discovered local default for "${slot}".`;
+      throw new AdapterUnavailableError(slot, 'load-failed', message, undefined, {
+        userMessage: message,
+        hint: command,
+        action: { id: 'diagnose-adapter-load', label: 'Diagnose the platform', command },
+      });
     }
 
     // Branch 1b: adapter present but not in config — bootstrap fallback
@@ -942,6 +949,8 @@ export async function initPlatform(
       adapters as Record<string, AdapterValue | undefined>,
       installedPlatform,
       adapterLoadFailures,
+      adapterRoot,
+      workspaceDevelopment,
     );
 
     // ══════════════════════════════════════════════════════════════════════
