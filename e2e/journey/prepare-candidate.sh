@@ -34,45 +34,20 @@ fi
 
 node "$ROOT/e2e/platform/validate-package-outputs.mjs" "$PACKAGES" "$ROOT"
 
-NATIVE_GOOS=""
-NATIVE_GOARCH=""
-if [[ "${KB_JOURNEY_NATIVE_BINARY:-0}" == "1" ]]; then
-  NATIVE_GOOS="$(cd "$ROOT/tools/kb-create" && go env GOOS)"
-  NATIVE_GOARCH="$(cd "$ROOT/tools/kb-create" && go env GOARCH)"
-fi
-(
-  cd "$ROOT/tools/kb-create"
-  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.commit=$COMMIT" \
-    -o "$TARGET/kb-create-linux-amd64" .
-  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.commit=$COMMIT" \
-    -o "$TARGET/kb-create-linux-arm64" .
-  if [[ -n "$NATIVE_GOOS" && "$NATIVE_GOOS/$NATIVE_GOARCH" != "linux/amd64" && "$NATIVE_GOOS/$NATIVE_GOARCH" != "linux/arm64" ]]; then
-    GOOS="$NATIVE_GOOS" GOARCH="$NATIVE_GOARCH" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.commit=$COMMIT" \
-      -o "$TARGET/kb-create-$NATIVE_GOOS-$NATIVE_GOARCH" .
-  fi
-  # The installer artifact targets the Linux runner; the sealer runs on the
-  # machine preparing the candidate (macOS locally, Linux in CI).
-  CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' \
-    -o "$OUT/kb-create-release-index" ./v2/cmd/kb-create-release-index
-)
-
-BINARY_FILES=(kb-create-linux-amd64 kb-create-linux-arm64)
-if [[ -n "${NATIVE_GOOS:-}" && "$NATIVE_GOOS/$NATIVE_GOARCH" != "linux/amd64" && "$NATIVE_GOOS/$NATIVE_GOARCH" != "linux/arm64" ]]; then
-  BINARY_FILES+=("kb-create-$NATIVE_GOOS-$NATIVE_GOARCH")
-fi
-if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$TARGET" && sha256sum "${BINARY_FILES[@]}" > binary-checksums.txt)
-else
-  (cd "$TARGET" && shasum -a 256 "${BINARY_FILES[@]}" > binary-checksums.txt)
-fi
+# The sealer is a host tool; distributable binaries come from GoReleaser.
+(cd "$ROOT/tools/kb-create" && CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "$OUT/kb-create-release-index" ./v2/cmd/kb-create-release-index)
 BINARY_VERSION="$(node -p "require('$ROOT/core/runtime/package.json').version")"
-node "$ROOT/tools/kb-create/scripts/prepare-binary-manifest.mjs" \
-  --checksums "$TARGET/binary-checksums.txt" \
+bash "$ROOT/scripts/prepare-candidate-binaries.sh" build "$BINARY_VERSION" \
+  --artifacts "$ROOT/dist/artifacts.json" \
+  --checksums "$ROOT/dist/checksums.txt" \
   --repository kb-labs-team/kb-labs \
   --release-tag "$TAG" \
   --version "$BINARY_VERSION" \
   --asset-base-url "${KB_JOURNEY_BINARY_BASE_URL:-http://origin:8080/journey-candidate}" \
   --output "$TARGET/binary-manifest.json"
+node "$ROOT/e2e/platform/stage-release-binaries.mjs" "$ROOT/dist/artifacts.json" "$TARGET"
+BINARY_FILES=()
+while IFS= read -r filename; do BINARY_FILES+=("$filename"); done < <(node -e 'const fs=require("fs"); for (const b of JSON.parse(fs.readFileSync(process.argv[1])).binaries) console.log(b.filename)' "$TARGET/binary-manifest.json")
 
 node "$ROOT/e2e/platform/prepare-release-index.mjs" \
   --packages-dir "$PACKAGES" \
@@ -80,8 +55,9 @@ node "$ROOT/e2e/platform/prepare-release-index.mjs" \
   --sealer "$OUT/kb-create-release-index" \
   --binary-dir "$TARGET" \
   --binary-manifest "$TARGET/binary-manifest.json" \
-  --binary-manifest-tool "$ROOT/tools/kb-create/scripts/prepare-binary-manifest.mjs" \
-  --binary-checksums "$TARGET/binary-checksums.txt" \
+  --binary-manifest-tool "$ROOT/scripts/prepare-candidate-binaries.sh" \
+  --binary-artifacts "$ROOT/dist/artifacts.json" \
+  --binary-checksums "$ROOT/dist/checksums.txt" \
   --release-config "$ROOT/tools/kb-create/config/platform-release.jsonc" \
   --binary-version "$BINARY_VERSION" \
   --source-revision "$COMMIT" \

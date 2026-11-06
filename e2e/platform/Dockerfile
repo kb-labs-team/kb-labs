@@ -12,31 +12,8 @@
 # Build:  docker build -t kb-e2e-platform -f e2e/platform/Dockerfile .
 # Run:    docker compose -f e2e/docker-compose.yml up
 
-# ── Stage 1: compile Go binaries ──────────────────────────────────────────
-FROM golang:1.26-bookworm AS go-builder
-
-ENV CGO_ENABLED=0
-
-WORKDIR /src
-
-# clikit is a workspace-local Go module shared by the tool binaries via a
-# `replace github.com/kb-labs/clikit => ../clikit` directive. The isolated
-# Docker build context must include it or `go build` fails with
-# "replacement directory ../clikit does not exist".
-COPY tools/clikit    /src/clikit
-COPY tools/kb-create /src/kb-create
-COPY tools/kb-dev    /src/kb-dev
-COPY tools/kb-devkit /src/kb-devkit
-
-RUN cd /src/kb-create && GOOS=linux GOARCH=amd64 go build -o /out/kb-create-linux-amd64 .
-RUN cd /src/kb-create && GOOS=linux GOARCH=arm64 go build -o /out/kb-create-linux-arm64 .
-RUN cp /out/kb-create-linux-amd64 /out/kb-create && chmod +x /out/kb-create
-RUN cd /src/kb-create && go build -o /out/kb-create-release-index ./v2/cmd/kb-create-release-index
-RUN cd /src/kb-dev    && go build -o /out/kb-dev .
-RUN cd /src/kb-devkit && go build -o /out/kb-devkit .
-
-# Build the sealed V2 index from the exact package tarballs that the publisher
-# exposes through Verdaccio. This uses the same sealer as the release pipeline.
+# Candidate binaries and the host sealer are prepared by the release owner
+# before Docker receives its build context.
 FROM node:24-bookworm AS release-index-builder
 
 ARG SOURCE_REVISION
@@ -45,10 +22,14 @@ WORKDIR /src
 COPY e2e/packages /src/packages
 COPY e2e/platform/registry-manifest.json /src/registry-manifest.json
 COPY e2e/platform/prepare-release-index.mjs /src/prepare-release-index.mjs
+COPY e2e/platform/release-index-package-stage.mjs /src/release-index-package-stage.mjs
 COPY e2e/platform/release-provenance.mjs /src/release-provenance.mjs
 COPY e2e/platform/journey-update-packages.mjs /src/journey-update-packages.mjs
 COPY e2e/platform/release-index-version.mjs /src/release-index-version.mjs
-COPY tools/kb-create/scripts/prepare-binary-manifest.mjs /src/kb-create/scripts/prepare-binary-manifest.mjs
+COPY tools/kb-create/scripts/prepare-binary-manifest.mjs /src/tools/kb-create/scripts/prepare-binary-manifest.mjs
+COPY scripts/prepare-candidate-binaries.sh /src/scripts/prepare-candidate-binaries.sh
+COPY dist /src/dist
+COPY .journey/e2e-platform-binaries /out/binaries
 COPY tools/kb-create/scripts/prepare-release-index.mjs /src/kb-create/scripts/prepare-release-index.mjs
 COPY tools/kb-create/scripts/platform-release-config.mjs /src/kb-create/scripts/platform-release-config.mjs
 COPY tools/kb-create/package.json /src/node_modules/kb-create/package.json
@@ -56,26 +37,18 @@ COPY tools/kb-create/scripts/package-provenance.mjs /src/node_modules/kb-create/
 COPY tools/kb-create/scripts/platform-release-config.mjs /src/node_modules/kb-create/scripts/platform-release-config.mjs
 COPY tools/kb-create/config/platform-release.jsonc /src/platform-release.jsonc
 COPY tools/kb-create/config/platform-release.jsonc /src/kb-create/config/platform-release.jsonc
-COPY --from=go-builder /out/kb-create-linux-amd64 /out/binaries/kb-create-linux-amd64
-COPY --from=go-builder /out/kb-create-linux-arm64 /out/binaries/kb-create-linux-arm64
-COPY --from=go-builder /out/kb-create-release-index /usr/local/bin/kb-create-release-index
-RUN sha256sum /out/binaries/kb-create-linux-amd64 /out/binaries/kb-create-linux-arm64 > /out/binary-checksums.txt && \
+RUN cp /out/binaries/kb-create-release-index /usr/local/bin/kb-create-release-index && \
+    cp /out/binaries/binary-manifest.json /out/binary-manifest.json && \
     BINARY_VERSION="$(node -e 'const fs=require("node:fs"); const {execFileSync}=require("node:child_process"); const file=fs.readdirSync("/src/packages").find(name=>name.startsWith("kb-labs-core-runtime-") && name.endsWith(".tgz")); if (!file) throw new Error("@kb-labs/core-runtime tarball is missing"); process.stdout.write(JSON.parse(execFileSync("tar", ["-xOzf", `/src/packages/${file}`, "package/package.json"], {encoding:"utf8"})).version)')" && \
-    node /src/kb-create/scripts/prepare-binary-manifest.mjs \
-      --checksums /out/binary-checksums.txt \
-      --repository kb-labs-team/kb-labs \
-      --release-tag journey-candidate \
-      --version "$BINARY_VERSION" \
-      --asset-base-url http://origin:8080/journey-candidate \
-      --output /out/binary-manifest.json && \
     node /src/prepare-release-index.mjs \
       --packages-dir /src/packages \
       --registry-manifest /src/registry-manifest.json \
       --sealer /usr/local/bin/kb-create-release-index \
       --binary-dir /out/binaries \
       --binary-manifest /out/binary-manifest.json \
-      --binary-manifest-tool /src/kb-create/scripts/prepare-binary-manifest.mjs \
-      --binary-checksums /out/binary-checksums.txt \
+      --binary-manifest-tool /src/scripts/prepare-candidate-binaries.sh \
+      --binary-artifacts /src/dist/artifacts.json \
+      --binary-checksums /src/dist/checksums.txt \
       --release-config /src/platform-release.jsonc \
       --binary-version "$BINARY_VERSION" \
       --source-revision "$SOURCE_REVISION" \
@@ -93,9 +66,9 @@ RUN git config --global user.email "e2e@kblabs.test" && \
     git config --global user.name "KB Labs E2E"
 
 # Pre-install binaries — entrypoint.sh skips kblabs.ru download when these exist
-COPY --from=go-builder /out/kb-create /usr/local/bin/kb-create
-COPY --from=go-builder /out/kb-dev    /usr/local/bin/kb-dev
-COPY --from=go-builder /out/kb-devkit /usr/local/bin/kb-devkit
+COPY --from=release-index-builder /out/binaries/kb-create-linux-amd64 /usr/local/bin/kb-create
+COPY --from=release-index-builder /out/binaries/kb-dev-linux-amd64 /usr/local/bin/kb-dev
+COPY --from=release-index-builder /out/binaries/kb-devkit-linux-amd64 /usr/local/bin/kb-devkit
 COPY --from=release-index-builder /out/release-index.json /release-index.json
 
 # Manifest that points kb-create at the local Verdaccio registry

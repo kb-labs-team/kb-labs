@@ -13,15 +13,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-tools:
+    uses: ./.github/workflows/build-go-tools.yml
+
   # ── Structural audit — fails CI on violations ──────────────────────────────
   # Errors (missing files, bad naming, depth violations) block merge via
   # branch protection "Require status checks to pass".
   # Warnings are printed to the log but do not fail the job.
   docs-audit:
+    needs: build-tools
     name: Doc conventions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: go-tools
+          path: tools-bin/
+      - name: Install kb-devkit
+        run: |
+          chmod +x tools-bin/kb-devkit
+          cp tools-bin/kb-devkit tools/kb-devkit/kb-devkit
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -53,27 +66,19 @@ jobs:
         run: |
           BASE=${{ github.event.pull_request.base.sha }}
           HEAD=${{ github.event.pull_request.head.sha }}
-          FILES=$(git diff --name-only "$BASE"..."$HEAD")
-          echo "files<<EOF" >> $GITHUB_OUTPUT
-          echo "$FILES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          git diff --name-only "$BASE"..."$HEAD" > "$RUNNER_TEMP/docs-changed-files"
 
       - name: Run docs-staleness
         id: staleness
         working-directory: sites/web/apps/docs
-        env:
-          CHANGED_FILES: ${{ steps.changed.outputs.files }}
         run: |
-          node scripts/docs-staleness.mjs > /tmp/staleness.json
-          echo "json=$(cat /tmp/staleness.json | tr -d '\n')" >> $GITHUB_OUTPUT
+          node scripts/docs-staleness.mjs < "$RUNNER_TEMP/docs-changed-files" > /tmp/staleness.json
 
       - name: Post staleness comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
-        env:
-          STALENESS_JSON: ${{ steps.staleness.outputs.json }}
         with:
           script: |
-            const staleness = JSON.parse(process.env.STALENESS_JSON || '{"affected":[]}');
+            const staleness = JSON.parse(require('fs').readFileSync('/tmp/staleness.json', 'utf8'));
             const { affected } = staleness;
 
             const pr    = context.payload.pull_request.number;

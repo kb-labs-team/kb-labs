@@ -36,6 +36,7 @@ const binaryDirectory = resolve(required('--binary-dir'));
 const binaryManifest = resolve(required('--binary-manifest'));
 const binaryManifestTool = resolve(required('--binary-manifest-tool'));
 const binaryChecksums = resolve(required('--binary-checksums'));
+const binaryArtifacts = resolve(required('--binary-artifacts'));
 const binaryVersion = required('--binary-version');
 const sourceRevision = required('--source-revision');
 const binaryRepository = value('--binary-repository') ?? 'kb-labs-team/kb-labs';
@@ -260,8 +261,10 @@ if (healthyHost.status !== 0) process.exit(healthyHost.status ?? 1);
 // Keep the checksum valid inside the sealed index, then the candidate
 // publisher corrupts the served copy at this isolated URL so download-time
 // verification sees a real artifact mismatch.
-execFileSync(process.execPath, [
+execFileSync('bash', [
   binaryManifestTool,
+  'manifest',
+  '--artifacts', binaryArtifacts,
   '--checksums', binaryChecksums,
   '--repository', binaryRepository,
   '--release-tag', binaryReleaseTag,
@@ -296,8 +299,10 @@ for (const filename of ['kb-create-linux-amd64', 'kb-create-linux-arm64']) {
   writeFileSync(join(corruptDirectory, filename), Buffer.concat([corrupted, Buffer.from('checksum-corruption')]));
 }
 
-execFileSync(process.execPath, [
+execFileSync('bash', [
   binaryManifestTool,
+  'manifest',
+  '--artifacts', binaryArtifacts,
   '--checksums', binaryChecksums,
   '--repository', binaryRepository,
   '--release-tag', binaryReleaseTag,

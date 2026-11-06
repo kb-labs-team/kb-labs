@@ -96,6 +96,11 @@ jobs:
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         timeout-minutes: 5
 
+      - name: Install GoReleaser for candidate binaries
+        uses: ./.github/actions/install-goreleaser
+      - name: Prepare platform candidate binaries
+        run: bash e2e/platform/prepare-container-binaries.sh
+
       - name: Build platform image
         run: |
           cache_args=()
@@ -104,7 +109,7 @@ jobs:
           fi
           docker buildx build \
             "${cache_args[@]}" \
-            --load -t kb-e2e-ci-platform:latest -f e2e/platform/Dockerfile .
+            --load -t kb-e2e-ci-platform:latest --build-arg "SOURCE_REVISION=$GITHUB_SHA" -f e2e/platform/Dockerfile .
 
       - name: Build publisher image
         run: |

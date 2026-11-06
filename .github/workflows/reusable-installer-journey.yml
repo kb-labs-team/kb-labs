@@ -50,6 +50,7 @@ jobs:
         with:
           path: e2e/packages/
           key: journey-tgz-v1-${{ runner.os }}-${{ hashFiles('**/dist/**/*.js', '**/dist/**/*.d.ts', '**/package.json') }}
+      - uses: ./.github/actions/install-goreleaser
       - name: Pack artifacts and seal the candidate release index
         env:
           KB_JOURNEY_PACKAGES_READY: ${{ steps.tgz-cache.outputs.cache-hit == 'true' && '1' || '0' }}

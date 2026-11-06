@@ -24,6 +24,8 @@
 # Build output — same story: excluded broadly, except candidate fixture
 # manifests and the CI-produced deploy artifacts used by Docker builds.
 **/dist
+!dist
+!dist/**
 !e2e/journey/fixtures/*/dist
 !e2e/journey/fixtures/*/dist/**
 !.kb/deploy/**/dist

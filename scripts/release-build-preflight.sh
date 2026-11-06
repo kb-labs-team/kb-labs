@@ -163,13 +163,8 @@ if [[ "$flow" == platform ]]; then
   if [[ -z "$binary_version" ]]; then
     binary_version="$(node -p 'require("./cli/bin/package.json").version')"
   fi
-  if [[ -n "${KBLABS_RELEASE_GORELEASER_CONFIG:-}" ]]; then
-    run_step env GORELEASER_CURRENT_TAG="v${binary_version}-binaries" goreleaser release --config "$KBLABS_RELEASE_GORELEASER_CONFIG" --snapshot --clean --skip=publish
-  else
-    run_step env GORELEASER_CURRENT_TAG="v${binary_version}-binaries" goreleaser release --snapshot --clean --skip=publish
-  fi
   repository="${GITHUB_REPOSITORY:-$(node -p 'String(require("./package.json").repository).replace(/\.git$/, "")')}"
-  run_step node tools/kb-create/scripts/prepare-binary-manifest.mjs \
+  run_step bash scripts/prepare-candidate-binaries.sh build "$binary_version" \
     --artifacts "$release_dist/artifacts.json" \
     --checksums "$release_dist/checksums.txt" \
     --repository "$repository" \

@@ -9,7 +9,7 @@
     "docs:source-sync": "node scripts/docs-source-check.mjs --write",
     "lint": "eslint .",
     "start": "next start -p 3001",
-    "test": "node --test scripts/docs-source-sync.test.mjs",
+    "test": "node --test scripts/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
