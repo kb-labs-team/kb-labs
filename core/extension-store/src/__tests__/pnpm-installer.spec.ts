@@ -1,4 +1,5 @@
 import * as crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -57,4 +58,19 @@ describe('PnpmInstaller registry tarball integrity', () => {
       casDir: path.join(dir, 'store'),
     })).rejects.toMatchObject({ code: 'KB_PLUGIN_INTEGRITY_MISMATCH' });
   });
+});
+
+// case: S-268.16
+it('rejects an extension tarball with a scoped runtime dependency before pnpm', async () => {
+  const { dir, pnpmPath } = await createInstallerFixture();
+  const packageDir = path.join(dir, 'package');
+  await fs.mkdir(packageDir);
+  await fs.writeFile(path.join(packageDir, 'package.json'), JSON.stringify({ name: '@kb-labs/demo', version: '1.2.3', dependencies: { '@kb-labs/sdk': '1.2.3' } }));
+  const archive = path.join(dir, 'package.tgz');
+  execFileSync('tar', ['-czf', archive, '-C', dir, 'package']);
+  const bytes = await fs.readFile(archive);
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(bytes)));
+  const projectDir = path.join(dir, 'project');
+  await expect(new PnpmInstaller({ pnpmPath }).install({ name: '@kb-labs/demo', version: '1.2.3', spec: 'https://registry.example.test/demo.tgz', expectedIntegrity: `sha512-${crypto.createHash('sha512').update(bytes).digest('base64')}`, projectDir, casDir: path.join(dir, 'store') })).rejects.toMatchObject({ code: 'KB_PLUGIN_INSTALL_FAILED' });
+  await expect(fs.access(path.join(projectDir, 'observed-spec.txt'))).rejects.toThrow();
 });

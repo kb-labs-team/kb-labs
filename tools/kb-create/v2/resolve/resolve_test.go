@@ -919,3 +919,24 @@ func TestSecretInputIDsMustBelongToSelectedSecretRequirements(t *testing.T) {
 		}
 	}
 }
+
+// case: PC-001.4
+func TestScenarioMarketplaceUsesReleaseIndexPin(t *testing.T) {
+	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{"@kb-labs/commit"}}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, plugin := range source.Plugins {
+		if plugin.Package == "@kb-labs/commit" {
+			if plan.Request.MarketplaceInstallSpecs[0] != plugin.Package+"@"+plugin.Version {
+				t.Fatalf("spec = %q, want release pin %s@%s", plan.Request.MarketplaceInstallSpecs[0], plugin.Package, plugin.Version)
+			}
+			return
+		}
+	}
+	t.Fatal("fixture missing commit")
+}

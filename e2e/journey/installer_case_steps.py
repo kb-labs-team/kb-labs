@@ -122,7 +122,7 @@ def commit_marketplace_install_record(receipt: dict) -> dict | None:
     installs = receipt.get("marketplaceInstalls", [])
     return next((entry for entry in installs
                  if isinstance(entry, dict) and entry.get("id") == "@kb-labs/commit"
-                 and entry.get("spec") == "@kb-labs/commit"
+                 and entry.get("spec") == f"@kb-labs/commit@{entry.get('version')}"
                  and entry.get("version") and entry.get("source")), None)
 
 
@@ -1867,7 +1867,11 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         if result.get("operation") != "apply" or not result.get("receipt") or not result.get("logPath"):
             raise RuntimeError("apply result omitted operation, receipt, or logPath")
         assert_apply_shim_owner(result, apply_root)
-        assert_commit_marketplace_receipt(result["receipt"])
+        index = json.loads(stable_index.read_text())
+        pin = next(item for item in index["plugins"] if item["package"] == "@kb-labs/commit")
+        record = next(item for item in result["receipt"].get("marketplaceInstalls", []) if item.get("id") == "@kb-labs/commit")
+        if record.get("spec") != f"@kb-labs/commit@{pin['version']}" or record.get("version") != pin["version"]:
+            raise RuntimeError("Commit Marketplace receipt does not match the verified release index pin")
         status = _data(run_command([launcher, "status", "--json", "--platform-root", str(apply_root)]),
                        "PC-001 apply status")
         host = status.get("host", {})

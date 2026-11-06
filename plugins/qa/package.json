@@ -47,7 +47,6 @@
     "build:cli": "tsup --config tsup.config.ts"
   },
   "dependencies": {
-    "@kb-labs/sdk": "workspace:*",
     "js-yaml": "^4.3.2",
     "zod": "^3.25.76"
   },

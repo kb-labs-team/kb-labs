@@ -1,13 +1,24 @@
 // Package install_spec owns the Marketplace command's package-spec grammar.
 package install_spec
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/kb-labs/create/v2/semrange"
+)
 
 // Validate accepts npm package install specs, including scoped names and the
 // unscoped names used by Marketplace, without accepting arbitrary strings.
 func Validate(value string) error {
 	if value == "" {
 		return fmt.Errorf("Marketplace install spec is empty")
+	}
+	if index := strings.LastIndex(value, "@"); index > 0 {
+		if _, err := semrange.ParseVersion(value[index+1:]); err != nil {
+			return fmt.Errorf("Marketplace install spec must use an exact version: %w", err)
+		}
+		value = value[:index]
 	}
 	parts := split(value)
 	if len(parts) == 0 || len(parts) > 2 {

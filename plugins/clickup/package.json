@@ -44,7 +44,6 @@
     "build:cli": "tsup --config tsup.config.ts"
   },
   "dependencies": {
-    "@kb-labs/sdk": "workspace:*",
     "zod": "^3.25.76"
   },
   "devDependencies": {

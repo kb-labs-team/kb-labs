@@ -74,6 +74,23 @@ func (verified verifiedPlanCatalog) plan(request contracts.InstallRequest, optio
 	if err != nil {
 		return contracts.ResolvedInstallPlan{}, err
 	}
+	request.MarketplaceInstallSpecs = append([]string(nil), request.MarketplaceInstallSpecs...)
+	for index, spec := range request.MarketplaceInstallSpecs {
+		matched := false
+		for _, plugin := range source.Plugins {
+			if plugin.ID == spec || plugin.ID+"@"+plugin.Version == spec {
+				if _, err := semrange.ParseVersion(plugin.Version); err != nil {
+					return contracts.ResolvedInstallPlan{}, fmt.Errorf("invalid release-index version for %s: %w", spec, err)
+				}
+				request.MarketplaceInstallSpecs[index] = plugin.Package + "@" + plugin.Version
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return contracts.ResolvedInstallPlan{}, fmt.Errorf("scenario Marketplace plugin %s is absent from release index", spec)
+		}
+	}
 	sealedCatalog, err := json.Marshal(source)
 	if err != nil {
 		return contracts.ResolvedInstallPlan{}, err

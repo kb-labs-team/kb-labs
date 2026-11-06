@@ -14,7 +14,8 @@ async function fixture(t) {
   await mkdir(path.join(platform, 'src'), { recursive: true });
   await writeFile(path.join(plugin, 'package.json'), JSON.stringify({
     name: '@kb-labs/example',
-    dependencies: { '@kb-labs/sdk': 'workspace:*' },
+    dependencies: {},
+    peerDependencies: { '@kb-labs/sdk': 'workspace:*' },
     devDependencies: { '@kb-labs/devkit': 'workspace:*' },
   }));
   await writeFile(path.join(plugin, 'src/index.ts'), "import { defineCommand } from '@kb-labs/sdk/command';\n");
@@ -25,7 +26,7 @@ async function fixture(t) {
     plugin,
     platform,
     packages: [
-      { name: '@kb-labs/example', dir: 'plugins/example', language: 'typescript' },
+      { name: '@kb-labs/example', dir: 'plugins/example', language: 'typescript', category: 'plugin-entry' },
       { name: '@kb-labs/core-runtime', dir: 'core/runtime', language: 'typescript' },
     ],
   };
@@ -111,4 +112,25 @@ test('source import rail rejects platform and plugin imports outside the SDK', a
   assert.ok(has(await collect(f.root, f.packages), 'imports a plugin package from a platform package'));
   await writeFile(platformSource, 'export const runtime = true;\n');
   assert.deepEqual(await collect(f.root, f.packages), []);
+});
+
+test('extension category rejects SDK runtime dependencies', async (t) => {
+  const f = await fixture(t);
+  const file = path.join(f.plugin, 'package.json');
+  const manifest = JSON.parse(await readFile(file, 'utf8'));
+  manifest.dependencies['@kb-labs/sdk'] = 'workspace:*';
+  await writeFile(file, JSON.stringify(manifest));
+  assert.ok(has(await collect(f.root, f.packages), 'KB_EXTENSION_PLATFORM_DEPENDENCY'));
+  delete manifest.dependencies['@kb-labs/sdk'];
+  await writeFile(file, JSON.stringify(manifest));
+  assert.deepEqual(await collect(f.root, f.packages), []);
+});
+
+test('adapter category rejects runtime scoped dependencies', async (t) => {
+  const f = await fixture(t);
+  const dir = path.join(f.root, 'adapters/example');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: '@kb-labs/adapter-example', dependencies: { '@kb-labs/sdk': 'workspace:*' } }));
+  f.packages.push({ dir: 'adapters/example', language: 'typescript', category: 'adapter' });
+  assert.ok(has(await collect(f.root, f.packages), 'KB_EXTENSION_PLATFORM_DEPENDENCY'));
 });

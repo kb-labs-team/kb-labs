@@ -43,6 +43,14 @@ export async function collect(root, packages) {
   const plugins = loaded.filter((pkg) => pkg.segments[0] === 'plugins' && pkg.segments.length === 2);
   const pluginNames = new Set(plugins.map(({ packageJson }) => packageJson.name).filter(Boolean));
 
+  for (const pkg of loaded.filter(({ category }) => category === 'plugin-entry' || category === 'adapter')) {
+    for (const name of Object.keys(pkg.packageJson.dependencies ?? {})) {
+      if (name.startsWith('@kb-labs/')) {
+        issue(`${pkg.relative}/package.json`, `KB_EXTENSION_PLATFORM_DEPENDENCY: ${name} must not be a runtime dependency of an extension`);
+      }
+    }
+  }
+
   for (const pkg of plugins) {
     for (const field of ['dependencies', 'peerDependencies']) {
       for (const name of Object.keys(pkg.packageJson[field] ?? {})) {

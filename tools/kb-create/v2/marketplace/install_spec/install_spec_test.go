@@ -14,3 +14,12 @@ func TestValidateMarketplaceInstallSpec(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateExactVersionedSpec(t *testing.T) {
+	if err := Validate("@kb-labs/commit@2.121.0-canary.49da88bfe"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate("@kb-labs/commit@latest"); err == nil {
+		t.Fatal("dist-tag accepted")
+	}
+}
