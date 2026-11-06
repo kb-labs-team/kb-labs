@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -23,19 +23,16 @@ test('candidate binary manifest from release tooling passes release-index prepar
   try {
     const artifacts = join(fixture, 'artifacts');
     mkdirSync(artifacts);
-    const amd64 = join(fixture, 'kb-create-linux-amd64');
-    const arm64 = join(fixture, 'kb-create-linux-arm64');
-    writeFileSync(amd64, 'fixture amd64 binary');
-    writeFileSync(arm64, 'fixture arm64 binary');
-    const checksums = join(fixture, 'checksums.txt');
-    writeFileSync(checksums, [amd64, arm64].map(path => {
-      const filename = path.split('/').at(-1);
-      const digest = createHash('sha256').update(readFileSync(path)).digest('hex');
-      return `${digest}  ${filename}`;
-    }).join('\n') + '\n');
+    const releaseDist = resolve(process.env.KBLABS_RELEASE_DIST ?? join(root, 'dist'));
+    const binaryArtifacts = join(releaseDist, 'artifacts.json');
+    const checksums = join(releaseDist, 'checksums.txt');
+    const releasedBinaries = JSON.parse(readFileSync(binaryArtifacts, 'utf8'))
+      .filter(item => item.type === 'Binary' && item.extra?.Checksum && item.extra.Binary === 'kb-create');
+    assert.ok(releasedBinaries.length > 0, 'GoReleaser did not produce kb-create release artifacts');
 
     const binaryManifest = join(fixture, 'binary-manifest.json');
     execFileSync(process.execPath, [binaryManifestTool,
+      '--artifacts', binaryArtifacts,
       '--checksums', checksums,
       '--repository', 'kb-labs-team/kb-labs',
       '--release-tag', 'journey-candidate',
@@ -93,15 +90,17 @@ test('candidate binary manifest from release tooling passes release-index prepar
 
     const index = JSON.parse(readFileSync(releaseIndex, 'utf8'));
     assert.equal(index.platforms[0].version, '1.0.0');
-    assert.deepEqual(index.platforms[0].binaries.map(({ id, version, os, arch, url }) =>
-      ({ id, version, os, arch, url })), [
-      { id: 'kb-create', version: '1.0.0', os: 'linux', arch: 'amd64', url: 'http://origin:8080/journey-candidate/kb-create-linux-amd64' },
-      { id: 'kb-create', version: '1.0.0', os: 'linux', arch: 'arm64', url: 'http://origin:8080/journey-candidate/kb-create-linux-arm64' },
-    ]);
-    assert.deepEqual(index.platforms[0].binaries.map(({ sha256 }) => sha256), [
-      createHash('sha256').update('fixture amd64 binary').digest('hex'),
-      createHash('sha256').update('fixture arm64 binary').digest('hex'),
-    ]);
+    const actualBinaries = index.platforms[0].binaries;
+    assert.equal(actualBinaries.length, releasedBinaries.length);
+    for (const artifact of releasedBinaries) {
+      const binary = actualBinaries.find(item => item.os === artifact.goos && item.arch === artifact.goarch);
+      assert.ok(binary, `missing ${artifact.goos}/${artifact.goarch}`);
+      assert.equal(binary.id, artifact.extra.Binary);
+      assert.equal(binary.version, '1.0.0');
+      assert.equal(binary.url, `http://origin:8080/journey-candidate/${artifact.name}`);
+      assert.equal(binary.sha256, createHash('sha256').update(readFileSync(artifact.path)).digest('hex'));
+    }
+
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
