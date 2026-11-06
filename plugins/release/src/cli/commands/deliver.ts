@@ -19,7 +19,7 @@
 import { appendFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defineCommand, type CLIInput, type PluginCommandContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
-import { createValidatedErrorEnvelope } from '@kb-labs/sdk/errors';
+import { createErrorEnvelope } from '@kb-labs/sdk/errors';
 import {
   mergeConfigWithFlow,
   resolvePublishTag,
@@ -29,6 +29,7 @@ import {
   type ReleaseConfig,
   type PublishablePackage,
 } from '../../core/index.js';
+import { verifyPackageTarball } from '../../core/verifier.js';
 import { findRepoRoot } from '../../shared/utils';
 import { publishPackagesProgrammatic, type PackageToPublish } from '../../shared/publish-programmatic';
 import { CandidateBundleError, CandidatePolicyError, verifyCandidateBundle } from '../../shared/candidate-bundle.js';
@@ -129,7 +130,7 @@ export default defineCommand({
           : `Choose a declared target in release.flows.${flowResult}.deliveryTargets, then rerun kb release artifact publish --target <name>.`;
         return {
           ok: false,
-          error: createValidatedErrorEnvelope('KB_RELEASE_DELIVERY_TARGET_INVALID', {
+          error: createErrorEnvelope('KB_RELEASE_DELIVERY_TARGET_INVALID', {
             message: `Release flow ${flowResult} does not declare delivery target ${targetName ?? '(required)'}.`,
             hint,
             details: { flow: flowResult, target: targetName ?? '(required)' },
@@ -168,7 +169,7 @@ export default defineCommand({
               : `${error.message} Declare a test target or change the channel gate policy before delivery.`;
           return {
             ok: false,
-            error: createValidatedErrorEnvelope('KB_RELEASE_CANDIDATE_POLICY_REJECTED', {
+            error: createErrorEnvelope('KB_RELEASE_CANDIDATE_POLICY_REJECTED', {
               message: error.message,
               hint,
               details: { candidateId, target: targetName },
@@ -195,6 +196,13 @@ export default defineCommand({
         tarballPath: join(candidate.artifactsDir, a.tarball),
       }));
 
+      if (dryRun) {
+        for (const pkg of packages) {
+          const issues = verifyPackageTarball(pkg.tarballPath!, pkg.name, pkg.version);
+          if (issues.length) return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: issues.join('; '), hint: 'Build a new candidate bundle, then retry the delivery.' } };
+        }
+      }
+
       const publishLoader = useLoader(`Delivering ${packages.length} package(s) to ${registry}...`);
       publishLoader.start();
 
@@ -215,8 +223,8 @@ export default defineCommand({
       const conflict = publishResult.results.find(result => result.alreadyPublished);
       if (conflict) {
         publishLoader.fail(`Immutable version already exists: ${conflict.name}@${conflict.version}`);
-        const error = createValidatedErrorEnvelope('KB_RELEASE_VERSION_CONFLICT', {
-          templateValues: { package: conflict.name, version: conflict.version },
+        const error = createErrorEnvelope('KB_RELEASE_VERSION_CONFLICT', {
+          details: { package: conflict.name, version: conflict.version },
           hint: `Build a new higher-version candidate with kb release plan --flow ${flowResult} --channel canary --bump patch --json, then deliver its bundle using the digest and identity values in the hosted build run summary.`,
         });
         return { ok: false, error };
@@ -264,10 +272,8 @@ export default defineCommand({
         return response;
       }
       publishLoader.succeed(`Delivered ${publishResult.results.length} package(s) to ${registry}`);
-
       if (dryRun) {
-        const result: DeliverPayload = { success: true, registry, published: publishResult.results.map(r => ({ name: r.name, version: r.version })) };
-        return result;
+        return { success: true, registry, published: publishResult.results.map(({ name, version }) => ({ name, version })) };
       }
 
       // Post-delivery verification against the real registry — this is the

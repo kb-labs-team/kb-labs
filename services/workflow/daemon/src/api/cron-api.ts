@@ -22,9 +22,9 @@ export function registerCronAPI(options: CronAPIOptions): void {
       return ok(await observability.observeOperation('workflow.cron.list', () => Promise.resolve(hostService.listCron())));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to list crons';
-      if (message === 'Cron scheduler not available') { return fail(reply, 'KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE', message); }
+      if (message === 'Cron scheduler not available') { return fail(reply, { code: 'KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE', message: message }); }
       logger.error('Failed to list crons', error instanceof Error ? error : undefined);
-      return fail(reply, 'KB_RUNTIME_CRON_LIST_FAILED', message);
+      return fail(reply, { code: 'KB_RUNTIME_CRON_LIST_FAILED', message: message });
     }
   });
 
@@ -38,11 +38,11 @@ export function registerCronAPI(options: CronAPIOptions): void {
             hostService.setCronEnabled(request.params.id, enabled));
           return ok(data);
         } catch (error) {
-          if (error instanceof CronMutationRefusedError) { return fail(reply, error.code, error.message); }
+          if (error instanceof CronMutationRefusedError) { return fail(reply, { code: error.code, message: error.message }); }
           const message = error instanceof Error ? error.message : `Failed to ${action} cron`;
-          if (message.startsWith('Cron not found:')) { return fail(reply, 'KB_RUNTIME_CRON_NOT_FOUND', message); }
+          if (message.startsWith('Cron not found:')) { return fail(reply, { code: 'KB_RUNTIME_CRON_NOT_FOUND', message: message }); }
           logger.error(`Failed to ${action} cron`, error instanceof Error ? error : undefined);
-          return fail(reply, 'KB_RUNTIME_CRON_MUTATION_FAILED', message);
+          return fail(reply, { code: 'KB_RUNTIME_CRON_MUTATION_FAILED', message: message });
         }
       },
     );

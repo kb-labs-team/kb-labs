@@ -131,7 +131,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
 
       const roots = await resolveConfigRoots(getContextCwd(ctx), scope === 'platform' ? 'platform' : 'required');
       if (scope === 'project' && !roots.projectId) {
-        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Project config requires a registered project.', `Run "kb project add ${roots.configRoot}" and retry "kb config set".`, { path: roots.configRoot });
+        throwSystemCataloguedFailure({ code: 'KB_PROJECT_UNKNOWN', message: 'Project config requires a registered project.', hint: `Run "kb project add ${roots.configRoot}" and retry "kb config set".`, details: { path: roots.configRoot } });
       }
       const file = await userConfigFileForScope(roots, scope);
       const runtimeConfig = await loadPlatformConfig({

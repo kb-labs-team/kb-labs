@@ -13,7 +13,7 @@ import {
 import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import { formatError } from './errors/index';
-import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, createValidatedErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type DetailsFor, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
+import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, createCatalogErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type DetailsFor, type CatalogErrorRequest, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
 import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
 import { renderErrorEnvelope } from '@kb-labs/shared-cli-ui';
@@ -490,28 +490,8 @@ export function throwSystemCommandError(
   });
 }
 
-type RequiredKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? never : K }[keyof T];
-type CataloguedDetailsArgument<C extends PlatformErrorCode> = [RequiredKeys<DetailsFor<C>>] extends [never]
-  ? [details?: DetailsFor<C>]
-  : [details: DetailsFor<C>];
-
-export function throwSystemCataloguedFailure<C extends PlatformErrorCode>(
-  code: C,
-  message: string,
-  hint: string,
-  ...details: CataloguedDetailsArgument<C>
-): never;
-export function throwSystemCataloguedFailure(
-  code: PlatformErrorCode,
-  message: string,
-  hint: string,
-  details?: unknown,
-): never {
-  throwSystemCataloguedError(createValidatedErrorEnvelope(code, {
-    message,
-    hint,
-    ...(details === undefined ? {} : { details }),
-  }));
+export function throwSystemCataloguedFailure(request: CatalogErrorRequest): never {
+  throwSystemCataloguedError(createCatalogErrorEnvelope(request));
 }
 
 export function throwSystemCataloguedError(envelope: ErrorEnvelope): never {

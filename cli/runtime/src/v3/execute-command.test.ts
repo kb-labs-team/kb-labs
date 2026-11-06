@@ -3,7 +3,7 @@ import { noopUI } from '@kb-labs/plugin-contracts';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
-import { createErrorEnvelope, createProductErrorEnvelope, createValidatedErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, createProductErrorEnvelope } from '@kb-labs/core-platform';
 import { executeCommandV3 } from './execute-command.js';
 import { useLoader } from '@kb-labs/shared-cli-ui';
 
@@ -117,7 +117,7 @@ describe('executeCommandV3 plugin command result output', () => {
   it('frames a factory-normalized returned typed failure once in JSON mode', async () => {
     const json = vi.fn();
     const error = vi.fn();
-    const envelope = createValidatedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+    const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
       templateValues: { binary: 'kb' },
       correlationId: 'returned-failure-correlation',
       message: 'The operation failed.',

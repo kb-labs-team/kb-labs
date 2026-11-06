@@ -61,7 +61,7 @@ describe('classifyFailure', () => {
   it('unreachable staging registry -> environment with REGISTRY_UNREACHABLE and a start command', () => {
     const v = classifyFailure(REGISTRY_DOWN ?? {});
     expect(v.classification).toBe('environment');
-    expect(v.code).toBe('KB_RELEASE_REGISTRY_UNREACHABLE');
+    expect(v.request.code).toBe('KB_RELEASE_REGISTRY_UNREACHABLE');
     expect(v.rootCause).toContain('http://localhost:4873');
     expect(v.hint).toContain('kb-dev ensure verdaccio');
   });
@@ -69,7 +69,7 @@ describe('classifyFailure', () => {
   it('PROCESS_TIMEOUT with partial stdout and no other evidence -> suspected-flake / CHECK_TIMEOUT', () => {
     const v = classifyFailure(TIMEOUT_PARTIAL ?? {});
     expect(v.classification).toBe('suspected-flake');
-    expect(v.code).toBe('KB_RELEASE_CHECK_TIMEOUT');
+    expect(v.request.code).toBe('KB_RELEASE_CHECK_TIMEOUT');
     expect(v.timedOut).toBe(true);
     expect(v.rootCause).toContain('partial output');
   });

@@ -1,3 +1,4 @@
+import { verifyPackageTarball } from '../../core/verifier.js';
 /**
  * Standalone stage command — packs the flow's currently-committed package
  * versions into real npm tarballs, once, so every downstream `release
@@ -18,14 +19,12 @@
 
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { defineCommand, type CLIInput, type PluginCommandContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
 import {
   discoverCurrentPackages,
   mergeConfigWithFlow,
-  verifyExtractedTarball,
   type ReleaseConfig,
 } from '../../core/index.js';
 import { findRepoRoot } from '../../shared/utils';
@@ -125,18 +124,10 @@ function verifyStagePackage(
   outDir: string,
   artifact: StagedArtifact,
 ): void {
-  const tarballPath = join(outDir, artifact.tarball);
-  const verifyDir = mkdtempSync(join(tmpdir(), 'kb-stage-verify-'));
-  try {
-    const extractResult = spawnSync('tar', ['xzf', tarballPath, '-C', verifyDir], { stdio: 'pipe' });
-    if (extractResult.status !== 0) {
-      throw new Error(`could not extract staged tarball for ${pkg.name}@${pkg.currentVersion}`);
-    }
-    const issues = verifyExtractedTarball(join(verifyDir, 'package'));
-    if (issues.length > 0) {
-      throw new Error(`staged artifact verification failed for ${pkg.name}@${pkg.currentVersion}: ${issues.join('; ')}`);
-    }
-  } finally { rmSync(verifyDir, { recursive: true, force: true }); }
+  const issues = verifyPackageTarball(join(outDir, artifact.tarball), pkg.name, pkg.currentVersion);
+  if (issues.length > 0) {
+    throw new Error(`staged artifact verification failed for ${pkg.name}@${pkg.currentVersion}: ${issues.join('; ')}`);
+  }
 
 }
 

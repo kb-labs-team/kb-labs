@@ -72,7 +72,7 @@ export async function userConfigFileForScope(roots: ConfigRoots, scope: ConfigSc
   if (scope === 'project') {
     if (!roots.projectId) {
       const projectRoot = roots.projectRoot ?? roots.configRoot;
-      throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Project config requires a registered project.', `Run "kb project add ${projectRoot}" to register it, then retry the config command.`, { path: projectRoot });
+      throwSystemCataloguedFailure({ code: 'KB_PROJECT_UNKNOWN', message: 'Project config requires a registered project.', hint: `Run "kb project add ${projectRoot}" to register it, then retry the config command.`, details: { path: projectRoot } });
     }
     return projectSettingsPath({ projectId: roots.projectId });
   }

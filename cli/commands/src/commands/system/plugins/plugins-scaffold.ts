@@ -44,12 +44,12 @@ export const pluginsScaffold = defineSystemCommand<PluginsScaffoldFlags, Plugins
   },
   async handler(ctx, argv, flags) {
     if (argv.length === 0) {
-      throwSystemCataloguedFailure('KB_RUNTIME_INPUT_INVALID', 'Please specify a plugin name.', 'Run `kb marketplace scaffold <plugin-name>` with the name of the plugin to create.');
+      throwSystemCataloguedFailure({ code: 'KB_RUNTIME_INPUT_INVALID', message: 'Please specify a plugin name.', hint: 'Run `kb marketplace scaffold <plugin-name>` with the name of the plugin to create.' });
     }
 
     const pluginName = argv[0];
     if (!pluginName) {
-      throwSystemCataloguedFailure('KB_RUNTIME_INPUT_INVALID', 'Please specify a plugin name.', 'Run `kb marketplace scaffold <plugin-name>` with the name of the plugin to create.');
+      throwSystemCataloguedFailure({ code: 'KB_RUNTIME_INPUT_INVALID', message: 'Please specify a plugin name.', hint: 'Run `kb marketplace scaffold <plugin-name>` with the name of the plugin to create.' });
     }
 
     ctx.platform?.logger?.info('Scaffolding plugin', { pluginName });
@@ -66,7 +66,7 @@ export const pluginsScaffold = defineSystemCommand<PluginsScaffoldFlags, Plugins
     try {
       await fs.access(dir);
       ctx.platform?.logger?.warn('Directory already exists', { dir });
-      throwSystemCataloguedFailure('KB_RUNTIME_INPUT_INVALID', `Directory ${pluginName} already exists.`, `Choose a different plugin name and rerun the command; "${dir}" already exists.`, { field: dir });
+      throwSystemCataloguedFailure({ code: 'KB_RUNTIME_INPUT_INVALID', message: `Directory ${pluginName} already exists.`, hint: `Choose a different plugin name and rerun the command; "${dir}" already exists.`, details: { field: dir } });
     } catch (err: unknown) {
       if ((err as { code?: string }).code !== 'ENOENT') {
         throw err;

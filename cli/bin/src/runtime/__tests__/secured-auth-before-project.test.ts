@@ -258,7 +258,7 @@ describe('secured CLI auth ordering', () => {
     ));
     mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: true });
     mocks.resolveProjectConfig.mockRejectedValue(new ProjectRegistryError(
-      'KB_PROJECT_UNKNOWN', 'No registered project matches this directory.', { path: 'unregistered' },
+      { code: 'KB_PROJECT_UNKNOWN', details: { path: 'unregistered' } }, 'No registered project matches this directory.',
     ));
     const diagnostic = vi.spyOn(runtimePlatform.logger, 'warn');
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});

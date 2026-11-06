@@ -21,8 +21,9 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { useLogger, useEnv } from '@kb-labs/sdk';
 import { rewriteWorkspaceDeps, topoSort } from './dep-rewrite';
 
@@ -188,7 +189,7 @@ function spawnPublish(options: {
   const { packagePath, tarballPath, packageManager, token, otp, dryRun, tag, access, registry } = options;
 
   return new Promise((resolve, reject) => {
-    const args = ['publish'];
+    const args = ['publish', '--no-update-notifier'];
     if (tarballPath) { args.push(tarballPath); }
 
     if (packageManager === 'pnpm' && !tarballPath) {
@@ -197,7 +198,8 @@ function spawnPublish(options: {
       // tarball — there's no working-tree state for pnpm to check.
       args.push('--no-git-checks');
     }
-    if (dryRun)   { args.push('--dry-run'); }
+    if (tarballPath) { args.push('--ignore-scripts'); }
+    if (dryRun)   { args.push('--dry-run', '--offline'); }
     if (tag)      { args.push(`--tag=${tag}`); }
     if (access)   { args.push(`--access=${access}`); }
     if (registry) { args.push(`--registry=${registry}`); }
@@ -205,6 +207,14 @@ function spawnPublish(options: {
 
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (token) { env['NODE_AUTH_TOKEN'] = token; }
+    const isolatedHome = dryRun ? mkdtempSync(join(tmpdir(), 'kb-publish-dry-run-')) : undefined;
+    if (isolatedHome) {
+      env.HOME = isolatedHome;
+      env.npm_config_cache = join(isolatedHome, 'cache');
+      env.npm_config_userconfig = join(isolatedHome, 'npmrc');
+      delete env.NPM_TOKEN;
+      delete env.NODE_AUTH_TOKEN;
+    }
 
     // Write a per-package .npmrc so npm picks up NODE_AUTH_TOKEN.
     // The auth line's host must match the target registry — hardcoding
@@ -216,7 +226,7 @@ function spawnPublish(options: {
     const registryHost = registry ? new URL(registry).host : 'registry.npmjs.org';
     const authLine = `//${registryHost}/:_authToken=\${NODE_AUTH_TOKEN}\n`;
 
-    if (token) {
+    if (token && !dryRun) {
       const existing = npmrcExisted ? readFileSync(npmrcPath, 'utf-8') : '';
       // Only an auth line for THIS registry host counts as "already has
       // auth". A package .npmrc left over from a real npmjs publish carries
@@ -229,7 +239,8 @@ function spawnPublish(options: {
     }
 
     const restoreNpmrc = () => {
-      if (!token) { return; }
+      if (isolatedHome) { rmSync(isolatedHome, { recursive: true, force: true }); }
+      if (!token || dryRun) { return; }
       try {
         if (npmrcBackup !== null) {
           writeFileSync(npmrcPath, npmrcBackup);
@@ -320,7 +331,7 @@ async function publishOne(
         }
 
         // Retryable transient error (rate-limit, network blip).
-        if (isRetryable(message) && attempt < MAX_RETRIES) {
+        if (!opts.dryRun && isRetryable(message) && attempt < MAX_RETRIES) {
           const delay = retryDelay(attempt);
           logger.warn(
             `Transient error for ${pkg.name}@${pkg.version} (attempt ${attempt + 1}/${MAX_RETRIES}), ` +

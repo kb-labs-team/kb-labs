@@ -126,6 +126,7 @@ export type ExecutionError = ErrorEnvelope & { error: SerializedError };
 /** Private execution diagnostics travel beside the user-facing failure envelope. */
 export interface ExecutionDiagnostics {
   errorStack?: string;
+  worker?: { workerId: string; executionId: string; requestId: string; pluginId: string; handlerRef: string };
 }
 
 export interface ExecutionMetadata {

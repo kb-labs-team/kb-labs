@@ -142,7 +142,7 @@ describe('live workflow failure terminalization', () => {
     platform.setAdapter('logger', logger);
     platform.setAdapter('processExecutor', createDefaultProcessExecutor(logger));
     const executionBackend = createExecutionBackend({ platform, mode: 'in-process' });
-    const registry = await openCatalog({ platformRoot: workspaceRoot, projectRoot: workspaceRoot });
+    const registry = await openCatalog({ platformRoot: workspaceRoot, projectRoot: workspaceRoot }, { resolvePlatformVersion: async () => 'test' });
     const worker = await createWorkflowWorker({
       engine, secretProvider: new EnvSecretProvider(), cliApi: registry,
       logger,

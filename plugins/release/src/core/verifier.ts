@@ -3,7 +3,7 @@
  * Catches: directory imports, test file leaks, missing exports, syntax errors.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -124,6 +124,26 @@ export function verifyPackage(
   }
 
   return { name, success: issues.length === 0, issues };
+}
+
+/** Verify the exact prebuilt archive and its declared package identity offline. */
+export function verifyPackageTarball(tarball: string, name: string, version: string): string[] {
+  const dir = mkdtempSync(join(tmpdir(), 'kb-release-verify-'));
+  try {
+    const extracted = spawnSync('tar', ['xzf', tarball, '-C', dir], { stdio: 'pipe' });
+    if (extracted.status !== 0) return [`Could not extract package archive for ${name}@${version}`];
+    const packageDir = join(dir, 'package');
+    const manifest: unknown = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
+    if (typeof manifest !== 'object' || manifest === null || !('name' in manifest) || !('version' in manifest) || manifest.name !== name || manifest.version !== version) {
+      return [`Package identity does not match ${name}@${version}`];
+    }
+    if ('private' in manifest && manifest.private === true) return [`Package ${name}@${version} is marked private`];
+    return verifyExtractedTarball(packageDir);
+  } catch (error) {
+    return [`Package verification failed for ${name}@${version}: ${error instanceof Error ? error.message : String(error)}`];
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**

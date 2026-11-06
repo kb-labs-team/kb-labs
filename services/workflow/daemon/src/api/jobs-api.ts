@@ -43,9 +43,9 @@ export function registerJobsAPI(options: JobsAPIOptions): void {
         const message = error instanceof Error ? error.message : 'Job submission failed';
         logger.error('Job submission failed', error instanceof Error ? error : undefined, { tenantId });
         if (message.startsWith('Invalid tenant') || message.startsWith('Missing required') || message.startsWith('Priority')) {
-          return fail(reply, 'KB_RUNTIME_JOB_INPUT_INVALID', message);
+          return fail(reply, { code: 'KB_RUNTIME_JOB_INPUT_INVALID', message: message });
         } else {
-          return fail(reply, 'KB_RUNTIME_JOB_SUBMIT_FAILED', message);
+          return fail(reply, { code: 'KB_RUNTIME_JOB_SUBMIT_FAILED', message: message });
         }
       }
     }
@@ -68,10 +68,10 @@ export function registerJobsAPI(options: JobsAPIOptions): void {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to get job status';
         if (message === 'Job not found') {
-          return fail(reply, 'KB_RUNTIME_JOB_NOT_FOUND', message);
+          return fail(reply, { code: 'KB_RUNTIME_JOB_NOT_FOUND', message: message });
         }
         logger.error('Failed to get job status', error instanceof Error ? error : undefined, { jobId });
-        return fail(reply, 'KB_RUNTIME_JOB_GET_FAILED', message);
+        return fail(reply, { code: 'KB_RUNTIME_JOB_GET_FAILED', message: message });
       }
     }
   );
@@ -92,7 +92,7 @@ export function registerJobsAPI(options: JobsAPIOptions): void {
         return ok(data);
       } catch (error) {
         logger.error('Failed to cancel job', error instanceof Error ? error : undefined);
-        return fail(reply, 'KB_RUNTIME_JOB_CANCEL_FAILED', error instanceof Error ? error.message : 'Failed to cancel job');
+        return fail(reply, { code: 'KB_RUNTIME_JOB_CANCEL_FAILED', message: error instanceof Error ? error.message : 'Failed to cancel job' });
       }
     }
   );
@@ -113,7 +113,7 @@ export function registerJobsAPI(options: JobsAPIOptions): void {
         return ok(data);
       } catch (error) {
         logger.error('Failed to list jobs', error instanceof Error ? error : undefined);
-        return fail(reply, 'KB_RUNTIME_JOB_LIST_FAILED', error instanceof Error ? error.message : 'Failed to list jobs');
+        return fail(reply, { code: 'KB_RUNTIME_JOB_LIST_FAILED', message: error instanceof Error ? error.message : 'Failed to list jobs' });
       }
     }
   );
@@ -128,9 +128,9 @@ export function registerJobsAPI(options: JobsAPIOptions): void {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to get job steps';
         if (message === 'Job not found') {
-          return fail(reply, 'KB_RUNTIME_JOB_NOT_FOUND', message);
+          return fail(reply, { code: 'KB_RUNTIME_JOB_NOT_FOUND', message: message });
         }
-        return fail(reply, 'KB_RUNTIME_JOB_STEPS_FAILED', message);
+        return fail(reply, { code: 'KB_RUNTIME_JOB_STEPS_FAILED', message: message });
       }
     }
   );
@@ -161,9 +161,9 @@ export function registerJobsAPI(options: JobsAPIOptions): void {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to get job logs';
         if (message === 'Job not found') {
-          return fail(reply, 'KB_RUNTIME_JOB_NOT_FOUND', message);
+          return fail(reply, { code: 'KB_RUNTIME_JOB_NOT_FOUND', message: message });
         }
-        return fail(reply, 'KB_RUNTIME_JOB_LOGS_FAILED', message);
+        return fail(reply, { code: 'KB_RUNTIME_JOB_LOGS_FAILED', message: message });
       }
     }
   );

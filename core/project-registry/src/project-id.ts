@@ -30,11 +30,7 @@ function normalizeForHash(canonicalPath: string): string {
 /** Pure derivation from a canonical absolute path. The same path always yields the same id. */
 export function deriveProjectId(canonicalPath: string): ProjectId {
   if (!isAbsolute(canonicalPath)) {
-    throw new ProjectRegistryError(
-      'KB_RUNTIME_INPUT_INVALID',
-      `Project id can only be derived from an absolute path, got "${canonicalPath}".`,
-      { field: 'path' },
-    );
+    throw new ProjectRegistryError({ code: 'KB_RUNTIME_INPUT_INVALID', details: { field: 'path' } }, `Project id can only be derived from an absolute path, got "${canonicalPath}".`);
   }
   const digest = createHash('sha256').update(normalizeForHash(canonicalPath), 'utf8').digest('hex');
   return `${PROJECT_ID_PREFIX}${digest.slice(0, ID_HEX_LENGTH)}`;
@@ -58,29 +54,29 @@ export async function canonicalizeProjectPath(input: string): Promise<string> {
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR') {
-      throw new ProjectRegistryError('KB_PROJECT_PATH_NOT_FOUND', `Path does not exist: ${absolute}`, {
+      throw new ProjectRegistryError({ code: 'KB_PROJECT_PATH_NOT_FOUND', details: {
         path: absolute,
-      });
+      } }, `Path does not exist: ${absolute}`);
     }
     if (code === 'EACCES' || code === 'EPERM') {
-      throw new ProjectRegistryError('KB_PROJECT_NO_ACCESS', `No permission to read: ${absolute}`, {
+      throw new ProjectRegistryError({ code: 'KB_PROJECT_NO_ACCESS', details: {
         path: absolute,
-      });
+      } }, `No permission to read: ${absolute}`);
     }
     throw error;
   }
   const stat = await fs.stat(canonical);
   if (!stat.isDirectory()) {
-    throw new ProjectRegistryError('KB_PROJECT_NOT_A_DIRECTORY', `Not a directory: ${canonical}`, {
+    throw new ProjectRegistryError({ code: 'KB_PROJECT_NOT_A_DIRECTORY', details: {
       path: canonical,
-    });
+    } }, `Not a directory: ${canonical}`);
   }
   try {
     await fs.access(canonical, fs.constants.R_OK);
   } catch {
-    throw new ProjectRegistryError('KB_PROJECT_NO_ACCESS', `No permission to read: ${canonical}`, {
+    throw new ProjectRegistryError({ code: 'KB_PROJECT_NO_ACCESS', details: {
       path: canonical,
-    });
+    } }, `No permission to read: ${canonical}`);
   }
   return canonical;
 }

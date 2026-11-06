@@ -19,6 +19,8 @@ vi.mock('../../../src/core/index.js', async importOriginal => {
   };
 });
 
+vi.mock('../../../src/core/verifier.js', () => ({ verifyPackageTarball: () => [] }));
+
 vi.mock('../../../src/shared/utils.js', () => ({
   findRepoRoot: (...args: unknown[]) => findRepoRoot(...args),
 }));
@@ -137,7 +139,8 @@ describe('release:deliver candidate bundle', () => {
       target: 'local', 'dry-run': true, json: true,
     } }));
     expect(result).toMatchObject({ success: true });
-    expect(publishPackagesProgrammatic).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true }));
+    expect(publishPackagesProgrammatic).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true, packageManager: 'npm' }));
+    expect(verifyAgainstRegistry).not.toHaveBeenCalled();
     expect(statSync(join(root, 'bundle', 'binaries', 'executable')).mode & 0o777).toBe(0o700);
   });
   // case: S-284.1

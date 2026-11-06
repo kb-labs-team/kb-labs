@@ -260,7 +260,7 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
       const cwd = getContextCwd(ctx);
       const roots = await resolveConfigRoots(cwd);
       if (!roots.projectId) {
-        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Effective config requires a registered project.', `Run "kb project add ${roots.configRoot}" and retry "kb config show".`, { path: roots.configRoot });
+        throwSystemCataloguedFailure({ code: 'KB_PROJECT_UNKNOWN', message: 'Effective config requires a registered project.', hint: `Run "kb project add ${roots.configRoot}" and retry "kb config show".`, details: { path: roots.configRoot } });
       }
       const result = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: cwd, loadEnvFile: false, projectId: roots.projectId, catalog: requireResolvedCatalog() });
       const rows = buildRows(result);
