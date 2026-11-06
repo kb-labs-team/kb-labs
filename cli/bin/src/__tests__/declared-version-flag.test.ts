@@ -3,18 +3,20 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 describe('declared version flag', () => {
-  // case: S-284.17
-  it.each([
+  for (const [_label, args] of [
     ['omitted', ['--version']],
     ['empty', ['--version', '', '--json']],
     ['next flag', ['--version', '--json']],
-  ])('rejects a %s command version at the built CLI boundary', (_label, args) => {
+  ] as const) {
+  // case: S-284.17
+  it('rejects a command version at the built CLI boundary', () => {
     const result = spawnSync(process.execPath, [
       resolve('dist/bin.js'), 'release', 'artifact', 'publish', ...args,
     ], { encoding: 'utf8', cwd: resolve('../..') });
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain('KB_RUNTIME_INPUT_INVALID');
   });
+  }
 
   it('routes a supplied version to delivery', () => {
     const result = spawnSync(process.execPath, [

@@ -2,7 +2,7 @@
 /**
  * docs-staleness.mjs — find doc pages affected by changed code files
  *
- * Input:  CHANGED_FILES env var — newline-separated paths relative to repo root
+ * Input:  stdin — newline-separated paths relative to repo root
  * Output: JSON to stdout:
  *   {
  *     affected: [
@@ -10,12 +10,12 @@
  *     ]
  *   }
  *
- * Standalone: CHANGED_FILES="services/workflow/core/executor.ts" node docs-staleness.mjs
+ * Standalone: printf '%s\n' "services/workflow/core/executor.ts" | node docs-staleness.mjs
  */
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { sourceFileForCommand, sourceFileForNodePolicy } from './docs-source-sync.mjs';
+import { commandSources, sourceFragmentSources } from '../lib/doc-source-map.mjs';
 
 const cwd = process.cwd();
 const sitemapPath = join(cwd, 'sitemap.config.json');
@@ -82,11 +82,11 @@ function collectSourceReferences(pages) {
 
       const directive = /<CommandExamples\s+command="([^"]+)"(?:\s+match="([^"]+)")?\s*\/>/g;
       for (const match of content.matchAll(directive)) {
-        const sourceFile = sourceFileForCommand(match[1]);
+        const sourceFile = commandSources[match[1]]?.source;
         if (sourceFile) refs.push({ page, sourceFile, command: match[1] });
       }
       if (content.includes('<NodePolicy />')) {
-        refs.push({ page, sourceFile: sourceFileForNodePolicy(), command: 'NodePolicy' });
+        refs.push({ page, sourceFile: sourceFragmentSources.nodePolicy, command: 'NodePolicy' });
       }
     }
   }
@@ -96,7 +96,7 @@ function collectSourceReferences(pages) {
 }
 
 function main() {
-  const changedFilesRaw = process.env.CHANGED_FILES ?? '';
+  const changedFilesRaw = readFileSync(0, 'utf8');
   const changedFiles = changedFilesRaw
     .split('\n')
     .map(f => f.trim())

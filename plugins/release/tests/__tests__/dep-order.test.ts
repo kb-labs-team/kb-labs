@@ -11,8 +11,8 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-// case: S-284.6
 describe('topoSortForBuild', () => {
+  // case: S-284.6
   it('builds a workspace devDependency before its consumer in a clean workspace', async () => {
     const root = join(tmpdir(), `kb-release-dep-order-${randomBytes(4).toString('hex')}`);
     roots.push(root);
@@ -42,8 +42,8 @@ describe('topoSortForBuild', () => {
   });
 });
 
-// case: S-284.6
 describe('topoSortForBuild with a workspace self-reference', () => {
+  // case: S-284.6
   it('keeps cross-package devDependency order when a package devDepends on itself', async () => {
     const root = join(tmpdir(), `kb-release-dep-order-${randomBytes(4).toString('hex')}`);
     roots.push(root);

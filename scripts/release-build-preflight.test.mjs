@@ -59,6 +59,7 @@ test('preflight reports a final CLI command failure with its exact command and s
     writeFileSync(path.join(root, '.kb', 'marketplace.lock'), JSON.stringify({ adapters: {} }));
     writeFileSync(path.join(root, 'scripts-release-build-preflight.sh'), readFileSync(scriptPath));
     writeFileSync(path.join(scriptsDir, 'release-candidate-post-build.sh'), readFileSync(new URL('./release-candidate-post-build.sh', import.meta.url)));
+    writeFileSync(path.join(scriptsDir, 'prepare-candidate-binaries.sh'), readFileSync(new URL('./prepare-candidate-binaries.sh', import.meta.url)));
 
     const node = path.join(binDir, 'node');
     writeFileSync(node, `#!/usr/bin/env bash
@@ -107,6 +108,7 @@ test('preflight stages npm artifacts after the release build', () => {
     writeFileSync(path.join(root, '.kb', 'marketplace.lock'), JSON.stringify({ adapters: {} }));
     writeFileSync(path.join(root, 'scripts-release-build-preflight.sh'), readFileSync(scriptPath));
     writeFileSync(path.join(scriptsDir, 'release-candidate-post-build.sh'), readFileSync(new URL('./release-candidate-post-build.sh', import.meta.url)));
+    writeFileSync(path.join(scriptsDir, 'prepare-candidate-binaries.sh'), readFileSync(new URL('./prepare-candidate-binaries.sh', import.meta.url)));
 
     const node = path.join(binDir, 'node');
     const nodeArgsPath = path.join(root, 'node-args.txt');
@@ -141,6 +143,8 @@ exit 0
     const goArgsPath = path.join(root, 'go-args.txt');
     writeFileSync(go, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> '${goArgsPath}'\nprintf '[]\\n'\n`);
     chmodSync(go, 0o755);
+
+    writeFileSync(path.join(binDir, 'git'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
 
     const goreleaser = path.join(binDir, 'goreleaser');
     const goreleaserArgsPath = path.join(root, 'goreleaser-args.txt');

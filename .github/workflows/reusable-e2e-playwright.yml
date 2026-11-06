@@ -172,6 +172,13 @@ jobs:
         if: inputs.prebuilt-artifact == '' || inputs.idp == true
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
 
+      - name: Install GoReleaser for candidate binaries
+        if: inputs.prebuilt-artifact == ''
+        uses: ./.github/actions/install-goreleaser
+      - name: Prepare platform candidate binaries
+        if: inputs.prebuilt-artifact == ''
+        run: bash e2e/platform/prepare-container-binaries.sh
+
       - name: Build platform image
         if: inputs.prebuilt-artifact == ''
         run: |
@@ -183,7 +190,7 @@ jobs:
             "${cache_args[@]}" \
             --load \
             -t kb-e2e-ci-platform:latest \
-            -f e2e/platform/Dockerfile .
+            --build-arg "SOURCE_REVISION=$GITHUB_SHA" -f e2e/platform/Dockerfile .
 
       - name: Build publisher image
         if: inputs.prebuilt-artifact == ''

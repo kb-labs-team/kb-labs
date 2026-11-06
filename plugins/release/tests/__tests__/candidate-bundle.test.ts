@@ -245,17 +245,19 @@ describe('candidate bundle producer and verifier', () => {
     expect(() => verifyCandidateBundle(changedModeBundle, original.trust, testPolicy)).toThrow(/trusted candidate digest/);
   });
 
-  // case: S-284.1
-  it.each([
+  for (const [_field, changed] of [
     ['candidateId', { candidateId: 'other-candidate' }],
     ['commit', { commit: '2234567890123456789012345678901234567890' }],
     ['flow', { flow: 'sdk' }],
     ['version', { version: '1.0.1' }],
-  ])('rejects a candidate that differs from the trusted %s', (_field, changed) => {
+  ] as const) {
+  // case: S-284.1
+  it('rejects a candidate that differs from the trusted identity', () => {
     const { bundleDir, trust } = makeBundle();
 
     expect(() => verifyCandidateBundle(bundleDir, { ...trust, ...changed }, testPolicy)).toThrow(/trusted candidate identity/);
   });
+  }
 
   // case: S-284.1
   it('rejects an unlisted file instead of publishing an expanded bundle', () => {
@@ -270,13 +272,15 @@ describe('candidate bundle producer and verifier', () => {
     expect(() => makeBundle(false, 'kb-labs-fixture-1.0.0.tgz;touch-pwned')).toThrow(/invalid npm tarball filename/);
   });
 
+  for (const filename of ['bundle.sha256', 'bundle.modes']) {
   // case: S-284.1
-  it.each(['bundle.sha256', 'bundle.modes'])('requires a canonical mode for %s', filename => {
+  it('requires a canonical mode', () => {
     const { bundleDir, trust } = makeBundle();
     chmodSync(join(bundleDir, filename), 0o600);
 
     expect(() => verifyCandidateBundle(bundleDir, trust, testPolicy)).toThrow(/canonical mode/);
   });
+  }
 
   // case: S-284.1
   it('rejects an npm file set that differs from the artifact manifest', () => {

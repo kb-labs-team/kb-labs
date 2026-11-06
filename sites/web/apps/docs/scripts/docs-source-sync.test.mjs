@@ -55,7 +55,7 @@ test('rejects a Node policy snapshot that points outside its allowlisted source'
 
 test('renders allowlisted command examples as a fenced shell block', () => {
   const rendered = renderCommandExamples('workflow runs status', generatedSources.commands);
-  assert.match(rendered, /^```bash title="Generated from cli\/commands\/src\/commands\/system\/workflow\.ts"/);
+  assert.match(rendered, /^```bash title="Generated from services\/workflow\/contracts\/src\/service-commands\.ts"/);
   assert.match(rendered, /kb workflow runs status <runId>/);
 });
 
@@ -97,7 +97,7 @@ test('rejects generated snapshots that point outside the allowlisted source', ()
 test('an explicit generated source reference takes precedence over broad owner zones', () => {
   const output = execFileSync(process.execPath, ['scripts/docs-staleness.mjs'], {
     cwd: getDocsDir(),
-    env: { ...process.env, CHANGED_FILES: 'cli/commands/src/commands/system/workflow.ts' },
+    input: 'services/workflow/contracts/src/service-commands.ts',
     encoding: 'utf8',
   });
   const { affected } = JSON.parse(output);
@@ -110,7 +110,7 @@ test('an explicit generated source reference takes precedence over broad owner z
 test('the root engine declaration marks only NodePolicy pages as exact source references', () => {
   const output = execFileSync(process.execPath, ['scripts/docs-staleness.mjs'], {
     cwd: getDocsDir(),
-    env: { ...process.env, CHANGED_FILES: 'package.json' },
+    input: 'package.json',
     encoding: 'utf8',
   });
   const { affected } = JSON.parse(output);
@@ -125,7 +125,7 @@ test('the root engine declaration marks only NodePolicy pages as exact source re
 test('workflow engine ownership zones point at real, relevant source areas', () => {
   const output = execFileSync(process.execPath, ['scripts/docs-staleness.mjs'], {
     cwd: getDocsDir(),
-    env: { ...process.env, CHANGED_FILES: 'services/workflow/engine/src/retry.ts' },
+    input: 'services/workflow/engine/src/retry.ts',
     encoding: 'utf8',
   });
   const { affected } = JSON.parse(output);
@@ -140,13 +140,10 @@ test('workflow engine ownership zones point at real, relevant source areas', () 
 test('documentation edits do not self-trigger the docs landing page', () => {
   const output = execFileSync(process.execPath, ['scripts/docs-staleness.mjs'], {
     cwd: getDocsDir(),
-    env: {
-      ...process.env,
-      CHANGED_FILES: [
+    input: [
         'sites/web/apps/docs/CONVENTIONS.md',
         'sites/web/apps/docs/sitemap.config.json',
       ].join('\n'),
-    },
     encoding: 'utf8',
   });
   const { affected } = JSON.parse(output);
