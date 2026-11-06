@@ -131,7 +131,7 @@ jobs:
             --load \
             -t kb-e2e-ci-publisher:latest \
             -f e2e/publisher/Dockerfile \
-            e2e/
+            .
 
       - name: Restore Verdaccio storage cache
         if: inputs.gate == false || steps.gate.outputs.run == 'true'

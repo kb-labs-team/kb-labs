@@ -37,7 +37,7 @@ from commit_fixture import commit_fixture_source_version
 
 def _release_entity(identity: str) -> dict:
     root = Path(__file__).resolve().parents[2]
-    index = json.loads((root / "e2e" / "platform" / "fixtures" / "release-index-v2.json").read_text())
+    index = json.loads((root / "e2e" / "platform" / "fixtures" / "release-index-v3.json").read_text())
     return next((entity for collection in ("plugins", "adapters") for entity in index[collection]
                  if entity["id"] == identity or entity["package"] == identity), None)
 

@@ -25,6 +25,12 @@ func planWithFixtureProvenance(request contracts.InstallRequest, source catalog.
 }
 
 func planWithFixtureProvenanceOptions(request contracts.InstallRequest, source catalog.Catalog, options Options) (contracts.ResolvedInstallPlan, error) {
+	for i := range source.Platforms {
+		if len(source.Platforms[i].Binaries) == 0 {
+			source.Platforms[i].SupportedTargets = []catalog.BinaryTarget{{OS: stdruntime.GOOS, Arch: stdruntime.GOARCH}}
+			source.Platforms[i].Binaries = []catalog.Binary{testfixtures.TargetBinary(stdruntime.GOOS, stdruntime.GOARCH)}
+		}
+	}
 	sealed, err := testfixtures.SealCatalog(source)
 	if err != nil {
 		return contracts.ResolvedInstallPlan{}, err
@@ -45,6 +51,14 @@ func TestOfflinePlanReportsChecksumVerifiedCacheResolutionPerArtifact(t *testing
 	if err := os.WriteFile(cachePath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	binary := testfixtures.TargetBinary(stdruntime.GOOS, stdruntime.GOARCH)
+	binaryPath := filepath.Join(root, "state", "cache", "binaries", binary.SHA256)
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binaryPath, testfixtures.TargetBinaryBytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	source := catalog.Catalog{
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: hash,
@@ -57,7 +71,7 @@ func TestOfflinePlanReportsChecksumVerifiedCacheResolutionPerArtifact(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Artifacts) != 1 || plan.Artifacts[0].ResolvedFrom != "cache" || plan.Artifacts[0].ResolvedURL != "" {
+	if len(plan.Artifacts) != 2 || plan.Artifacts[0].ResolvedFrom != "cache" || plan.Artifacts[0].ResolvedURL != "" || plan.Artifacts[1].ResolvedFrom != "cache" || plan.Artifacts[1].ResolvedURL != "" {
 		t.Fatalf("offline artifact provenance = %#v", plan.Artifacts)
 	}
 
@@ -65,7 +79,7 @@ func TestOfflinePlanReportsChecksumVerifiedCacheResolutionPerArtifact(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if onlinePlan.Artifacts[0].ResolvedFrom != "registry" || onlinePlan.Artifacts[0].ResolvedURL != "https://registry.example/platform.tgz" {
+	if onlinePlan.Artifacts[1].ResolvedFrom != "registry" || onlinePlan.Artifacts[1].ResolvedURL != "https://registry.example/platform.tgz" {
 		t.Fatalf("registry artifact provenance = %#v", onlinePlan.Artifacts[0])
 	}
 }
@@ -76,6 +90,8 @@ func TestPlanRefusesSelectedPackageWithoutSealedProvenance(t *testing.T) {
 		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
 			Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
 	}
+	source.Platforms[0].SupportedTargets = []catalog.BinaryTarget{{OS: stdruntime.GOOS, Arch: stdruntime.GOARCH}}
+	source.Platforms[0].Binaries = []catalog.Binary{testfixtures.TargetBinary(stdruntime.GOOS, stdruntime.GOARCH)}
 	_, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default"}, source)
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != contracts.CodeProvenanceMismatch ||
@@ -455,7 +471,13 @@ func TestPlanAllowsMissingOptionalSecretAndRetainsWarning(t *testing.T) {
 	if len(plan.ConfigPatches) != 1 {
 		t.Fatalf("missing optional secret must not create an environment patch: %#v", plan.ConfigPatches)
 	}
-	if len(plan.Artifacts) == 0 || len(plan.Artifacts[0].Config) != 1 || plan.Artifacts[0].Config[0].Severity != "warning" || !plan.Artifacts[0].Config[0].Optional || plan.Artifacts[0].Config[0].Action != requirement.Action {
+	var platformArtifact contracts.Artifact
+	for _, item := range plan.Artifacts {
+		if item.Kind == "platform" {
+			platformArtifact = item
+		}
+	}
+	if len(platformArtifact.Config) != 1 || platformArtifact.Config[0].Severity != "warning" || !platformArtifact.Config[0].Optional || platformArtifact.Config[0].Action != requirement.Action {
 		t.Fatalf("resolved plan lost optional warning metadata: %#v", plan.Artifacts)
 	}
 }
@@ -509,7 +531,7 @@ func TestPlanInstallsPlatformMembersAtomically(t *testing.T) {
 	for _, artifact := range plan.Artifacts {
 		member = member || artifact.Kind == "platform-member" && artifact.ID == "gateway"
 	}
-	if err != nil || len(plan.Artifacts) != 2 || !member {
+	if err != nil || len(plan.Artifacts) != 3 || !member {
 		t.Fatalf("plan/error = %#v / %v", plan, err)
 	}
 }
@@ -531,7 +553,13 @@ func TestPlanKeepsPlatformPackageOnceWhenAlsoSelectedAsMemberAdapter(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Artifacts) != 1 || plan.Artifacts[0].Kind != "platform" || plan.Artifacts[0].Registry != "adapter" {
+	var platformItems []contracts.Artifact
+	for _, item := range plan.Artifacts {
+		if item.Kind == "platform" {
+			platformItems = append(platformItems, item)
+		}
+	}
+	if len(plan.Artifacts) != 2 || len(platformItems) != 1 || platformItems[0].Registry != "adapter" {
 		t.Fatalf("platform/member/adapter roles did not resolve to one platform artifact: %#v", plan.Artifacts)
 	}
 	if err := contracts.ValidatePlanArtifactIdentities(plan); err != nil {
@@ -597,6 +625,11 @@ func TestPlanIncludesSDKSelectedByPlatformReleaseWhenRequestOmitsSDK(t *testing.
 			{ID: "sdk@2.0.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"stage"}},
 		}},
 	}
+	var binaryFixture catalog.Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("2.0.0", "2.0.0", stdruntime.GOOS, stdruntime.GOARCH), &binaryFixture); err != nil {
+		t.Fatal(err)
+	}
+	source.Compatibility.Labels = append(source.Compatibility.Labels, binaryFixture.Compatibility.Labels[2])
 	plan, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: t.TempDir()}, source)
 	if err != nil {
 		t.Fatal(err)
@@ -649,7 +682,7 @@ func TestPlanKeepsPlatformMembersThatShareACatalogID(t *testing.T) {
 
 // case: PC-001.8, S-181.4, S-023.2
 func TestStableFixturePlansHaveUniqueArtifactIdentitiesAcrossProfilesAndScenarios(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v2.json"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v3.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -441,13 +441,13 @@ export function renderUIOutputText(output: UIOutput): string {
       const options = output.options;
       const displayLevel = output.level === 'success' ? 'ok' : output.level;
       const lines = [`[${displayLevel}] ${options?.title ?? output.message}`];
-      if (options?.title && options.title !== output.message) lines.push(output.message);
-      for (const [key, value] of Object.entries(options?.summary ?? {})) lines.push(`${key}: ${value}`);
+      if (options?.title && options.title !== output.message) {lines.push(output.message);}
+      for (const [key, value] of Object.entries(options?.summary ?? {})) {lines.push(`${key}: ${value}`);}
       lines.push(...outputSectionsText(options?.sections));
-      if (options?.cause) lines.push(`Cause: ${options.cause}`);
-      if (options?.hint) lines.push(`Hint: ${options.hint}`);
-      if (options?.command) lines.push(`$ ${options.command}`);
-      if (options?.timing !== undefined) lines.push(`Completed in ${options.timing}ms`);
+      if (options?.cause) {lines.push(`Cause: ${options.cause}`);}
+      if (options?.hint) {lines.push(`Hint: ${options.hint}`);}
+      if (options?.command) {lines.push(`$ ${options.command}`);}
+      if (options?.timing !== undefined) {lines.push(`Completed in ${options.timing}ms`);}
       return lines.join('\n');
     }
     case 'sideBox': {
@@ -467,7 +467,7 @@ export function renderUIOutputText(output: UIOutput): string {
         ...(item.timing === undefined ? [] : [`Completed in ${item.timing}ms`]),
       ].join('\n')).join('\n');
     case 'table': {
-      if (output.data.length === 0) return '';
+      if (output.data.length === 0) {return '';}
       const columns = output.columns ?? Object.keys(output.data[0]!).map(key => ({ header: key, key }));
       return [columns.map(column => column.header).join('\t'), ...output.data.map(row => columns.map(column => String(row[column.key] ?? '')).join('\t'))].join('\n');
     }

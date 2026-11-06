@@ -72,7 +72,7 @@ async function ipcPrompt(
     });
 
     process.send!(msg, (error) => {
-      if (!error) return;
+      if (!error) {return;}
       pendingPrompts.delete(promptId);
       clearTimeout(timer);
       reject(unavailablePrompt(prompt.message, 'The worker could not send the prompt to its host.'));

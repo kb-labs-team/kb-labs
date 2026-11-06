@@ -114,7 +114,9 @@ for (const packageName of platformMemberPackages) {
 }
 const sdk = byName.get(sdkPackage);
 if (!sdk) throw new Error(`SDK package ${sdkPackage} is absent from stage manifest; compatibility cannot be validated without an exact SDK artifact`);
-const binaries = binaryManifestPath ? JSON.parse(readFileSync(binaryManifestPath, 'utf8')).binaries : [];
+const binaryManifest = binaryManifestPath ? JSON.parse(readFileSync(binaryManifestPath, 'utf8')) : {};
+const binaries = binaryManifestPath ? binaryManifest.binaries : [];
+const supportedTargets = binaryManifest.supportedTargets;
 if (!Array.isArray(binaries)) throw new Error('binary manifest must contain a binaries array');
 for (const binary of binaries) {
   for (const field of ['id', 'version', 'os', 'arch', 'url', 'filename', 'sha256']) if (!binary[field]) throw new Error(`binary manifest entry is missing ${field}`);
@@ -399,6 +401,7 @@ const exportValue = {
       client: { profile: 'client', platformVersion: platform.version, services: [] },
     },
     binaries,
+    supportedTargets,
     members: [...platformMemberArtifacts].filter(packageName => packageName !== sdk.name).map(packageName => {
       const item = byName.get(packageName);
       return item ? component(item, undefined,

@@ -19,7 +19,7 @@ export function summarizeWorkflowInput(
     if (key === 'secrets' && isRecord(value)) {
       return { keys: Object.keys(value), declaredSecretKeys: Object.keys(value) }
     }
-    if (Array.isArray(value)) return value.map((nested) => summarize(nested))
+    if (Array.isArray(value)) {return value.map((nested) => summarize(nested))}
     if (isRecord(value)) {
       return Object.fromEntries(
         Object.entries(value).map(([nestedKey, nested]) => [nestedKey, summarize(nested, nestedKey)]),

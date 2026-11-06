@@ -116,7 +116,7 @@ export const workspaceRegister = defineSystemCommand<Flags, Result>({
       execution: { mode: 'in-process', timeoutMs: 120_000 },
     }, null, 2), { mode: 0o600 });
     const result = { configPath, hostId: data.hostId, clientId: data.clientId };
-    if (flags.json) return result;
+    if (flags.json) {return result;}
     ctx.ui?.success('Workspace Agent registered', {
       sections: [{ items: [
         `Host ID:    ${data.hostId}`,

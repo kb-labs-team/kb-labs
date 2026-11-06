@@ -28,6 +28,7 @@ COPY e2e/platform/journey-update-packages.mjs /src/journey-update-packages.mjs
 COPY e2e/platform/release-index-version.mjs /src/release-index-version.mjs
 COPY tools/kb-create/scripts/prepare-binary-manifest.mjs /src/tools/kb-create/scripts/prepare-binary-manifest.mjs
 COPY scripts/prepare-candidate-binaries.sh /src/scripts/prepare-candidate-binaries.sh
+COPY .goreleaser.yaml /src/.goreleaser.yaml
 COPY dist /src/dist
 COPY .journey/e2e-platform-binaries /out/binaries
 COPY tools/kb-create/scripts/prepare-release-index.mjs /src/kb-create/scripts/prepare-release-index.mjs
@@ -40,7 +41,7 @@ COPY tools/kb-create/config/platform-release.jsonc /src/kb-create/config/platfor
 RUN cp /out/binaries/kb-create-release-index /usr/local/bin/kb-create-release-index && \
     cp /out/binaries/binary-manifest.json /out/binary-manifest.json && \
     BINARY_VERSION="$(node -e 'const fs=require("node:fs"); const {execFileSync}=require("node:child_process"); const file=fs.readdirSync("/src/packages").find(name=>name.startsWith("kb-labs-core-runtime-") && name.endsWith(".tgz")); if (!file) throw new Error("@kb-labs/core-runtime tarball is missing"); process.stdout.write(JSON.parse(execFileSync("tar", ["-xOzf", `/src/packages/${file}`, "package/package.json"], {encoding:"utf8"})).version)')" && \
-    node /src/prepare-release-index.mjs \
+    KBLABS_RELEASE_INDEX_SEALER=/usr/local/bin/kb-create-release-index node /src/prepare-release-index.mjs \
       --packages-dir /src/packages \
       --registry-manifest /src/registry-manifest.json \
       --sealer /usr/local/bin/kb-create-release-index \

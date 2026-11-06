@@ -78,6 +78,20 @@ jobs:
       - id: batch
         name: Produce shared build and candidate
         run: node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"
+      - name: Print candidate diagnostics
+        if: failure()
+        run: |
+          for file in .journey/candidate-diagnostics/*.json; do
+            if [ -f "$file" ]; then tail -c 4096 "$file"; fi
+          done
+      - name: Upload candidate diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: batch-candidate-diagnostics
+          path: .journey/candidate-diagnostics/*.json
+          if-no-files-found: warn
+          include-hidden-files: true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:

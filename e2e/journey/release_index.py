@@ -1,4 +1,4 @@
-"""Helpers for reading the sealed V2 release index."""
+"""Helpers for reading the sealed v3 release index."""
 
 
 def channel_platform_version(index: dict, channel: str) -> str:

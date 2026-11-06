@@ -28,7 +28,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
     const captured = await captureFilesystemObservations(async () => {
       await readFile(packagePath);
       try { await readFile(manifestPath); } catch (error) {
-        if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error;
+        if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') {throw error;}
       }
     });
     const observations = captured.observations;

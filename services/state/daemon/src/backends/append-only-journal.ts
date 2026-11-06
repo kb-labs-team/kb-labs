@@ -77,7 +77,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
 
   override async setIfNotExists<T>(key: string, value: T, ttl = DEFAULT_TTL_MS): Promise<boolean> {
     return this.enqueue(async () => {
-      if (this.hasLiveEntry(key)) return false;
+      if (this.hasLiveEntry(key)) {return false;}
       const expiresAt = Date.now() + ttl;
       await this.append({ version: 1, operation: 'set', key, value, expiresAt });
       await super.set(key, value, Math.max(0, expiresAt - Date.now()));
@@ -115,12 +115,12 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
           this.lockOwned = true;
           return;
         } catch (error) {
-          if (!isAlreadyExists(error)) throw error;
+          if (!isAlreadyExists(error)) {throw error;}
         }
 
         const existing = await this.readWriterLock();
         if (existing === null) {
-          await new Promise((resolve) => setTimeout(resolve, 20));
+          await new Promise((resolve) => { setTimeout(resolve, 20); });
           continue;
         }
         if (existing.pid === process.pid) {
@@ -130,7 +130,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
           await this.reclaimStaleWriterLock(existing);
           continue;
         }
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await new Promise((resolve) => { setTimeout(resolve, 50); });
       }
     } finally {
       await rm(ownerPath, { force: true });
@@ -144,8 +144,8 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
         await mkdir(reclaimPath);
         break;
       } catch (error) {
-        if (!isAlreadyExists(error)) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        if (!isAlreadyExists(error)) {throw error;}
+        await new Promise((resolve) => { setTimeout(resolve, 20); });
       }
     }
 
@@ -164,7 +164,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
     try {
       content = await readFile(this.lockPath, 'utf8');
     } catch (error) {
-      if (isMissingPath(error)) return null;
+      if (isMissingPath(error)) {return null;}
       throw error;
     }
     const value: unknown = JSON.parse(content);
@@ -179,7 +179,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
   }
 
   private async releaseWriterLock(): Promise<void> {
-    if (!this.lockOwned) return;
+    if (!this.lockOwned) {return;}
     const existing = await this.readWriterLock();
     if (existing?.pid === process.pid && existing.token === this.ownerToken) {
       await rm(this.lockPath, { force: true });
@@ -200,7 +200,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
       handle = await open(this.journalPath, 'wx');
       created = true;
     } catch (error) {
-      if (!isAlreadyExists(error)) throw error;
+      if (!isAlreadyExists(error)) {throw error;}
       handle = await open(this.journalPath, 'a');
     }
     try {
@@ -209,7 +209,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
     } finally {
       await handle.close();
     }
-    if (created) await syncDirectoryChain(path.dirname(this.journalPath));
+    if (created) {await syncDirectoryChain(path.dirname(this.journalPath));}
     this.journalRecords++;
   }
 
@@ -218,7 +218,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
     try {
       contents = await readFile(this.journalPath);
     } catch (error) {
-      if (isMissingPath(error)) return;
+      if (isMissingPath(error)) {return;}
       throw error;
     }
 
@@ -230,10 +230,10 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
       const completeLine = lineEnd !== -1;
       let record: JournalRecord;
       try {
-        if (!completeLine) throw new Error('incomplete final record');
+        if (!completeLine) {throw new Error('incomplete final record');}
         const line = decoder.decode(contents.subarray(lineStart, lineEnd));
         const parsed: unknown = JSON.parse(line);
-        if (!isJournalRecord(parsed)) throw new Error('record does not match journal format');
+        if (!isJournalRecord(parsed)) {throw new Error('record does not match journal format');}
         record = parsed;
       } catch {
         this.corrupted = true;
@@ -260,7 +260,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
     switch (record.operation) {
       case 'set': {
         const ttl = record.expiresAt - Date.now();
-        if (ttl > 0) await super.set(record.key, record.value, ttl);
+        if (ttl > 0) {await super.set(record.key, record.value, ttl);}
         return;
       }
       case 'delete':
@@ -273,7 +273,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
   }
 
   private async compactIfNeeded(): Promise<void> {
-    if (this.journalRecords < COMPACT_AFTER_RECORDS) return;
+    if (this.journalRecords < COMPACT_AFTER_RECORDS) {return;}
     const entries = this.snapshotEntries();
     const temporaryPath = `${this.journalPath}.${process.pid}.${Date.now()}.tmp`;
     const handle = await open(temporaryPath, 'w');
@@ -304,14 +304,14 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
 }
 
 function isJournalRecord(value: unknown): value is JournalRecord {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {return false;}
   const record = value as Record<string, unknown>;
-  if (record.version !== 1 || typeof record.operation !== 'string') return false;
+  if (record.version !== 1 || typeof record.operation !== 'string') {return false;}
   if (record.operation === 'set') {
     return typeof record.key === 'string' && typeof record.expiresAt === 'number' && Number.isFinite(record.expiresAt) && 'value' in record;
   }
-  if (record.operation === 'delete') return typeof record.key === 'string';
-  if (record.operation === 'clear') return record.pattern === undefined || typeof record.pattern === 'string';
+  if (record.operation === 'delete') {return typeof record.key === 'string';}
+  if (record.operation === 'clear') {return record.pattern === undefined || typeof record.pattern === 'string';}
   return false;
 }
 
@@ -328,8 +328,8 @@ function isProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false;
-    if (error instanceof Error && 'code' in error && error.code === 'EPERM') return true;
+    if (error instanceof Error && 'code' in error && error.code === 'ESRCH') {return false;}
+    if (error instanceof Error && 'code' in error && error.code === 'EPERM') {return true;}
     throw error;
   }
 }
@@ -344,7 +344,7 @@ async function syncDirectoryChain(directory: string): Promise<void> {
       await handle.close();
     }
     const parent = path.dirname(current);
-    if (parent === current) return;
+    if (parent === current) {return;}
     current = parent;
   }
 }

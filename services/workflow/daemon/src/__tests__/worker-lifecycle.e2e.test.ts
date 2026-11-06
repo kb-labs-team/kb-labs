@@ -217,7 +217,7 @@ describe('workflow worker lifecycle', () => {
     const stateStore = { updateStep: vi.fn(async () => null) } satisfies Partial<StateStore>;
     const engine = {
       async nextJob() {
-        if (queueDrained) return null;
+        if (queueDrained) {return null;}
         queueDrained = true;
         return {
           id: `${runId}:queue`,

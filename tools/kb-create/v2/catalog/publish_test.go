@@ -157,7 +157,7 @@ func compatibilitySealFixture() Catalog {
 			{ID: sdkID, Kind: "sdk", ArtifactID: "sdk", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"test"}},
 			{ID: "binary:kb-create@2.0.0:linux/amd64", Kind: "binary", ArtifactID: "kb-create", Version: "2.0.0", Requires: []CompatibilityRelation{{Label: platformID}, {Label: sdkID}}, Status: "prepared", ValidatedBy: []string{"test"}},
 		}},
-		Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
+		Platforms: []PlatformBundle{{SupportedTargets: []BinaryTarget{{OS: "linux", Arch: "amd64"}}, ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
 			Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}},
 			Binaries: []Binary{{ID: "kb-create", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}}}},
 		SDKs: []Component{{ID: "sdk", Version: "2.0.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk.tgz", SHA256: "sdk"}},
@@ -173,7 +173,7 @@ func TestCompatibilityMatrixAcceptsIndependentPlatformSDKAndBinaryVersions(t *te
 			{ID: "sdk@3.2.0", Kind: "sdk", ArtifactID: "sdk", Version: "3.2.0", Status: "prepared", ValidatedBy: []string{"stage"}},
 			{ID: "binary:kb-create@5.1.0:linux/amd64", Kind: "binary", ArtifactID: "kb-create", Version: "5.1.0", Requires: []CompatibilityRelation{{Label: "platform@4.0.0"}, {Label: "sdk@3.2.0"}}, Status: "prepared", ValidatedBy: []string{"stage"}},
 		}},
-		Platforms: []PlatformBundle{{ID: "platform", Version: "4.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Binaries: []Binary{{ID: "kb-create", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}}}},
+		Platforms: []PlatformBundle{{SupportedTargets: []BinaryTarget{{OS: "linux", Arch: "amd64"}}, ID: "platform", Version: "4.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Binaries: []Binary{{ID: "kb-create", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}}}},
 		SDKs:      []Component{{ID: "sdk", Version: "3.2.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk.tgz", SHA256: "sdk"}},
 	}
 	sealed, err := Seal(base)

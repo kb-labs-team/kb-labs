@@ -17,11 +17,11 @@ export async function callServiceTool(
     const query = new URLSearchParams();
     const payload: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(args)) {
-      if (pathParameters.has(key) || !inputNames.has(key) || value === undefined) continue;
+      if (pathParameters.has(key) || !inputNames.has(key) || value === undefined) {continue;}
       if (tool.route.body === true) {
         payload[key] = value;
       } else if (Array.isArray(value)) {
-        for (const item of value) query.append(key, String(item));
+        for (const item of value) {query.append(key, String(item));}
       } else {
         query.append(key, String(value));
       }

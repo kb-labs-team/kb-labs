@@ -19,7 +19,7 @@ export function nodeVersionSupported(requiredMajor, actualVersion) {
  * @returns {number}
  */
 function parseNodeMajor(version) {
-  if (typeof version !== 'string') throw new Error(`Invalid Node.js version "${version}".`);
+  if (typeof version !== 'string') {throw new Error(`Invalid Node.js version "${version}".`);}
   const majorText = version.trim().replace(/^v/, '').split('.')[0];
   const major = Number(majorText);
   if (!Number.isSafeInteger(major) || major < 0 || majorText === '') {
@@ -62,10 +62,10 @@ export function runtimePackageManifest(moduleURL) {
     const manifest = join(directory, 'package.json');
     if (existsSync(manifest)) {
       const parsed = JSON.parse(readFileSync(manifest, 'utf8'));
-      if (parsed.name === '@kb-labs/plugin-runtime') return manifest;
+      if (parsed.name === '@kb-labs/plugin-runtime') {return manifest;}
     }
     const parent = dirname(directory);
-    if (parent === directory) break;
+    if (parent === directory) {break;}
     directory = parent;
   }
   throw new Error(`Cannot locate the installed @kb-labs/plugin-runtime/package.json from ${moduleURL}.`);
@@ -82,7 +82,7 @@ export function selectNodeExecutable(rootManifest, environment = process.env) {
   const candidates = new Set((environment.PATH ?? '').split(delimiter).map((directory) => join(directory || '.', 'node')));
   const rejected = [];
   for (const candidate of candidates) {
-    if (!existsSync(candidate)) continue;
+    if (!existsSync(candidate)) {continue;}
     let version;
     try {
       version = execFileSync(candidate, ['--version'], { encoding: 'utf8', timeout: 5000 }).trim();
@@ -90,7 +90,7 @@ export function selectNodeExecutable(rootManifest, environment = process.env) {
       rejected.push(`${candidate} (could not read version: ${error instanceof Error ? error.message : String(error)})`);
       continue;
     }
-    if (nodeVersionSupported(requiredMajor, version)) return candidate;
+    if (nodeVersionSupported(requiredMajor, version)) {return candidate;}
     rejected.push(`${candidate} (${version})`);
   }
   const checked = rejected.length > 0 ? rejected.join(', ') : 'no Node.js executables were found on PATH';

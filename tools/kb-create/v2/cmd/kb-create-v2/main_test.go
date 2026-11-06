@@ -855,7 +855,7 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
 	index := filepath.Join(home, "release-index.json")
-	source, err := catalog.LoadFile(filepath.Join("..", "..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v2.json"))
+	source, err := catalog.LoadFile(filepath.Join("..", "..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v3.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1030,7 +1030,7 @@ func TestInstallAndApplyArgvRefuseUnattributedRootsUnchanged(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
-	index := filepath.Join("..", "..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v2.json")
+	index := filepath.Join("..", "..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v3.json")
 	project := filepath.Join(home, "fresh-project")
 	if err := os.Mkdir(project, 0o700); err != nil {
 		t.Fatal(err)
@@ -1098,7 +1098,7 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
 	index := filepath.Join(home, "release-index.json")
-	source, err := catalog.LoadFile(filepath.Join("..", "..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v2.json"))
+	source, err := catalog.LoadFile(filepath.Join("..", "..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v3.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

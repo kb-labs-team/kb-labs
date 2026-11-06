@@ -53,7 +53,7 @@ export async function resolveActiveGatewayAddress({
 }
 
 async function resolvePlatformRoot(cwd: string, env: NodeJS.ProcessEnv, explicitPlatformRoot?: string): Promise<string> {
-  if (explicitPlatformRoot) return explicitPlatformRoot;
+  if (explicitPlatformRoot) {return explicitPlatformRoot;}
   return (await loadPlatformConfig({
     startDir: cwd,
     env,

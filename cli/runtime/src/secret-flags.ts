@@ -13,8 +13,8 @@ export function registerSecretFlagValues(
   const secretNames = declarations.filter(({ secret }) => secret === true).map(({ name }) => name);
   registerProcessSensitiveValues(secretNames.flatMap((name) => {
     const value = values[name];
-    if (typeof value === 'string') return [value];
-    if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === 'string');
+    if (typeof value === 'string') {return [value];}
+    if (Array.isArray(value)) {return value.filter((entry): entry is string => typeof entry === 'string');}
     return [];
   }));
 }

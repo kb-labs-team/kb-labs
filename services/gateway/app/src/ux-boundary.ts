@@ -18,7 +18,7 @@ export function registerGatewayUxErrorResponses(
 ): void {
   registerGatewayRouteSchemas(app);
   app.addHook('preSerialization', async (_request, reply, payload) => {
-    if (reply.statusCode >= 400) reply.serializer((value) => JSON.stringify(value));
+    if (reply.statusCode >= 400) {reply.serializer((value) => JSON.stringify(value));}
     return payload;
   });
   app.setErrorHandler((error, request, reply) => {
@@ -44,10 +44,10 @@ export function registerGatewayUxErrorResponses(
     reply.code(statusCode).send({ error: failure.error });
   });
   app.addHook('onSend', async (request, reply, payload) => {
-    if (reply.statusCode < 400) return payload;
+    if (reply.statusCode < 400) {return payload;}
     if (payload === null || payload === undefined || Buffer.isBuffer(payload)
       || typeof (payload as { pipe?: unknown }).pipe === 'function'
-      || typeof (payload as { getReader?: unknown }).getReader === 'function') return payload;
+      || typeof (payload as { getReader?: unknown }).getReader === 'function') {return payload;}
     let body: unknown = payload;
     if (typeof payload === 'string') {
       try { body = JSON.parse(payload); } catch { body = undefined; }
@@ -75,12 +75,12 @@ export function registerGatewayUxBoundary(
     return sendGatewayNotFound(reply, String(request.id || randomUUID()));
   });
   app.addHook('onSend', async (request, reply, payload) => {
-    if (request.routeOptions.config?.ux === 'raw') return payload;
-    if (reply.statusCode >= 400) return payload;
+    if (request.routeOptions.config?.ux === 'raw') {return payload;}
+    if (reply.statusCode >= 400) {return payload;}
     if (typeof payload !== 'string') {
       if (payload === null || payload === undefined || Buffer.isBuffer(payload)
         || typeof (payload as { pipe?: unknown }).pipe === 'function'
-        || typeof (payload as { getReader?: unknown }).getReader === 'function') return payload;
+        || typeof (payload as { getReader?: unknown }).getReader === 'function') {return payload;}
       return JSON.stringify(createUxSuccessResult(payload));
     }
     let body: unknown;
@@ -89,7 +89,7 @@ export function registerGatewayUxBoundary(
       const error = 'error' in body ? body.error : undefined;
       return JSON.stringify(createUxFailureResult(toErrorEnvelope(error, { correlationId: String(request.id || '') })));
     }
-    if (isUxResult(body)) return payload;
+    if (isUxResult(body)) {return payload;}
     return JSON.stringify(createUxSuccessResult(body));
   });
 }

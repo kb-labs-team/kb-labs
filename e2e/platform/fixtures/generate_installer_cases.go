@@ -27,7 +27,8 @@ func label(id, kind, artifact, version string, requires ...string) catalog.Compa
 func fixtureCatalog(hasRunnerBinary bool, runnerOS, runnerArch string) catalog.Catalog {
 	platform := catalog.PlatformBundle{
 		ID: "platform", Version: fixtureVersion, Package: "@kb/fixture-platform",
-		Tarball: "https://example.test/fixture-platform.tgz", SHA256: "fixture-platform-sha256",
+		SupportedTargets: []catalog.BinaryTarget{{OS: runnerOS, Arch: runnerArch}},
+		Tarball:          "https://example.test/fixture-platform.tgz", SHA256: "fixture-platform-sha256",
 		SDKRange: ">=3.0.0 <4.0.0", Host: &contracts.HostSpec{Command: "node_modules/.bin/kb-host", HealthURL: "http://127.0.0.1:4000/health"},
 		Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: fixtureVersion}},
 	}

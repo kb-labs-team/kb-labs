@@ -17,7 +17,7 @@ export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
 
 
 export function ok<T>(data: T): ApiSuccessResponse<Exclude<T, undefined>> {
-  if (data === undefined) throw new TypeError('Workflow API success data must be defined.');
+  if (data === undefined) {throw new TypeError('Workflow API success data must be defined.');}
   return createUxSuccessResult(data as Exclude<T, undefined>);
 }
 

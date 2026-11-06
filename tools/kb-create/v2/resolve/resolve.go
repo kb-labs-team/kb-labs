@@ -151,11 +151,13 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		}
 	}
 	binaryForTarget := false
-	binaryForOS := false
-	for _, binary := range platform.Binaries {
-		if binary.OS == goos {
-			binaryForOS = true
+	supportedTarget := false
+	for _, target := range platform.SupportedTargets {
+		if target.OS == goos && target.Arch == goarch {
+			supportedTarget = true
 		}
+	}
+	for _, binary := range platform.Binaries {
 		if binary.OS == goos && binary.Arch == goarch {
 			binaryForTarget = true
 			if source.Compatibility != nil {
@@ -166,8 +168,8 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			artifacts = append(artifacts, contracts.Artifact{ID: binary.ID, Kind: "binary", Version: platform.Version, SHA256: binary.SHA256, SizeBytes: binary.SizeBytes, URL: binary.URL, Target: binary.ID})
 		}
 	}
-	if len(platform.Binaries) > 0 && !binaryForTarget {
-		if !binaryForOS {
+	if !binaryForTarget {
+		if !supportedTarget {
 			return contracts.ResolvedInstallPlan{}, contracts.UnsupportedPlatformDiagnostic(goos, goarch)
 		}
 		return contracts.ResolvedInstallPlan{}, incompatibleBinary("kb-create", platform.Version, goos+"/"+goarch, "binary "+goos+"/"+goarch, "platform "+platform.Version+" ships no binary for this OS/arch")

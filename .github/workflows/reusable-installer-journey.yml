@@ -55,6 +55,20 @@ jobs:
         env:
           KB_JOURNEY_PACKAGES_READY: ${{ steps.tgz-cache.outputs.cache-hit == 'true' && '1' || '0' }}
         run: e2e/journey/prepare-candidate.sh
+      - name: Print candidate diagnostics
+        if: failure()
+        run: |
+          for file in .journey/candidate-diagnostics/*.json; do
+            if [ -f "$file" ]; then tail -c 4096 "$file"; fi
+          done
+      - name: Upload candidate diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: installer-candidate-diagnostics
+          path: .journey/candidate-diagnostics/*.json
+          if-no-files-found: warn
+          include-hidden-files: true
       - id: matrix
         name: Select journeys from release case claims
         run: printf 'journeys=%s\n' "$(python3 e2e/journey/select_from_cases.py)" >> "$GITHUB_OUTPUT"

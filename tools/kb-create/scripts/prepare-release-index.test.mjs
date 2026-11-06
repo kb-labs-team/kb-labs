@@ -24,6 +24,10 @@ const digestTool = join(digestToolDirectory, 'kb-create-release-index');
 execFileSync('go', ['build', '-trimpath', '-o', digestTool, './v2/cmd/kb-create-release-index'], {
   cwd: resolve(dirname(fileURLToPath(import.meta.url)), '..'),
 });
+const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+const supportedTargets = JSON.parse(execFileSync(digestTool, ['targets', join(workspaceRoot, '.goreleaser.yaml'), 'kb-create'], { encoding: 'utf8' }));
+const schemaFixture = JSON.parse(readFileSync(join(workspaceRoot, 'e2e/platform/fixtures/release-index-v3.json'), 'utf8')).schema;
+
 
 test('dropping the provenance manifest refuses release-index production', () => {
   const root = temporaryRoot('kb-release-index-required-provenance-');
@@ -59,13 +63,13 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
   execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","kvStore":"@kb-labs/adapters-sqlite/kv","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}},"llm":{"apiKey":"${OPENAI_API_KEY}"}}', '--platform-member-packages', '@kb-labs/core-contracts,@kb-labs/scaffold,@kb-labs/release', '--release-notes', 'Candidate release notes from the journey fixture.', '--output', output], { stdio: 'pipe' });
   assert.equal(existsSync(join(stage, 'v2-manifest-root')), false, 'release-index inspection files must stay out of the staged npm artifact directory');
   assert.equal(existsSync(join(stage, 'manifest-export.json')), false, 'release-index input files must stay out of the staged npm artifact directory');
   const index = JSON.parse(readFileSync(output, 'utf8'));
-  assert.equal(index.schema, 'kb.create.release-index/v2');
+  assert.equal(index.schema, schemaFixture);
   assert.equal(index.compatibility.schema, 'kb.release-compatibility/2');
   assert.deepEqual(index.compatibility.labels.map(({ id, kind, artifactId, version }) => ({ id, kind, artifactId, version })), [
     { id: 'platform@2.0.0', kind: 'platform', artifactId: 'platform', version: '2.0.0' },
@@ -225,7 +229,7 @@ test('seals the runtime range from the packed workspace SDK contract', () => {
   }
   writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [] }));
   const output = join(root, 'release-index.json');
   execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage),
     '--binary-manifest', binaryManifest,
@@ -281,7 +285,7 @@ test('filesystem adapter contributes the project storage directory default to th
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
   execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-requires', 'storage', '--platform-adapter-config', '{"storage":"@kb-labs/adapters-fs"}', '--output', output], { stdio: 'pipe' });
 
@@ -304,7 +308,7 @@ test('fails closed when a configured platform adapter is not staged', () => {
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-adapter-config', '{"cache":"@kb-labs/adapters-redis"}', '--output', join(root, 'release-index.json')], { encoding: 'utf8' });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /configured platform adapter @kb-labs\/adapters-redis is absent/);
@@ -323,7 +327,7 @@ test('derives the platform compatibility range from the SDK runtime dependency',
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [] }));
   const output = join(root, 'release-index.json');
   const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--output', output], { encoding: 'utf8' });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
@@ -343,7 +347,7 @@ test('records the SDK and platform versions without a second range compatibility
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
   const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--output', output], { encoding: 'utf8' });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
@@ -380,7 +384,7 @@ test('each staged plugin must have its declared platform peers provided by the p
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [] }));
   const args = [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage),
     '--binary-manifest', binaryManifest,
     '--platform-member-packages', '@kb-labs/cli-bin,@kb-labs/workflow-entry',
@@ -406,7 +410,7 @@ test('fails closed when a required platform member was not staged', () => {
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-member-packages', '@kb-labs/cli-bin', '--output', join(root, 'release-index.json')], { encoding: 'utf8' });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /required platform member @kb-labs\/cli-bin is absent/);
@@ -427,7 +431,7 @@ test('reads the structured service port from the emitted manifest artifact', () 
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
   execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--output', output], { stdio: 'pipe' });
   const index = JSON.parse(readFileSync(output, 'utf8'));
@@ -531,7 +535,7 @@ test('the default platform.adapters baseline keeps the credential-free logger an
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
   execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport,logger,logRingBuffer', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","logger":"@kb-labs/adapters-pino","logRingBuffer":"@kb-labs/adapters-log-ringbuffer","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}}}', '--platform-member-packages', '@kb-labs/workflow-daemon', '--output', output], { stdio: 'pipe' });
   const index = JSON.parse(readFileSync(output, 'utf8'));
@@ -563,7 +567,7 @@ test('the release index requires and binds the persistent fresh-install defaults
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [] }));
   const bindings = {
     storage: '@kb-labs/adapters-fs', cache: '@kb-labs/adapters-state-broker',
     eventBus: '@kb-labs/adapters-eventbus-cache',
@@ -608,7 +612,7 @@ function prepareWithGateway(files) {
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
   const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--output', output], { encoding: 'utf8' });
   return { result, output, text: `${result.stdout}\n${result.stderr}` };
@@ -727,7 +731,7 @@ function versionFixture(prefix, sdkVersion) {
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
   ]);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
   const base = [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--output', output];
   return { base, output };
@@ -747,7 +751,7 @@ test('fails preparation when a staged package declares a manifest but lacks the 
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [] }));
   const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--output', join(root, 'release-index.json')], { encoding: 'utf8' });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /@kb-labs\/adapters-missing-artifact declares kb\.adapter\.manifest but its build did not emit dist\/manifest\.json/);
@@ -756,7 +760,7 @@ test('fails preparation when a staged package declares a manifest but lacks the 
 test('writes the actual SDK and binary versions as explicit compatibility relations', () => {
   const { base, output } = versionFixture('kb-release-index-independent-', '2.1.0');
   const binaryManifest = base[base.indexOf('--binary-manifest') + 1];
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '3.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  writeFileSync(binaryManifest, JSON.stringify({ supportedTargets, binaries: [{ id: 'kb-create', version: '3.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const result = spawnSync(process.execPath, base, { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   const index = JSON.parse(readFileSync(output, 'utf8'));
@@ -813,6 +817,6 @@ function hostFixture(hostExtra) {
     ...(hostExtra ? [packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', hostExtra)] : []),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
-  writeFileSync(join(root, 'binary-manifest.json'), JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  writeFileSync(join(root, 'binary-manifest.json'), JSON.stringify({ supportedTargets, binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   return { root, stage };
 }

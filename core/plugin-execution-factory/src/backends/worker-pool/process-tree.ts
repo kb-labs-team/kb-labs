@@ -20,7 +20,7 @@ const PROCESS_POLL_INTERVAL_MS = 25;
 
 export function parseDarwinProcessTable(table: string): ProcessRecord[] {
   return table.split(/\r?\n/).flatMap(line => {
-    if (!line.trim()) return [];
+    if (!line.trim()) {return [];}
     const fields = line.trim().split(/\s+/);
     const pid = Number(fields[0]);
     const ppid = Number(fields[1]);
@@ -43,7 +43,7 @@ export const systemProcessTable: ProcessTableSource = {
           const close = stat.lastIndexOf(')');
           const fields = stat.slice(close + 2).trim().split(/\s+/);
           const ppid = Number(fields[1]);
-          if (fields[0] === 'Z' || fields[0] === 'X') return [];
+          if (fields[0] === 'Z' || fields[0] === 'X') {return [];}
           const startIdentity = fields[19];
           if (!Number.isInteger(ppid) || !startIdentity) {
             throw new Error(`Invalid process identity record for PID ${pid}`);
@@ -89,7 +89,7 @@ function identityUnverified(expected: ProcessRecord, current: ProcessRecord | un
 function signalProcess(pid: number): string | undefined {
   try { process.kill(pid, 'SIGKILL'); return undefined; }
   catch (error) {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH') return undefined;
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH') {return undefined;}
     return error instanceof Error ? error.message : String(error);
   }
 }
@@ -144,7 +144,7 @@ export async function terminateProcessTree(
     if (!descendants.some(record => sameProcess(record, byPid.get(record.pid)))) {
       return { verified: true, descendants: descendants.map(record => record.pid) };
     }
-    await new Promise(resolve => setTimeout(resolve, PROCESS_POLL_INTERVAL_MS));
+    await new Promise(resolve => { setTimeout(resolve, PROCESS_POLL_INTERVAL_MS); });
   }
   return { verified: false, descendants: descendants.map(record => record.pid), reason: 'survivor-timeout' };
 }

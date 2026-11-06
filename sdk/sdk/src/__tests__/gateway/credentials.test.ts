@@ -17,7 +17,7 @@ let filePath: string;
 let manager: CredentialsManager;
 
 afterEach(async () => {
-  if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  if (tmpDir) {await fs.rm(tmpDir, { recursive: true, force: true });}
 });
 
 async function setup(): Promise<void> {

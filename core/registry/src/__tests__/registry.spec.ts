@@ -335,8 +335,8 @@ describe('EntityRegistry', () => {
       expect(health.version.kbLabs).toBe('2.120.2-cand.d84c8f013160');
     } finally {
       await registry.dispose();
-      if (previousVersion === undefined) delete process.env.KB_LABS_VERSION;
-      else process.env.KB_LABS_VERSION = previousVersion;
+      if (previousVersion === undefined) {delete process.env.KB_LABS_VERSION;}
+      else {process.env.KB_LABS_VERSION = previousVersion;}
     }
   });
 

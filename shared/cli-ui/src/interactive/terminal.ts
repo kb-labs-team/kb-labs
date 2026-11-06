@@ -29,7 +29,7 @@ export function requireInteractiveInput(
   hint: string,
   cause = 'Required input cannot be read in this execution context.',
 ): void {
-  if (isInteractive()) return;
+  if (isInteractive()) {return;}
   throw new InteractiveInputRequiredError(hint, cause);
 }
 

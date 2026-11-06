@@ -390,8 +390,8 @@ export class TrieRouter {
   listSystemCommandEntries(): Array<{ command: SystemCommand; path: string[] }> {
     const entries: Array<{ command: SystemCommand; path: string[] }> = [];
     const visit = (node: TrieNode, path: string[]): void => {
-      if (node.systemCommand) entries.push({ command: node.systemCommand, path });
-      for (const [segment, child] of node.children) visit(child, [...path, segment]);
+      if (node.systemCommand) {entries.push({ command: node.systemCommand, path });}
+      for (const [segment, child] of node.children) {visit(child, [...path, segment]);}
     };
     visit(this.root, []);
     return entries;

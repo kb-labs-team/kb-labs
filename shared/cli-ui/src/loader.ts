@@ -6,7 +6,7 @@
 
 import { safeColors, safeSymbols } from './colors';
 function writeOutput(text: string, jsonMode = false): void {
-  if (jsonMode) return;
+  if (jsonMode) {return;}
   process.stdout.write(text);
 }
 

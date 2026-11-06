@@ -142,8 +142,8 @@ describe('Registry Integration', () => {
       const snapshotPath = resolveRuntimeStatePath(scopeRoot, ['cache', 'registry.json'], { root: kbHome });
       await expect(fs.access(snapshotPath)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
-      if (previousKbHome === undefined) delete process.env.KB_HOME;
-      else process.env.KB_HOME = previousKbHome;
+      if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+      else {process.env.KB_HOME = previousKbHome;}
       await fs.rm(kbHome, { recursive: true, force: true });
       await fs.rm(scopeRoot, { recursive: true, force: true });
     }
@@ -289,8 +289,8 @@ describe('Registry Integration', () => {
 
       await fs.rm(packageB, { recursive: true, force: true });
     } finally {
-      if (previousKbHome === undefined) delete process.env.KB_HOME;
-      else process.env.KB_HOME = previousKbHome;
+      if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+      else {process.env.KB_HOME = previousKbHome;}
     }
   });
 
@@ -332,8 +332,8 @@ describe('Registry Integration', () => {
       expect(afterBuild.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).toContain('sample after-build');
       await afterBuild.dispose();
     } finally {
-      if (previousKbHome === undefined) delete process.env.KB_HOME;
-      else process.env.KB_HOME = previousKbHome;
+      if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+      else {process.env.KB_HOME = previousKbHome;}
     }
   });
 
@@ -380,8 +380,8 @@ describe('Registry Integration', () => {
         .toContain('commit plan show');
       await enabled.dispose();
     } finally {
-      if (previousKbHome === undefined) delete process.env.KB_HOME;
-      else process.env.KB_HOME = previousKbHome;
+      if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+      else {process.env.KB_HOME = previousKbHome;}
     }
   });
 
@@ -433,8 +433,8 @@ describe('Registry Integration', () => {
         .not.toContain('commit plan show');
       await reopened.dispose();
     } finally {
-      if (previousKbHome === undefined) delete process.env.KB_HOME;
-      else process.env.KB_HOME = previousKbHome;
+      if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+      else {process.env.KB_HOME = previousKbHome;}
     }
   });
 
@@ -469,8 +469,8 @@ describe('Registry Integration', () => {
       expect(commandIds).not.toContain('target old');
       await reopened.dispose();
     } finally {
-      if (previousKbHome === undefined) delete process.env.KB_HOME;
-      else process.env.KB_HOME = previousKbHome;
+      if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+      else {process.env.KB_HOME = previousKbHome;}
     }
   });
 
@@ -497,8 +497,8 @@ describe('Registry Integration', () => {
       expect(withoutPlatform.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('platform only');
       await withoutPlatform.dispose();
     } finally {
-      if (previousKbHome === undefined) delete process.env.KB_HOME;
-      else process.env.KB_HOME = previousKbHome;
+      if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+      else {process.env.KB_HOME = previousKbHome;}
     }
   });
 
@@ -561,8 +561,8 @@ describe('Registry Integration', () => {
       expect(jsonChanged.queryEntities({ kind: 'cli-command' }).map(entity => entity.ref.entityId)).not.toContain('json old');
       await jsonChanged.dispose();
     } finally {
-      if (previousKbHome === undefined) delete process.env.KB_HOME;
-      else process.env.KB_HOME = previousKbHome;
+      if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+      else {process.env.KB_HOME = previousKbHome;}
     }
   });
 

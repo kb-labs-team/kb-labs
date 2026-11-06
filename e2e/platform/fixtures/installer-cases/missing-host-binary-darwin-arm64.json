@@ -1,6 +1,6 @@
 {
-  "schema": "kb.create.release-index/v2",
-  "digest": "cac6302226022a3cad2f5f3ecc55fc100cc4f5d4bf199d8d5385692e76b44e15",
+  "schema": "kb.create.release-index/v3",
+  "digest": "5440fe3cccc1a7cc3368d48a0f3b01e14c7a8629f1a8b48743eff6b894d7a88d",
   "channels": {
     "stable": "3.2.0"
   },
@@ -95,6 +95,12 @@
         "command": "node_modules/.bin/kb-host",
         "healthUrl": "http://127.0.0.1:4000/health"
       },
+      "supportedTargets": [
+        {
+          "os": "darwin",
+          "arch": "arm64"
+        }
+      ],
       "binaries": [
         {
           "id": "kb-create",

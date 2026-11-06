@@ -77,7 +77,7 @@ export function resolvePlatformDataPath(
       `Run kb config set --scope platform ${optionPath} '<path-inside-platform-data>' with a path inside ${context.dataRoot}.`,
     );
   }
-  if (specialValues.includes(value) || isAbsolute(value)) return value;
+  if (specialValues.includes(value) || isAbsolute(value)) {return value;}
 
   const normalizedInput = value.replaceAll('\\', sep);
   const normalizedRelative = normalize(normalizedInput);

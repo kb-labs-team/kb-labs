@@ -808,8 +808,8 @@ export function resolvePluginBasePath(
   const basePath = declaredBasePath || (surface === "ws"
     ? `/v1/ws/plugins/${manifest.id}`
     : `/plugins/${manifest.id}`);
-  if (basePath.startsWith("/api/")) return basePath;
-  if (basePath.startsWith("/v1/")) return basePath.replace(/^\/v1/, configBase);
+  if (basePath.startsWith("/api/")) {return basePath;}
+  if (basePath.startsWith("/v1/")) {return basePath.replace(/^\/v1/, configBase);}
   return `${configBase}${basePath.startsWith("/") ? "" : "/"}${basePath}`;
 }
 

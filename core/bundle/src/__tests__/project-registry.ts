@@ -17,15 +17,15 @@ export async function useIsolatedProjectRegistry(
   try {
     await registerTestProject(projectPath);
   } catch (error) {
-    if (previousKbHome === undefined) delete process.env.KB_HOME;
-    else process.env.KB_HOME = previousKbHome;
+    if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+    else {process.env.KB_HOME = previousKbHome;}
     await rm(registryHome, { recursive: true, force: true });
     throw error;
   }
 
   return async () => {
-    if (previousKbHome === undefined) delete process.env.KB_HOME;
-    else process.env.KB_HOME = previousKbHome;
+    if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+    else {process.env.KB_HOME = previousKbHome;}
     await rm(registryHome, { recursive: true, force: true });
   };
 }

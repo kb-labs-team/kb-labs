@@ -10,7 +10,7 @@ describe('resolvePlatformDataRoot', () => {
   let tempRoot: string | undefined;
 
   afterEach(async () => {
-    if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+    if (tempRoot) {await rm(tempRoot, { recursive: true, force: true });}
     tempRoot = undefined;
   });
 

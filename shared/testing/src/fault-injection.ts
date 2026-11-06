@@ -21,7 +21,7 @@ export class FaultInjectingCache implements ICache {
 
   private async fail(operation: CacheOperation): Promise<void> {
     const error = await this.failureFor(operation);
-    if (error) throw error;
+    if (error) {throw error;}
   }
 
   async get<T>(key: string): Promise<T | null> {
@@ -74,7 +74,7 @@ export class FaultInjectingEventBus implements IEventBus {
 
   async publish<T>(topic: string, event: T): Promise<void> {
     const error = await this.failureFor({ name: 'publish', topic, event });
-    if (error) throw error;
+    if (error) {throw error;}
     return this.delegate.publish(topic, event);
   }
 

@@ -29,3 +29,21 @@ func TestWriteRequiresCorrelationID(t *testing.T) {
 		t.Fatal("expected correlation validation")
 	}
 }
+
+func TestWriteRedactsCredentialFormInPackageManagerTail(t *testing.T) {
+	const secret = "diagnostic-sentinel-credential"
+	failure := diag.New("KB_INSTALL_APPLY_FAILED", "package manager failed", diag.WithMeta(map[string]any{
+		"packageManagerStderrTail": "API_TOKEN=" + secret,
+	}))
+	path, err := Write(t.TempDir(), Dossier{CorrelationID: "failure", Error: failure}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), secret) || !strings.Contains(string(data), "[REDACTED]") {
+		t.Fatalf("dossier did not redact credential in package-manager tail: %s", data)
+	}
+}

@@ -13,7 +13,6 @@
 import { generateCommandSchema } from '@kb-labs/cli-commands';
 import { getHandlerPermissions } from '@kb-labs/plugin-contracts';
 import type {
-  IEntityRegistry,
   RegistrySnapshot,
   RegistrySnapshotManifestEntry,
 } from '@kb-labs/plugin-contracts';
@@ -137,7 +136,7 @@ export interface McpServiceTool {
 /** Derive project service tools from the enabled service manifests. */
 export function buildServiceTools(manifests: readonly ServiceManifest[]): McpServiceTool[] {
   return manifests.flatMap((manifest) => (manifest.commands ?? []).flatMap((command) => {
-    if (command.kind === 'local') return [];
+    if (command.kind === 'local') {return [];}
     return [{
       name: mcpToolName(manifest.id, command.name),
       description: command.description,

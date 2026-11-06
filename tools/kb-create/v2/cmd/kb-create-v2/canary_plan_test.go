@@ -17,7 +17,7 @@ import (
 
 func installCanaryIndex(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "x251-release-index.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "x251-release-index-v3.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

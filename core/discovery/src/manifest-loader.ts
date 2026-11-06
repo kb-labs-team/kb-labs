@@ -66,7 +66,7 @@ async function readManifestJson(
   try {
     bytes = await fs.readFile(filePath);
   } catch (error) {
-    if (isMissingFile(error) && !required) return undefined;
+    if (isMissingFile(error) && !required) {return undefined;}
     return failed(diag, pluginId, filePath, 'MANIFEST_PARSE_ERROR', `Failed to read manifest ${filePath}: ${errorMessage(error)}`, error);
   }
   const raw = bytes.toString('utf8');

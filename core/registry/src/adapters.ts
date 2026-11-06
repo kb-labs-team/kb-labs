@@ -12,7 +12,7 @@ export async function resolveCatalogAdapters(
   const result = new Map<string, CatalogAdapter>();
   const lock = (await discovery.getMarketplaceLocks()).get(platformRoot);
   for (const [id, entry] of Object.entries(lock?.adapters ?? {})) {
-    if (entry.enabled === false || !entry.resolvedPath) continue;
+    if (entry.enabled === false || !entry.resolvedPath) {continue;}
     const packageRoot = path.resolve(platformRoot, entry.resolvedPath);
     result.set(id, {
       id,
@@ -31,7 +31,7 @@ export async function resolveCatalogAdapters(
       : packages.filter(({ packageName }) => configured.has(packageName));
     for (const candidate of candidates) {
       const manifest = await loadAdapterManifest({ packageRoot: candidate.packageRoot });
-      if (manifest.kind !== 'adapter' && !configured.has(candidate.packageName) && !workspace.discoverAll) continue;
+      if (manifest.kind !== 'adapter' && !configured.has(candidate.packageName) && !workspace.discoverAll) {continue;}
       result.set(candidate.packageName, {
         id: candidate.packageName,
         packageRoot: candidate.packageRoot,

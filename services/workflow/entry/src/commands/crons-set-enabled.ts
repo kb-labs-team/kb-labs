@@ -18,7 +18,7 @@ export function createCronEnabledCommand(enabled: boolean) {
         }
         try {
           const result = await new WorkflowDaemonClient().setCronEnabled(id, enabled);
-          if (!outputJson) ctx.ui?.success?.(`Cron ${id} ${enabled ? 'enabled' : 'disabled'}`);
+          if (!outputJson) {ctx.ui?.success?.(`Cron ${id} ${enabled ? 'enabled' : 'disabled'}`);}
           return { id, ...result };
         } catch (error) {
           if (error instanceof WorkflowDaemonError && error.code === 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY' && error.hint) {

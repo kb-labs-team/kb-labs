@@ -85,8 +85,8 @@ describe('plugin executor adapter errors', () => {
         env: { KB_GATEWAY_URL: 'http://127.0.0.1:43323' },
       }));
     } finally {
-      if (previousGatewayUrl === undefined) delete process.env.KB_GATEWAY_URL;
-      else process.env.KB_GATEWAY_URL = previousGatewayUrl;
+      if (previousGatewayUrl === undefined) {delete process.env.KB_GATEWAY_URL;}
+      else {process.env.KB_GATEWAY_URL = previousGatewayUrl;}
       executeCommandV3.mockReset();
     }
   });
@@ -128,8 +128,8 @@ describe('plugin executor adapter errors', () => {
         env: { KB_GATEWAY_URL: 'http://127.0.0.1:4200' },
       }));
     } finally {
-      if (previousGatewayUrl === undefined) delete process.env.KB_GATEWAY_URL;
-      else process.env.KB_GATEWAY_URL = previousGatewayUrl;
+      if (previousGatewayUrl === undefined) {delete process.env.KB_GATEWAY_URL;}
+      else {process.env.KB_GATEWAY_URL = previousGatewayUrl;}
       executeCommandV3.mockReset();
     }
   });

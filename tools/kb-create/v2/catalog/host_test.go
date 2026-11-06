@@ -11,7 +11,7 @@ import (
 func platformWithHost(host *contracts.HostSpec) Catalog {
 	return Catalog{
 		Channels:  map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
-		Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact", Host: host, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
+		Platforms: []PlatformBundle{{SupportedTargets: []BinaryTarget{{OS: "linux", Arch: "amd64"}}, ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact", Host: host, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
 	}
 }
 

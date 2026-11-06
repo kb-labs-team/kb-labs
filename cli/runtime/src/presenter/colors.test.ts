@@ -6,7 +6,7 @@ const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
 afterEach(() => {
   vi.resetModules();
   vi.unstubAllEnvs();
-  if (ttyDescriptor) Object.defineProperty(process.stdout, 'isTTY', ttyDescriptor);
+  if (ttyDescriptor) {Object.defineProperty(process.stdout, 'isTTY', ttyDescriptor);}
 });
 
 describe('CLI presenter color policy', () => {
