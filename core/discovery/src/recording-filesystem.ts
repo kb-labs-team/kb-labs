@@ -33,7 +33,7 @@ function uniqueObservations(observations: readonly FilesystemObservation[]): Fil
 
 function record(filePath: string, kind: FilesystemObservation['kind'], value: string | Buffer): void {
   let session = sessions.getStore();
-  if (!session) return;
+  if (!session) {return;}
   const locator = ['stat:', 'directory:', 'glob:', 'read:', 'access:', 'exists:', 'realpath:'].some((prefix) => filePath.startsWith(prefix));
   const absolute = locator ? filePath : path.resolve(filePath);
   const observation = { path: absolute, kind, digest: digest(value) };
@@ -51,8 +51,8 @@ export async function readFile(filePath: string, encoding?: BufferEncoding): Pro
     record(filePath, 'content', bytes);
     return encoding ? bytes.toString(encoding) : bytes;
   } catch (error) {
-    if (missing(error)) record(filePath, 'absent', '');
-    else record(`read:${path.resolve(filePath)}`, 'present', failure(error));
+    if (missing(error)) {record(filePath, 'absent', '');}
+    else {record(`read:${path.resolve(filePath)}`, 'present', failure(error));}
     throw error;
   }
 }
@@ -77,8 +77,8 @@ export async function access(filePath: string): Promise<void> {
     await nativeFs.access(filePath);
     record(filePath, 'present', 'present');
   } catch (error) {
-    if (missing(error)) record(filePath, 'absent', '');
-    else record(`access:${path.resolve(filePath)}`, 'present', failure(error));
+    if (missing(error)) {record(filePath, 'absent', '');}
+    else {record(`access:${path.resolve(filePath)}`, 'present', failure(error));}
     throw error;
   }
 }
@@ -89,8 +89,8 @@ export async function realpath(filePath: string): Promise<string> {
     record(`realpath:${path.resolve(filePath)}`, 'present', resolved);
     return resolved;
   } catch (error) {
-    if (missing(error)) record(filePath, 'absent', '');
-    else record(`realpath:${path.resolve(filePath)}`, 'present', failure(error));
+    if (missing(error)) {record(filePath, 'absent', '');}
+    else {record(`realpath:${path.resolve(filePath)}`, 'present', failure(error));}
     throw error;
   }
 }
@@ -101,8 +101,8 @@ export async function stat(filePath: string): Promise<Awaited<ReturnType<typeof 
     record(`stat:${path.resolve(filePath)}`, 'present', JSON.stringify({ size: value.size, mode: value.mode, mtimeMs: value.mtimeMs, file: value.isFile(), directory: value.isDirectory() }));
     return value;
   } catch (error) {
-    if (missing(error)) record(`stat:${path.resolve(filePath)}`, 'absent', '');
-    else record(`stat:${path.resolve(filePath)}`, 'present', failure(error));
+    if (missing(error)) {record(`stat:${path.resolve(filePath)}`, 'absent', '');}
+    else {record(`stat:${path.resolve(filePath)}`, 'present', failure(error));}
     throw error;
   }
 }
@@ -258,7 +258,7 @@ export const fs = {
 
 export function hashFilesystemObservations(observations: readonly FilesystemObservation[]): string {
   const hash = createHash('sha256');
-  for (const observation of uniqueObservations(observations)) hash.update(observation.path).update('\0').update(observation.kind).update('\0').update(observation.digest).update('\0');
+  for (const observation of uniqueObservations(observations)) {hash.update(observation.path).update('\0').update(observation.kind).update('\0').update(observation.digest).update('\0');}
   return hash.digest('hex');
 }
 

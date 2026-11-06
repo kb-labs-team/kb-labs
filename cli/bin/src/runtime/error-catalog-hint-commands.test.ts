@@ -17,8 +17,8 @@ function commandSnippets(text: string): string[] {
 }
 
 function declaredFlags(route: ReturnType<typeof registry.resolve>): Set<string> {
-  if (route.type === 'command') return new Set((route.command.manifest.flags ?? []).map((flag) => flag.name));
-  if (route.type === 'system-cmd') return new Set((route.cmd.flags ?? []).map((flag) => flag.name));
+  if (route.type === 'command') {return new Set((route.command.manifest.flags ?? []).map((flag) => flag.name));}
+  if (route.type === 'system-cmd') {return new Set((route.cmd.flags ?? []).map((flag) => flag.name));}
   return new Set();
 }
 
@@ -31,13 +31,13 @@ describe('error catalog recovery commands', () => {
         const parsed = parseArgs(tokens.slice(1));
         const route = registry.resolve(tokens.slice(1));
         if (route.type !== 'command' && route.type !== 'system-cmd') {
-          if (parsed.cmdPath.length === 0 && parsed.global.help) continue;
+          if (parsed.cmdPath.length === 0 && parsed.global.help) {continue;}
           problems.push(`${entry.code}: command does not resolve: ${snippet}`);
           continue;
         }
         const flags = declaredFlags(route);
         for (const token of tokens.slice(1)) {
-          if (!token.startsWith('--')) continue;
+          if (!token.startsWith('--')) {continue;}
           const flag = token.slice(2).split('=')[0]!;
           if (!flags.has(flag) && !Object.hasOwn(parsed.global, flag)) {
             problems.push(`${entry.code}: --${flag} is not declared by ${snippet}`);

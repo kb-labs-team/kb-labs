@@ -169,7 +169,7 @@ export class InMemoryStateBroker implements StateBroker {
 
   protected hasLiveEntry(key: string): boolean {
     const entry = this.store.get(key);
-    if (!entry) return false;
+    if (!entry) {return false;}
     if (Date.now() > entry.expiresAt) {
       this.store.delete(key);
       return false;

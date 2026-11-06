@@ -35,7 +35,7 @@ export function isFirstPartyPluginSource(source: PluginProvenance): boolean {
 }
 
 function readNames(value: unknown, field: 'allow' | 'block' | 'linked', configPath: string, diagnostics: Diagnostic[]): string[] | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {return undefined;}
   if (!Array.isArray(value)) {
     diagnostics.push(diagnostic('PLUGIN_POLICY_TYPE_INVALID', `plugins.${field} must be an array of package names`, configPath, { field: `$.plugins.${field}` }));
     return undefined;
@@ -65,12 +65,12 @@ export async function readPluginPolicy(
   try {
     await fs.access(configPath);
   } catch (error) {
-    if (isMissing(error)) return { kind: 'valid', policy: {} };
+    if (isMissing(error)) {return { kind: 'valid', policy: {} };}
     return { kind: 'invalid', configPath, diagnostics: [diagnostic('FILE_READ_FAILED', `Failed to access config file: ${configPath}`, configPath, error)] };
   }
 
   const result = await readJsonWithDiagnostics<{ plugins?: unknown }>(configPath, undefined, readFile);
-  if (!result.ok) return { kind: 'invalid', configPath, diagnostics: result.diagnostics };
+  if (!result.ok) {return { kind: 'invalid', configPath, diagnostics: result.diagnostics };}
 
   const diagnostics: Diagnostic[] = [];
   if (result.data === null || typeof result.data !== 'object' || Array.isArray(result.data)) {
@@ -98,8 +98,8 @@ export async function readPluginPolicy(
 }
 
 export function checkPluginPolicy(policy: PluginPolicy, ids: string[], source: PluginProvenance): PolicyVerdict {
-  if (isFirstPartyPluginSource(source)) return 'ok';
-  if (policy.block?.some(blocked => ids.includes(blocked))) return 'blocked';
-  if (policy.allow && !ids.some(id => policy.allow?.includes(id) || policy.linked?.includes(id))) return 'not-allowed';
+  if (isFirstPartyPluginSource(source)) {return 'ok';}
+  if (policy.block?.some(blocked => ids.includes(blocked))) {return 'blocked';}
+  if (policy.allow && !ids.some(id => policy.allow?.includes(id) || policy.linked?.includes(id))) {return 'not-allowed';}
   return 'ok';
 }

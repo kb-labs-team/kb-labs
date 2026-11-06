@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,11 @@ import (
 
 func primeOfflineCatalog(t *testing.T, root string, source *catalog.Catalog) {
 	t.Helper()
+	for index := range source.Platforms {
+		if len(source.Platforms[index].Binaries) == 0 {
+			source.Platforms[index].Binaries = []catalog.Binary{testfixtures.TargetBinary(goruntime.GOOS, goruntime.GOARCH)}
+		}
+	}
 	sealed, err := testfixtures.SealCatalog(*source)
 	if err != nil {
 		t.Fatalf("seal offline test catalog: %v", err)
@@ -194,7 +200,7 @@ func sealedGatewayCatalog(t *testing.T) catalog.Catalog {
 	source := catalog.Catalog{
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Platforms: []catalog.PlatformBundle{{
-			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(),
+			SupportedTargets: []catalog.BinaryTarget{{OS: goruntime.GOOS, Arch: goruntime.GOARCH}}, ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(),
 			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{
 				{ID: "gateway", Command: "gateway-app", Port: 4000, Required: true},
 				{ID: "rest", Command: "rest-api", Port: 5050},
@@ -204,6 +210,7 @@ func sealedGatewayCatalog(t *testing.T) catalog.Catalog {
 		}},
 		Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "sqlite-stores", Version: "2.0.0", Package: sqlitePackage, Tarball: "https://example.test/adapters-sqlite.tgz", SHA256: "sqlite"}, Provides: []string{"documentDatabase", "kvStore"}}},
 	}
+	source.Platforms[0].Binaries = []catalog.Binary{testfixtures.TargetBinary(goruntime.GOOS, goruntime.GOARCH)}
 	enriched, err := release.EnrichWithManifests(source, stage)
 	if err != nil {
 		t.Fatalf("the real requirements must survive the release sealing path: %v", err)
@@ -604,7 +611,7 @@ func (probe *captureHostEnvironment) Probe(context.Context, contracts.HostSpec) 
 
 // case: S-038.4
 func TestFreshFixtureInstallRendersInternalSecretForEveryConsumer(t *testing.T) {
-	data, err := os.ReadFile("../../../../e2e/platform/fixtures/release-index-v2.json")
+	data, err := os.ReadFile("../../../../e2e/platform/fixtures/release-index-v3.json")
 	if err != nil {
 		t.Fatal(err)
 	}

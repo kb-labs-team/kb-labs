@@ -7,7 +7,7 @@
 
 ## Context
 
-V2 `kb-create` resolves installations from a sealed `kb.create.release-index/v2`.
+V2 `kb-create` resolves installations from a sealed `kb.create.release-index/v3`.
 The repository already has a release pipeline that stages exact npm tarballs,
 publishes them under canary, and promotes the same immutable versions to
 stable. Package metadata already exists, but it is emitted in several package
@@ -35,6 +35,12 @@ release topology, or publish release metadata.
 
 Canary and stable never rebuild different package sets. Stable promotion
 reuses the candidate's immutable index and changes only the channel pointer.
+
+On 2026-11-06 the owner selected a new index schema with a required supported
+target set generated from GoReleaser output. The new schema starts a fresh
+history: preparation rejects older-schema history instead of rewriting its
+sealed bytes or reading it through a compatibility path. There has been no
+public release; prior indexes are canaries and hosted candidates. Case S-214.13.
 
 ## Invariants
 

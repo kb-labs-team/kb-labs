@@ -52,7 +52,7 @@ export function collectProjectServiceDeclarations(
     manifests.flatMap((manifest) => manifest.projectApi ? [manifest.projectApi] : []),
   );
   return manifests.flatMap((manifest) => {
-    if (!manifest.projectApi) return [];
+    if (!manifest.projectApi) {return [];}
     const declaredHealthCheck = manifest.runtime.healthCheck;
     let healthCheck: string;
     if (declaredHealthCheck.startsWith("/")) {

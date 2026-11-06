@@ -103,7 +103,7 @@ function normalizeErrorEnvelope(error: unknown, correlationId?: string): ErrorEn
         ...(correlationId ? { correlationId } : {}),
       });
     }
-    if (error instanceof CataloguedExecutionError) return error.envelope;
+    if (error instanceof CataloguedExecutionError) {return error.envelope;}
     return createErrorEnvelope('KB_RUNTIME_UNEXPECTED');
   }
   if (error instanceof Error) {

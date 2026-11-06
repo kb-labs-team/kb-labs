@@ -15,7 +15,7 @@ import (
 	"github.com/kb-labs/create/v2/semrange"
 )
 
-const Schema = "kb.create.release-index/v2"
+const Schema = "kb.create.release-index/v3"
 
 type Catalog struct {
 	Schema        string                       `json:"schema"`
@@ -135,6 +135,16 @@ func Validate(source Catalog) error {
 		}
 		if _, err := semrange.ParseRange(platform.SDKRange); err != nil {
 			return fmt.Errorf("platform %s SDK range is invalid: %w", key, err)
+		}
+		if len(platform.SupportedTargets) == 0 {
+			return fmt.Errorf("platform bundle %q has no supported targets", key)
+		}
+		targets := make(map[BinaryTarget]bool, len(platform.SupportedTargets))
+		for _, target := range platform.SupportedTargets {
+			if target.OS == "" || target.Arch == "" || targets[target] {
+				return fmt.Errorf("platform bundle %q has an invalid or duplicate supported target", key)
+			}
+			targets[target] = true
 		}
 		for _, binary := range platform.Binaries {
 			if binary.ID == "" || binary.OS == "" || binary.Arch == "" || binary.URL == "" || binary.SHA256 == "" || binary.Filename == "" {
@@ -450,11 +460,17 @@ type PlatformBundle struct {
 	Profiles           map[string]contracts.ServiceGraph `json:"profiles"`
 	// Host is how the launcher runs this platform: the one supervised host
 	// process. Every platform bundle declares it; there is no other runner.
-	Host     *contracts.HostSpec `json:"host,omitempty"`
-	Requires []Requirement       `json:"requires,omitempty"`
-	Config   []ConfigRequirement `json:"config,omitempty"`
-	Binaries []Binary            `json:"binaries,omitempty"`
-	Members  []Component         `json:"members,omitempty"`
+	Host             *contracts.HostSpec `json:"host,omitempty"`
+	Requires         []Requirement       `json:"requires,omitempty"`
+	Config           []ConfigRequirement `json:"config,omitempty"`
+	SupportedTargets []BinaryTarget      `json:"supportedTargets"`
+	Binaries         []Binary            `json:"binaries,omitempty"`
+	Members          []Component         `json:"members,omitempty"`
+}
+
+type BinaryTarget struct {
+	OS   string `json:"os"`
+	Arch string `json:"arch"`
 }
 
 // Binary is release-owned tooling required by a platform bundle. URLs and

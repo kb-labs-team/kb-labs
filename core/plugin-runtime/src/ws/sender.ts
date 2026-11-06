@@ -25,7 +25,7 @@ export function createWSSender(reference: WSConnectionReference, operations: IWe
 
 /** Build the runtime-only sender from the serialized WebSocket input reference. */
 export function rehydrateWSInput(input: WSInputReference, operations: IWebSocketHostOperations | undefined) {
-  if (input.event === 'disconnect') return input;
+  if (input.event === 'disconnect') {return input;}
   if (!operations) {
     throw new ErrorEnvelopeError(createErrorEnvelope('KB_ADAPTER_NOT_CONFIGURED', {
       details: { service: 'websocket', adapter: 'websocket', command: getAdapterConfigurationCommand('websocket') },

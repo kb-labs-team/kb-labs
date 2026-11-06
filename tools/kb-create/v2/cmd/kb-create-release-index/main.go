@@ -19,6 +19,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/release"
 	"github.com/kb-labs/create/v2/scenario"
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -28,6 +29,11 @@ func main() {
 func executeCommand() diag.ExitStatus {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "targets":
+			if err := runTargets(os.Args[2:], os.Stdout); err != nil {
+				return digestFailure(err)
+			}
+			return diag.SuccessStatus()
 		case "digest":
 			return executeDigest(os.Args[2:])
 		case "provenance":
@@ -35,6 +41,55 @@ func executeCommand() diag.ExitStatus {
 		}
 	}
 	return execute()
+}
+
+// runTargets projects the declared GoReleaser matrix, including missing artifacts.
+func runTargets(args []string, output io.Writer) error {
+	if len(args) != 2 {
+		return fmt.Errorf("usage: kb-create-release-index targets <goreleaser-config> <build-id>")
+	}
+	data, err := os.ReadFile(args[0])
+	if err != nil {
+		return err
+	}
+	var config struct {
+		Builds []struct {
+			ID     string   `yaml:"id"`
+			OS     []string `yaml:"goos"`
+			Arch   []string `yaml:"goarch"`
+			Ignore []struct {
+				OS   string `yaml:"goos"`
+				Arch string `yaml:"goarch"`
+			} `yaml:"ignore"`
+		} `yaml:"builds"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return err
+	}
+	for _, build := range config.Builds {
+		if build.ID == args[1] {
+			if len(build.OS) == 0 || len(build.Arch) == 0 {
+				return fmt.Errorf("build %q must explicitly declare goos and goarch", build.ID)
+			}
+			targets := []catalog.BinaryTarget{}
+			for _, osname := range build.OS {
+				for _, arch := range build.Arch {
+					ignored := false
+					for _, item := range build.Ignore {
+						if (item.OS == "" || item.OS == osname) && (item.Arch == "" || item.Arch == arch) {
+							ignored = true
+							break
+						}
+					}
+					if !ignored {
+						targets = append(targets, catalog.BinaryTarget{OS: osname, Arch: arch})
+					}
+				}
+			}
+			return json.NewEncoder(output).Encode(targets)
+		}
+	}
+	return fmt.Errorf("GoReleaser build %q not found", args[1])
 }
 
 func executeProvenance(args []string) diag.ExitStatus {

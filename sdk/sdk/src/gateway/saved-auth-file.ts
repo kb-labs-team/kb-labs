@@ -28,7 +28,7 @@ export async function readSavedAuthFile<T>(
   try {
     raw = await fs.readFile(absolutePath, 'utf-8');
   } catch (error) {
-    if (errorCode(error) === 'ENOENT') return null;
+    if (errorCode(error) === 'ENOENT') {return null;}
     throw new SavedAuthFileError(displayPath, 'unreadable');
   }
 
@@ -38,7 +38,7 @@ export async function readSavedAuthFile<T>(
   } catch {
     throw new SavedAuthFileError(displayPath, 'invalid');
   }
-  if (!isValid(value)) throw new SavedAuthFileError(displayPath, 'invalid');
+  if (!isValid(value)) {throw new SavedAuthFileError(displayPath, 'invalid');}
   return value;
 }
 
@@ -54,16 +54,16 @@ export function isSavedCredentialBase(value: unknown): value is {
   refreshToken: string;
   expiresAt: number;
 } {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {return false;}
   const record = value as Record<string, unknown>;
   if (typeof record.gatewayUrl !== 'string' || record.gatewayUrl.length === 0
     || typeof record.accessToken !== 'string' || record.accessToken.length === 0
     || typeof record.refreshToken !== 'string' || record.refreshToken.length === 0
     || typeof record.expiresAt !== 'number'
-    || !Number.isFinite(record.expiresAt)) return false;
+    || !Number.isFinite(record.expiresAt)) {return false;}
   try {
     const url = new URL(record.gatewayUrl);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {return false;}
   } catch {
     return false;
   }

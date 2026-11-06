@@ -73,7 +73,7 @@ async function gitCheckoutMapping(
       timeout: 5_000,
     })
     const [topLevelOutput, commonDirOutput, extraOutput] = stdout.toString().trimEnd().split(/\r?\n/)
-    if (!topLevelOutput || !commonDirOutput || extraOutput !== undefined) return undefined
+    if (!topLevelOutput || !commonDirOutput || extraOutput !== undefined) {return undefined}
 
     const [topLevel, commonDir, canonicalStart] = await Promise.all([
       fsp.realpath(topLevelOutput),
@@ -82,7 +82,7 @@ async function gitCheckoutMapping(
     ])
     // Only the standard main-checkout layout lets us map a worktree path back
     // to the registered project path without probing every registry entry.
-    if (path.basename(commonDir) !== '.git') return undefined
+    if (path.basename(commonDir) !== '.git') {return undefined}
 
     const relativePath = path.relative(topLevel, canonicalStart)
     if (relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
@@ -116,9 +116,9 @@ async function findRegisteredProject(
   }
 
   const mappedPath = await gitCheckoutMapping(current, gitExec)
-  if (!mappedPath) return undefined
+  if (!mappedPath) {return undefined}
   const mappedProject = await findProjectContainingPath(registry, mappedPath)
-  if (!mappedProject) return undefined
+  if (!mappedProject) {return undefined}
   return { rootDir: mappedProject.project.path, source: 'worktree', cwdDir: current }
 }
 
@@ -133,7 +133,7 @@ export async function resolveProjectRoot(
   const { cwd, env = process.env, startDir = process.cwd() } = options
   const current = path.resolve(cwd ?? startDir)
   const project = await findRegisteredProject(current, env, defaultGitExec)
-  if (!project) requireProjectContext(undefined, current)
+  if (!project) {requireProjectContext(undefined, current)}
   return project
 }
 

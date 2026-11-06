@@ -43,7 +43,8 @@ journey_install_candidate_runtime() {
       --index "$index_path" \
       --packages "$packages_directory" \
       --root "$install_root" \
-      --registry "$JOURNEY_REGISTRY_HOST_URL"
+      --registry "$JOURNEY_REGISTRY_HOST_URL" \
+      --diagnostics-dir "$root/.journey/candidate-diagnostics"
   )
 }
 

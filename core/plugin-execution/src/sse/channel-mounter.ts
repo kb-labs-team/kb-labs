@@ -107,14 +107,14 @@ export async function mountEventStreams(
         try {
           await execute({ event: "connect", sender: stream });
         } catch (error) {
-          if (!(error instanceof ErrorEnvelopeError)) throw error;
+          if (!(error instanceof ErrorEnvelopeError)) {throw error;}
           stream.send("error", error.envelope);
           stream.close("handler_error");
           return;
         }
         stream.onCleanup(() => {
           void execute({ event: "disconnect" }).catch((error) => {
-            if (!(error instanceof ErrorEnvelopeError)) options.logger.error("SSE disconnect transport failed", error instanceof Error ? error : new Error(String(error)), { pluginId: manifest.id, path });
+            if (!(error instanceof ErrorEnvelopeError)) {options.logger.error("SSE disconnect transport failed", error instanceof Error ? error : new Error(String(error)), { pluginId: manifest.id, path });}
           });
         });
         await stream.closed;

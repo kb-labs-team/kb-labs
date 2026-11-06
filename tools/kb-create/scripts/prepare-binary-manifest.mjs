@@ -4,6 +4,8 @@
 // unified release-index input. It never resolves a channel or a "latest"
 // release; the tag and asset bytes are explicit inputs.
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -50,6 +52,12 @@ for (const line of readFileSync(checksumsPath, 'utf8').split(/\r?\n/).map(value 
 const artifacts = JSON.parse(readFileSync(artifactsPath, 'utf8'));
 if (!Array.isArray(artifacts)) throw new Error('GoReleaser artifacts output must be an array');
 const binaries = [];
+const config = resolve(value('--config') ?? process.env.KBLABS_RELEASE_GORELEASER_CONFIG ?? '.goreleaser.yaml');
+const sealer = process.env.KBLABS_RELEASE_INDEX_SEALER;
+const targetCommand = sealer ? [sealer, ['targets', config, 'kb-create']] : ['go', ['run', './v2/cmd/kb-create-release-index', 'targets', config, 'kb-create']];
+const targetResult = spawnSync(targetCommand[0], targetCommand[1], { cwd: fileURLToPath(new URL('../', import.meta.url)), encoding: 'utf8' });
+if (targetResult.status !== 0) throw new Error(`GoReleaser target projection failed: ${targetResult.stderr || targetResult.error}`);
+const supportedTargets = JSON.parse(targetResult.stdout);
 const seen = new Set();
 
 for (const artifact of artifacts) {
@@ -81,4 +89,4 @@ for (const artifact of artifacts) {
 
 if (binaries.length === 0) throw new Error('checksums file contains no KB Labs binary assets');
 binaries.sort((left, right) => `${left.id}:${left.os}/${left.arch}`.localeCompare(`${right.id}:${right.os}/${right.arch}`));
-writeFileSync(output, `${JSON.stringify({ binaries }, null, 2)}\n`);
+writeFileSync(output, `${JSON.stringify({ supportedTargets, binaries }, null, 2)}\n`);

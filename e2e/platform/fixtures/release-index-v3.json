@@ -1,6 +1,6 @@
 {
-  "schema": "kb.create.release-index/v2",
-  "digest": "e84e1455fe8129f6f2397ac9cc8d2c32f12a2324d01cef83931387a4fcefa5ba",
+  "schema": "kb.create.release-index/v3",
+  "digest": "c3bc755430faba4cfb2e86de762efbed82c62da912a49b5a0a968f255afe5688",
   "channels": {
     "stable": "2.120.1"
   },
@@ -242,6 +242,24 @@
           "id": "platform.adapterOptions",
           "path": "/platform/adapterOptions",
           "default": "{\"cache\":{\"url\":\"http://127.0.0.1:7777\",\"namespace\":\"kb:\"},\"serviceTransport\":{\"services\":{\"rest\":{\"url\":\"http://127.0.0.1:5050\"},\"workflow\":{\"url\":\"http://127.0.0.1:7778\"},\"gateway\":{\"url\":\"http://127.0.0.1:4000\"},\"marketplace\":{\"url\":\"http://127.0.0.1:5070\"},\"studio\":{\"url\":\"http://127.0.0.1:3000\"},\"mcp-daemon\":{\"url\":\"http://127.0.0.1:7779\"}}},\"documentDatabase\":{\"filename\":\"database/kb.sqlite\"},\"kvStore\":{\"filename\":\"database/kb.sqlite\"},\"analytics\":{\"dbPath\":\"analytics/analytics.sqlite\"},\"logger\":{\"level\":\"info\",\"streaming\":{\"enabled\":true,\"bufferSize\":1000,\"bufferMaxAge\":3600000}},\"logRingBuffer\":{\"maxSize\":100},\"logPersistence\":{\"collection\":\"logs\",\"batchSize\":100,\"flushInterval\":5000,\"retention\":{\"maxAgeFatal\":2592000000,\"maxAgeError\":1209600000,\"maxAgeWarn\":604800000,\"maxAgeInfo\":1800000,\"maxAgeDebug\":1800000,\"cleanupIntervalMs\":300000}}}"
+        }
+      ],
+      "supportedTargets": [
+        {
+          "os": "darwin",
+          "arch": "amd64"
+        },
+        {
+          "os": "darwin",
+          "arch": "arm64"
+        },
+        {
+          "os": "linux",
+          "arch": "amd64"
+        },
+        {
+          "os": "linux",
+          "arch": "arm64"
         }
       ],
       "binaries": [

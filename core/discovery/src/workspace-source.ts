@@ -34,7 +34,7 @@ async function readPackageJson(file: string): Promise<Record<string, unknown> | 
     const bytes = await fs.readFile(file);
     return JSON.parse(bytes.toString('utf-8')) as Record<string, unknown>;
   } catch (error) {
-    if (isMissingFile(error)) return null;
+    if (isMissingFile(error)) {return null;}
     throw error;
   }
 }
@@ -44,7 +44,7 @@ async function exists(file: string): Promise<boolean> {
     await fs.access(file);
     return true;
   } catch (error) {
-    if (isMissingFile(error)) return false;
+    if (isMissingFile(error)) {return false;}
     throw error;
   }
 }
@@ -60,7 +60,7 @@ async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | nu
   const manifestField = declaredManifestPath(pkg);
   if (!manifestField) {return null;}
   const resolved = resolveDeclaredManifestPath(packageRoot, manifestField);
-  if (resolved.escapesRoot) return { packageName: pkg.name, packageRoot };
+  if (resolved.escapesRoot) {return { packageName: pkg.name, packageRoot };}
   const built = await exists(resolved.manifestPath) || await exists(resolved.manifestPath.replace(/\.[cm]?js$/, '.json'));
   return built ? { packageName: pkg.name, packageRoot } : null;
 }
@@ -81,7 +81,7 @@ async function workspacePackageRoots(
       patterns = parsed.packages.filter((p): p is string => typeof p === 'string');
     }
   } catch (error) {
-    if (!isMissingFile(error)) throw error;
+    if (!isMissingFile(error)) {throw error;}
   }
 
   if (!patterns) {

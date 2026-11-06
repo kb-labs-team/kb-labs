@@ -65,7 +65,7 @@ describe('project MCP wire fixture producer', () => {
     } finally {
       await resolvedCatalog?.dispose();
       vi.unstubAllEnvs();
-      if (temporaryProjectRoot) await rm(temporaryProjectRoot, { recursive: true, force: true });
+      if (temporaryProjectRoot) {await rm(temporaryProjectRoot, { recursive: true, force: true });}
     }
   });
 

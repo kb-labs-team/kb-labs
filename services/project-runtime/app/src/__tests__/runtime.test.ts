@@ -115,7 +115,9 @@ describe("project MCP calls over the HTTP service transport", () => {
       setup: async (ctx) => {
         const server: Server = createServer(async (req, res) => {
           const chunks: Buffer[] = [];
-          for await (const chunk of req) chunks.push(Buffer.from(chunk));
+          for await (const chunk of req) {
+            chunks.push(Buffer.from(chunk));
+          }
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ method: req.method, url: req.url, body: Buffer.concat(chunks).toString() }));
         });

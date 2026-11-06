@@ -43,6 +43,7 @@ func fixtureCatalog(t *testing.T, options fixtureOptions) catalog.Catalog {
 	}
 	source.Platforms[0].MinLauncherVersion = options.minLauncher
 	source.Platforms[0].Host = testHost()
+	source.Platforms[0].SupportedTargets = []catalog.BinaryTarget{{OS: targetOS, Arch: targetArch}}
 	if options.unrelatedBinary {
 		source.Compatibility.Labels[2].Requires = nil
 	}
@@ -107,7 +108,7 @@ func TestCompatibilityMatrix(t *testing.T) {
 		if err := json.Unmarshal(data, &raw); err != nil {
 			t.Fatal(err)
 		}
-		raw["schema"] = "kb.create.release-index/v3"
+		raw["schema"] = "kb.create.release-index/v99"
 		// A v3 index may have a different shape entirely; it must be rejected
 		// on its schema, before any field is interpreted.
 		raw["platforms"] = "topology moved to a single host"
@@ -152,6 +153,20 @@ func TestCompatibilityMatrix(t *testing.T) {
 		data := fixtureIndex(t, fixtureOptions{})
 		tampered := strings.Replace(string(data), "@kb/platform", "@kb/tampered", 1)
 		requireCode(t, installIndex([]byte(tampered), "2.0.0"), contracts.CodeReleaseIndexInvalid)
+	})
+	t.Run("all binary artifacts missing", func(t *testing.T) {
+		source := fixtureCatalog(t, fixtureOptions{})
+		source.Platforms[0].Binaries = nil
+		source.Compatibility.Labels = source.Compatibility.Labels[:2]
+		sealed, err := catalog.Seal(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(sealed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireCode(t, installIndex(data, "2.0.0"), contracts.CodeIncompatibleComponents)
 	})
 	t.Run("missing binary for os/arch", func(t *testing.T) {
 		requireCode(t, installIndex(fixtureIndex(t, fixtureOptions{binaryPlatformOS: "windows"}), "2.0.0"), contracts.CodeIncompatibleComponents)

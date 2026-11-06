@@ -54,7 +54,7 @@ export function resolveColorSupport(isTTY, noColor, forceColor, term) {
           : rule.when === 'termDumb' ? term?.toLowerCase() === 'dumb'
             : rule.when === 'tty' ? isTTY === true
               : false;
-    if (matches) return rule.result;
+    if (matches) {return rule.result;}
   }
   return false;
 }
@@ -63,6 +63,6 @@ const forceColorIntegerPattern = new RegExp(`^[${colorPolicy.forceColorInteger.d
 
 /** @param {string} value */
 function forceColorEnables(value) {
-  if (value === '' || value === 'true') return true;
+  if (value === '' || value === 'true') {return true;}
   return forceColorIntegerPattern.test(value) && Number(value) >= colorPolicy.forceColorInteger.minimum;
 }

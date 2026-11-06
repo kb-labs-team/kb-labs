@@ -80,14 +80,14 @@ export class SnapshotManager {
     const primary = this.readDisk(this.snapshotPath);
     if (primary && !primary.corrupted) {
       this.lastChecksum = primary.checksum ?? null;
-      return await this.markStaleness(primary);
+      return this.markStaleness(primary);
     }
 
     // Disk backup
     const backup = this.readDisk(this.backupPath);
     if (backup && !backup.corrupted) {
       this.lastChecksum = backup.checksum ?? null;
-      return await this.markStaleness(backup);
+      return this.markStaleness(backup);
     }
 
     return null;
@@ -95,7 +95,7 @@ export class SnapshotManager {
 
   /** Persist snapshot to disk + platform cache. Serialized to prevent races. */
   async persist(snapshot: RegistrySnapshot): Promise<void> {
-    if (!this.persistSnapshot) return;
+    if (!this.persistSnapshot) {return;}
     // Serialize concurrent persist() calls
     this.persistLock = this.persistLock.then(() => this.doPersist(snapshot));
     return this.persistLock;

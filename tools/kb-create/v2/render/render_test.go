@@ -437,7 +437,7 @@ func TestBuildUsesRegistryForDefaultMarketplaceNpmSource(t *testing.T) {
 	if !ok {
 		t.Fatal("cannot locate the shipped index")
 	}
-	index, err := catalog.LoadFile(filepath.Join(filepath.Dir(filename), "../../../../.x251/release-index.json"))
+	index, err := catalog.LoadFile(filepath.Join(filepath.Dir(filename), "../cmd/kb-create-v2/testdata/x251-release-index-v3.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -44,7 +44,7 @@ export class HttpClient {
           if (data.ok) {
             // Success envelope: unwrap and return data
             response.data = decodeUxSuccessResult(data);
-            if (requireUxResult) return response;
+            if (requireUxResult) {return response;}
           } else {
             // Error envelope: throw error
             const error = mapFetchError(data, {

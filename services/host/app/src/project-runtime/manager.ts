@@ -136,7 +136,7 @@ export interface ProjectRuntimeManagerOptions {
 const ACTIVE_WORK_KINDS = ["workflow", "job", "service-job", "long-command"] as const;
 
 function isActiveWorkItem(value: unknown): value is ActiveWorkItem {
-  if (typeof value !== "object" || value === null || !("kind" in value) || !("id" in value) || !("owningService" in value)) return false;
+  if (typeof value !== "object" || value === null || !("kind" in value) || !("id" in value) || !("owningService" in value)) {return false;}
   return typeof value.kind === "string" && (ACTIVE_WORK_KINDS as readonly string[]).includes(value.kind)
     && typeof value.id === "string" && typeof value.owningService === "string";
 }
@@ -321,11 +321,11 @@ export class ProjectRuntimeManager {
         headers: { [RUNTIME_TOKEN_HEADER]: runtime.token },
         signal: AbortSignal.timeout(2000),
       });
-      if (!response.ok) throw new Error(`Project runtime ${entry.project.id} active-work query returned HTTP ${response.status}.`);
+      if (!response.ok) {throw new Error(`Project runtime ${entry.project.id} active-work query returned HTTP ${response.status}.`);}
       const items: unknown = await response.json();
-      if (!Array.isArray(items)) throw new Error(`Project runtime ${entry.project.id} returned an invalid active-work response.`);
+      if (!Array.isArray(items)) {throw new Error(`Project runtime ${entry.project.id} returned an invalid active-work response.`);}
       return items.map((value): ActiveWorkItem => {
-        if (!isActiveWorkItem(value)) throw new Error(`Project runtime ${entry.project.id} returned an invalid active-work item.`);
+        if (!isActiveWorkItem(value)) {throw new Error(`Project runtime ${entry.project.id} returned an invalid active-work item.`);}
         return { ...value, owningService: `project:${entry.project.id}/${value.owningService}` };
       });
     }));
@@ -479,14 +479,14 @@ export class ProjectRuntimeManager {
         released = true;
         entry.inflight -= 1;
         entry.lastUsed = this.now();
-        if (entry.inflight === 0) entry.drained?.resolve();
+        if (entry.inflight === 0) {entry.drained?.resolve();}
       },
     };
   }
 
   /** One reload promise gates acquisitions while leases on the old runtime drain. */
   private reload(entry: Entry, digest: string): Promise<void> {
-    if (entry.state === "reloading") return entry.reloadTask ?? Promise.resolve();
+    if (entry.state === "reloading") {return entry.reloadTask ?? Promise.resolve();}
     entry.state = "reloading";
     entry.drained = entry.inflight > 0 ? deferred() : undefined;
     entry.reloadTask = this.reloadProcess(entry, digest);
@@ -496,11 +496,11 @@ export class ProjectRuntimeManager {
   private async reloadProcess(entry: Entry, digest: string): Promise<void> {
     const previous = entry.process;
     try {
-      if (entry.drained) await entry.drained.promise;
-      if (entry.state !== "reloading") return;
+      if (entry.drained) {await entry.drained.promise;}
+      if (entry.state !== "reloading") {return;}
       this.clearHealthMonitor(entry);
       await previous?.stop();
-      if (entry.state !== "reloading") return;
+      if (entry.state !== "reloading") {return;}
       entry.process = undefined;
       await this.startOnce(entry);
       if (entry.state === "reloading") {
@@ -509,7 +509,7 @@ export class ProjectRuntimeManager {
         this.markReady(entry);
       }
     } catch (error) {
-      if (entry.state !== "reloading") return;
+      if (entry.state !== "reloading") {return;}
       const cause = error instanceof Error ? error.message : String(error);
       this.clearHealthMonitor(entry);
       await entry.process?.stop().catch(() => undefined);
@@ -520,7 +520,7 @@ export class ProjectRuntimeManager {
         error: cause,
         restarts: entry.restarts,
       });
-      if (this.entries.get(entry.project.id) === entry) this.entries.delete(entry.project.id);
+      if (this.entries.get(entry.project.id) === entry) {this.entries.delete(entry.project.id);}
       throw runtimeReloadFailed(entry.project.id, cause);
     }
   }

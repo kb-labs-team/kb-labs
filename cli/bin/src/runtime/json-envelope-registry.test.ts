@@ -175,7 +175,7 @@ function commandPaths(): RegistryCommandFixture[] {
         : route.type === "group"
           ? route.childKeys
           : [];
-    for (const child of children) queue.push([...segments, child]);
+    for (const child of children) {queue.push([...segments, child]);}
   }
   return [...commands]
     .sort(([left], [right]) => left.localeCompare(right))
@@ -291,8 +291,8 @@ describe("JSON envelope coverage for the live CLI registry", () => {
     fixtureCatalogs = [];
     await rm(isolatedHome, { recursive: true, force: true });
     for (const [key, value] of Object.entries(originalEnvironment)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+      if (value === undefined) {delete process.env[key];}
+      else {process.env[key] = value;}
     }
   });
 
@@ -367,10 +367,10 @@ describe("JSON envelope coverage for the live CLI registry", () => {
         return { exitCode, result, stdoutRecords, stderrRecords };
       } finally {
         process.chdir(previousCwd);
-        for (const spy of stdoutConsole) spy.mockRestore();
+        for (const spy of stdoutConsole) {spy.mockRestore();}
         stdout.mockRestore();
         stderr.mockRestore();
-        for (const spy of stderrConsole) spy.mockRestore();
+        for (const spy of stderrConsole) {spy.mockRestore();}
       }
     };
 
@@ -385,15 +385,15 @@ describe("JSON envelope coverage for the live CLI registry", () => {
             command.segments.join(" "),
           ).toBe(true);
           const safeArgs = system.jsonTest.safeArgs.map((argument) => {
-            if (argument === "__fixture_project_id__") return fixtureProjectId;
-            if (argument === "__fixture_manifest__") return fixtureManifest;
+            if (argument === "__fixture_project_id__") {return fixtureProjectId;}
+            if (argument === "__fixture_manifest__") {return fixtureManifest;}
             if (argument === "__fixture_workflow__") {
               return path.join(
                 workspaceRoot,
                 "services/workflow/entry/src/__tests__/cli/fixtures/lint/valid.yml",
               );
             }
-            if (argument.startsWith("__fixture_")) return `${argument}-id`;
+            if (argument.startsWith("__fixture_")) {return `${argument}-id`;}
             return argument;
           });
           const commandCwd = command.segments.join(" ") === "workflow create"

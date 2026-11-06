@@ -4,12 +4,33 @@ import (
 	"bytes"
 	"log"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/versionroot"
 )
+
+func TestCommandWritesRedactedFailureDossier(t *testing.T) {
+	outputDir := t.TempDir()
+	const sentinel = "candidate-test-secret-sentinel"
+	t.Setenv("CANDIDATE_TEST_SECRET", sentinel)
+	cmd := exec.Command("go", "run", ".", "--index", filepath.Join(t.TempDir(), sentinel), "--packages", t.TempDir(), "--root", t.TempDir(), "--registry", "http://127.0.0.1:1", "--diagnostics-dir", outputDir)
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("candidate unexpectedly succeeded: %s", output)
+	}
+	files, err := os.ReadDir(outputDir)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("expected one diagnostic dossier, got %v, %v", files, err)
+	}
+	data, err := os.ReadFile(filepath.Join(outputDir, files[0].Name()))
+	if err != nil || !strings.Contains(string(data), contracts.CodeReleaseIndexUnreadable) || strings.Contains(string(data), sentinel) {
+		t.Fatalf("missing candidate diagnostic: %s, %v", data, err)
+	}
+}
 
 func TestRegistryReportsMetadataEncodingFailure(t *testing.T) {
 	var output bytes.Buffer

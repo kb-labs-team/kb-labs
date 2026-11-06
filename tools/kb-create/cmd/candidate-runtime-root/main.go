@@ -26,6 +26,7 @@ import (
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/diagnostics"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -50,9 +51,31 @@ func main() {
 	packageDirectory := flag.String("packages", "", "candidate package tarball directory")
 	installRoot := flag.String("root", "", "temporary installer root")
 	registryURL := flag.String("registry", "", "required shared package registry URL")
+	diagnosticsDir := flag.String("diagnostics-dir", "", "directory for redacted candidate failure dossiers")
 	flag.Parse()
 	if err := run(*indexPath, *packageDirectory, *installRoot, *registryURL); err != nil {
-		command.Exit(diag.ExitCode(diag.FromError(err)))
+		failure := diag.FromError(err)
+		if *diagnosticsDir != "" {
+			if failure.CorrelationID == "" {
+				failure.CorrelationID = diag.NewCorrelationID()
+			}
+			var redactions []string
+			for _, entry := range os.Environ() {
+				_, value, ok := strings.Cut(entry, "=")
+				if ok && value != "" {
+					redactions = append(redactions, value)
+				}
+			}
+			path, writeErr := diagnostics.Write(*diagnosticsDir, diagnostics.Dossier{
+				CorrelationID: failure.CorrelationID, Error: failure, Stage: contracts.StageApply,
+			}, redactions)
+			if writeErr != nil {
+				fmt.Fprintf(os.Stderr, "cannot write candidate diagnostic: %v\n", writeErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "candidate diagnostic: %s\n", path)
+			}
+		}
+		command.Exit(diag.ExitCode(failure))
 	}
 }
 

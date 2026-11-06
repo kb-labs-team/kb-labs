@@ -11,7 +11,7 @@ import (
 )
 
 func TestEveryCanaryIndexArtifactUsesItsSelectedSource(t *testing.T) {
-	index, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
+	index, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index-v3.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

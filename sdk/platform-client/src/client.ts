@@ -98,15 +98,15 @@ export class KBPlatform {
     try {
       body = JSON.parse(text);
     } catch {
-      if (!response.ok) throw new Error(`Platform API error: ${response.status} ${text}`);
+      if (!response.ok) {throw new Error(`Platform API error: ${response.status} ${text}`);}
       throw new Error('Gateway returned a response that is not a valid UX success envelope.');
     }
 
     if (!response.ok) {
-      if (isUxResult(body) && !body.ok) throw new Error(body.error.message);
+      if (isUxResult(body) && !body.ok) {throw new Error(body.error.message);}
       throw new Error(`Platform API error: ${response.status} ${text}`);
     }
-    if (isUxResult(body) && !body.ok) throw new Error(body.error.message);
+    if (isUxResult(body) && !body.ok) {throw new Error(body.error.message);}
 
     return decodeUxSuccessResult<T>(body);
   }

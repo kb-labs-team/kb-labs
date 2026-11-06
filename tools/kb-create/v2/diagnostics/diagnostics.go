@@ -32,7 +32,7 @@ type Dossier struct {
 }
 
 func Redact(value string, secrets []string) string {
-	result := value
+	result := diag.RedactText(value)
 	for _, secret := range secrets {
 		if secret != "" {
 			result = strings.ReplaceAll(result, secret, "[REDACTED]")
@@ -45,6 +45,8 @@ func Write(directory string, dossier Dossier, secrets []string) (string, error) 
 		return "", fmt.Errorf("diagnostic correlation ID is required")
 	}
 	if dossier.Error != nil {
+		dossier.Error.Message = Redact(dossier.Error.Message, secrets)
+		dossier.Error.Cause = Redact(dossier.Error.Cause, secrets)
 		dossier.Error.Reason = Redact(dossier.Error.Reason, secrets)
 		for key, value := range dossier.Error.Meta {
 			if text, ok := value.(string); ok {

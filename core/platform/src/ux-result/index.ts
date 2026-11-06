@@ -21,7 +21,7 @@ export function createUxSuccessResult<T>(
   data: Exclude<T, undefined>,
   meta?: Record<string, unknown>,
 ): UxSuccessResult<Exclude<T, undefined>> {
-  if (data === undefined) throw new TypeError('UX success result data must be defined.');
+  if (data === undefined) {throw new TypeError('UX success result data must be defined.');}
   return { ok: true, data, ...(meta ? { meta } : {}) };
 }
 
@@ -43,21 +43,21 @@ export function isUxResultCandidate(value: unknown): value is UxResultCandidate 
 
 /** Returns a list of problems; empty means the value is a valid result envelope. */
 export function validateUxResult(value: unknown): string[] {
-  if (!isUxResultCandidate(value)) return ['result must be an object with a boolean "ok" field'];
-  if (typeof value.ok !== 'boolean') return ['result "ok" field must be a boolean'];
+  if (!isUxResultCandidate(value)) {return ['result must be an object with a boolean "ok" field'];}
+  if (typeof value.ok !== 'boolean') {return ['result "ok" field must be a boolean'];}
 
   const problems: string[] = [];
   if (value.ok) {
     for (const key of Object.keys(value)) {
-      if (key !== 'ok' && key !== 'data' && key !== 'meta') problems.push(`unknown field "${key}"`);
+      if (key !== 'ok' && key !== 'data' && key !== 'meta') {problems.push(`unknown field "${key}"`);}
     }
-    if (!('data' in value)) problems.push('success result must include "data"');
-    if (value.meta !== undefined && !isRecord(value.meta)) problems.push('meta must be an object');
+    if (!('data' in value)) {problems.push('success result must include "data"');}
+    if (value.meta !== undefined && !isRecord(value.meta)) {problems.push('meta must be an object');}
     return problems;
   }
 
   for (const key of Object.keys(value)) {
-    if (key !== 'ok' && key !== 'error') problems.push(`unknown field "${key}"`);
+    if (key !== 'ok' && key !== 'error') {problems.push(`unknown field "${key}"`);}
   }
   problems.push(...validateErrorEnvelope(value.error).map((problem) => `error.${problem.field} ${problem.reason}`));
   return problems;

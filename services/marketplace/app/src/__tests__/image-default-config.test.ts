@@ -27,7 +27,7 @@ const producerPath = path.join(workspaceRoot, "tools/release/generate-platform-i
 let tempRoot = "";
 
 afterEach(async () => {
-  if (tempRoot) await fs.rm(tempRoot, { recursive: true, force: true });
+  if (tempRoot) {await fs.rm(tempRoot, { recursive: true, force: true });}
   tempRoot = "";
   vi.clearAllMocks();
 });

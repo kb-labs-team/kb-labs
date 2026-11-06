@@ -26,12 +26,12 @@ function isJobResponseData(value: unknown): value is JobResponseData {
 
 /** Decode the Gateway UX-result envelope used by JSON job endpoints. */
 export function decodeJobResponseData(value: unknown): JobResponseData {
-  if (!isUxResult(value)) throw new Error('Gateway returned an invalid result envelope for the job response.');
+  if (!isUxResult(value)) {throw new Error('Gateway returned an invalid result envelope for the job response.');}
   if (!value.ok) {
     const error = toErrorEnvelope(value.error);
     throw new Error(`${error.code}: ${error.message} — ${error.hint}${error.correlationId ? ` (correlationId: ${error.correlationId})` : ''}`);
   }
-  if (!isJobResponseData(value.data)) throw new Error('Gateway returned an invalid job response payload.');
+  if (!isJobResponseData(value.data)) {throw new Error('Gateway returned an invalid job response payload.');}
   return value.data;
 }
 

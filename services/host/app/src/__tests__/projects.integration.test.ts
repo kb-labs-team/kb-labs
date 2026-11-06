@@ -367,8 +367,8 @@ describe("kb-host project routing", () => {
       try {
         await subject?.stop();
       } finally {
-        if (previousKbHome === undefined) delete process.env.KB_HOME;
-        else process.env.KB_HOME = previousKbHome;
+        if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+        else {process.env.KB_HOME = previousKbHome;}
       }
     }
   }, 25_000);
@@ -615,7 +615,7 @@ describe("kb-host project routing", () => {
 
       for (const token of [undefined, "invalid-token"]) {
         const headers: Record<string, string> = { "content-type": "application/json" };
-        if (token !== undefined) headers.authorization = `Bearer ${token}`;
+        if (token !== undefined) {headers.authorization = `Bearer ${token}`;}
         const denied = await running.fetchGateway(`/api/v1/projects/${project.id}/mcp`, {
           method: "POST", headers,
           body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
@@ -631,8 +631,8 @@ describe("kb-host project routing", () => {
         await subject?.stop();
       } finally {
         for (const [key, value] of savedEnv) {
-          if (value === undefined) delete process.env[key];
-          else process.env[key] = value;
+          if (value === undefined) {delete process.env[key];}
+          else {process.env[key] = value;}
         }
       }
     }

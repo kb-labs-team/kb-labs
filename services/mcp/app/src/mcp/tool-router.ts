@@ -112,8 +112,8 @@ export async function callTool(
   );
 
   const text = output.text.join('\n');
-  if (exitCode === 0) return { success: true, output: text, structured: output.structured, exitCode: 0 };
-  if (!error) throw new Error(`MCP tool ${tool.name} exited ${exitCode} without a normalized error envelope.`);
+  if (exitCode === 0) {return { success: true, output: text, structured: output.structured, exitCode: 0 };}
+  if (!error) {throw new Error(`MCP tool ${tool.name} exited ${exitCode} without a normalized error envelope.`);}
   return {
     success: false,
     output: text,

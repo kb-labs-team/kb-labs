@@ -30,6 +30,14 @@ func TestLoadFileSchemaVersionFailureDiagnostic(t *testing.T) {
 		func(*testing.T) []byte { return []byte(`{"schema":"kb.create.release-index/v99"}`) })
 }
 
+func TestPreviousReleaseSchemaIsRejected(t *testing.T) {
+	_, err := Decode([]byte(`{"schema":"kb.create.release-index/v2"}`))
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != contracts.CodeIndexSchemaUnsupported {
+		t.Fatalf("previous schema error = %v, want %s", err, contracts.CodeIndexSchemaUnsupported)
+	}
+}
+
 // case: S-214.4
 func TestLoadFileDigestFailureDiagnostic(t *testing.T) {
 	assertLoadFileDiagnostic(t, "digest", "wrong-digest", "", contracts.CodeReleaseIndexInvalid, func(t *testing.T) []byte {
@@ -110,7 +118,7 @@ func assertLoadFileDiagnostic(t *testing.T, gate, expected, actual, code string,
 func testLoadableCatalog(t *testing.T) Catalog {
 	t.Helper()
 	value, err := Seal(Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []PlatformBundle{{
-		ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact",
+		SupportedTargets: []BinaryTarget{{OS: "linux", Arch: "amd64"}}, ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact",
 		Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}},
 	}}})
 	if err != nil {
@@ -137,6 +145,36 @@ func TestLoadJourneyCompatibilityIndexesBeforeCompatibilityResolution(t *testing
 		t.Run(path, func(t *testing.T) {
 			if _, err := LoadFile(path); err != nil {
 				t.Fatalf("journey fixture is not a valid sealed release index: %v", err)
+			}
+		})
+	}
+}
+
+func TestSealedJourneyFixturesMatchCatalogProducer(t *testing.T) {
+	for _, path := range []string{
+		"../../../../e2e/platform/fixtures/release-index-v3.json",
+		"../cmd/kb-create-v2/testdata/x251-release-index-v3.json",
+	} {
+		t.Run(path, func(t *testing.T) {
+			actual, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			index, err := LoadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sealed, err := Seal(index)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected, err := json.MarshalIndent(sealed, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected = append(expected, '\n')
+			if string(actual) != string(expected) {
+				t.Fatal("fixture differs from catalog sealer output")
 			}
 		})
 	}

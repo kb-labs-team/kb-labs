@@ -67,7 +67,7 @@ export async function resolvePluginSettingsValidator(
       },
     };
   } catch (error) {
-    if (error instanceof PluginSettingsSchemaLoadError) throw error;
+    if (error instanceof PluginSettingsSchemaLoadError) {throw error;}
     const detail = error instanceof Error ? error.message : String(error);
     throw new PluginSettingsSchemaLoadError(
       `The plugin settings schema could not be loaded: ${detail}`,
@@ -85,7 +85,7 @@ interface LoadedZodSchema {
 
 async function loadZodSchema(reference: string, packageRoot: string): Promise<LoadedZodSchema> {
   const [moduleSpecifier, exportName] = reference.split('#');
-  if (!moduleSpecifier || !exportName) throw new Error('A Zod reference must use <module>#<export>.');
+  if (!moduleSpecifier || !exportName) {throw new Error('A Zod reference must use <module>#<export>.');}
   const packageRequire = createRequire(path.join(packageRoot, 'package.json'));
   const modulePath = moduleSpecifier.startsWith('.') || path.isAbsolute(moduleSpecifier)
     ? packageRequire.resolve(path.resolve(packageRoot, moduleSpecifier))
@@ -103,7 +103,7 @@ async function loadJsonSchemaReference(reference: string, packageRoot: string): 
   const hashIndex = reference.indexOf('#');
   const target = hashIndex === -1 ? reference : reference.slice(0, hashIndex);
   const fragment = hashIndex === -1 ? '' : reference.slice(hashIndex + 1);
-  if (!target) throw new Error('A JSON Schema reference must include a file path before its fragment.');
+  if (!target) {throw new Error('A JSON Schema reference must include a file path before its fragment.');}
   if (/^[a-z][a-z\d+.-]*:/i.test(target) && !target.startsWith('file:')) {
     throw new Error('Only local JSON Schema references are supported.');
   }
@@ -117,17 +117,17 @@ async function loadJsonSchemaReference(reference: string, packageRoot: string): 
   }
   const parsed: unknown = JSON.parse(await fs.readFile(resolved, 'utf8'));
   const selected = fragment ? resolveJsonPointer(parsed, fragment) : parsed;
-  if (!isRecord(selected)) throw new Error('The JSON Schema reference does not point to a schema object.');
+  if (!isRecord(selected)) {throw new Error('The JSON Schema reference does not point to a schema object.');}
   return { document: parsed, uri: pathToFileURL(resolved).href };
 }
 
 function resolveJsonPointer(document: unknown, fragment: string): unknown {
-  if (!fragment.startsWith('/')) throw new Error('A JSON Schema fragment must be a JSON Pointer.');
+  if (!fragment.startsWith('/')) {throw new Error('A JSON Schema fragment must be a JSON Pointer.');}
   return fragment.slice(1).split('/').map((part) => part.replaceAll('~1', '/').replaceAll('~0', '~'))
     .reduce<unknown>((current, segment) => {
-      if (!isRecord(current) && !Array.isArray(current)) throw new Error(`JSON Schema pointer segment "${segment}" was not found.`);
+      if (!isRecord(current) && !Array.isArray(current)) {throw new Error(`JSON Schema pointer segment "${segment}" was not found.`);}
       const value = (current as Record<string, unknown>)[segment];
-      if (value === undefined) throw new Error(`JSON Schema pointer segment "${segment}" was not found.`);
+      if (value === undefined) {throw new Error(`JSON Schema pointer segment "${segment}" was not found.`);}
       return value;
     }, document);
 }

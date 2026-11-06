@@ -39,7 +39,7 @@ export class PluginError<C extends ErrorCode = PlatformErrorCode> extends Error 
   constructor(message: string, ...args: PluginErrorArguments<C>);
   constructor(message: string, ...args: [C, ...unknown[]]) {
     const [code, ...values] = args;
-    if (typeof code !== 'string') throw new TypeError('PluginError requires a validated error code.');
+    if (typeof code !== 'string') {throw new TypeError('PluginError requires a validated error code.');}
     const platformCode = isErrorCode(code) ? code : undefined;
     const details = platformCode ? values[0] as DetailsFor<PlatformErrorCode> | undefined : values[1] as Record<string, string> | undefined;
     const hint = platformCode ? values[1] as string | undefined : values[2] as string | undefined;

@@ -35,7 +35,7 @@ flowchart TB
 
 **Артефакты релиза** (каталог `.kb/release/candidates/<candidate-id>/`): `release-index.json`, `bundle.sha256`, `provenance.json`, `binary-manifest.json`, `npm/`, `binaries/`.
 
-**Release index** (`kb.create.release-index/v2`, запечатан digest): каналы, платформы (с профилем: список сервисов, порты, health-check, конфиг по умолчанию, бинарники по os/arch, члены платформы), sdks, плагины, адаптеры, **матрица совместимости** (`kb.release-compatibility/2`).
+**Release index** (`kb.create.release-index/v3`, запечатан digest): каналы, платформы (с профилем: список сервисов, порты, health-check, конфиг по умолчанию, бинарники по os/arch, члены платформы), sdks, плагины, адаптеры, **матрица совместимости** (`kb.release-compatibility/2`).
 
 **Матрица совместимости:** метки `platform@X`, `sdk@Y`, `binary:kb-create@X:os/arch`; связи `requires` — точные пары, ничего не совместимо по умолчанию. `kb-create` проверяет в `CheckCompatibility` (`catalog.go`): есть ли метка платформы, связана ли она с выбранным SDK, связан ли бинарник и с платформой, и с SDK.
 

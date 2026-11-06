@@ -32,14 +32,14 @@ export function createBufferedUI(pushFn?: (text: string, output?: UIOutput) => v
   const lines: string[] = [];
   const structuredOutput: UIOutput[] = [];
   const push = (text: string): void => {
-    if (pushFn) pushFn(text);
-    else lines.push(text);
+    if (pushFn) {pushFn(text);}
+    else {lines.push(text);}
   };
   const emit = (output: UIOutput): void => {
     structuredOutput.push(output);
     const text = renderUIOutputText(output);
-    if (pushFn) pushFn(text, output);
-    else lines.push(text);
+    if (pushFn) {pushFn(text, output);}
+    else {lines.push(text);}
   };
 
   const unavailablePrompt = (message: string): InteractiveInputRequiredError =>

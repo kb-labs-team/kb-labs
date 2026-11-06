@@ -35,9 +35,10 @@ func ReleaseIndexJSON(platformVersion, sdkVersion, os, arch string) []byte {
 		}},
 		Platforms: []catalog.PlatformBundle{{
 			ID: "platform", Version: platformVersion, Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
-			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
-			Profiles: map[string]contracts.ServiceGraph{"default": {}},
-			Binaries: []catalog.Binary{{ID: "kb-create", OS: os, Arch: arch, URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}},
+			Host:             &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles:         map[string]contracts.ServiceGraph{"default": {}},
+			SupportedTargets: []catalog.BinaryTarget{{OS: os, Arch: arch}},
+			Binaries:         []catalog.Binary{{ID: "kb-create", OS: os, Arch: arch, URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}},
 		}},
 		SDKs: []catalog.Component{{ID: "sdk", Version: sdkVersion, Package: "@kb/sdk", Tarball: "https://example.test/sdk.tgz", SHA256: "sdk"}},
 	}
@@ -51,6 +52,21 @@ func ReleaseIndexJSON(platformVersion, sdkVersion, os, arch string) []byte {
 	}
 	return data
 }
+
+// TargetBinary is the same binary declaration used by the shared release fixture.
+func TargetBinary(osName, arch string) catalog.Binary {
+	var fixture catalog.Catalog
+	if err := json.Unmarshal(ReleaseIndexJSON("2.0.0", "2.0.0", osName, arch), &fixture); err != nil {
+		panic(err)
+	}
+	binary := fixture.Platforms[0].Binaries[0]
+	digest := sha256.Sum256(TargetBinaryBytes())
+	binary.SHA256 = hex.EncodeToString(digest[:])
+	return binary
+}
+
+// TargetBinaryBytes is the cache content for TargetBinary.
+func TargetBinaryBytes() []byte { return []byte("binary:kb-create") }
 
 // SealCatalog adds provenance generated from the same package archives that
 // PackageTarball returns to tests. The production sealer remains the owner of

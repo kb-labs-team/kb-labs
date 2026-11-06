@@ -34,7 +34,7 @@ export class EnvSecretProvider implements SecretProvider {
   }
 
   sourceFor(name: string): string {
-    if (this.allowPlain && process.env[name] !== undefined) return name
+    if (this.allowPlain && process.env[name] !== undefined) {return name}
     return `${this.prefix}${name}`
   }
 
@@ -59,7 +59,7 @@ export class EnvSecretProvider implements SecretProvider {
     const resolved: Record<string, string> = {}
     for (const name of names) {
       const value = this.lookup(name)
-      if (value === undefined) throw createMissingSecretError(this, name)
+      if (value === undefined) {throw createMissingSecretError(this, name)}
       resolved[name] = value
     }
     return resolved

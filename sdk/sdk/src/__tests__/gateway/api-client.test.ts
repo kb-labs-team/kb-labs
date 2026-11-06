@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../../gateway/session.js', () => ({
   SessionManager: class {
-    async load() { if (mocks.loadError) throw mocks.loadError; return mocks.session; }
+    async load() { if (mocks.loadError) {throw mocks.loadError;} return mocks.session; }
     async save() {}
     async clear() {}
     getFilePath() { return '/tmp/session.json'; }

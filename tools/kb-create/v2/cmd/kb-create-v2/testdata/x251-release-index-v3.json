@@ -1,6 +1,6 @@
 {
-  "schema": "kb.create.release-index/v2",
-  "digest": "7eb10cc88ef5266b325cf48ec857c67bbb2f4f77337b406c1c5dc5bc4c18e427",
+  "schema": "kb.create.release-index/v3",
+  "digest": "eff019b0a2692b7956c94cf9bf4f70dd48f53505b29660be0f2c7153a410de69",
   "channels": {
     "canary": "2.121.0-canary.cec6dacc6"
   },
@@ -276,6 +276,24 @@
           "id": "marketplace.sources",
           "path": "/marketplace/sources",
           "default": "[{\"kind\":\"npm\",\"url\":\"https://registry.npmjs.org\"}]"
+        }
+      ],
+      "supportedTargets": [
+        {
+          "os": "darwin",
+          "arch": "amd64"
+        },
+        {
+          "os": "darwin",
+          "arch": "arm64"
+        },
+        {
+          "os": "linux",
+          "arch": "amd64"
+        },
+        {
+          "os": "linux",
+          "arch": "arm64"
         }
       ],
       "binaries": [

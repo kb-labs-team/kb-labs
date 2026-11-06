@@ -22,7 +22,7 @@ export const workspaceStatus = defineSystemCommand<Flags, Result>({
       // An unavailable local IPC endpoint means the separate process is stopped.
     }
     if (!status) {
-      if (!flags.json) ctx.ui?.info('Workspace Agent is not running. Start it with: kb-host-agent');
+      if (!flags.json) {ctx.ui?.info('Workspace Agent is not running. Start it with: kb-host-agent');}
       return { running: false };
     }
     const result = {
@@ -31,7 +31,7 @@ export const workspaceStatus = defineSystemCommand<Flags, Result>({
       hostId: status.hostId,
       gatewayUrl: status.gatewayUrl,
     };
-    if (flags.json) return result;
+    if (flags.json) {return result;}
     const label = status.connected ? 'connected' : status.reconnecting ? 'reconnecting...' : 'disconnected';
     ctx.ui?.success('Workspace Agent Status', {
       sections: [{ items: [

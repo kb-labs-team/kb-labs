@@ -7,7 +7,7 @@ import type { FastifyInstance } from "fastify";
 import type { RestApiConfig } from "@kb-labs/rest-api-core";
 
 function pluginBasePath(entry: RegistrySnapshotManifestEntry, basePath: string): string | undefined {
-  if (!entry.manifest.rest?.basePath && !entry.manifest.rest?.routes?.length) return undefined;
+  if (!entry.manifest.rest?.basePath && !entry.manifest.rest?.routes?.length) {return undefined;}
   return resolvePluginBasePath(entry.manifest, "rest", basePath);
 }
 
@@ -37,7 +37,7 @@ export function registerPluginRouteNotFoundHandler(
     }
 
     const slug = pathname.slice(pluginPrefix.length).split("/", 1)[0];
-    if (!slug) return resourceNotFound(`REST route ${route} was not found.`);
+    if (!slug) {return resourceNotFound(`REST route ${route} was not found.`);}
 
     const snapshot = registry.snapshot();
     const requestedPrefix = `${pluginPrefix}${slug}`;
