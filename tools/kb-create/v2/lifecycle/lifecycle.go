@@ -13,7 +13,7 @@ import (
 )
 
 type Mutation func() error
-type PackageRestore func([]contracts.Artifact) error
+type PackageRestore func(contracts.ResolvedInstallPlan, contracts.ResolvedInstallPlan) error
 
 // Mutate snapshots the active verified receipt before a destructive change.
 // A failed mutation or verification restores the exact managed state and
@@ -44,8 +44,13 @@ func Rollback(platformRoot, snapshotsDirectory, snapshotID string, restorePackag
 	if err != nil {
 		return contracts.Snapshot{}, fmt.Errorf("read snapshot %s: %w", snapshotID, err)
 	}
-	var artifacts []contracts.Artifact
+	var plan, previous contracts.ResolvedInstallPlan
 	if restorePackages != nil {
+		current, readErr := receipt.Read(platformRoot)
+		if readErr != nil {
+			return snapshot, fmt.Errorf("read outgoing receipt for snapshot %s: %w", snapshotID, readErr)
+		}
+		previous = current.Plan
 		receiptBytes, ok := snapshot.Files[".kb/v2/receipt.json"]
 		if !ok {
 			return snapshot, fmt.Errorf("restore packages for snapshot %s: snapshot receipt is missing", snapshotID)
@@ -57,13 +62,13 @@ func Rollback(platformRoot, snapshotsDirectory, snapshotID string, restorePackag
 		if restored.Schema != contracts.ReceiptSchema || restored.ID != snapshot.ReceiptID {
 			return snapshot, fmt.Errorf("restore packages for snapshot %s: snapshot receipt identity is invalid", snapshotID)
 		}
-		artifacts = restored.Plan.Artifacts
+		plan = restored.Plan
 	}
 	if _, err := receipt.RestoreSnapshot(platformRoot, snapshotsDirectory, snapshotID); err != nil {
 		return snapshot, fmt.Errorf("restore snapshot %s: %w", snapshotID, err)
 	}
 	if restorePackages != nil {
-		if err := restorePackages(artifacts); err != nil {
+		if err := restorePackages(plan, previous); err != nil {
 			return snapshot, fmt.Errorf("restore packages for snapshot %s: %w", snapshotID, err)
 		}
 	}

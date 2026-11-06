@@ -52,7 +52,39 @@ func Plan(request contracts.InstallRequest, source catalog.Catalog) (contracts.R
 // PlanWith resolves a request; the schema gate and launcher-version gate run
 // before any resolution work.
 func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options Options) (contracts.ResolvedInstallPlan, error) {
-	return planWith(request, source, options, false)
+	verified, err := verifyPlanCatalog(source)
+	if err != nil {
+		return contracts.ResolvedInstallPlan{}, err
+	}
+	return verified.plan(request, options)
+}
+
+type verifiedPlanCatalog struct{ source catalog.Verified }
+
+func verifyPlanCatalog(source catalog.Catalog) (verifiedPlanCatalog, error) {
+	verified, err := catalog.VerifyCatalog(source)
+	if err != nil {
+		return verifiedPlanCatalog{}, err
+	}
+	return verifiedPlanCatalog{source: verified}, nil
+}
+
+func (verified verifiedPlanCatalog) plan(request contracts.InstallRequest, options Options) (contracts.ResolvedInstallPlan, error) {
+	source, err := verified.source.Catalog()
+	if err != nil {
+		return contracts.ResolvedInstallPlan{}, err
+	}
+	sealedCatalog, err := json.Marshal(source)
+	if err != nil {
+		return contracts.ResolvedInstallPlan{}, err
+	}
+	plan, err := planWith(request, source, options, false)
+	if err != nil {
+		return contracts.ResolvedInstallPlan{}, err
+	}
+	plan.ReleaseCatalog = sealedCatalog
+	plan.PlanHash = hash(plan)
+	return plan, nil
 }
 
 // ValidateWith checks whether a request can be resolved against a catalog while

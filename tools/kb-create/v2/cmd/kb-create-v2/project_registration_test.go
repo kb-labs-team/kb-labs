@@ -327,7 +327,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 			deps := productionCommandDependencies(cmd)
 			deps.NodeCheck = func() error { return nil }
 			deps.Executable = launcher
-			deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Clock: clock}
+			deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release)}, Clock: clock}
 			deps.ProjectRegistrar = func(platformRoot, selectedProject string) (projectRegistrationResult, error) {
 				registrarCalls++
 				return registerInstalledProject(platformRoot, selectedProject, nil)
@@ -475,7 +475,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		deps := productionCommandDependencies(cmd)
 		deps.NodeCheck = func() error { return nil }
 		deps.Executable = launcher
-		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: testHost, Clock: clock}
+		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release)}, Host: testHost, Clock: clock}
 		deps.ProjectRegistrar = func(platformRoot, selectedProject string) (projectRegistrationResult, error) {
 			registrarCalls++
 			return registerInstalledProject(platformRoot, selectedProject, nil)
@@ -589,7 +589,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		deps.Executable = launcher
 		answers := []string{"", "", "secured", "admin@example.test", "workspace", humanJWTSecret, humanJWTSecret, ""}
 		deps.InstallInput = strings.NewReader(strings.Join(answers, "\n"))
-		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: testHost, Clock: clock}
+		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, humanRelease)}, Host: testHost, Clock: clock}
 		deps.ProjectRegistrar = func(platformRoot, selectedProject string) (projectRegistrationResult, error) {
 			registrarCalls++
 			return registerInstalledProject(platformRoot, selectedProject, nil)
@@ -745,7 +745,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 					deps := productionCommandDependencies(cmd)
 					deps.NodeCheck = func() error { return nil }
 					deps.Executable = launcher
-					deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: testHost, Clock: clock}
+					deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, registrationRelease)}, Host: testHost, Clock: clock}
 					return deps
 				})
 				var stdout, stderr bytes.Buffer

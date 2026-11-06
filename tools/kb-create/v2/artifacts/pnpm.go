@@ -20,8 +20,10 @@ import (
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/toolchain"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/semrange"
 	"gopkg.in/yaml.v3"
 )
@@ -66,10 +68,7 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 			if r.corepackHome == "" {
 				return err
 			}
-			source := r.registry
-			if source == "" {
-				source = "Corepack's default npm registry"
-			}
+			source := "Corepack's default npm registry"
 			if !r.offline {
 				var provision toolchain.Result
 				provision, err = toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env, Operation: toolchain.OperationPackageManager})
@@ -84,7 +83,7 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 				}
 			}
 			if err != nil {
-				return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s; check --registry.", toolchain.SupportedPnpm, source), "Check --registry and rerun the install command.", err)
+				return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s.", toolchain.SupportedPnpm, source), "Check the default npm registry and rerun the install command.", err)
 			}
 		}
 		executable = node
@@ -133,13 +132,16 @@ func packageManagerEnvironment(base, overrides []string) []string {
 }
 
 type Pnpm struct {
-	Root               string
-	CacheRoot          string
-	PackageManagerRoot string
-	Registry           string
-	Offline            bool
-	Client             *http.Client
-	Runner             Runner
+	Root                   string
+	CacheRoot              string
+	PackageManagerRoot     string
+	Registry               string
+	ReleaseCatalog         catalog.Verified
+	PreviousReleaseCatalog *catalog.Verified
+	MarketplaceRoot        string
+	Offline                bool
+	Client                 *http.Client
+	Runner                 Runner
 	// Log receives the complete package-manager transcript. It is deliberately
 	// file-oriented: raw package-manager output must never pollute human or JSON
 	// command output.
@@ -338,17 +340,7 @@ func (p Pnpm) run(command string, specs ...string) error {
 	if command == "remove" {
 		args = append(args, "--config.minimumReleaseAge=0")
 	}
-	// pnpm rejects --registry for remove, but pruning a dependency graph can
-	// still need package metadata from the registry that supplied the install.
-	// Keep that registry in config form so private release candidates can be
-	// uninstalled without falling back to the public npm registry.
-	if p.Registry != "" && command == "remove" {
-		args = append(args, "--config.registry="+p.Registry)
-	}
 	args = append(args, specs...)
-	if p.Registry != "" && command != "remove" {
-		args = append(args, "--registry", p.Registry)
-	}
 	runner := p.Runner
 	if runner == nil {
 		if p.PackageManagerRoot == "" {
@@ -399,9 +391,6 @@ func (p Pnpm) packageManagerEnvironment() []string {
 		"npm_config_devdir=" + filepath.Join(root, "node-gyp"),
 		"npm_config_store_dir=" + filepath.Join(root, "pnpm-store"),
 	}
-	if p.Registry != "" {
-		env = append(env, "COREPACK_NPM_REGISTRY="+p.Registry)
-	}
 	return env
 }
 
@@ -428,12 +417,23 @@ func (p Pnpm) prepareNpmrc() error {
 		return nil
 	}
 	path := filepath.Join(p.Root, ".npmrc")
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return os.WriteFile(path, []byte("registry="+p.Registry+"\n"), 0o600)
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	filtered := make([]string, 0, len(lines)+1)
+	for _, line := range lines {
+		key, _, found := strings.Cut(line, "=")
+		if found && strings.TrimSpace(key) == "@kb-labs:registry" {
+			continue
+		}
+		if line != "" {
+			filtered = append(filtered, line)
+		}
+	}
+	filtered = append(filtered, "@kb-labs:registry="+p.Registry)
+	return os.WriteFile(path, []byte(strings.Join(filtered, "\n")+"\n"), 0o600)
 }
 
 func (p Pnpm) preparePackageJSON() error {
@@ -460,6 +460,15 @@ func (p Pnpm) prepareWorkspaceYAML() error {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
+	}
+	if p.MarketplaceRoot != "" && p.MarketplaceRoot != p.Root {
+		data, err := os.ReadFile(filepath.Join(p.MarketplaceRoot, "pnpm-workspace.yaml"))
+		if err == nil {
+			return os.WriteFile(path, data, 0o600)
+		}
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("read previous pnpm workspace configuration: %w", err)
+		}
 	}
 	var buf bytes.Buffer
 	buf.WriteString("autoInstallPeers: false\n")
@@ -503,6 +512,25 @@ func (p Pnpm) mergeMinimumReleaseAgeExclude(items []contracts.Artifact) error {
 	} else if exclusions.Kind != yaml.SequenceNode {
 		return fmt.Errorf("pnpm workspace minimumReleaseAgeExclude must be a list")
 	}
+	previous := make(map[string]bool)
+	pins := make(map[string]bool)
+	if p.PreviousReleaseCatalog != nil {
+		source, err := p.PreviousReleaseCatalog.Catalog()
+		if err != nil {
+			return fmt.Errorf("verify previous release index: %w", err)
+		}
+		for _, item := range source.Provenance {
+			previous[item.Package+"@"+item.Version] = true
+		}
+		root := p.MarketplaceRoot
+		if root == "" {
+			root = p.Root
+		}
+		pins, err = marketplace.MarketplacePins(root)
+		if err != nil {
+			return fmt.Errorf("read Marketplace pins: %w", err)
+		}
+	}
 	versionsByPackage := make(map[string]map[string]struct{}, len(exclusions.Content)+len(items))
 	retained := make([]string, 0, len(exclusions.Content))
 	for _, entry := range exclusions.Content {
@@ -514,14 +542,27 @@ func (p Pnpm) mergeMinimumReleaseAgeExclude(items []contracts.Artifact) error {
 			retained = append(retained, entry.Value)
 			continue
 		}
-		addExactReleaseAgeVersions(versionsByPackage, packageName, versions...)
-	}
-	for _, item := range items {
-		if item.IsBinary() {
-			continue
+		for _, version := range versions {
+			key := packageName + "@" + version
+			if !previous[key] || pins[key] {
+				addExactReleaseAgeVersions(versionsByPackage, packageName, version)
+			}
 		}
-		if item.Package == "" || item.Version == "" {
-			return fmt.Errorf("artifact %q must declare package and exact version", item.ID)
+	}
+	for pin := range pins {
+		name, versions, ok := exactReleaseAgeExclusion(pin)
+		if !ok || len(versions) != 1 {
+			return fmt.Errorf("Marketplace pin %q is not an exact package version", pin)
+		}
+		addExactReleaseAgeVersions(versionsByPackage, name, versions...)
+	}
+	source, err := p.ReleaseCatalog.Catalog()
+	if err != nil {
+		return fmt.Errorf("verify release index for package installation: %w", err)
+	}
+	for _, item := range source.Provenance {
+		if _, err := semrange.ParseVersion(item.Version); err != nil {
+			return fmt.Errorf("sealed package %s has invalid version: %w", item.Package, err)
 		}
 		addExactReleaseAgeVersions(versionsByPackage, item.Package, item.Version)
 	}

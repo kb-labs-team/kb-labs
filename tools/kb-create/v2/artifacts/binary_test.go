@@ -177,7 +177,7 @@ func TestPreparedPackageInstallsTheSingleVerifiedTarballResponse(t *testing.T) {
 	cacheRoot := filepath.Join(root, ".kb", "v2", "cache")
 	runner := &fakeRunner{packages: []contracts.Artifact{item}}
 	executor := Composite{
-		Packages: Pnpm{Root: root, CacheRoot: cacheRoot, Runner: runner},
+		Packages: Pnpm{Root: root, CacheRoot: cacheRoot, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, item)},
 		Binaries: Binaries{Root: root, CacheRoot: cacheRoot},
 	}
 	prepared, err := executor.Prepare([]contracts.Artifact{item})

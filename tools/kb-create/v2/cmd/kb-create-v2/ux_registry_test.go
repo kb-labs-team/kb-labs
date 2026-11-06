@@ -316,7 +316,7 @@ func TestJSONInstallProgressEndsWithTerminalRecord(t *testing.T) {
 	var stdout bytes.Buffer
 	cmd := &cobra.Command{Use: "kb-create install"}
 	cmd.SetOut(&stdout)
-	inv := operationTestSetup{Operation: "install", Index: index, JSON: true, Direct: directRequest{PlatformRoot: platformRoot}, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot}, Host: installHost{}}, NodePreflight: func() error { return nil }}
+	inv := operationTestSetup{Operation: "install", Index: index, JSON: true, Direct: directRequest{PlatformRoot: platformRoot}, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot, release: verifiedFixtureCatalog(t, release)}, Host: installHost{}}, NodePreflight: func() error { return nil }}
 	descriptor, _ := lookupOperationDescriptor("install")
 	err = descriptorTestCall(cmd, descriptor, inv)
 	if code, ok := result.StreamExitCode(err); !ok || code != diag.SuccessStatus() {

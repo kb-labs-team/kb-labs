@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
@@ -230,4 +231,50 @@ func validateLockItem(kind, id string, item Item) error {
 		return fmt.Errorf("invalid marketplace lock %s %q: unknown source %q", kind, id, item.Source)
 	}
 	return nil
+}
+
+// MarketplacePins returns exact identities owned by the installed Marketplace lock.
+func MarketplacePins(platformRoot string) (map[string]bool, error) {
+	pins := make(map[string]bool)
+	lock, err := readLock(platformRoot)
+	if os.IsNotExist(err) {
+		return pins, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, entries := range []map[string]Item{lock.Plugins, lock.Adapters} {
+		for _, entry := range entries {
+			if entry.Source != "marketplace" {
+				continue
+			}
+			name := entry.Package
+			if name == "" {
+				path := filepath.Clean(entry.ResolvedPath)
+				if filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) {
+					return nil, fmt.Errorf("invalid Marketplace package path %q", entry.ResolvedPath)
+				}
+				data, err := os.ReadFile(filepath.Join(platformRoot, path, "package.json"))
+				if err != nil {
+					return nil, err
+				}
+				var manifest struct {
+					Name    string `json:"name"`
+					Version string `json:"version"`
+				}
+				if err := json.Unmarshal(data, &manifest); err != nil {
+					return nil, err
+				}
+				if manifest.Name == "" || manifest.Version != entry.Version {
+					return nil, fmt.Errorf("Marketplace adapter identity does not match lock")
+				}
+				name = manifest.Name
+			}
+			if name == "" || entry.Version == "" {
+				return nil, fmt.Errorf("Marketplace lock package and version are required")
+			}
+			pins[name+"@"+entry.Version] = true
+		}
+	}
+	return pins, nil
 }

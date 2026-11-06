@@ -641,8 +641,11 @@ type recordingPreparedArtifacts struct{ install func() error }
 
 func (p recordingPreparedArtifacts) Install(func(string, bool) error) error { return p.install() }
 func (recordingPreparedArtifacts) Close() error                             { return nil }
-func (r *recordingInstaller) Restore([]contracts.Artifact) error            { r.restores++; return nil }
-func (r *recordingInstaller) Uninstall([]contracts.Artifact) error          { return nil }
+func (r *recordingInstaller) Restore(contracts.ResolvedInstallPlan, contracts.ResolvedInstallPlan) error {
+	r.restores++
+	return nil
+}
+func (r *recordingInstaller) Uninstall([]contracts.Artifact) error { return nil }
 
 func treeDigest(root string) ([32]byte, error) {
 	hash := sha256.New()
@@ -732,6 +735,14 @@ func versionedReceipt(t *testing.T, version string, port int, hostArgs ...string
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema,
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: version, Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
 		Host:         spec}
+	release, err := sealTestCatalog(t, testReleaseCatalog(t, version))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.ReleaseCatalog, err = json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return contracts.InstallReceipt{ID: "receipt-" + version, InstallationID: "installation-stable", Plan: plan}
 }
 
@@ -877,9 +888,17 @@ func TestFreshInstallWritesCompleteRunningIdentityBeforeFirstUpdate(t *testing.T
 		Host: &contracts.HostSpec{Command: fakehost, Args: []string{"-port", fmt.Sprint(port)},
 			HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway"}}}}
+	release, err := sealTestCatalog(t, testReleaseCatalog(t, "1.0.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.ReleaseCatalog, err = json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resolved := resolvedPlan{Plan: plan, State: state}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcher}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release)}, Host: installedHostStarter{root: root, executable: launcher}}}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	var processID int
 	t.Cleanup(func() {
@@ -967,9 +986,17 @@ func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWr
 			t.Errorf("container lifecycle left host process %d alive", processID)
 		}
 	})
+	release, err := sealTestCatalog(t, testReleaseCatalog(t, "1.0.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.ReleaseCatalog, err = json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resolved := resolvedPlan{Plan: plan, State: state}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcher}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release)}, Host: installedHostStarter{root: root, executable: launcher}}}
 	runApplyForTest(t, resolved, deps)
 	installed = true
 	if _, code, output := inst.run("status", "--json"); code != 0 {
@@ -1089,9 +1116,17 @@ func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T
 			HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway"}}}}
 	inst := installation{launcher: installedLauncher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
+	release, err := sealTestCatalog(t, testReleaseCatalog(t, "1.0.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.ReleaseCatalog, err = json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resolved := resolvedPlan{Plan: plan, State: state}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcher}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release)}, Host: installedHostStarter{root: root, executable: launcher}}}
 	registerTestHostProcessTreeCleanup(t, root)
 	installed := false
 	t.Cleanup(func() {
@@ -1293,11 +1328,21 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 	t.Setenv(host.KBHomeEnv, kbHome)
 	hostSpec := &contracts.HostSpec{Command: fakehost, Args: []string{"-port", fmt.Sprint(port)},
 		HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10}
+	component := catalog.Component{ID: "fixture-package", Package: "@kb-labs/fixture", Version: "1.0.0", Tarball: "https://example.test/package.tgz", SHA256: "fixture"}
+	fixtureRelease := func(version string) json.RawMessage {
+		source := testReleaseCatalog(t, version)
+		source.Plugins = append(source.Plugins, component)
+		encoded, err := json.Marshal(testfixtures.MustSealCatalog(source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
+	}
 	fixtures := map[string][]byte{
 		"install": []byte("install binary fixture"),
 		"update1": []byte("first update binary fixture"),
 		"update2": []byte("second update binary fixture"),
-		"package": testPackageTarball("@kb-labs/fixture", "1.0.0"),
+		"package": testPackageTarball(component.Package, component.Version),
 	}
 	digests := make(map[string]string, len(fixtures))
 	for name, data := range fixtures {
@@ -1348,13 +1393,13 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 	defer server.Close()
 
 	installPlan := contracts.ResolvedInstallPlan{
-		Schema: contracts.ResolvedPlanSchema, PlanHash: "production-artifacts-install",
+		Schema: contracts.ResolvedPlanSchema, PlanHash: "production-artifacts-install", ReleaseCatalog: fixtureRelease("1.0.0"),
 		Request:      contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
 		Host:         hostSpec,
 		Artifacts: []contracts.Artifact{
 			{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/install", ResolvedURL: server.URL + "/install", SHA256: digests["install"], Target: "bin/kb-create"},
-			{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
+			{ID: component.ID, Kind: "plugin", Version: component.Version, Package: component.Package, Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, component.Package, component.Version)},
 		},
 	}
 	state, err := host.StateForRoot(root)
@@ -1430,13 +1475,13 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 	for _, name := range []string{"update1", "update2"} {
 		version := map[string]string{"update1": "2.0.0", "update2": "3.0.0"}[name]
 		plan := contracts.ResolvedInstallPlan{
-			Schema: contracts.ResolvedPlanSchema, PlanHash: "production-artifacts-" + name,
+			Schema: contracts.ResolvedPlanSchema, PlanHash: "production-artifacts-" + name, ReleaseCatalog: fixtureRelease(version),
 			Request:      contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
 			ServiceGraph: contracts.ServiceGraph{PlatformVersion: version, Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
 			Host:         hostSpec,
 			Artifacts: []contracts.Artifact{
 				{ID: "fixture-binary", Kind: "binary", Version: version, URL: server.URL + "/" + name, ResolvedURL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"},
-				{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
+				{ID: component.ID, Kind: "plugin", Version: component.Version, Package: component.Package, Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, component.Package, component.Version)},
 			},
 		}
 		plan.Request.PlatformRoot = layout.PlatformRoot()
@@ -1567,7 +1612,11 @@ func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
 	launcher, fakehost := binaries(t)
 	port := freeLoopbackPort(t)
 	registerTestHostProcessTreeCleanup(t, root)
-	sealed := fixturePackageArtifact(t, "@kb-labs/sealed-runtime", "1.0.0")
+	component := catalog.Component{ID: "sealed-runtime", Package: "@kb-labs/sealed-runtime", Version: "1.0.0", Tarball: "https://example.test/sealed.tgz", SHA256: "fixture"}
+	source := testReleaseCatalog(t, "1.0.0")
+	source.Plugins = append(source.Plugins, component)
+	release := testfixtures.MustSealCatalog(source)
+	sealed := fixturePackageArtifact(t, component.Package, component.Version)
 	plan := contracts.ResolvedInstallPlan{
 		Schema: contracts.ResolvedPlanSchema, PlanHash: "fresh-marketplace-pin-install",
 		Request: contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
@@ -1577,6 +1626,11 @@ func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
 			HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5},
 		Artifacts: []contracts.Artifact{sealed},
 	}
+	encodedRelease, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.ReleaseCatalog = encodedRelease
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: productionPackageFixtureRunner{},
 		Runtime: &runtime.Dependencies{Host: installedHostStarter{root: root, executable: launcher}}}
 	if _, failure := executeApply(context.Background(), applyCommandInput{Resolved: &resolvedPlan{Plan: plan, State: host.State{Dir: t.TempDir()}}}, deps); failure != nil {
@@ -1724,10 +1778,7 @@ func TestUpdatePlanRetainsInstalledMarketplaceAdapterFromActiveLock(t *testing.T
 	source.Adapters = append(source.Adapters, catalog.Adapter{Component: catalog.Component{
 		ID: adapterID, Version: "1.0.0", Package: adapterID, Tarball: "https://example.test/vibeproxy.tgz", SHA256: "vibeproxy",
 	}})
-	source, err := testfixtures.SealCatalog(source)
-	if err != nil {
-		t.Fatalf("seal update release index: %v", err)
-	}
+	source = testfixtures.MustSealCatalog(source)
 	request := contracts.InstallRequest{Schema: contracts.RequestSchema,
 		Platform: contracts.VersionSelector{Version: "1.0.0"}, SDK: contracts.VersionSelector{Version: "1.0.0"},
 		ServiceProfile: "default", PlatformRoot: root}
@@ -1758,6 +1809,7 @@ func TestUpdatePlanRetainsInstalledMarketplaceAdapterFromActiveLock(t *testing.T
 
 	withoutAdapter := source
 	withoutAdapter.Adapters = nil
+	withoutAdapter = testfixtures.MustSealCatalog(withoutAdapter)
 	_, failure = planUpdateWithMarketplaceLock(root, *initial.Plan, withoutAdapter,
 		"kb-create update --platform-root "+root)
 	if failure == nil || failure.Code != contracts.CodeIncompatibleComponents || failure.Meta["id"] != adapterID {
@@ -1799,7 +1851,11 @@ func TestArtifactExecutorLeavesUnprojectedStageWithoutSharedProjections(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixtures := map[string][]byte{"binary": []byte("binary fixture"), "package": testPackageTarball("@kb-labs/fixture", "1.0.0")}
+	component := catalog.Component{ID: "fixture-package", Package: "@kb-labs/fixture", Version: "1.0.0", Tarball: "https://example.test/package", SHA256: "fixture"}
+	source := testReleaseCatalog(t, "1.0.0")
+	source.Plugins = append(source.Plugins, component)
+	release := testfixtures.MustSealCatalog(source)
+	fixtures := map[string][]byte{"binary": []byte("binary fixture"), "package": testPackageTarball(component.Package, component.Version)}
 	digests := make(map[string]string, len(fixtures))
 	for name, data := range fixtures {
 		digest := sha256.Sum256(data)
@@ -1820,9 +1876,10 @@ func TestArtifactExecutorLeavesUnprojectedStageWithoutSharedProjections(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	executor.Packages.ReleaseCatalog = verifiedFixtureCatalog(t, release)
 	items := []contracts.Artifact{
 		{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/binary", ResolvedURL: server.URL + "/binary", SHA256: digests["binary"], Target: "bin/kb-create"},
-		{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
+		{ID: component.ID, Kind: "plugin", Version: component.Version, Package: component.Package, Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, component.Package, component.Version)},
 	}
 	if err := executor.InstallWithProgress(items, func(_ string, start bool) error {
 		if start {
@@ -1830,6 +1887,10 @@ func TestArtifactExecutorLeavesUnprojectedStageWithoutSharedProjections(t *testi
 		}
 		return versionroot.ValidateNoSharedRuntimeProjectionEntries(stage)
 	}); err != nil {
+		var failure *diag.Diag
+		if errors.As(err, &failure) {
+			t.Fatalf("production artifact executor install: %v; cause: %s", err, failure.Cause)
+		}
 		t.Fatalf("production artifact executor install: %v", err)
 	}
 	if err := versionroot.ValidateNoSharedRuntimeProjectionEntries(stage); err != nil {

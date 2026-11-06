@@ -13,6 +13,7 @@ import (
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 )
 
 func TestBuildKeepsSecretValuesOutOfConfigAndChecksTheirServices(t *testing.T) {
@@ -138,17 +139,7 @@ func TestDefaultInstallRendersReleaseMarketplaceSourcesAndBootsMarketplace(t *te
 		t.Fatal("could not locate render test source")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "../../../.."))
-	defaultSourcesScript := fmt.Sprintf(`import { readPlatformReleaseConfig } from %q;
-const config = readPlatformReleaseConfig(%q);
-process.stdout.write(JSON.stringify(config.marketplaceSources));`,
-		"file://"+filepath.ToSlash(filepath.Join(root, "tools/kb-create/scripts/platform-release-config.mjs")),
-		filepath.Join(root, "tools/kb-create/config/platform-release.jsonc"))
-	defaultSourcesCommand := exec.Command("node", "--input-type=module", "-e", defaultSourcesScript)
-	defaultSourcesCommand.Dir = root
-	defaultSourcesJSON, err := defaultSourcesCommand.Output()
-	if err != nil {
-		t.Fatalf("read release-declared Marketplace sources: %v", err)
-	}
+	defaultSourcesJSON := releaseMarketplaceSources(t, root)
 	plan := testPlan(t.TempDir())
 	plan.ConfigPatches = append(plan.ConfigPatches, contracts.ConfigPatch{
 		Path: "/marketplace/sources", JSON: string(defaultSourcesJSON), Owner: "release:marketplace.sources",
@@ -194,13 +185,33 @@ try { /* setup returning a stop function proves the service listened successfull
 	}
 }
 
+func releaseMarketplaceSources(t *testing.T, root string) []byte {
+	t.Helper()
+	script := fmt.Sprintf(`import { readPlatformReleaseConfig } from %q;
+const config = readPlatformReleaseConfig(%q);
+process.stdout.write(JSON.stringify(config.marketplaceSources));`,
+		"file://"+filepath.ToSlash(filepath.Join(root, "tools/kb-create/scripts/platform-release-config.mjs")),
+		filepath.Join(root, "tools/kb-create/config/platform-release.jsonc"))
+	command := exec.Command("node", "--input-type=module", "-e", script)
+	command.Dir = root
+	data, err := command.Output()
+	if err != nil {
+		t.Fatalf("read release-declared Marketplace sources: %v", err)
+	}
+	return data
+}
+
 func validateRenderedMarketplaceSources(t *testing.T, root string, config []byte) {
 	t.Helper()
+	schemaPath := filepath.Join(root, "core/config/dist/index.js")
+	if _, err := os.Stat(schemaPath); err != nil {
+		t.Fatalf("core-config schema build precondition %s: %v; run from workspace root: corepack pnpm --filter @kb-labs/core-config build", schemaPath, err)
+	}
 	validate := fmt.Sprintf(`import { validateProductConfig } from %q;
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const result = validateProductConfig('marketplace', JSON.parse(input).marketplace);
-if (!result.ok) { process.stderr.write(JSON.stringify(result.errors)); process.exit(1); }`, "file://"+filepath.ToSlash(filepath.Join(root, "core/config/dist/index.js")))
+if (!result.ok) { process.stderr.write(JSON.stringify(result.errors)); process.exit(1); }`, "file://"+filepath.ToSlash(schemaPath))
 	cmd := exec.Command("node", "--input-type=module", "-e", validate)
 	cmd.Dir = root
 	cmd.Stdin = bytes.NewReader(config)
@@ -435,10 +446,16 @@ func TestBuildUsesRegistryForDefaultMarketplaceNpmSource(t *testing.T) {
 	plan.Registry = "http://127.0.0.1:4873"
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Fatal("cannot locate the shipped index")
+		t.Fatal("cannot locate release configuration")
 	}
-	index, err := catalog.LoadFile(filepath.Join(filepath.Dir(filename), "../../../../.x251/release-index.json"))
-	if err != nil {
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "../../../.."))
+	var index catalog.Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("2.0.0", "2.0.0", runtime.GOOS, runtime.GOARCH), &index); err != nil {
+		t.Fatal(err)
+	}
+	index.Platforms[0].Config = append(index.Platforms[0].Config, catalog.ConfigRequirement{ID: "marketplace.sources", Path: "/marketplace/sources", Default: string(releaseMarketplaceSources(t, root))})
+	index = testfixtures.MustSealCatalog(index)
+	if _, err := catalog.VerifyCatalog(index); err != nil {
 		t.Fatal(err)
 	}
 	for _, item := range index.Platforms[0].Config {
@@ -447,7 +464,7 @@ func TestBuildUsesRegistryForDefaultMarketplaceNpmSource(t *testing.T) {
 		}
 	}
 	if len(plan.ConfigPatches) == 0 {
-		t.Fatal("shipped index does not declare Marketplace sources")
+		t.Fatal("fixture index does not declare Marketplace sources")
 	}
 	output, err := Build(plan)
 	if err != nil {

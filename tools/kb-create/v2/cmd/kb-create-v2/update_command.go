@@ -350,6 +350,17 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "the shared artifact cache path could not be resolved", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the update", err)
 	}
+	verifiedRelease, err := catalog.DecodeVerified(plan.ReleaseCatalog)
+	if err != nil {
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "the release index could not be verified", "rerun the installation with a valid release index", err)
+	}
+	installer.Packages.ReleaseCatalog = verifiedRelease
+	previousRelease, err := catalog.DecodeVerified(previousReceipt.Plan.ReleaseCatalog)
+	if err != nil {
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "the previous release index could not be verified", updateActivationRetryHint(input), err)
+	}
+	installer.Packages.PreviousReleaseCatalog = &previousRelease
+	installer.Packages.MarketplaceRoot = activeRoot
 	deps := runtime.Dependencies{Artifacts: installer, CorrelationID: correlationID, Secrets: &store}
 	deps.PreserveGeneratedConfig = true
 	deps.VerificationConfigRoot = activeRoot

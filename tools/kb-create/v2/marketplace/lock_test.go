@@ -266,3 +266,36 @@ func TestWriteLockUsesInstalledPackageJSONIntegrity(t *testing.T) {
 		t.Fatalf("integrity = %q, want installed package.json integrity %q", got, want)
 	}
 }
+
+// case: S-284.20
+func TestMarketplacePinsUseMarketplaceOwnedLockEntries(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".kb"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeRaw(t, root, Lock{Schema: Schema, Plugins: map[string]Item{"plugin-id": {Source: "marketplace", MarketplaceSource: "npm", SignatureStatus: "unsigned", Package: "@example/plugin", Version: "1.2.3"}, "platform-id": {Source: "platform", Package: "@example/platform", Version: "1.2.3"}}})
+	pins, err := MarketplacePins(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pins["@example/plugin@1.2.3"] || pins["@example/platform@1.2.3"] {
+		t.Fatalf("pins = %v", pins)
+	}
+}
+
+// case: S-284.20
+func TestMarketplacePinsReadsAdapterPackageIdentityFromInstalledMetadata(t *testing.T) {
+	root := t.TempDir()
+	writePackageJSON(t, root, "@example/adapter", `{"name":"@example/adapter","version":"1.2.3"}`)
+	if err := os.MkdirAll(filepath.Join(root, ".kb"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeRaw(t, root, Lock{Schema: Schema, Plugins: map[string]Item{}, Adapters: map[string]Item{"adapter-id": {Source: "marketplace", MarketplaceSource: "npm", SignatureStatus: "unsigned", ResolvedPath: "node_modules/@example/adapter", Version: "1.2.3"}}})
+	pins, err := MarketplacePins(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pins["@example/adapter@1.2.3"] || pins["adapter-id@1.2.3"] {
+		t.Fatalf("pins=%v", pins)
+	}
+}

@@ -13,13 +13,13 @@ import (
 	"github.com/kb-labs/clikit/toolchain"
 )
 
-// case: S-285.9
+// case: S-285.9, S-284.20
 func TestProductCorepackProvisionUsesInstallHomeAndRegistry(t *testing.T) {
 	root := t.TempDir()
 	bin := t.TempDir()
 	script := `#!/bin/sh
 set -eu
-[ "$COREPACK_NPM_REGISTRY" = "http://127.0.0.1:4873" ]
+[ "$COREPACK_NPM_REGISTRY" = "http://127.0.0.1:4874" ]
 [ "$1" = install ] && [ "$2" = -g ] && [ "$3" = "pnpm@` + toolchain.SupportedPnpm + `" ]
 mkdir -p "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin"
 printf 'process.stdout.write("product-pnpm-ok")' > "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin/pnpm.cjs"
@@ -28,6 +28,7 @@ printf 'process.stdout.write("product-pnpm-ok")' > "$COREPACK_HOME/v1/pnpm/` + t
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("COREPACK_NPM_REGISTRY", "http://127.0.0.1:4874")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	p := Pnpm{PackageManagerRoot: root, Registry: "http://127.0.0.1:4873"}
 	var output bytes.Buffer
@@ -52,7 +53,7 @@ func TestProductCorepackProvisionFailureNamesSource(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	p := Pnpm{PackageManagerRoot: root, Registry: "http://127.0.0.1:1"}
 	err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.Registry}).Run(context.Background(), &bytes.Buffer{}, "pnpm", "--version")
-	if err == nil || !strings.Contains(err.Error(), toolchain.SupportedPnpm) || !strings.Contains(err.Error(), p.Registry) || !strings.Contains(err.Error(), "--registry") || strings.Contains(err.Error(), "workspace root") {
+	if err == nil || !strings.Contains(err.Error(), toolchain.SupportedPnpm) || !strings.Contains(err.Error(), "Corepack's default npm registry") || strings.Contains(err.Error(), p.Registry) || strings.Contains(err.Error(), "workspace root") {
 		t.Fatalf("diagnostic = %v", err)
 	}
 }
@@ -60,7 +61,7 @@ func TestProductCorepackProvisionFailureNamesSource(t *testing.T) {
 func TestProductCorepackHomeAndRegistryAreShared(t *testing.T) {
 	p := Pnpm{PackageManagerRoot: t.TempDir(), Registry: "http://127.0.0.1:4873"}
 	env := strings.Join(p.packageManagerEnvironment(), "\n")
-	if !strings.Contains(env, "COREPACK_HOME="+p.corepackHome()) || !strings.Contains(env, "COREPACK_NPM_REGISTRY="+p.Registry) {
+	if !strings.Contains(env, "COREPACK_HOME="+p.corepackHome()) || strings.Contains(env, "COREPACK_NPM_REGISTRY=") {
 		t.Fatalf("Corepack environment = %s", env)
 	}
 	script := filepath.Join(p.corepackHome(), "v1", "pnpm", toolchain.SupportedPnpm, "bin", "pnpm.cjs")

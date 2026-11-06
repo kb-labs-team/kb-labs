@@ -482,11 +482,13 @@ func TestMissingOptionalSecretRequirementCanResolve(t *testing.T) {
 	})
 	request := contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable},
 		ServiceProfile: "default", Source: contracts.SourceRegistry, Policy: contracts.PolicyCompatible}
+	source = testfixtures.MustSealCatalog(source)
 	if _, err := resolve.Plan(request, source); err != nil {
 		t.Fatalf("plan should resolve without optional OpenAI credentials: %v", err)
 	}
 	source.Platforms[0].Config[len(source.Platforms[0].Config)-1].Optional = false
 	source.Platforms[0].Config[len(source.Platforms[0].Config)-1].Severity = "error"
+	source = testfixtures.MustSealCatalog(source)
 	if _, err := resolve.Plan(request, source); err == nil {
 		t.Fatalf("plan without a required secret should fail with missing input, got %v", err)
 	}

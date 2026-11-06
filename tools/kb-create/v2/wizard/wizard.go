@@ -24,8 +24,11 @@ import (
 )
 
 type IO struct {
-	In  io.Reader
-	Out io.Writer
+	In              io.Reader
+	Out             io.Writer
+	PlatformChannel string
+	ServiceProfile  string
+	Answers         map[string]json.RawMessage
 	// PendingSecrets holds values in memory until the resolved plan accepts the
 	// requirements. The apply owner persists them after validating all sources.
 	PendingSecrets map[string]secrets.PendingSecret
@@ -110,7 +113,11 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		return contracts.InstallRequest{}, fmt.Errorf("wizard input and output are required")
 	}
 	reader := bufio.NewReader(terminal.In)
-	if strings.TrimSpace(projectRoot) == "" {
+	interactive := true
+	if file, ok := terminal.In.(*os.File); ok {
+		interactive = term.IsTerminal(file.Fd())
+	}
+	if strings.TrimSpace(projectRoot) == "" && interactive {
 		if err := renderPrompt(terminal.Out,
 			"Project directory (press Enter to install without a project): "); err != nil {
 			return contracts.InstallRequest{}, err
@@ -129,13 +136,16 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		projectRoot = canonical
 	}
 	if scenarioID == "" {
-		ids, err := scenario.IDs()
-		if err != nil {
-			return contracts.InstallRequest{}, err
-		}
-		scenarioID, err = choose(reader, terminal.Out, "Scenario", ids, "explore")
-		if err != nil {
-			return contracts.InstallRequest{}, err
+		scenarioID = "explore"
+		if interactive {
+			ids, err := scenario.IDs()
+			if err != nil {
+				return contracts.InstallRequest{}, err
+			}
+			scenarioID, err = choose(reader, terminal.Out, "Scenario", ids, "explore")
+			if err != nil {
+				return contracts.InstallRequest{}, err
+			}
 		}
 	}
 	definition, err := scenario.Load(scenarioID)
@@ -146,9 +156,22 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		definition = withoutRequirements(definition, terminal.SkipRequirements)
 	}
 	channels := availableChannels(source)
-	channel, err := choose(reader, terminal.Out, "Platform channel", channels, string(contracts.ChannelStable))
-	if err != nil {
-		return contracts.InstallRequest{}, err
+	channel := terminal.PlatformChannel
+	if channel == "" {
+		if _, ok := source.Channels[contracts.ChannelStable]; ok {
+			channel = string(contracts.ChannelStable)
+		} else if len(channels) == 1 {
+			channel = channels[0]
+		}
+		if interactive {
+			channel, err = choose(reader, terminal.Out, "Platform channel", channels, channel)
+			if err != nil {
+				return contracts.InstallRequest{}, err
+			}
+		}
+	}
+	if channel == "" {
+		return contracts.InstallRequest{}, fmt.Errorf("platformChannel: required answer is missing")
 	}
 	version := source.Channels[contracts.Channel(channel)]
 	platform, ok := findPlatform(source.Platforms, version)
@@ -160,14 +183,25 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		profiles = append(profiles, profile)
 	}
 	sort.Strings(profiles)
-	profile, err := choose(reader, terminal.Out, "Service profile", profiles, "default")
-	if err != nil {
-		return contracts.InstallRequest{}, err
+	profile := terminal.ServiceProfile
+	if profile == "" {
+		profile = "default"
+		if interactive {
+			profile, err = choose(reader, terminal.Out, "Service profile", profiles, profile)
+			if err != nil {
+				return contracts.InstallRequest{}, err
+			}
+		}
 	}
 	base := contracts.InstallRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot, Platform: contracts.VersionSelector{Channel: contracts.Channel(channel)}, ServiceProfile: profile, Policy: contracts.PolicyCompatible, Source: contracts.SourceRegistry}
 	session, err := flow.New(definition, nil, nil)
 	if err != nil {
 		return contracts.InstallRequest{}, err
+	}
+	for id, value := range terminal.Answers {
+		if err := session.Apply(id, value, flow.SourceAgent); err != nil {
+			return contracts.InstallRequest{}, err
+		}
 	}
 	// Secret values typed (or generated) during the journey stay in memory until
 	// the selected request is resolved by the shared installer boundary.
@@ -178,6 +212,46 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		requests := session.Inspect()
 		for _, request := range requests {
 			field := request.Field
+			if _, answered := terminal.Answers[field.ID]; answered {
+				if field.Secret {
+					var value string
+					if err := json.Unmarshal(terminal.Answers[field.ID], &value); err != nil {
+						return contracts.InstallRequest{}, err
+					}
+					pending[field.Requirement] = value
+				}
+				continue
+			}
+			if !interactive {
+				if field.Secret && field.Generate {
+					if value, present, err := store.Get(field.Requirement); err != nil {
+						return contracts.InstallRequest{}, fmt.Errorf("read stored secret %s: %w", field.Requirement, err)
+					} else if present {
+						raw, err := json.Marshal(value)
+						if err != nil {
+							return contracts.InstallRequest{}, err
+						}
+						if err := session.Apply(field.ID, raw, flow.SourceDefault); err != nil {
+							return contracts.InstallRequest{}, err
+						}
+						continue
+					}
+					value, err := generateSecret()
+					if err != nil {
+						return contracts.InstallRequest{}, err
+					}
+					raw, err := json.Marshal(value)
+					if err != nil {
+						return contracts.InstallRequest{}, err
+					}
+					if err := session.Apply(field.ID, raw, flow.SourceDefault); err != nil {
+						return contracts.InstallRequest{}, err
+					}
+					pending[field.Requirement] = value
+					generatedValues[field.Requirement] = true
+				}
+				continue
+			}
 			label := field.Label
 			if label == "" {
 				label = field.ID
@@ -399,6 +473,9 @@ func choose(reader *bufio.Reader, output io.Writer, label string, options []stri
 	if err != nil && err != io.EOF {
 		return "", err
 	}
+	if err == io.EOF {
+		value = ""
+	}
 	value = strings.TrimSpace(value)
 	if value == "" {
 		value = fallback
@@ -418,6 +495,9 @@ func chooseMany(reader *bufio.Reader, output io.Writer, label string, options []
 	value, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return nil, err
+	}
+	if err == io.EOF {
+		value = ""
 	}
 	if strings.TrimSpace(value) == "" {
 		return nil, nil

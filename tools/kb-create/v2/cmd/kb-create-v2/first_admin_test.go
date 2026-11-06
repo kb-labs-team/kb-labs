@@ -26,6 +26,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
@@ -221,7 +222,7 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 			})
 			factory := func(cmd *cobra.Command) commandDependencies {
 				return commandDependencies{Command: cmd, NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
-					Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: starter}}
+					Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release)}, Host: starter}}
 			}
 			args := []string{test.command, "--index", indexPath, "--input", requestPath, "--secret-env", secrets.BootstrapPassword + "=" + environment}
 			if test.json {
@@ -408,10 +409,10 @@ func TestExecuteInteractiveInstallDoesNotPersistPromptSecretsBeforeMappingValida
 	if err := os.WriteFile(indexPath, indexBytes, 0o600); err != nil {
 		t.Fatal("write interactive test release")
 	}
-	input := strings.NewReader("\n\nsecured\nadmin@example.test\n\n" + value + "\n" + value + "\n\n")
+	input := strings.NewReader("\n\n\nsecured\nadmin@example.test\n\n" + value + "\n" + value + "\n\n")
 	factory := func(cmd *cobra.Command) commandDependencies {
 		return commandDependencies{Command: cmd, NodeCheck: func() error { return nil }, InstallInput: input,
-			Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+			Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release)}}}
 	}
 	var stdout, stderr bytes.Buffer
 	args := []string{"install", "--index", indexPath, "--platform-root", root, "--project-root", project,
@@ -934,13 +935,21 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root,
 		Values:       map[string]string{"gateway.access.mode": `"secured"`, "gateway.bootstrap.adminEmail": `"admin@example.test"`},
 		SecretInputs: []string{"gateway.bootstrap.password", "gateway.jwtSecret"}}
-	gateway := fixturePackageArtifact(t, "@kb-labs/gateway", "2.0.0")
+	source := testReleaseCatalog(t, "2.0.0")
+	gatewayComponent := catalog.Component{ID: "gateway", Package: "@kb-labs/gateway", Version: "2.0.0", Tarball: "https://example.test/gateway.tgz", SHA256: "gateway"}
+	source.Platforms[0].Members = append(source.Platforms[0].Members, gatewayComponent)
+	release := testfixtures.MustSealCatalog(source)
+	gateway := fixturePackageArtifact(t, gatewayComponent.Package, gatewayComponent.Version)
 	gateway.ID = "gateway"
 	gateway.Config = []contracts.ConfigRequirement{{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true}}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, PlanHash: "admin-bootstrap-repeat",
 		Request: request, Host: &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "default"},
 		Artifacts:    []contracts.Artifact{gateway}}
+	plan.ReleaseCatalog, err = json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resolved := resolvedPlan{Plan: plan, State: state}
 	platformRoot := platformRootForTest(t, root)
 	store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
@@ -1020,13 +1029,21 @@ func TestApplyFailureBeforeResultWriteLeavesPasswordEligibleForRetry(t *testing.
 	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root,
 		Values:       map[string]string{"gateway.access.mode": `"secured"`, "gateway.bootstrap.adminEmail": `"admin@example.test"`},
 		SecretInputs: []string{"gateway.bootstrap.password", "gateway.jwtSecret"}}
-	gateway := fixturePackageArtifact(t, "@kb-labs/gateway", "2.0.0")
+	source := testReleaseCatalog(t, "2.0.0")
+	gatewayComponent := catalog.Component{ID: "gateway", Package: "@kb-labs/gateway", Version: "2.0.0", Tarball: "https://example.test/gateway.tgz", SHA256: "gateway"}
+	source.Platforms[0].Members = append(source.Platforms[0].Members, gatewayComponent)
+	release := testfixtures.MustSealCatalog(source)
+	gateway := fixturePackageArtifact(t, gatewayComponent.Package, gatewayComponent.Version)
 	gateway.ID = "gateway"
 	gateway.Config = []contracts.ConfigRequirement{{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true}}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, PlanHash: "admin-bootstrap-repeat",
 		Request: request, Host: &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "default"},
 		Artifacts:    []contracts.Artifact{gateway}}
+	plan.ReleaseCatalog, err = json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resolved := resolvedPlan{Plan: plan, State: state}
 	store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
 	starter := &bootstrapTestHost{address: address}
@@ -1082,13 +1099,21 @@ func TestApplyResultWriteFailureLeavesDisclosureMarkerAbsentForRetry(t *testing.
 	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root,
 		Values:       map[string]string{"gateway.access.mode": `"secured"`, "gateway.bootstrap.adminEmail": `"admin@example.test"`},
 		SecretInputs: []string{"gateway.bootstrap.password", "gateway.jwtSecret"}}
-	gateway := fixturePackageArtifact(t, "@kb-labs/gateway", "2.0.0")
+	source := testReleaseCatalog(t, "2.0.0")
+	gatewayComponent := catalog.Component{ID: "gateway", Package: "@kb-labs/gateway", Version: "2.0.0", Tarball: "https://example.test/gateway.tgz", SHA256: "gateway"}
+	source.Platforms[0].Members = append(source.Platforms[0].Members, gatewayComponent)
+	release := testfixtures.MustSealCatalog(source)
+	gateway := fixturePackageArtifact(t, gatewayComponent.Package, gatewayComponent.Version)
 	gateway.ID = "gateway"
 	gateway.Config = []contracts.ConfigRequirement{{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true}}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, PlanHash: "result-write-failure",
 		Request: request, Host: &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "default"},
 		Artifacts:    []contracts.Artifact{gateway}}
+	plan.ReleaseCatalog, err = json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resolved := resolvedPlan{Plan: plan, State: host.State{Dir: t.TempDir()}}
 	store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
 	starter := &bootstrapTestHost{address: address}
@@ -1100,7 +1125,7 @@ func TestApplyResultWriteFailureLeavesDisclosureMarkerAbsentForRetry(t *testing.
 	})
 	applied, failure := executeApply(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
 	if failure != nil {
-		t.Fatalf("prepare apply result: %v", failure)
+		t.Fatalf("prepare apply result: %v; cause: %s", failure, failure.Cause)
 	}
 	var stdout, stderr failFirstAdminResultWriter
 	if code := emitApplyResultForTest(t, applied, &stdout, &stderr); code == 0 {
@@ -1211,7 +1236,7 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 			deps := productionCommandDependencies(cmd)
 			deps.NodeCheck = func() error { return nil }
 			deps.ArtifactRunner = operationLogTestRunner{}
-			deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: starter, Clock: projectRegistrationTestClock{now: time.Now()}}
+			deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release)}, Host: starter, Clock: projectRegistrationTestClock{now: time.Now()}}
 			deps.ProjectRegistrar = func(platformRoot, selected string) (projectRegistrationResult, error) {
 				registrations++
 				if registrations == 1 {
@@ -1308,7 +1333,7 @@ func runApplyForTest(t *testing.T, resolved resolvedPlan, deps commandDependenci
 	var stdout, stderr bytes.Buffer
 	applied, failure := executeApply(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
 	if failure != nil {
-		t.Fatalf("apply failed: %v", failure)
+		t.Fatalf("apply failed: %v; cause: %s", failure, failure.Cause)
 	}
 	if code := emitApplyResultForTest(t, applied, &stdout, &stderr); code != 0 {
 		t.Fatalf("apply failed: exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())

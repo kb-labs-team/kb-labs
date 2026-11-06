@@ -2,6 +2,7 @@ package v2cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -96,8 +97,23 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	if bootstrapCompleted {
 		skipRequirements = []string{secrets.BootstrapPassword}
 	}
-	terminal := wizard.IO{In: inputReader, Out: out, PendingSecrets: pendingSecrets, SkipRequirements: skipRequirements}
-	request, err := wizard.RequestScenario(source, root, "explore", input.Direct.ProjectRoot, terminal)
+	answers := map[string]json.RawMessage{}
+	if input.Answers != "" {
+		if err := json.Unmarshal([]byte(input.Answers), &answers); err != nil {
+			return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the answers and rerun `kb-create install`.", err)
+		}
+	}
+	channel := input.Direct.PlatformChannel
+	if value, ok := answers["platformChannel"]; ok {
+		if channel == "" {
+			if err := json.Unmarshal(value, &channel); err != nil {
+				return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the answers and rerun `kb-create install`.", err)
+			}
+		}
+		delete(answers, "platformChannel")
+	}
+	terminal := wizard.IO{In: inputReader, Out: out, PendingSecrets: pendingSecrets, SkipRequirements: skipRequirements, PlatformChannel: channel, ServiceProfile: input.Direct.ServiceProfile, Answers: answers}
+	request, err := wizard.RequestScenario(source, root, input.ScenarioID, input.Direct.ProjectRoot, terminal)
 	if err != nil {
 		var validation *contracts.RequestValidationError
 		if errors.As(err, &validation) {

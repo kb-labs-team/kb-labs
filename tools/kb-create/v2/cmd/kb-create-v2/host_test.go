@@ -455,6 +455,14 @@ func newInstallationWithRoot(t *testing.T, launcher, fakehost, root, kbHome stri
 	spec := &contracts.HostSpec{Command: fakehost, Args: append([]string{"-port", fmt.Sprint(port)}, hostArgs...), HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: spec,
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}}}
+	fixtureCatalog, err := sealTestCatalog(t, testReleaseCatalog(t, "1.0.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.ReleaseCatalog, err = json.Marshal(fixtureCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
 	writeVersionedReceipt(t, root, contracts.InstallReceipt{ID: "r1", InstallationID: "installation-r1", Plan: plan})
 	registerTestHostProcessTreeCleanup(t, root)
 	if err := os.WriteFile(filepath.Join(root, "state", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {

@@ -32,7 +32,8 @@ type snapshotRestoreRecorder struct {
 	calls     int
 }
 
-func (r *snapshotRestoreRecorder) Restore(artifacts []contracts.Artifact) error {
+func (r *snapshotRestoreRecorder) Restore(plan, _ contracts.ResolvedInstallPlan) error {
+	artifacts := plan.Artifacts
 	r.artifacts = append(r.artifacts, artifacts...)
 	r.calls++
 	return nil

@@ -16,6 +16,7 @@ import (
 
 	"github.com/kb-labs/clikit/diag"
 	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/diagnostics"
 	"github.com/kb-labs/create/v2/gateway"
@@ -279,6 +280,22 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 			"the shared artifact cache path could not be resolved",
 			"run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the install", err)
+	}
+	verifiedRelease, err := catalog.DecodeVerified(planned.ReleaseCatalog)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "the release index could not be verified", "rerun the installation with a valid release index", err)
+	}
+	artifactExecutor.Packages.ReleaseCatalog = verifiedRelease
+	previousReceipt, previousErr := receipt.Read(installRoot)
+	if previousErr == nil {
+		previousRelease, verifyErr := catalog.DecodeVerified(previousReceipt.Plan.ReleaseCatalog)
+		if verifyErr != nil {
+			return applyCommandResult{}, indexFailure(verifyErr, contracts.ShellCommand("kb-create", "install", "--platform-root", installRoot))
+		}
+		artifactExecutor.Packages.PreviousReleaseCatalog = &previousRelease
+		artifactExecutor.Packages.MarketplaceRoot = installRoot
+	} else if !os.IsNotExist(previousErr) {
+		return applyCommandResult{}, asDiag(previousErr)
 	}
 	prober := host.Prober{PlatformRoot: installRoot, Operation: "apply"}
 	runtimeDeps := runtime.Dependencies{Artifacts: artifactExecutor, CorrelationID: correlationID, Secrets: &store, Progress: input.Progress}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -262,7 +263,19 @@ func (c Composite) installVerified(items []contracts.Artifact, verifiedBinaries 
 	}
 	return nil
 }
-func (c Composite) Restore(items []contracts.Artifact) error { return c.Packages.Restore(items) }
+func (c Composite) Restore(plan, previous contracts.ResolvedInstallPlan) error {
+	verified, err := catalog.DecodeVerified(plan.ReleaseCatalog)
+	if err != nil {
+		return err
+	}
+	previousRelease, err := catalog.DecodeVerified(previous.ReleaseCatalog)
+	if err != nil {
+		return err
+	}
+	c.Packages.ReleaseCatalog = verified
+	c.Packages.PreviousReleaseCatalog = &previousRelease
+	return c.Packages.Restore(plan.Artifacts)
+}
 func (c Composite) Uninstall(items []contracts.Artifact) error {
 	if err := c.Packages.Uninstall(items); err != nil {
 		return err

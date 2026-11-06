@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -155,6 +156,7 @@ type ResolvedInstallPlan struct {
 	Registry         string            `json:"registry,omitempty"`
 	Request          InstallRequest    `json:"request"`
 	Artifacts        []Artifact        `json:"artifacts"`
+	ReleaseCatalog   json.RawMessage   `json:"releaseCatalog"`
 	ServiceGraph     ServiceGraph      `json:"serviceGraph"`
 	PlatformChannel  string            `json:"platformChannel"`
 	ProviderBindings []ProviderBinding `json:"providerBindings,omitempty"`

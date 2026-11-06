@@ -122,20 +122,103 @@ func TestCanaryBinarySourcePlan(t *testing.T) {
 	}
 }
 
-type binaryDownloadProbe struct{ root string }
+type binaryDownloadProbe struct {
+	root   string
+	client *http.Client
+}
 
 func (p binaryDownloadProbe) Prepare(items []contracts.Artifact) (contracts.PreparedArtifacts, error) {
-	err := (artifacts.Binaries{Root: p.root, CacheRoot: filepath.Join(p.root, "cache")}).Install(items)
+	err := (artifacts.Binaries{Root: p.root, CacheRoot: filepath.Join(p.root, "cache"), Client: p.client}).Install(items)
 	if err != nil {
 		return nil, err
 	}
 	return nil, fmt.Errorf("binary probe completed")
 }
+
+type firstDownloadTimeout struct{}
+
+func (*firstDownloadTimeout) Error() string   { return "fixture timeout" }
+func (*firstDownloadTimeout) Timeout() bool   { return true }
+func (*firstDownloadTimeout) Temporary() bool { return true }
+
+type retryBinaryTransport struct{ attempts int }
+
+func (t *retryBinaryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.attempts++
+	if t.attempts == 1 {
+		return nil, &firstDownloadTimeout{}
+	}
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+// case: S-284.21
+func TestCanaryBinaryDownloadRetriesThroughApplyCommand(t *testing.T) {
+	home := installCanaryIndex(t)
+	indexPath := filepath.Join(home, ".local/share/kb-create/release-index.json")
+	source, err := catalog.LoadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("retry binary fixture")
+	digest := fmt.Sprintf("%x", sha256.Sum256(data))
+	for i := range source.Platforms {
+		for j := range source.Platforms[i].Binaries {
+			source.Platforms[i].Binaries[j].SHA256 = digest
+		}
+	}
+	source, err = catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	mirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(data) }))
+	defer mirror.Close()
+	root := filepath.Join(home, "platform")
+	args := []string{"--platform-root", root, "--platform-version", "2.121.0-canary.cec6dacc6", "--gateway-url", "http://127.0.0.1:7000", "--binary-source", mirror.URL, "--json"}
+	var output, stderr bytes.Buffer
+	if code := clikitcommand.Execute(newRootCommand(), append([]string{"plan"}, args...), &output, &stderr); code.Code() != 0 {
+		t.Fatalf("plan: %s %s", output.String(), stderr.String())
+	}
+	var result struct {
+		Data struct {
+			Plan contracts.ResolvedInstallPlan `json:"plan"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Data.Plan.Request.GatewayURL != "http://127.0.0.1:7000" {
+		t.Fatalf("gateway: %s", result.Data.Plan.Request.GatewayURL)
+	}
+	for _, service := range result.Data.Plan.ServiceGraph.Services {
+		if service.Port != 0 && service.Port < 4500 {
+			t.Fatalf("unsafe port %d", service.Port)
+		}
+	}
+	transport := &retryBinaryTransport{}
+	factory := func(cmd *cobra.Command) commandDependencies {
+		return commandDependencies{Command: cmd, NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{Artifacts: binaryDownloadProbe{root: filepath.Join(home, "probe"), client: &http.Client{Transport: transport}}}}
+	}
+	output.Reset()
+	stderr.Reset()
+	code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), append([]string{"apply"}, args...), &output, &stderr)
+	if code.Code() == 0 || transport.attempts != 2 || !strings.Contains(output.String()+stderr.String(), "binary probe completed") {
+		t.Fatalf("attempts=%d output=%s %s", transport.attempts, output.String(), stderr.String())
+	}
+}
 func (p binaryDownloadProbe) Install(items []contracts.Artifact) error {
 	_, err := p.Prepare(items)
 	return err
 }
-func (p binaryDownloadProbe) Restore([]contracts.Artifact) error { return nil }
+func (p binaryDownloadProbe) Restore(contracts.ResolvedInstallPlan, contracts.ResolvedInstallPlan) error {
+	return nil
+}
 
 func TestCanaryBinaryMirrorApplyCommand(t *testing.T) {
 	data := []byte("x251 mirror binary fixture")

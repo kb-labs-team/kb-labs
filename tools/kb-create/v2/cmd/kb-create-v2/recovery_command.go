@@ -245,7 +245,7 @@ type recoveryMutationResult struct {
 }
 
 func restoreReceiptArtifacts(installer interface {
-	Restore([]contracts.Artifact) error
+	Restore(contracts.ResolvedInstallPlan, contracts.ResolvedInstallPlan) error
 }) lifecycle.PackageRestore {
 	return installer.Restore
 }

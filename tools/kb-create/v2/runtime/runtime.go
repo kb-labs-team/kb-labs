@@ -27,7 +27,7 @@ import (
 type ArtifactInstaller interface {
 	Prepare([]contracts.Artifact) (contracts.PreparedArtifacts, error)
 	Install([]contracts.Artifact) error
-	Restore([]contracts.Artifact) error
+	Restore(contracts.ResolvedInstallPlan, contracts.ResolvedInstallPlan) error
 }
 type ProgressArtifactInstaller interface {
 	InstallWithProgress([]contracts.Artifact, func(string, bool) error) error

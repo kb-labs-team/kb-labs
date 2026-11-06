@@ -6,6 +6,7 @@ import (
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 )
 
 func hostCatalog(host *contracts.HostSpec) catalog.Catalog {
@@ -34,7 +35,16 @@ func TestPlanCarriesThePlatformsHost(t *testing.T) {
 }
 
 func TestPlanRejectsAPlatformThatDeclaresNoHost(t *testing.T) {
-	_, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, hostCatalog(nil))
+	source := hostCatalog(nil)
+	source.Platforms[0].Tarball = "https://fixture.invalid/platform.tgz"
+	source, err := testfixtures.SealCatalog(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.Seal(source); err == nil {
+		t.Fatal("hostless catalog must not be sealed")
+	}
+	err = ValidateWith(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source, Options{})
 	launcherErr, ok := err.(*diag.Diag)
 	if !ok || launcherErr.Code != contracts.CodeIncompatibleComponents {
 		t.Fatalf("err = %#v", err)

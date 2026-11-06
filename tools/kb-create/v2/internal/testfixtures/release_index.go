@@ -59,6 +59,34 @@ func SealCatalog(source catalog.Catalog) (catalog.Catalog, error) {
 	return SealCatalogWithArchives(source, nil)
 }
 
+// CatalogWithTarballURLs supplies fixture transport locations for identities
+// whose archives are produced by PackageTarball.
+func CatalogWithTarballURLs(source catalog.Catalog) catalog.Catalog {
+	for i := range source.Platforms {
+		if source.Platforms[i].Tarball == "" {
+			source.Platforms[i].Tarball = "https://fixture.invalid/" + source.Platforms[i].Package + ".tgz"
+		}
+		for j := range source.Platforms[i].Members {
+			if source.Platforms[i].Members[j].Tarball == "" {
+				source.Platforms[i].Members[j].Tarball = "https://fixture.invalid/" + source.Platforms[i].Members[j].Package + ".tgz"
+			}
+		}
+	}
+	for _, components := range [][]catalog.Component{source.SDKs, source.Plugins} {
+		for i := range components {
+			if components[i].Tarball == "" {
+				components[i].Tarball = "https://fixture.invalid/" + components[i].Package + ".tgz"
+			}
+		}
+	}
+	for i := range source.Adapters {
+		if source.Adapters[i].Tarball == "" {
+			source.Adapters[i].Tarball = "https://fixture.invalid/" + source.Adapters[i].Package + ".tgz"
+		}
+	}
+	return source
+}
+
 // SealCatalogWithArchives uses supplied fixture archives by package identity
 // and generates the remaining package archives through PackageTarball.
 func SealCatalogWithArchives(source catalog.Catalog, archives map[string][]byte) (catalog.Catalog, error) {
@@ -175,9 +203,16 @@ func PackageProvenance(name, version string) (contracts.ArtifactProvenance, erro
 // MustSealCatalog is for static test catalog declarations that cannot return
 // errors through their existing fixture signature.
 func MustSealCatalog(source catalog.Catalog) catalog.Catalog {
-	sealed, err := SealCatalog(source)
+	withProvenance, err := SealCatalog(CatalogWithTarballURLs(source))
 	if err != nil {
 		panic(fmt.Errorf("seal test catalog: %w", err))
+	}
+	sealed, err := catalog.Seal(withProvenance)
+	if err != nil {
+		panic(fmt.Errorf("seal test release index: %w", err))
+	}
+	if err := catalog.Verify(sealed); err != nil {
+		panic(fmt.Errorf("verify test release index: %w", err))
 	}
 	return sealed
 }

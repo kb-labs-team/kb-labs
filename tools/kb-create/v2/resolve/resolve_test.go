@@ -25,11 +25,61 @@ func planWithFixtureProvenance(request contracts.InstallRequest, source catalog.
 }
 
 func planWithFixtureProvenanceOptions(request contracts.InstallRequest, source catalog.Catalog, options Options) (contracts.ResolvedInstallPlan, error) {
-	sealed, err := testfixtures.SealCatalog(source)
+	sealed, err := sealedFixtureCatalog(source)
 	if err != nil {
 		return contracts.ResolvedInstallPlan{}, err
 	}
 	return PlanWith(request, sealed, options)
+}
+
+func sealedFixtureCatalog(source catalog.Catalog) (catalog.Catalog, error) {
+	source = testfixtures.CatalogWithTarballURLs(source)
+	sealed, err := testfixtures.SealCatalog(source)
+	if err != nil {
+		return catalog.Catalog{}, err
+	}
+	return catalog.Seal(sealed)
+}
+
+// case: S-284.20
+func TestPlanCarriesSealedTransitivePackageIdentities(t *testing.T) {
+	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		ReleaseCatalog catalog.Catalog `json:"releaseCatalog"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := catalog.Verify(decoded.ReleaseCatalog); err != nil {
+		t.Fatalf("plan did not carry a verified release catalog: %v", err)
+	}
+	if len(decoded.ReleaseCatalog.Provenance) != len(source.Provenance) {
+		t.Fatalf("plan provenance = %d, want %d", len(decoded.ReleaseCatalog.Provenance), len(source.Provenance))
+	}
+}
+
+// case: S-284.20
+func TestPlanRejectsUnverifiedProvenance(t *testing.T) {
+	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Provenance[0].Version = "1.2.3"
+	_, err = Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}}, source)
+	if err == nil {
+		t.Fatal("plan accepted changed provenance without verifying the index digest")
+	}
 }
 
 // case: S-181.4
@@ -76,7 +126,11 @@ func TestPlanRefusesSelectedPackageWithoutSealedProvenance(t *testing.T) {
 		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
 			Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
 	}
-	_, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default"}, source)
+	source, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default"}, source)
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != contracts.CodeProvenanceMismatch ||
 		failure.Meta["package"] != "@kb/platform" || failure.Meta["field"] != contracts.ProvenanceDigestField ||
@@ -210,7 +264,7 @@ func TestPlanAppliesAnExplicitGatewayAddressToHostServicesAndConfig(t *testing.T
 }
 
 func TestAmbiguousProviderFailsFast(t *testing.T) {
-	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{Version: "2.0.0", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Requires: []catalog.Requirement{{Capability: "logs"}}}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "a", Version: "1"}, Provides: []string{"logs"}}, {Component: catalog.Component{ID: "b", Version: "1"}, Provides: []string{"logs"}}}}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Package: "@kb/platform", SHA256: "platform", Version: "2.0.0", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Requires: []catalog.Requirement{{Capability: "logs"}}}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "a", Package: "@kb/a", SHA256: "a", Version: "1"}, Provides: []string{"logs"}}, {Component: catalog.Component{ID: "b", Package: "@kb/b", SHA256: "b", Version: "1"}, Provides: []string{"logs"}}}}
 	_, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
 	if err == nil {
 		t.Fatal("expected error")
@@ -226,6 +280,7 @@ func TestClientProfileResolvesWithoutHostOrServices(t *testing.T) {
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Platforms: []catalog.PlatformBundle{{
 			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
 			Profiles: map[string]contracts.ServiceGraph{"default": {}, "client": {}},
 			Binaries: []catalog.Binary{{ID: "kb-create", OS: stdruntime.GOOS, Arch: stdruntime.GOARCH, URL: "https://example.test/kb-create", Filename: "kb-create", SHA256: "binary"}},
 			Members:  []catalog.Component{{ID: "cli-bin", Version: "2.0.0", Package: "@kb-labs/cli-bin", Tarball: "https://example.test/cli-bin.tgz", SHA256: "cli-bin"}},
@@ -428,11 +483,15 @@ func TestExplicitAdapterSelectionDoesNotConstrainOtherCapabilities(t *testing.T)
 
 func TestPlanProjectsSecretOnlyAsEnvironmentReference(t *testing.T) {
 	source := catalog.Catalog{Digest: "release-digest", Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "serve"}}}}, Config: []catalog.ConfigRequirement{{ID: "openai.apiKey", Secret: true, Required: true, Env: "OPENAI_API_KEY", Services: []string{"gateway"}}}}}}
-	plan, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: "/tmp/x", SecretInputs: []string{"openai.apiKey"}}, source)
+	sealed, err := sealedFixtureCatalog(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.ReleaseDigest != "release-digest" {
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x", SecretInputs: []string{"openai.apiKey"}}, sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ReleaseDigest != sealed.Digest {
 		t.Fatalf("release digest = %q", plan.ReleaseDigest)
 	}
 	if len(plan.ConfigPatches) != 2 || plan.ConfigPatches[1].Environment != "OPENAI_API_KEY" {
@@ -496,8 +555,12 @@ func TestPlanProjectsGeneratedSecretWithoutUserInput(t *testing.T) {
 
 func TestPlanPreservesScenarioProvenance(t *testing.T) {
 	source := catalog.Catalog{Digest: "release", Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}}
-	plan, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: "/tmp/x", ScenarioID: "custom", ScenarioStateDigest: "state"}, source)
-	if err != nil || plan.ReleaseDigest != "release" || plan.ScenarioStateDigest != "state" {
+	sealed, err := sealedFixtureCatalog(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x", ScenarioID: "custom", ScenarioStateDigest: "state"}, sealed)
+	if err != nil || plan.ReleaseDigest != sealed.Digest || plan.ScenarioStateDigest != "state" {
 		t.Fatalf("plan/error = %#v / %v", plan, err)
 	}
 }

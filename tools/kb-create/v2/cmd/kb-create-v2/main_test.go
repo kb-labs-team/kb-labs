@@ -274,8 +274,12 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	if err := os.WriteFile(indexPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	verified, err := catalog.VerifyCatalog(release)
+	if err != nil {
+		t.Fatal(err)
+	}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Executable: launcher,
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcherBinary}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verified}, Host: installedHostStarter{root: root, executable: launcherBinary}}}
 	commandFactory := func(cmd *cobra.Command) commandDependencies {
 		deps.Command = cmd
 		return deps
@@ -739,7 +743,28 @@ func snapshotTree(t *testing.T, root string) []byte {
 	return snapshot.Bytes()
 }
 
-type installArtifacts struct{ root string }
+func verifiedFixtureCatalog(t *testing.T, release catalog.Catalog) catalog.Verified {
+	t.Helper()
+	verified, err := catalog.VerifyCatalog(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return verified
+}
+
+func verifiedFixtureCatalogFile(t *testing.T, path string) catalog.Verified {
+	t.Helper()
+	source, err := catalog.LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return verifiedFixtureCatalog(t, source)
+}
+
+type installArtifacts struct {
+	root    string
+	release catalog.Verified
+}
 
 func (a installArtifacts) Prepare(items []contracts.Artifact) (contracts.PreparedArtifacts, error) {
 	return installPreparedArtifacts{install: func(progress func(string, bool) error) error {
@@ -800,7 +825,7 @@ func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progre
 			return err
 		}
 	}
-	pnpm := artifacts.Pnpm{Root: root, CacheRoot: cacheRoot, PackageManagerRoot: layout.PackageManagerStateDir()}
+	pnpm := artifacts.Pnpm{Root: root, CacheRoot: cacheRoot, PackageManagerRoot: layout.PackageManagerStateDir(), ReleaseCatalog: a.release}
 	err = pnpm.Install(items)
 	if progress != nil {
 		progress("Install packages", false)
@@ -828,7 +853,9 @@ func (a installArtifacts) installRoot() (string, error) {
 	}
 	return a.root, nil
 }
-func (installArtifacts) Restore([]contracts.Artifact) error { return nil }
+func (installArtifacts) Restore(contracts.ResolvedInstallPlan, contracts.ResolvedInstallPlan) error {
+	return nil
+}
 
 type installHost struct{}
 
@@ -914,7 +941,7 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 		gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", gatewayPort)
 		dependencyFactory := func(cmd *cobra.Command) commandDependencies {
 			return commandDependencies{
-				Runtime:       &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
+				Runtime:       &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalogFile(t, index)}, Host: installHost{}},
 				Marketplace:   recordingMarketplaceInstaller{},
 				NodeCheck:     func() error { return nil },
 				InstallInput:  strings.NewReader(strings.Repeat("\n", 12)),
@@ -1145,7 +1172,7 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 			if args[0] == "uninstall" {
 				artifactRunner = &recordingInstaller{}
 			} else {
-				artifactRunner = installArtifacts{root: root}
+				artifactRunner = installArtifacts{root: root, release: verifiedFixtureCatalogFile(t, index)}
 			}
 			return commandDependencies{Runtime: &runtime.Dependencies{Artifacts: artifactRunner, Host: installHost{}},
 				Marketplace: recordingMarketplaceInstaller{},
@@ -1370,7 +1397,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 			t.Errorf("stop interactive-install test host: %v", failure)
 		}
 	})
-	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installedHostStarter{root: root, executable: launcherBinary}}, NodePreflight: func() error { return nil }})
+	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalogFile(t, index)}, Host: installedHostStarter{root: root, executable: launcherBinary}}, NodePreflight: func() error { return nil }})
 	if code != 0 {
 		t.Fatalf("exit code %d, failure=%v, screen:\n%s", code, failure, screen.String())
 	}
@@ -1423,7 +1450,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	secondaryRoot := filepath.Join(home, "kb-platform-secondary")
 	_, _, secondaryCode, secondaryText := executeForTest(t, operationTestSetup{Operation: "apply", Index: index,
 		Direct:     directRequest{PlatformRoot: secondaryRoot, PlatformChannel: "stable", ServiceProfile: "default", Policy: "compatible"},
-		Executable: launcher, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: secondaryRoot}, Host: installHost{}},
+		Executable: launcher, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: secondaryRoot, release: verifiedFixtureCatalogFile(t, index)}, Host: installHost{}},
 		NodePreflight: func() error { return nil }, JSON: true,
 	})
 	if secondaryCode != 0 {
@@ -1514,7 +1541,7 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	installData, failure, code, _ := executeForTest(t, operationTestSetup{
 		Operation: "install", Index: index, Direct: directRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot},
 		Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen,
-		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot}, Host: installHost{}},
+		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot, release: verifiedFixtureCatalogFile(t, index)}, Host: installHost{}},
 		Marketplace:   recordingMarketplaceInstaller{},
 		NodePreflight: func() error { return nil },
 		ProjectRegistrar: func(path string) (projectRegistrationResult, error) {
@@ -1545,7 +1572,7 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 		Direct:        directRequest{PlatformRoot: failedRoot, ProjectRoot: projectRoot},
 		InstallInput:  strings.NewReader(strings.Repeat("\n", 12)),
 		InstallOutput: &failedScreen,
-		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: failedRoot}, Host: installHost{}},
+		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: failedRoot, release: verifiedFixtureCatalogFile(t, index)}, Host: installHost{}},
 		Marketplace:   recordingMarketplaceInstaller{},
 		NodePreflight: func() error { return nil },
 		ProjectRegistrar: func(string) (projectRegistrationResult, error) {
@@ -1671,7 +1698,7 @@ func TestJSONScenarioInstallRegistersCanonicalProject(t *testing.T) {
 		Operation: "install", JSON: true, Index: index, ScenarioID: "custom",
 		ScenarioAnswers: `{"access.mode":"local"}`,
 		Direct:          directRequest{PlatformRoot: root, ProjectRoot: project},
-		RuntimeDeps:     &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
+		RuntimeDeps:     &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalogFile(t, index)}, Host: installHost{}},
 		NodePreflight:   func() error { return nil },
 		ProjectRegistrar: func(path string) (projectRegistrationResult, error) {
 			registry[path] = "prj_0123456789abcdef"
@@ -1692,7 +1719,7 @@ func TestApplyCommandForwardsScenarioAnswersBeforeMutation(t *testing.T) {
 	command := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
 		deps := productionCommandDependencies(cmd)
 		deps.NodeCheck = func() error { return nil }
-		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}}
+		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalogFile(t, index)}, Host: installHost{}}
 		return deps
 	})
 	var stdout, stderr bytes.Buffer
@@ -1759,7 +1786,7 @@ func TestApplyRequestValidationHintUsesActualRetryArguments(t *testing.T) {
 	}
 	args := []string{"apply", "--index", index, "--input", requestPath, "--json"}
 	factory := func(*cobra.Command) commandDependencies {
-		return commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: filepath.Join(home, "platform")}, Host: installHost{}}}
+		return commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: filepath.Join(home, "platform"), release: verifiedFixtureCatalogFile(t, index)}, Host: installHost{}}}
 	}
 	var output, stderr bytes.Buffer
 	code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &output, &stderr)
@@ -1825,7 +1852,7 @@ func TestJSONRequestFileInstallRegistersCanonicalProject(t *testing.T) {
 	registry := map[string]string{}
 	_, failure, code, raw := executeForTest(t, operationTestSetup{
 		Operation: "install", JSON: true, Index: index, Input: requestPath,
-		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
+		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalogFile(t, index)}, Host: installHost{}},
 		NodePreflight: func() error { return nil },
 		ProjectRegistrar: func(path string) (projectRegistrationResult, error) {
 			registry[path] = "prj_0123456789abcdef"

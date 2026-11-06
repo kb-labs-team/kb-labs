@@ -71,7 +71,8 @@ func (a *offlineArtifacts) Install(items []contracts.Artifact) error {
 	}
 	return nil
 }
-func (a *offlineArtifacts) Restore(items []contracts.Artifact) error {
+func (a *offlineArtifacts) Restore(plan, _ contracts.ResolvedInstallPlan) error {
+	items := plan.Artifacts
 	a.installed = append(a.installed, items...)
 	a.restores++
 	return nil
@@ -88,6 +89,7 @@ func TestOfflineJourneyUsesResolvedGraphAsSingleTruth(t *testing.T) {
 	root := t.TempDir()
 	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "kb-gateway", Port: 4000, Required: true}}}}, Requires: []catalog.Requirement{{Capability: "logging", RequiredBy: "platform"}}}}, Plugins: []catalog.Component{{ID: "review", Version: "1.0.0", Package: "@kb/review", SHA256: "review", PlatformRange: "^2.0.0"}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "pino", Version: "1.0.0", Package: "@kb/pino", SHA256: "pino", PlatformRange: "^2.0.0"}, Provides: []string{"logging"}}}}
 	primeOfflineCatalog(t, root, &source)
+	source = testfixtures.MustSealCatalog(source)
 	plan, err := resolve.Plan(contracts.InstallRequest{PlatformRoot: root, Source: contracts.SourceOffline, Plugins: []contracts.ComponentRequest{{ID: "review"}}}, source)
 	if err != nil {
 		t.Fatal(err)
@@ -224,6 +226,7 @@ func TestOfflineApplyCompletesPluginAndWorkflowReadyPath(t *testing.T) {
 		Plugins: []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb-labs/commit", SHA256: "commit", PlatformRange: "^2.0.0"}},
 	}
 	primeOfflineCatalog(t, root, &source)
+	source = testfixtures.MustSealCatalog(source)
 	plan, err := resolve.Plan(contracts.InstallRequest{
 		PlatformRoot: root, Source: contracts.SourceOffline, ServiceProfile: "default",
 		Plugins: []contracts.ComponentRequest{{ID: "@kb-labs/commit"}},

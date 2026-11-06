@@ -110,7 +110,7 @@ func TestPlanWithUpdateClassifiesDeclaredRangeIncompatibilityAtResolution(t *tes
 		SDK:          contracts.VersionSelector{Version: "3.2.0"},
 		Policy:       contracts.PolicyCompatible,
 	}
-	_, err := PlanWith(request, source, Options{Operation: OperationUpdate})
+	_, err := planWithFixtureProvenanceOptions(request, source, Options{Operation: OperationUpdate})
 	failure, ok := err.(*diag.Diag)
 	if !ok || failure.Code != contracts.CodeUpdateIncompatible || failure.Meta["kind"] != "sdk" ||
 		failure.Meta["id"] != "sdk" || failure.Meta["selectedVersion"] != "3.2.0" || failure.Meta["requiredRange"] != "<3.0.0" {

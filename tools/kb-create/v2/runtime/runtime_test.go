@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,8 +17,10 @@ import (
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/artifacts"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 	receiptpkg "github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -54,7 +57,8 @@ func (f *fakeInstaller) Install(items []contracts.Artifact) error {
 	f.artifacts = append(f.artifacts, items...)
 	return f.err
 }
-func (f *fakeInstaller) Restore(items []contracts.Artifact) error {
+func (f *fakeInstaller) Restore(plan, _ contracts.ResolvedInstallPlan) error {
+	items := plan.Artifacts
 	f.restored = append(f.restored, items...)
 	f.restores++
 	return nil
@@ -586,8 +590,21 @@ func TestUpdateRequiresArtifactPreparationBeforeSnapshot(t *testing.T) {
 
 func TestUpdateInstallsTheSingleVerifiedArtifactResponse(t *testing.T) {
 	root := t.TempDir()
+	var source catalog.Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("2.0.0", "2.0.0", "darwin", "arm64"), &source); err != nil {
+		t.Fatal(err)
+	}
+	source = testfixtures.MustSealCatalog(source)
+	verified, err := catalog.VerifyCatalog(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := receiptpkg.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before",
-		InstallationID: "stable-installation", Plan: contracts.ResolvedInstallPlan{PlanHash: "old"}}); err != nil {
+		InstallationID: "stable-installation", Plan: contracts.ResolvedInstallPlan{PlanHash: "old", ReleaseCatalog: encoded}}); err != nil {
 		t.Fatal(err)
 	}
 	good := []byte("sealed binary bytes")
@@ -608,7 +625,7 @@ func TestUpdateInstallsTheSingleVerifiedArtifactResponse(t *testing.T) {
 	plan.Artifacts = []contracts.Artifact{item}
 	cacheRoot := filepath.Join(root, ".kb", "v2", "cache")
 	installer := artifacts.Composite{
-		Packages: artifacts.Pnpm{Root: root, CacheRoot: cacheRoot},
+		Packages: artifacts.Pnpm{Root: root, CacheRoot: cacheRoot, ReleaseCatalog: verified},
 		Binaries: artifacts.Binaries{Root: root, CacheRoot: cacheRoot},
 	}
 	_, snapshot, err := Update(context.Background(), plan, Dependencies{Artifacts: installer, Probe: &fakeProbe{}, Clock: fixedClock{time.Unix(4, 0)}})

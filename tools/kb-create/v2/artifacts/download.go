@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
 )
@@ -39,9 +41,18 @@ func fetchArtifact(client *http.Client, item contracts.Artifact, target string) 
 	if client == nil {
 		client = http.DefaultClient
 	}
-	response, err := client.Get(target)
-	if err != nil {
-		return nil, downloadFailure(item, target, err)
+	var response *http.Response
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		response, err = client.Get(target)
+		if err == nil {
+			break
+		}
+		var networkError net.Error
+		if !errors.As(err, &networkError) || !networkError.Timeout() || attempt == 2 {
+			return nil, downloadFailure(item, target, err)
+		}
+		time.Sleep(time.Duration(1<<attempt) * 100 * time.Millisecond)
 	}
 	data, readErr := io.ReadAll(response.Body)
 	closeErr := response.Body.Close()
