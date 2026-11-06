@@ -8,6 +8,9 @@ import { defineSystemCommand } from '@kb-labs/shared-command-kit';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { handleExecutionError } from './execution-error.js';
 import { platform } from '@kb-labs/core-runtime';
+import { fillAdapterFallbacksAndRecord } from '../../../../core/runtime/src/loader.js';
+import { resetAdapterStatus } from '../../../../core/runtime/src/adapter-status.js';
+import { AdapterUnavailableError } from '@kb-labs/core-platform';
 
 describe('handleExecutionError', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -92,6 +95,21 @@ describe('handleExecutionError', () => {
     expect(rendered).toContain(`Hint: ${createErrorEnvelope('KB_AUTH_REQUIRED', {
       details: { gatewayUrl: 'https://gateway.test' },
     }).hint}`);
+  });
+
+  it('renders the startup adapter failure and its recovery command', () => {
+    platform.reset();
+    resetAdapterStatus();
+    let failure: unknown;
+    try { fillAdapterFallbacksAndRecord(platform, {}, true); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(AdapterUnavailableError);
+    if (!(failure instanceof AdapterUnavailableError)) throw new Error('Expected an adapter failure');
+    const json = vi.fn();
+    const presenter = { isJSON: true, json, error: vi.fn() } as unknown as Presenter;
+    expect(handleExecutionError(failure, presenter)).toBe(1);
+    expect(json).toHaveBeenCalledWith({ ok: false, error: expect.objectContaining({
+      code: 'KB_HOST_ADAPTER_UNAVAILABLE', message: failure.userMessage, hint: failure.action?.command,
+    }) });
   });
 
   // case: S-203.1
