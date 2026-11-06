@@ -5,7 +5,12 @@
     "path": "versions"
   },
   "sharedStateDirectory": "state",
-  "packageManagerStateDirectory": "state/package-manager",
+  "kbHomeDirectory": "home",
+  "packageManagerStateDirectories": {
+    "installer": { "base": "root", "path": "state/package-manager" },
+    "extensionStore": { "base": "kbHome", "path": "store/cas" },
+    "extensionEntries": { "base": "kbHome", "path": "store/entries" }
+  },
   "installerStateDirectory": "installer",
   "hostStateDirectory": "installer/host",
   "platformDataRoot": { "platformPath": ".kb/data", "statePath": "state/data" },

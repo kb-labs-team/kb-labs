@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -737,6 +738,49 @@ func TestInitialTargetRefusesSymlinkedAndWrongTypedOwnedEntries(t *testing.T) {
 }
 
 func TestPackageManagerStateAllowsPnpmProjectSymlinks(t *testing.T) {
+	t.Run("stale package manager registration inside install root is accepted", func(t *testing.T) {
+		layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
+		link := filepath.Join(layout.PackageManagerStateDir(), "xdg-data", "pnpm", "store", "v11", "projects", "stale")
+		if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(layout.Root, "versions", ".stage-renamed"), link); err != nil {
+			t.Fatal(err)
+		}
+		if err := layout.ValidateStructure(); err != nil {
+			t.Fatalf("stale registration rejected: %v", err)
+		}
+	})
+	t.Run("dangling package manager link outside install root is rejected", func(t *testing.T) {
+		layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
+		link := filepath.Join(layout.PackageManagerStateDir(), "escaping")
+		if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), link); err != nil {
+			t.Fatal(err)
+		}
+		if err := layout.ValidateStructure(); err == nil {
+			t.Fatal("escaping dangling link accepted")
+		}
+	})
+	t.Run("extension store target inside install root is accepted", func(t *testing.T) {
+		layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
+		target := filepath.Join(layout.Root, "state", "home", "store", "entries", "fixture")
+		link := filepath.Join(layout.Root, "state", "home", "store", "cas", "v11", "projects", "fixture")
+		if err := os.MkdirAll(target, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if err := layout.ValidateStructure(); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("project target inside install root is accepted", func(t *testing.T) {
 		layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
 		target := filepath.Join(layout.PackageManagerStateDir(), "projects", "fixture")
@@ -772,6 +816,62 @@ func TestPackageManagerStateAllowsPnpmProjectSymlinks(t *testing.T) {
 			t.Fatalf("ValidateStructure error = %v, want named package-manager symlink escape diagnostic", err)
 		}
 	})
+}
+
+func TestDarwinVarAliasResolvesInsideCanonicalInstallRoot(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	const aliasRoot = "/var/folders"
+	layout, err := New(aliasRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(aliasRoot)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("read %s: %v", aliasRoot, err)
+	}
+	target, err := filepath.EvalSymlinks(filepath.Join(aliasRoot, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inside, err := contracts.PathWithin(layout.Root, target)
+	if err != nil || !inside {
+		t.Fatalf("target %s is not inside canonical root %s: %v", target, layout.Root, err)
+	}
+	links := t.TempDir()
+	link := filepath.Join(links, "project")
+	if err := os.Symlink(filepath.Join(aliasRoot, entries[0].Name()), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateContainerSymlinks(links, layout.Root, []string{links}); err != nil {
+		t.Fatalf("validator rejected /var alias inside %s: %v", layout.Root, err)
+	}
+}
+
+func TestRealExtensionStorePassesContainerValidator(t *testing.T) {
+	layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
+	workspace, err := filepath.Abs("../../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(filepath.Join(workspace, "node_modules/.bin/vitest"), "run", "tools/kb-create/v2/versionroot/testdata/store-seam.test.ts")
+	cmd.Dir = workspace
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, contracts.KBHomeEnv+"=") && !strings.HasPrefix(value, "HOME=") {
+			cmd.Env = append(cmd.Env, value)
+		}
+	}
+	cmd.Env = append(cmd.Env, contracts.KBHomeEnv+"="+contracts.KBHomeDirectory(layout.Root), "HOME="+t.TempDir())
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("real store install: %v\n%s", err, output)
+	}
+	if err := layout.ValidateStructure(); err != nil {
+		t.Fatalf("real store rejected: %v", err)
+	}
+	if err := layout.ValidateStructure(); err != nil {
+		t.Fatalf("repeat validation: %v", err)
+	}
 }
 
 func TestInitialTargetRefusesVersionLinksThatEscapeTheContainer(t *testing.T) {

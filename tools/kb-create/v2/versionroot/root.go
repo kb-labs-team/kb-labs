@@ -1384,14 +1384,14 @@ func (l Layout) validatePreinstallTree() error {
 }
 
 func validateNoSymlinks(root string) error {
-	return validateContainerSymlinks(root, "", "")
+	return validateContainerSymlinks(root, "", nil)
 }
 
 func (l Layout) validateSharedStateSymlinks(root string) error {
-	return validateContainerSymlinks(root, l.Root, l.PackageManagerStateDir())
+	return validateContainerSymlinks(root, l.Root, contracts.PackageManagerStateDirectories(l.Root))
 }
 
-func validateContainerSymlinks(root, installRoot, packageManagerStateRoot string) error {
+func validateContainerSymlinks(root, installRoot string, packageManagerStateRoots []string) error {
 	return filepath.WalkDir(root, func(path string, _ os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -1402,10 +1402,13 @@ func validateContainerSymlinks(root, installRoot, packageManagerStateRoot string
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			insidePackageManager := false
-			if packageManagerStateRoot != "" {
+			for _, packageManagerStateRoot := range packageManagerStateRoots {
 				insidePackageManager, err = contracts.PathWithin(packageManagerStateRoot, filepath.Dir(path))
 				if err != nil {
 					return err
+				}
+				if insidePackageManager {
+					break
 				}
 			}
 			if insidePackageManager {
@@ -1416,6 +1419,9 @@ func validateContainerSymlinks(root, installRoot, packageManagerStateRoot string
 				if !filepath.IsAbs(linkTarget) {
 					linkTarget = filepath.Join(filepath.Dir(path), linkTarget)
 				}
+				// The package manager owns the contents of its state roots, including
+				// stale project registrations, which pnpm prunes itself. The container
+				// guarantee here is only that no link resolves outside the install root.
 				resolvedTarget, err := canonicalPath(filepath.Clean(linkTarget))
 				if err != nil {
 					return fmt.Errorf("install container package-manager symlink target cannot be resolved at %s: %w", path, err)

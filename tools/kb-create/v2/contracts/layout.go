@@ -11,21 +11,22 @@ import (
 var platformLayoutJSON []byte
 
 type platformLayout struct {
-	Schema                       string              `json:"schema"`
-	CurrentLink                  string              `json:"currentLink"`
-	VersionRoots                 layoutDirectory     `json:"versionRoots"`
-	SharedStateDirectory         string              `json:"sharedStateDirectory"`
-	PackageManagerStateDirectory string              `json:"packageManagerStateDirectory"`
-	InstallerStateDirectory      string              `json:"installerStateDirectory"`
-	HostStateDirectory           string              `json:"hostStateDirectory"`
-	PlatformDataRoot             PlatformDataRoot    `json:"platformDataRoot"`
-	OwnershipRecord              string              `json:"ownershipRecord"`
-	OwnershipRecordStagingPrefix string              `json:"ownershipRecordStagingPrefix"`
-	OwnedEntries                 []string            `json:"ownedEntries"`
-	SharedRuntimePaths           []SharedRuntimePath `json:"sharedRuntimePaths"`
-	VersionStatePaths            []VersionStatePath  `json:"versionStatePaths"`
-	RuntimeStatePaths            []string            `json:"runtimeStatePaths"`
-	InstallerRecords             installerRecords    `json:"installerRecords"`
+	Schema                         string                             `json:"schema"`
+	CurrentLink                    string                             `json:"currentLink"`
+	VersionRoots                   layoutDirectory                    `json:"versionRoots"`
+	SharedStateDirectory           string                             `json:"sharedStateDirectory"`
+	KBHomeDirectory                string                             `json:"kbHomeDirectory"`
+	PackageManagerStateDirectories map[string]packageManagerDirectory `json:"packageManagerStateDirectories"`
+	InstallerStateDirectory        string                             `json:"installerStateDirectory"`
+	HostStateDirectory             string                             `json:"hostStateDirectory"`
+	PlatformDataRoot               PlatformDataRoot                   `json:"platformDataRoot"`
+	OwnershipRecord                string                             `json:"ownershipRecord"`
+	OwnershipRecordStagingPrefix   string                             `json:"ownershipRecordStagingPrefix"`
+	OwnedEntries                   []string                           `json:"ownedEntries"`
+	SharedRuntimePaths             []SharedRuntimePath                `json:"sharedRuntimePaths"`
+	VersionStatePaths              []VersionStatePath                 `json:"versionStatePaths"`
+	RuntimeStatePaths              []string                           `json:"runtimeStatePaths"`
+	InstallerRecords               installerRecords                   `json:"installerRecords"`
 }
 
 type installerRecords struct {
@@ -36,6 +37,11 @@ type installerRecords struct {
 }
 
 type layoutDirectory struct {
+	Path string `json:"path"`
+}
+
+type packageManagerDirectory struct {
+	Base string `json:"base"`
 	Path string `json:"path"`
 }
 
@@ -90,10 +96,48 @@ func SharedStateDirectory(installRoot string) string {
 
 func PackageManagerStateDirectory(installRoot string) string {
 	var layout platformLayout
-	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil || layout.PackageManagerStateDirectory == "" {
+	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil || layout.PackageManagerStateDirectories["installer"].Path == "" {
 		panic("invalid embedded platform layout package-manager-state path")
 	}
-	return filepath.Join(installRoot, filepath.FromSlash(layout.PackageManagerStateDirectory))
+	return packageManagerStateDirectory(installRoot, layout.PackageManagerStateDirectories["installer"])
+}
+
+func packageManagerStateDirectory(installRoot string, directory packageManagerDirectory) string {
+	if directory.Path == "" {
+		panic("empty package-manager state path")
+	}
+	var base string
+	switch directory.Base {
+	case "root":
+		base = installRoot
+	case "kbHome":
+		base = KBHomeDirectory(installRoot)
+	default:
+		panic("invalid package-manager state base")
+	}
+	return filepath.Join(base, filepath.FromSlash(directory.Path))
+}
+
+func PackageManagerStateDirectories(installRoot string) []string {
+	var layout platformLayout
+	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil || len(layout.PackageManagerStateDirectories) == 0 {
+		panic("invalid embedded platform layout package-manager-state paths")
+	}
+	paths := make([]string, 0, len(layout.PackageManagerStateDirectories))
+	for _, directory := range layout.PackageManagerStateDirectories {
+		paths = append(paths, packageManagerStateDirectory(installRoot, directory))
+	}
+	return paths
+}
+
+const KBHomeEnv = "KB_HOME"
+
+func KBHomeDirectory(installRoot string) string {
+	var layout platformLayout
+	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil || layout.KBHomeDirectory == "" {
+		panic("invalid embedded platform layout KB home path")
+	}
+	return filepath.Join(SharedStateDirectory(installRoot), filepath.FromSlash(layout.KBHomeDirectory))
 }
 
 func InstallerStateDirectory(installRoot string) string {

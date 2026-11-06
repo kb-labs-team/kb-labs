@@ -403,6 +403,9 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			return applyCommandResult{}, marketplaceFailure
 		}
 	}
+	if failure := validateAppliedContainer(root, layout); failure != nil {
+		return applyCommandResult{}, failure
+	}
 	if planned.Host != nil {
 		roots := make([]gateway.Root, 0, 2)
 		if owner, ok := shim.Owner(input.Executable); ok && !shim.Correct(input.Executable, platformRoot) {
@@ -528,6 +531,16 @@ func storePendingSecrets(store secrets.Store, pending map[string]secrets.Pending
 		if err := store.Put(id, input.Value); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateAppliedContainer(root string, layout versionroot.Layout) *diag.Diag {
+	if err := layout.ValidateStructure(); err != nil {
+		next := contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)
+		failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The applied installation has an invalid container layout.", "Inspect the installation with `"+next+"` before retrying.", err)
+		failure.Meta = map[string]any{"platformRoot": root, "nextCommand": next}
+		return failure
 	}
 	return nil
 }

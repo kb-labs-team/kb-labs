@@ -1342,6 +1342,23 @@ func TestOwnershipPublicationErrorsHaveActionableEnvelopes(t *testing.T) {
 	}
 }
 
+func TestAppliedContainerViolationHasLayoutDiagnostic(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	writeVersionedReceipt(t, root, contracts.InstallReceipt{})
+	bad := filepath.Join(root, "state", "bad-link")
+	if err := os.Symlink(filepath.Join(root, "missing"), bad); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := validateAppliedContainer(root, layout)
+	if failure == nil || failure.Code != contracts.CodeInstallLayoutUnsupported || !strings.Contains(failure.Reason, bad) || !strings.Contains(failure.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)) {
+		t.Fatalf("layout diagnostic = %#v", failure)
+	}
+}
+
 // case: PC-001.16, S-054.2
 func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	home := t.TempDir()

@@ -41,3 +41,4 @@ A developer installs a Marketplace entity by the install spec they would type at
 
 | S-268.15 | Pack each plugin and adapter and inspect its package manifest | No extension declares an `@kb-labs/*` runtime dependency; platform-provided packages are peers. The category check rejects violations. |
 | S-268.16 | Install an extension tarball whose manifest declares an `@kb-labs/*` runtime dependency | The store rejects the package with a named error before pnpm fetches dependencies. |
+| S-268.17 | Install Commit into a fresh local root with a selected project, repeat the install, then update that root | Each operation completes; the initial receipt records the project and Commit, and the `kb` shim is available. No link in the install container resolves outside that root; paths outside it remain unchanged. A container-layout violation reports `KB_INSTALL_LAYOUT_UNSUPPORTED`, identifies the path and gives the catalogued recovery. |
