@@ -9,14 +9,9 @@
 
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
+import { sessionFilePath } from '@kb-labs/core-platform';
 import type { SessionCredentials, ISessionManager } from './types.js';
 import { isSavedCredentialBase, readSavedAuthFile } from './saved-auth-file.js';
-
-/** Resolve the one canonical human-session path for the current CLI user. */
-export function sessionFilePath(homeDirectory = os.homedir()): string {
-  return path.join(homeDirectory, '.kb', 'session.json');
-}
 
 export class SessionManager implements ISessionManager {
   private readonly filePath: string;

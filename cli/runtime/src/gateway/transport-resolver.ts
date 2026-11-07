@@ -13,21 +13,18 @@
  * Auth tokens for the HTTP transport are still loaded from credentials.json when available.
  */
 
-import * as path from 'node:path';
-import * as os from 'node:os';
 import * as net from 'node:net';
 import type { IGatewayClient } from '@kb-labs/sdk/gateway';
 import { HttpSseGatewayTransport } from './http-sse-transport.js';
 import { HostAgentTransport } from './host-agent-transport.js';
-import { getHostServiceAddress } from '@kb-labs/core-platform';
+import { agentSocketPath, getHostServiceAddress } from '@kb-labs/core-platform';
 
-/** Default Host Agent IPC socket path */
-const HOST_AGENT_SOCKET = path.join(os.homedir(), '.kb', 'agent.sock');
 
 /**
  * Resolve the execution transport for a Gateway selected by the CLI bootstrap owner.
  */
 export async function resolveTransport(gatewayUrl: string): Promise<IGatewayClient> {
+  const HOST_AGENT_SOCKET = agentSocketPath();
   // 1. Host Agent IPC socket (same-host deployment, workspace agent)
   if (await isSocketAlive(HOST_AGENT_SOCKET)) {
     return new HostAgentTransport(HOST_AGENT_SOCKET);

@@ -1,3 +1,4 @@
+import { completionCachePath } from '@kb-labs/core-platform';
 /**
  * kb completion bash|zsh|fish  — print shell completion script
  * kb completion install         — bake static completions into shell profile (instant Tab)
@@ -16,7 +17,7 @@ type RemoveResult = { shell: string; profilePath: string; removed: boolean; stat
 
 const MARKER        = '# kb completion';
 const ALIAS_MARKER  = '# kb alias';
-const STATIC_FILE   = path.join(os.homedir(), '.config', 'kb', 'completion.zsh');
+const STATIC_FILE   = completionCachePath();
 
 // ─── Dynamic scripts (fallback) ───────────────────────────────────────────────
 

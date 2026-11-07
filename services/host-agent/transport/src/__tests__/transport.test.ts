@@ -105,12 +105,12 @@ describe('UnixSocketTransport', () => {
 
 describe('createTransport', () => {
   it('creates TcpTransport for mode=tcp', () => {
-    const t = createTransport({ mode: 'tcp', port: 9999 });
+    const t = createTransport({ mode: 'tcp', port: 9999, socketPath: '/tmp/unused.sock' });
     expect(t).toBeInstanceOf(TcpTransport);
   });
 
   it('creates platform-appropriate transport for mode=auto', async () => {
-    const t = createTransport({ mode: 'auto' });
+    const t = createTransport({ mode: 'auto', socketPath: '/tmp/agent.sock' });
     if (process.platform === 'win32') {
       const { NamedPipeTransport } = await import('../named-pipe.js');
       expect(t).toBeInstanceOf(NamedPipeTransport);
@@ -120,6 +120,6 @@ describe('createTransport', () => {
   });
 
   it('throws for unknown mode', () => {
-    expect(() => createTransport({ mode: 'unknown' as never })).toThrow('Unknown transport mode');
+    expect(() => createTransport({ mode: 'unknown' as never, socketPath: '/tmp/unused.sock' })).toThrow('Unknown transport mode');
   });
 });

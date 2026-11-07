@@ -5,7 +5,7 @@
  */
 
 import { join, resolve } from 'node:path';
-import { resolveKbHome } from '@kb-labs/core-project-registry';
+import { resolveKbHome } from '@kb-labs/core-platform';
 import { ExtensionStoreError } from './errors.js';
 
 /** A package name or version safe to fold into a filesystem path. */

@@ -27,7 +27,6 @@ export {
   findRegisteredProjectContainingPathSync,
   parseRegistryFile,
   projectStateDir,
-  resolveKbHome,
   type ProjectRegistryOptions,
 } from './registry.js';
 export {

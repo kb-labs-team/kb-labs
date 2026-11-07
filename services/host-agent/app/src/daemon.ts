@@ -10,8 +10,7 @@
  *   6. Wait for SIGTERM/SIGINT → graceful shutdown
  */
 
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { agentConfigPath, agentSocketPath } from '@kb-labs/core-platform';
 import { readFile } from 'node:fs/promises';
 import { GatewayClient, GatewayTransport, IpcServer, TokenManager, type TokenPair } from '@kb-labs/host-agent-core';
 import { FilesystemHandler, SearchHandler, ShellHandler } from '@kb-labs/host-agent-fs';
@@ -19,7 +18,7 @@ import { AgentConfigSchema, TokenPairSchema } from '@kb-labs/host-agent-contract
 import { createTransport } from '@kb-labs/host-agent-transport';
 import { ExecutionHandler } from './handlers/execution-handler.js';
 
-const AGENT_CONFIG_PATH = join(homedir(), '.kb', 'agent.json');
+const AGENT_CONFIG_PATH = agentConfigPath();
 const AGENT_VERSION = '0.1.0';
 
 async function parseTokenResponse(res: Response, context: string): Promise<TokenPair> {
@@ -153,7 +152,7 @@ export async function startDaemon(): Promise<void> {
   gatewayClient.registerHandler('execution', (call) => executionHandler.handle(call));
 
   // 6. IPC server — transport auto-selects unix socket / named pipe / tcp by platform
-  const ipcTransport = createTransport({ mode: 'auto' });
+  const ipcTransport = createTransport({ mode: 'auto', socketPath: agentSocketPath() });
   const ipcServer = new IpcServer({
     transport: ipcTransport,
     getStatus: () => ({

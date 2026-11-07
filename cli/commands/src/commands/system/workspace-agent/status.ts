@@ -1,6 +1,7 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { HostAgentClient } from '@kb-labs/host-agent-client';
 import { createTransport } from '@kb-labs/host-agent-transport';
+import { agentSocketPath } from '@kb-labs/core-platform';
 
 type Flags = { json: { type: 'boolean'; description: string } };
 type Result = CommandResult & { running: boolean; connected?: boolean; hostId?: string; gatewayUrl?: string };
@@ -14,7 +15,7 @@ export const workspaceStatus = defineSystemCommand<Flags, Result>({
   async handler(ctx, _argv, flags) {
     let status: { connected: boolean; hostId?: string; gatewayUrl?: string; reconnecting?: boolean } | null = null;
     try {
-      const client = new HostAgentClient({ transport: createTransport({ mode: 'auto' }), requestTimeout: 3000 });
+      const client = new HostAgentClient({ transport: createTransport({ mode: 'auto', socketPath: agentSocketPath() }), requestTimeout: 3000 });
       await client.connect();
       status = await client.status();
       client.close();

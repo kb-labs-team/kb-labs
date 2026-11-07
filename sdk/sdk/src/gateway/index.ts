@@ -2,7 +2,7 @@
 export { gatewayApiFetch, GatewayApiError, type GatewayRequestTarget, type GatewayCredentialKind } from './api-client.js';
 export { AuthSessionOwner, AuthSessionVerificationError } from './auth-session.js';
 export { CredentialsManager } from './credentials.js';
-export { SessionManager, sessionFilePath } from './session.js';
+export { SessionManager } from './session.js';
 export { readGatewaySuccessData, decodeGatewayFailure, withGatewayUrl } from './result.js';
 export { credentialMatchesGatewayOrigin, authRequiredForGateway } from './auth-origin.js';
 export { SavedAuthFileError, savedAuthFileErrorEnvelope } from './saved-auth-file.js';

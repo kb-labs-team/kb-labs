@@ -1,7 +1,8 @@
 import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { writeFile, mkdir, stat } from 'node:fs/promises';
-import { join, resolve, normalize } from 'node:path';
-import { homedir, hostname } from 'node:os';
+import { resolve, normalize } from 'node:path';
+import { hostname } from 'node:os';
+import { agentConfigPath, resolveKbHome } from '@kb-labs/core-platform';
 import { gatewayApiFetch, GatewayApiError } from '@kb-labs/sdk/gateway';
 
 type Flags = {
@@ -57,7 +58,7 @@ export const workspaceRegister = defineSystemCommand<Flags, Result>({
     if (!gatewayUrl.startsWith('http://') && !gatewayUrl.startsWith('https://')) {
       throwSystemCommandError('Invalid gateway URL — must start with http:// or https://', 'Pass a Gateway URL beginning with http:// or https://, then retry.');
     }
-    const configPath = join(homedir(), '.kb', 'agent.json');
+    const configPath = agentConfigPath();
     if (flags['dry-run']) {
       const name = flags.name ?? '(this machine)';
       const result = {
@@ -104,7 +105,7 @@ export const workspaceRegister = defineSystemCommand<Flags, Result>({
     if (!/^[A-Za-z0-9_\-+/=]{16,}$/.test(data.clientSecret)) {
       throwSystemCommandError('Gateway returned an invalid client secret (unexpected format)', 'Check the Gateway registration endpoint and retry.');
     }
-    await mkdir(join(homedir(), '.kb'), { recursive: true });
+    await mkdir(resolveKbHome(), { recursive: true });
     await writeFile(configPath, JSON.stringify({
       clientId: data.clientId,
       clientSecret: data.clientSecret,

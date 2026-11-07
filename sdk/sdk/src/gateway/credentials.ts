@@ -7,7 +7,7 @@
 
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
+import { credentialsFilePath } from '@kb-labs/core-platform';
 import type { GatewayCredentials, ICredentialsManager } from './types.js';
 import { isSavedCredentialBase, readSavedAuthFile } from './saved-auth-file.js';
 
@@ -15,7 +15,7 @@ export class CredentialsManager implements ICredentialsManager {
   private readonly filePath: string;
 
   constructor(filePath?: string) {
-    this.filePath = filePath ?? path.join(os.homedir(), '.kb', 'credentials.json');
+    this.filePath = filePath ?? credentialsFilePath();
   }
 
   async load(): Promise<GatewayCredentials | null> {

@@ -1,3 +1,4 @@
+import { resolveKbHome } from '@kb-labs/core-platform';
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,7 +13,6 @@ import {
   findProjectContainingPath,
   findRegisteredProjectContainingPathSync,
   projectStateDir,
-  resolveKbHome,
 } from '../registry.js';
 
 let sandbox: string;

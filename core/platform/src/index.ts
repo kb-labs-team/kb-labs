@@ -394,3 +394,5 @@ export type {
   ServiceTransportStream,
   ServiceTransportHealth,
 } from "./adapters/service-transport.js";
+
+export { resolveKbHome, credentialsFilePath, sessionFilePath, agentConfigPath, agentSocketPath, completionCachePath, projectSettingsFilePath, projectOverlaysDirPath } from './kb-home.js';

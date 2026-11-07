@@ -25,7 +25,7 @@ export type TransportMode = 'unix' | 'named-pipe' | 'tcp' | 'auto';
 export interface TransportConfig {
   mode: TransportMode;
   /** Unix socket path (unix mode). Default: ~/.kb/agent.sock */
-  socketPath?: string;
+  socketPath: string;
   /** Named pipe name (named-pipe mode). Default: kb-agent */
   pipeName?: string;
   /** TCP port (tcp mode). Default: 7779 */

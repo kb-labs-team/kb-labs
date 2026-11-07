@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs, readFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { resolveKbHome } from '@kb-labs/core-platform';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type {
   AddProjectOptions,
@@ -23,12 +23,6 @@ export const PROJECT_REGISTRY_FILE = 'projects.json';
 
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const STATUSES: readonly ProjectStatus[] = ['active', 'disabled'];
-
-/** Root of machine-level state: `$KB_HOME` when set, otherwise `~/.kb`. */
-export function resolveKbHome(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.KB_HOME?.trim();
-  return resolve(override ? override : join(homedir(), '.kb'));
-}
 
 /** `<root>/state/<projectId>/` — path only, nothing is created. */
 export function projectStateDir(root: string, id: ProjectId): string {

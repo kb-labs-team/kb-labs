@@ -1,9 +1,7 @@
 import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { gatewayApiFetch, GatewayApiError } from '@kb-labs/sdk/gateway';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-import { getHostServiceAddress } from '@kb-labs/core-platform';
+import { agentConfigPath, getHostServiceAddress } from '@kb-labs/core-platform';
 import { useEnv } from '@kb-labs/sdk';
 
 type Flags = {
@@ -34,7 +32,7 @@ export const workspaceList = defineSystemCommand<Flags, Result>({
     let gatewayUrl = flags.gateway;
     if (!gatewayUrl) {
       try {
-        const config = JSON.parse(readFileSync(join(homedir(), '.kb', 'agent.json'), 'utf8')) as { gatewayUrl?: string };
+        const config = JSON.parse(readFileSync(agentConfigPath(), 'utf8')) as { gatewayUrl?: string };
         gatewayUrl = config.gatewayUrl;
       } catch {
         // Use the configured platform Gateway when no agent configuration exists.

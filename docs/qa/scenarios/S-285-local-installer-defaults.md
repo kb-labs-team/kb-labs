@@ -35,3 +35,4 @@ Install a local platform using the saved release index and platform defaults, an
 | S-285.15 | Install a native dependency with an isolated home | Native build cache files remain inside the platform root. |
 | S-285.18 | Provision the package manager and observe a subprocess failure | The diagnostic includes bounded, redacted stderr evidence when stderr is present. |
 | S-285.17 | Request Gateway health with Studio mounted and with Studio disabled | Health reports the mounted Studio URL only when Studio is mounted; status and install use the reported URL. |
+| S-285.19 | With `HOME` and `KB_HOME` set to separate isolated directories, bootstrap Gateway CLI credentials and use CLI credentials and session operations | Gateway and CLI read and write credentials and session only under `KB_HOME`; `HOME/.kb` remains absent. |
