@@ -12,7 +12,6 @@ export default defineConfig({
     ...baseConfig.test,
     globals: true,
     environment: 'node',
-    setupFiles: ['tests/setup.ts'],
     include: ['tests/**/*.spec.ts']
   },
   resolve: {

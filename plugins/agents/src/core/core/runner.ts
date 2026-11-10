@@ -49,6 +49,7 @@ import { AGENT_ANALYTICS_EVENTS } from '../../contracts/index.js';
 import type { AgentConfig, AgentEvent, LLMTier, TaskResult, SpawnAgentRequest, SpawnAgentResult, SubAgentPreset } from '../../contracts/index.js';
 import type { Turn } from '../../contracts/index.js';
 import type { AgentSDK, IAgentRunner } from '../../sdk/index.js';
+import { AgentRunnerResolutionError, resolveExternalRunner } from '../../vendors/index.js';
 import { RuntimeEngine } from '../../runtime/index.js';
 import { SessionArtifactStore } from '../../store/index.js';
 import { LinearExecutionLoop } from '../execution/linear-execution-loop.js';
@@ -183,6 +184,7 @@ export class SDKAgentRunner implements IAgentRunner {
     let aggregateToolSuccesses = 0;
     let aggregateToolErrors = 0;
     let aggregateTokens = 0;
+    let hasUnknownTokenUsage = false;
     let aggregateIterations = 0;
     const filesRead = new Set<string>();
     const filesModified = new Set<string>();
@@ -195,7 +197,11 @@ export class SDKAgentRunner implements IAgentRunner {
       aggregateToolCalls += result._metrics.toolCallsTotal;
       aggregateToolSuccesses += result._metrics.toolSuccessCount;
       aggregateToolErrors += result._metrics.toolErrorCount;
-      aggregateTokens += result.tokensUsed;
+      if (result.tokensUsed === undefined) {
+        hasUnknownTokenUsage = true;
+      } else {
+        aggregateTokens += result.tokensUsed;
+      }
       aggregateIterations += result.iterations;
       for (const path of result.filesRead) {filesRead.add(path);}
       for (const path of result.filesModified) {filesModified.add(path);}
@@ -227,7 +233,13 @@ export class SDKAgentRunner implements IAgentRunner {
         const finalResult: TaskResult = {
           ...taskResult,
           iterations: aggregateIterations,
-          tokensUsed: aggregateTokens,
+          tokensUsed: hasUnknownTokenUsage ? undefined : aggregateTokens,
+          usage: {
+            ...(hasUnknownTokenUsage ? {} : { totalTokens: aggregateTokens }),
+            wallTimeMs: aggregateDurationMs,
+            rounds: 1,
+          },
+          outcome: taskResult.success ? 'done' : 'blocked',
           filesRead: [...filesRead],
           filesModified: [...filesModified],
           filesCreated: [...filesCreated],
@@ -245,7 +257,13 @@ export class SDKAgentRunner implements IAgentRunner {
       const finalResult: TaskResult = {
         ...taskResult,
         iterations: aggregateIterations,
-        tokensUsed: aggregateTokens,
+        tokensUsed: hasUnknownTokenUsage ? undefined : aggregateTokens,
+        usage: {
+          ...(hasUnknownTokenUsage ? {} : { totalTokens: aggregateTokens }),
+          wallTimeMs: aggregateDurationMs,
+          rounds: 1,
+        },
+        outcome: taskResult.success ? 'done' : 'blocked',
         filesRead: [...filesRead],
         filesModified: [...filesModified],
         filesCreated: [...filesCreated],
@@ -813,6 +831,9 @@ export class SDKAgentRunner implements IAgentRunner {
       workingDir: request.workingDir ?? this.config.workingDir,
       abortSignal: this.abortController.signal,
       allowedTools: request.allowedTools,
+      runnerId: request.runnerId,
+      vendorSessionId: request.vendorSessionId,
+      runnerRole: request.role,
       // Child budget: capped at fraction of parent's remaining budget
       tokenBudget: childMaxTokens > 0
         ? {
@@ -827,11 +848,61 @@ export class SDKAgentRunner implements IAgentRunner {
     };
 
     const childSDK = this.sdk.extend();
-    const childRunner = new SDKAgentRunner(childConfig, childSDK);
     const preset: SubAgentPreset = request.preset ?? 'research';
 
     try {
+      const runnerModule = request.runnerId ? await resolveExternalRunner(request.runnerId) : undefined;
+      if (runnerModule && parentMaxTokens > 0 && !runnerModule.runnerCapabilities.reportsUsage) {
+        const failure = {
+          kind: 'budget_unmeasurable' as const,
+          code: 'KB_RUNTIME_INPUT_INVALID',
+          message: 'The selected runner does not report token usage required by the parent budget.',
+          retryable: false,
+          details: { runnerId: request.runnerId },
+        };
+        return {
+          success: false,
+          summary: failure.message,
+          filesRead: [],
+          filesModified: [],
+          filesCreated: [],
+          iterations: 0,
+          durationMs: Date.now() - startedAt,
+          error: failure.message,
+          preset,
+          runnerId: request.runnerId,
+          failure,
+        };
+      }
+      const childRunner = runnerModule
+        ? runnerModule.createRunner(childConfig, childSDK)
+        : new SDKAgentRunner(childConfig, childSDK);
       const result = await childRunner.execute(request.task);
+      if (runnerModule?.runnerCapabilities.reportsUsage && (!result.usage || result.usage.totalTokens === undefined)) {
+        const message = 'The selected runner declared usage reporting but returned no total token measurement.';
+        const failure = {
+          kind: 'invalid_output' as const,
+          code: 'KB_RUNTIME_INPUT_INVALID',
+          message,
+          retryable: false,
+          details: { runnerId: request.runnerId, missing: 'usage.totalTokens' },
+        };
+        return {
+          success: false,
+          summary: message,
+          filesRead: result.filesRead,
+          filesModified: result.filesModified,
+          filesCreated: result.filesCreated,
+          iterations: result.iterations,
+          durationMs: Date.now() - startedAt,
+          error: message,
+          preset,
+          runnerId: request.runnerId,
+          vendorSessionId: result.vendorSessionId,
+          lastMessage: result.lastMessage,
+          failure,
+        };
+      }
       return {
         success: result.success,
         summary: result.summary,
@@ -840,6 +911,12 @@ export class SDKAgentRunner implements IAgentRunner {
         filesCreated: result.filesCreated,
         iterations: result.iterations,
         tokensUsed: result.tokensUsed,
+        usage: result.usage,
+        outcome: result.outcome,
+        failure: result.failure,
+        runnerId: request.runnerId ?? result.runnerId,
+        vendorSessionId: result.vendorSessionId,
+        lastMessage: result.lastMessage,
         durationMs: Date.now() - startedAt,
         error: result.error,
         preset,
@@ -852,10 +929,11 @@ export class SDKAgentRunner implements IAgentRunner {
         filesModified: [],
         filesCreated: [],
         iterations: 0,
-        tokensUsed: 0,
         durationMs: Date.now() - startedAt,
         error: error instanceof Error ? error.message : String(error),
         preset,
+        runnerId: request.runnerId,
+        ...(error instanceof AgentRunnerResolutionError ? { failure: error.failure } : {}),
       };
     }
   }
@@ -966,11 +1044,13 @@ export class SDKAgentRunner implements IAgentRunner {
       iterationsUsed: result.iterations,
       iterationBudget,
       tokenBudget,
-      tokenUtilization: tokenBudget && tokenBudget > 0 ? result.tokensUsed / tokenBudget : undefined,
+      tokenUtilization: tokenBudget && tokenBudget > 0 && result.tokensUsed !== undefined ? result.tokensUsed / tokenBudget : undefined,
       startTier,
       finalTier,
       durationMs: aggregate.durationMs,
       tokensUsed: result.tokensUsed,
+      usage: result.usage,
+      runnerId: result.runnerId,
       toolCallsTotal: aggregate.toolCallsTotal,
       toolSuccessCount: aggregate.toolSuccessCount,
       toolErrorCount: aggregate.toolErrorCount,

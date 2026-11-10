@@ -73,3 +73,4 @@ export type {
 // ═══════════════════════════════════════════════════════════════════════
 
 export type * from './spawn.js';
+export type * from './agent-run.js';

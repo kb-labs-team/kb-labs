@@ -28,6 +28,12 @@ export type SubAgentPreset = 'research' | 'execute' | 'review';
 export interface SpawnAgentRequest {
   /** Clear task description — the sub-agent has no context about parent's work. */
   task: string;
+  /** Runtime-resolved runner module id; absent selects the native runner. */
+  runnerId?: string;
+  /** External run role controls continuation policy. */
+  role?: 'worker' | 'review';
+  /** Opaque session id supplied by the selected runner to resume a run. */
+  vendorSessionId?: string;
   /** Preset determines which tools the child gets. Default: 'research'. */
   preset?: SubAgentPreset;
   /**
@@ -63,7 +69,13 @@ export interface SpawnAgentResult {
   /** Files the sub-agent created. */
   filesCreated: string[];
   iterations: number;
-  tokensUsed: number;
+  tokensUsed?: number;
+  usage?: import('./agent-run.js').AgentRunUsage;
+  outcome?: import('./agent-run.js').AgentRoundOutcome;
+  failure?: import('./agent-run.js').AgentRunFailure;
+  runnerId?: string;
+  vendorSessionId?: string;
+  lastMessage?: string;
   /** Wall-clock duration in milliseconds. */
   durationMs: number;
   /** Error message if success=false. */

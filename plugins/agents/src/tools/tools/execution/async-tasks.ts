@@ -182,7 +182,7 @@ export function createTaskCollectTool(context: ToolContext): Tool {
         const result = await context.taskManager.collect(taskId);
         const status = result.success ? 'completed successfully' : 'failed';
         const lines = [
-          `Task ${taskId} ${status} [preset=${result.preset}, ${result.iterations} iters, ${result.tokensUsed.toLocaleString()} tokens, ${(result.durationMs / 1000).toFixed(1)}s]`,
+          `Task ${taskId} ${status} [preset=${result.preset}, ${result.iterations} iters, ${result.tokensUsed?.toLocaleString() ?? 'n/a'} tokens, ${(result.durationMs / 1000).toFixed(1)}s]`,
         ];
 
         if (result.filesRead.length > 0) { lines.push(`Files read: ${result.filesRead.length}`); }

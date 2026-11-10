@@ -432,7 +432,7 @@ export default defineCommand({
             data: {
               content: result.summary,
               hasToolCalls: false,
-              tokensUsed: 0,
+              tokensUsed: result.tokensUsed,
               durationMs: 0,
               stopReason: 'no_tool_calls',
             },
