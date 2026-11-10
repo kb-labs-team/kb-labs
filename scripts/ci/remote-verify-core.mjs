@@ -1,4 +1,4 @@
-import { parseVerdict, repositoryFromRemote, selectVerificationRun } from './remote-verdict.mjs';
+import { parseVerdict, repositoryFromRemote, selectVerificationRun, VerificationRemoteError } from './remote-verdict.mjs';
 import { candidateIntegrationBase } from './remote-selection-base.mjs';
 
 const WORKFLOW_PATH = '.github/workflows/remote-verify.yml';
@@ -143,15 +143,20 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
   const deadlineAt = clock.now() + policy.timeoutMs;
   const callRemote = createRemoteCaller(clock, policy.pollMs);
   let repo;
-  let remote;
+  const remoteName = options.remote ?? 'origin';
+  let remoteUrl;
   let ref;
   let sha;
   let run;
   let verdict;
 
   try {
-    remote = await git.backupRemote();
-    repo = repositoryFromRemote(remote);
+    try {
+      remoteUrl = await git.remoteUrl(remoteName);
+    } catch (cause) {
+      throw new VerificationRemoteError(remoteName, 'is not configured in this worktree', { cause });
+    }
+    repo = repositoryFromRemote(remoteUrl, remoteName);
     if (options.attach) {
       if (/^\d+$/.test(options.attach)) {
         run = validateRun(await retryOperation(() => gh.getRun(repo, options.attach), {
@@ -167,7 +172,7 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
         if (!ref.startsWith(options.profile === 'candidate' ? 'verify-candidate/' : 'verify/')) throw new Error(`An attached ref must be under ${options.profile === 'candidate' ? 'verify-candidate/' : 'verify/'}`);
         const namedSha = ref.match(/\/(?:[0-9]{8}T[0-9]{6}Z)-([0-9a-f]{40})$/)?.[1];
         if (!namedSha) throw new Error('Attached verification ref must include its timestamp and commit SHA');
-        sha = await retryOperation(() => git.resolveRef(remote, ref), {
+        sha = await retryOperation(() => git.resolveRef(remoteName, ref), {
           deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
           callRemote, cadenceMs: policy.pollMs,
         });
@@ -181,7 +186,7 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
       if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('Current HEAD did not resolve to a full commit SHA');
       const created = new Date(clock.now()).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
       ref = `${options.profile === 'candidate' ? 'verify-candidate' : 'verify'}/${options.stream}/${created}-${sha}`;
-      await retryOperation(() => git.pushRef(ref, sha), {
+      await retryOperation(() => git.pushRef(remoteName, ref, sha), {
         deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
         callRemote, cadenceMs: policy.pollMs,
       });
@@ -295,9 +300,9 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
   }
 
   verdict.diagnostics ??= [];
-  if (ref && remote) {
+  if (ref && remoteUrl) {
     try {
-      await retryOperation(() => git.deleteRef(remote, ref), {
+      await retryOperation(() => git.deleteRef(remoteName, ref), {
         deadlineAt: clock.now() + policy.cleanupBudgetMs,
         outageBudgetMs: policy.cleanupBudgetMs,
         now: clock.now,

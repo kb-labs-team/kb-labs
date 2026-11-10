@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const root = fileURLToPath(new URL('../..', import.meta.url));
+const root = fileURLToPath(new URL('../', import.meta.url));
 const binaryManifestTool = join(root, 'tools/kb-create/scripts/prepare-binary-manifest.mjs');
 const releaseIndexTool = join(root, 'tools/kb-create/scripts/prepare-release-index.mjs');
 const digestToolDirectory = mkdtempSync(join(tmpdir(), 'kb-release-manifest-digest-tool-'));
@@ -18,6 +18,7 @@ execFileSync('go', ['build', '-trimpath', '-o', digestTool, './v2/cmd/kb-create-
 });
 after(() => rmSync(digestToolDirectory, { recursive: true, force: true }));
 
+// case: S-284.11
 test('candidate binary manifest from release tooling passes release-index preparation', () => {
   const fixture = mkdtempSync(join(tmpdir(), 'kb-journey-release-manifest-'));
   try {

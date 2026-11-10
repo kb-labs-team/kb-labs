@@ -1,19 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RemoteOperationError, runRemoteVerification } from './remote-verify-core.mjs';
+import { createGitRemoteOperations } from './remote-verify-git.mjs';
 
 const sha = 'a'.repeat(40);
 const pass = { schemaVersion: 1, sha, profile: 'stream', status: 'pass', jobs: [{ name: 'build', status: 'pass', failures: [], logTail: '' }] };
 const candidatePass = { ...pass, profile: 'candidate', internalToolResults: { status: 'pass', jobs: [] } };
 const run = (overrides = {}) => { const head_branch = overrides.head_branch ?? 'verify/stream/20261025T120000Z-' + sha; return { id: 17, event: 'push', head_branch, head_sha: sha, path: '.github/workflows/remote-verify.yml', display_title: `Remote agent verification (stream) for ${head_branch}`, status: 'completed', conclusion: 'success', ...overrides }; };
 
-function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteRef = async () => {}, resolveRef = async () => sha, failureJobs = async () => ({ jobs: [] }), failureLogs = async () => '', failureArtifacts = async () => [] } = {}) {
+function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteRef = async () => {}, resolveRef = async () => sha, remoteUrl = 'https://github.com/kb-labs-team/kb-labs.git', remoteUrlError, failureJobs = async () => ({ jobs: [] }), failureLogs = async () => '', failureArtifacts = async () => [] } = {}) {
   let time = 0;
-  const calls = { pushes: [], deletes: [], lists: 0, gets: 0, ghTimes: [], remoteTimes: [], artifacts: 0 };
+  const calls = { pushes: [], resolves: [], deletes: [], remoteUrls: [], repositories: [], lists: 0, gets: 0, ghTimes: [], remoteTimes: [], artifacts: 0 };
   const recordGh = () => { calls.ghTimes.push(time); calls.remoteTimes.push(time); };
   const recordGitRemote = () => calls.remoteTimes.push(time);
   const gh = {
-    listRuns: async (...args) => { recordGh(); calls.lists += 1; return listRuns ? listRuns(...args) : [run({ head_branch: args[1] })]; },
+    listRuns: async (...args) => { recordGh(); calls.lists += 1; calls.repositories.push(args[0]); return listRuns ? listRuns(...args) : [run({ head_branch: args[1] })]; },
     dispatchRun: async () => { recordGh(); },
     getRun: async (...args) => { recordGh(); calls.gets += 1; return getRun ? getRun(...args) : run(); },
     downloadVerdict: async (...args) => { recordGh(); calls.artifacts += 1; return downloadVerdict(...args); },
@@ -24,14 +25,73 @@ function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteR
   const git = {
     headSha: async () => sha,
     currentBranch: async () => 'agent/x231-test-strategy',
-    backupRemote: async () => 'git@github-kb-backup:owner/repo.git',
-    pushRef: async (ref, pushedSha) => { recordGitRemote(); calls.pushes.push({ ref, sha: pushedSha }); },
-    resolveRef: async (...args) => { recordGitRemote(); return resolveRef(...args); },
-    deleteRef: async (ref) => { recordGitRemote(); calls.deletes.push(ref); return deleteRef(ref); },
+    remoteUrl: async (remoteName) => { calls.remoteUrls.push(remoteName); if (remoteUrlError) throw remoteUrlError; return remoteUrl; },
+    pushRef: async (remoteName, ref, pushedSha) => { recordGitRemote(); calls.pushes.push({ remote: remoteName, ref, sha: pushedSha }); },
+    resolveRef: async (remoteName, ref) => { recordGitRemote(); calls.resolves.push({ remote: remoteName, ref }); return resolveRef(remoteName, ref); },
+    deleteRef: async (remoteName, ref) => { recordGitRemote(); calls.deletes.push({ remote: remoteName, ref }); return deleteRef(remoteName, ref); },
   };
   const clock = { now: () => time, sleep: async (ms) => { time += ms; } };
   return { executors: { gh, git }, clock, calls, policy: { timeoutMs: 300_000, outageBudgetMs: 120_000, cleanupBudgetMs: 180_000 } };
 }
+
+test('Git adapter sends the same configured remote to push, lookup, and delete commands', async () => {
+  const commands = [];
+  const operations = createGitRemoteOperations((command, args) => {
+    commands.push({ command, args });
+    return `${sha}\trefs/heads/verify/stream`;
+  }, RemoteOperationError);
+  await operations.pushRef('origin', 'verify/stream', sha);
+  assert.equal(await operations.resolveRef('origin', 'verify/stream'), sha);
+  await operations.deleteRef('origin', 'verify/stream');
+  assert.deepEqual(commands.map(({ args }) => args.slice(0, 2)), [
+    ['push', 'origin'],
+    ['ls-remote', 'origin'],
+    ['push', 'origin'],
+  ]);
+});
+
+// case: S-262.6
+test('resolves origin once and uses it for push, ref lookup, repository derivation, and cleanup', async () => {
+  const h = harness();
+  const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'pass', JSON.stringify(verdict));
+  assert.deepEqual(h.calls.remoteUrls, ['origin']);
+  assert.equal(h.calls.pushes[0].remote, 'origin');
+  assert.equal(h.calls.pushes[0].sha, sha);
+  assert.deepEqual(h.calls.deletes[0], { remote: 'origin', ref: h.calls.pushes[0].ref });
+  assert.equal(h.calls.repositories[0], 'kb-labs-team/kb-labs');
+
+  const attached = harness();
+  const ref = `verify/stream/20261110T120000Z-${sha}`;
+  const attachedVerdict = await runRemoteVerification({ attach: ref, out: '/tmp/verdict.json' }, attached.executors, { clock: attached.clock, policy: attached.policy });
+  assert.equal(attachedVerdict.status, 'pass', JSON.stringify(attachedVerdict));
+  assert.deepEqual(attached.calls.remoteUrls, ['origin']);
+  assert.deepEqual(attached.calls.resolves[0], { remote: 'origin', ref });
+  assert.deepEqual(attached.calls.deletes[0], { remote: 'origin', ref });
+  assert.equal(attached.calls.repositories[0], 'kb-labs-team/kb-labs');
+});
+
+// case: S-262.6
+test('uses one explicitly configured remote for the whole verification', async () => {
+  const h = harness();
+  const verdict = await runRemoteVerification({ stream: 'stream', remote: 'upstream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'pass', JSON.stringify(verdict));
+  assert.deepEqual(h.calls.remoteUrls, ['upstream']);
+  assert.equal(h.calls.pushes[0].remote, 'upstream');
+  assert.deepEqual(h.calls.deletes[0], { remote: 'upstream', ref: h.calls.pushes[0].ref });
+  assert.equal(h.calls.repositories[0], 'kb-labs-team/kb-labs');
+});
+
+// case: S-262.6
+test('fails with an actionable diagnostic when the selected remote is missing', async () => {
+  const h = harness({ remoteUrlError: new Error('No such remote') });
+  const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'fail');
+  assert.match(verdict.diagnostics[0], /\[VERIFICATION_REMOTE_INVALID\] Verification remote "origin" is not configured/);
+  assert.match(verdict.diagnostics[0], /--remote <name>/);
+  assert.deepEqual(h.calls.remoteUrls, ['origin']);
+  assert.equal(h.calls.pushes.length, 0);
+});
 
 function assertMinimumRemoteSpacing(times, minimumMs = 30_000) {
   for (let index = 1; index < times.length; index += 1) {

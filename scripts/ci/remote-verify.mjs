@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, wr
 import os from 'node:os';
 import path from 'node:path';
 import { RemoteOperationError, runRemoteVerification } from './remote-verify-core.mjs';
+import { createGitRemoteOperations } from './remote-verify-git.mjs';
 import { parseArgs } from './remote-verify-options.mjs';
 import { persistFailureEvidence } from './remote-verify-evidence.mjs';
 
@@ -23,15 +24,7 @@ function createExecutors(scratch) {
   const git = {
     headSha: async () => execute('git', ['rev-parse', 'HEAD']),
     currentBranch: async () => execute('git', ['branch', '--show-current']),
-    backupRemote: async () => execute('git', ['remote', 'get-url', 'backup']),
-    pushRef: async (ref, sha) => execute('git', ['push', 'backup', `${sha}:refs/heads/${ref}`], { retryable: true }),
-    resolveRef: async (remote, ref) => {
-      const output = execute('git', ['ls-remote', remote, `refs/heads/${ref}`], { retryable: true });
-      const [resolvedSha] = output.split(/\s+/);
-      if (!resolvedSha) throw new RemoteOperationError(`Verification ref ${ref} does not exist on backup`, { retryable: true });
-      return resolvedSha;
-    },
-    deleteRef: async (remote, ref) => execute('git', ['push', remote, `:refs/heads/${ref}`], { retryable: true }),
+    ...createGitRemoteOperations(execute, RemoteOperationError),
   };
 
   const gh = {

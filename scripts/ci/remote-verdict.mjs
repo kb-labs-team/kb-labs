@@ -38,9 +38,20 @@ export function terminalVerdict(sha, status, message) {
   return { schemaVersion: 1, sha, status, jobs: [], diagnostics: [message] };
 }
 
-export function repositoryFromRemote(url) {
-  const match = url.match(/(?:^[^@]+@[^:]+:|^https?:\/\/[^/]+\/)([^/]+\/[^/.]+?)(?:\.git)?$/);
-  if (!match) throw new Error(`backup remote is not a GitHub repository: ${url}`);
+export class VerificationRemoteError extends Error {
+  constructor(remoteName, reason, options = {}) {
+    super(`[VERIFICATION_REMOTE_INVALID] Verification remote "${remoteName}" ${reason}. Configure it as a GitHub remote or select an existing remote with --remote <name>.`, options);
+    this.name = 'VerificationRemoteError';
+    this.code = 'VERIFICATION_REMOTE_INVALID';
+    this.remoteName = remoteName;
+  }
+}
+
+export function repositoryFromRemote(url, remoteName = 'origin') {
+  const match = typeof url === 'string'
+    ? url.match(/^(?:git@github\.com:|https:\/\/github\.com\/)([A-Za-z0-9-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/)
+    : undefined;
+  if (!match) throw new VerificationRemoteError(remoteName, 'must point to a GitHub repository URL');
   return match[1];
 }
 

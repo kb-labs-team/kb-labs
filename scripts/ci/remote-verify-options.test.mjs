@@ -14,6 +14,10 @@ test('requires an explicit verdict path and resolves it from the invoking direct
   assert.throws(() => parseArgs(['stream-name'], '/work/tree'), /--out path is required/);
 });
 
+test('accepts one explicit verification remote override', () => {
+  assert.equal(parseArgs(['stream-name', '--remote', 'upstream', '--out', '/tmp/result.json']).remote, 'upstream');
+});
+
 // case: S-262.6
 test('accepts an existing run or verification ref without a stream name', () => {
   assert.equal(parseArgs(['--attach', '40194225801', '--out', '/tmp/result.json']).attach, '40194225801');

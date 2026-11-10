@@ -37,6 +37,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  checks: read
 
 concurrency:
   group: ${{ inputs.deliver_canary && 'release-candidate-canary-delivery' || format('release-candidate-{0}', inputs.candidate_id) }}
@@ -73,12 +75,25 @@ jobs:
     permissions:
       contents: read
 
+  unit-test-gate:
+    name: Workspace unit verification
+    needs: resolve-gate-policy
+    uses: ./.github/workflows/remote-verify.yml
+    with:
+      profile: candidate
+      target_sha: ${{ inputs.commit_sha }}
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+
   build:
     name: Build candidate ${{ inputs.candidate_id }}
-    needs: [resolve-gate-policy, journey-gate]
+    needs: [resolve-gate-policy, journey-gate, unit-test-gate]
     if: >-
       always() &&
       needs.resolve-gate-policy.result == 'success' &&
+      needs.unit-test-gate.result == 'success' &&
       ((needs.resolve-gate-policy.outputs.required != 'true' && needs.journey-gate.result == 'skipped') ||
        (needs.resolve-gate-policy.outputs.required == 'true' && needs.journey-gate.result == 'success'))
     runs-on: ubuntu-latest
