@@ -182,7 +182,7 @@ func (p Pnpm) Install(items []contracts.Artifact) error {
 
 func (p Pnpm) installVerified(items []contracts.Artifact, verified map[string][]byte) error {
 	for _, item := range items {
-		data, ok := verified[item.ID]
+		data, ok := verified[item.SHA256]
 		if !ok {
 			continue
 		}
@@ -257,7 +257,7 @@ func (p Pnpm) verifyTarballs(items []contracts.Artifact) (map[string][]byte, err
 			}
 			return nil, downloadFailure(item, item.ResolvedURL, fmt.Errorf("checksum mismatch: expected %s, got %s", item.SHA256, actual))
 		}
-		verified[item.ID] = data
+		verified[item.SHA256] = data
 	}
 	return verified, nil
 }

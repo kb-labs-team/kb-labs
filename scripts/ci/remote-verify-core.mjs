@@ -12,6 +12,20 @@ export class RemoteOperationError extends Error {
   }
 }
 
+export class RemoteAuthError extends RemoteOperationError {
+  constructor(message, options = {}) {
+    super(message, { ...options, retryable: false });
+    this.name = 'RemoteAuthError';
+  }
+}
+
+export class RemoteNotFoundError extends RemoteOperationError {
+  constructor(message, options = {}) {
+    super(message, { ...options, retryable: false });
+    this.name = 'RemoteNotFoundError';
+  }
+}
+
 export class RemoteTimeoutError extends Error {
   constructor(message = 'Remote verification deadline expired') {
     super(message);
@@ -115,10 +129,22 @@ function failureVerdict(sha, diagnostics, details = { jobs: [] }, profile = 'str
   return { schemaVersion: 1, sha, profile, status: 'fail', jobs: details.jobs ?? [], diagnostics: [...diagnostics, ...(details.diagnostics ?? [])] };
 }
 
-function classifyError(error, sha, profile) {
+function classifyError(error, sha, profile, remoteName, repo) {
   if (error instanceof RemoteTimeoutError) return { schemaVersion: 1, sha: sha ?? 'unknown', profile, status: 'timeout', jobs: [], diagnostics: [error.message] };
   if (error instanceof RemoteOutageError) return { schemaVersion: 1, sha: sha ?? 'unknown', profile, status: 'outage', jobs: [], diagnostics: [error.message] };
+  if (error instanceof RemoteAuthError) return {
+    schemaVersion: 1, sha: sha ?? 'unknown', profile, status: 'auth', jobs: [],
+    diagnostics: [`Authentication or permission denied for remote "${remoteName}" (${repo}): ${error.message}. Run "gh auth status" and confirm this identity has push access to ${repo}.`],
+  };
+  if (error instanceof RemoteNotFoundError) return {
+    schemaVersion: 1, sha: sha ?? 'unknown', profile, status: 'not-found', jobs: [],
+    diagnostics: [`GitHub resource was not found for remote "${remoteName}" (${repo}): ${error.message}. Check "gh workflow list --repo ${repo}" and confirm the workflow exists.`],
+  };
   return failureVerdict(sha ?? 'unknown', [error?.message ?? String(error)], { jobs: [] }, profile);
+}
+
+function isTypedRemoteFailure(error) {
+  return error instanceof RemoteAuthError || error instanceof RemoteNotFoundError;
 }
 
 function failureDetails(jobsResponse, logTail) {
@@ -204,7 +230,7 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
     try {
       artifact = await callRemote(() => gh.downloadVerdict(repo, run.id), deadlineAt);
     } catch (error) {
-      if (error instanceof RemoteTimeoutError) throw error;
+      if (error instanceof RemoteTimeoutError || isTypedRemoteFailure(error)) throw error;
       artifactError = error;
     }
     if (run.conclusion === 'timed_out') {
@@ -221,7 +247,7 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
           diagnostics: [...(parsed.diagnostics ?? [])],
         };
       } catch (error) {
-        if (error instanceof RemoteTimeoutError) throw error;
+        if (error instanceof RemoteTimeoutError || isTypedRemoteFailure(error)) throw error;
         if (run.conclusion === 'failure') {
           try {
             const jobsResponse = await retryOperation(() => gh.failureJobs(repo, run.id), {
@@ -230,7 +256,7 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
             });
             verdict = failureVerdict(sha, [`Workflow failed before a valid verdict artifact was available: ${error.message}`], failureDetails(jobsResponse, ''), options.profile);
           } catch (detailsError) {
-            if (detailsError instanceof RemoteTimeoutError || detailsError instanceof RemoteOutageError) throw detailsError;
+            if (detailsError instanceof RemoteTimeoutError || detailsError instanceof RemoteOutageError || isTypedRemoteFailure(detailsError)) throw detailsError;
             verdict = failureVerdict(sha, [`Workflow failed and diagnostics could not be retrieved: ${detailsError.message}`], { jobs: [] }, options.profile);
           }
           if (error instanceof RemoteOutageError && verdict.status === 'fail') {
@@ -259,7 +285,7 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
               });
               logs.push({ name: job.name, log });
             } catch (error) {
-              if (error instanceof RemoteTimeoutError || error instanceof RemoteOutageError) throw error;
+              if (error instanceof RemoteTimeoutError || error instanceof RemoteOutageError || isTypedRemoteFailure(error)) throw error;
               logs.push({ name: job.name, log: '' });
               verdict.diagnostics.push(`Failed-step log for ${job.name} could not be retrieved: ${error.message}`);
             }
@@ -285,18 +311,18 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
               callRemote, cadenceMs: policy.pollMs,
             });
           } catch (error) {
-            if (error instanceof RemoteTimeoutError || error instanceof RemoteOutageError) throw error;
+            if (error instanceof RemoteTimeoutError || error instanceof RemoteOutageError || isTypedRemoteFailure(error)) throw error;
             verdict.diagnostics.push(`Structured job findings could not be retrieved: ${error.message}`);
           }
           verdict.failureEvidence = { jobs: logs, structuredArtifacts };
         } catch (error) {
-          if (error instanceof RemoteTimeoutError || error instanceof RemoteOutageError) throw error;
+          if (error instanceof RemoteTimeoutError || error instanceof RemoteOutageError || isTypedRemoteFailure(error)) throw error;
           verdict.diagnostics.push(`Failed-job evidence could not be retrieved: ${error.message}`);
         }
       }
     }
   } catch (error) {
-    verdict = classifyError(error, sha, options.profile);
+    verdict = classifyError(error, sha, options.profile, remoteName, repo ?? 'unknown repository');
   }
 
   verdict.diagnostics ??= [];
@@ -311,6 +337,10 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
         cadenceMs: policy.pollMs,
       });
     } catch (error) {
+      if (isTypedRemoteFailure(error)) {
+        verdict = classifyError(error, sha, options.profile, remoteName, repo ?? 'unknown repository');
+        return verdict;
+      }
       verdict.diagnostics.push(`Verify ref cleanup failed after retries; the scheduled sweep will remove ${ref}: ${error.message}`);
     }
   }

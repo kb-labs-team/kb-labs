@@ -1244,7 +1244,7 @@
       "severity": "error",
       "retryable": false,
       "processExitClass": "operation-failure",
-      "message": "The release index uses schema {schema}, which this launcher does not support.",
+      "message": "The release index uses a schema this launcher does not support.",
       "hint": "Update the launcher (kb-create update, or download the current launcher) and retry.",
       "structuredDetailFields": [
         "actual",

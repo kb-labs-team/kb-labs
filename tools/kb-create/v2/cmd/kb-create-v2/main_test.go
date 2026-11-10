@@ -2038,6 +2038,8 @@ func testReleaseCatalog(t *testing.T, platformVersion string) catalog.Catalog {
 	}
 	source.Platforms[0].Members = []catalog.Component{{ID: "cli-bin", Version: platformVersion, Package: "@kb-labs/cli-bin",
 		Tarball: "https://example.test/cli-bin.tgz", SHA256: "cli-bin"}}
+	source.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit",
+		Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
 	sealed, err := testfixtures.SealCatalog(source)
 	if err != nil {
 		t.Fatalf("seal command release fixture: %v", err)

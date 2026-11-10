@@ -3,8 +3,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { RemoteOperationError, runRemoteVerification } from './remote-verify-core.mjs';
+import { RemoteNotFoundError, RemoteOperationError, runRemoteVerification } from './remote-verify-core.mjs';
 import { createGitRemoteOperations } from './remote-verify-git.mjs';
+import { classifyRemoteCliError } from './remote-verify-errors.mjs';
 import { parseArgs } from './remote-verify-options.mjs';
 import { persistFailureEvidence } from './remote-verify-evidence.mjs';
 
@@ -15,7 +16,7 @@ function execute(command, args, { retryable = false, maxBuffer = 16 * 1024 * 102
   if (result.error) throw new RemoteOperationError(`${command} could not run`, { retryable, cause: result.error });
   if (result.status !== 0) {
     const diagnostic = (result.stderr || result.stdout || `${command} exited with status ${result.status}`).trim().slice(-2000);
-    throw new RemoteOperationError(`${command} operation failed: ${diagnostic}`, { retryable });
+    throw classifyRemoteCliError(command, diagnostic, { retryable });
   }
   return result.stdout.trim();
 }
@@ -24,7 +25,7 @@ function createExecutors(scratch) {
   const git = {
     headSha: async () => execute('git', ['rev-parse', 'HEAD']),
     currentBranch: async () => execute('git', ['branch', '--show-current']),
-    ...createGitRemoteOperations(execute, RemoteOperationError),
+    ...createGitRemoteOperations(execute, RemoteOperationError, RemoteNotFoundError),
   };
 
   const gh = {
