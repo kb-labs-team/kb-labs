@@ -5,13 +5,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { githubJobName } from './aggregate-remote-verdict.mjs';
+import { githubJobName, verificationSha } from './aggregate-remote-verdict.mjs';
 import { aggregateVerdict, fetchGitHubJobEvidence } from './aggregate-remote-verdict.mjs';
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const passingPrepare = () => ({
   name: 'prepare', status: 'pass', selectedPackageCount: 41, failures: [], logTail: '', durationMs: 100,
+});
+
+// case: S-262.7
+test('uses the explicitly requested SHA for a reusable verification verdict', () => {
+  const targetSha = 'a'.repeat(40);
+  assert.equal(verificationSha({ VERIFICATION_SHA: targetSha, GITHUB_SHA: 'b'.repeat(40) }), targetSha);
+  assert.equal(verificationSha({ GITHUB_SHA: targetSha }), targetSha);
 });
 
 // case: S-262.7

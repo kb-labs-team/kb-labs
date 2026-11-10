@@ -40,6 +40,7 @@ describe('executeCommandV3 environment', () => {
 });
 
 describe('executeCommandV3 plugin command result output', () => {
+  // case: S-203.1
   it('returns the normalized result and forwards backend logs by declared stream', async () => {
     const stdout: string[] = [];
     const stderr: string[] = [];
@@ -74,7 +75,7 @@ describe('executeCommandV3 plugin command result output', () => {
       expect(json).toHaveBeenCalledWith(expect.objectContaining({ ok: true, data: { complete: true } }));
       expect(stdout.join('')).toContain('worker stdout');
       expect(stderr.join('')).toContain('worker stderr');
-      expect(stderr.join('')).toContain('Analyzing with native tools...');
+      expect(stderr.join('')).not.toContain('Analyzing with native tools...');
     } finally {
       stdoutWrite.mockRestore();
       stderrWrite.mockRestore();

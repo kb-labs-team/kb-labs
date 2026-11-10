@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,18 @@ const candidateActionPath = fileURLToPath(new URL('../.github/actions/release-bu
 test('candidate job expands the shared build once and leaves only hosted-only steps afterward', () => {
   const workflow = loadYaml(readFileSync(candidateWorkflowPath, 'utf8'));
   const steps = workflow.jobs.build.steps;
+  const unitGate = workflow.jobs['unit-test-gate'];
+  assert.equal(unitGate.uses, './.github/workflows/remote-verify.yml');
+  assert.deepEqual(unitGate.with, {
+    profile: 'candidate',
+    target_sha: '${{ inputs.commit_sha }}',
+  });
+  const remoteVerify = loadYaml(readFileSync(fileURLToPath(new URL('../.github/workflows/remote-verify.yml', import.meta.url)), 'utf8'));
+  assert.equal(remoteVerify.on.workflow_call.inputs.target_sha.required, true);
+  assert.equal(remoteVerify.jobs.verdict.steps.find(step => step.name === 'Aggregate commit-bound verdict').env.VERIFICATION_SHA, '${{ inputs.target_sha || github.sha }}');
+  assert.ok(remoteVerify.jobs.prepare.steps.find(step => step.uses?.startsWith('actions/checkout@')).with.ref.includes('inputs.target_sha'), 'reusable verifier must check out the requested SHA');
+  assert.ok(workflow.jobs.build.needs.includes('unit-test-gate'), 'candidate build must wait for workspace unit verification');
+  assert.match(workflow.jobs.build.if, /needs\.unit-test-gate\.result == 'success'/, 'a red or skipped unit verdict must block candidate creation');
   const buildActionIndexes = steps.flatMap((step, index) => step.uses === './.github/actions/release-build-preflight' ? [index] : []);
   assert.equal(buildActionIndexes.length, 1, 'candidate job must invoke the shared release-build action exactly once');
 
@@ -44,6 +56,16 @@ test('candidate job expands the shared build once and leaves only hosted-only st
     assert.equal(classification, 'hosted-only', `${step.name} has an unknown coverage classification`);
     assert.ok(step.env?.RELEASE_PREFLIGHT_HOSTED_ONLY_REASON?.trim(), `${step.name} must explain its hosted-only requirement`);
   }
+});
+
+test('platform image CI runs the release-index seam test after GoReleaser produces its input', () => {
+  const workflowPath = fileURLToPath(new URL('../.github/workflows/reusable-e2e-platform-build.yml', import.meta.url));
+  const workflow = loadYaml(readFileSync(workflowPath, 'utf8'));
+  const steps = workflow.jobs.build.steps;
+  const producerIndex = steps.findIndex(step => step.run === 'bash e2e/platform/prepare-container-binaries.sh');
+  const seamIndex = steps.findIndex(step => step.run === 'node --test scripts/release-binary-manifest.preflight.mjs');
+  assert.ok(producerIndex >= 0, 'platform image CI must generate GoReleaser artifacts');
+  assert.ok(seamIndex > producerIndex, 'the real release-index seam test must run after GoReleaser output exists');
 });
 
 test('preflight reports a final CLI command failure with its exact command and status', () => {
@@ -180,15 +202,18 @@ printf 'goreleaser %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"
     const nodeCommands = readFileSync(nodeArgsPath, 'utf8');
     assert.match(nodeCommands, /\.\/cli\/bin\/dist\/bin\.js release artifact create --flow platform --out-dir \.kb\/release\/artifacts --json/);
     const snapshotPosition = nodeCommands.indexOf('tools/kb-create/scripts/prepare-binary-manifest.mjs');
+    const seamPosition = nodeCommands.indexOf('--test scripts/release-binary-manifest.preflight.mjs');
     const regressionPosition = nodeCommands.indexOf('--test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs');
     assert.ok(snapshotPosition >= 0, nodeCommands);
+    assert.ok(seamPosition > snapshotPosition, nodeCommands);
     assert.ok(regressionPosition > snapshotPosition, nodeCommands);
+    assert.ok(regressionPosition > seamPosition, nodeCommands);
     const releaseDist = process.env.KBLABS_RELEASE_DIST ?? 'dist';
     assert.ok(nodeCommands.includes(`--artifacts ${releaseDist}/artifacts.json --checksums ${releaseDist}/checksums.txt`), nodeCommands);
     assert.match(nodeCommands, /process\.env\.RELEASE_INDEX_PATH/);
     assert.deepEqual(readFileSync(goArgsPath, 'utf8').trim().split(' '), [
       '-C', 'tools/kb-create', 'run', './v2/cmd/kb-create-release-index', 'provenance',
-      path.join(root, '.kb/release/artifacts'), '0123456789abcdef0123456789abcdef01234567',
+      path.join(realpathSync(root), '.kb/release/artifacts'), '0123456789abcdef0123456789abcdef01234567',
     ]);
     const commandOrder = readFileSync(orderPath, 'utf8');
     const goreleaserPosition = commandOrder.indexOf('goreleaser release --snapshot --clean --skip=publish');

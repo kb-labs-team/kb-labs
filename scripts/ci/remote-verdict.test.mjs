@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVerdict, repositoryFromRemote, selectVerificationRun, terminalVerdict } from './remote-verdict.mjs';
+import { parseVerdict, repositoryFromRemote, selectVerificationRun, terminalVerdict, VerificationRemoteError } from './remote-verdict.mjs';
 
 const good = { schemaVersion: 1, sha: 'abc123', profile: 'candidate', status: 'pass', jobs: [{ name: 'build', status: 'pass', failures: [], logTail: '' }], internalToolResults: { status: 'pass', jobs: [] } };
 
@@ -24,9 +24,16 @@ test('classifies bounded wait expiry and API outages distinctly', () => {
   assert.throws(() => terminalVerdict('abc123', 'pass', 'unexpected'), /Invalid terminal/);
 });
 
-test('derives the repository from the configured SSH alias and HTTPS remotes', () => {
-  assert.equal(repositoryFromRemote('git@github-kb-backup:KirillBaranovOfficial/kb-labs-backup.git'), 'KirillBaranovOfficial/kb-labs-backup');
+test('derives the repository from GitHub SSH and HTTPS remotes', () => {
+  assert.equal(repositoryFromRemote('git@github.com:kb-labs-team/kb-labs.git'), 'kb-labs-team/kb-labs');
   assert.equal(repositoryFromRemote('https://github.com/kb-labs-team/kb-labs.git'), 'kb-labs-team/kb-labs');
+});
+
+test('rejects a non-GitHub remote with a typed, actionable diagnostic naming that remote', () => {
+  assert.throws(
+    () => repositoryFromRemote('https://example.com/kb-labs-team/kb-labs.git', 'origin'),
+    (error) => error instanceof VerificationRemoteError && error.code === 'VERIFICATION_REMOTE_INVALID' && /origin/.test(error.message) && /GitHub/.test(error.message),
+  );
 });
 
 test('selects only the push run for the exact branch, workflow, and SHA', () => {

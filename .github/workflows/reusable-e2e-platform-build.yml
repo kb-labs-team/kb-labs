@@ -100,6 +100,8 @@ jobs:
         uses: ./.github/actions/install-goreleaser
       - name: Prepare platform candidate binaries
         run: bash e2e/platform/prepare-container-binaries.sh
+      - name: Verify release-index preparation from GoReleaser output
+        run: node --test scripts/release-binary-manifest.preflight.mjs
 
       - name: Build platform image
         run: |

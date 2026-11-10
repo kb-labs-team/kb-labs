@@ -134,9 +134,9 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
   try {
     assert.equal(prepare.steps.find((step) => step.uses?.startsWith('actions/checkout@')).with['fetch-depth'], 0);
     assert.equal(workflow.env.DEFAULT_BRANCH, '${{ github.event.repository.default_branch }}');
-    assert.equal(prepare.env.VERIFICATION_PROFILE, "${{ github.event.inputs.profile || 'stream' }}");
-  assert.equal(prepare.env.REMOTE_BASE_REF, "${{ github.event.inputs.base_ref || '' }}");
-  assert.equal(prepare.env.REMOTE_REF_NAME, '${{ github.ref_name }}');
+    assert.equal(prepare.env.VERIFICATION_PROFILE, "${{ inputs.profile || github.event.inputs.profile || 'stream' }}");
+    assert.equal(prepare.env.REMOTE_BASE_REF, "${{ inputs.base_ref || github.event.inputs.base_ref || '' }}");
+    assert.equal(prepare.env.REMOTE_REF_NAME, '${{ github.ref_name }}');
     mkdirSync(home);
     const goPaths = execFileSync('go', ['env', 'GOPATH', 'GOMODCACHE', 'GOCACHE'], { encoding: 'utf8' }).trim().split('\n');
     const controlledGoEnv = { PATH: process.env.PATH, HOME: home, GOPATH: goPaths[0], GOMODCACHE: goPaths[1], GOCACHE: goPaths[2], GOTOOLCHAIN: 'local', GOWORK: 'off', GOFLAGS: '', GOENV: 'off' };
@@ -335,7 +335,7 @@ test('candidate workflow dispatch cannot use a forged base on a protected ref', 
     const workflow = readYaml('.github/workflows/remote-verify.yml');
     const prepareEnv = workflow.jobs.prepare.env;
     assert.equal(prepareEnv.REMOTE_REF_NAME, '${{ github.ref_name }}');
-    assert.equal(prepareEnv.REMOTE_BASE_REF, "${{ github.event.inputs.base_ref || '' }}");
+    assert.equal(prepareEnv.REMOTE_BASE_REF, "${{ inputs.base_ref || github.event.inputs.base_ref || '' }}");
     writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
     chmodSync(fakeDevkit, 0o755);
     const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
