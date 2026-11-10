@@ -24,7 +24,12 @@ async function createInstallerFixture(): Promise<{ dir: string; pnpmPath: string
 describe('PnpmInstaller registry tarball integrity', () => {
   it('verifies the registry bytes and preserves their integrity for direct tarball specs', async () => {
     const { dir, pnpmPath } = await createInstallerFixture();
-    const tarball = Buffer.from('registry tarball bytes');
+    const packageDir = path.join(dir, 'package');
+    await fs.mkdir(packageDir);
+    await fs.writeFile(path.join(packageDir, 'package.json'), JSON.stringify({ name: '@kb-labs/demo', version: '1.2.3', peerDependencies: { '@kb-labs/sdk': '^1.2.3' } }));
+    const archive = path.join(dir, 'package.tgz');
+    execFileSync('tar', ['-czf', archive, '-C', dir, 'package']);
+    const tarball = await fs.readFile(archive);
     const expectedIntegrity = `sha512-${crypto.createHash('sha512').update(tarball).digest('base64')}`;
     vi.stubGlobal('fetch', vi.fn(async () => new Response(tarball)));
     const projectDir = path.join(dir, 'project');

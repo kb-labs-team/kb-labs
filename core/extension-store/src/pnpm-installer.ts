@@ -127,7 +127,37 @@ async function prepareVerifiedTarball(
 
   const tarballPath = path.join(projectDir, `${name.replaceAll('/', '-')}.tgz`);
   await fs.writeFile(tarballPath, tarball);
+  await rejectPlatformRuntimeDependencies(tarballPath, name);
   return pathToFileURL(tarballPath).href;
+}
+
+async function rejectPlatformRuntimeDependencies(tarballPath: string, name: string): Promise<void> {
+  let manifest: Record<string, unknown>;
+  try {
+    const { stdout } = await execa('tar', ['-xOf', tarballPath, 'package/package.json']);
+    const parsed: unknown = JSON.parse(stdout);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('package manifest must be an object');
+    }
+    manifest = parsed as Record<string, unknown>;
+  } catch (err) {
+    throw new StoreInstallError(
+      { plugin: name },
+      `Unable to read package manifest from verified tarball: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  for (const field of ['dependencies', 'optionalDependencies'] as const) {
+    const dependencies = manifest[field];
+    if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) { continue; }
+    const platformDependency = Object.keys(dependencies).find((dependency) => dependency.startsWith('@kb-labs/'));
+    if (platformDependency) {
+      throw new StoreInstallError(
+        { plugin: name },
+        `Package manifest declares platform runtime dependency "${platformDependency}" in ${field}.`,
+      );
+    }
+  }
 }
 
 async function writeSyntheticProject(projectDir: string, name: string, spec: string): Promise<void> {
