@@ -791,13 +791,14 @@ importers:
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
 
   adapters/vibeproxy:
+    dependencies:
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/sdk
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../sdk/sdk
       '@types/node':
         specifier: ^24.3.3
         version: 24.12.2

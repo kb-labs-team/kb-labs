@@ -94,6 +94,7 @@ class GatewayStepTests(unittest.TestCase):
     def test_llm_provider_fixture_restores_platform_config_after_success(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,
+            "KB_JOURNEY_SELECTED_STEPS": "S-017.1,S-017.2,S-017.3,S-017.4,S-017.5,S-018.1,S-018.2,S-018.3,S-189.2,S-189.3,S-189.4,S-189.5,S-189.6,S-189.7,S-190.1,S-190.2",
             "KB_JOURNEY_PROJECT_ROOT": "/fixture/project-a",
             "KB_JOURNEY_PROJECT_B_ROOT": "/fixture/project-b",
             "KB_JOURNEY_PROJECT_ID": "project-a",
@@ -146,6 +147,7 @@ class GatewayStepTests(unittest.TestCase):
     def test_stream_failure_claim_requires_typed_error_and_healthy_gateway(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,
+            "KB_JOURNEY_SELECTED_STEPS": "S-017.1,S-017.2,S-017.3,S-017.4,S-017.5,S-018.1,S-018.2,S-018.3,S-189.2,S-189.3,S-189.4,S-189.5,S-189.6,S-189.7,S-190.1,S-190.2",
             "KB_JOURNEY_BASE_URL": "http://gateway.test",
             "KB_JOURNEY_PROJECT_ROOT": directory,
             "KB_JOURNEY_PROJECT_ID": "project-a",
@@ -207,6 +209,7 @@ class GatewayStepTests(unittest.TestCase):
     def test_provider_steps_require_deterministic_content_in_the_json_result(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,
+            "KB_JOURNEY_SELECTED_STEPS": "S-017.1,S-017.2,S-017.3,S-017.4,S-017.5,S-018.1,S-018.2,S-018.3,S-189.2,S-189.3,S-189.4,S-189.5,S-189.6,S-189.7,S-190.1,S-190.2",
             "KB_JOURNEY_PROJECT_ROOT": "/fixture/project-a",
             "KB_JOURNEY_PROJECT_B_ROOT": "/fixture/project-b",
             "KB_JOURNEY_PROJECT_ID": "project-a",
@@ -352,6 +355,7 @@ class GatewayStepTests(unittest.TestCase):
     def test_fake_cli_and_http_failures_make_every_gateway_claim_red(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,
+            "KB_JOURNEY_SELECTED_STEPS": "S-017.1,S-017.2,S-017.3,S-017.4,S-017.5,S-018.1,S-018.2,S-018.3,S-189.2,S-189.3,S-189.4,S-189.5,S-189.6,S-189.7,S-190.1,S-190.2",
             "KB_JOURNEY_BASE_URL": "http://gateway.test",
             "KB_JOURNEY_PROJECT_ROOT": directory,
             "KB_JOURNEY_PROJECT_ID": "project-a",
