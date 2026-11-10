@@ -47,7 +47,7 @@ export const JOB_TRANSITIONS: Record<JobState, readonly JobState[]> = {
   // without ever passing through 'running' (see engine.ts `skipJob`).
   // 'failed': `cleanupStaleRuns` force-fails abandoned jobs that never even
   // started (daemon restarted before they were dequeued).
-  queued: ['running', 'cancelled', 'skipped', 'success', 'failed'],
+  queued: ['running', 'cancelled', 'skipped', 'success', 'failed', 'waiting'],
   // 'queued': a running job can be re-parked back to queued mid-execution
   // when its current step legitimately pauses (waiting_child reconciliation
   // resume, gate restart) — not a hard requirement that 'running' only ever
@@ -59,6 +59,7 @@ export const JOB_TRANSITIONS: Record<JobState, readonly JobState[]> = {
   // while the parent job is still sitting in 'waiting_child'.
   waiting_approval: ['queued', 'cancelled', 'failed'],
   waiting_child: ['queued', 'cancelled', 'failed'],
+  waiting: ['queued', 'cancelled', 'failed'],
   interrupted: ['queued', 'cancelled'],
   success: [],
   // 'queued': `markJobFailed` schedules a retry after a transient failure —
@@ -66,7 +67,7 @@ export const JOB_TRANSITIONS: Record<JobState, readonly JobState[]> = {
   // "this attempt failed", not always "this job is permanently done"; the
   // caller decides whether to retry before ever reaching a real terminal
   // outcome for the job.
-  failed: ['queued'],
+  failed: ['queued', 'waiting'],
   cancelled: [],
   skipped: [],
 }
@@ -79,13 +80,14 @@ export const STEP_TRANSITIONS: Record<StepState, readonly StepState[]> = {
   // `workflow:` invocation steps never call `markStepStarted` at all (see
   // worker.ts's step loop) — they park straight from 'queued', there's no
   // "running" phase to observe for these step kinds.
-  queued: ['running', 'skipped', 'cancelled', 'success', 'waiting_approval', 'waiting_child'],
+  queued: ['running', 'skipped', 'cancelled', 'success', 'waiting_approval', 'waiting_child', 'waiting'],
   running: ['success', 'failed', 'waiting_approval', 'waiting_child'],
   waiting_approval: ['success', 'failed'],
   // Reconciliation may restart a parked child-invocation step back to `running`.
   waiting_child: ['success', 'failed', 'running'],
+  waiting: ['queued', 'cancelled', 'failed'],
   success: [],
-  failed: [],
+  failed: ['waiting'],
   cancelled: [],
   skipped: [],
   dlq: [],
@@ -126,8 +128,8 @@ const TERMINAL_STATES: Record<EntityKind, ReadonlySet<string>> = {
  */
 const PARKED_STATES: Record<EntityKind, ReadonlySet<string>> = {
   run: new Set([]),
-  job: new Set(['waiting_approval', 'waiting_child', 'interrupted']),
-  step: new Set(['waiting_approval', 'waiting_child']),
+  job: new Set(['waiting_approval', 'waiting_child', 'waiting', 'interrupted']),
+  step: new Set(['waiting_approval', 'waiting_child', 'waiting']),
 }
 
 /**

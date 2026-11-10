@@ -11,6 +11,7 @@
 
 import { execaCommand } from 'execa';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { WORKFLOW_ACTIVITY_META_KEY } from '@kb-labs/workflow-contracts';
 
 /**
  * Commands that are always blocked (dangerous)
@@ -315,7 +316,7 @@ export function mergeJsonOutputs(output: ShellOutput, warn?: (msg: string) => vo
 async function shellHandler(
   ctx: PluginContextV3,
   input: ShellInput,
-): Promise<Record<string, unknown>> {
+): Promise<{ workflowStepResult: Record<string, unknown> }> {
   const { command, env = {}, throwOnError = false } = input;
 
   // Security: Check for dangerous commands
@@ -393,7 +394,12 @@ async function shellHandler(
       (stream === 'stderr' ? stderrBatcher : stdoutBatcher).add(line, lineNo);
     };
 
+    const emitActivity = () => {
+      void ctx.api.events.emit('log.line', { stream: 'stdout', line: '', lineNo: 0, meta: { [WORKFLOW_ACTIVITY_META_KEY]: true } });
+    };
+
     proc.stdout?.on('data', (chunk: Buffer) => {
+      emitActivity();
       const text = chunk.toString();
       stdoutFull += text;
       stdoutBuf += text;
@@ -403,6 +409,7 @@ async function shellHandler(
     });
 
     proc.stderr?.on('data', (chunk: Buffer) => {
+      emitActivity();
       const text = chunk.toString();
       stderrFull += text;
       stderrBuf += text;
@@ -477,7 +484,11 @@ async function shellHandler(
       }
     }
 
-    return mergeJsonOutputs(output, (msg) => ctx.platform.logger.warn(`[shell] ${msg}`));
+    const resultData = mergeJsonOutputs(output, (msg) => ctx.platform.logger.warn(`[shell] ${msg}`));
+    if (output.exitCode !== 0 && !resultData.error) {
+      resultData.error = { kind: 'exit', retryable: false, exitCode: output.exitCode, message: `Command exited with code ${output.exitCode}`, code: 'COMMAND_FAILED' };
+    }
+    return { workflowStepResult: resultData };
   } catch (error) {
     // Handle execution error
     if (error && typeof error === 'object' && 'exitCode' in error) {
@@ -495,7 +506,7 @@ async function shellHandler(
       });
 
       if (!throwOnError) {
-        return { ...output };
+        return { workflowStepResult: { ...output, error: { kind: 'exit', retryable: false, exitCode: output.exitCode, message: `Command exited with code ${output.exitCode}`, code: 'COMMAND_FAILED' } } };
       }
     }
 

@@ -95,6 +95,7 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
       outputs?: Record<string, unknown>;
       resolvedInputs?: Record<string, unknown>;
       error?: { message: string; code?: string; details?: Record<string, unknown> } | string;
+      wait?: WorkflowRun['jobs'][number]['steps'][number]['wait'];
       spec?: Record<string, unknown>;
     }>;
   }>;
