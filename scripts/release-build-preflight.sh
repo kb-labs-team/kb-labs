@@ -171,6 +171,7 @@ if [[ "$flow" == platform ]]; then
     --release-tag "v${binary_version}-binaries" \
     --version "$binary_version" \
     --output .kb/release/binary-manifest.json
+  run_step env KBLABS_RELEASE_DIST="$release_dist" node --test scripts/release-binary-manifest.preflight.mjs
   run_step env KBLABS_RELEASE_DIST="$release_dist" node --test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs
   short_commit="${commit_sha:0:9}"
   if [[ "$mode" == candidate ]]; then

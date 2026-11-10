@@ -292,7 +292,7 @@ export function fetchGitHubJobEvidence({ repository, runId, plannedJobs, runComm
 
 function main() {
   const [resultsDir, out] = process.argv.slice(2);
-  const sha = process.env.GITHUB_SHA;
+  const sha = verificationSha(process.env);
   const selectedPackageCount = Number(process.env.REMOTE_SELECTED_PACKAGE_COUNT);
   const rawMatrix = process.env.REMOTE_TEST_MATRIX;
   if (!resultsDir || !out || !/^[0-9a-f]{40}$/.test(sha ?? '') || !Number.isSafeInteger(selectedPackageCount) || selectedPackageCount < 0) throw new Error('Usage: set GITHUB_SHA and REMOTE_SELECTED_PACKAGE_COUNT, then run node scripts/ci/aggregate-remote-verdict.mjs <results-dir> <output>.');
@@ -338,6 +338,10 @@ function main() {
   }
   process.stdout.write(`Remote verification ${verdict.status} for ${sha}; wrote ${out}.\n`);
   if (verdict.status !== 'pass') process.exitCode = 1;
+}
+
+export function verificationSha(env) {
+  return env.VERIFICATION_SHA ?? env.GITHUB_SHA;
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) main();
