@@ -71,7 +71,7 @@ interface DiagnosticReport {
   summary: {
     totalEvents: number;
     iterations: number;
-    totalTokens: number;
+    totalTokens?: number;
     durationMs: number;
     success: boolean;
     confidence: number;
@@ -90,7 +90,7 @@ interface DiagnosticReport {
     }>;
     tokenGrowth: Array<{
       iteration: number;
-      cumulativeTokens: number;
+      cumulativeTokens?: number;
     }>;
     systemPromptChanges: Array<{
       iteration: number;
@@ -174,10 +174,21 @@ function analyzeDiagnostics(taskId: string, events: DetailedTraceEntry[]): Diagn
   const agentEnd = [...normalized].reverse().find(e => e.type === 'agent:end');
   const iterationStarts = normalized.filter(e => e.type === 'iteration:start');
   const iterations = iterationStarts.length || Math.max(0, ...normalized.map(e => e.iteration));
-  const llmEndTokens = normalized
-    .filter(e => e.type === 'llm:end')
-    .reduce((sum, e) => sum + (Number(e.data.tokensUsed) || 0), 0);
-  const totalTokens = Number(agentEnd?.data?.tokensUsed) || llmEndTokens;
+  const llmEndEvents = normalized.filter(e => e.type === 'llm:end');
+  const llmEndMeasurements = llmEndEvents.map(e =>
+    typeof e.data.tokensUsed === 'number' && Number.isFinite(e.data.tokensUsed)
+      ? e.data.tokensUsed
+      : undefined,
+  );
+  const allLlmUsageMeasured = llmEndMeasurements.length > 0
+    && llmEndMeasurements.every((tokens): tokens is number => tokens !== undefined);
+  const llmEndTokens = allLlmUsageMeasured
+    ? llmEndMeasurements.reduce((sum, tokens) => sum + tokens, 0)
+    : undefined;
+  const agentEndTokens = typeof agentEnd?.data?.tokensUsed === 'number' && Number.isFinite(agentEnd.data.tokensUsed)
+    ? agentEnd.data.tokensUsed
+    : undefined;
+  const totalTokens = agentEndTokens ?? llmEndTokens;
   const lastNormalized = normalized[normalized.length - 1];
   const durationMs = Number(agentEnd?.data?.durationMs)
     || (taskStart && lastNormalized
@@ -233,10 +244,15 @@ function analyzeDiagnostics(taskId: string, events: DetailedTraceEntry[]): Diagn
   truncatedToolOutputs = contextTrims.length;
 
   // Token growth per iteration (from iteration:end cumulativeTokens)
-  const tokenGrowth: Array<{ iteration: number; cumulativeTokens: number }> = [];
-  let cumulative = 0;
+  const tokenGrowth: Array<{ iteration: number; cumulativeTokens?: number }> = [];
+  let cumulative: number | undefined = 0;
   for (const e of normalized.filter(e => e.type === 'llm:end')) {
-    cumulative += Number(e.data.tokensUsed) || 0;
+    const measuredTokens = typeof e.data.tokensUsed === 'number' && Number.isFinite(e.data.tokensUsed)
+      ? e.data.tokensUsed
+      : undefined;
+    cumulative = cumulative === undefined || measuredTokens === undefined
+      ? undefined
+      : cumulative + measuredTokens;
     tokenGrowth.push({ iteration: e.iteration, cumulativeTokens: cumulative });
   }
 
@@ -507,7 +523,7 @@ function printReport(ctx: PluginCommandContextV3, report: DiagnosticReport): voi
   // Summary
   const status = summary.success ? '  OK' : '  FAILED';
   ctx.ui.write(`\n${status}\n`);
-  ctx.ui.write(`  Iterations: ${summary.iterations} | Tokens: ${summary.totalTokens} | Time: ${(summary.durationMs / 1000).toFixed(1)}s`);
+  ctx.ui.write(`  Iterations: ${summary.iterations} | Tokens: ${summary.totalTokens?.toLocaleString() ?? 'n/a'} | Time: ${(summary.durationMs / 1000).toFixed(1)}s`);
   if (summary.confidence > 0) {ctx.ui.write(` | Confidence: ${summary.confidence}`);}
   ctx.ui.write('\n');
 
@@ -544,7 +560,7 @@ function printReport(ctx: PluginCommandContextV3, report: DiagnosticReport): voi
   if (contextHealth.tokenGrowth.length > 0) {
     ctx.ui.write('  Tokens: ');
     ctx.ui.write(contextHealth.tokenGrowth
-      .map(t => `iter${t.iteration}=${t.cumulativeTokens}`)
+      .map(t => `iter${t.iteration}=${t.cumulativeTokens?.toLocaleString() ?? 'n/a'}`)
       .join(' -> '));
     ctx.ui.write('\n');
   }

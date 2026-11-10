@@ -187,8 +187,8 @@ function printHumanReadable(
     // Show details for important events
     if ((type === 'llm:end' || type === 'llm:call') && typeEvents.length > 0) {
       const llmEvent = typeEvents[0] as unknown as LLMIterationEvent;
-      const tokens = llmEvent?.data?.tokensUsed ?? llmEvent?.response?.usage?.totalTokens ?? 0;
-      ctx.ui.write(`    Tokens: ${tokens}\n`);
+      const tokens = llmEvent?.data?.tokensUsed ?? llmEvent?.response?.usage?.totalTokens;
+      ctx.ui.write(`    Tokens: ${tokens?.toLocaleString() ?? 'n/a'}\n`);
     } else if (type === 'tool:end' || type === 'tool:start' || type === 'tool:execution') {
       const toolNames = (typeEvents as unknown as ToolIterationEvent[]).map((e) => e?.data?.toolName || e?.tool?.name || 'unknown');
       ctx.ui.write(`    Tools: ${[...new Set(toolNames)].join(', ')}\n`);

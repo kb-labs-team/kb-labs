@@ -63,9 +63,9 @@ export interface StatsResponse {
 
   llm: {
     calls: number;
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
   };
 
   tools: {
