@@ -1,14 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RemoteOperationError, runRemoteVerification } from './remote-verify-core.mjs';
+import { RemoteAuthError, RemoteNotFoundError, RemoteOperationError, runRemoteVerification } from './remote-verify-core.mjs';
 import { createGitRemoteOperations } from './remote-verify-git.mjs';
+import { classifyRemoteCliError } from './remote-verify-errors.mjs';
 
 const sha = 'a'.repeat(40);
 const pass = { schemaVersion: 1, sha, profile: 'stream', status: 'pass', jobs: [{ name: 'build', status: 'pass', failures: [], logTail: '' }] };
 const candidatePass = { ...pass, profile: 'candidate', internalToolResults: { status: 'pass', jobs: [] } };
 const run = (overrides = {}) => { const head_branch = overrides.head_branch ?? 'verify/stream/20261025T120000Z-' + sha; return { id: 17, event: 'push', head_branch, head_sha: sha, path: '.github/workflows/remote-verify.yml', display_title: `Remote agent verification (stream) for ${head_branch}`, status: 'completed', conclusion: 'success', ...overrides }; };
 
-function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteRef = async () => {}, resolveRef = async () => sha, remoteUrl = 'https://github.com/kb-labs-team/kb-labs.git', remoteUrlError, failureJobs = async () => ({ jobs: [] }), failureLogs = async () => '', failureArtifacts = async () => [] } = {}) {
+function harness({ listRuns, getRun, downloadVerdict = async () => pass, pushRef = async () => {}, deleteRef = async () => {}, resolveRef = async () => sha, remoteUrl = 'https://github.com/kb-labs-team/kb-labs.git', remoteUrlError, failureJobs = async () => ({ jobs: [] }), failureLogs = async () => '', failureArtifacts = async () => [] } = {}) {
   let time = 0;
   const calls = { pushes: [], resolves: [], deletes: [], remoteUrls: [], repositories: [], lists: 0, gets: 0, ghTimes: [], remoteTimes: [], artifacts: 0 };
   const recordGh = () => { calls.ghTimes.push(time); calls.remoteTimes.push(time); };
@@ -26,7 +27,7 @@ function harness({ listRuns, getRun, downloadVerdict = async () => pass, deleteR
     headSha: async () => sha,
     currentBranch: async () => 'agent/x231-test-strategy',
     remoteUrl: async (remoteName) => { calls.remoteUrls.push(remoteName); if (remoteUrlError) throw remoteUrlError; return remoteUrl; },
-    pushRef: async (remoteName, ref, pushedSha) => { recordGitRemote(); calls.pushes.push({ remote: remoteName, ref, sha: pushedSha }); },
+    pushRef: async (remoteName, ref, pushedSha) => { recordGitRemote(); calls.pushes.push({ remote: remoteName, ref, sha: pushedSha }); return pushRef(remoteName, ref, pushedSha); },
     resolveRef: async (remoteName, ref) => { recordGitRemote(); calls.resolves.push({ remote: remoteName, ref }); return resolveRef(remoteName, ref); },
     deleteRef: async (remoteName, ref) => { recordGitRemote(); calls.deletes.push({ remote: remoteName, ref }); return deleteRef(remoteName, ref); },
   };
@@ -39,15 +40,101 @@ test('Git adapter sends the same configured remote to push, lookup, and delete c
   const operations = createGitRemoteOperations((command, args) => {
     commands.push({ command, args });
     return `${sha}\trefs/heads/verify/stream`;
-  }, RemoteOperationError);
+  }, RemoteOperationError, RemoteNotFoundError);
   await operations.pushRef('origin', 'verify/stream', sha);
   assert.equal(await operations.resolveRef('origin', 'verify/stream'), sha);
   await operations.deleteRef('origin', 'verify/stream');
-  assert.deepEqual(commands.map(({ args }) => args.slice(0, 2)), [
+  assert.deepEqual(commands.map(({ args }) => args.slice(4, 6)), [
     ['push', 'origin'],
     ['ls-remote', 'origin'],
     ['push', 'origin'],
   ]);
+  for (const { command, args } of commands) {
+    assert.equal(command, 'git');
+    assert.deepEqual(args.slice(0, 4), ['-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential']);
+  }
+});
+
+// case: S-262.10
+test('a git permission denial returns an auth verdict immediately with a recovery step', async () => {
+  let attempts = 0;
+  const h = harness({
+    pushRef: async () => { attempts += 1; throw classifyRemoteCliError('git', 'remote: Permission to kb-labs-team/kb-labs.git denied', { retryable: true }); },
+  });
+  const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'auth');
+  assert.equal(attempts, 1);
+  assert.match(verdict.diagnostics.join('\n'), /origin/);
+  assert.match(verdict.diagnostics.join('\n'), /kb-labs-team\/kb-labs/);
+  assert.match(verdict.diagnostics.join('\n'), /gh auth status/);
+  assert.match(verdict.diagnostics.join('\n'), /push access/);
+});
+
+// case: S-262.10
+test('a git permission denial while deleting the verification ref replaces a pass with auth', async () => {
+  const h = harness({ deleteRef: async () => { throw new RemoteAuthError('Authentication failed while deleting the verification ref'); } });
+  const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'auth');
+  assert.match(verdict.diagnostics.join('\n'), /gh auth status/);
+  assert.equal(h.calls.deletes.length, 1);
+});
+
+// case: S-262.11
+test('a GitHub API permission denial is typed and is not retried', async () => {
+  let attempts = 0;
+  const h = harness({ listRuns: async () => { attempts += 1; throw classifyRemoteCliError('gh', 'HTTP 403: Resource not accessible by integration', { retryable: true }); } });
+  const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'auth');
+  assert.equal(attempts, 1);
+  assert.match(verdict.diagnostics.join('\n'), /kb-labs-team\/kb-labs/);
+  assert.match(verdict.diagnostics.join('\n'), /gh auth status/);
+});
+
+// case: S-262.11
+test('an empty successful ls-remote result returns not-found without retrying', async () => {
+  let attempts = 0;
+  const git = createGitRemoteOperations(() => { attempts += 1; return ''; }, RemoteOperationError, RemoteNotFoundError);
+  const h = harness({ resolveRef: (remote, ref) => git.resolveRef(remote, ref) });
+  const verdict = await runRemoteVerification({ attach: `verify/stream/20261025T120000Z-${sha}`, out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'not-found');
+  assert.equal(attempts, 1);
+});
+
+test('a failed ls-remote transport remains retryable', async () => {
+  const operations = createGitRemoteOperations(() => { throw new RemoteOperationError('connection reset', { retryable: true }); }, RemoteOperationError, RemoteNotFoundError);
+  await assert.rejects(operations.resolveRef('origin', 'verify/stream'), (error) => error.retryable === true);
+});
+
+test('a missing GitHub workflow resource is reported as not-found rather than outage', async () => {
+  let attempts = 0;
+  const h = harness({ listRuns: async () => { attempts += 1; throw classifyRemoteCliError('gh', 'HTTP 404: workflow remote-verify.yml not found', { retryable: true }); } });
+  const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'not-found');
+  assert.equal(attempts, 1);
+  assert.match(verdict.diagnostics.join('\n'), /kb-labs-team\/kb-labs/);
+  assert.match(verdict.diagnostics.join('\n'), /gh workflow list --repo kb-labs-team\/kb-labs/);
+});
+
+// case: S-262.12
+test('transient server and connection failures are retried', async () => {
+  let attempts = 0;
+  const h = harness({ listRuns: async (_repo, branch) => {
+    attempts += 1;
+    if (attempts === 1) throw new RemoteOperationError('HTTP 503 service unavailable', { retryable: true });
+    if (attempts === 2) throw new RemoteOperationError('connection reset by peer', { retryable: true });
+    return [run({ head_branch: branch })];
+  } });
+  const verdict = await runRemoteVerification({ stream: 'stream', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'pass');
+  assert.equal(attempts, 3);
+});
+
+test('CLI HTTP 403 and 404 failures are typed while 5xx and connection resets remain retryable', () => {
+  assert.ok(classifyRemoteCliError('git', 'remote: Permission to kb-labs-team/kb-labs.git denied', { retryable: true }) instanceof RemoteAuthError);
+  assert.ok(classifyRemoteCliError('gh', 'HTTP 403: Resource not accessible by integration', { retryable: true }) instanceof RemoteAuthError);
+  assert.ok(classifyRemoteCliError('gh', 'HTTP 404: workflow remote-verify.yml not found', { retryable: true }) instanceof RemoteNotFoundError);
+  assert.equal(classifyRemoteCliError('gh', 'HTTP 503: service unavailable', { retryable: true }).retryable, true);
+  assert.equal(classifyRemoteCliError('git', 'connection reset by peer', { retryable: true }).retryable, true);
 });
 
 // case: S-262.6

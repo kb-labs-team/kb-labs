@@ -798,6 +798,20 @@ func TestPlanTargetsReleaseManagedBinaryByLogicalID(t *testing.T) {
 	}
 }
 
+// case: S-053.5
+func TestPlanReportsMissingReleaseBinaryAsIncompatibleOnSupportedOS(t *testing.T) {
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{
+		ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+		Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}},
+		Binaries: []catalog.Binary{{ID: "kb-create", OS: "darwin", Arch: "arm64", URL: "https://example.test/kb-create", Filename: "kb-create", SHA256: "binary"}},
+	}}}
+	_, err := planWithFixtureProvenanceOptions(contracts.InstallRequest{PlatformRoot: t.TempDir()}, source, Options{OS: "linux", Arch: "amd64"})
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != contracts.CodeIncompatibleComponents {
+		t.Fatalf("missing Linux release binary = %#v, want %s", err, contracts.CodeIncompatibleComponents)
+	}
+}
+
 // case: S-284.10
 func TestPlanRejectsUnsupportedOperatingSystemWithCataloguedPlatformError(t *testing.T) {
 	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelCanary: "2.0.0-canary.abc123456"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0-canary.abc123456", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Binaries: []catalog.Binary{{ID: "kb-create", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-create-linux-amd64", Filename: "kb-create-linux-amd64", SHA256: "binary"}}}}}
@@ -932,11 +946,36 @@ func TestScenarioMarketplaceUsesReleaseIndexPin(t *testing.T) {
 	}
 	for _, plugin := range source.Plugins {
 		if plugin.Package == "@kb-labs/commit" {
-			if plan.Request.MarketplaceInstallSpecs[0] != plugin.Package+"@"+plugin.Version {
-				t.Fatalf("spec = %q, want release pin %s@%s", plan.Request.MarketplaceInstallSpecs[0], plugin.Package, plugin.Version)
+			if plan.Request.MarketplaceInstallSpecs[0] != plugin.ID+"@"+plugin.Version {
+				t.Fatalf("spec = %q, want release-index pin %s@%s", plan.Request.MarketplaceInstallSpecs[0], plugin.ID, plugin.Version)
 			}
 			return
 		}
 	}
 	t.Fatal("fixture missing commit")
+}
+
+func TestScenarioMarketplacePreservesReleaseIndexIdentityWhenPackageDiffers(t *testing.T) {
+	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plugin catalog.Component
+	for index := range source.Plugins {
+		if source.Plugins[index].ID == "@kb-labs/commit" {
+			source.Plugins[index].Package = "@kb/commit"
+			plugin = source.Plugins[index]
+		}
+	}
+	source, err = catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{plugin.ID}}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := plan.Request.MarketplaceInstallSpecs[0], plugin.ID+"@"+plugin.Version; got != want {
+		t.Fatalf("pinned request = %q, want release-index identity %q (package %q is not the requested identity)", got, want, plugin.Package)
+	}
 }

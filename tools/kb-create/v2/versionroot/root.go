@@ -139,8 +139,13 @@ func canonicalPath(path string) (string, error) {
 	return contracts.CanonicalPath(path)
 }
 
+// IsSupportedOS reports whether the installer supports the operating system.
+func IsSupportedOS(goos string) bool {
+	return goos == "linux" || goos == "darwin"
+}
+
 func supportedOS(goos string) error {
-	if goos == "linux" || goos == "darwin" {
+	if IsSupportedOS(goos) {
 		return nil
 	}
 	return contracts.UnsupportedPlatformDiagnostic(goos, runtime.GOARCH)

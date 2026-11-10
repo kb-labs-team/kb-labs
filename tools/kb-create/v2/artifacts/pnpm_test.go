@@ -53,6 +53,38 @@ func TestPnpmUsesVerifiedTarballInsteadOfRegistrySpec(t *testing.T) {
 	}
 }
 
+func TestPnpmKeepsDistinctTarballsForArtifactsWithSameID(t *testing.T) {
+	daemon := packageTarball(t, "@kb-labs/workflow-daemon", "2.120.1", nil)
+	entry := packageTarball(t, "@kb-labs/workflow-entry", "2.120.1", nil)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data := map[string][]byte{"/daemon.tgz": daemon, "/entry.tgz": entry}[r.URL.Path]
+		if len(data) == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	t.Cleanup(server.Close)
+	items, runner := sealedTestRunner(t,
+		contracts.Artifact{ID: "workflow", Package: "@kb-labs/workflow-daemon", Version: "2.120.1", SHA256: fmt.Sprintf("%x", sha256.Sum256(daemon)), Tarball: server.URL + "/daemon.tgz", ResolvedURL: server.URL + "/daemon.tgz"},
+		contracts.Artifact{ID: "workflow", Package: "@kb-labs/workflow-entry", Version: "2.120.1", SHA256: fmt.Sprintf("%x", sha256.Sum256(entry)), Tarball: server.URL + "/entry.tgz", ResolvedURL: server.URL + "/entry.tgz"},
+	)
+	cacheRoot := t.TempDir()
+	if err := (Pnpm{Root: t.TempDir(), CacheRoot: cacheRoot, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		path := filepath.Join(cacheRoot, "packages", item.SHA256+".tgz")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s cache entry: %v", item.Package, err)
+		}
+		if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != item.SHA256 {
+			t.Fatalf("%s cache digest = %s, want %s", item.Package, actual, item.SHA256)
+		}
+	}
+}
+
 func TestPnpmRejectsCorruptTarballBeforeWritingSharedCache(t *testing.T) {
 	valid := []byte("sealed package bytes")
 	corrupt := []byte("corrupt package bytes")

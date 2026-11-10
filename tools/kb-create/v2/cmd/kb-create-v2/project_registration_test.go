@@ -255,23 +255,23 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`},
 	}
 	source.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
+	release, err := sealTestCatalog(t, source)
+	if err != nil {
+		t.Fatal(err)
+	}
 	planInput, err := json.Marshal(unregisteredBeforeRepeat.Plan.Request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	planned := transport.PlanWith(planInput, source, resolve.Options{})
+	planned := transport.PlanWith(planInput, release, resolve.Options{})
 	if !planned.OK {
-		t.Fatalf("resolve repeat-install plan for the live-host fixture: %v", planned.Error)
+		t.Fatalf("resolve repeat-install plan for the live-host fixture: %#v", planned.Error)
 	}
 	unregisteredBeforeRepeat.Plan = *planned.Plan
 	unregisteredBeforeRepeat.Plan.Request.PlatformRoot = activeRoot
 	unregisteredBeforeRepeat.Plan.ServiceGraph.Services[0].Port = port
 	unregisteredBeforeRepeat.Verification.HostHealthURL = hostSpec.HealthURL
 	if err := receipt.Write(activeRoot, unregisteredBeforeRepeat); err != nil {
-		t.Fatal(err)
-	}
-	release, err := sealTestCatalog(t, source)
-	if err != nil {
 		t.Fatal(err)
 	}
 	indexBytes, err := json.Marshal(release)

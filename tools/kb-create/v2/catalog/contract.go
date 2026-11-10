@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/kb-labs/clikit/diag"
 	"strings"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/semrange"
 )
@@ -27,9 +27,9 @@ func CheckSchema(schema string) error {
 		}
 	}
 	err := contracts.NewDiag(contracts.CodeIndexSchemaUnsupported,
-		fmt.Sprintf("The release index uses schema %q, which this launcher does not support (supported: %s).", schema, strings.Join(SupportedSchemas, ", ")),
+		"The release index uses a schema this launcher does not support.",
 		"Update the launcher (kb-create update, or download the current launcher) and retry.", nil)
-	err.Meta = map[string]any{"schema": schema, "supported": strings.Join(SupportedSchemas, ",")}
+	err.Meta = map[string]any{"actual": schema, "supported": strings.Join(SupportedSchemas, ",")}
 	return err
 }
 

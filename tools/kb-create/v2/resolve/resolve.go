@@ -82,7 +82,7 @@ func (verified verifiedPlanCatalog) plan(request contracts.InstallRequest, optio
 				if _, err := semrange.ParseVersion(plugin.Version); err != nil {
 					return contracts.ResolvedInstallPlan{}, fmt.Errorf("invalid release-index version for %s: %w", spec, err)
 				}
-				request.MarketplaceInstallSpecs[index] = plugin.Package + "@" + plugin.Version
+				request.MarketplaceInstallSpecs[index] = plugin.ID + "@" + plugin.Version
 				matched = true
 				break
 			}
@@ -200,11 +200,7 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		}
 	}
 	binaryForTarget := false
-	binaryForOS := false
 	for _, binary := range platform.Binaries {
-		if binary.OS == goos {
-			binaryForOS = true
-		}
 		if binary.OS == goos && binary.Arch == goarch {
 			binaryForTarget = true
 			if source.Compatibility != nil {
@@ -216,7 +212,7 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		}
 	}
 	if len(platform.Binaries) > 0 && !binaryForTarget {
-		if !binaryForOS {
+		if !versionroot.IsSupportedOS(goos) {
 			return contracts.ResolvedInstallPlan{}, contracts.UnsupportedPlatformDiagnostic(goos, goarch)
 		}
 		return contracts.ResolvedInstallPlan{}, incompatibleBinary("kb-create", platform.Version, goos+"/"+goarch, "binary "+goos+"/"+goarch, "platform "+platform.Version+" ships no binary for this OS/arch")
