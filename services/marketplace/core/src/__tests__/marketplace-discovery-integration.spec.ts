@@ -24,7 +24,10 @@ import { MarketplaceService, type MarketplaceServiceOptions } from '../marketpla
 const integrationRegistryKeys = crypto.generateKeyPairSync('ed25519');
 const integrationRegistryPublicKey = integrationRegistryKeys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
 
-function makeMarketplaceService(options: Omit<MarketplaceServiceOptions, 'logger' | 'sources'> & { source: PackageSource }): MarketplaceService {
+function makeMarketplaceService(options: Omit<MarketplaceServiceOptions, 'logger' | 'sources' | 'resolveSelectedAdapterSlot'> & {
+  source: PackageSource;
+  resolveSelectedAdapterSlot?: MarketplaceServiceOptions['resolveSelectedAdapterSlot'];
+}): MarketplaceService {
   const { withShareToken: _withShareToken, ...base } = options.source;
   const source: MarketplaceSource = {
     ...base,
@@ -45,7 +48,7 @@ function makeMarketplaceService(options: Omit<MarketplaceServiceOptions, 'logger
       };
     },
   };
-  return new MarketplaceService({ platformRoot: options.platformRoot, projectRoot: options.projectRoot, extensionStore: options.extensionStore, strategies: options.strategies, sources: [source], logger: new NoOpLogger() });
+  return new MarketplaceService({ platformRoot: options.platformRoot, projectRoot: options.projectRoot, extensionStore: options.extensionStore, strategies: options.strategies, sources: [source], logger: new NoOpLogger(), resolveSelectedAdapterSlot: options.resolveSelectedAdapterSlot ?? (async () => null) });
 }
 
 describe('Marketplace → Discovery Integration', () => {
@@ -217,6 +220,7 @@ describe('Marketplace → Discovery Integration', () => {
       extensionStore: store,
       sources: [source],
       logger: new NoOpLogger(),
+      resolveSelectedAdapterSlot: async () => null,
     });
 
     await expect(marketplace.install({ scope: 'project', projectRoot }, [identity]))
@@ -248,6 +252,7 @@ describe('Marketplace → Discovery Integration', () => {
       extensionStore: store,
       sources: [validSource],
       logger: new NoOpLogger(),
+      resolveSelectedAdapterSlot: async () => null,
     });
 
     await expect(tamperedMarketplace.install({ scope: 'project', projectRoot }, [identity]))

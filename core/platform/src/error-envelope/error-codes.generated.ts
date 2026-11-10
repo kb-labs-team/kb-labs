@@ -5,6 +5,7 @@ import type { ErrorAction, ErrorEnvelope, PlatformDiagnostic } from './types.js'
  */
 export type CatalogErrorCode =
   | "ACQUIRE_TIMEOUT"
+  | "KB_ADAPTER_CONFIG_REQUIRED"
   | "KB_ADAPTER_CREDENTIALS_MISSING"
   | "KB_ADAPTER_MANIFEST_LOAD"
   | "KB_ADAPTER_NOT_CONFIGURED"
@@ -128,6 +129,7 @@ export type CatalogErrorCode =
   | "KB_INSTALL_TOOLCHAIN_UNSUPPORTED"
   | "KB_INSTALL_UNSUPPORTED_PLATFORM"
   | "KB_INSTALL_WIZARD_INPUT_INVALID"
+  | "KB_MARKETPLACE_ADAPTER_SELECTED"
   | "KB_MARKETPLACE_AUTH_FAILED"
   | "KB_MARKETPLACE_IDENTITY_RESERVED"
   | "KB_MARKETPLACE_INSTALL_FAILED"
@@ -293,6 +295,7 @@ export type CatalogErrorCode =
 
 export interface CatalogTemplateParameters {
   "ACQUIRE_TIMEOUT": { "acquireTimeoutMs": string };
+  "KB_ADAPTER_CONFIG_REQUIRED": { "nextCommand": string; "path": string };
   "KB_ADAPTER_CREDENTIALS_MISSING": { "command": string; "credential": string; "path": string; "service": string };
   "KB_ADAPTER_MANIFEST_LOAD": Record<never, never>;
   "KB_ADAPTER_NOT_CONFIGURED": { "command": string; "service": string };
@@ -416,6 +419,7 @@ export interface CatalogTemplateParameters {
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": Record<never, never>;
   "KB_INSTALL_UNSUPPORTED_PLATFORM": { "arch": string; "os": string };
   "KB_INSTALL_WIZARD_INPUT_INVALID": Record<never, never>;
+  "KB_MARKETPLACE_ADAPTER_SELECTED": { "package": string; "slot": string };
   "KB_MARKETPLACE_AUTH_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_IDENTITY_RESERVED": { "package": string; "scope": string };
   "KB_MARKETPLACE_INSTALL_FAILED": { "package": string; "scope": string; "sourceName": string };
@@ -581,6 +585,7 @@ export interface CatalogTemplateParameters {
 
 export interface CatalogProducerInputFor {
   "ACQUIRE_TIMEOUT": CatalogProducerCommon & ({ details: { "acquireTimeoutMs": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "acquireTimeoutMs": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "acquireTimeoutMs"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "acquireTimeoutMs"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
+  "KB_ADAPTER_CONFIG_REQUIRED": CatalogProducerCommon & ({ details: { "nextCommand": string; "path": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "nextCommand"?: string; "path": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "nextCommand": string; "path"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "nextCommand"?: string; "path"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_ADAPTER_CREDENTIALS_MISSING": CatalogProducerCommon & ({ details: { "command": string; "credential": string; "path": string; "service": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "command"?: string; "credential": string; "path"?: string; "service": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "command": string; "credential": string; "path": string; "service"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "command"?: string; "credential"?: string; "path"?: string; "service"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_ADAPTER_MANIFEST_LOAD": CatalogProducerCommon & ({ details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_ADAPTER_NOT_CONFIGURED": CatalogProducerCommon & ({ details: { "command": string; "service": string; "adapter"?: string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "command"?: string; "service": string; "adapter"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "command": string; "service"?: string; "adapter"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "command"?: string; "service"?: string; "adapter"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
@@ -704,6 +709,7 @@ export interface CatalogProducerInputFor {
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": CatalogProducerCommon & ({ details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_INSTALL_UNSUPPORTED_PLATFORM": CatalogProducerCommon & ({ details: { "arch": string; "os": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "arch": string; "os": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "arch"?: string; "os"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "arch"?: string; "os"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_INSTALL_WIZARD_INPUT_INVALID": CatalogProducerCommon & ({ details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint: string });
+  "KB_MARKETPLACE_ADAPTER_SELECTED": CatalogProducerCommon & ({ details: { "package": string; "slot": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "package": string; "slot": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "package"?: string; "slot": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "package"?: string; "slot"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_MARKETPLACE_AUTH_FAILED": CatalogProducerCommon & ({ details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_MARKETPLACE_IDENTITY_RESERVED": CatalogProducerCommon & ({ details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_MARKETPLACE_INSTALL_FAILED": CatalogProducerCommon & ({ details: { "package": string; "scope": string; "source"?: string }; templateValues?: { "sourceName"?: string }; message?: never; hint?: never } | { details: { "package": string; "scope"?: string; "source"?: string }; templateValues?: { "sourceName"?: string }; message?: never; hint: string } | { details: { "package": string; "scope": string; "source"?: string }; templateValues?: { "sourceName"?: string }; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string; "source"?: string }; templateValues?: { "sourceName"?: string }; message: string; hint: string });
@@ -871,6 +877,7 @@ export interface CatalogProducerCommon { cause?: string; correlationId?: string;
 
 export interface CatalogDetailsFor {
   "ACQUIRE_TIMEOUT": { "acquireTimeoutMs": string };
+  "KB_ADAPTER_CONFIG_REQUIRED": { "nextCommand": string; "path": string };
   "KB_ADAPTER_CREDENTIALS_MISSING": { "command": string; "credential": string; "path": string; "service": string };
   "KB_ADAPTER_MANIFEST_LOAD": Record<string, never>;
   "KB_ADAPTER_NOT_CONFIGURED": { "command": string; "service": string; "adapter"?: string };
@@ -994,6 +1001,7 @@ export interface CatalogDetailsFor {
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": Record<string, never>;
   "KB_INSTALL_UNSUPPORTED_PLATFORM": { "arch": string; "os": string };
   "KB_INSTALL_WIZARD_INPUT_INVALID": Record<string, never>;
+  "KB_MARKETPLACE_ADAPTER_SELECTED": { "package": string; "slot": string };
   "KB_MARKETPLACE_AUTH_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_IDENTITY_RESERVED": { "package": string; "scope": string };
   "KB_MARKETPLACE_INSTALL_FAILED": { "package": string; "scope": string; "source"?: string };
@@ -1186,6 +1194,7 @@ export const catalogEnvironmentVariables = {
 
 export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
   "ACQUIRE_TIMEOUT": ["acquireTimeoutMs"],
+  "KB_ADAPTER_CONFIG_REQUIRED": ["nextCommand","path"],
   "KB_ADAPTER_CREDENTIALS_MISSING": ["command","credential","path","service"],
   "KB_ADAPTER_MANIFEST_LOAD": [],
   "KB_ADAPTER_NOT_CONFIGURED": ["command","service"],
@@ -1309,6 +1318,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
   "KB_INSTALL_UNSUPPORTED_PLATFORM": ["arch","os"],
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
+  "KB_MARKETPLACE_ADAPTER_SELECTED": ["package","slot"],
   "KB_MARKETPLACE_AUTH_FAILED": ["package","scope"],
   "KB_MARKETPLACE_IDENTITY_RESERVED": ["package","scope"],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope"],
@@ -1474,6 +1484,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
 
 export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
   "ACQUIRE_TIMEOUT": ["acquireTimeoutMs"],
+  "KB_ADAPTER_CONFIG_REQUIRED": ["path"],
   "KB_ADAPTER_CREDENTIALS_MISSING": ["credential","service"],
   "KB_ADAPTER_MANIFEST_LOAD": [],
   "KB_ADAPTER_NOT_CONFIGURED": ["service"],
@@ -1597,6 +1608,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
   "KB_INSTALL_UNSUPPORTED_PLATFORM": ["arch","os"],
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
+  "KB_MARKETPLACE_ADAPTER_SELECTED": ["package","slot"],
   "KB_MARKETPLACE_AUTH_FAILED": [],
   "KB_MARKETPLACE_IDENTITY_RESERVED": [],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package"],
@@ -1762,6 +1774,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
 
 export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
   "ACQUIRE_TIMEOUT": [],
+  "KB_ADAPTER_CONFIG_REQUIRED": ["nextCommand"],
   "KB_ADAPTER_CREDENTIALS_MISSING": ["command","credential","path"],
   "KB_ADAPTER_MANIFEST_LOAD": [],
   "KB_ADAPTER_NOT_CONFIGURED": ["command"],
@@ -1885,6 +1898,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
   "KB_INSTALL_UNSUPPORTED_PLATFORM": [],
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
+  "KB_MARKETPLACE_ADAPTER_SELECTED": ["slot"],
   "KB_MARKETPLACE_AUTH_FAILED": ["package","scope"],
   "KB_MARKETPLACE_IDENTITY_RESERVED": ["package","scope"],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope"],
@@ -2050,6 +2064,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
 
 export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
   "ACQUIRE_TIMEOUT": ["acquireTimeoutMs"],
+  "KB_ADAPTER_CONFIG_REQUIRED": ["nextCommand","path"],
   "KB_ADAPTER_CREDENTIALS_MISSING": ["command","credential","path","service"],
   "KB_ADAPTER_MANIFEST_LOAD": [],
   "KB_ADAPTER_NOT_CONFIGURED": ["command","service"],
@@ -2173,6 +2188,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
   "KB_INSTALL_UNSUPPORTED_PLATFORM": ["arch","os"],
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
+  "KB_MARKETPLACE_ADAPTER_SELECTED": ["package","slot"],
   "KB_MARKETPLACE_AUTH_FAILED": ["package","scope"],
   "KB_MARKETPLACE_IDENTITY_RESERVED": ["package","scope"],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope","sourceName"],
@@ -2338,6 +2354,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
 
 export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
   "ACQUIRE_TIMEOUT": ["acquireTimeoutMs"],
+  "KB_ADAPTER_CONFIG_REQUIRED": ["path"],
   "KB_ADAPTER_CREDENTIALS_MISSING": ["credential","service"],
   "KB_ADAPTER_MANIFEST_LOAD": [],
   "KB_ADAPTER_NOT_CONFIGURED": ["service"],
@@ -2461,6 +2478,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
   "KB_INSTALL_UNSUPPORTED_PLATFORM": ["arch","os"],
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
+  "KB_MARKETPLACE_ADAPTER_SELECTED": ["package","slot"],
   "KB_MARKETPLACE_AUTH_FAILED": [],
   "KB_MARKETPLACE_IDENTITY_RESERVED": [],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package","sourceName"],
@@ -2626,6 +2644,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
 
 export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
   "ACQUIRE_TIMEOUT": [],
+  "KB_ADAPTER_CONFIG_REQUIRED": ["nextCommand"],
   "KB_ADAPTER_CREDENTIALS_MISSING": ["command","credential","path"],
   "KB_ADAPTER_MANIFEST_LOAD": [],
   "KB_ADAPTER_NOT_CONFIGURED": ["command"],
@@ -2749,6 +2768,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
   "KB_INSTALL_UNSUPPORTED_PLATFORM": [],
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
+  "KB_MARKETPLACE_ADAPTER_SELECTED": ["slot"],
   "KB_MARKETPLACE_AUTH_FAILED": ["package","scope"],
   "KB_MARKETPLACE_IDENTITY_RESERVED": ["package","scope"],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope"],
@@ -2914,6 +2934,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
 
 export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
   "ACQUIRE_TIMEOUT": [],
+  "KB_ADAPTER_CONFIG_REQUIRED": [],
   "KB_ADAPTER_CREDENTIALS_MISSING": [],
   "KB_ADAPTER_MANIFEST_LOAD": [],
   "KB_ADAPTER_NOT_CONFIGURED": ["adapter","command","service"],
@@ -3037,6 +3058,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
   "KB_INSTALL_UNSUPPORTED_PLATFORM": [],
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
+  "KB_MARKETPLACE_ADAPTER_SELECTED": ["package","slot"],
   "KB_MARKETPLACE_AUTH_FAILED": [],
   "KB_MARKETPLACE_IDENTITY_RESERVED": [],
   "KB_MARKETPLACE_INSTALL_FAILED": ["source"],
@@ -3202,6 +3224,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
 
 export interface CatalogMessageTemplateParameters {
   "ACQUIRE_TIMEOUT": { "acquireTimeoutMs": string };
+  "KB_ADAPTER_CONFIG_REQUIRED": { "path": string };
   "KB_ADAPTER_CREDENTIALS_MISSING": { "credential": string; "service": string };
   "KB_ADAPTER_MANIFEST_LOAD": Record<never, never>;
   "KB_ADAPTER_NOT_CONFIGURED": { "service": string };
@@ -3325,6 +3348,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": Record<never, never>;
   "KB_INSTALL_UNSUPPORTED_PLATFORM": { "arch": string; "os": string };
   "KB_INSTALL_WIZARD_INPUT_INVALID": Record<never, never>;
+  "KB_MARKETPLACE_ADAPTER_SELECTED": { "package": string; "slot": string };
   "KB_MARKETPLACE_AUTH_FAILED": Record<never, never>;
   "KB_MARKETPLACE_IDENTITY_RESERVED": Record<never, never>;
   "KB_MARKETPLACE_INSTALL_FAILED": { "package": string };
@@ -3490,6 +3514,7 @@ export interface CatalogMessageTemplateParameters {
 
 export interface CatalogHintTemplateParameters {
   "ACQUIRE_TIMEOUT": Record<never, never>;
+  "KB_ADAPTER_CONFIG_REQUIRED": { "nextCommand": string };
   "KB_ADAPTER_CREDENTIALS_MISSING": { "command": string; "credential": string; "path": string };
   "KB_ADAPTER_MANIFEST_LOAD": Record<never, never>;
   "KB_ADAPTER_NOT_CONFIGURED": { "command": string };
@@ -3613,6 +3638,7 @@ export interface CatalogHintTemplateParameters {
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": Record<never, never>;
   "KB_INSTALL_UNSUPPORTED_PLATFORM": Record<never, never>;
   "KB_INSTALL_WIZARD_INPUT_INVALID": Record<never, never>;
+  "KB_MARKETPLACE_ADAPTER_SELECTED": { "slot": string };
   "KB_MARKETPLACE_AUTH_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_IDENTITY_RESERVED": { "package": string; "scope": string };
   "KB_MARKETPLACE_INSTALL_FAILED": { "package": string; "scope": string };
@@ -3778,6 +3804,7 @@ export interface CatalogHintTemplateParameters {
 
 export interface CatalogRuntimeTemplateParameters {
   "ACQUIRE_TIMEOUT": Record<never, never>;
+  "KB_ADAPTER_CONFIG_REQUIRED": Record<never, never>;
   "KB_ADAPTER_CREDENTIALS_MISSING": Record<never, never>;
   "KB_ADAPTER_MANIFEST_LOAD": Record<never, never>;
   "KB_ADAPTER_NOT_CONFIGURED": Record<never, never>;
@@ -3901,6 +3928,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": Record<never, never>;
   "KB_INSTALL_UNSUPPORTED_PLATFORM": Record<never, never>;
   "KB_INSTALL_WIZARD_INPUT_INVALID": Record<never, never>;
+  "KB_MARKETPLACE_ADAPTER_SELECTED": Record<never, never>;
   "KB_MARKETPLACE_AUTH_FAILED": Record<never, never>;
   "KB_MARKETPLACE_IDENTITY_RESERVED": Record<never, never>;
   "KB_MARKETPLACE_INSTALL_FAILED": { "sourceName"?: string };
