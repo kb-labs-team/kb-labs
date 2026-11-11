@@ -624,8 +624,13 @@ func TestUpdateInstallsTheSingleVerifiedArtifactResponse(t *testing.T) {
 	plan := planIn(root, "new-plan-123456")
 	plan.Artifacts = []contracts.Artifact{item}
 	cacheRoot := filepath.Join(root, ".kb", "v2", "cache")
+	packages, err := artifacts.NewPnpm(artifacts.PnpmConfig{Root: root, CacheRoot: cacheRoot,
+		PackageManagerRoot: filepath.Join(root, "state"), Registry: "https://registry.test", ReleaseCatalog: verified})
+	if err != nil {
+		t.Fatal(err)
+	}
 	installer := artifacts.Composite{
-		Packages: artifacts.Pnpm{Root: root, CacheRoot: cacheRoot, ReleaseCatalog: verified},
+		Packages: packages,
 		Binaries: artifacts.Binaries{Root: root, CacheRoot: cacheRoot},
 	}
 	_, snapshot, err := Update(context.Background(), plan, Dependencies{Artifacts: installer, Probe: &fakeProbe{}, Clock: fixedClock{time.Unix(4, 0)}})

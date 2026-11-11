@@ -55,13 +55,23 @@ func TestV2NetworkFailureIsReportedBeforePnpmMutation(t *testing.T) {
 	}))
 	defer server.Close()
 	root := t.TempDir()
-	err := (artifacts.Pnpm{
-		Root:   root,
-		Client: server.Client(),
-	}).Install([]contracts.Artifact{{
-		ID: "platform", Package: "@kb/platform", Version: "2.0.0",
-		Tarball: server.URL + "/platform.tgz", SHA256: "not-the-response",
-	}})
+	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := catalog.VerifyCatalog(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform := source.Platforms[0]
+	item := contracts.Artifact{ID: platform.ID, Package: platform.Package, Version: platform.Version,
+		Tarball: server.URL + "/platform.tgz", ResolvedURL: server.URL + "/platform.tgz", SHA256: platform.SHA256}
+	installer, err := artifacts.NewPnpm(artifacts.PnpmConfig{Root: root, CacheRoot: filepath.Join(root, "cache"),
+		PackageManagerRoot: filepath.Join(root, "state"), Registry: server.URL, ReleaseCatalog: verified, Client: server.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = installer.Install([]contracts.Artifact{item})
 	if err == nil {
 		t.Fatal("expected registry failure")
 	}

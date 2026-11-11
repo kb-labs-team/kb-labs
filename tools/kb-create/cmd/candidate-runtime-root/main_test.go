@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -12,18 +13,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
 func TestRenderFailureWritesDiagnosticAndSelectsFailureStatus(t *testing.T) {
 	var stderr bytes.Buffer
-	status := renderFailure(errors.New("candidate installation failed"), &stderr)
+	hint := "Correct the cause and rerun: " + invocationCommand()
+	status := renderFailure(contracts.NewDiag(contracts.CodeApplyFailed, "Candidate install failed.", hint, errors.New("verified release index is required")), &stderr)
 	if status.Code() == 0 {
 		t.Fatal("expected a non-zero status")
 	}
 	if stderr.Len() == 0 {
 		t.Fatal("expected a rendered diagnostic on stderr")
+	}
+	if !strings.Contains(stderr.String(), contracts.CodeApplyFailed) || !strings.Contains(stderr.String(), "verified release index is required") || !strings.Contains(stderr.String(), hint) {
+		t.Fatalf("rendered diagnostic lacks code, cause or next step: %q", stderr.String())
 	}
 }
 
@@ -50,19 +56,48 @@ func TestRegistryReportsMetadataEncodingFailure(t *testing.T) {
 	}
 }
 
-func TestCandidatePackageInstallerUsesInstallRootPackageManagerState(t *testing.T) {
+func TestCandidatePackageInstallerConsumesLoadedVerifiedCatalog(t *testing.T) {
 	layout := versionroot.Layout{Root: t.TempDir()}
 	stage := filepath.Join(layout.Root, "versions", "candidate")
 	const registryURL = "http://127.0.0.1:49183"
-	installer, err := candidatePackageInstaller(layout, stage, registryURL)
+	index, err := catalog.Seal(catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: []catalog.CompatibilityLabel{
+			{ID: "platform@2.0.0", Kind: "platform", ArtifactID: "platform", Version: "2.0.0", Requires: []catalog.CompatibilityRelation{{Label: "sdk@2.0.0"}}, Status: "prepared", ValidatedBy: []string{"candidate-runtime-root-test"}},
+			{ID: "sdk@2.0.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"candidate-runtime-root-test"}},
+		}},
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+		}},
+		SDKs: []catalog.Component{{ID: "sdk", Version: "2.0.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk.tgz", SHA256: "sdk"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if installer.PackageManagerRoot != layout.PackageManagerStateDir() {
-		t.Fatalf("package manager root = %q, want install-root state %q", installer.PackageManagerRoot, layout.PackageManagerStateDir())
+	indexPath := filepath.Join(t.TempDir(), "release-index.json")
+	contents, err := json.Marshal(index)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if installer.Registry != registryURL {
-		t.Fatalf("package manager registry = %q, want Compose registry %q", installer.Registry, registryURL)
+	if err := os.WriteFile(indexPath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := catalog.LoadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseCatalog, err := catalog.VerifyCatalog(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer, err := candidatePackageInstaller(layout, stage, registryURL, releaseCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installer.Install(nil); err != nil {
+		t.Fatalf("installer could not consume the verified candidate catalog: %v", err)
 	}
 }
 

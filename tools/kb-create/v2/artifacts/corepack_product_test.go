@@ -30,9 +30,9 @@ printf 'process.stdout.write("product-pnpm-ok")' > "$COREPACK_HOME/v1/pnpm/` + t
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("COREPACK_NPM_REGISTRY", "http://127.0.0.1:4874")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	p := Pnpm{PackageManagerRoot: root, Registry: "http://127.0.0.1:4873"}
+	p := mustPnpm(t, PnpmConfig{PackageManagerRoot: root, Registry: "http://127.0.0.1:4873"})
 	var output bytes.Buffer
-	if err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.Registry}).Run(context.Background(), &output, "pnpm", "--version"); err != nil {
+	if err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry}).Run(context.Background(), &output, "pnpm", "--version"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "product-pnpm-ok") {
@@ -51,15 +51,15 @@ func TestProductCorepackProvisionFailureNamesSource(t *testing.T) {
 	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	p := Pnpm{PackageManagerRoot: root, Registry: "http://127.0.0.1:1"}
-	err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.Registry}).Run(context.Background(), &bytes.Buffer{}, "pnpm", "--version")
-	if err == nil || !strings.Contains(err.Error(), toolchain.SupportedPnpm) || !strings.Contains(err.Error(), "Corepack's default npm registry") || strings.Contains(err.Error(), p.Registry) || strings.Contains(err.Error(), "workspace root") {
+	p := mustPnpm(t, PnpmConfig{PackageManagerRoot: root, Registry: "http://127.0.0.1:1"})
+	err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry}).Run(context.Background(), &bytes.Buffer{}, "pnpm", "--version")
+	if err == nil || !strings.Contains(err.Error(), toolchain.SupportedPnpm) || !strings.Contains(err.Error(), "Corepack's default npm registry") || strings.Contains(err.Error(), p.config.Registry) || strings.Contains(err.Error(), "workspace root") {
 		t.Fatalf("diagnostic = %v", err)
 	}
 }
 
 func TestProductCorepackHomeAndRegistryAreShared(t *testing.T) {
-	p := Pnpm{PackageManagerRoot: t.TempDir(), Registry: "http://127.0.0.1:4873"}
+	p := mustPnpm(t, PnpmConfig{PackageManagerRoot: t.TempDir(), Registry: "http://127.0.0.1:4873"})
 	env := strings.Join(p.packageManagerEnvironment(), "\n")
 	if !strings.Contains(env, "COREPACK_HOME="+p.corepackHome()) || strings.Contains(env, "COREPACK_NPM_REGISTRY=") {
 		t.Fatalf("Corepack environment = %s", env)
@@ -80,7 +80,7 @@ func TestProductCorepackHomeAndRegistryAreShared(t *testing.T) {
 // case: S-285.15
 func TestNativeBuildCacheIsInsidePackageManagerRoot(t *testing.T) {
 	root := t.TempDir()
-	p := Pnpm{PackageManagerRoot: root}
+	p := mustPnpm(t, PnpmConfig{PackageManagerRoot: root})
 	want := "npm_config_devdir=" + filepath.Join(root, "node-gyp")
 	for _, item := range p.packageManagerEnvironment() {
 		if item == want {
@@ -97,8 +97,8 @@ func TestCorepackStdoutFailureAppearsInProvisioningDiagnostic(t *testing.T) {
 	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	p := Pnpm{PackageManagerRoot: root, Registry: "http://127.0.0.1:1"}
-	err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.Registry}).Run(context.Background(), &bytes.Buffer{}, "pnpm", "--version")
+	p := mustPnpm(t, PnpmConfig{PackageManagerRoot: root, Registry: "http://127.0.0.1:1"})
+	err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry}).Run(context.Background(), &bytes.Buffer{}, "pnpm", "--version")
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || !strings.Contains(failure.Reason, "HTTP 404 fixture registry") || !strings.Contains(failure.Cause, "HTTP 404 fixture registry") {
 		t.Fatalf("failure = %#v", err)

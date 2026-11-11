@@ -1873,12 +1873,12 @@ func TestArtifactExecutorLeavesUnprojectedStageWithoutSharedProjections(t *testi
 		_, _ = writer.Write(data)
 	}))
 	defer server.Close()
-	executor, err := newArtifactExecutor(layout, stage, "", false, io.Discard,
-		productionPackageFixtureRunner{})
+	releaseCatalog := verifiedFixtureCatalog(t, release)
+	executor, err := newArtifactExecutor(layout, stage, "https://registry.test", false, io.Discard,
+		productionPackageFixtureRunner{}, releaseCatalog, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	executor.Packages.ReleaseCatalog = verifiedFixtureCatalog(t, release)
 	items := []contracts.Artifact{
 		{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/binary", ResolvedURL: server.URL + "/binary", SHA256: digests["binary"], Target: "bin/kb-create"},
 		{ID: component.ID, Kind: "plugin", Version: component.Version, Package: component.Package, Tarball: server.URL + "/package", ResolvedURL: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, component.Package, component.Version)},

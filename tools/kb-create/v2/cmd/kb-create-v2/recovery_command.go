@@ -11,6 +11,7 @@ import (
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/artifacts"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
@@ -269,7 +270,20 @@ func runRecoveryMutation(ctx context.Context, input recoveryRuntimeInput, root s
 	defer transcript.Close()
 	var installer runtime.ArtifactInstaller = input.Artifacts
 	if installer == nil {
-		executor, executorErr := newArtifactExecutor(layout, activeRoot, input.Registry, false, transcript, input.ArtifactRunner)
+		activeReceipt, receiptErr := receipt.Read(platformRoot)
+		if receiptErr != nil {
+			return recoveryMutationResult{}, asDiag(receiptErr)
+		}
+		activeRelease, verifyErr := catalog.DecodeVerified(activeReceipt.Plan.ReleaseCatalog)
+		if verifyErr != nil {
+			return recoveryMutationResult{}, indexFailure(verifyErr, contracts.ShellCommand("kb-create", operation, "--platform-root", platformRoot))
+		}
+		registry := input.Registry
+		if registry == "" {
+			registry = activeReceipt.Plan.Registry
+		}
+		executor, executorErr := newArtifactExecutor(layout, activeRoot, registry, false, transcript, input.ArtifactRunner,
+			activeRelease, nil, platformRoot)
 		if executorErr != nil {
 			return recoveryMutationResult{}, asDiag(executorErr)
 		}

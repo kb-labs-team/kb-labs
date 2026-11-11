@@ -413,7 +413,7 @@ func TestRestoreRejectsChangedDistBeforeAcceptingRestoredPackages(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), []byte("lockfileVersion: '9.0'\npackages:\n  '@kb-labs/sample@1.0.0':\n    resolution:\n      integrity: sha512-expected\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err = (Pnpm{Root: root, Runner: &fakeRunner{}, ReleaseCatalog: testReleaseCatalog(t, item)}).Restore([]contracts.Artifact{item})
+	err = (mustPnpm(t, PnpmConfig{Root: root, Runner: &fakeRunner{}, ReleaseCatalog: testReleaseCatalog(t, item)})).Restore([]contracts.Artifact{item})
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != contracts.CodeProvenanceMismatch ||
 		!strings.Contains(failure.Reason, expected) {

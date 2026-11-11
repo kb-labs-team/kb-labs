@@ -45,7 +45,7 @@ func TestPnpmUsesVerifiedTarballInsteadOfRegistrySpec(t *testing.T) {
 	root := t.TempDir()
 	cacheRoot := t.TempDir()
 	items, runner := sealedTestRunner(t, contracts.Artifact{ID: "platform", Package: "@kb/platform", Version: "2.0.0", SHA256: sum, Tarball: server.URL, ResolvedURL: server.URL})
-	if err := (Pnpm{Root: root, CacheRoot: cacheRoot, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, CacheRoot: cacheRoot, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items); err != nil {
 		t.Fatal(err)
 	}
 	want := "file:" + filepath.Join(cacheRoot, "packages", sum+".tgz")
@@ -71,7 +71,7 @@ func TestPnpmKeepsDistinctTarballsForArtifactsWithSameID(t *testing.T) {
 		contracts.Artifact{ID: "workflow", Package: "@kb-labs/workflow-entry", Version: "2.120.1", SHA256: fmt.Sprintf("%x", sha256.Sum256(entry)), Tarball: server.URL + "/entry.tgz", ResolvedURL: server.URL + "/entry.tgz"},
 	)
 	cacheRoot := t.TempDir()
-	if err := (Pnpm{Root: t.TempDir(), CacheRoot: cacheRoot, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: t.TempDir(), CacheRoot: cacheRoot, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items); err != nil {
 		t.Fatal(err)
 	}
 	for _, item := range items {
@@ -98,7 +98,7 @@ func TestPnpmRejectsCorruptTarballBeforeWritingSharedCache(t *testing.T) {
 	item := contracts.Artifact{ID: "platform", Kind: "package", Package: "@kb/platform", Version: "2.0.0",
 		SHA256: digest, Tarball: server.URL + "/platform.tgz", ResolvedURL: server.URL + "/platform.tgz"}
 
-	if _, err := (Pnpm{CacheRoot: cacheRoot, Client: server.Client()}).tarball(item); err == nil {
+	if _, err := (mustPnpm(t, PnpmConfig{CacheRoot: cacheRoot, Client: server.Client()})).tarball(item); err == nil {
 		t.Fatal("corrupt sealed package tarball unexpectedly passed verification")
 	}
 	cachePath := filepath.Join(cacheRoot, "packages", digest+".tgz")
@@ -113,16 +113,18 @@ func TestPnpmTarballRequiresResolvedSource(t *testing.T) {
 	}))
 	defer server.Close()
 	item := contracts.Artifact{ID: "platform", Package: "@kb/platform", Version: "2.0.0", SHA256: strings.Repeat("a", 64), Tarball: server.URL}
-	if _, err := (Pnpm{CacheRoot: t.TempDir()}).tarball(item); err == nil || !strings.Contains(err.Error(), "resolved download URL") {
+	if _, err := (mustPnpm(t, PnpmConfig{CacheRoot: t.TempDir()})).tarball(item); err == nil || !strings.Contains(err.Error(), "resolved download URL") {
 		t.Fatalf("error = %v, want missing resolved download URL", err)
 	}
 }
 
-func TestPnpmRestoreRequiresSharedCacheForSealedArtifacts(t *testing.T) {
-	item := contracts.Artifact{ID: "platform", Package: "@kb/platform", Version: "2.0.0", SHA256: strings.Repeat("a", 64), Tarball: "https://registry.test/platform.tgz"}
-	err := (Pnpm{Root: t.TempDir(), Runner: &fakeRunner{}, ReleaseCatalog: testReleaseCatalog(t, item)}).Restore([]contracts.Artifact{item})
-	if err == nil || !strings.Contains(err.Error(), "install root shared cache") {
-		t.Fatalf("restore error = %v, want missing shared cache contract", err)
+func TestNewPnpmRequiresSharedCacheBeforeRestore(t *testing.T) {
+	root := t.TempDir()
+	_, err := NewPnpm(PnpmConfig{Root: root, PackageManagerRoot: filepath.Join(root, "state"),
+		Registry: "https://registry.test", ReleaseCatalog: testReleaseCatalog(t)})
+	var diagnostic *diag.Diag
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed {
+		t.Fatalf("constructor error = %T %v, want missing shared cache diagnostic", err, err)
 	}
 }
 
@@ -144,7 +146,7 @@ func TestPnpmCommandKeepsPackageManagerStateInsideInstallRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := snapshotTestTree(t, home, root)
-	manager := Pnpm{Root: root, CacheRoot: cacheRoot, PackageManagerRoot: filepath.Join(root, "state", "package-manager")}
+	manager := mustPnpm(t, PnpmConfig{Root: root, CacheRoot: cacheRoot, PackageManagerRoot: filepath.Join(root, "state", "package-manager")})
 	if err := manager.prepare(); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +173,7 @@ func TestPnpmCommandKeepsPackageManagerStateInsideInstallRoot(t *testing.T) {
 			t.Fatalf("pnpm %s: %v", command, err)
 		}
 	}
-	if err := (Pnpm{Root: root, PackageManagerRoot: filepath.Join(root, "state", "package-manager")}).run("install"); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, PackageManagerRoot: filepath.Join(root, "state", "package-manager")})).run("install"); err != nil {
 		t.Fatalf("pnpm install without a separate artifact cache root: %v", err)
 	}
 	assertOutsideTestRootUnchanged(t, before, snapshotTestTree(t, home, root))
@@ -322,7 +324,7 @@ func TestPnpmMinimumReleaseAgeExemptsOnlySealedExactVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	var provisionLog strings.Builder
-	pm := Pnpm{Root: root, PackageManagerRoot: packageManagerRoot, Registry: server.URL, Log: &provisionLog, ReleaseCatalog: testReleaseCatalog(t, itemV1, itemV2)}
+	pm := mustPnpm(t, PnpmConfig{Root: root, PackageManagerRoot: packageManagerRoot, Registry: server.URL, Log: &provisionLog, ReleaseCatalog: testReleaseCatalog(t, itemV1, itemV2)})
 	if err := pm.Install([]contracts.Artifact{itemV1}); err != nil {
 		t.Fatalf("install first sealed exact version: %#v; process output: %s", err, diag.RedactText(provisionLog.String()))
 	}
@@ -343,7 +345,7 @@ func TestPnpmMinimumReleaseAgeExemptsOnlySealedExactVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	var transcript strings.Builder
-	err = (Pnpm{Root: freshRoot, PackageManagerRoot: packageManagerRoot, Registry: server.URL + "/fresh", Log: &transcript, ReleaseCatalog: testReleaseCatalog(t, sealedFreshDependency)}).Install([]contracts.Artifact{sealedFreshDependency})
+	err = (mustPnpm(t, PnpmConfig{Root: freshRoot, PackageManagerRoot: packageManagerRoot, Registry: server.URL + "/fresh", Log: &transcript, ReleaseCatalog: testReleaseCatalog(t, sealedFreshDependency)})).Install([]contracts.Artifact{sealedFreshDependency})
 	if err == nil {
 		requestLogMu.Lock()
 		requests := append([]string(nil), requestLog...)
@@ -478,7 +480,7 @@ func TestPnpmReportsExpectedAndReceivedTarballChecksums(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(payload) }))
 	defer server.Close()
 	runner := &fakeRunner{}
-	err := (Pnpm{Root: t.TempDir(), CacheRoot: t.TempDir(), Runner: runner}).Install([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2.0.0", SHA256: sum, Tarball: server.URL, ResolvedURL: server.URL}})
+	err := (mustPnpm(t, PnpmConfig{Root: t.TempDir(), CacheRoot: t.TempDir(), Runner: runner})).Install([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2.0.0", SHA256: sum, Tarball: server.URL, ResolvedURL: server.URL}})
 	if err == nil || !strings.Contains(err.Error(), "expected "+sum) || !strings.Contains(err.Error(), fmt.Sprintf("got %x", sha256.Sum256(payload))) || len(runner.calls) != 0 {
 		t.Fatalf("error/calls = %v / %#v", err, runner.calls)
 	}
@@ -508,7 +510,7 @@ func TestPnpmSealedArtifactOverridesFollowInstallUpdateAndRollback(t *testing.T)
 		}
 	}
 	runner := &fakeRunner{packages: []contracts.Artifact{old, oldRuntime}}
-	pm := Pnpm{Root: root, CacheRoot: cacheRoot, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, sealed...)}
+	pm := mustPnpm(t, PnpmConfig{Root: root, CacheRoot: cacheRoot, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, sealed...)})
 	if err := pm.Install([]contracts.Artifact{old, oldRuntime}); err != nil {
 		t.Fatalf("initial install: %v", err)
 	}
@@ -565,7 +567,7 @@ func TestPnpmReportsSignalTerminationAsLikelyMemoryFailure(t *testing.T) {
 	runner := runnerFunc(func(context.Context, io.Writer, string, ...string) error {
 		return exec.Command("sh", "-c", "kill -9 $$").Run()
 	})
-	err := (Pnpm{Root: t.TempDir(), Runner: runner, ReleaseCatalog: testReleaseCatalog(t, contracts.Artifact{ID: "a", Package: "@kb/a", Version: "1.0.0"})}).Install([]contracts.Artifact{{ID: "a", Package: "@kb/a", Version: "1.0.0"}})
+	err := (mustPnpm(t, PnpmConfig{Root: t.TempDir(), Runner: runner, ReleaseCatalog: testReleaseCatalog(t, contracts.Artifact{ID: "a", Package: "@kb/a", Version: "1.0.0"})})).Install([]contracts.Artifact{{ID: "a", Package: "@kb/a", Version: "1.0.0"}})
 	failure, ok := err.(*diag.Diag)
 	if !ok || failure.Code != contracts.CodePackageManagerKilled || !strings.Contains(failure.Message, "likely out of memory") || !strings.Contains(failure.Message, "992.3 MiB RSS") || failure.Meta["requiredAvailableMemory"] != "1.20 GiB" || failure.Meta["tunedPeakMemory"] != "992.3 MiB" {
 		t.Fatalf("error = %#v", err)
@@ -588,7 +590,7 @@ func (run runnerFunc) Run(ctx context.Context, output io.Writer, name string, ar
 func TestPnpmWritesWorkspaceAllowBuildsList(t *testing.T) {
 	root := t.TempDir()
 	items, runner := sealedTestRunner(t, contracts.Artifact{ID: "a", Package: "@kb/a", Version: "1.0.0"})
-	if err := (Pnpm{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "pnpm-workspace.yaml"))
@@ -620,7 +622,7 @@ func TestPnpmMaterializesSignedArtifactManifestForDoctor(t *testing.T) {
 	}
 	items, runner := sealedTestRunner(t, item)
 	item = items[0]
-	if err := (Pnpm{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items); err != nil {
 		t.Fatal(err)
 	}
 	manifest, err := installed.Load(root, item)
@@ -655,7 +657,7 @@ func TestPnpmInstallUpdateRestoreKeepsManifestsForEveryReceiptArtifact(t *testin
 		contracts.Artifact{ID: "gateway", Kind: "platform-member", Package: "@kb-labs/gateway-app", Version: "2.120.2"},
 	)
 	runner := &relinkingPnpmRunner{root: root, restore: old, artifacts: append(append([]contracts.Artifact{}, old...), updated...)}
-	pm := Pnpm{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, append(append([]contracts.Artifact{}, old...), updated...)...)}
+	pm := mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, append(append([]contracts.Artifact{}, old...), updated...)...)})
 	if err := pm.Install(old); err != nil {
 		t.Fatalf("install initial receipt: %v", err)
 	}
@@ -764,7 +766,7 @@ func (r *relinkingPnpmRunner) relink(artifact contracts.Artifact) error {
 func TestPnpmPersistsExplicitRegistryForLifecycleOperations(t *testing.T) {
 	root := t.TempDir()
 	items, runner := sealedTestRunner(t, contracts.Artifact{ID: "a", Package: "@kb/a", Version: "1.0.0"})
-	if err := (Pnpm{Root: root, Registry: "https://registry.test", Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Registry: "https://registry.test", Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, ".npmrc"))
@@ -776,6 +778,30 @@ func TestPnpmPersistsExplicitRegistryForLifecycleOperations(t *testing.T) {
 	}
 }
 
+func TestPnpmKeepsImplicitRegistryForApply(t *testing.T) {
+	root := t.TempDir()
+	items, runner := sealedTestRunner(t, contracts.Artifact{ID: "a", Package: "@kb/a", Version: "1.0.0"})
+	pm, err := NewPnpm(PnpmConfig{Root: root, CacheRoot: filepath.Join(root, "cache"),
+		PackageManagerRoot: filepath.Join(root, "state"), Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})
+	if err != nil {
+		t.Fatalf("construct apply package installer without a registry override: %v", err)
+	}
+	if err := pm.Install(items); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("pnpm calls = %d, want one", len(runner.calls))
+	}
+	for _, arg := range runner.calls[0].args {
+		if strings.Contains(arg, "--registry") {
+			t.Fatalf("pnpm received an unexpected registry override: %q", arg)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".npmrc")); !os.IsNotExist(err) {
+		t.Fatalf("implicit registry wrote .npmrc override (stat error %v)", err)
+	}
+}
+
 func TestPnpmPreservesExistingNpmrc(t *testing.T) {
 	root := t.TempDir()
 	want := "registry=https://existing.test\n"
@@ -783,7 +809,7 @@ func TestPnpmPreservesExistingNpmrc(t *testing.T) {
 		t.Fatal(err)
 	}
 	items, runner := sealedTestRunner(t, contracts.Artifact{ID: "a", Package: "@kb/a", Version: "1.0.0"})
-	if err := (Pnpm{Root: root, Registry: "https://registry.test", Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Registry: "https://registry.test", Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, ".npmrc"))
@@ -803,7 +829,7 @@ func TestPnpmUpdatesExistingScopedRegistry(t *testing.T) {
 	if err := os.WriteFile(path, []byte("registry=https://default.test\n@kb-labs:registry=https://old.test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := (Pnpm{Root: root, Registry: "https://new.test"}).prepareNpmrc(); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Registry: "https://new.test"})).prepareNpmrc(); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -827,7 +853,7 @@ func TestPnpmExcludesOnlySealedTransitiveVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := Pnpm{Root: root, ReleaseCatalog: verified}
+	manager := mustPnpm(t, PnpmConfig{Root: root, ReleaseCatalog: verified})
 	if err := manager.mergeMinimumReleaseAgeExclude(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -863,7 +889,7 @@ func TestPnpmExcludesOnlySealedTransitiveVersion(t *testing.T) {
 func TestPnpmDoesNotPinGeneratedProjectToOnePatchPnpmVersion(t *testing.T) {
 	root := t.TempDir()
 	items, runner := sealedTestRunner(t, contracts.Artifact{ID: "a", Package: "@kb/a", Version: "1.0.0"})
-	if err := (Pnpm{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "package.json"))
@@ -887,7 +913,7 @@ func TestPnpmUninstallRemovesInstalledArtifactsByPackageName(t *testing.T) {
 		{ID: "duplicate", Package: "@kb/platform", Version: "2.0.0"},
 		{ID: "binary", Kind: "binary", Version: "2.0.0"},
 	}
-	if err := (Pnpm{Root: root, Runner: runner}).Uninstall(items); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Runner: runner})).Uninstall(items); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"remove", "--dir", root, "--reporter=append-only", "--config.minimumReleaseAge=0", "@kb/platform"}
@@ -899,7 +925,7 @@ func TestPnpmUninstallRemovesInstalledArtifactsByPackageName(t *testing.T) {
 func TestPnpmUninstallUsesRegistryConfigWithoutUnsupportedFlag(t *testing.T) {
 	root := t.TempDir()
 	runner := &fakeRunner{}
-	if err := (Pnpm{Root: root, Registry: "https://registry.test", Runner: runner}).Uninstall([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2.0.0"}}); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Registry: "https://registry.test", Runner: runner})).Uninstall([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2.0.0"}}); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"remove", "--dir", root, "--reporter=append-only", "--config.minimumReleaseAge=0", "@kb/platform"}
@@ -919,7 +945,7 @@ func TestPnpmMergesExactPlanVersionIntoExistingWorkspaceYAML(t *testing.T) {
 		t.Fatal(err)
 	}
 	items, runner := sealedTestRunner(t, contracts.Artifact{ID: "a", Package: "@kb/a", Version: "1.0.0"})
-	if err := (Pnpm{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -944,7 +970,7 @@ func TestPnpmCoalescesEveryExactVersionForTheSamePackage(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan, runner := sealedTestRunner(t, contracts.Artifact{ID: "runtime", Package: "@kb/runtime", Version: "1.0.2"})
-	if err := (Pnpm{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, plan...)}).Install(plan); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, plan...)})).Install(plan); err != nil {
 		t.Fatal(err)
 	}
 	assertReleaseAgeExclusions(t, workspace, []string{
@@ -979,7 +1005,7 @@ func TestPnpmExcludesExactPlanVersionsAndPreservesWorkspaceEntries(t *testing.T)
 		contracts.Artifact{ID: "runtime", Package: "@kb/runtime", Version: "2.0.0"},
 		contracts.Artifact{ID: "new-file", Package: "@kb/new-file", Version: "1.5.0", SHA256: sum, Tarball: "https://registry.test/new-file.tgz"},
 	)
-	if err := (Pnpm{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache"), Runner: runner, ReleaseCatalog: testReleaseCatalog(t, plan...)}).Install(plan); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache"), Runner: runner, ReleaseCatalog: testReleaseCatalog(t, plan...)})).Install(plan); err != nil {
 		t.Fatal(err)
 	}
 	assertReleaseAgeExclusions(t, workspace, []string{
@@ -987,7 +1013,7 @@ func TestPnpmExcludesExactPlanVersionsAndPreservesWorkspaceEntries(t *testing.T)
 	})
 
 	// A rollback to plan N must merge N's exact versions after the snapshot is restored.
-	if err := (Pnpm{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache"), Runner: runner, ReleaseCatalog: testReleaseCatalog(t, plan...)}).Restore(plan); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache"), Runner: runner, ReleaseCatalog: testReleaseCatalog(t, plan...)})).Restore(plan); err != nil {
 		t.Fatal(err)
 	}
 	assertReleaseAgeExclusions(t, workspace, []string{
@@ -1058,7 +1084,7 @@ func TestPnpmInstallRefusesChangedDistBeforeAcceptingCandidate(t *testing.T) {
 	root := t.TempDir()
 	items := sealedTestArtifacts(t, contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0"})
 	delegate := &fakeRunner{packages: items}
-	err := (Pnpm{Root: root, Registry: "https://registry.test", Runner: changedDistRunner{delegate: delegate}, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items)
+	err := (mustPnpm(t, PnpmConfig{Root: root, Registry: "https://registry.test", Runner: changedDistRunner{delegate: delegate}, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items)
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != contracts.CodeProvenanceMismatch {
 		t.Fatalf("install error = %v, want catalogued provenance mismatch", err)
@@ -1173,7 +1199,7 @@ func sealedTestRunner(t *testing.T, artifacts ...contracts.Artifact) ([]contract
 func TestPnpmInstallsSortedExactArtifactBatch(t *testing.T) {
 	root := t.TempDir()
 	items, runner := sealedTestRunner(t, contracts.Artifact{ID: "b", Package: "@kb/b", Version: "2.0.0"}, contracts.Artifact{ID: "a", Package: "@kb/a", Version: "1.0.0"}, contracts.Artifact{ID: "repeat", Package: "@kb/a", Version: "1.0.0"})
-	err := (Pnpm{Root: root, Registry: "https://registry.test", Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items)
+	err := (mustPnpm(t, PnpmConfig{Root: root, Registry: "https://registry.test", Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1190,7 +1216,7 @@ func TestPnpmSkipsAlreadyInstalledExactArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := &fakeRunner{}
-	if err := (Pnpm{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.calls) != 0 {
@@ -1199,7 +1225,7 @@ func TestPnpmSkipsAlreadyInstalledExactArtifact(t *testing.T) {
 }
 func TestPnpmDoesNotRunForInvalidArtifact(t *testing.T) {
 	runner := &fakeRunner{}
-	err := (Pnpm{Root: t.TempDir(), Runner: runner}).Install([]contracts.Artifact{{ID: "broken", Package: "@kb/broken"}})
+	err := (mustPnpm(t, PnpmConfig{Root: t.TempDir(), Runner: runner})).Install([]contracts.Artifact{{ID: "broken", Package: "@kb/broken"}})
 	if err == nil || len(runner.calls) != 0 {
 		t.Fatalf("err/calls = %v / %#v", err, runner.calls)
 	}
@@ -1207,7 +1233,7 @@ func TestPnpmDoesNotRunForInvalidArtifact(t *testing.T) {
 func TestPnpmPreservesPackageManagerFailure(t *testing.T) {
 	root := t.TempDir()
 	runner := &fakeRunner{err: errors.New("exit status 1")}
-	err := (Pnpm{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t)}).Restore(nil)
+	err := (mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t)})).Restore(nil)
 	if err == nil || !errors.Is(err, runner.err) {
 		t.Fatalf("err = %v", err)
 	}
@@ -1216,11 +1242,11 @@ func TestPnpmPreservesPackageManagerFailure(t *testing.T) {
 func TestPnpmDiagnosticKeepsExitCodeAndStderrTail(t *testing.T) {
 	root := t.TempDir()
 	var transcript strings.Builder
-	manager := Pnpm{
+	manager := mustPnpm(t, PnpmConfig{
 		Root:               root,
 		PackageManagerRoot: filepath.Join(root, "state", "package-manager"),
 		Log:                &transcript,
-	}
+	})
 	err := manager.run("command-that-does-not-exist")
 	var failure *diag.Diag
 	if !errors.As(err, &failure) {
@@ -1235,7 +1261,7 @@ func TestPnpmDiagnosticKeepsExitCodeAndStderrTail(t *testing.T) {
 }
 func TestPnpmSkipsReleaseManagedBinary(t *testing.T) {
 	runner := &fakeRunner{}
-	if err := (Pnpm{Root: t.TempDir(), Runner: runner, ReleaseCatalog: testReleaseCatalog(t)}).Install([]contracts.Artifact{{ID: "kb-dev", Kind: "binary", Version: "2.0.0"}}); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: t.TempDir(), Runner: runner, ReleaseCatalog: testReleaseCatalog(t)})).Install([]contracts.Artifact{{ID: "kb-dev", Kind: "binary", Version: "2.0.0"}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.calls) != 0 {
@@ -1246,7 +1272,7 @@ func TestPnpmSkipsReleaseManagedBinary(t *testing.T) {
 func TestPnpmUsesOfflineModeWhenRequested(t *testing.T) {
 	root := t.TempDir()
 	items, runner := sealedTestRunner(t, contracts.Artifact{ID: "platform", Package: "@kb/platform", Version: "2.0.0"})
-	if err := (Pnpm{Root: root, Offline: true, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)}).Install(items); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Offline: true, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Install(items); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"add", "--dir", root, "--reporter=append-only", "--offline", "@kb/platform@2.0.0"}
@@ -1320,6 +1346,30 @@ func testReleaseCatalog(t *testing.T, items ...contracts.Artifact) catalog.Verif
 	return verified
 }
 
+func mustPnpm(t *testing.T, config PnpmConfig) Pnpm {
+	t.Helper()
+	if config.Root == "" {
+		config.Root = t.TempDir()
+	}
+	if config.CacheRoot == "" {
+		config.CacheRoot = filepath.Join(config.Root, ".kb", "v2", "cache")
+	}
+	if config.PackageManagerRoot == "" {
+		config.PackageManagerRoot = filepath.Join(config.Root, ".kb", "v2", "package-manager")
+	}
+	if config.Registry == "" {
+		config.Registry = "https://registry.test"
+	}
+	if _, err := config.ReleaseCatalog.Catalog(); err != nil {
+		config.ReleaseCatalog = testReleaseCatalog(t)
+	}
+	pnpm, err := NewPnpm(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pnpm
+}
+
 // case: S-284.20
 func TestPnpmRejectsUnverifiedReleaseBeforeWritingExclusions(t *testing.T) {
 	root := t.TempDir()
@@ -1329,9 +1379,14 @@ func TestPnpmRejectsUnverifiedReleaseBeforeWritingExclusions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = (Pnpm{Root: root}).mergeMinimumReleaseAgeExclude(nil)
+	_, err = NewPnpm(PnpmConfig{Root: root, CacheRoot: filepath.Join(root, "cache"),
+		PackageManagerRoot: filepath.Join(root, "state"), Registry: "https://registry.test"})
 	if err == nil {
 		t.Fatal("unverified catalog accepted")
+	}
+	var diagnostic *diag.Diag
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeReleaseIndexInvalid {
+		t.Fatalf("constructor error = %T %v, want %s diagnostic", err, err, contracts.CodeReleaseIndexInvalid)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -1351,7 +1406,7 @@ func TestReleaseAgeRemovesPreviousCatalogContributions(t *testing.T) {
 	}
 	current := testReleaseCatalog(t, contracts.Artifact{Package: "@kb-labs/transitive", Version: "1.0.0"})
 	previous := testReleaseCatalog(t, contracts.Artifact{Package: "@kb-labs/transitive", Version: "1.0.1"})
-	if err := (Pnpm{Root: root, ReleaseCatalog: current, PreviousReleaseCatalog: &previous}).mergeMinimumReleaseAgeExclude(nil); err != nil {
+	if err := (mustPnpm(t, PnpmConfig{Root: root, ReleaseCatalog: current, PreviousReleaseCatalog: &previous})).mergeMinimumReleaseAgeExclude(nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -1376,7 +1431,7 @@ func TestStagedWorkspacePreservesExistingReleaseAgeSettings(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(active, "pnpm-workspace.yaml"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
-	manager := Pnpm{Root: stage, MarketplaceRoot: active}
+	manager := mustPnpm(t, PnpmConfig{Root: stage, MarketplaceRoot: active})
 	if err := manager.prepareWorkspaceYAML(); err != nil {
 		t.Fatal(err)
 	}
@@ -1428,7 +1483,7 @@ func TestPnpmRoutesScopedAndThirdPartyPackagesToSeparateRegistries(t *testing.T)
 	t.Setenv("npm_config_registry", third.URL)
 	t.Setenv("HOME", t.TempDir())
 	var transcript strings.Builder
-	pm := Pnpm{Root: root, PackageManagerRoot: managerRoot, Registry: scoped.URL, Log: &transcript}
+	pm := mustPnpm(t, PnpmConfig{Root: root, PackageManagerRoot: managerRoot, Registry: scoped.URL, Log: &transcript})
 	if err := os.WriteFile(filepath.Join(root, ".npmrc"), []byte("registry="+third.URL+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

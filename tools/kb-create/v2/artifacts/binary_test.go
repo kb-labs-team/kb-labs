@@ -145,7 +145,7 @@ func TestCompositeRemovesBinaryWhenPackageInstallFails(t *testing.T) {
 	defer server.Close()
 	root := t.TempDir()
 	runner := &fakeRunner{err: fmt.Errorf("pnpm failed")}
-	executor := Composite{Packages: Pnpm{Root: root, Runner: runner}, Binaries: Binaries{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache")}}
+	executor := Composite{Packages: mustPnpm(t, PnpmConfig{Root: root, Runner: runner}), Binaries: Binaries{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache")}}
 	err := executor.Install([]contracts.Artifact{{ID: "kb-dev", Kind: "binary", URL: server.URL, ResolvedURL: server.URL, SHA256: sum, Target: "kb-dev"}, {ID: "platform", Package: "@kb/platform", Version: "2"}})
 	if err == nil {
 		t.Fatal("expected package failure")
@@ -177,7 +177,7 @@ func TestPreparedPackageInstallsTheSingleVerifiedTarballResponse(t *testing.T) {
 	cacheRoot := filepath.Join(root, ".kb", "v2", "cache")
 	runner := &fakeRunner{packages: []contracts.Artifact{item}}
 	executor := Composite{
-		Packages: Pnpm{Root: root, CacheRoot: cacheRoot, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, item)},
+		Packages: mustPnpm(t, PnpmConfig{Root: root, CacheRoot: cacheRoot, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, item)}),
 		Binaries: Binaries{Root: root, CacheRoot: cacheRoot},
 	}
 	prepared, err := executor.Prepare([]contracts.Artifact{item})

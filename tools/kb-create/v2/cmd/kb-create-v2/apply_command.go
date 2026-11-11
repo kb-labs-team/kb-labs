@@ -275,27 +275,29 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	applyCtx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	offline := planned.Request.Source == contracts.SourceOffline
-	artifactExecutor, err := newArtifactExecutor(layout, operationRoot, planned.Registry, offline, transcript, deps.ArtifactRunner)
-	if err != nil {
-		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
-			"the shared artifact cache path could not be resolved",
-			"run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the install", err)
-	}
 	verifiedRelease, err := catalog.DecodeVerified(planned.ReleaseCatalog)
 	if err != nil {
 		return applyCommandResult{}, contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "the release index could not be verified", "rerun the installation with a valid release index", err)
 	}
-	artifactExecutor.Packages.ReleaseCatalog = verifiedRelease
 	previousReceipt, previousErr := receipt.Read(installRoot)
+	var previousRelease *catalog.Verified
+	marketplaceRoot := ""
 	if previousErr == nil {
-		previousRelease, verifyErr := catalog.DecodeVerified(previousReceipt.Plan.ReleaseCatalog)
+		verifiedPrevious, verifyErr := catalog.DecodeVerified(previousReceipt.Plan.ReleaseCatalog)
 		if verifyErr != nil {
 			return applyCommandResult{}, indexFailure(verifyErr, contracts.ShellCommand("kb-create", "install", "--platform-root", installRoot))
 		}
-		artifactExecutor.Packages.PreviousReleaseCatalog = &previousRelease
-		artifactExecutor.Packages.MarketplaceRoot = installRoot
+		previousRelease = &verifiedPrevious
+		marketplaceRoot = installRoot
 	} else if !os.IsNotExist(previousErr) {
 		return applyCommandResult{}, asDiag(previousErr)
+	}
+	artifactExecutor, err := newArtifactExecutor(layout, operationRoot, planned.Registry, offline, transcript, deps.ArtifactRunner,
+		verifiedRelease, previousRelease, marketplaceRoot)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
+			"the shared artifact cache path could not be resolved",
+			"run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the install", err)
 	}
 	prober := host.Prober{PlatformRoot: installRoot, Operation: "apply"}
 	runtimeDeps := runtime.Dependencies{Artifacts: artifactExecutor, CorrelationID: correlationID, Secrets: &store, Progress: input.Progress}

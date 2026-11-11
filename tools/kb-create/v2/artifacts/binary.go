@@ -272,9 +272,14 @@ func (c Composite) Restore(plan, previous contracts.ResolvedInstallPlan) error {
 	if err != nil {
 		return err
 	}
-	c.Packages.ReleaseCatalog = verified
-	c.Packages.PreviousReleaseCatalog = &previousRelease
-	return c.Packages.Restore(plan.Artifacts)
+	config := c.Packages.config
+	config.ReleaseCatalog = verified
+	config.PreviousReleaseCatalog = &previousRelease
+	packages, err := NewPnpm(config)
+	if err != nil {
+		return err
+	}
+	return packages.Restore(plan.Artifacts)
 }
 func (c Composite) Uninstall(items []contracts.Artifact) error {
 	if err := c.Packages.Uninstall(items); err != nil {

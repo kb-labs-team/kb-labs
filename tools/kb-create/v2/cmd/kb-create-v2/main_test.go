@@ -840,7 +840,11 @@ func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progre
 			return err
 		}
 	}
-	pnpm := artifacts.Pnpm{Root: root, CacheRoot: cacheRoot, PackageManagerRoot: layout.PackageManagerStateDir(), ReleaseCatalog: a.release, Runner: a.runner}
+	pnpm, err := artifacts.NewPnpm(artifacts.PnpmConfig{Root: root, CacheRoot: cacheRoot,
+		PackageManagerRoot: layout.PackageManagerStateDir(), Registry: "https://registry.test", ReleaseCatalog: a.release, Runner: a.runner})
+	if err != nil {
+		return err
+	}
 	err = pnpm.Install(items)
 	if progress != nil {
 		progress("Install packages", false)

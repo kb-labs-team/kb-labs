@@ -39,7 +39,12 @@ func TestMarketplacePinAbsentFromRestoredWorkspaceIsRetained(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := artifacts.Pnpm{Root: root, ReleaseCatalog: verified, PreviousReleaseCatalog: &verified}
+	manager, err := artifacts.NewPnpm(artifacts.PnpmConfig{Root: root, CacheRoot: filepath.Join(root, "cache"),
+		PackageManagerRoot: filepath.Join(root, "state"), Registry: "https://registry.test",
+		ReleaseCatalog: verified, PreviousReleaseCatalog: &verified})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := manager.Install(nil); err != nil {
 		t.Fatal(err)
 	}

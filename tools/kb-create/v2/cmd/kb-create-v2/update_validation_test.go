@@ -250,12 +250,21 @@ func TestUpdateBadPackageChecksumPreservesSharedStateAndReturnsOperationFailure(
 		t.Fatal(err)
 	}
 	stateBefore := snapshotStateTree(t, filepath.Join(inst.root, "state"))
+	verifiedCatalog, catalogErr := catalog.VerifyCatalog(sealed)
+	if catalogErr != nil {
+		t.Fatal(catalogErr)
+	}
+	packageInstaller, packageErr := artifacts.NewPnpm(artifacts.PnpmConfig{Root: inst.root, CacheRoot: sharedCache,
+		PackageManagerRoot: filepath.Join(inst.root, "state", "package-manager"), Registry: server.URL,
+		ReleaseCatalog: verifiedCatalog, Client: server.Client()})
+	if packageErr != nil {
+		t.Fatal(packageErr)
+	}
 	_, failure, exitCode, _ := executeForTest(t, operationTestSetup{
 		Operation: "update", Index: indexPath, JSON: true,
 		Direct: directRequest{PlatformRoot: inst.root, PlatformVersion: "2.0.0", SDKVersion: "2.0.0", Policy: "compatible"},
 		RuntimeDeps: &runtime.Dependencies{Artifacts: artifacts.Composite{
-			Packages: artifacts.Pnpm{Root: inst.root, CacheRoot: sharedCache,
-				PackageManagerRoot: filepath.Join(inst.root, "state", "package-manager"), Client: server.Client()},
+			Packages: packageInstaller,
 			Binaries: artifacts.Binaries{Root: inst.root, CacheRoot: sharedCache, Client: server.Client()},
 		}},
 		NodePreflight: func() error { return nil },
