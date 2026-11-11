@@ -1821,9 +1821,35 @@ func cleanupTreeWithProtectedClockAndDirectChild(root int, runID string, observe
 	}
 	for _, process := range targets {
 		if process.Unverified {
+			identity, alive, identityErr := source.Identity(process.PID)
+			if identityErr == nil && (!alive || identity != process.Identity) {
+				result.Reaped = append(result.Reaped, process)
+				continue
+			}
 			result.Unverified = append(result.Unverified, process)
 			result.Remaining = append(result.Remaining, process)
-			recordFailure(fmt.Errorf("unverified process %d prevents verified tree cleanup", process.PID))
+			state := process.processState
+			if state == "" {
+				state = "unknown"
+			}
+			identityCheck := "still-live-but-ownership-unverified"
+			if identityErr != nil {
+				identityCheck = fmt.Sprintf("observation-error(%q)", identityErr.Error())
+			}
+			markerResult := process.markerResult
+			if markerResult == "" {
+				markerResult = "unknown"
+			}
+			tokenResult := process.tokenResult
+			if tokenResult == "" {
+				tokenResult = "unknown"
+			}
+			reason := process.OwnershipUnverifiedReason
+			if reason == "" {
+				reason = "none"
+			}
+			recordFailure(fmt.Errorf("unverified process pid=%d ppid=%d state=%s identity=%q identity_check=%s marker=%s token=%s ownership_reason=%s prevents verified tree cleanup",
+				process.PID, process.PPID, state, process.Identity, identityCheck, markerResult, tokenResult, reason))
 			continue
 		}
 		identity, alive, identityErr := source.Identity(process.PID)

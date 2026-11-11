@@ -156,7 +156,7 @@ func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issu
 		Severity:             SeverityError,
 		Message:              "External check could not complete.",
 		CheckFailure:         true,
-		Cause:                safeExternalCause(err),
+		Cause:                safeExternalCause(err, r.timeout),
 		File:                 pkg.Dir,
 		FailureDiagnostic:    externalDiagnostic(err),
 		FailureExitCode:      externalExitCode(err),
@@ -180,7 +180,7 @@ func (r *externalRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
 	if len(out.Issues) > 0 {
 		return out.Issues
 	}
-	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err), File: ws.Root, FailureDiagnostic: externalDiagnostic(err), FailureExitCode: externalExitCode(err), FailureExitCodeKnown: externalExitCodeKnown(err), FailureStderrTail: externalStderrTail(err)}}
+	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err, r.timeout), File: ws.Root, FailureDiagnostic: externalDiagnostic(err), FailureExitCode: externalExitCode(err), FailureExitCodeKnown: externalExitCodeKnown(err), FailureStderrTail: externalStderrTail(err)}}
 }
 
 func (r *externalRule) Apply(pkg workspace.Package, issues []Issue, dryRun bool) error {
@@ -310,10 +310,10 @@ func decodeExternalCheckOutput(data []byte) (externalCheckOutput, error) {
 	return externalCheckOutput{Issues: issues}, nil
 }
 
-func safeExternalCause(err error) string {
+func safeExternalCause(err error, declaredBudget time.Duration) string {
 	var timeoutErr *toolchain.TimeoutError
 	if errors.As(err, &timeoutErr) && timeoutErr.Bound == toolchain.BoundCaller {
-		return fmt.Sprintf("external check exceeded its configured %s execution budget", timeoutErr.Budget.Round(time.Millisecond))
+		return fmt.Sprintf("external check exceeded its configured %s execution budget", declaredBudget.Round(time.Millisecond))
 	}
 	var outputErr *externalOutputError
 	if errors.As(err, &outputErr) {

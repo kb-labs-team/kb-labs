@@ -46,6 +46,17 @@ func TestWorkspaceExternalCheckFailsAtDeclaredExecutionBudget(t *testing.T) {
 	}
 }
 
+func TestSafeExternalCauseUsesDeclaredCallerBudget(t *testing.T) {
+	got := safeExternalCause(&toolchain.TimeoutError{
+		Bound:  toolchain.BoundCaller,
+		Budget: 23 * time.Millisecond,
+	}, 25*time.Millisecond)
+	want := "external check exceeded its configured 25ms execution budget"
+	if got != want {
+		t.Fatalf("safeExternalCause() = %q, want %q", got, want)
+	}
+}
+
 func TestExternalCommandCheckAndFix(t *testing.T) {
 	root := t.TempDir()
 	pkgDir := filepath.Join(root, "packages", "demo")
@@ -492,7 +503,7 @@ func TestExternalCheckReportsObserverErrorAfterSuccessfulExit(t *testing.T) {
 		Cause:       fmt.Errorf("enumerate Darwin process table: %w", syscall.EPERM),
 	}
 	err := &toolchain.CommandError{ExitCode: 0, Err: observerErr}
-	cause := safeExternalCause(err)
+	cause := safeExternalCause(err, 0)
 	if !strings.Contains(cause, "process observer error") || !strings.Contains(cause, "enumerate Darwin process table: operation not permitted") {
 		t.Fatalf("cause = %q, want exact process-observer failure chain", cause)
 	}
