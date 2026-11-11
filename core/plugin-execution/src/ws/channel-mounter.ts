@@ -340,7 +340,7 @@ export async function mountWebSocketChannels(
             await executeChannelHandler(disconnectInput);
           } catch (error) {
             transportStats.handlerErrors += 1;
-            if (!(error instanceof ErrorEnvelopeError)) connectionLogger.error({ err: error, plugin: manifest.id, channel: channel.path, connectionId, code }, '[ws] onDisconnect transport failed');
+            if (!(error instanceof ErrorEnvelopeError)) {connectionLogger.error({ err: error, plugin: manifest.id, channel: channel.path, connectionId, code }, '[ws] onDisconnect transport failed');}
           } finally {
             connectionLogger.info({
               event: 'websocket.connection.closed',

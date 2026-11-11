@@ -5,7 +5,6 @@ import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AppendOnlyJournalStateBroker } from '../backends/append-only-journal.js';
 
@@ -32,7 +31,7 @@ describe('StateBroker durability', () => {
       await first.set('unexpired', 'kept', 60_000);
       await first.set('expired', 'gone', 20);
       await first.set('default-ttl', 'default');
-      await new Promise((resolve) => setTimeout(resolve, 35));
+      await new Promise((resolve) => { setTimeout(resolve, 35); });
       await first.stop();
 
       const restarted = await AppendOnlyJournalStateBroker.open(root);
@@ -86,7 +85,7 @@ describe('StateBroker durability', () => {
     const originalSync = prototype.sync;
     let directorySyncs = 0;
     prototype.sync = async function (this: typeof probe, ...args: never[]) {
-      if ((await this.stat()).isDirectory()) directorySyncs++;
+      if ((await this.stat()).isDirectory()) {directorySyncs++;}
       return originalSync.apply(this, args);
     };
     try {
@@ -160,7 +159,7 @@ describe('StateBroker durability', () => {
       const stdout = child.stdout;
       const stdin = child.stdin;
       const stderr = child.stderr;
-      if (!stdout || !stdin || !stderr) throw new Error('journal lock worker has no piped stdio');
+      if (!stdout || !stdin || !stderr) {throw new Error('journal lock worker has no piped stdio');}
       const lines = createInterface({ input: stdout });
       tracked.lines = lines;
       const seen = new Set<string>();
@@ -169,19 +168,19 @@ describe('StateBroker durability', () => {
       stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
       lines.on('line', (value) => {
         seen.add(value);
-        for (const waiter of waiters.get(value) ?? []) waiter.resolve();
+        for (const waiter of waiters.get(value) ?? []) {waiter.resolve();}
         waiters.delete(value);
       });
       child.on('exit', (code, signal) => {
-        if (code === 0) return;
+        if (code === 0) {return;}
         const failure = new Error(`journal worker exited (${code ?? signal}): ${Buffer.concat(stderrChunks).toString('utf8')}`);
         for (const waiting of waiters.values()) {
-          for (const waiter of waiting) waiter.reject(failure);
+          for (const waiter of waiting) {waiter.reject(failure);}
         }
         waiters.clear();
       });
       const waitForLine = (line: string) => {
-        if (seen.has(line)) return Promise.resolve();
+        if (seen.has(line)) {return Promise.resolve();}
         return new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(() => reject(new Error(`timed out waiting for journal worker signal: ${line}`)), 10_000);
           const waiting = waiters.get(line) ?? [];
@@ -202,7 +201,7 @@ describe('StateBroker durability', () => {
       await first.waitForLine('locked-first');
       second = startChild('second');
       await second.waitForLine('attempting-open');
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => { setTimeout(resolve, 100); });
       expect(second.seen.has('locked-second')).toBe(false);
 
       first.stdin.write('release\n');
@@ -222,7 +221,7 @@ describe('StateBroker durability', () => {
       await once(orphan.child, 'exit');
       const reclaimers = Array.from({ length: 16 }, (_, index) => startChild(`reclaimer-${index}`, true));
       await Promise.all(reclaimers.map((reclaimer) => reclaimer.waitForLine('ready-to-open')));
-      for (const reclaimer of reclaimers) reclaimer.stdin.write('go\n');
+      for (const reclaimer of reclaimers) {reclaimer.stdin.write('go\n');}
       await Promise.all(reclaimers.map((reclaimer) => reclaimer.waitForLine('attempting-open')));
       await Promise.all(reclaimers.map((reclaimer) => reclaimer.waitForLine('stopped')));
       const afterReclaim = await AppendOnlyJournalStateBroker.open(root);
@@ -235,12 +234,12 @@ describe('StateBroker durability', () => {
       await afterReclaim.stop();
     } finally {
       const stopChild = async (child: ChildProcess | undefined) => {
-        if (!child || child.exitCode !== null || child.signalCode !== null) return;
+        if (!child || child.exitCode !== null || child.signalCode !== null) {return;}
         child.kill();
         await once(child, 'exit');
       };
       await Promise.all(children.map(({ child }) => stopChild(child)));
-      for (const worker of children) worker.lines?.close();
+      for (const worker of children) {worker.lines?.close();}
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -276,7 +275,7 @@ describe('StateBroker durability', () => {
       const stdout = child.stdout;
       const stdin = child.stdin;
       const stderr = child.stderr;
-      if (!stdout || !stdin || !stderr) throw new Error('journal lock worker has no piped stdio');
+      if (!stdout || !stdin || !stderr) {throw new Error('journal lock worker has no piped stdio');}
       const lines = createInterface({ input: stdout });
       const seen = new Set<string>();
       const waiters = new Map<string, Array<{ resolve(): void; reject(error: Error): void }>>();
@@ -284,17 +283,17 @@ describe('StateBroker durability', () => {
       stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
       lines.on('line', (value) => {
         seen.add(value);
-        for (const waiter of waiters.get(value) ?? []) waiter.resolve();
+        for (const waiter of waiters.get(value) ?? []) {waiter.resolve();}
         waiters.delete(value);
       });
       child.on('exit', (code, signal) => {
-        if (code === 0) return;
+        if (code === 0) {return;}
         const failure = new Error(`journal worker exited (${code ?? signal}): ${Buffer.concat(stderrChunks).toString('utf8')}`);
-        for (const waiting of waiters.values()) for (const waiter of waiting) waiter.reject(failure);
+        for (const waiting of waiters.values()) {for (const waiter of waiting) {waiter.reject(failure);}}
         waiters.clear();
       });
       const waitForLine = (line: string) => {
-        if (seen.has(line)) return Promise.resolve();
+        if (seen.has(line)) {return Promise.resolve();}
         return new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(() => reject(new Error(`timed out waiting for journal worker signal: ${line}`)), 10_000);
           const waiting = waiters.get(line) ?? [];
@@ -324,7 +323,7 @@ describe('StateBroker durability', () => {
       fifoWriter = await open(lockPath, 'w');
       const staleProcess = spawn(process.execPath, ['-e', 'process.exit(0)']);
       const stalePid = staleProcess.pid;
-      if (!stalePid) throw new Error('could not start stale lock owner process');
+      if (!stalePid) {throw new Error('could not start stale lock owner process');}
       await once(staleProcess, 'exit');
       await fifoWriter.writeFile(JSON.stringify({ pid: stalePid, token: 'stale-owner' }), 'utf8');
       await rename(lockPath, rereadFifoPath);
@@ -338,11 +337,11 @@ describe('StateBroker durability', () => {
           await stat(reclaimPath);
           break;
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {throw error;}
+          await new Promise((resolve) => { setTimeout(resolve, 10); });
         }
       }
-      if (Date.now() >= gateDeadline) throw new Error('timed out waiting for the reread rendezvous');
+      if (Date.now() >= gateDeadline) {throw new Error('timed out waiting for the reread rendezvous');}
 
       fifoWriter = await open(lockPath, 'w');
       await fifoWriter.writeFile(JSON.stringify(liveRecord), 'utf8');
@@ -354,9 +353,9 @@ describe('StateBroker durability', () => {
       while (Date.now() < reclaimDeadline) {
         try {
           await stat(reclaimPath);
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          await new Promise((resolve) => { setTimeout(resolve, 10); });
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {throw error;}
           break;
         }
       }
@@ -366,9 +365,9 @@ describe('StateBroker durability', () => {
       await live.waitForLine('stopped');
     } finally {
       await fifoWriter?.close();
-      if (!liveReleased) live.stdin.write('release\n');
+      if (!liveReleased) {live.stdin.write('release\n');}
       const stopChild = async (child: ChildProcess | undefined) => {
-        if (!child || child.exitCode !== null || child.signalCode !== null) return;
+        if (!child || child.exitCode !== null || child.signalCode !== null) {return;}
         child.kill();
         await once(child, 'exit');
       };

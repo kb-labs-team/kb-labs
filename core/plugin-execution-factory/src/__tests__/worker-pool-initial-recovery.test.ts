@@ -50,7 +50,7 @@ describe('worker pool initial capacity recovery', () => {
         warn(_message: string, fields?: unknown) {
           if (fields && typeof fields === 'object' && 'code' in fields && fields.code === 'WORKER_START_FAILED') {
             failedAttempts++;
-            if (failedAttempts === 2) resolveFailures?.();
+            if (failedAttempts === 2) {resolveFailures?.();}
           }
         },
       },
@@ -60,7 +60,7 @@ describe('worker pool initial capacity recovery', () => {
       createServer: () => ({
         start() {
           attempts++;
-          if (attempts <= 2) throw new Error(`initial spawn ${attempts} failed`);
+          if (attempts <= 2) {throw new Error(`initial spawn ${attempts} failed`);}
         },
         stop() {},
       }),
@@ -93,7 +93,7 @@ describe('worker pool initial capacity recovery', () => {
 
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline && !(await backend.health()).healthy) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => { setImmediate(resolve); });
     }
     expect((await backend.health()).healthy).toBe(true);
     expect(attempts).toBe(3);

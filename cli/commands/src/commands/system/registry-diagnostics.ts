@@ -38,7 +38,7 @@ export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, Diagnos
     const cwd = getContextCwd(ctx);
 
     const registry = getResolvedCatalog();
-    if (!registry) throw new Error('The CLI catalog was not opened during command registration.');
+    if (!registry) {throw new Error('The CLI catalog was not opened during command registration.');}
 
     if (flags.refresh) {
       await registry.refresh();

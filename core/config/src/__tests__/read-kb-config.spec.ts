@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ErrorEnvelopeError } from '@kb-labs/core-platform/error-envelope';
 import { readKbConfig, readRawKbConfig } from '../api/read-kb-config.js';
 import { setUserConfigValue } from '../user-config/write-user-config.js';
 

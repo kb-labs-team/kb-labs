@@ -81,15 +81,14 @@ export async function userConfigFileForScope(roots: ConfigRoots, scope: ConfigSc
 
 /** Load an inline JSON Schema declared by the installed plugin for this setting section. */
 export async function pluginSettingsSchemaFor(
-  roots: ConfigRoots,
   configSection: string,
 ): Promise<{ schema: unknown; packageRoot: string } | undefined> {
   const catalog = requireResolvedCatalog();
   const discovered = catalog.discovery();
   const manifest = [...discovered.manifests.values()].find((candidate) => candidate.configSection === configSection);
-  if (!manifest?.settings) return undefined;
+  if (!manifest?.settings) {return undefined;}
   const plugin = discovered.plugins.find(({ id }) => id === manifest.id);
-  if (!plugin) return undefined;
+  if (!plugin) {return undefined;}
   return { schema: manifest.settings.schema, packageRoot: plugin.packageRoot };
 }
 

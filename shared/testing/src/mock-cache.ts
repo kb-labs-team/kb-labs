@@ -80,7 +80,7 @@ export function mockCache(initial?: Record<string, unknown>): MockCacheInstance 
   // The ICache-typed versions are cast below for the public interface.
   const spies: ReturnType<typeof vi.fn>[] = [];
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   function spy<T extends (...args: any[]) => unknown>(fn: T): T {
     const s = vi.fn(fn) as unknown as T;
     spies.push(s as unknown as ReturnType<typeof vi.fn>);

@@ -19,7 +19,7 @@ export function withUxErrorResponses<const Responses extends Record<number, unkn
     const status = Number(statusText);
     result[status] = status >= 400 ? uxErrorResponseSchema : schema;
   }
-  for (const status of uxErrorStatuses) result[status] = uxErrorResponseSchema;
+  for (const status of uxErrorStatuses) {result[status] = uxErrorResponseSchema;}
   return result as Omit<Responses, UxErrorStatus> & Record<UxErrorStatus, typeof UxFailureResultJsonSchema>;
 }
 
@@ -30,7 +30,7 @@ export function registerGatewayRouteSchemas(app: FastifyInstance): void {
     if (methods.includes('OPTIONS') || route.url.startsWith('/docs')) {
       route.config = { ...route.config, ux: 'raw' };
     }
-    if (route.config?.ux === 'raw' || !route.schema || typeof route.schema !== 'object') return;
+    if (route.config?.ux === 'raw' || !route.schema || typeof route.schema !== 'object') {return;}
     const schema = route.schema as { response?: Record<number, unknown> };
     route.schema = { ...route.schema, response: withUxErrorResponses(schema.response ?? {}) };
   });

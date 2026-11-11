@@ -18,7 +18,7 @@ export function isGatewayConnectionFailure(error: unknown): boolean {
   while (current && typeof current === 'object' && !seen.has(current)) {
     seen.add(current);
     const code = errorCode(current);
-    if (code !== undefined && CONNECTION_ERROR_CODES.has(code)) return true;
+    if (code !== undefined && CONNECTION_ERROR_CODES.has(code)) {return true;}
     current = 'cause' in current ? current.cause : undefined;
   }
   return false;

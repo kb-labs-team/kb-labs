@@ -30,7 +30,7 @@ export interface ErrorDefinition {
   /** HTTP status code (400, 404, 500, etc.) */
   code: number;
   /** Error message - can be string or function for parameterized messages */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   message: string | ((...args: any[]) => string);
   /** Actionable next step required by ADR-0049 for product error codes. */
   hint: string;

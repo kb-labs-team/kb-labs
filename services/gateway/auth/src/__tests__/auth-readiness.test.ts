@@ -97,7 +97,9 @@ describe('auth enabled', () => {
         jwks_uri: `${issuer}/jwks`,
       }));
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
     const address = server.address();
     if (!address || typeof address === 'string') { throw new Error('OIDC stub did not bind a TCP port'); }
     const fetchStub: typeof fetch = (input, init) => {
@@ -151,7 +153,15 @@ describe('auth enabled', () => {
         .toMatchObject({ ok: true, activeAdmins: 1 });
     } finally {
       nowSpy.mockRestore();
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
     }
   });
 

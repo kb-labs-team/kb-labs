@@ -5,7 +5,6 @@
 
 import { loadRestApiConfig } from "@kb-labs/rest-api-core";
 import { createServer } from "./server";
-import type { IEntityRegistry } from "@kb-labs/plugin-contracts";
 import type { IServiceTransport } from "@kb-labs/core-platform";
 import { requireProjectContext, platform as runtimePlatform } from "@kb-labs/core-runtime";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";

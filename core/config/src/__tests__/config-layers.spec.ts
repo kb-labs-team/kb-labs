@@ -18,7 +18,7 @@ function storeRoot(): string {
 }
 
 function loadConfig(options: { platformRoot?: string } = {}) {
-  return loadEffectiveConfig(project, { ...options, projectId, storeRoot: storeRoot() });
+  return loadEffectiveConfig({ ...options, projectId, storeRoot: storeRoot() });
 }
 
 async function writeProjectSettings(contents: string): Promise<string> {

@@ -61,7 +61,7 @@ describe('confirmDestructive', () => {
     expect(res).not.toBeNull();
     const error = res!.error;
     expect(error.code).toBe('KB_RUNTIME_CONFIRMATION_REQUIRED');
-    if (error.code !== 'KB_RUNTIME_CONFIRMATION_REQUIRED') throw new Error('Unexpected confirmation error code');
+    if (error.code !== 'KB_RUNTIME_CONFIRMATION_REQUIRED') {throw new Error('Unexpected confirmation error code');}
     expect(Object.entries(error.details ?? {})).toContainEqual(['irreversible', 'true']);
     expect(error.details && 'recovery' in error.details).toBe(false);
   });

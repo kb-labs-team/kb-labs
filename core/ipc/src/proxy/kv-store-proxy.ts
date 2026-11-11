@@ -82,7 +82,7 @@ export class KVStoreProxy extends RemoteAdapter<IKVStore, KVStoreIPCOperation> i
     return (await this.callRemote('persist', [key])) as boolean;
   }
 
-  // eslint-disable-next-line require-yield
+
   async *scan(
     _prefix?: string,
     _options?: { batchSize?: number } & SignalOpts,

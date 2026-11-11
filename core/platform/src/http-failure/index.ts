@@ -11,7 +11,7 @@ export interface HttpFailureOptions {
 
 export function statusForHttpFailure(payload: unknown, transportStatusCode: number): number {
   const parts = failureParts(payload, transportStatusCode);
-  if (!parts.cataloguedPayload || !isErrorCode(parts.code)) return transportStatusCode;
+  if (!parts.cataloguedPayload || !isErrorCode(parts.code)) {return transportStatusCode;}
 
   const entry = getCatalogEntry(parts.code);
   return entry.httpStatus;
@@ -56,20 +56,20 @@ function failureParts(payload: unknown, statusCode: number, limitBytes?: number)
 }
 
 function validationDetails(payload: unknown): Record<string, string> | undefined {
-  if (typeof payload !== 'object' || payload === null) return undefined;
+  if (typeof payload !== 'object' || payload === null) {return undefined;}
   const source = payload as Record<string, unknown>;
   const candidates = Array.isArray(source.validation) ? source.validation
     : Array.isArray(source.issues) ? source.issues
       : [];
   for (const candidate of candidates) {
-    if (typeof candidate !== 'object' || candidate === null) continue;
+    if (typeof candidate !== 'object' || candidate === null) {continue;}
     const issue = candidate as Record<string, unknown>;
     const path = Array.isArray(issue.path) ? issue.path.filter((part): part is string | number =>
       typeof part === 'string' || typeof part === 'number')
       : typeof issue.instancePath === 'string' ? issue.instancePath.split('/').filter(Boolean)
         : typeof issue.dataPath === 'string' ? issue.dataPath.split('.').filter(Boolean)
           : [];
-    if (path.length) return { field: path.map(String).join('.') };
+    if (path.length) {return { field: path.map(String).join('.') };}
   }
   return undefined;
 }
@@ -99,7 +99,7 @@ function createFallbackError(
       details: { permission: 'the requested operation' },
     });
   }
-  if (code !== 'KB_RUNTIME_PAYLOAD_TOO_LARGE') return createErrorEnvelope(code);
+  if (code !== 'KB_RUNTIME_PAYLOAD_TOO_LARGE') {return createErrorEnvelope(code);}
   if (limitBytes === undefined) {
     return createErrorEnvelope(code, { details: { limit: 'the configured receiving-service limit' } });
   }

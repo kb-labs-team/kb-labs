@@ -205,9 +205,9 @@ export async function registerRoutes(
 
   const basePath = normalizeBasePath(config.basePath);
 
-  await registerHealthRoutes(server, config, repoRoot, registry, readiness);
+  await registerHealthRoutes(server, config, registry, readiness);
 
-  await registerOpenAPIRoutes(server, config, repoRoot, registry);
+  await registerOpenAPIRoutes(server, registry);
 
   registerMetricsRoutes(server, config);
 
@@ -245,13 +245,13 @@ export async function registerRoutes(
     platform.logger.info('Historical metrics collector stopped');
   });
 
-  await registerObservabilityRoutes(server, config, repoRoot, historicalCollector, platformServices);
+  await registerObservabilityRoutes(server, config, historicalCollector, platformServices);
 
   await registerAnalyticsRoutes(server, config);
 
   await registerAdaptersRoutes(server, config);
 
-  await registerLogRoutes(server, config, eventHub);
+  await registerLogRoutes(server);
 
   await registerPlatformRoutes(server, config, repoRoot);
 

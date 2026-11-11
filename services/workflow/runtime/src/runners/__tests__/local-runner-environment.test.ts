@@ -40,7 +40,7 @@ describe('LocalRunner environment projection', () => {
     })
 
     expect(result.status).toBe('success')
-    if (result.status !== 'success') return
+    if (result.status !== 'success') {return}
     const output = JSON.parse(result.outputs?.stdout as string) as Record<string, string | undefined>
     expect(output.path).toBe(process.env.PATH)
     expect(output.home).toBe(process.env.HOME)

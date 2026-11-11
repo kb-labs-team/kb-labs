@@ -25,7 +25,6 @@ global.fetch = mockFetch as any;
 describe('registerObservabilityRoutes', () => {
   let app: ReturnType<typeof Fastify>;
   let previousStateDaemonUrl: string | undefined;
-  const repoRoot = '/mock/repo';
 
   beforeEach(async () => {
     previousStateDaemonUrl = process.env.KB_STATE_DAEMON_URL;
@@ -33,7 +32,7 @@ describe('registerObservabilityRoutes', () => {
     vi.clearAllMocks();
     app = Fastify({ logger: false });
     registerEnvelopeMiddleware(app, BASE_CONFIG);
-    await registerObservabilityRoutes(app, BASE_CONFIG, repoRoot);
+    await registerObservabilityRoutes(app, BASE_CONFIG);
   });
 
   afterEach(async () => {

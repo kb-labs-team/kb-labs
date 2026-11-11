@@ -9,11 +9,11 @@ function productionTypeScriptFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const file = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (['.git', 'dist', 'node_modules'].includes(entry.name)) return [];
+      if (['.git', 'dist', 'node_modules'].includes(entry.name)) {return [];}
       return productionTypeScriptFiles(file);
     }
-    if (!entry.isFile() || !/\.(?:ts|tsx|mts|cts)$/.test(entry.name)) return [];
-    if (/(?:\.test|\.spec|\.typecheck)\.(?:ts|tsx|mts|cts)$/.test(entry.name) || file.includes(`${path.sep}__tests__${path.sep}`)) return [];
+    if (!entry.isFile() || !/\.(?:ts|tsx|mts|cts)$/.test(entry.name)) {return [];}
+    if (/(?:\.test|\.spec|\.typecheck)\.(?:ts|tsx|mts|cts)$/.test(entry.name) || file.includes(`${path.sep}__tests__${path.sep}`)) {return [];}
     return [file];
   });
 }

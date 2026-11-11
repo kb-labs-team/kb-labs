@@ -29,7 +29,7 @@ describe('built-in workflow commands', () => {
     const visit = (group: typeof workflowGroup, prefix: string): void => {
       const groupPath = prefix ? `${prefix} ${group.name}` : group.name;
       registered.push(...group.commands.map((command) => `${groupPath} ${command.name}`));
-      for (const subgroup of group.subgroups ?? []) visit(subgroup, groupPath);
+      for (const subgroup of group.subgroups ?? []) {visit(subgroup, groupPath);}
     };
     visit(workflowGroup, '');
     const declared = Object.values(workflowServiceCommands.commands).map((command) => command.name);
@@ -48,7 +48,7 @@ describe('built-in workflow commands', () => {
     registerBuiltinSystemCommands();
     const route = registry.resolve(['workflow', 'lint']);
     expect(route.type).toBe('system-cmd');
-    if (route.type !== 'system-cmd') throw new Error('workflow lint is not a built-in system command');
+    if (route.type !== 'system-cmd') {throw new Error('workflow lint is not a built-in system command');}
 
     const directory = await mkdtemp(join(tmpdir(), 'kb-workflow-cli-boundary-'));
     tempDirectories.push(directory);

@@ -11,8 +11,8 @@ vi.mock('../backends/worker-pool/worker.js', () => ({
     readonly treeUnverified = false;
     readonly info = { id: this.id, state: this.state, createdAt: Date.now(), requestCount: 0, healthy: true };
     async spawn(): Promise<void> {
-      if (workerControl.attempts === 2) throw new Error('replacement spawn failed');
-      if (workerControl.attempts === 3) workerControl.resolveThird?.();
+      if (workerControl.attempts === 2) {throw new Error('replacement spawn failed');}
+      if (workerControl.attempts === 3) {workerControl.resolveThird?.();}
     }
     async shutdown(): Promise<void> { this.state = 'stopped'; }
     healthCheck(): Promise<boolean> { return Promise.resolve(true); }
@@ -53,7 +53,7 @@ describe('pool lifecycle replacement recovery', () => {
     original.emit('exit', original, 1, null);
     await Promise.race([
       thirdAttempt,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('replacement recovery did not retry')), 2_000)),
+      new Promise<never>((_, reject) => { setTimeout(() => reject(new Error('replacement recovery did not retry')), 2_000); }),
     ]);
     expect(workerControl.attempts).toBe(3);
     expect(workers.size).toBe(1);

@@ -8,7 +8,7 @@ describe('installed platform plugin identities', () => {
   let tempRoot: string | undefined;
 
   afterEach(async () => {
-    if (tempRoot) await fs.rm(tempRoot, { recursive: true, force: true });
+    if (tempRoot) {await fs.rm(tempRoot, { recursive: true, force: true });}
     tempRoot = undefined;
   });
 

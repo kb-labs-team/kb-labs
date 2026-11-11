@@ -649,7 +649,6 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     },
   ): Promise<SyncResult> {
     let effectiveCtx = ctx;
-    let scopeRoot: string;
     if (ctx.scope === 'project') {
       const projectRoot = ctx.projectRoot ?? this.roots.projectRoot;
       if (projectRoot && path.isAbsolute(projectRoot)) {
@@ -664,7 +663,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         }
       }
     }
-    scopeRoot = resolveScopeRoot(this.roots, effectiveCtx);
+    const scopeRoot = resolveScopeRoot(this.roots, effectiveCtx);
     return this.withScopeMutation(scopeRoot, () => this.syncInScope(effectiveCtx, scopeRoot, opts));
   }
 

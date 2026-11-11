@@ -43,7 +43,7 @@ export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
     try {
       const { projects, diagnostics } = await listProjects(openRegistry());
       if (projects.length === 0) {
-        if (!json) ctx.ui?.write('No projects registered. Add one with: kb project add <path>\n');
+        if (!json) {ctx.ui?.write('No projects registered. Add one with: kb project add <path>\n');}
       } else if (!json) {
         const nameWidth = Math.max(4, ...projects.map((p) => p.name.length));
         ctx.ui?.write(`${pad('NAME', nameWidth)}  ${pad('ID', 20)}  ${pad('STATUS', 8)}  PATH\n`);

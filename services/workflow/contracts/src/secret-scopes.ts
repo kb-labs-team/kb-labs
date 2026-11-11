@@ -9,15 +9,15 @@ export function getStepSecretNames(step: StepSecretScope): string[] {
 
 export function getJobSecretNames(job: JobSecretScope): string[] {
   const names = [...(job.secrets ?? [])]
-  for (const step of job.steps) names.push(...getStepSecretNames(step))
+  for (const step of job.steps) {names.push(...getStepSecretNames(step))}
   for (const hookSteps of Object.values(job.hooks ?? {})) {
-    for (const step of hookSteps ?? []) names.push(...getStepSecretNames(step))
+    for (const step of hookSteps ?? []) {names.push(...getStepSecretNames(step))}
   }
   return [...new Set(names)]
 }
 
 export function getWorkflowSecretNames(workflow: Pick<WorkflowSpec, 'secrets' | 'jobs'>): string[] {
   const names = [...(workflow.secrets ?? [])]
-  for (const job of Object.values(workflow.jobs)) names.push(...getJobSecretNames(job))
+  for (const job of Object.values(workflow.jobs)) {names.push(...getJobSecretNames(job))}
   return [...new Set(names)]
 }

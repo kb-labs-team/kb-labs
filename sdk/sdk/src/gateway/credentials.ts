@@ -41,7 +41,7 @@ export class CredentialsManager implements ICredentialsManager {
 }
 
 function isGatewayCredentials(value: unknown): value is GatewayCredentials {
-  if (!isSavedCredentialBase(value)) return false;
+  if (!isSavedCredentialBase(value)) {return false;}
   const record = value as GatewayCredentials;
   return (record.handle === undefined || typeof record.handle === 'string')
     && (record.namespaceId === undefined || typeof record.namespaceId === 'string');

@@ -57,11 +57,11 @@ describe('installed platform adapter defaults', () => {
   let primaryGatewayServer: Server | undefined;
 
   afterEach(async () => {
-    if (gatewayServer?.listening) await new Promise<void>((resolve, reject) => gatewayServer!.close((error) => error ? reject(error) : resolve()));
+    if (gatewayServer?.listening) {await new Promise<void>((resolve, reject) => { gatewayServer!.close((error) => error ? reject(error) : resolve()); });}
     gatewayServer = undefined;
-    if (primaryGatewayServer?.listening) await new Promise<void>((resolve, reject) => primaryGatewayServer!.close((error) => error ? reject(error) : resolve()));
+    if (primaryGatewayServer?.listening) {await new Promise<void>((resolve, reject) => { primaryGatewayServer!.close((error) => error ? reject(error) : resolve()); });}
     primaryGatewayServer = undefined;
-    if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+    if (tempRoot) {await rm(tempRoot, { recursive: true, force: true });}
     tempRoot = undefined;
   });
 
@@ -100,7 +100,7 @@ describe('installed platform adapter defaults', () => {
       response.end(JSON.stringify({ ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: 'not found' } }));
     });
     gatewayServer = session;
-    await new Promise<void>((resolve) => session.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => { session.listen(0, '127.0.0.1', resolve); });
     const gatewayUrl = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
     const expectedAuthFailure = createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl } });
 
@@ -155,9 +155,9 @@ describe('installed platform adapter defaults', () => {
     const representatives = new Map<string, string[]>();
     const registeredClasses = new Set<string>();
     for (const command of listing.data.commands) {
-      if (!command.requiresSession) continue;
+      if (!command.requiresSession) {continue;}
       registeredClasses.add(command.protectionClass);
-      if (command.available && !representatives.has(command.protectionClass)) representatives.set(command.protectionClass, command.path);
+      if (command.available && !representatives.has(command.protectionClass)) {representatives.set(command.protectionClass, command.path);}
     }
     expect([...registeredClasses].sort()).toEqual([...representatives.keys()].sort());
     expect(listing.data.commands.find((command) => command.path.join(' ') === 'registry commands')).toMatchObject({
@@ -232,16 +232,16 @@ describe('installed platform adapter defaults', () => {
     expect(result.status, result.stderr || result.stdout).toBe(0);
     const payload: unknown = JSON.parse(result.stdout);
     const findProjects = (value: unknown): unknown[] | undefined => {
-      if (Array.isArray(value)) return value.flatMap((item) => {
+      if (Array.isArray(value)) {return value.flatMap((item) => {
         const found = findProjects(item);
         return found === undefined ? [] : [found];
-      })[0] as unknown[] | undefined;
+      })[0] as unknown[] | undefined;}
       if (value && typeof value === 'object') {
         const record = value as Record<string, unknown>;
-        if (Array.isArray(record.projects)) return record.projects;
+        if (Array.isArray(record.projects)) {return record.projects;}
         for (const child of Object.values(record)) {
           const found = findProjects(child);
-          if (found !== undefined) return found;
+          if (found !== undefined) {return found;}
         }
       }
       return undefined;
@@ -300,7 +300,7 @@ describe('installed platform adapter defaults', () => {
       response.statusCode = 404;
       response.end('{}');
     });
-    await new Promise<void>((resolve) => primaryGatewayServer!.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => { primaryGatewayServer!.listen(0, '127.0.0.1', resolve); });
     const primaryGatewayPort = (primaryGatewayServer.address() as AddressInfo).port;
     await writeFile(path.join(primaryPlatformRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
       installationId: 'installed-root-a', verification: { hostHealthUrl: `http://127.0.0.1:${primaryGatewayPort}/health` },
@@ -324,7 +324,7 @@ describe('installed platform adapter defaults', () => {
       response.statusCode = 404;
       response.end('{}');
     });
-    await new Promise<void>((resolve) => gatewayServer!.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => { gatewayServer!.listen(0, '127.0.0.1', resolve); });
     const gatewayPort = (gatewayServer.address() as AddressInfo).port;
     await mkdir(path.join(platformRoot, '.kb', 'v2'), { recursive: true });
     const unifiedVersion = '2.120.2-cand.d84c8f013160';
@@ -345,7 +345,7 @@ describe('installed platform adapter defaults', () => {
     };
     config.gateway = { ...config.gateway, access: { ...config.gateway?.access, mode: 'local' } };
     delete config.platform.adapters.storage;
-    if (config.platform.adapterOptions) delete config.platform.adapterOptions.storage;
+    if (config.platform.adapterOptions) {delete config.platform.adapterOptions.storage;}
     await writeFile(path.join(platformRoot, '.kb', 'kb.config.jsonc'), `${JSON.stringify(config, null, 2)}\n`);
     const packages = [...new Set([
       ...Object.values(config.platform.adapters).map(value => value.split('/').slice(0, 2).join('/')),
@@ -451,7 +451,7 @@ describe('installed platform adapter defaults', () => {
       credentialsStatus: 'missing', missingCredentials: ['OPENAI_API_KEY'],
     });
 
-    await new Promise<void>((resolve, reject) => gatewayServer!.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) => { gatewayServer!.close((error) => error ? reject(error) : resolve()); });
     gatewayServer = undefined;
     const stopped = await spawnCli(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'adapter', 'list', '--json'], {
       cwd: projectRoot,
@@ -531,7 +531,7 @@ describe('installed platform adapter defaults', () => {
       response.statusCode = 404;
       response.end('{}');
     });
-    await new Promise<void>((resolve) => gatewayServer!.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => { gatewayServer!.listen(0, '127.0.0.1', resolve); });
     const gatewayPort = (gatewayServer.address() as AddressInfo).port;
     await writeFile(path.join(versionRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
       installationId: 'platform-data-root-test',
@@ -592,7 +592,7 @@ describe('installed platform adapter defaults', () => {
         await access(dependencyPath);
         continue;
       } catch (error) {
-        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {throw error;}
       }
       await mkdir(path.dirname(dependencyPath), { recursive: true });
       await symlink(path.join(commitRoot, 'node_modules', dependency), dependencyPath, 'dir');
@@ -633,7 +633,7 @@ describe('installed platform adapter defaults', () => {
       expect(await snapshotRepositoryTree(projectRoot)).toEqual(projectTreeBefore);
       expect(await snapshotRepositoryTree(secondProjectRoot)).toEqual(secondProjectTreeBefore);
       for (const repository of [projectRoot, secondProjectRoot]) {
-        if (!gitRepositories.has(repository)) continue;
+        if (!gitRepositories.has(repository)) {continue;}
         const status = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], {
           cwd: repository, env, encoding: 'utf8',
         });
@@ -739,7 +739,7 @@ describe('installed platform adapter defaults', () => {
     };
     config.gateway = { ...config.gateway, access: { ...config.gateway?.access, mode: 'local' } };
     delete config.platform.adapters.storage;
-    if (config.platform.adapterOptions) delete config.platform.adapterOptions.storage;
+    if (config.platform.adapterOptions) {delete config.platform.adapterOptions.storage;}
     await writeFile(path.join(platformRoot, '.kb', 'kb.config.jsonc'), `${JSON.stringify(config, null, 2)}\n`);
     const packages = [...new Set([
       ...Object.values(config.platform.adapters).map(value => value.split('/').slice(0, 2).join('/')),
@@ -809,7 +809,7 @@ async function snapshotRepositoryTree(root: string): Promise<Array<[string, stri
   const entries: Array<[string, string]> = [];
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (entry.name === '.git') continue;
+      if (entry.name === '.git') {continue;}
       const absolute = path.join(directory, entry.name);
       const relative = path.relative(root, absolute);
       if (entry.isDirectory()) {

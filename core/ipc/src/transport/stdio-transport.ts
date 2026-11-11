@@ -8,7 +8,7 @@ import {
   TimeoutError,
 } from './transport';
 import { selectTimeout } from './timeout-config';
-import { StdioChannel } from './stdio-channel';
+import type { StdioChannel } from './stdio-channel';
 
 /** Platform RPC transport over the same framed stdio channel as execution control. */
 export class StdioTransport implements ITransport {

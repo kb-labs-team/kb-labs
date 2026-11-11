@@ -142,7 +142,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
         catalog: requireResolvedCatalog(),
         ...(roots.projectId ? { projectId: roots.projectId } : {}),
       });
-      const platform = await loadEffectiveConfig(roots.configRoot, {
+      const platform = await loadEffectiveConfig({
         platformRoot: roots.platformRoot,
         ...(roots.projectId ? { projectId: roots.projectId } : {}),
         pluginDefaults: manifestSettingsLayers(runtimeConfig),
@@ -158,7 +158,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
         effectiveAdapters: effectivePlatform?.adapters,
       });
       const pluginSettings = segments[0] === 'plugins' && segments.length >= 3
-        ? await pluginSettingsSchemaFor(roots, segments[1]!)
+        ? await pluginSettingsSchemaFor(segments[1]!)
         : undefined;
       const pluginValidator = pluginSettings
         ? await resolvePluginSettingsValidator(pluginSettings.schema, pluginSettings.packageRoot, segments[1])

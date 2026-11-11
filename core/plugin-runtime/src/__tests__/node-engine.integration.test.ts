@@ -81,11 +81,11 @@ function findOlderNode(): string | undefined {
 
   for (const candidate of candidates) {
     if (!existsSync(candidate)) {
-      if (explicit) throw new Error(`KB_TEST_OLD_NODE does not exist: ${candidate}`);
+      if (explicit) {throw new Error(`KB_TEST_OLD_NODE does not exist: ${candidate}`);}
       throw new Error(`NVM Node executable does not exist: ${candidate}`);
     }
     const version = execFileSync(candidate, ['--version'], { encoding: 'utf8', timeout: 5000 }).trim();
-    if (!nodeVersionSupported(requiredMajor, version)) return candidate;
+    if (!nodeVersionSupported(requiredMajor, version)) {return candidate;}
     if (explicit) {
       throw new Error(`KB_TEST_OLD_NODE ${candidate} reports ${version}, which satisfies Node.js ${requiredMajor}.x; choose an older Node binary.`);
     }

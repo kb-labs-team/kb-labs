@@ -101,7 +101,7 @@ export const pluginValidate = defineSystemCommand<PluginValidateFlags, PluginVal
     const cwd = getContextCwd(ctx);
     const manifestPath = path.resolve(cwd, flags.manifest || 'manifest.v2.ts');
 
-    if (!flags.json) ctx.ui.write(`Validating manifest: ${manifestPath}\n`);
+    if (!flags.json) {ctx.ui.write(`Validating manifest: ${manifestPath}\n`);}
 
     // Read and parse manifest
     let manifestContent: string;
@@ -141,12 +141,12 @@ export const pluginValidate = defineSystemCommand<PluginValidateFlags, PluginVal
       throwSystemCommandError('Manifest validation failed', "Run `kb marketplace plugin:validate --help` to review valid inputs and recovery steps, then retry.", undefined, validationResult.errors.map((message) => ({ code: 'KB_RUNTIME_INPUT_INVALID', message, severity: 'error' as const })));
     }
 
-    if (!flags.json) ctx.ui.success('✅ Manifest structure is valid!\n');
+    if (!flags.json) {ctx.ui.success('✅ Manifest structure is valid!\n');}
 
     // Cross-validation with contracts
     if (flags.contracts) {
       const contractsPath = path.resolve(cwd, flags.contracts);
-      if (!flags.json) ctx.ui.write(`\nValidating against contracts: ${contractsPath}\n`);
+      if (!flags.json) {ctx.ui.write(`\nValidating against contracts: ${contractsPath}\n`);}
 
       const crossValidation = await validateManifestAgainstContracts(manifest, contractsPath);
 
@@ -155,10 +155,10 @@ export const pluginValidate = defineSystemCommand<PluginValidateFlags, PluginVal
         throwSystemCommandError('Contract validation failed', "Run `kb marketplace plugin:validate --help` to review valid inputs and recovery steps, then retry.", undefined, crossValidation.issues.map((message) => ({ code: 'KB_RUNTIME_INPUT_INVALID', message, severity: 'error' as const })));
       }
 
-      if (!flags.json) ctx.ui.success('✅ Manifest matches contracts!\n');
+      if (!flags.json) {ctx.ui.success('✅ Manifest matches contracts!\n');}
     }
 
-    if (!flags.json) ctx.ui.success('\n✅ All validations passed!\n');
+    if (!flags.json) {ctx.ui.success('\n✅ All validations passed!\n');}
     return {  valid: true };
   },
 });

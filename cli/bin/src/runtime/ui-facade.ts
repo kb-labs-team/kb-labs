@@ -49,10 +49,10 @@ function renderTTYOutput(output: UIOutput, writeOutput: (text: string) => void, 
   switch (output.kind) {
     case 'message': {
       const sections = output.options?.sections?.map(section => ({ header: section.header, items: section.items })) ?? [];
-      if (output.options?.cause) sections.push({ header: 'Cause', items: [{ text: output.options.cause, dim: true }] });
+      if (output.options?.cause) {sections.push({ header: 'Cause', items: [{ text: output.options.cause, dim: true }] });}
       if (output.options?.hint) {
         const hint: Array<string | { text: string; dim: boolean }> = [output.options.hint];
-        if (output.options.command) hint.push({ text: `$ ${output.options.command}`, dim: true });
+        if (output.options.command) {hint.push({ text: `$ ${output.options.command}`, dim: true });}
         sections.push({ header: 'Hint', items: hint });
       } else if (output.options?.command) {
         sections.push({ header: 'Hint', items: [{ text: `$ ${output.options.command}`, dim: true }] });
@@ -87,7 +87,7 @@ function renderTTYOutput(output: UIOutput, writeOutput: (text: string) => void, 
       }))));
       return;
     case 'table': {
-      if (output.data.length === 0) return;
+      if (output.data.length === 0) {return;}
       const columns: TableColumn[] = output.columns ?? Object.keys(output.data[0]!).map(key => ({ header: key, key }));
       const rows = output.data.map(row => columns.map(column => String(row[column.key] ?? '')));
       for (const line of formatTable(columns.map(column => ({ header: column.header, width: column.width, align: column.align })), rows, { separator: '' })) {
@@ -158,7 +158,7 @@ export function createCLIUIFacade(presenter: PresenterDelegate | undefined, writ
       const sections = [...(options?.sections ?? [])];
       if (err instanceof Error && err.stack && !options?.sections) {
         const stackLines = formatErrorStack(err);
-        if (stackLines.length > 0) sections.push({ header: 'Stack', items: stackLines });
+        if (stackLines.length > 0) {sections.push({ header: 'Stack', items: stackLines });}
       }
       renderTTYOutput(
         { kind: 'message', level: 'error', message, options: { ...options, sections } },

@@ -37,7 +37,7 @@ export async function resolvePlatformDataRoot(platformRoot: string, development?
     throw new Error(`Platform layout contract at ${contractPath} has no valid platformDataRoot paths.`);
   }
   const projection = path.resolve(contractRoot, platformPath);
-  if (!installed) return projection;
+  if (!installed) {return projection;}
   try {
     return await fs.realpath(projection);
   } catch (error) {
@@ -50,20 +50,20 @@ async function selectVersionLayoutContract(versionContractPath: string, activeCo
     await fs.access(activeContractPath);
     return activeContractPath;
   } catch (error) {
-    if (!isMissingPath(error)) throw error;
+    if (!isMissingPath(error)) {throw error;}
   }
   try {
     await fs.access(versionContractPath);
     return versionContractPath;
   } catch (error) {
-    if (!isMissingPath(error)) throw error;
+    if (!isMissingPath(error)) {throw error;}
   }
   if (development !== false) {
     try {
       await fs.access(developmentContractPath);
       return developmentContractPath;
     } catch (error) {
-      if (!isMissingPath(error)) throw error;
+      if (!isMissingPath(error)) {throw error;}
     }
   }
   return versionContractPath;
@@ -72,9 +72,9 @@ async function selectVersionLayoutContract(versionContractPath: string, activeCo
 async function findInstallRoot(root: string): Promise<string | undefined> {
   let candidate = path.resolve(root);
   while (true) {
-    if (await hasInstallRootStructure(candidate)) return candidate;
+    if (await hasInstallRootStructure(candidate)) {return candidate;}
     const parent = path.dirname(candidate);
-    if (parent === candidate) return undefined;
+    if (parent === candidate) {return undefined;}
     candidate = parent;
   }
 }
@@ -85,7 +85,7 @@ async function hasInstallRootStructure(root: string): Promise<boolean> {
       await fs.access(path.join(root, child));
       return true;
     } catch (error) {
-      if (!isMissingPath(error)) throw error;
+      if (!isMissingPath(error)) {throw error;}
     }
   }
   return false;

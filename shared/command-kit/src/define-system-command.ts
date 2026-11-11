@@ -13,7 +13,7 @@ import {
 import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import { formatError } from './errors/index';
-import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, createCatalogErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type DetailsFor, type CatalogErrorRequest, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
+import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, createCatalogErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type DetailsFor, type CatalogErrorRequest, type ErrorCode, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
 import { renderErrorEnvelope } from '@kb-labs/shared-cli-ui';
@@ -80,7 +80,7 @@ function validateSystemFlags(
   }
   for (const flagName of Object.keys(rawFlags)) {
     const normalizedName = flagName.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
-    if (schemaNames.has(flagName) || schemaNames.has(normalizedName) || GLOBAL_FLAG_NAMES.has(flagName)) continue;
+    if (schemaNames.has(flagName) || schemaNames.has(normalizedName) || GLOBAL_FLAG_NAMES.has(flagName)) {continue;}
     throw new FlagValidationError(
       flagName,
       `Unknown flag: --${flagName}`,

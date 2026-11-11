@@ -32,11 +32,11 @@ async function terminalFailure(
   observation: SideEffectObservation = {},
   storage: IStorage = new InMemoryStorage(),
 ) {
-  let deadLetterKey: string | undefined;
+  const deadLetterKey: { value?: string } = {};
   const projectId = 'prj_0000000000000001';
   const cache = deadLetterError
     ? new FaultInjectingCache(new InMemoryCache(), async (operation: CacheOperation) => {
-        if (operation.name === 'set' && operation.key === deadLetterKey) {
+        if (operation.name === 'set' && operation.key === deadLetterKey.value) {
           observation.status = (await observation.readRun?.())?.status;
           return deadLetterError;
         }
@@ -66,7 +66,7 @@ async function terminalFailure(
   });
   const failedJob = run.jobs.find((job) => job.jobName === 'failed')!;
   await engine.markJobStarted(run.id, failedJob.id);
-  deadLetterKey = workflowProjectCacheKey(projectId, workflowDeadLetterCacheKey(run.id, failedJob.id));
+  deadLetterKey.value = workflowProjectCacheKey(projectId, workflowDeadLetterCacheKey(run.id, failedJob.id));
   observation.readRun = () => engine.getRun(run.id);
   const result = await engine.markJobFailed(run.id, failedJob.id, new Error('step failed'), undefined, false);
   return { engine, logger, run, failedJob, observation, result };
@@ -214,8 +214,6 @@ describe('workflow terminal state precedes ancillary effects', () => {
   // case: S-027.5
   it('cancels a running run through the terminal owner before effects and persists history', async () => {
     const error = new Error('cancellation event unavailable');
-    let engine: WorkflowEngine;
-    let run: WorkflowRun;
     let observedStatus: WorkflowRun['status'] | undefined;
     const logger = mockLogger();
     const events = new FaultInjectingEventBus(new InMemoryEventBus(), async (operation) => {
@@ -226,11 +224,11 @@ describe('workflow terminal state precedes ancillary effects', () => {
       }
       return undefined;
     });
-    engine = new WorkflowEngine({
+    const engine = new WorkflowEngine({
       projectId: 'prj_0000000000000001', cache: new InMemoryCache(), storage: new InMemoryStorage(),
       events, logger, secretProvider: new EnvSecretProvider(),
     });
-    run = await engine.createRun({
+    const run = await engine.createRun({
       spec: { name: 'cancel-running', version: '1.0.0', on: { manual: true }, jobs: {
         job: { runsOn: 'local', steps: [{ name: 'Hold', uses: 'builtin:shell', with: { run: 'true' } }] },
       } },

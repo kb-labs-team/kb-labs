@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { RegistryPackageError, RegistryPackageSource } from './registry-source.js';
+import { RegistryPackageSource } from './registry-source.js';
 
 describe('RegistryPackageSource', () => {
   afterEach(() => vi.unstubAllGlobals());

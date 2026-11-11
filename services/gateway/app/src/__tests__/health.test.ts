@@ -52,28 +52,28 @@ const stubJwtConfig: JwtConfig = { secret: 'test-secret' };
 type FixtureMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 function schemaExample(input: unknown): unknown {
-  if (!input || typeof input !== 'object') return {};
+  if (!input || typeof input !== 'object') {return {};}
   const schema = input as Record<string, unknown>;
-  if ('const' in schema) return schema.const;
-  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+  if ('const' in schema) {return schema.const;}
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {return schema.enum[0];}
   for (const key of ['anyOf', 'oneOf']) {
     const variants = schema[key];
-    if (Array.isArray(variants) && variants.length > 0) return schemaExample(variants[0]);
+    if (Array.isArray(variants) && variants.length > 0) {return schemaExample(variants[0]);}
   }
   if (schema.type === 'object' || schema.properties) {
     const properties = (schema.properties ?? {}) as Record<string, unknown>;
     const required = Array.isArray(schema.required) ? schema.required.map(String) : [];
     return Object.fromEntries(required.map((key) => [key, schemaExample(properties[key])]));
   }
-  if (schema.type === 'array') return [schemaExample(schema.items)];
+  if (schema.type === 'array') {return [schemaExample(schema.items)];}
   if (schema.type === 'string') {
-    if (schema.format === 'date-time') return '2030-01-02T03:04:05.000Z';
-    if (schema.format === 'date') return '2030-01-02';
-    if (typeof schema.pattern === 'string' && schema.pattern.includes('a-z0-9')) return 'fixture-01';
+    if (schema.format === 'date-time') {return '2030-01-02T03:04:05.000Z';}
+    if (schema.format === 'date') {return '2030-01-02';}
+    if (typeof schema.pattern === 'string' && schema.pattern.includes('a-z0-9')) {return 'fixture-01';}
     return 'fixture';
   }
-  if (schema.type === 'integer' || schema.type === 'number') return typeof schema.minimum === 'number' ? schema.minimum : 1;
-  if (schema.type === 'boolean') return true;
+  if (schema.type === 'integer' || schema.type === 'number') {return typeof schema.minimum === 'number' ? schema.minimum : 1;}
+  if (schema.type === 'boolean') {return true;}
   return {};
 }
 
@@ -83,7 +83,7 @@ function routeRequest(route: RouteOptions, method: FixtureMethod, invalid = fals
   let url = route.url.replace(/:([^/]+)/g, (_match, name: string) => encodeURIComponent(String(schemaExample(params[name])))).replace(/\*/g, 'fixture');
   const query = invalid ? { __ux_fixture_invalid__: 'true' } : schemaExample(schema.querystring) as Record<string, unknown>;
   const search = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)] as [string, string]));
-  if (search.size) url += `?${search}`;
+  if (search.size) {url += `?${search}`;}
   const request: { method: FixtureMethod; url: string; payload?: string; headers?: { 'content-type': string } } = { method, url };
   if (invalid && ['POST', 'PUT', 'PATCH'].includes(method) && schema.body) {
     const bodySchema = schema.body as { anyOf?: Array<{ maxProperties?: number }>; required?: string[]; properties?: Record<string, unknown> };
@@ -93,13 +93,13 @@ function routeRequest(route: RouteOptions, method: FixtureMethod, invalid = fals
       ? '{"__ux_fixture_invalid__":true}'
       : JSON.stringify({ [firstProperty[0]]: invalidSchemaExample(firstProperty[1]) });
   }
-  else if (!invalid && ['POST', 'PUT', 'PATCH'].includes(method) && schema.body) request.payload = JSON.stringify(schemaExample(schema.body));
-  if (request.payload !== undefined) request.headers = { 'content-type': 'application/json' };
+  else if (!invalid && ['POST', 'PUT', 'PATCH'].includes(method) && schema.body) {request.payload = JSON.stringify(schemaExample(schema.body));}
+  if (request.payload !== undefined) {request.headers = { 'content-type': 'application/json' };}
   return request;
 }
 
 function invalidSchemaExample(schema: unknown): unknown {
-  if (typeof schema !== 'object' || schema === null || !('type' in schema)) return { __ux_fixture_invalid__: true };
+  if (typeof schema !== 'object' || schema === null || !('type' in schema)) {return { __ux_fixture_invalid__: true };}
   switch (schema.type) {
     case 'string': return 1;
     case 'number':
@@ -373,7 +373,7 @@ describe('Gateway production route declarations', () => {
     const app = await buildHealthApp({ access: { mode: 'local' } }, undefined, (route) => {
       const original = route.handler;
       route.handler = async function (...args) {
-        if (injectFailure) throw new Error('fixture unexpected failure');
+        if (injectFailure) {throw new Error('fixture unexpected failure');}
         return original.apply(this, args);
       };
       routes.push(route);
@@ -382,14 +382,14 @@ describe('Gateway production route declarations', () => {
       expect(routes.length).toBeGreaterThan(0);
       const missing = routes.filter((route) => {
         const config = route.config as { ux?: string } | undefined;
-        if (config?.ux === 'raw') return false;
-        if (!route.schema || typeof route.schema !== 'object') return true;
+        if (config?.ux === 'raw') {return false;}
+        if (!route.schema || typeof route.schema !== 'object') {return true;}
         const schema = route.schema as { params?: unknown; querystring?: unknown; body?: unknown; response?: Record<number, unknown> };
-        if (route.url.includes(':') && !schema.params) return true;
+        if (route.url.includes(':') && !schema.params) {return true;}
         const methods = Array.isArray(route.method) ? route.method : [route.method];
         const hasJsonMethod = methods.some((method) => method !== 'HEAD');
-        if (hasJsonMethod && !schema.querystring) return true;
-        if (methods.some((method) => ['POST', 'PUT', 'PATCH'].includes(method)) && !schema.body) return true;
+        if (hasJsonMethod && !schema.querystring) {return true;}
+        if (methods.some((method) => ['POST', 'PUT', 'PATCH'].includes(method)) && !schema.body) {return true;}
         return hasJsonMethod && !Object.entries(schema.response ?? {}).some(([status]) => Number(status) >= 200 && Number(status) < 300);
       });
       expect(missing.map(({ method, url }) => `${Array.isArray(method) ? method.join(',') : method} ${url}`)).toEqual([]);
@@ -403,7 +403,7 @@ describe('Gateway production route declarations', () => {
         }
         const methods = (Array.isArray(route.method) ? route.method : [route.method]).filter((method) => method !== 'HEAD');
         for (const method of methods) {
-          if (method !== 'GET' && method !== 'POST' && method !== 'PUT' && method !== 'PATCH' && method !== 'DELETE') continue;
+          if (method !== 'GET' && method !== 'POST' && method !== 'PUT' && method !== 'PATCH' && method !== 'DELETE') {continue;}
           const fixtureMethod = method as FixtureMethod;
           const valid = await app.inject(routeRequest(route, fixtureMethod));
           const responseSchemas = (route.schema as { response?: Record<number, unknown> } | undefined)?.response ?? {};
@@ -422,8 +422,8 @@ describe('Gateway production route declarations', () => {
             expect(validBody.error?.hint).toEqual(expect.any(String));
             expect(validBody.error?.correlationId).toEqual(expect.any(String));
             const fixture = (route.config as { uxFixture?: { validResult?: 'error-envelope' } } | undefined)?.uxFixture;
-            if (fixture?.validResult !== 'error-envelope') missingFixtureMetadata.push(`${method} ${route.url}: ${valid.statusCode}`);
-          } else expect(validBody).toHaveProperty('data');
+            if (fixture?.validResult !== 'error-envelope') {missingFixtureMetadata.push(`${method} ${route.url}: ${valid.statusCode}`);}
+          } else {expect(validBody).toHaveProperty('data');}
 
           const invalid = await app.inject(routeRequest(route, fixtureMethod, true));
           const invalidBody = invalid.json() as { ok?: boolean; error?: { code?: string; message?: string; hint?: string; correlationId?: string } };
@@ -519,7 +519,7 @@ describe('Gateway /health/identity endpoint', () => {
   let app: Awaited<ReturnType<typeof buildHealthApp>>;
 
   afterEach(async () => {
-    if (app) await app.close();
+    if (app) {await app.close();}
   });
 
   // case: S-203.22

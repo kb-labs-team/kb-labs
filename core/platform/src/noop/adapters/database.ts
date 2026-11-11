@@ -49,7 +49,7 @@ export class NoOpDocumentDatabase implements IDocumentDatabase {
     throw new Error(NOT_CONFIGURED_DOC);
   }
 
-  // eslint-disable-next-line require-yield
+
   async *findStream<T extends BaseDocument, P = T>(
     _collection: string,
     _filter: DocumentFilter<T>,
@@ -229,7 +229,7 @@ export class NoOpKVStore implements IKVStore {
     throw new Error(NOT_CONFIGURED_KV);
   }
 
-  // eslint-disable-next-line require-yield
+
   async *scan(
     _prefix?: string,
     _options?: { batchSize?: number } & SignalOpts,

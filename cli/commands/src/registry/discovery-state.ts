@@ -13,7 +13,7 @@ export function getResolvedCatalog(): IEntityRegistry | undefined {
 }
 
 export function requireResolvedCatalog(): IEntityRegistry {
-  if (!resolvedCatalog) throw new Error('The CLI catalog was not opened during command registration.');
+  if (!resolvedCatalog) {throw new Error('The CLI catalog was not opened during command registration.');}
   return resolvedCatalog;
 }
 

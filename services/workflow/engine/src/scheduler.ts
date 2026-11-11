@@ -92,7 +92,7 @@ export class Scheduler {
   async dequeueJob(): Promise<JobQueueEntry | null> {
     // Sequential check by priority order - must return first match respecting priority
     for (const priority of this.priorityOrder) {
-      const entry = await this.dequeueFromPriority(priority) // eslint-disable-line no-await-in-loop
+      const entry = await this.dequeueFromPriority(priority)
       if (entry) {
         return entry
       }

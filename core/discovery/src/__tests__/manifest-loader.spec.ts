@@ -119,7 +119,7 @@ describe('loadManifest', () => {
     const result = await loadManifestFile(pkgDir, diag);
 
     expect(result.kind).toBe('manifest');
-    if (result.kind === 'manifest') expect(result.loaded.manifest.id).toBe('@kb-labs/kb-field');
+    if (result.kind === 'manifest') {expect(result.loaded.manifest.id).toBe('@kb-labs/kb-field');}
   });
 
   // ── Path traversal guard ─────────────────────────────────────────────
@@ -158,7 +158,7 @@ describe('loadManifest', () => {
     const result = await loadManifestFile(pkgDir, diag);
 
     expect(result.kind).toBe('manifest');
-    if (result.kind === 'manifest') expect(result.loaded.manifest.id).toBe('@kb-labs/fallback');
+    if (result.kind === 'manifest') {expect(result.loaded.manifest.id).toBe('@kb-labs/fallback');}
   });
 
   // ── Priority order (package.json field wins over kb.plugin.json) ─────
@@ -183,7 +183,7 @@ describe('loadManifest', () => {
     const result = await loadManifestFile(pkgDir, diag);
 
     expect(result.kind).toBe('manifest');
-    if (result.kind === 'manifest') expect(result.loaded.manifest.id).toBe('from-pkg-field');
+    if (result.kind === 'manifest') {expect(result.loaded.manifest.id).toBe('from-pkg-field');}
   });
 
   // case: S-203.25

@@ -15,11 +15,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import type {
+  InMemoryDocumentDatabase,
+  InMemoryKVStore} from '@kb-labs/core-platform/inmemory';
 import {
   createInMemoryDocumentDatabase,
-  createInMemoryKVStore,
-  InMemoryDocumentDatabase,
-  InMemoryKVStore,
+  createInMemoryKVStore
 } from '@kb-labs/core-platform/inmemory';
 import { PermissionError } from '@kb-labs/plugin-contracts';
 import type { PermissionSpec } from '@kb-labs/plugin-contracts';

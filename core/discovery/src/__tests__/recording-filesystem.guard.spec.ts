@@ -11,7 +11,7 @@ function productionSources(entryPath: string): string[] {
   const pending = [entryPath];
   while (pending.length > 0) {
     const filePath = pending.pop()!;
-    if (sources.has(filePath)) continue;
+    if (sources.has(filePath)) {continue;}
     sources.add(filePath);
     const ast = ts.createSourceFile(filePath, ts.sys.readFile(filePath) ?? '', ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const specifiers: string[] = [];
@@ -29,7 +29,7 @@ function productionSources(entryPath: string): string[] {
     visit(ast);
     for (const specifier of specifiers) {
       const resolved = ts.resolveModuleName(specifier, filePath, { moduleResolution: ts.ModuleResolutionKind.NodeNext, module: ts.ModuleKind.NodeNext }, ts.sys).resolvedModule?.resolvedFileName;
-      if (resolved && path.resolve(resolved).startsWith(`${sourceRoot}${path.sep}`) && !sources.has(path.resolve(resolved))) pending.push(path.resolve(resolved));
+      if (resolved && path.resolve(resolved).startsWith(`${sourceRoot}${path.sep}`) && !sources.has(path.resolve(resolved))) {pending.push(path.resolve(resolved));}
     }
   }
   return [...sources];
@@ -40,13 +40,13 @@ function importedModules(source: string, filePath: string): string[] {
   const modules: string[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      if (node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) modules.push(node.moduleSpecifier.text);
+      if (node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {modules.push(node.moduleSpecifier.text);}
     }
     const argument = ts.isCallExpression(node) && node.arguments.length === 1 ? node.arguments[0] : undefined;
     if (ts.isCallExpression(node) && argument && ts.isStringLiteral(argument)) {
       const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
       const isRequire = ts.isIdentifier(node.expression) && node.expression.text === 'require';
-      if (isDynamicImport || isRequire) modules.push(argument.text);
+      if (isDynamicImport || isRequire) {modules.push(argument.text);}
     }
     ts.forEachChild(node, visit);
   };
@@ -59,7 +59,7 @@ describe('discovery filesystem ownership', () => {
     const files = productionSources(path.join(sourceRoot, 'index.ts'));
     const bypasses: string[] = [];
     for (const file of files) {
-      if (file === facadePath) continue;
+      if (file === facadePath) {continue;}
       const modules = importedModules(await readFile(file, 'utf8'), file);
       if (modules.some((specifier) => specifier === 'node:fs' || specifier.startsWith('node:fs/') || specifier === 'fs' || specifier === 'glob' || specifier === 'fast-glob')) {
         bypasses.push(path.relative(sourceRoot, file));

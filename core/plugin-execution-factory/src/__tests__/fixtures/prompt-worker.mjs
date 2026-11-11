@@ -7,7 +7,7 @@ process.on('message', (message) => {
     process.send({ type: 'healthOk' });
     return;
   }
-  if (message.type !== 'execute') return;
+  if (message.type !== 'execute') {return;}
   activeRequestId = message.requestId;
 
   process.send({
@@ -21,7 +21,7 @@ process.on('message', (message) => {
 });
 
 process.on('message', (message) => {
-  if (message.type !== 'uiPromptResult') return;
+  if (message.type !== 'uiPromptResult') {return;}
   if (message.failure) {
     process.send({
       type: 'error',

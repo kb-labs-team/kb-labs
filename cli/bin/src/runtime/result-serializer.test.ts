@@ -10,8 +10,8 @@ describe('CLI result serializer', () => {
   let outputFd: number | undefined;
 
   afterEach(() => {
-    if (outputFd !== undefined) closeSync(outputFd);
-    if (pathToOutput !== undefined) unlinkSync(pathToOutput);
+    if (outputFd !== undefined) {closeSync(outputFd);}
+    if (pathToOutput !== undefined) {unlinkSync(pathToOutput);}
     outputFd = undefined;
     pathToOutput = undefined;
   });

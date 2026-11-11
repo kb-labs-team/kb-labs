@@ -33,7 +33,7 @@ export async function readProjectSettings(
   try {
     text = await fs.readFile(filePath, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {return {};}
     throw error;
   }
   const value = parseJsonc(text);
@@ -102,13 +102,13 @@ export async function writeProjectSetting(
 }
 
 function isSchemaReference(value: unknown): boolean {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value)) {return false;}
   return (Object.keys(value).length === 1 && typeof value.$ref === 'string') ||
     (Object.keys(value).length === 1 && typeof value.zod === 'string');
 }
 
 function mergeSettings(lower: unknown, higher: unknown): unknown {
-  if (!isRecord(lower) || !isRecord(higher)) return higher;
+  if (!isRecord(lower) || !isRecord(higher)) {return higher;}
   const result: Record<string, unknown> = { ...lower };
   for (const [key, value] of Object.entries(higher)) {
     result[key] = Object.prototype.hasOwnProperty.call(lower, key)

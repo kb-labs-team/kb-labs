@@ -5,6 +5,7 @@ import {
 } from '@kb-labs/core-platform';
 
 export default {
+  /** @type {import('@kb-labs/plugin-contracts').CommandHandler} */
   async execute(_context, input) {
     if (input.kind === 'adapter') {
       const error = new AdapterUnavailableError(

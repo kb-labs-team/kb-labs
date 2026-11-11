@@ -67,9 +67,9 @@ describe('SandboxRunner — builtin:shell KB_WORKSPACE_ROOT routing', () => {
 
   it('uses context.env.KB_WORKSPACE_ROOT (worktree) not request.workspace (platform root)', async () => {
     const runner = new SandboxRunner({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       backend: mockBackend as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       cliApi: mockCliApi as any,
       workspaceRoot: '/main/workspace',
       platformRoot: '/opt/kb-platform',
@@ -88,9 +88,9 @@ describe('SandboxRunner — builtin:shell KB_WORKSPACE_ROOT routing', () => {
 
   it('falls back to request.workspace when context.env has no KB_WORKSPACE_ROOT', async () => {
     const runner = new SandboxRunner({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       backend: mockBackend as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       cliApi: mockCliApi as any,
       workspaceRoot: '/main/workspace',
     })
@@ -125,9 +125,9 @@ describe('SandboxRunner — builtin:shell KB_WORKSPACE_ROOT routing', () => {
     }
 
     const runner = new SandboxRunner({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       backend: backendCapturingTimeout as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       cliApi: mockCliApi as any,
       workspaceRoot: '/main/workspace',
     })

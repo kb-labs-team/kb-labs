@@ -14,7 +14,7 @@ import type {
 import * as path from 'node:path';
 
 export class AdapterManifestLoadError extends Error {
-  readonly code: 'KB_ADAPTER_MANIFEST_LOAD' = 'KB_ADAPTER_MANIFEST_LOAD';
+  readonly code = 'KB_ADAPTER_MANIFEST_LOAD' as const;
   readonly hint = 'Correct the adapter manifest, rebuild the adapter package, then run `kb marketplace plugins doctor --scope platform` to verify it.';
   readonly details: DetailsFor<'KB_ADAPTER_MANIFEST_LOAD'> = {};
   readonly metadata: { packageRoot: string; reason: string };

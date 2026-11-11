@@ -48,10 +48,10 @@ function makeCtx(): { ctx: PluginContextV3; json: Payload[]; text: string[] } {
       },
       warn: (m: string, options) => {
         text.push(m);
-        if (options?.title) text.push(options.title);
+        if (options?.title) {text.push(options.title);}
         for (const section of options?.sections ?? []) {
-          if (section.header) text.push(section.header);
-          for (const item of section.items) text.push(typeof item === 'string' ? item : item.text);
+          if (section.header) {text.push(section.header);}
+          for (const item of section.items) {text.push(typeof item === 'string' ? item : item.text);}
         }
       },
       info: (m: string) => {

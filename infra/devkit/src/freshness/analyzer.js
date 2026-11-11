@@ -8,7 +8,7 @@
 /**
  * Analyze staleness for a single package
  */
-export function analyzeStaleness(pkgName, meta, graph, allMetadata, options) {
+export function analyzeStaleness(pkgName, meta, graph, options) {
   const issues = [];
 
   // Criterion 1: Version Mismatch

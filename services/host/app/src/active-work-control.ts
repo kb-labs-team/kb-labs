@@ -11,7 +11,7 @@ export interface HostActiveWorkControl {
 }
 
 function credentialMatches(expected: string, received: string | undefined): boolean {
-  if (!received) return false;
+  if (!received) {return false;}
   const expectedDigest = createHash("sha256").update(expected).digest();
   const receivedDigest = createHash("sha256").update(received).digest();
   return timingSafeEqual(expectedDigest, receivedDigest);
@@ -22,7 +22,7 @@ export async function startHostActiveWorkControl(
   providers: ActiveWorkRegistry,
   projectRuntimes: ProjectRuntimeManager,
 ): Promise<HostActiveWorkControl> {
-  if (credential.length < 32) throw new Error("Host active-work control credential is missing or too short.");
+  if (credential.length < 32) {throw new Error("Host active-work control credential is missing or too short.");}
   const server: Server = createServer((request, response) => {
     if (!credentialMatches(credential, request.headers.authorization?.replace(/^Bearer /, ""))) {
       response.writeHead(403).end();
@@ -52,9 +52,17 @@ export async function startHostActiveWorkControl(
     });
   });
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Host active-work control endpoint did not bind a TCP address.");
+  if (!address || typeof address === "string") {throw new Error("Host active-work control endpoint did not bind a TCP address.");}
   return {
     address: `http://127.0.0.1:${address.port}`,
-    close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+    close: () => new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    }),
   };
 }

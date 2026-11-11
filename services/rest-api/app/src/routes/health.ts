@@ -40,7 +40,6 @@ let inFlightBaseSnapshot: Promise<SystemHealthSnapshot> | null = null;
 export async function registerHealthRoutes(
   fastify: FastifyInstance,
   config: RestApiConfig,
-  _repoRoot: string,
   registry: IEntityRegistry,
   readiness: ReadinessState
 ): Promise<void> {

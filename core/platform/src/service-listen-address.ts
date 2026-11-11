@@ -119,7 +119,7 @@ async function selectCliGateway(
     return { gatewayUrl: resolveGatewayServiceAddress(undefined, options) };
   }
   const installation = platformRoot ? await readInstalledPlatformIdentity(platformRoot) : undefined;
-  if (installation) return { gatewayUrl: installation.gatewayUrl, installation };
+  if (installation) {return { gatewayUrl: installation.gatewayUrl, installation };}
   validateConfiguredGatewayPort(options);
   const gatewayUrl = resolveGatewayServiceAddress(transport, options);
   return { gatewayUrl, installation };
@@ -131,7 +131,7 @@ export async function readInstalledPlatformIdentity(platformRoot: string): Promi
   try {
     receipt = JSON.parse(await readFile(receiptPath, 'utf8')) as typeof receipt;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {return undefined;}
     throw new ErrorEnvelopeError(createErrorEnvelope('KB_INSTALL_RECEIPT_UNAVAILABLE', {
       cause: `The active platform receipt at ${receiptPath} could not be parsed.`,
       hint: `Run "kb-create update --platform-root ${platformRoot}" or reinstall the platform, then retry the command.`,
@@ -171,7 +171,7 @@ export function resolveGatewayServiceAddress(
 }
 
 function validateConfiguredGatewayPort(options: GatewayServiceAddressOptions): void {
-  if (options.gatewayPort === undefined) return;
+  if (options.gatewayPort === undefined) {return;}
   resolveServiceListenAddress(undefined, {
     serviceId: GATEWAY_SERVICE_NETWORK.serviceId,
     portEnvVar: GATEWAY_SERVICE_NETWORK.portEnvVar,

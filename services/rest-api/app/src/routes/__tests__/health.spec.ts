@@ -128,7 +128,7 @@ describe('registerHealthRoutes', () => {
       })),
     } as unknown as IEntityRegistry;
 
-    await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
+    await registerHealthRoutes(app, BASE_CONFIG, cliApi, readiness);
 
     const response = await app.inject({ method: 'GET', url: '/health' });
     expect(response.statusCode).toBe(200);
@@ -194,7 +194,7 @@ describe('registerHealthRoutes', () => {
       })),
     } as unknown as IEntityRegistry;
 
-    await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
+    await registerHealthRoutes(app, BASE_CONFIG, cliApi, readiness);
 
     const notReady = await app.inject({ method: 'GET', url: '/ready' });
     expect(notReady.statusCode).toBe(503);
@@ -310,7 +310,7 @@ describe('registerHealthRoutes', () => {
       })),
     } as unknown as IEntityRegistry;
 
-    await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
+    await registerHealthRoutes(app, BASE_CONFIG, cliApi, readiness);
 
     const response = await app.inject({ method: 'GET', url: '/ready' });
     expect(response.statusCode).toBe(503);
@@ -372,7 +372,7 @@ describe('registerHealthRoutes', () => {
       })),
     } as unknown as IEntityRegistry;
 
-    await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
+    await registerHealthRoutes(app, BASE_CONFIG, cliApi, readiness);
 
     const describe = await app.inject({ method: 'GET', url: '/api/v1/observability/describe' });
     expect(describe.statusCode).toBe(200);

@@ -217,7 +217,7 @@
         { "slug": "gateway/routing",        "type": "hybrid", "owners": ["plugins/gateway/core/**"] },
         { "slug": "gateway/webhooks",       "type": "manual", "owners": ["services/gateway/app/src/webhook/**", "services/gateway/contracts/src/webhook-history.ts", "cli/commands/src/commands/system/webhook/**"] },
         { "slug": "gateway/self-hosted",    "type": "manual", "owners": ["tools/kb-deploy/**", "infra/docker-compose.backend.yml", "deploy/helm/kb-labs-platform/**", "services/host/app/src/host.ts", "services/gateway/app/kb-create.requirements.json"] },
-        { "slug": "gateway/architecture",   "type": "manual", "owners": ["plugins/gateway/**", "services/gateway/app/src/server.ts", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/routes/adapter-call.ts", "services/marketplace-registry/api/src/auth-middleware.ts"] }
+        { "slug": "gateway/architecture",   "type": "manual", "owners": ["plugins/gateway/**", "services/gateway/app/src/server.ts", "services/gateway/app/src/bootstrap.ts", "services/gateway/app/src/config.ts", "core/config/src/api/effective-config.ts", "services/rest-api/app/src/routes/adapter-call.ts", "services/marketplace-registry/api/src/auth-middleware.ts"] }
       ]
     },
 

@@ -294,7 +294,7 @@ export class McpDaemonServer {
                   result = await callServiceTool(serviceTool, args, this.opts.serviceTransport, reqLogger);
                 }
               }
-            } else result = await executeToolCall({
+            } else {result = await executeToolCall({
               name: params.name,
               args: (params.arguments ?? {}) as Record<string, unknown>,
               visibleTools,
@@ -305,7 +305,7 @@ export class McpDaemonServer {
               collector: this.collector,
               logger: reqLogger,
               gatewayUrl: this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL,
-            });
+            });}
           }
         } catch (error) {
           result = unexpectedMcpResult(error, reqLogger);

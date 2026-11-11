@@ -33,7 +33,7 @@ vi.mock("@kb-labs/core-platform", async (importOriginal) => ({
 vi.mock("@kb-labs/core-runtime", () => ({
   resolveDeploymentTopology: () => 'local',
   requireProjectContext: (projectRoot: string | undefined) => {
-    if (!projectRoot) throw new Error('Project root required by test fixture');
+    if (!projectRoot) {throw new Error('Project root required by test fixture');}
     return projectRoot;
   },
   platform: {

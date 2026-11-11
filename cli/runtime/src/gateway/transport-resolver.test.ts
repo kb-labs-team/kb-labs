@@ -10,12 +10,12 @@ describe('resolveTransport', () => {
 
   afterEach(async () => {
     vi.resetModules();
-    if (isolatedHome) await rm(isolatedHome, { recursive: true, force: true });
+    if (isolatedHome) {await rm(isolatedHome, { recursive: true, force: true });}
     isolatedHome = undefined;
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    if (originalGatewayUrl === undefined) delete process.env.KB_GATEWAY_URL;
-    else process.env.KB_GATEWAY_URL = originalGatewayUrl;
+    if (originalHome === undefined) {delete process.env.HOME;}
+    else {process.env.HOME = originalHome;}
+    if (originalGatewayUrl === undefined) {delete process.env.KB_GATEWAY_URL;}
+    else {process.env.KB_GATEWAY_URL = originalGatewayUrl;}
   });
 
   it('uses the Gateway selected by bootstrap instead of an ambient address', async () => {

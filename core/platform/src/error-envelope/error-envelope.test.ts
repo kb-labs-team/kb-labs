@@ -320,7 +320,7 @@ describe('errors.catalog.json lint', () => {
       'KB_INSTALL_SERVICE_GRAPH_MISMATCH',
     ]) {
       expect(isErrorCode(code), code).toBe(true);
-      if (isErrorCode(code)) expect(getCatalogEntry(code), code).toBeDefined();
+      if (isErrorCode(code)) {expect(getCatalogEntry(code), code).toBeDefined();}
     }
     expect(errorCatalog.codes.some((entry) => entry.code.startsWith('KB_CREATE_'))).toBe(false);
   });

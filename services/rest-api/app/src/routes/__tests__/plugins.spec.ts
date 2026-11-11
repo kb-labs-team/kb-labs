@@ -228,8 +228,8 @@ describe('registerPluginRoutes', () => {
         env: expect.objectContaining({ KB_HOME: '/tmp/kb-home-route-mount-test' }),
       }));
     } finally {
-      if (previousKbHome === undefined) delete process.env.KB_HOME;
-      else process.env.KB_HOME = previousKbHome;
+      if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+      else {process.env.KB_HOME = previousKbHome;}
     }
   });
 

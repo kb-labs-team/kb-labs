@@ -10,7 +10,7 @@ describe('flattenZodIssues enum hints', () => {
     const schema = z.enum(options, { errorMap: () => ({ message: 'invalid choice' }) });
     const result = schema.safeParse('unknown');
     expect(result.success).toBe(false);
-    if (result.success) return;
+    if (result.success) {return;}
 
     expect(flattenZodIssues(result.error)).toEqual([
       { path: '', message: 'invalid choice', hint: 'Choose from first, second.' },

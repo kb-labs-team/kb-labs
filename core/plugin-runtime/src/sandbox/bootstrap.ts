@@ -1,7 +1,7 @@
 /** Child entry point for subprocess and container executions. */
 
 import { Writable } from 'node:stream';
-import { createStdioChannel, encodeStdioFrame } from '@kb-labs/core-ipc';
+import { createStdioChannel } from '@kb-labs/core-ipc';
 import type { StdioFrame } from '@kb-labs/core-ipc';
 import type { UIFacade } from '@kb-labs/plugin-contracts';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';

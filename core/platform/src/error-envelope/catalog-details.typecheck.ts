@@ -26,7 +26,7 @@ createErrorEnvelope('KB_AUTH_CLOCK_SKEW', { details: { reason: 'clock mismatch' 
 const credentialError = new AdapterCredentialsMissingError('llm', 'OPENAI_API_KEY', 'adapters.llm');
 
 // @ts-expect-error Adapter errors expose only the details declared for their code.
-credentialError.details.reason;
+void credentialError.details.reason;
 
 createErrorEnvelope('KB_RUNTIME_TIMEOUT', { details: { timeoutMs: '300' } });
 // @ts-expect-error Worker execution identity is not a catalogued public timeout detail.

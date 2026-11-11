@@ -17,7 +17,7 @@ function makeSseStream(events: Array<{ type: string; stepId?: string; payload?: 
   const lines = events
     .map((e) => {
       const obj: Record<string, unknown> = { type: e.type, payload: e.payload ?? {} };
-      if (e.stepId !== undefined) obj['stepId'] = e.stepId;
+      if (e.stepId !== undefined) {obj['stepId'] = e.stepId;}
       return `data: ${JSON.stringify(obj)}\n\n`;
     })
     .join('');

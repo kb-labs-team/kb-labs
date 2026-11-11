@@ -369,7 +369,7 @@ export function wrapKVStore(
 function createDocumentDenyStub(pluginId: string): IDocumentDatabase {
   const reason = "Document database access denied: plugin did not declare `permissions.platform.database.document`";
   const denyAsync = async (): Promise<never> => { throw permissionDenied(pluginId, 'platform.database.document', reason); };
-  // eslint-disable-next-line require-yield
+
   const denyIter = async function* (): AsyncIterable<never> { throw permissionDenied(pluginId, 'platform.database.document', reason); };
   return {
     find: denyAsync as never,
@@ -395,7 +395,7 @@ function createDocumentDenyStub(pluginId: string): IDocumentDatabase {
 function createKVDenyStub(pluginId: string): IKVStore {
   const reason = "KV store access denied: plugin did not declare `permissions.platform.database.kvStore`";
   const denyAsync = async (): Promise<never> => { throw permissionDenied(pluginId, 'platform.database.kvStore', reason); };
-  // eslint-disable-next-line require-yield
+
   const denyIter = async function* (): AsyncIterable<never> { throw permissionDenied(pluginId, 'platform.database.kvStore', reason); };
   return {
     get: denyAsync as never,

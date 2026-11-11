@@ -34,9 +34,9 @@ describe('CLI result descriptor boundary', () => {
   afterEach(async () => {
     fixture?.releaseHold?.();
     if (fixture?.server.listening) {
-      await new Promise<void>((resolve, reject) => fixture!.server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => { fixture!.server.close((error) => error ? reject(error) : resolve()); });
     }
-    if (fixture) await rm(fixture.root, { recursive: true, force: true });
+    if (fixture) {await rm(fixture.root, { recursive: true, force: true });}
     fixture = undefined;
   });
 
@@ -263,10 +263,10 @@ async function createCliFixture(
     }
     if (request.url === '/api/v1/execute') {
       const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      for await (const chunk of request) {chunks.push(Buffer.from(chunk));}
       state.gatewayRequest = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
       response.writeHead(200, { 'content-type': 'application/x-ndjson' });
-      for (const event of state.gatewayEvents) response.write(`${JSON.stringify(event)}\n`);
+      for (const event of state.gatewayEvents) {response.write(`${JSON.stringify(event)}\n`);}
       response.end();
       return;
     }
@@ -283,9 +283,9 @@ async function createCliFixture(
     }
     sendJson(response, 404, { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: 'Fixture route missing' } });
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve); });
   const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Fixture Gateway did not bind an ephemeral TCP port');
+  if (!address || typeof address === 'string') {throw new Error('Fixture Gateway did not bind an ephemeral TCP port');}
   const gatewayUrl = `http://127.0.0.1:${address.port}`;
 
   const env: NodeJS.ProcessEnv = {
@@ -363,7 +363,7 @@ async function createOutputFixturePlugin(projectRoot: string): Promise<void> {
     }] },
   } satisfies ManifestV3;
   const validation = validateManifest(manifest);
-  if (!validation.valid) throw new Error(`Invalid output fixture manifest: ${validation.errors.join('; ')}`);
+  if (!validation.valid) {throw new Error(`Invalid output fixture manifest: ${validation.errors.join('; ')}`);}
 
   await Promise.all([
     writeFile(path.join(pluginRoot, 'package.json'), JSON.stringify({

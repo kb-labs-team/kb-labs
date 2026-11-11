@@ -35,7 +35,7 @@ export class SerializedErrorEnvelopeError extends ErrorEnvelopeError {
 
 /** The sole producer for thrown and transported handler diagnostics. */
 export function serializeError(value: unknown): SerializedError {
-  if (value instanceof SerializedErrorEnvelopeError) return value.serializedError;
+  if (value instanceof SerializedErrorEnvelopeError) {return value.serializedError;}
   if (value instanceof Error) {
     const cause = value.cause === undefined ? undefined : serializeError(value.cause);
     const moduleResolution = moduleResolutionOf(value);
@@ -48,7 +48,7 @@ export function serializeError(value: unknown): SerializedError {
     };
   }
 
-  if (isSerializedError(value)) return value;
+  if (isSerializedError(value)) {return value;}
 
   if (typeof value === 'object' && value !== null && !Array.isArray(value) &&
       'message' in value && typeof value.message === 'string') {
@@ -75,7 +75,7 @@ function moduleResolutionOf(error: Error): SerializedError['moduleResolution'] {
 }
 
 function isSerializedError(value: unknown): value is SerializedError {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {return false;}
   const candidate = value as Record<string, unknown>;
   return typeof candidate.name === 'string' &&
     typeof candidate.message === 'string' &&

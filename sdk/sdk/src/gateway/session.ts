@@ -47,7 +47,7 @@ export class SessionManager implements ISessionManager {
 }
 
 function isSessionCredentials(value: unknown): value is SessionCredentials {
-  if (!isSavedCredentialBase(value)) return false;
+  if (!isSavedCredentialBase(value)) {return false;}
   const record = value as SessionCredentials;
   return (record.email === undefined || typeof record.email === 'string')
     && (record.tenantId === undefined || typeof record.tenantId === 'string');

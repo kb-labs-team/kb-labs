@@ -8,8 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsc --noEmit",
-    "lint": "eslint ."
+    "build": "tsc --noEmit"
   },
   "devDependencies": {
     "@kb-labs/web-config": "workspace:*",

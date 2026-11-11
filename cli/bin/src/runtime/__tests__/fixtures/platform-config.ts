@@ -43,7 +43,7 @@ export async function createPlatformConfigFixture(
     const registered = new Set((await projectRegistry.list()).projects.map(({ project }) => project.path));
     for (const projectRoot of options.registeredProjects) {
       await mkdir(projectRoot, { recursive: true });
-      if (!registered.has(projectRoot)) await projectRegistry.add(projectRoot);
+      if (!registered.has(projectRoot)) {await projectRegistry.add(projectRoot);}
     }
   }
 

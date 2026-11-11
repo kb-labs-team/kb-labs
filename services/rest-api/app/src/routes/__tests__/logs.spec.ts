@@ -56,7 +56,7 @@ describe('Log Routes Integration Tests', () => {
 
     app = Fastify({ logger: false });
     registerEnvelopeMiddleware(app, BASE_CONFIG);
-    await registerLogRoutes(app, BASE_CONFIG, {} as any);
+    await registerLogRoutes(app);
   });
 
   afterEach(async () => {

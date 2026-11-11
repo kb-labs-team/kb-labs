@@ -444,7 +444,7 @@ export async function createWorkflowWorker(
     }
 
     // Create job execution promise for graceful shutdown tracking
-    // eslint-disable-next-line sonarjs/cognitive-complexity -- Step execution loop: handles data flow, spec.if, builtin:approval polling, builtin:gate routing with restart-from
+
     let failedStepFailure:
       | import("@kb-labs/core-contracts").ClassifiedFailure
       | undefined;

@@ -150,7 +150,7 @@ async function readFileIfPresent(filePath: string): Promise<string | undefined> 
   try {
     return await fs.readFile(filePath, 'utf8');
   } catch (error) {
-    if (isMissingFile(error)) return undefined;
+    if (isMissingFile(error)) {return undefined;}
     throw error;
   }
 }
@@ -161,7 +161,7 @@ async function removeInstallation(shell: string): Promise<RemoveResult> {
   const updated = existing
     .replaceAll(`\n${profileLine(shell)}\n`, '')
     .replaceAll(`\n${aliasLine(shell)}\n`, '');
-  if (updated !== existing) await fs.writeFile(rcPath, updated, 'utf8');
+  if (updated !== existing) {await fs.writeFile(rcPath, updated, 'utf8');}
 
   let staticFileRemoved = false;
   if (shell === 'zsh' && await readFileIfPresent(STATIC_FILE) !== undefined) {
@@ -266,7 +266,7 @@ export function createCompletionCommand(registry: TrieBackedRegistry) {
 
       if (arg === 'remove') {
         const shell = argv[1] ?? detectShell();
-        if (!dynamicScript(shell)) unsupportedShell(shell);
+        if (!dynamicScript(shell)) {unsupportedShell(shell);}
         return removeInstallation(shell);
       }
 

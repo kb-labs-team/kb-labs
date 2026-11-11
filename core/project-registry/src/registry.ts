@@ -369,8 +369,8 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
           error: mismatch.error,
         })),
       ], canonicalCwd);
-      if (!candidate) return undefined;
-      if ('error' in candidate) throw candidate.error;
+      if (!candidate) {return undefined;}
+      if ('error' in candidate) {throw candidate.error;}
       return view(candidate.record);
     },
 
@@ -455,7 +455,7 @@ export function findRegisteredProjectContainingPathSync(
     ...snapshot.file.projects,
     ...snapshot.identityMismatches.map(({ record, error }) => ({ ...record, error })),
   ], canonicalCwd);
-  if (!candidate) return undefined;
-  if ('error' in candidate) throw candidate.error;
+  if (!candidate) {return undefined;}
+  if ('error' in candidate) {throw candidate.error;}
   return candidate;
 }

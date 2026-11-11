@@ -1,4 +1,5 @@
 export default {
+  /** @type {import('@kb-labs/sdk').WebSocketHandler} */
   async execute(_context, input) {
     if (await input.sender.getConnectionId() !== input.connection.connectionId) {
       throw new Error('Sender connection reference does not match the handler input.');

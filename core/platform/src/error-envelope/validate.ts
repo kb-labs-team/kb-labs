@@ -25,7 +25,7 @@ function nonEmptyString(value: unknown): value is string {
 
 /** Identifies a possibly malformed envelope without claiming that it is valid. */
 export function hasErrorEnvelopeIdentity(value: unknown): value is Record<string, unknown> {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value)) {return false;}
   return FULL_ENVELOPE_REQUIRED_KEYS.some((key) => key in value);
 }
 

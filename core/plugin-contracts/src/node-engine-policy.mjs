@@ -29,7 +29,7 @@ export function readNodeEngineDeclaration(packageManifest) {
     throw new Error(`Cannot read package manifest ${packageManifest}: ${error instanceof Error ? error.message : String(error)}`);
   }
   const policy = parsed.engines?.node;
-  if (policy === undefined) return undefined;
+  if (policy === undefined) {return undefined;}
   if (typeof policy !== 'string') {
     throw new Error(`Node.js engine declaration in ${packageManifest} must be a string.`);
   }

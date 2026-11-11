@@ -128,7 +128,7 @@ describe('marketplace-lock v3', () => {
 
     for (const [id, entry] of Object.entries(lock?.plugins ?? {})) {
       expect(entry.source, `${id} must be a workspace plugin link`).toBe('local');
-      if (entry.source !== 'local') continue;
+      if (entry.source !== 'local') {continue;}
       const packageJson = await readWorkspacePackage(entry.link);
       expect(packageJson.kb?.manifest, `${id} must resolve to a package declaring a plugin manifest`).toBeTypeOf('string');
     }

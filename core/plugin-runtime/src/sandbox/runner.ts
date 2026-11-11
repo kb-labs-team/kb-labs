@@ -263,13 +263,13 @@ export async function runInSubprocess<T = unknown>(
 
     let completed = false;
     let stderrBuffer = '';
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutId: { timer?: ReturnType<typeof setTimeout> } = {};
     let cancelId: ReturnType<typeof setTimeout> | undefined;
     const channel = createStdioChannel(child.stdout, child.stdin);
     const platformServer = new StdioPlatformServer(channel, platform);
     const finish = () => {
       completed = true;
-      clearTimeout(timeoutId);
+      clearTimeout(timeoutId.timer);
       clearTimeout(cancelId);
       signal?.removeEventListener('abort', abortHandler);
       platformServer.close();
@@ -317,8 +317,8 @@ export async function runInSubprocess<T = unknown>(
     });
 
     // Set timeout
-    // eslint-disable-next-line prefer-const
-    timeoutId = setTimeout(() => {
+
+    timeoutId.timer = setTimeout(() => {
       if (!completed) {
         fail(new TimeoutError(`Plugin execution timed out after ${timeoutMs}ms`));
       }

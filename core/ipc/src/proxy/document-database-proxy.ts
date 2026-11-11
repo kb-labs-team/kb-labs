@@ -51,7 +51,7 @@ export class DocumentDatabaseProxy
     return (await this.callRemote('find', [collection, filter, stripSignal(options)])) as P[];
   }
 
-  // eslint-disable-next-line require-yield
+
   async *findStream<T extends BaseDocument, P = T>(
     _collection: string,
     _filter: DocumentFilter<T>,

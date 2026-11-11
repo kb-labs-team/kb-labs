@@ -149,7 +149,7 @@ export async function startGateway(
   // machine Gateway uses platformRoot; standalone Gateway uses projectRoot.
   // Keep the platform root separate so installed-mode defaults resolve from
   // the platform even when the selected project lives elsewhere.
-  const loadedConfig = await loadGatewayConfig(configRoot, platformRoot);
+  const loadedConfig = await loadGatewayConfig(platformRoot);
   const config = options.configure
     ? options.configure(loadedConfig)
     : loadedConfig;

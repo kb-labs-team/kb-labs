@@ -58,7 +58,13 @@ describe('Marketplace → Discovery Integration', () => {
 
   afterEach(async () => {
     if (registryServer?.listening) {
-      await new Promise<void>((resolve, reject) => registryServer!.close(error => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => { registryServer!.close((error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      }); });
       registryServer = undefined;
     }
     await fs.rm(tmpDir, { recursive: true, force: true });
@@ -186,7 +192,9 @@ describe('Marketplace → Discovery Integration', () => {
       response.writeHead(200, { 'content-type': 'application/octet-stream' });
       response.end(tarball);
     });
-    await new Promise<void>(resolve => registryServer!.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => {
+      registryServer!.listen(0, '127.0.0.1', resolve);
+    });
     const serverAddress = registryServer.address() as import('node:net').AddressInfo;
     const store = createExtensionStore({ root: path.join(tmpDir, 'machine-store') });
     const source = Object.assign({

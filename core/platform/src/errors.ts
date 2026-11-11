@@ -95,7 +95,7 @@ export class AdapterProjectScopeError extends Error {
 
 /** A bound adapter cannot run because a required credential is absent. */
 export class AdapterCredentialsMissingError extends Error implements TypedPlatformError<'KB_ADAPTER_CREDENTIALS_MISSING'> {
-  public readonly code: 'KB_ADAPTER_CREDENTIALS_MISSING' = 'KB_ADAPTER_CREDENTIALS_MISSING';
+  public readonly code: 'KB_ADAPTER_CREDENTIALS_MISSING' = 'KB_ADAPTER_CREDENTIALS_MISSING' as const;
   public readonly slot: string;
   public readonly credential: string;
   public readonly configurationPath: string;
@@ -117,7 +117,7 @@ export class AdapterCredentialsMissingError extends Error implements TypedPlatfo
 
 /** An adapter operation failed after its own retry policy was exhausted. */
 export class AdapterOperationError extends Error {
-  public readonly code: 'KB_ADAPTER_OPERATION_FAILED' = 'KB_ADAPTER_OPERATION_FAILED';
+  public readonly code: 'KB_ADAPTER_OPERATION_FAILED' = 'KB_ADAPTER_OPERATION_FAILED' as const;
 
   constructor(
     public readonly slot: string,

@@ -169,7 +169,7 @@ describe('persistence failure at the normalized result boundary', () => {
       const result = await backend.execute(makeRequest('thrown-failure-handler.js', correlationId));
       expect(Date.now() - started).toBeLessThan(LOG_PERSISTENCE_ERROR_FLUSH_TIMEOUT_MS + 1000);
       expect(result.ok).toBe(false);
-      if (result.ok) return;
+      if (result.ok) {return;}
       expect(result.error.envelope).toMatchObject({
         code: 'KB_PLUGIN_COMMAND_FAILED',
         correlationId,
@@ -199,7 +199,7 @@ describe.each(backends)('%s real failure dispatch', (mode) => {
 
       expect(result.metadata?.backend).toBe(mode);
       expect(result.ok).toBe(false);
-      if (result.ok) return;
+      if (result.ok) {return;}
       expect(result.error.code, `${mode} ${failure.handler} returned ${result.error.error.name}: ${result.error.error.message}`).toBe(failure.expectedCode);
       expect(result.error.envelope.code).toBe(failure.expectedCode);
       expect(result.error).not.toHaveProperty('stack');
@@ -274,7 +274,7 @@ describe.each(backends)('%s real failure dispatch', (mode) => {
     try {
       const result = await backend.execute(makeRequest('thrown-failure-handler.js', correlationId));
       expect(result.ok).toBe(false);
-      if (result.ok) return;
+      if (result.ok) {return;}
       expect(result.error.envelope).toMatchObject({
         code: 'KB_PLUGIN_COMMAND_FAILED',
         correlationId,
@@ -313,7 +313,7 @@ describe.each(backends)('%s real failure dispatch', (mode) => {
       const result = await backend.execute(makeRequest('returned-invalid-envelope-handler.js', correlationId));
 
       expect(result.ok).toBe(false);
-      if (result.ok) return;
+      if (result.ok) {return;}
       expect(result.error.envelope).toMatchObject({
         code: 'KB_PLUGIN_CONTRACT_VIOLATION',
         correlationId,
@@ -358,7 +358,7 @@ describe('REST handler failure persistence', () => {
       expect(result.ok).toBe(false);
       expect(logger.flushCount).toBeGreaterThan(0);
       expect(logger.flushRecordCounts.at(-1)).toBeGreaterThan(0);
-      if (result.ok) return;
+      if (result.ok) {return;}
       expect(result.error.envelope).toMatchObject({
         code: 'KB_RUNTIME_UNEXPECTED',
         correlationId,

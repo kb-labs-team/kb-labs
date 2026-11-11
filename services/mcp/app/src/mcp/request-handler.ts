@@ -17,7 +17,6 @@ import { filterTools, type McpTool } from './tool-builder.js';
 import { callTool, type PlatformResolver } from './tool-router.js';
 import { actionForOperation, type Permits } from './authz.js';
 import type { McpObservabilityCollector } from '../observability/collector.js';
-import type { PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
 import type { UIOutput } from '@kb-labs/plugin-contracts';
 
 /** How long a per-identity tool listing stays cached. */

@@ -164,7 +164,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
         projectId: roots.projectId,
         catalog: requireResolvedCatalog(),
       });
-      const platform = await loadEffectiveConfig(roots.configRoot, {
+      const platform = await loadEffectiveConfig({
         platformRoot: roots.platformRoot,
         projectId: roots.projectId,
         pluginDefaults: manifestSettingsLayers(runtimeConfig),

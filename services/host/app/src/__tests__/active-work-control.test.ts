@@ -9,7 +9,7 @@ import { silentLogger } from "./testkit.js";
 describe("host active-work control", () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
-    for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+    for (const cleanup of cleanups.splice(0).reverse()) {await cleanup();}
   });
 
   it("aggregates registered host providers and authenticated project runtimes", async () => {
@@ -22,10 +22,10 @@ describe("host active-work control", () => {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify([{ kind: "workflow", id: "project-run-1", owningService: "workflow" }]));
     });
-    await new Promise<void>((resolve) => runtimeServer.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => { runtimeServer.listen(0, "127.0.0.1", resolve); });
     const runtimeAddress = runtimeServer.address();
-    if (!runtimeAddress || typeof runtimeAddress === "string") throw new Error("runtime fixture did not bind");
-    cleanups.push(() => new Promise<void>((resolve, reject) => runtimeServer.close((error) => error ? reject(error) : resolve())));
+    if (!runtimeAddress || typeof runtimeAddress === "string") {throw new Error("runtime fixture did not bind");}
+    cleanups.push(() => new Promise<void>((resolve, reject) => { runtimeServer.close((error) => error ? reject(error) : resolve()); }));
 
     const launcher: RuntimeLauncher = {
       async launch() {
@@ -33,7 +33,7 @@ describe("host active-work control", () => {
           pid: 1,
           address: { host: "127.0.0.1", port: runtimeAddress.port },
           token: runtimeToken,
-          exited: new Promise(() => undefined),
+          exited: new Promise(() => {}),
           async stop() {},
           outputTail: () => "",
         };

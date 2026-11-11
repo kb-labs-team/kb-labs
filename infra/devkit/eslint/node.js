@@ -28,6 +28,13 @@ export default [
   // ---- base TypeScript recommendations
   ...tseslint.configs.recommended,
 
+  {
+    files: ['**/*.{ts,tsx,mts,cts}'],
+    languageOptions: {
+      parserOptions: { projectService: true },
+    },
+  },
+
   // ---- project-wide rules and import resolver
   {
     plugins: {

@@ -21,16 +21,16 @@ export type DecodeEnvelopeOptions = ToEnvelopeOptions & {
 
 /** Read a validated platform envelope carried by a typed error wrapper. */
 export function errorEnvelopeFrom(error: unknown): ErrorEnvelope | undefined {
-  if (error instanceof ErrorEnvelopeError) return error.envelope;
-  if (typeof error !== 'object' || error === null) return undefined;
-  if (!('envelope' in error)) return undefined;
+  if (error instanceof ErrorEnvelopeError) {return error.envelope;}
+  if (typeof error !== 'object' || error === null) {return undefined;}
+  if (!('envelope' in error)) {return undefined;}
   return isErrorEnvelope(error.envelope) ? error.envelope : undefined;
 }
 
 /** Convert any thrown value to an envelope. Unknown values become `KB_RUNTIME_UNEXPECTED`. */
 export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ValidatedErrorEnvelope {
   const typedEnvelope = errorEnvelopeFrom(error);
-  if (typedEnvelope) return canonicalizeErrorEnvelope(typedEnvelope, options);
+  if (typedEnvelope) {return canonicalizeErrorEnvelope(typedEnvelope, options);}
   const candidate = getErrorRecord(error);
   if (isErrorEnvelope(candidate)) {
     return canonicalizeErrorEnvelope(candidate, options);
@@ -344,7 +344,7 @@ export function decodeErrorEnvelope(envelope: unknown, options: DecodeEnvelopeOp
       },
     });
   }
-  if (!isErrorCode(envelope.code)) return canonicalizeErrorEnvelope(envelope, envelopeOptions);
+  if (!isErrorCode(envelope.code)) {return canonicalizeErrorEnvelope(envelope, envelopeOptions);}
 
   const details = envelope.details ?? {};
 
@@ -405,10 +405,10 @@ function isSystemErrorRecord(source: ErrorRecord): boolean {
 }
 
 function getDetails(value: unknown): Record<string, string> | null | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  if (value === undefined) {return undefined;}
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {return null;}
   const entries = Object.entries(value);
-  if (entries.some(([, item]) => typeof item !== 'string' || isSerializedStructuredValue(item))) return null;
+  if (entries.some(([, item]) => typeof item !== 'string' || isSerializedStructuredValue(item))) {return null;}
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
@@ -457,11 +457,11 @@ export function createProductErrorEnvelope(input: ProductErrorInput): ValidatedE
     message: input.message,
     hint: input.hint,
   };
-  if (input.details && Object.keys(input.details).length > 0) envelope.details = input.details;
-  if (input.correlationId) envelope.correlationId = input.correlationId;
-  if (input.actions?.length) envelope.actions = input.actions;
-  if (input.docs) envelope.docs = input.docs;
-  if (input.diagnostics?.length) envelope.diagnostics = input.diagnostics;
+  if (input.details && Object.keys(input.details).length > 0) {envelope.details = input.details;}
+  if (input.correlationId) {envelope.correlationId = input.correlationId;}
+  if (input.actions?.length) {envelope.actions = input.actions;}
+  if (input.docs) {envelope.docs = input.docs;}
+  if (input.diagnostics?.length) {envelope.diagnostics = input.diagnostics;}
   return markValidatedErrorEnvelope(envelope);
 }
 
@@ -488,11 +488,11 @@ function contractViolationDetailsFor(field: string, value: unknown): Record<stri
 }
 
 function readField(value: unknown, field: string): unknown {
-  if (field === 'envelope') return value;
-  if (typeof value !== 'object' || value === null) return undefined;
+  if (field === 'envelope') {return value;}
+  if (typeof value !== 'object' || value === null) {return undefined;}
   let current: unknown = value;
   for (const segment of field.split('.')) {
-    if (typeof current !== 'object' || current === null || !(segment in current)) return undefined;
+    if (typeof current !== 'object' || current === null || !(segment in current)) {return undefined;}
     current = Reflect.get(current, segment);
   }
   return current;

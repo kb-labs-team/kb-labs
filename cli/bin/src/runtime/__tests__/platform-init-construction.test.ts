@@ -38,7 +38,7 @@ describe("CLI adapter construction", () => {
     try {
       await openedCatalog?.dispose();
     } finally {
-      if (root) await rm(root, { recursive: true, force: true });
+      if (root) {await rm(root, { recursive: true, force: true });}
       vi.clearAllMocks();
     }
   });
@@ -136,7 +136,7 @@ describe("CLI adapter construction", () => {
       projectScope: "platform",
     });
     const projectRoot = config.projectRoot;
-    if (!projectRoot) throw new Error("config resolver did not return a project root for the development config");
+    if (!projectRoot) {throw new Error("config resolver did not return a project root for the development config");}
     return { config, home, invocationDir, projectRoot, workspaceRoot };
   }
 

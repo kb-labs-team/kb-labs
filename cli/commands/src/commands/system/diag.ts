@@ -399,7 +399,7 @@ async function runLockStage(
   ctx: TraceCtx,
 ): Promise<TraceStage & { enrich?: Partial<TraceCtx> }> {
   const catalog = getResolvedCatalog();
-  if (!catalog) throw new Error('The CLI catalog was not opened during command registration.');
+  if (!catalog) {throw new Error('The CLI catalog was not opened during command registration.');}
   const lock = (await catalog.marketplaceLocks()).get(path.resolve(ctx.cwd));
 
   if (!lock) {
@@ -645,7 +645,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
     // 3. Marketplace lock — also surface DiagnosticCollector events
     try {
       const catalog = getResolvedCatalog();
-      if (!catalog) throw new Error('The CLI catalog was not opened during command registration.');
+      if (!catalog) {throw new Error('The CLI catalog was not opened during command registration.');}
       const lock = (await catalog.marketplaceLocks()).get(path.resolve(cwd));
 
       for (const event of catalog.discovery().diagnostics) {

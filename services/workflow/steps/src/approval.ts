@@ -44,7 +44,7 @@ export interface ApprovalOutput {
 export class ApprovalHandler {
   static readonly uses = 'builtin:approval';
 
-  handle(_input: ApprovalInput): { status: 'waiting'; reason: 'approval' } {
+  handle(): { status: 'waiting'; reason: 'approval' } {
     return { status: 'waiting', reason: 'approval' };
   }
 }

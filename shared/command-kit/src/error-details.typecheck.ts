@@ -29,7 +29,7 @@ const serviceError = new ServiceNotConfiguredError('llm', '@kb-labs/adapters-ope
 const validationError = new ValidationError('Invalid input.', [{ path: 'name', message: 'Required' }]);
 
 // @ts-expect-error The service error emits only its catalogue details.
-serviceError.details.reason;
+void serviceError.details.reason;
 
 // @ts-expect-error Validation fields use the catalogue's `field` detail.
-validationError.details.name;
+void validationError.details.name;

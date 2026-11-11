@@ -9,7 +9,7 @@ describe('discovery filesystem observations', () => {
   let root: string;
 
   afterEach(async () => {
-    if (root) await fs.rm(root, { recursive: true, force: true });
+    if (root) {await fs.rm(root, { recursive: true, force: true });}
   });
 
   it('records and replays content, absence, presence, and listing through one facade', async () => {

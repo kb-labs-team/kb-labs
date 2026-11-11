@@ -159,9 +159,9 @@ describe('Gateway UX boundary', () => {
       additionalProperties: false,
     } } }, async (request, reply) => {
       const mode = (request.query as { mode?: string }).mode;
-      if (mode === 'typed') return reply.code(422).send(createUxFailureResult(createErrorEnvelope('KB_PROJECT_DECLARATION_INVALID', {
+      if (mode === 'typed') {return reply.code(422).send(createUxFailureResult(createErrorEnvelope('KB_PROJECT_DECLARATION_INVALID', {
         details: { expected: 'a declared field', field: 'projectId' }, message: 'Project declaration failed.', hint: 'Repair the project declaration.',
-      })));
+      })));}
       if (mode === 'plain') {
         const error = new Error('fixture plain failure') as Error & { statusCode: number; code: string; details: { path: string } };
         error.statusCode = 409;
@@ -169,7 +169,7 @@ describe('Gateway UX boundary', () => {
         error.details = { path: '/registered/project' };
         throw error;
       }
-      if (mode === 'unexpected') throw new Error('private stack detail');
+      if (mode === 'unexpected') {throw new Error('private stack detail');}
       return { accepted: true };
     });
     app.get('/stream-probe', { config: { ux: 'raw' } }, async (_request, reply) => {
@@ -184,7 +184,7 @@ describe('Gateway UX boundary', () => {
     expect(GatewayAuthHealthResponseSchema.parse(gatewayAuthHealthFixture.data)).toMatchObject({ bootstrap: 'exists-non-active' });
     expect(routes.length).toBeGreaterThan(0);
     for (const route of routes) {
-      if (route.config?.ux === 'raw') continue;
+      if (route.config?.ux === 'raw') {continue;}
       const registeredMethod = Array.isArray(route.method) ? route.method[0] : route.method;
       expect(['GET', 'HEAD']).toContain(registeredMethod);
       const success = await app.inject({ method: 'GET', url: `${route.url}?mode=success` });

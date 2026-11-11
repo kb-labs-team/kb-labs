@@ -9,6 +9,6 @@ export type EntityManifestKind = (typeof ENTITY_MANIFEST_KINDS)[keyof typeof ENT
 const entityManifestKinds = new Map<string, EntityManifestKind>(Object.entries(ENTITY_MANIFEST_KINDS));
 
 export function manifestKindFromSchema(schema: unknown): EntityManifestKind | undefined {
-  if (typeof schema !== 'string') return undefined;
+  if (typeof schema !== 'string') {return undefined;}
   return entityManifestKinds.get(schema);
 }

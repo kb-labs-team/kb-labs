@@ -45,10 +45,10 @@ const registry = {
 } as unknown as IEntityRegistry;
 
 function schemaExample(input: unknown): unknown {
-  if (!input || typeof input !== 'object') return {};
+  if (!input || typeof input !== 'object') {return {};}
   const schema = input as Record<string, unknown>;
-  if ('const' in schema) return schema.const;
-  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+  if ('const' in schema) {return schema.const;}
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {return schema.enum[0];}
   for (const key of ['anyOf', 'oneOf']) {
     const alternatives = schema[key];
     if (Array.isArray(alternatives) && alternatives.length > 0) {
@@ -66,14 +66,14 @@ function schemaExample(input: unknown): unknown {
     return Array.from({ length: count }, () => schemaExample(schema.items));
   }
   if (schema.type === 'string') {
-    if (schema.format === 'date-time') return '2030-01-02T03:04:05.000Z';
-    if (schema.format === 'date') return '2030-01-02';
-    if (schema.format === 'email') return 'fixture@example.test';
-    if (typeof schema.pattern === 'string' && schema.pattern.includes('a-z0-9')) return 'fixture-01';
+    if (schema.format === 'date-time') {return '2030-01-02T03:04:05.000Z';}
+    if (schema.format === 'date') {return '2030-01-02';}
+    if (schema.format === 'email') {return 'fixture@example.test';}
+    if (typeof schema.pattern === 'string' && schema.pattern.includes('a-z0-9')) {return 'fixture-01';}
     return 'fixture';
   }
-  if (schema.type === 'integer' || schema.type === 'number') return typeof schema.minimum === 'number' ? schema.minimum : 1;
-  if (schema.type === 'boolean') return true;
+  if (schema.type === 'integer' || schema.type === 'number') {return typeof schema.minimum === 'number' ? schema.minimum : 1;}
+  if (schema.type === 'boolean') {return true;}
   return {};
 }
 
@@ -150,10 +150,10 @@ describe('REST production route declarations', () => {
     await Promise.all(apps.splice(0).map((app) => app.close()));
     resetPlatform();
     vi.unstubAllGlobals();
-    if (originalTenantTier === undefined) delete process.env.KB_TENANT_DEFAULT_TIER;
-    else process.env.KB_TENANT_DEFAULT_TIER = originalTenantTier;
-    if (originalInternalSecret === undefined) delete process.env.GATEWAY_INTERNAL_SECRET;
-    else process.env.GATEWAY_INTERNAL_SECRET = originalInternalSecret;
+    if (originalTenantTier === undefined) {delete process.env.KB_TENANT_DEFAULT_TIER;}
+    else {process.env.KB_TENANT_DEFAULT_TIER = originalTenantTier;}
+    if (originalInternalSecret === undefined) {delete process.env.GATEWAY_INTERNAL_SECRET;}
+    else {process.env.GATEWAY_INTERNAL_SECRET = originalInternalSecret;}
   });
 
   it('adapts root Fastify log objects into platform logger message and fields', async () => {
@@ -213,8 +213,8 @@ describe('REST production route declarations', () => {
           error.details = { path: '/fixture/project' };
           throw error;
         }
-        if (failure === 'raw-reply') return reply.code(400).send({ error: { code: 'KB_RUNTIME_INPUT_INVALID' } });
-        if (failure === 'unexpected') throw new Error('fixture unexpected failure');
+        if (failure === 'raw-reply') {return reply.code(400).send({ error: { code: 'KB_RUNTIME_INPUT_INVALID' } });}
+        if (failure === 'unexpected') {throw new Error('fixture unexpected failure');}
         return original.apply(this, args);
       };
       routes.push(route);
@@ -225,14 +225,14 @@ describe('REST production route declarations', () => {
     expect(routes.length).toBeGreaterThan(0);
     const missing = routes.filter((route) => {
       const config = route.config as { ux?: string } | undefined;
-      if (config?.ux === 'raw') return false;
-      if (!route.schema || typeof route.schema !== 'object') return true;
+      if (config?.ux === 'raw') {return false;}
+      if (!route.schema || typeof route.schema !== 'object') {return true;}
       const schema = route.schema as { params?: unknown; querystring?: unknown; body?: unknown; response?: Record<number, unknown> };
-      if (route.url.includes(':') && !schema.params) return true;
+      if (route.url.includes(':') && !schema.params) {return true;}
       const methods = Array.isArray(route.method) ? route.method : [route.method];
       const hasJsonMethod = methods.some((method) => method !== 'HEAD');
-      if (hasJsonMethod && !schema.querystring) return true;
-      if (methods.some((method) => ['POST', 'PUT', 'PATCH'].includes(method)) && !schema.body) return true;
+      if (hasJsonMethod && !schema.querystring) {return true;}
+      if (methods.some((method) => ['POST', 'PUT', 'PATCH'].includes(method)) && !schema.body) {return true;}
       return hasJsonMethod && !schema.response?.[200];
     });
     expect(missing.map(({ method, url }) => `${Array.isArray(method) ? method.join(',') : method} ${url}`)).toEqual([]);
@@ -246,7 +246,7 @@ describe('REST production route declarations', () => {
       }
       const methods = (Array.isArray(route.method) ? route.method : [route.method]).filter((method) => method !== 'HEAD');
       for (const method of methods) {
-        if (method === 'GET' || method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') jsonRoutes.push({ route, method: method as FixtureMethod });
+        if (method === 'GET' || method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') {jsonRoutes.push({ route, method: method as FixtureMethod });}
       }
     }
 

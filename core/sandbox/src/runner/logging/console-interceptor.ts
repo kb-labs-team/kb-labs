@@ -5,6 +5,7 @@
 
 import type { Output } from '@kb-labs/core-sys/output';
 
+
 /**
  * Intercept console methods and filter based on KB_LOG_LEVEL
  *
@@ -26,9 +27,8 @@ import type { Output } from '@kb-labs/core-sys/output';
  * - console.debug → debug logging (suppress in silent mode)
  * - console.log → actual command output/results (NEVER suppress in silent mode!)
  *
- * @param output - Output instance (not used to avoid recursion, kept for compatibility)
  */
-export function interceptConsole(output?: Output): void {
+export function interceptConsole(): void {
   // Read environment variables for log level control
   const logLevel = (process.env.KB_LOG_LEVEL || 'silent').toLowerCase();
   const isQuiet = process.env.KB_QUIET === 'true';

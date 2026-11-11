@@ -1,4 +1,4 @@
-import type { DetailsFor, DetailsOptionFor, PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
+import type { DetailsOptionFor, PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
 
 type WorkflowErrorCode = Extract<PlatformErrorCode,
   'KB_RUNTIME_INPUT_INVALID' | 'KB_RUNTIME_COMMAND_FAILED' | 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY'>;

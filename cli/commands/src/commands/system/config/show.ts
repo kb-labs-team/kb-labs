@@ -266,7 +266,7 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
       const rows = buildRows(result);
 
       // Platform provenance remains available from the platform config layer.
-      const effective = await loadEffectiveConfig(roots.configRoot, {
+      const effective = await loadEffectiveConfig({
         platformRoot: result.platformRoot,
         projectId: roots.projectId,
         pluginDefaults: manifestSettingsLayers(result),

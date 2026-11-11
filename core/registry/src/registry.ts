@@ -22,7 +22,6 @@ import type {
   SystemHealthSnapshot,
   SystemHealthOptions,
   DiagnosticReport,
-  RegistrySnapshotManifestEntry,
   CatalogAdapter,
   DiscoveryResult,
 } from '@kb-labs/plugin-contracts';

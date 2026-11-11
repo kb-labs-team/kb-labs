@@ -654,7 +654,7 @@ describe('shared UI output contract in CLI adapter', () => {
     try {
       contract.invoke(createCLIUIFacade(undefined, (value) => streamOutput.push(JSON.stringify(value))));
       const rendered = `${consoleOutput.join('\n')}\n${streamOutput.join('\n')}`;
-      for (const expected of contract.visibleText) expect(rendered).toContain(expected);
+      for (const expected of contract.visibleText) {expect(rendered).toContain(expected);}
     } finally {
       consoleSpy.mockRestore();
       streamSpy.mockRestore();
@@ -690,8 +690,8 @@ describe('shared UI output contract in CLI adapter', () => {
       }
       expect(output.join('').split('\n')).toEqual(lines);
     } finally {
-      if (originalNoColor === undefined) delete process.env.NO_COLOR;
-      else process.env.NO_COLOR = originalNoColor;
+      if (originalNoColor === undefined) {delete process.env.NO_COLOR;}
+      else {process.env.NO_COLOR = originalNoColor;}
       vi.resetModules();
     }
   });

@@ -81,9 +81,7 @@ export abstract class NodeProcessBackend implements IProcessExecutor {
 
   abstract capabilities(): ProcessBackendCapabilities;
 
-  protected configureProcess(_pid: number, _request: GovernedProcessRequest): () => void {
-    return () => {};
-  }
+  protected abstract configureProcess(pid: number, request: GovernedProcessRequest): () => void;
 
   private treePids(rootPid: number): number[] {
     if (process.platform !== 'linux') { return [rootPid]; }

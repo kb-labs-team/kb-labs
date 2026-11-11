@@ -40,12 +40,12 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
   afterEach(async () => {
     await Promise.all(fixtureCatalogs.map((catalog) => catalog.dispose()));
     fixtureCatalogs = [];
-    if (isolatedHome) await rm(isolatedHome, { recursive: true, force: true });
+    if (isolatedHome) {await rm(isolatedHome, { recursive: true, force: true });}
     isolatedHome = undefined;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     for (const key of Object.keys(process.env)) {
-      if (!(key in originalEnv)) delete process.env[key];
+      if (!(key in originalEnv)) {delete process.env[key];}
     }
     Object.assign(process.env, originalEnv);
     vi.clearAllMocks();

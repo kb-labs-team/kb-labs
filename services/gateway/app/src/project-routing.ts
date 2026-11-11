@@ -157,11 +157,10 @@ function forward(
 ): Promise<IncomingMessage> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    let timeout: NodeJS.Timeout | undefined;
     const fail = (error: Error) => {
-      if (settled) return;
+      if (settled) {return;}
       settled = true;
-      if (timeout) clearTimeout(timeout);
+      clearTimeout(timeout);
       reject(error);
     };
     const upstreamRequest = httpRequest(
@@ -179,12 +178,12 @@ function forward(
           return;
         }
         settled = true;
-        if (timeout) clearTimeout(timeout);
+        clearTimeout(timeout);
         upstreamRequest.setTimeout(0);
         resolve(response);
       },
     );
-    timeout = setTimeout(() => {
+    const timeout = setTimeout(() => {
       const error = Object.assign(new Error("Project upstream request timed out"), { code: "KB_RUNTIME_TIMEOUT" });
       upstreamRequest.destroy(error);
     }, timeoutMs);
@@ -272,7 +271,7 @@ export async function registerProjectRoutes(
           return sendError(reply, request, error, projectId, serviceId);
         }
         if (!upstream) {
-          if (isHealthRequest) return sendHealthFailure("The project service runtime address is unavailable.");
+          if (isHealthRequest) {return sendHealthFailure("The project service runtime address is unavailable.");}
           return sendError(reply, request, new ProjectRoutingError(createErrorEnvelope(
             "KB_HOST_SERVICE_ADDRESS_MISSING",
             { details: { service: serviceId, project: projectId }, correlationId: String(request.id) },
@@ -287,13 +286,13 @@ export async function registerProjectRoutes(
 
         let released = false;
         const release = () => {
-          if (released) return;
+          if (released) {return;}
           released = true;
           upstream?.release?.();
         };
         const abortController = new AbortController();
         reply.raw.once("close", () => {
-          if (!reply.raw.writableEnded) abortController.abort();
+          if (!reply.raw.writableEnded) {abortController.abort();}
         });
         let response: IncomingMessage;
         try {
@@ -323,7 +322,7 @@ export async function registerProjectRoutes(
             }
             return reply.code(status).send(createUxFailureResult(envelope));
           }
-          if (abortController.signal.aborted) return reply;
+          if (abortController.signal.aborted) {return reply;}
           request.kbLogger?.warn("Project runtime unreachable", {
             projectId,
             error: error instanceof Error ? error.message : String(error),

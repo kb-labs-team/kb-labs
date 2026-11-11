@@ -10,12 +10,12 @@ describe('bootstrap command scope resolution', () => {
     const route = registry.resolve(['project', 'show']);
 
     expect(route.type).toBe('system-cmd');
-    if (route.type !== 'system-cmd') throw new Error('project show is not a system command');
+    if (route.type !== 'system-cmd') {throw new Error('project show is not a system command');}
     expect(resolveProjectScope(route, {}, ['project', 'show'])).toBe('required');
 
     const explicit = registry.resolve(['project', 'show', 'project-id']);
     expect(explicit.type).toBe('system-cmd');
-    if (explicit.type !== 'system-cmd') throw new Error('project show with an ID is not a system command');
+    if (explicit.type !== 'system-cmd') {throw new Error('project show with an ID is not a system command');}
     expect(explicit.rest).toEqual(['project-id']);
     expect(resolveProjectScope(explicit, {}, ['project', 'show', 'project-id'])).toBe('platform');
   });

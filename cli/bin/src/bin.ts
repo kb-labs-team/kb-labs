@@ -54,7 +54,7 @@ async function reportCliResultFailure(cause: string): Promise<void> {
 
 function isRemappedChild(): boolean {
   const marker = process.argv[2];
-  if (!marker?.startsWith(INTERNAL_RESULT_CHANNEL)) return false;
+  if (!marker?.startsWith(INTERNAL_RESULT_CHANNEL)) {return false;}
 
   try {
     const challenge = JSON.parse(Buffer.from(marker.slice(INTERNAL_RESULT_CHANNEL.length), 'base64url').toString('utf8')) as {
@@ -154,10 +154,10 @@ if (remappedChild) {
       : 'could not prepare the result channel because of an unknown error';
     await reportCliResultFailure(cause);
   } finally {
-    if (challengeFd !== undefined) closeSync(challengeFd);
-    if (resultFd !== undefined) closeSync(resultFd);
-    if (challengeCreated) unlinkSync(challengePath);
-    if (resultCreated) unlinkSync(resultPath);
+    if (challengeFd !== undefined) {closeSync(challengeFd);}
+    if (resultFd !== undefined) {closeSync(resultFd);}
+    if (challengeCreated) {unlinkSync(challengePath);}
+    if (resultCreated) {unlinkSync(resultPath);}
   }
   process.exit(exitCode);
 }

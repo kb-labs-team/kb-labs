@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -22,7 +22,7 @@ it('discovers defaults declared by an unbound workspace adapter', async () => {
     });
     const entry = result.get('@kb-labs/adapters-sqlite');
     expect(entry?.manifest.kind).toBe('adapter');
-    if (entry?.manifest.kind !== 'adapter') throw new Error('SQLite manifest was not discovered');
+    if (entry?.manifest.kind !== 'adapter') {throw new Error('SQLite manifest was not discovered');}
     expect(entry.manifest.manifest.defaultFor?.vectorStore).toEqual(['vector-store']);
   } finally {
     await rm(root, { recursive: true, force: true });

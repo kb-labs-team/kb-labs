@@ -103,15 +103,14 @@ function normalizeErrorEnvelope(error: unknown, correlationId?: string): ErrorEn
         ...(correlationId ? { correlationId } : {}),
       });
     }
-    if (error instanceof CataloguedExecutionError) return error.envelope;
+    if (error instanceof CataloguedExecutionError) {return error.envelope;}
     return createErrorEnvelope('KB_RUNTIME_UNEXPECTED');
   }
   if (error instanceof Error) {
     return toErrorEnvelope(error);
   }
   if (typeof error === 'object' && error !== null) {
-    const envelope = toErrorEnvelope(error);
-    return envelope;
+    return toErrorEnvelope(error);
   }
 
   // Non-error: convert to string

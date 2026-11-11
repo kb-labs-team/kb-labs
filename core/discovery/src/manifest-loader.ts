@@ -66,7 +66,7 @@ async function readManifestJson(
   try {
     bytes = await fs.readFile(filePath);
   } catch (error) {
-    if (isMissingFile(error) && !required) return undefined;
+    if (isMissingFile(error) && !required) {return undefined;}
     return failed(diag, pluginId, filePath, 'MANIFEST_PARSE_ERROR', `Failed to read manifest ${filePath}: ${errorMessage(error)}`, error);
   }
   const raw = bytes.toString('utf8');
@@ -144,8 +144,7 @@ export async function loadManifestFile(
       const result = await readManifestJson(manifestPath, pluginId, packageName, diag, true);
       return result!;
     }
-    const result = await loadDeclaredModuleArtifact(manifestPath, pluginId, packageName, diag);
-    return result;
+    return loadDeclaredModuleArtifact(manifestPath, pluginId, packageName, diag);
   }
 
   const kbPluginJsonPath = path.join(root, 'kb.plugin.json');

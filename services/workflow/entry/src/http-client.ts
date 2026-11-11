@@ -183,14 +183,14 @@ export class WorkflowDaemonClient {
   private commandPath(commandName: keyof typeof workflowServiceCommands.commands, parameters: Record<string, string> = {}): string {
     const command = workflowServiceCommands.commands[commandName];
     const route = 'route' in command ? command.route : undefined;
-    if (!route) throw new Error(`Workflow command "${commandName}" has no service route.`);
+    if (!route) {throw new Error(`Workflow command "${commandName}" has no service route.`);}
     return this.resolveRoute(route.path, parameters);
   }
 
   private commandMethod(commandName: keyof typeof workflowServiceCommands.commands): string {
     const command = workflowServiceCommands.commands[commandName];
     const route = 'route' in command ? command.route : undefined;
-    if (!route) throw new Error(`Workflow command \"${commandName}\" has no service route.`);
+    if (!route) {throw new Error(`Workflow command \"${commandName}\" has no service route.`);}
     return route.method;
   }
 
@@ -201,7 +201,7 @@ export class WorkflowDaemonClient {
   private resolveRoute(path: string, parameters: Record<string, string>): string {
     return path.replace(/\{([^}]+)\}/g, (_match, name: string) => {
       const value = parameters[name];
-      if (value === undefined) throw new Error(`Workflow route is missing path parameter "${name}".`);
+      if (value === undefined) {throw new Error(`Workflow route is missing path parameter "${name}".`);}
       return value;
     });
   }

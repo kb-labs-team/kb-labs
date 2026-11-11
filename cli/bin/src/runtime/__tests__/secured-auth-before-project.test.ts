@@ -78,7 +78,7 @@ describe('secured CLI auth ordering', () => {
   afterEach(async () => {
     await Promise.all(fixtureCatalogs.map((catalog) => catalog.dispose()));
     fixtureCatalogs = [];
-    if (isolatedHome) await rm(isolatedHome, { recursive: true, force: true });
+    if (isolatedHome) {await rm(isolatedHome, { recursive: true, force: true });}
     isolatedHome = undefined;
     process.env.HOME = originalHome;
     process.env.KB_HOME = originalKbHome;

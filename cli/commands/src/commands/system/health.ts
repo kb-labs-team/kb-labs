@@ -37,7 +37,7 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
   },
   async handler(ctx, _argv, _flags) {
     const cliApi = getResolvedCatalog();
-    if (!cliApi) throw new Error('The CLI catalog was not opened during command registration.');
+    if (!cliApi) {throw new Error('The CLI catalog was not opened during command registration.');}
 
     try {
       ctx.platform?.logger?.info('Health check started');
@@ -56,7 +56,7 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
       throwSystemCommandError(message, "Run `kb info health --help` to review valid inputs and recovery steps, then retry.");
     }
   },
-  // eslint-disable-next-line sonarjs/cognitive-complexity -- Complex health status formatting with nested conditions for different health states
+
   formatter(result, ctx) {
     const snapshot = result;
     const gitInfo = snapshot.version.git
@@ -109,13 +109,13 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
 });
 
 function formatWorkers(value: unknown): string {
-  if (!value || typeof value !== 'object') return 'n/a';
+  if (!value || typeof value !== 'object') {return 'n/a';}
   const workers = value as Record<string, unknown>;
   return `total ${String(workers.total ?? 0)}, idle ${String(workers.idle ?? 0)}, busy ${String(workers.busy ?? 0)}, queued ${String(workers.queued ?? 0)}, queue limit ${String(workers.queueLimit ?? 0)}`;
 }
 
 function formatFailure(value: unknown): string {
-  if (!value || typeof value !== 'object') return 'none';
+  if (!value || typeof value !== 'object') {return 'none';}
   const failure = value as Record<string, unknown>;
   return `${String(failure.code ?? 'unknown')} at ${String(failure.at ?? 'unknown time')}`;
 }

@@ -301,8 +301,8 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
     let snapshotSent = false;
     let closed = false;
     let unsubscribed = false;
-    let unsubscribe: (() => void) | undefined;
-    let raw: typeof reply.raw | undefined;
+    const subscription: { unsubscribe?: () => void } = {};
+    const raw = reply.raw;
     const pendingEvents: WorkflowEvent[] = [];
     let onLiveEvent: (event: WorkflowEvent) => void = () => {};
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -313,7 +313,7 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       pendingEvents.length = 0;
       if (!unsubscribed) {
         unsubscribed = true;
-        unsubscribe?.();
+        subscription.unsubscribe?.();
       }
       if (idleTimer) {clearTimeout(idleTimer);}
       if (keepAliveTimer) {clearInterval(keepAliveTimer);}
@@ -329,7 +329,7 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
         pendingEvents.push(event);
       }
     };
-    unsubscribe = engine.subscribeToRunEvents(runId, (event) => dispatchEvent(event));
+    subscription.unsubscribe = engine.subscribeToRunEvents(runId, (event) => dispatchEvent(event));
     let run: WorkflowRun | null;
     try {
       run = await observability.observeOperation('workflow.run.events', () => engine.getRun(runId));
@@ -345,8 +345,6 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
 
     // SSE response
     reply.hijack();
-    raw = reply.raw;
-
     const origin = request.headers.origin;
     if (typeof origin === 'string') {
       try {

@@ -24,8 +24,8 @@ export async function resolveMarketplaceLockScope(
     roots.projectRoot ? canonicalPath(roots.projectRoot) : undefined,
   ]);
 
-  if (platform && target === platform) return 'platform';
-  if (project && target === project) return 'project';
+  if (platform && target === platform) {return 'platform';}
+  if (project && target === project) {return 'project';}
   throw new Error(`Marketplace lock root "${lockRoot}" is neither the resolved platform root nor project root.`);
 }
 

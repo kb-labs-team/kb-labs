@@ -52,7 +52,7 @@ function resolveDependency(depName, depSpec, pkgDirMap, metadata, packageDir) {
 /**
  * Build dependency graph
  */
-export function buildDependencyGraph(packages, metadata) {
+export function buildDependencyGraph(metadata) {
   const graph = new Map(); // pkgName -> GraphNode
   const pkgDirMap = new Map(); // pkgName -> directory
 

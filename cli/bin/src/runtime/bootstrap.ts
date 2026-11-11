@@ -38,7 +38,7 @@ import { initializePlatform, loadPlatformConfiguration, resolveProjectConfig } f
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import { platform as runtimePlatform, resolvePlatformVersion, type PlatformContainer, type PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, isAgentDiagnosticsEnabled, toErrorEnvelope, type IServiceTransport } from "@kb-labs/core-platform";
+import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, isAgentDiagnosticsEnabled, type IServiceTransport } from "@kb-labs/core-platform";
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
 import { hasUsablePlatformAuth, resolveActiveGateway, resolveActiveGatewayAddress } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
@@ -177,7 +177,7 @@ export async function executeCli(
     configResolution = { ok: false, error };
   }
   const loadedConfigBeforeGates = configResolution.ok ? configResolution.value : undefined;
-  if (loadedConfigBeforeGates) globalThis.__KB_RAW_CONFIG__ = loadedConfigBeforeGates.rawConfig;
+  if (loadedConfigBeforeGates) {globalThis.__KB_RAW_CONFIG__ = loadedConfigBeforeGates.rawConfig;}
   const authRoute = registryStore.resolve(cmdPath);
   const authCommandKind = authRoute.type === "system-cmd" ? "system" : "plugin";
   const authCommandPath = authRoute.type === "system-cmd"
@@ -460,8 +460,8 @@ export async function executeCli(
       message: `Required flag --${missingValue.name} needs a value.`,
       hint: `Run "kb ${cmdPath.join(' ')} --help" to see the required flags.`,
     });
-    if (global.json) presenter.json({ ok: false, error: envelope });
-    else presenter.error(`${envelope.message} [${envelope.code}]\nHint: ${envelope.hint}`);
+    if (global.json) {presenter.json({ ok: false, error: envelope });}
+    else {presenter.error(`${envelope.message} [${envelope.code}]\nHint: ${envelope.hint}`);}
     return 2;
   }
 

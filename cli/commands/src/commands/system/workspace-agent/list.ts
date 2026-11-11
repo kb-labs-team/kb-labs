@@ -42,7 +42,7 @@ export const workspaceList = defineSystemCommand<Flags, Result>({
     let hosts: HostEntry[];
     try {
       const response = await gatewayApiFetch(`${gatewayUrl}/hosts`);
-      if (!response.ok) throwSystemCommandError(`Failed to list hosts: HTTP ${response.status}`, `Check that ${gatewayUrl} is reachable, then retry.`);
+      if (!response.ok) {throwSystemCommandError(`Failed to list hosts: HTTP ${response.status}`, `Check that ${gatewayUrl} is reachable, then retry.`);}
       const body = await response.json() as { hosts: HostEntry[] };
       hosts = body.hosts;
     } catch (error) {
@@ -51,16 +51,16 @@ export const workspaceList = defineSystemCommand<Flags, Result>({
       }
       throw error;
     }
-    if (flags.json) return { hosts };
+    if (flags.json) {return { hosts };}
     if (hosts.length === 0) {
       ctx.ui?.info('No Workspace Agents connected.');
       return { hosts: [] };
     }
     const ago = (timestamp: number) => {
       const seconds = Math.floor((Date.now() - timestamp) / 1000);
-      if (seconds < 60) return `${seconds}s ago`;
-      if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-      if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+      if (seconds < 60) {return `${seconds}s ago`;}
+      if (seconds < 3600) {return `${Math.floor(seconds / 60)}m ago`;}
+      if (seconds < 86400) {return `${Math.floor(seconds / 3600)}h ago`;}
       return `${Math.floor(seconds / 86400)}d ago`;
     };
     const online = hosts.filter((host) => host.status === 'online').length;

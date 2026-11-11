@@ -88,12 +88,12 @@ function failureReason(error: unknown): FailureReason {
   if (typeof error === 'object' && error !== null && 'details' in error &&
       typeof error.details === 'object' && error.details !== null && 'failureReason' in error.details) {
     const reason = error.details.failureReason;
-    if (reason === 'timed out' || reason === 'execution process crashed') return reason;
+    if (reason === 'timed out' || reason === 'execution process crashed') {return reason;}
   }
-  if (error instanceof Error && error.name === 'TimeoutError') return 'timed out';
-  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'TIMEOUT') return 'timed out';
-  if (error instanceof Error && error.name === 'WorkerCrashedError') return 'execution process crashed';
-  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'WORKER_CRASHED') return 'execution process crashed';
+  if (error instanceof Error && error.name === 'TimeoutError') {return 'timed out';}
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'TIMEOUT') {return 'timed out';}
+  if (error instanceof Error && error.name === 'WorkerCrashedError') {return 'execution process crashed';}
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'WORKER_CRASHED') {return 'execution process crashed';}
   return 'failed unexpectedly';
 }
 
@@ -283,10 +283,10 @@ function sourceFailureDetails(
 }
 
 function sourceHintType(value: unknown): string {
-  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, 'hint')) return 'absent';
+  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, 'hint')) {return 'absent';}
   const hint = Reflect.get(value, 'hint');
-  if (hint === undefined) return 'undefined';
-  if (hint === null) return 'null';
+  if (hint === undefined) {return 'undefined';}
+  if (hint === null) {return 'null';}
   return typeof hint;
 }
 

@@ -178,11 +178,15 @@ class ChildRuntime implements RuntimeProcess {
               `Project runtime process group ${pid} did not stop within ${this.stopTimeoutMs} ms after SIGKILL`,
             );
           }
-          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 10);
+          });
         }
         break;
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 10);
+      });
     }
     await this.exited;
   }

@@ -21,7 +21,7 @@ import { resolveMarketplaceLockScope, type MarketplaceLockRoots } from './market
 import { loadManifestFile } from './manifest-loader.js';
 import { computePackageIntegrity } from './integrity.js';
 import { findWorkspaceCandidates } from './workspace-source.js';
-import { readPluginPolicy, checkPluginPolicy, isFirstPartyPluginSource, type PluginPolicy, type PluginPolicyResult } from './plugin-policy.js';
+import { readPluginPolicy, checkPluginPolicy, isFirstPartyPluginSource, type PluginPolicyResult } from './plugin-policy.js';
 import { captureFilesystemObservations, hashDiscoveryFingerprint } from './recording-filesystem.js';
 
 // ---------------------------------------------------------------------------
@@ -102,7 +102,7 @@ async function hasFile(filePath: string): Promise<boolean> {
     await fs.access(filePath);
     return true;
   } catch (error) {
-    if (isMissingFile(error)) return false;
+    if (isMissingFile(error)) {return false;}
     throw error;
   }
 }
@@ -184,7 +184,7 @@ export class DiscoveryManager {
     const policyResults = await Promise.all(this.scopes.map(async ({ scope, root }) => [scope, root, await readPluginPolicy(root)] as const));
     this.policies = new Map(policyResults.map(([, root, result]) => [root, result]));
     for (const [scope, , result] of policyResults) {
-      if (result.kind !== 'invalid') continue;
+      if (result.kind !== 'invalid') {continue;}
       for (const issue of result.diagnostics) {
         diag.error(issue.code, issue.message, {
           filePath: issue.path ?? result.configPath,
@@ -324,11 +324,11 @@ export class DiscoveryManager {
   }
 
   private async loadMarketplaceLocks(diag: DiagnosticCollector): Promise<void> {
-    if (this.marketplaceLocksLoaded) return;
+    if (this.marketplaceLocksLoaded) {return;}
     for (const { root } of this.scopes) {
       const lockScope = await resolveMarketplaceLockScope(this.lockRoots, root);
       const lock = await readMarketplaceLock(root, diag, lockScope);
-      if (lock) this.marketplaceLocks.set(root, lock);
+      if (lock) {this.marketplaceLocks.set(root, lock);}
     }
     this.marketplaceLocksLoaded = true;
   }

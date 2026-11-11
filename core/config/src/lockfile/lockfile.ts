@@ -120,7 +120,7 @@ export async function updateLockfile(
 /**
  * Get config hash for a product
  */
-export function getLockfileConfigHash(product: string, config: unknown): string {
+export function getLockfileConfigHash(config: unknown): string {
   return computeConfigHash(config);
 }
 

@@ -35,7 +35,7 @@ export const version = defineSystemCommand<VersionFlags, VersionResult>({
   },
   async handler(ctx, argv, flags) {
     const cliCtx = ctx.hostContext?.host === 'cli' ? ctx.hostContext : undefined;
-    if (!cliCtx?.resolvePlatformVersion) throw new ErrorEnvelopeError(createErrorEnvelope('KB_CLI_PLATFORM_VERSION_UNAVAILABLE'));
+    if (!cliCtx?.resolvePlatformVersion) {throw new ErrorEnvelopeError(createErrorEnvelope('KB_CLI_PLATFORM_VERSION_UNAVAILABLE'));}
     const cliVersion = await cliCtx.resolvePlatformVersion();
     const nodeVersion = process.version;
     const platform = `${process.platform} ${process.arch}`;

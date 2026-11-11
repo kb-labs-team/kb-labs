@@ -376,24 +376,24 @@ class ContextLogger implements IContextLogger {
   }
 
   private redactError(error?: Error): Error | undefined {
-    if (!error || this.sensitiveValues.values.length === 0) return error;
+    if (!error || this.sensitiveValues.values.length === 0) {return error;}
     const redacted = new Error(this.redactString(error.message), {
       cause: this.redactValue(error.cause),
     });
     redacted.name = this.redactString(error.name);
-    if (error.stack) redacted.stack = this.redactString(error.stack);
+    if (error.stack) {redacted.stack = this.redactString(error.stack);}
     return redacted;
   }
 
   private redactRecord(record: Record<string, unknown>): Record<string, unknown> {
-    if (this.sensitiveValues.values.length === 0) return record;
+    if (this.sensitiveValues.values.length === 0) {return record;}
     return this.redactValue(record) as Record<string, unknown>;
   }
 
   private redactValue(value: unknown): unknown {
-    if (typeof value === 'string') return this.redactString(value);
-    if (Array.isArray(value)) return value.map((nested) => this.redactValue(nested));
-    if (value instanceof Error) return this.redactError(value);
+    if (typeof value === 'string') {return this.redactString(value);}
+    if (Array.isArray(value)) {return value.map((nested) => this.redactValue(nested));}
+    if (value instanceof Error) {return this.redactError(value);}
     if (isRecord(value)) {
       return Object.fromEntries(
         Object.entries(value).map(([key, nested]) => [
@@ -417,7 +417,7 @@ export function createContextLogger(
 
 /** Create the process root log context before resolving runtime configuration. */
 export function createProcessRootLogContext(context: PlatformLogContext): PlatformLogContext {
-  if (processRootContext) return processRootContext;
+  if (processRootContext) {return processRootContext;}
   processRootContext = Object.freeze({ ...context });
   const registry = getProcessSensitiveValues();
   contextRegistries.set(processRootContext, registry);

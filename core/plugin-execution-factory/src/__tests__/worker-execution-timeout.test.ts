@@ -91,7 +91,7 @@ describe('Worker — execution timeout (real forked child process)', () => {
     const records: Array<Record<string, unknown>> = [];
     const logger: ILogger = {
       trace() {}, debug() {}, info() {}, warn() {},
-      error(_message, _error, fields) { if (fields) records.push(fields); },
+      error(_message, _error, fields) { if (fields) {records.push(fields);} },
       fatal() {}, child() { return logger; }, async flush() {},
     };
     const backend = {

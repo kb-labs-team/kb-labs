@@ -10,8 +10,8 @@ const TEST_PROJECT_ID = 'prj_effective_test';
 function testStoreRoot(projectRoot: string): string {
   return path.join(path.dirname(projectRoot), 'platform-state');
 }
-function loadEffectiveConfig(projectRoot: string, options: Parameters<typeof resolveEffectiveConfig>[1] = {}) {
-  return resolveEffectiveConfig(projectRoot, {
+function loadEffectiveConfig(projectRoot: string, options: Parameters<typeof resolveEffectiveConfig>[0] = {}) {
+  return resolveEffectiveConfig({
     ...options,
     projectId: TEST_PROJECT_ID,
     storeRoot: testStoreRoot(projectRoot),

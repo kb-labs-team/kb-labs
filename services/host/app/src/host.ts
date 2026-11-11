@@ -281,7 +281,7 @@ export async function createHostConfig(
           );
         }
         const gatewayConfigRoot = resolveGatewayConfigRoot(ctx, GATEWAY_CONFIG_SCOPE);
-        const effective = await loadEffectiveConfig(gatewayConfigRoot, {
+        const effective = await loadEffectiveConfig({
           platformRoot: ctx.platformRoot,
         });
         const platformConfig = (effective?.data as { platform?: unknown } | undefined)?.platform;
@@ -298,7 +298,7 @@ export async function createHostConfig(
         const upstreams = generatedUpstreams(settings);
         let gatewayAddress: string | undefined;
         if (isSelected(settings, "gateway")) {
-          const gatewayConfig = await loadGatewayConfig(gatewayConfigRoot, ctx.platformRoot);
+          const gatewayConfig = await loadGatewayConfig(ctx.platformRoot);
           // Dry run: refuse an unsafe exposure before any module binds a port.
           applyHostGatewayPolicy(
             gatewayConfig,

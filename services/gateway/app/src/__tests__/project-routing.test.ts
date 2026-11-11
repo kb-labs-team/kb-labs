@@ -52,7 +52,7 @@ describe("registerProjectRoutes", () => {
       req.on("end", () => {
         seen.push({ url: req.url, headers: req.headers, body: Buffer.concat(chunks).toString() });
         const reply = Array.isArray(upstreamReply) ? upstreamReply[seen.length - 1] : upstreamReply;
-        if (reply?.stall) return;
+        if (reply?.stall) {return;}
         if (reply?.stream) {
           res.writeHead(reply.statusCode, { "content-type": "text/event-stream" });
           res.write("data: open\\n\\n");
@@ -372,7 +372,7 @@ describe("registerProjectRoutes", () => {
       });
       req.resume();
     });
-    await new Promise<void>((resolve) => upstream!.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => { upstream!.listen(0, "127.0.0.1", resolve); });
     const port = (upstream.address() as { port: number }).port;
     app = Fastify();
     await registerProjectRoutes(app, PROJECT_SERVICES, { resolveProjectService: async () => ({
@@ -380,7 +380,7 @@ describe("registerProjectRoutes", () => {
     }) });
     await app.listen({ host: "127.0.0.1", port: 0 });
     const address = app.server.address();
-    if (!address || typeof address === "string") throw new Error("Expected TCP listener");
+    if (!address || typeof address === "string") {throw new Error("Expected TCP listener");}
     await new Promise<void>((resolve, reject) => {
       const downstream = httpRequest({ host: "127.0.0.1", port: address.port, path: "/api/v1/projects/p/rest/events" }, (response) => {
         response.once("data", () => {
@@ -389,8 +389,8 @@ describe("registerProjectRoutes", () => {
         });
       });
       downstream.once("error", (error) => {
-        if (error.message === "socket hang up") resolve();
-        else reject(error);
+        if (error.message === "socket hang up") {resolve();}
+        else {reject(error);}
       });
       downstream.end();
     });
@@ -426,7 +426,7 @@ describe("registerProjectRoutes", () => {
       resolveProjectService: async () => ({ baseUrl: `http://127.0.0.1:${port}`, pathPrefix: "/rest", headers: {}, release: () => undefined }),
     }), { statusCode: 403, body: '{"error":"Forbidden"}' });
 
-    if (!app) throw new Error("project routing app was not initialized");
+    if (!app) {throw new Error("project routing app was not initialized");}
     const res = await app.inject({ method: "GET", url: "/api/v1/projects/p/rest/api/v1/private" });
 
     expect(res.statusCode).toBe(403);

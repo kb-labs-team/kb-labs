@@ -58,7 +58,7 @@ export class WorkflowRegistry {
       }
 
       try {
-        const files = await readdir(absoluteDir) // eslint-disable-line no-await-in-loop
+        const files = await readdir(absoluteDir)
         const yamlFiles = files.filter(f => f.endsWith('.yml') || f.endsWith('.yaml'))
 
         this.options.logger.debug(`Found workflow files`, {
@@ -67,7 +67,7 @@ export class WorkflowRegistry {
         })
 
         // Index all files in parallel
-        await Promise.all( // eslint-disable-line no-await-in-loop
+        await Promise.all(
           yamlFiles.map(file => {
             const filePath = join(absoluteDir, file)
             return this.indexFile(filePath)

@@ -124,7 +124,7 @@ async function findAllConfigsInRoot(root: string): Promise<string[]> {
       const code = error !== null && typeof error === 'object' && 'code' in error
         ? error.code
         : undefined;
-      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      if (code === 'ENOENT' || code === 'ENOTDIR') {continue;}
       const detail = error instanceof Error ? error.message : String(error);
       throw new PlatformConfigError(full, 'read', detail);
     }
@@ -199,7 +199,7 @@ function throwConfigDiagnostic(
 
 function throwConfigErrors(diagnostics: readonly Diagnostic[], fallbackPath: string): void {
   const diagnostic = diagnostics.find((entry) => entry.level === 'error');
-  if (diagnostic) throwConfigDiagnostic(diagnostic, fallbackPath);
+  if (diagnostic) {throwConfigDiagnostic(diagnostic, fallbackPath);}
 }
 
 /**
@@ -207,7 +207,6 @@ function throwConfigErrors(diagnostics: readonly Diagnostic[], fallbackPath: str
  * consumer repository is never consulted for `.kb/kb.config.*` or overlays.
  */
 export async function loadEffectiveConfig(
-  _projectRoot: string,
   options: LoadEffectiveConfigOptions = {},
 ): Promise<EffectiveConfigResult | null> {
   const diagnostics: Diagnostic[] = [];

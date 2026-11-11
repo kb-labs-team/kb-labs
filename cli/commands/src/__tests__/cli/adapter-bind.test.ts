@@ -71,7 +71,7 @@ function context(cwd = projectRoot) {
       json: (data: unknown) => outputs.push(data),
       error: (message: string, options?: { hint?: string }) => {
         errors.push(message);
-        if (options?.hint) hints.push(options.hint);
+        if (options?.hint) {hints.push(options.hint);}
       },
     },
     platform: { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn().mockReturnThis() } } as never,

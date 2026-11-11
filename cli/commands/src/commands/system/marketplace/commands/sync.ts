@@ -117,7 +117,7 @@ async function loadSyncConfig(root: string): Promise<{ include?: string[]; exclu
     try {
       raw = await fs.readFile(p, 'utf-8');
     } catch (error) {
-      if (isMissingFileError(error)) continue;
+      if (isMissingFileError(error)) {continue;}
       throw new Error(`Cannot read marketplace sync config ${p}: ${errorMessage(error)}`);
     }
 
@@ -128,11 +128,11 @@ async function loadSyncConfig(root: string): Promise<{ include?: string[]; exclu
       throw new Error(`Invalid marketplace sync config ${p}: ${errorMessage(error)}`);
     }
 
-    if (typeof parsed !== 'object' || parsed === null || !('marketplace' in parsed)) return {};
+    if (typeof parsed !== 'object' || parsed === null || !('marketplace' in parsed)) {return {};}
     const marketplace = parsed.marketplace;
-    if (typeof marketplace !== 'object' || marketplace === null || !('sync' in marketplace)) return {};
+    if (typeof marketplace !== 'object' || marketplace === null || !('sync' in marketplace)) {return {};}
     const sync = marketplace.sync;
-    if (typeof sync !== 'object' || sync === null) return {};
+    if (typeof sync !== 'object' || sync === null) {return {};}
     const include = 'include' in sync && Array.isArray(sync.include) && sync.include.every((item): item is string => typeof item === 'string')
       ? sync.include
       : undefined;

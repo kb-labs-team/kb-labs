@@ -9,8 +9,8 @@ import { GatewayConfigSchema, type GatewayConfig } from '@kb-labs/gateway-contra
  * `@kb-labs/core-config :: loadEffectiveConfig`. This file does one job:
  * pluck the `gateway` section out of the merged result and validate it.
  */
-export async function loadGatewayConfig(repoRoot: string, platformRoot?: string): Promise<GatewayConfig> {
-  const merged = await loadEffectiveConfig(repoRoot, { platformRoot });
+export async function loadGatewayConfig(platformRoot?: string): Promise<GatewayConfig> {
+  const merged = await loadEffectiveConfig({ platformRoot });
   const gateway = (merged?.data as { gateway?: unknown } | undefined)?.gateway;
   if (gateway && typeof gateway === 'object' && !Array.isArray(gateway)) {
     return GatewayConfigSchema.parse(gateway);

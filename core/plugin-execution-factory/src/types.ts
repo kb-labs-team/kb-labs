@@ -45,7 +45,7 @@ import type {
   ResolvedExecutionMode,
   ExecutionStats as CoreExecutionStats,
 } from '@kb-labs/core-contracts';
-import type { NormalizedExecutionFailure, NormalizedExecutionResult } from './normalized-result.js';
+import type { NormalizedExecutionResult } from './normalized-result.js';
 
 // Re-export runtime types for convenience (consumers use these, not custom types)
 export type { PluginContextDescriptor, HostContext, HostType, PermissionSpec };

@@ -58,13 +58,13 @@ describe('StateDaemon durability', () => {
   it('releases the durable broker after listener startup fails', async () => {
     const root = await makeRoot();
     const blocker = createServer();
-    await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => { blocker.listen(0, '127.0.0.1', resolve); });
     const address = blocker.address();
-    if (!address || typeof address === 'string') throw new Error('listener blocker has no TCP port');
+    if (!address || typeof address === 'string') {throw new Error('listener blocker has no TCP port');}
     const failed = createDurableStateDaemon({ port: address.port, host: '127.0.0.1' }, root);
 
     await expect(failed.start()).rejects.toThrow();
-    await new Promise<void>((resolve, reject) => blocker.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) => { blocker.close((error) => error ? reject(error) : resolve()); });
 
     await start(address.port, root);
     const ready = await fetch(`http://127.0.0.1:${address.port}/ready`);
@@ -93,7 +93,7 @@ describe('StateDaemon durability', () => {
     expect((await setValue(port, 'unexpired', 'kept', 60_000)).status).toBe(204);
     expect((await setValue(port, 'expired', 'gone', 25)).status).toBe(204);
     expect((await setValue(port, 'default-ttl', 'default')).status).toBe(204);
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    await new Promise((resolve) => { setTimeout(resolve, 40); });
     await activeServers.pop()?.stop();
 
     await start(port, root);

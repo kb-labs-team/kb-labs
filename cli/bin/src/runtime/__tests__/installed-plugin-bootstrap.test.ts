@@ -38,10 +38,10 @@ describe('installed project plugin routes at CLI bootstrap', () => {
   const platform = { logger, getAdapter: () => undefined };
 
   afterEach(async () => {
-    if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true });
+    if (temporaryRoot) {await rm(temporaryRoot, { recursive: true, force: true });}
     temporaryRoot = undefined;
     for (const key of Object.keys(process.env)) {
-      if (!(key in originalEnv)) delete process.env[key];
+      if (!(key in originalEnv)) {delete process.env[key];}
     }
     Object.assign(process.env, originalEnv);
     vi.restoreAllMocks();
@@ -101,7 +101,7 @@ describe('installed project plugin routes at CLI bootstrap', () => {
       env: { ...env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` },
     });
     const [packed] = JSON.parse(packedJson) as Array<{ filename: string }>;
-    if (!packed) throw new Error('npm pack did not produce the Commit package');
+    if (!packed) {throw new Error('npm pack did not produce the Commit package');}
     execFileSync('tar', ['-xzf', path.join(packedRoot, packed.filename), '-C', unpackedRoot, '--strip-components=1']);
     const manifestPath = path.join(unpackedRoot, 'dist', 'manifest.json');
     const packageManifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {

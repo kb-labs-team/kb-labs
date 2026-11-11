@@ -181,7 +181,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     expect(launcher.launches).toBe(2);
     expect(new Set(leases.map((lease) => lease.address.port)).size).toBe(1);
     expect(isAlive(oldPid)).toBe(false);
-    for (const lease of leases) lease.release();
+    for (const lease of leases) {lease.release();}
   });
 
   // case: S-192.2

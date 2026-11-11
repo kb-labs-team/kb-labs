@@ -63,7 +63,7 @@ describe('createExecutionBackend returned contract failure diagnostics', () => {
     const result = await backend.execute(request);
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {return;}
     expect(result.error.envelope).not.toHaveProperty('stack');
     expect(result.error.envelope).toMatchObject({
       code: 'KB_PLUGIN_CONTRACT_VIOLATION',
