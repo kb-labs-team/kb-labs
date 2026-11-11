@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +18,10 @@ import (
 	"github.com/kb-labs/devkit/internal/workspace"
 	"github.com/spf13/cobra"
 )
+
+// resourceSampleInterval is how often `run` logs its admission state, so a
+// runner that dies mid-build leaves its last sample in the log.
+const resourceSampleInterval = 30 * time.Second
 
 var (
 	runAffected    bool
@@ -93,6 +98,17 @@ Examples:
 			Concurrency: runConcurrency,
 			WSRoot:      ws.Root,
 			CacheRoot:   cacheRoot,
+
+			MemoryProbe:    engine.HostMemoryProbe,
+			SampleInterval: resourceSampleInterval,
+			OnSample: func(sample engine.AdmissionSample) {
+				line, marshalErr := json.Marshal(sample)
+				if marshalErr != nil {
+					fmt.Fprintf(os.Stderr, "devkit resource sample failed: %v\n", marshalErr)
+					return
+				}
+				fmt.Fprintf(os.Stderr, "devkit resource sample: %s\n", line)
+			},
 		}
 
 		o := newOutput()
@@ -195,7 +211,7 @@ func init() {
 	runCmd.Flags().StringSliceVar(&runPackages, "packages", nil, "run specific packages (comma-separated)")
 	runCmd.Flags().BoolVar(&runNoCache, "no-cache", false, "bypass cache lookup (still stores result)")
 	runCmd.Flags().BoolVar(&runLive, "live", false, "stream output while running (forces concurrency=1)")
-	runCmd.Flags().IntVar(&runConcurrency, "concurrency", 0, "parallel task limit (default: NumCPU-1)")
+	runCmd.Flags().IntVar(&runConcurrency, "concurrency", 0, "upper bound on parallel tasks; memory admission may run fewer (default: NumCPU-1)")
 	rootCmd.AddCommand(runCmd)
 }
 

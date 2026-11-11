@@ -249,6 +249,10 @@ type RunConfig struct {
 	// Concurrency is the max number of parallel (package, task) pairs.
 	// Default: NumCPU-1. Override with --concurrency flag or this field.
 	Concurrency int `yaml:"concurrency"`
+	// TaskMemoryMB is the expected peak memory of one running task. The
+	// scheduler starts a task only while running tasks plus this estimate fit
+	// the host memory budget. Zero disables memory admission.
+	TaskMemoryMB int `yaml:"task_memory_mb"`
 }
 
 // ─── Custom checks ────────────────────────────────────────────────────────────

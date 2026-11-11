@@ -2,37 +2,6 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 
-export const BUILD_MEMORY_BUDGET_FRACTION = 0.7;
-// Largest observed task-process RSS in run 40424362740, read from the 30-second resource samples.
-export const CALIBRATED_TASK_FOOTPRINT_BYTES = 2_536_468_480;
-
-export class BuildCapacityError extends Error {
-  constructor(message, code) {
-    super(message);
-    this.name = 'BuildCapacityError';
-    this.code = code;
-  }
-}
-
-export function deriveBuildLimits({ cpuCount, totalBytes, availableBytes, expectedTaskFootprintBytes = CALIBRATED_TASK_FOOTPRINT_BYTES }) {
-  if (!Number.isSafeInteger(cpuCount) || cpuCount < 1) throw new BuildCapacityError('Runner CPU count must be a positive integer.', 'RUNNER_CPU_INVALID');
-  if (!Number.isSafeInteger(totalBytes) || totalBytes < 1) throw new BuildCapacityError('Runner MemTotal must be a positive integer.', 'RUNNER_MEMTOTAL_INVALID');
-  if (!Number.isSafeInteger(availableBytes) || availableBytes < 1) throw new BuildCapacityError('Runner MemAvailable must be a positive integer.', 'RUNNER_MEMAVAILABLE_INVALID');
-  if (!Number.isSafeInteger(expectedTaskFootprintBytes) || expectedTaskFootprintBytes < 1) throw new Error('Expected task footprint must be a positive integer measured in bytes.');
-  const memoryBudgetBytes = Math.min(Math.floor(totalBytes * BUILD_MEMORY_BUDGET_FRACTION), availableBytes);
-  const memoryBoundConcurrency = Math.floor(memoryBudgetBytes / expectedTaskFootprintBytes);
-  if (memoryBoundConcurrency < 1) throw new BuildCapacityError('Runner available memory cannot fit one build task.', 'RUNNER_MEMORY_CAPACITY_INSUFFICIENT');
-  const concurrency = Math.min(cpuCount, memoryBoundConcurrency);
-  return { cpuCount, memoryBudgetBytes, concurrency, expectedTaskFootprintBytes };
-}
-
-export function measureBuildLimits({
-  readCpuCount = () => os.availableParallelism(),
-  readMeminfo = () => readFileSync('/proc/meminfo', 'utf8'),
-} = {}) {
-  return deriveBuildLimits({ cpuCount: readCpuCount(), ...readRunnerMemory(readMeminfo) });
-}
-
 export function readRunnerMemory(readMeminfo = () => readFileSync('/proc/meminfo', 'utf8')) {
   let content;
   try {

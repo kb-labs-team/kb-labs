@@ -516,7 +516,11 @@ affected:
 # ──────────────────────────────────────────────────────────────────────────────
 
 run:
+  # Upper bound on parallel tasks; memory admission may run fewer.
   concurrency: 8
+  # Largest observed task-process RSS (2_536_468_480 bytes) in run 40424362740,
+  # from the 30-second resource samples: 2419 MiB.
+  task_memory_mb: 2419
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TASKS — execution engine (kb-devkit run <task>)

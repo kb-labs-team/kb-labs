@@ -2,7 +2,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { runStage } from './remote-verify-stage.mjs';
-import { measureBuildLimits } from './remote-build-resources.mjs';
 import { mirrorStreamsToFile } from './remote-stage-output.mjs';
 
 if (process.argv[2] === '--journey-batch-prepare') {
@@ -43,11 +42,6 @@ const result = await runStage({
   affectedBuild: process.env.REMOTE_AFFECTED_BUILD === '1',
   devkitExecutable: process.env.REMOTE_DEVKIT_EXECUTABLE,
   partialResultPath: stage === profile.buildStage ? out : undefined,
-  measureBuildLimits: stage === profile.buildStage ? () => {
-    const limits = measureBuildLimits();
-    process.stdout.write(`${profile.buildStage} resource limits: ${JSON.stringify(limits)}\n`);
-    return limits;
-  } : undefined,
   runCommand: (command, args, options) => new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: options.cwd,

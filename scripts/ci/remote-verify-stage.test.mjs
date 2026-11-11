@@ -10,21 +10,20 @@ import { runStage } from './remote-verify-stage.mjs';
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-test('journey workspace build uses the same measured concurrency entry and streams affected builds', async () => {
+test('journey workspace build passes no concurrency of its own and streams affected builds', async () => {
   let invocation;
   const result = await runStage({
     stage: profile.buildStage,
     packages: [],
     selectedPackageCount: 0,
     affectedBuild: true,
-    buildLimits: { cpuCount: 4, memoryBudgetBytes: 1000, concurrency: 2, expectedTaskFootprintBytes: 500 },
     runCommand: async (command, args) => {
       invocation = [command, args];
       return { status: 0, stdout: JSON.stringify({ ok: true, data: { results: [{ Package: '@fixture/a', Task: 'build', OK: true }] } }), stderr: '' };
     },
   });
 
-  assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--affected', '--concurrency', '2', '--json']]);
+  assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--affected', '--json']]);
   assert.equal(result.status, 'pass');
   assert.equal(result.selectedPackageCount, 1);
 });
@@ -227,7 +226,6 @@ test('failed kb-devkit task contributes the task log tail identified by structur
       stage: profile.buildStage,
       packages: ['@fixture/site'],
       selectedPackageCount: 1,
-      buildLimits: { cpuCount: 2, memoryBudgetBytes: 1_000_000, concurrency: 2, expectedTaskFootprintBytes: 500_000 },
       runCommand: async (command, args, options) => {
         invocation = [command, args];
         childEnvironment = options.env;
@@ -240,7 +238,7 @@ test('failed kb-devkit task contributes the task log tail identified by structur
       now: (() => { let value = 0; return () => value += 10; })(),
     });
 
-    assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--packages', '@fixture/site', '--concurrency', '2', '--json']]);
+    assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--packages', '@fixture/site', '--json']]);
     assert.deepEqual(childEnvironment, {});
     assert.equal(result.status, 'fail');
     assert.ok(result.failures.some((line) => line.includes('@fixture/site:build — command exited with code 1')));
@@ -288,7 +286,6 @@ test('workspace build failures come from structured task errors, not streamed bu
       stage: profile.buildStage,
       packages: packageNames,
       selectedPackageCount: packageNames.length,
-      buildLimits: { cpuCount: 4, memoryBudgetBytes: 11_736_487_526, concurrency: 4, expectedTaskFootprintBytes: 2_536_468_480 },
       runCommand: async (command, args, options) => spawnSync(binary, ['--config', configPath, ...args], {
         cwd: fixtureRoot,
         encoding: 'utf8',

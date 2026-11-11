@@ -28,10 +28,24 @@ type RunOptions struct {
 	Packages    []workspace.Package
 	NoCache     bool
 	LiveOutput  bool // stream stdout/stderr while running (disables parallel output)
-	Concurrency int
+	Concurrency int  // upper bound on parallel tasks; memory admission may run fewer
 	WSRoot      string
 	CacheRoot   string // path to .kb/devkit/
 	Affected    bool   // selection came from --affected
+
+	// MemoryProbe reads host memory for admission. Nil disables memory
+	// admission (the concurrency cap alone applies).
+	MemoryProbe MemoryProbe
+	// SampleInterval is the period of OnSample; zero disables sampling. Sampling
+	// also needs run.task_memory_mb, since samples describe memory admission.
+	SampleInterval time.Duration
+	// AdmissionPollInterval overrides how often waiting tasks re-read the probe.
+	AdmissionPollInterval time.Duration
+	// AdmissionSettle overrides how long a started task's memory is reserved
+	// before the host is trusted to show it.
+	AdmissionSettle time.Duration
+	// OnSample receives periodic admission/resource samples.
+	OnSample func(AdmissionSample)
 
 	// OnResult is called immediately when each (pkg, task) finishes.
 	// Called from the scheduler goroutine — must be safe to print to stdout.
@@ -245,19 +259,48 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		}
 	}
 
-	// Concurrency priority: --concurrency flag > devkit.yaml run.concurrency > NumCPU-1.
+	// Concurrency is an upper bound, never a promise: --concurrency flag >
+	// devkit.yaml run.concurrency (clamped to the CPU count) > NumCPU-1.
+	// Memory admission (run.task_memory_mb) may run fewer tasks.
 	// Live output forces 1 to avoid interleaved lines.
 	concurrency := opts.Concurrency
 	if opts.LiveOutput {
 		concurrency = 1
 	} else if concurrency <= 0 {
 		concurrency = cfg.Run.Concurrency
+		if cpus := runtime.NumCPU(); concurrency > cpus {
+			concurrency = cpus
+		}
 	}
 	if concurrency <= 0 {
 		concurrency = runtime.NumCPU()
 		if concurrency > 1 {
 			concurrency--
 		}
+	}
+
+	gate := newAdmission(concurrency, cfg.Run.TaskMemoryMB, opts.MemoryProbe, opts.AdmissionPollInterval, opts.AdmissionSettle)
+	executor.gate = gate
+	// Samples describe memory admission; without a per-task estimate there is none.
+	if opts.OnSample != nil && opts.SampleInterval > 0 && gate.taskBytes > 0 {
+		stopSampling := make(chan struct{})
+		sampled := make(chan struct{})
+		go func() {
+			defer close(sampled)
+			ticker := time.NewTicker(opts.SampleInterval)
+			defer ticker.Stop()
+			opts.OnSample(gate.sample(time.Now()))
+			for {
+				select {
+				case <-stopSampling:
+					opts.OnSample(gate.sample(time.Now())) // final state of the run
+					return
+				case now := <-ticker.C:
+					opts.OnSample(gate.sample(now))
+				}
+			}
+		}()
+		defer func() { close(stopSampling); <-sampled }()
 	}
 
 	// Execute layer by layer (Kahn's algorithm).
@@ -951,6 +994,8 @@ func runLayer(
 ) []TaskResult {
 	results := make([]TaskResult, len(layer))
 	var wg sync.WaitGroup
+	// sem bounds the CPU-bound work of a layer (hashing, cache restore); memory
+	// admission is separate and wraps only the process launch in Executor.Run.
 	sem := make(chan struct{}, concurrency)
 
 	for i, k := range layer {

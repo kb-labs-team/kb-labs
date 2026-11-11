@@ -30,6 +30,7 @@ type Executor struct {
 	logRoot            string
 	liveOutput         bool // stream stdout/stderr while running
 	onHeartbeat        func(packageName, taskName string, elapsed time.Duration)
+	gate               *admission // memory admission around the real process launch; nil admits everything
 	runtimeFingerprint string
 	globalInputDigest  string
 	ownedInputDigests  map[string]string
@@ -104,8 +105,16 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 		}
 	}
 
-	// 3. Run command.
+	// 3. Run command. Memory is reserved only here, after the cache lookup:
+	// a cache hit never holds a reservation.
+	var slot int
+	if e.gate != nil {
+		slot = e.gate.acquire()
+	}
 	stdout, stderr, exitCode, runErr := e.runCommand(def.Command, pkg.Dir, pkg.Name, def.Name, taskHeartbeatInterval)
+	if e.gate != nil {
+		e.gate.release(slot)
+	}
 	elapsed := time.Since(start)
 
 	result := TaskResult{

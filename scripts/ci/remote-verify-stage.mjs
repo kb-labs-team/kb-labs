@@ -37,7 +37,7 @@ export async function runStage({
   stage, packageNames, packages, selectedPackageCount, shard, runCommand, now = Date.now, cache = {},
   resourceSamplePath, partialResultPath, sampleIntervalMs = 30_000,
   sampleResources = () => sampleRunnerResources({ workspaceRoot: root, now }),
-  buildLimits, measureBuildLimits, affectedBuild = false, devkitExecutable = './tools/kb-devkit/kb-devkit',
+  affectedBuild = false, devkitExecutable = './tools/kb-devkit/kb-devkit',
 }) {
   const definition = stageDefinitions.find((entry) => entry.id === stage);
   if (!definition) throw new Error(`Unknown verification stage ${stage}; use the registered stages in scripts/ci/verification-profile.json.`);
@@ -90,37 +90,16 @@ export async function runStage({
       name, status, selectedPackageCount: stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package' ? packageNames.length : selectedPackageCount,
       failures: [...sampleFailures], logTail: '', startedAt: new Date(startedAt).toISOString(),
       finishedAt: null, durationMs: Math.max(0, now() - startedAt),
-      ...(stage === profile.buildStage ? { resourceLimits: buildLimits, resourcePeaks: resourcePeaks(buildSamples), lastResourceSample: buildSamples.at(-1) } : {}),
+      ...(stage === profile.buildStage ? { resourcePeaks: resourcePeaks(buildSamples), lastResourceSample: buildSamples.at(-1) } : {}),
       cache: cacheRecord(cache),
     };
     writeAtomicJSON(partialResultPath, partial);
   };
   if (stage === profile.buildStage) {
     persistPartial();
-    try {
-      if (measureBuildLimits) buildLimits = measureBuildLimits();
-      if (!buildLimits) throw new Error('Runner capacity measurement did not produce build limits.');
-    } catch (error) {
-      const finishedAt = now();
-      process.stderr.write(`build capacity measurement failed: ${error.message}\n`);
-      const result = {
-        name,
-        status: 'fail',
-        selectedPackageCount,
-        failures: [`build capacity measurement failed: ${error.message}`],
-        logTail: `Build was not started because capacity measurement failed: ${error.message}`,
-        startedAt: new Date(startedAt).toISOString(),
-        finishedAt: new Date(finishedAt).toISOString(),
-        durationMs: Math.max(0, finishedAt - startedAt),
-        ...(typeof error.code === 'string' ? { measurementErrorCode: error.code } : {}),
-        cache: cacheRecord(cache),
-      };
-      if (partialResultPath) writeAtomicJSON(partialResultPath, result);
-      return result;
-    }
     args = affectedBuild
-      ? ['run', 'build', '--affected', '--concurrency', String(buildLimits.concurrency), '--json']
-      : ['run', 'build', '--packages', (packages ?? []).join(','), '--concurrency', String(buildLimits.concurrency), '--json'];
+      ? ['run', 'build', '--affected', '--json']
+      : ['run', 'build', '--packages', (packages ?? []).join(','), '--json'];
   }
   const captureResourceSample = () => {
     try {
@@ -195,7 +174,6 @@ export async function runStage({
     ...(stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package' ? { packages: packageNames } : {}),
     cache: cacheRecord(cache),
     ...(stage === profile.buildStage ? {
-      resourceLimits: buildLimits,
       resourcePeaks: resourcePeaks(buildSamples),
       lastResourceSample: buildSamples.at(-1),
     } : {}),
