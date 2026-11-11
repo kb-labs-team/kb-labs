@@ -623,6 +623,19 @@ type AdmissionCanceledError struct {
 	Cause      error
 }
 
+// CommandCanceledError reports cancellation after the keeper had spawned the
+// user command but before the ready handshake completed. The command's process
+// tree was reaped before this error is returned.
+type CommandCanceledError struct {
+	Cause error
+}
+
+func (e *CommandCanceledError) Error() string {
+	return fmt.Sprintf("proc: command canceled before keeper handshake completed: %v", e.Cause)
+}
+
+func (e *CommandCanceledError) Unwrap() error { return e.Cause }
+
 func (e *AdmissionCanceledError) Error() string {
 	if e.WaitReason == "" {
 		return fmt.Sprintf("proc: admission cancelled: %v", e.Cause)
@@ -874,12 +887,17 @@ func startWithExecutable(ctx context.Context, cfg Config, source HostResourceSou
 				// cleanup must join the reader without waiting for a second result.
 				readyCh = nil
 			}
-			cleanupErr := cleanupStartedKeeper(cmd, keeperWait, runID)
+			spawned, cleanupErr := cleanupStartedKeeperObserved(cmd, keeperWait, runID)
 			closeErr := readReady.Close()
 			if readyCh != nil {
 				<-readyCh
 			}
 			<-readerDone
+			// A complete ready record or a reaped descendant proves the command
+			// was spawned; only a keeper that spawned nothing failed to start.
+			if spawned || (outcome.readyConsumed && outcome.result.err == nil) {
+				return nil, errors.Join(&CommandCanceledError{Cause: ctx.Err()}, cleanupErr, closeErr)
+			}
 			return nil, errors.Join(fmt.Errorf("proc: keeper startup canceled: %w", ctx.Err()), cleanupErr, closeErr)
 		}
 	}
@@ -953,10 +971,17 @@ func resolveReadyAfterKeeperExit(readReady *os.File, results <-chan readyResult,
 }
 
 func cleanupStartedKeeper(cmd *exec.Cmd, wait *processWait, runID string) error {
+	_, err := cleanupStartedKeeperObserved(cmd, wait, runID)
+	return err
+}
+
+// cleanupStartedKeeperObserved reports whether the keeper had already spawned
+// descendants, which is the only evidence that its user command started.
+func cleanupStartedKeeperObserved(cmd *exec.Cmd, wait *processWait, runID string) (bool, error) {
 	if cmd == nil || cmd.Process == nil {
-		return nil
+		return false, nil
 	}
-	cleanupErr := cleanupStartedKeeperTree(cmd.Process.Pid, runID)
+	spawned, cleanupErr := cleanupStartedKeeperTreeObserved(cmd.Process.Pid, runID)
 	identity, alive, identityErr := ProcessIdentity(cmd.Process.Pid)
 	if identityErr != nil {
 		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("proc: inspect starting keeper before cleanup: %w", identityErr))
@@ -969,19 +994,26 @@ func cleanupStartedKeeper(cmd *exec.Cmd, wait *processWait, runID string) error 
 		// ErrProcessDone means the waiter already owns the terminal outcome.
 		cleanupErr = errors.Join(cleanupErr, wait.outcome().err)
 	}
-	return cleanupErr
+	return spawned, cleanupErr
 }
 
 func cleanupStartedKeeperTree(pid int, runID string) error {
+	_, err := cleanupStartedKeeperTreeObserved(pid, runID)
+	return err
+}
+
+func cleanupStartedKeeperTreeObserved(pid int, runID string) (bool, error) {
 	parentIdentity, alive, identityErr := ProcessIdentity(os.Getpid())
 	if identityErr != nil {
-		return fmt.Errorf("proc: inspect startup caller before tree cleanup: %w", identityErr)
+		return false, fmt.Errorf("proc: inspect startup caller before tree cleanup: %w", identityErr)
 	}
 	if !alive {
-		return errors.New("proc: startup caller identity disappeared before tree cleanup")
+		return false, errors.New("proc: startup caller identity disappeared before tree cleanup")
 	}
 	cleanup := killTreeWithProtectedAncestors(pid, runID, nil, []ProcessIdentityEvidence{{PID: os.Getpid(), Identity: parentIdentity}})
-	return errors.Join(cleanup.err, child.KillTree(pid))
+	// The tree excludes the keeper itself, so any member is a spawned command.
+	spawned := len(cleanup.Reaped)+len(cleanup.Unverified)+len(cleanup.Remaining) > 0
+	return spawned, errors.Join(cleanup.err, child.KillTree(pid))
 }
 
 func (r *Run) Wait() error {

@@ -690,6 +690,11 @@ func runHintCommand(ctx context.Context, command string, env []string, budget ti
 		StdoutPath: stdoutPath, StderrPath: stderrPath,
 		Command: []string{"/bin/sh", "-c", command}, Env: env, CleanEnv: true,
 	})
+	var canceledBeforeHandshake *proc.CommandCanceledError
+	if errors.As(err, &canceledBeforeHandshake) {
+		// The command was spawned and its tree reaped by Start; this is a cancellation, not a startup failure.
+		return nil, hintCancellationError(ctx, command, budget, started, err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("start supervised hint command: %w", err)
 	}
@@ -737,12 +742,16 @@ func runHintCommand(ctx context.Context, command string, env []string, budget ti
 		killErr := run.Kill()
 		waitErr := <-wait
 		output, readErr := readOutput()
-		kind := "HINT_COMMAND_CANCELED"
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			kind = "HINT_COMMAND_TIMEOUT"
-		}
-		return output, fmt.Errorf("%s command=%q %s: %w", kind, command, testdeadline.FailureDetails(budget, time.Since(started)), errors.Join(ctx.Err(), waitErr, nonProcessDone(killErr), readErr, readTeardown()))
+		return output, hintCancellationError(ctx, command, budget, started, errors.Join(waitErr, nonProcessDone(killErr), readErr, readTeardown()))
 	}
+}
+
+func hintCancellationError(ctx context.Context, command string, budget time.Duration, started time.Time, cause error) error {
+	kind := "HINT_COMMAND_CANCELED"
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		kind = "HINT_COMMAND_TIMEOUT"
+	}
+	return fmt.Errorf("%s command=%q %s: %w", kind, command, testdeadline.FailureDetails(budget, time.Since(started)), errors.Join(ctx.Err(), cause))
 }
 
 func nonProcessDone(err error) error {

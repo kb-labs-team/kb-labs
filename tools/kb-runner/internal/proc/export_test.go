@@ -63,6 +63,29 @@ func BuildRetainingKeeperForTest(t testing.TB) TestExecutable {
 	return TestExecutable{path: executable}
 }
 
+// BuildHoldingKeeperForTest builds a test-only keeper that spawns a
+// command and then holds the ready handshake open.
+func BuildHoldingKeeperForTest(t testing.TB) TestExecutable {
+	t.Helper()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate proc test package")
+	}
+	packageDir := filepath.Dir(source)
+	executable := filepath.Join(t.TempDir(), "holdingkeeper")
+	command := exec.Command("go", "build", "-o", executable, "./testdata/holdingkeeper")
+	command.Dir = packageDir
+	for _, item := range os.Environ() {
+		if !strings.HasPrefix(item, "GOFLAGS=") {
+			command.Env = append(command.Env, item)
+		}
+	}
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build holding keeper fixture: %v\n%s", err, output)
+	}
+	return TestExecutable{path: executable}
+}
+
 // StartWithExecutableForTest lets external package tests exercise a separately
 // built executable whose proc import owns keeper dispatch.
 func StartWithExecutableForTest(ctx context.Context, cfg Config, source HostResourceSource, executable TestExecutable) (*Run, error) {

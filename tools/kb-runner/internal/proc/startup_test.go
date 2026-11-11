@@ -609,3 +609,49 @@ func waitForKeeperPID(t *testing.T, state, tag string) int {
 		}
 	}
 }
+
+// case: S-237.138
+func TestStartCancellationAfterCommandSpawnReportsCommandCanceled(t *testing.T) {
+	helper := proc.BuildHoldingKeeperForTest(t)
+	state := t.TempDir()
+	report := filepath.Join(state, "spawned.fifo")
+	if err := syscall.Mkfifo(report, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := proc.StartWithExecutableForTest(ctx, proc.Config{
+			StateDir: state, Tag: "cancel-after-spawn", Stall: time.Hour,
+			StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
+			Command: []string{"true"},
+			Env:     []string{"X288_HOLDING_KEEPER_REPORT=" + report},
+		}, stableHostResourceSource{}, helper)
+		resultCh <- err
+	}()
+	// Opening the FIFO blocks until the fixture keeper has spawned its command
+	// and written the pid; the handshake is still held open at that point.
+	file, err := os.Open(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spawnedPID int
+	_, scanErr := fmt.Fscan(file, &spawnedPID)
+	if closeErr := file.Close(); scanErr != nil || closeErr != nil || spawnedPID <= 0 {
+		t.Fatalf("read spawned command pid = %d: scan=%v close=%v", spawnedPID, scanErr, closeErr)
+	}
+	identity, alive := identityForTest(t, spawnedPID)
+	if !alive {
+		t.Fatalf("spawned command %d is not alive before cancellation", spawnedPID)
+	}
+	cancel()
+	err = <-resultCh
+	var canceled *proc.CommandCanceledError
+	if !errors.As(err, &canceled) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("Start canceled after command spawn = %v, want *proc.CommandCanceledError wrapping context.Canceled", err)
+	}
+	if current, stillAlive := identityForTest(t, spawnedPID); stillAlive && current == identity {
+		t.Fatalf("spawned command %d survived cancellation", spawnedPID)
+	}
+}
