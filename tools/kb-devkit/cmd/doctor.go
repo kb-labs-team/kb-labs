@@ -11,15 +11,18 @@ import (
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/toolchain"
+	"github.com/kb-labs/devkit/internal/cache"
 	"github.com/spf13/cobra"
 )
+
+var doctorVerifyCache bool
 
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Environment diagnostics",
 	Long:  `Checks that the local environment is healthy: node, pnpm, submodules, devkit.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		checks := runDoctorChecks()
+		checks := runDoctorChecks(doctorVerifyCache)
 
 		if jsonMode {
 			ok := true
@@ -75,6 +78,7 @@ var doctorCmd = &cobra.Command{
 }
 
 func init() {
+	doctorCmd.Flags().BoolVar(&doctorVerifyCache, "verify-cache", false, "rehash every object in the shared build cache and check that manifests reference stored objects")
 	rootCmd.AddCommand(doctorCmd)
 }
 
@@ -86,7 +90,7 @@ type doctorCheck struct {
 	Diagnostic *diag.Diag `json:"diagnostic,omitempty"`
 }
 
-func runDoctorChecks() []doctorCheck {
+func runDoctorChecks(verifyCache bool) []doctorCheck {
 	var results []doctorCheck
 
 	// Node.js version.
@@ -133,7 +137,36 @@ func runDoctorChecks() []doctorCheck {
 		Fix:    "create pnpm-workspace.yaml with packages: [...]",
 	})
 
+	results = append(results, checkSharedCache(cwd, verifyCache))
+
 	return results
+}
+
+// checkSharedCache reports where the repository's shared build cache lives and
+// how large it is, so its retention can be managed. With verify it also proves
+// the store's integrity.
+func checkSharedCache(wsRoot string, verify bool) doctorCheck {
+	root, err := cache.SharedRoot(wsRoot)
+	if err != nil {
+		return doctorCheck{Name: "build cache", OK: false, Detail: err.Error(), Fix: "run kb-devkit doctor inside the repository"}
+	}
+	usage, err := cache.Describe(root)
+	if err != nil {
+		return doctorCheck{Name: "build cache", OK: false, Detail: fmt.Sprintf("%s: %v", root, err)}
+	}
+	detail := fmt.Sprintf("%s (%d objects, %d manifests, %.1f MiB)", usage.Root, usage.Objects, usage.Manifests, float64(usage.Bytes)/(1<<20))
+	if !verify {
+		return doctorCheck{Name: "build cache", OK: true, Detail: detail}
+	}
+	problems, err := cache.Verify(root)
+	if err != nil {
+		return doctorCheck{Name: "build cache", OK: false, Detail: fmt.Sprintf("%s: verify: %v", detail, err)}
+	}
+	if len(problems) > 0 {
+		return doctorCheck{Name: "build cache", OK: false, Detail: fmt.Sprintf("%s: %d problems, first: %s", detail, len(problems), problems[0]),
+			Fix: "delete " + root + " and rebuild; entries are recomputed from inputs"}
+	}
+	return doctorCheck{Name: "build cache", OK: true, Detail: detail + ", verified"}
 }
 
 func checkCommand(name, arg, label string) doctorCheck {

@@ -39,7 +39,9 @@ var runCmd = &cobra.Command{
 across all packages in dependency order.
 
 Results are cached by input hash — identical inputs skip execution and
-restore outputs instantly. Cache lives in .kb/devkit/.
+restore outputs instantly. Objects and manifests live in the repository's git
+common directory (kb-devkit/), shared by all of its worktrees; task state and
+logs stay in this worktree's .kb/devkit/.
 
 Examples:
   kb-devkit run build
@@ -91,14 +93,16 @@ Examples:
 
 		diagnostics := clikitcommand.FromCommand(cmd).ErrorWriter()
 		opts := engine.RunOptions{
-			Tasks:       args,
-			Packages:    pkgs,
-			Affected:    runAffected,
-			NoCache:     runNoCache,
-			LiveOutput:  runLive,
-			Concurrency: runConcurrency,
-			WSRoot:      ws.Root,
-			CacheRoot:   cacheRoot,
+			Tasks:    args,
+			Packages: pkgs,
+			Affected: runAffected,
+
+			DefaultSelection: !runAffected && len(runPackages) == 0,
+			NoCache:          runNoCache,
+			LiveOutput:       runLive,
+			Concurrency:      runConcurrency,
+			WSRoot:           ws.Root,
+			CacheRoot:        cacheRoot,
 
 			MemoryProbe:    engine.HostMemoryProbe,
 			SampleInterval: resourceSampleInterval,
@@ -170,10 +174,18 @@ Examples:
 				"summary": summary,
 				"elapsed": elapsed.String(),
 			}
+			if len(result.SkippedBuilds) > 0 {
+				payload["skippedBuilds"] = result.SkippedBuilds
+			}
 			if !result.OK {
 				return taskFailure(failedTaskResult(result.Results), payload)
 			}
 			return JSONOut(payload)
+		}
+
+		if len(result.SkippedBuilds) > 0 {
+			clikitcommand.Printf("\n  %s\n", o.dim.Render(fmt.Sprintf("skipped build of %d product app packages (category defaultBuild: false); build them with `kb-devkit run build --packages %s`",
+				len(result.SkippedBuilds), strings.Join(result.SkippedBuilds, ","))))
 		}
 
 		// Summary line.
