@@ -3,12 +3,16 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"log"
+	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
@@ -59,5 +63,38 @@ func TestCandidatePackageInstallerUsesInstallRootPackageManagerState(t *testing.
 	}
 	if installer.Registry != registryURL {
 		t.Fatalf("package manager registry = %q, want Compose registry %q", installer.Registry, registryURL)
+	}
+}
+
+func TestCandidateArtifactResolvesAgainstRuntimeRootRegistry(t *testing.T) {
+	producer := httptest.NewServer(nil)
+	defer producer.Close()
+	archive := filepath.Join(t.TempDir(), "adapter.tgz")
+	if err := os.WriteFile(archive, []byte("candidate package bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry := &packageRegistry{packages: map[string]map[string]candidatePackage{
+		"@kb-labs/adapters-openai": {"2.120.1": {Path: archive}},
+	}}
+	consumer := httptest.NewServer(registry)
+	defer consumer.Close()
+
+	item := contracts.Artifact{Package: "@kb-labs/adapters-openai", Version: "2.120.1", Tarball: producer.URL + "/@kb-labs/adapters-openai/-/adapters-openai-2.120.1.tgz"}
+	got := candidateArtifactURL(consumer.URL, item)
+	want := consumer.URL + "/artifact?package=%40kb-labs%2Fadapters-openai&version=2.120.1"
+	if got != want {
+		t.Fatalf("candidate artifact URL = %q, want %q", got, want)
+	}
+	response, err := http.Get(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || string(data) != "candidate package bytes" || producer.URL == consumer.URL {
+		t.Fatalf("consumer status=%d body=%q producer=%s consumer=%s", response.StatusCode, data, producer.URL, consumer.URL)
 	}
 }

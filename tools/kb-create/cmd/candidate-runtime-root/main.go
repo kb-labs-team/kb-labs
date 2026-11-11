@@ -135,7 +135,10 @@ func run(indexPath, packageDirectory, installRoot, sharedRegistryURL string) (ru
 		if _, ok := registry.packageFor(item.Package, item.Version); !ok {
 			return fmt.Errorf("candidate artifact %s@%s has no matching package tarball", item.Package, item.Version)
 		}
-		item.Tarball = baseURL + "/artifact?package=" + url.QueryEscape(item.Package) + "&version=" + url.QueryEscape(item.Version)
+		artifactURL := candidateArtifactURL(baseURL, *item)
+		item.Tarball = artifactURL
+		item.ResolvedURL = artifactURL
+		item.ResolvedFrom = "candidate-registry"
 	}
 	installer, err := candidatePackageInstaller(layout, stage, sharedRegistryURL)
 	if err != nil {
@@ -149,6 +152,10 @@ func run(indexPath, packageDirectory, installRoot, sharedRegistryURL string) (ru
 	}
 	fmt.Println(stage)
 	return nil
+}
+
+func candidateArtifactURL(registryURL string, item contracts.Artifact) string {
+	return registryURL + "/artifact?package=" + url.QueryEscape(item.Package) + "&version=" + url.QueryEscape(item.Version)
 }
 
 func candidatePackageInstaller(layout versionroot.Layout, stage, registryURL string) (artifacts.Pnpm, error) {

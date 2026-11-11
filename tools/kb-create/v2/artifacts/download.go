@@ -29,11 +29,16 @@ func NormalizeSourceURL(source string) (string, error) {
 
 // downloadFailure renders a single source-aware diagnostic for every artifact.
 func downloadFailure(item contracts.Artifact, target string, cause error) error {
-	sourceHint := "--registry or npm_config_registry"
+	sourceHint := "the release index tarball URL"
+	if item.ResolvedFrom == "registry" {
+		sourceHint = "--registry or npm_config_registry"
+	} else if item.ResolvedFrom == "candidate-registry" {
+		sourceHint = "the candidate package registry"
+	}
 	if item.IsBinary() {
 		sourceHint = "--binary-source or " + BinarySourceEnv
 	}
-	return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("download artifact %s from %s failed: %s", item.ID, target, cause.Error()), "Check "+sourceHint+" and retry the invocation.", cause)
+	return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("download artifact %s from %s (%s) failed: %s", item.ID, sourceHint, target, cause.Error()), "Check "+sourceHint+" and retry the invocation.", cause)
 }
 
 // fetchArtifact is the single network download and diagnostic boundary for sealed artifacts.

@@ -142,6 +142,12 @@ workspace:
       language: typescript
       preset: site
 
+    site-config:
+      match:
+        - "sites/*/packages/config"
+      language: typescript
+      preset: site-pkg
+
     site-pkg:
       match:
         - "sites/*/apps/*"
@@ -621,7 +627,7 @@ tasks:
       deps:
         - "^build"
 
-    - categories: [site-pkg]
+    - categories: [site-pkg, site-config]
       command: pnpm run build
       inputs:
         - "src/**"
@@ -658,7 +664,7 @@ tasks:
 
   type-check:
     - categories: [ts-lib, ts-app]
-      command: tsc --noEmit
+      command: tsc --noEmit -p tsconfig.json
       inputs:
         - "src/**"
         - "tsconfig*.json"
@@ -668,7 +674,7 @@ tasks:
         - "^build"   # needs deps' dist/**/*.d.ts
 
     - categories: [site-pkg]
-      command: tsc --noEmit
+      command: tsc --noEmit -p tsconfig.json
       inputs:
         - "src/**"
         - "tsconfig*.json"

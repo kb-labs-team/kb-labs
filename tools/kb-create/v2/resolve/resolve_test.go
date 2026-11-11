@@ -116,8 +116,8 @@ func TestOfflinePlanReportsChecksumVerifiedCacheResolutionPerArtifact(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if onlinePlan.Artifacts[0].ResolvedFrom != "registry" || onlinePlan.Artifacts[0].ResolvedURL != "https://registry.example/platform.tgz" {
-		t.Fatalf("registry artifact provenance = %#v", onlinePlan.Artifacts[0])
+	if onlinePlan.Artifacts[0].ResolvedFrom != "release-index" || onlinePlan.Artifacts[0].ResolvedURL != "https://registry.example/platform.tgz" {
+		t.Fatalf("release-index artifact provenance = %#v", onlinePlan.Artifacts[0])
 	}
 }
 

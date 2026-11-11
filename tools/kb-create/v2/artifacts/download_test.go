@@ -48,3 +48,11 @@ func TestDownloadRetriesTimeoutAndBoundsAttempts(t *testing.T) {
 		}
 	}
 }
+
+func TestDownloadFailureNamesReleaseIndexWhenItOwnsTheURL(t *testing.T) {
+	item := contracts.Artifact{ID: "platform", ResolvedFrom: "release-index"}
+	err := downloadFailure(item, "https://producer.invalid/platform.tgz", errors.New("unreachable"))
+	if !strings.Contains(err.Error(), "release index tarball URL") || strings.Contains(err.Error(), "--registry or npm_config_registry") {
+		t.Fatalf("diagnostic does not identify URL owner: %v", err)
+	}
+}

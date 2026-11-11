@@ -47,6 +47,7 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 	}
 	sort.Strings(graphTasks)
 	r.Register(&aggregateTaskOwnerRule{cfg: cfg})
+	r.Register(&typeCheckProjectRule{cfg: cfg})
 	for _, c := range cfg.Custom {
 		if !matchesPhase(c, phase) {
 			continue

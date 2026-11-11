@@ -190,8 +190,8 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 	if input.Workspace.Packages[0].BuildTarget || input.Workspace.Packages[1].BuildTarget {
 		t.Fatalf("build targets = %#v, want false because config declares no build task", input.Workspace.Packages)
 	}
-	if result, ok := results["workspace"]; !ok || len(result.Issues) != 0 || result.ChecksRun != 3 {
-		t.Fatalf("clean workspace check result = %#v, want the custom check, task-ownership check, and release boundary check", result)
+	if result, ok := results["workspace"]; !ok || len(result.Issues) != 0 || result.ChecksRun != 4 {
+		t.Fatalf("clean workspace check result = %#v, want the custom check, task-ownership check, type-check project check, and release boundary check", result)
 	}
 }
 

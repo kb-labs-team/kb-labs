@@ -582,7 +582,7 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 			item.ResolvedFrom = "cache"
 			continue
 		}
-		item.ResolvedFrom = "registry"
+		item.ResolvedFrom = "release-index"
 		if fetchBinary {
 			item.ResolvedURL = item.URL
 			if binarySource != "" {
@@ -607,6 +607,7 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 					name = name[pos+1:]
 				}
 				item.ResolvedURL = registry + "/" + item.Package + "/-/" + name + "-" + item.Version + ".tgz"
+				item.ResolvedFrom = "registry"
 			}
 		}
 	}
