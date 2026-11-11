@@ -28,6 +28,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
+	"github.com/kb-labs/create/v2/testworkspace"
 	"gopkg.in/yaml.v3"
 )
 
@@ -127,6 +128,7 @@ func TestPnpmRestoreRequiresSharedCacheForSealedArtifacts(t *testing.T) {
 
 // case: S-261.6
 func TestPnpmCommandKeepsPackageManagerStateInsideInstallRoot(t *testing.T) {
+	testworkspace.Require(t)
 	home := t.TempDir()
 	root := filepath.Join(home, "kb-platform")
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -220,6 +222,7 @@ func assertOutsideTestRootUnchanged(t *testing.T, before, after map[string]strin
 
 // case: S-261.6
 func TestPnpmMinimumReleaseAgeExemptsOnlySealedExactVersions(t *testing.T) {
+	testworkspace.Require(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	packageManagerRoot := filepath.Join(home, "package-manager")
@@ -1388,6 +1391,7 @@ func TestStagedWorkspacePreservesExistingReleaseAgeSettings(t *testing.T) {
 
 // case: S-284.20
 func TestPnpmRoutesScopedAndThirdPartyPackagesToSeparateRegistries(t *testing.T) {
+	testworkspace.Require(t)
 	_, pnpmScript, err := toolchain.PnpmExecutable()
 	if err != nil {
 		t.Fatal(err)

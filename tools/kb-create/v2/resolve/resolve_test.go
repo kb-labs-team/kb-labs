@@ -12,6 +12,7 @@ import (
 	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/internal/testfixtures"
+	"github.com/kb-labs/create/v2/testworkspace"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -308,6 +309,7 @@ func TestDeclaredProviderDefaultWinsWithoutOrderDependence(t *testing.T) {
 
 // cases: S-054.2, S-054.8, S-054.10
 func TestSelectedPlatformMemberAdapterRetainsItsCredentialRequirement(t *testing.T) {
+	testworkspace.Require(t)
 	t.Setenv("OPENAI_API_KEY", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -38,6 +38,7 @@ import (
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/testworkspace"
 	"github.com/kb-labs/create/v2/transport"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
@@ -1584,6 +1585,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 
 // case: S-054.11
 func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
+	testworkspace.Require(t)
 	root := filepath.Join(t.TempDir(), "install")
 	home := t.TempDir()
 	t.Cleanup(func() {

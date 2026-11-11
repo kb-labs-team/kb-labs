@@ -14,6 +14,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/internal/testfixtures"
+	"github.com/kb-labs/create/v2/testworkspace"
 )
 
 func TestBuildKeepsSecretValuesOutOfConfigAndChecksTheirServices(t *testing.T) {
@@ -89,6 +90,7 @@ func TestBuildPersistsMarketplaceSourceOrderAndSecretReferences(t *testing.T) {
 
 // case: S-268.12
 func TestBuildPersistsNpmOnlyMarketplaceMirror(t *testing.T) {
+	testworkspace.Require(t)
 	plan := testPlan(t.TempDir())
 	plan.Request.MarketplaceSources = &contracts.MarketplaceSources{NpmURL: "http://verdaccio:4873"}
 	output, err := Build(plan)
@@ -115,6 +117,7 @@ func TestBuildPersistsNpmOnlyMarketplaceMirror(t *testing.T) {
 }
 
 func TestGoRenderedMarketplaceSourcesValidateAgainstCoreConfigSchema(t *testing.T) {
+	testworkspace.Require(t)
 	plan := testPlan(t.TempDir())
 	plan.Request.MarketplaceSources = &contracts.MarketplaceSources{
 		RegistryURL: "https://registry.example.test", SigningPublicKeyEnv: "KB_REGISTRY_PUBLIC_KEY",
@@ -134,6 +137,7 @@ func TestGoRenderedMarketplaceSourcesValidateAgainstCoreConfigSchema(t *testing.
 
 // case: S-268.9
 func TestDefaultInstallRendersReleaseMarketplaceSourcesAndBootsMarketplace(t *testing.T) {
+	testworkspace.Require(t)
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("could not locate render test source")

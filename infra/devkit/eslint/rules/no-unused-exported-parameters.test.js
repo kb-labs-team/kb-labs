@@ -47,6 +47,14 @@ ruleTester.run('no-unused-exported-parameters', noUnusedExportedParameters, {
       errors: [{ messageId: 'unused', data: { name: 'required' } }],
     },
     {
+      code: 'interface Contract { run(input: string): void; } export class Implementation implements Contract { run(input: string) {} unrelated(unused: string) {} }',
+      errors: [{ messageId: 'unused', data: { name: 'unused' } }],
+    },
+    {
+      code: 'class Base { run(input: string): void {} } export class Implementation extends Base { unrelated(unused: string) {} }',
+      errors: [{ messageId: 'unused', data: { name: 'unused' } }],
+    },
+    {
       code: 'export async function resolve(specifier, context, nextResolve) {}',
       errors: [
         { messageId: 'unused', data: { name: 'specifier' } },
