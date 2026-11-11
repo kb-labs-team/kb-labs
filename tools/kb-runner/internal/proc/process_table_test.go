@@ -1107,6 +1107,63 @@ type advancingCleanupClock struct {
 func (clock *advancingCleanupClock) Now() time.Time              { return clock.now }
 func (clock *advancingCleanupClock) Wait(duration time.Duration) { clock.now = clock.now.Add(duration) }
 
+type unverifiedCleanupProcessSource struct {
+	identity string
+	alive    bool
+	signals  []int
+	err      error
+	checks   int
+}
+
+func (source *unverifiedCleanupProcessSource) Snapshot(string) ([]Process, error) {
+	return nil, nil
+}
+
+func (source *unverifiedCleanupProcessSource) Identity(int) (string, bool, error) {
+	source.checks++
+	return source.identity, source.alive, source.err
+}
+
+func (source *unverifiedCleanupProcessSource) Signal(pid int, _ string, _ syscall.Signal) error {
+	source.signals = append(source.signals, pid)
+	return nil
+}
+
+func TestCleanupReclassifiesUnverifiedGoneIdentity(t *testing.T) {
+	clock := &advancingCleanupClock{start: time.Unix(500, 0), now: time.Unix(500, 0)}
+	source := &unverifiedCleanupProcessSource{identity: "start-123", alive: false}
+	cleanup := cleanupTreeWithClock(100, "run", []Process{{
+		PID: 123, PPID: 120, Command: "proc-helper", Identity: source.identity,
+		Unverified: true, markerResult: "unreadable", processState: "Z",
+	}}, source, clock)
+	if cleanup.err != nil || len(cleanup.Remaining) != 0 || len(cleanup.Reaped) != 1 || cleanup.Reaped[0].PID != 123 {
+		t.Fatalf("gone unverified identity cleanup = error %v reaped %+v remaining %+v; want cleanly reaped PID 123", cleanup.err, cleanup.Reaped, cleanup.Remaining)
+	}
+	if len(source.signals) != 0 {
+		t.Fatalf("gone unverified target was signalled: %v", source.signals)
+	}
+}
+
+func TestCleanupKeepsUnresolvedUnverifiedIdentityBlocking(t *testing.T) {
+	clock := &advancingCleanupClock{start: time.Unix(600, 0), now: time.Unix(600, 0)}
+	source := &unverifiedCleanupProcessSource{identity: "start-124", alive: true, err: errors.New("identity observation denied")}
+	cleanup := cleanupTreeWithClock(100, "run", []Process{{
+		PID: 124, PPID: 121, Command: "proc-helper", Identity: source.identity,
+		Unverified: true, markerResult: "unreadable", tokenResult: "absent", processState: "S",
+	}}, source, clock)
+	if len(cleanup.Remaining) != 1 || cleanup.Remaining[0].PID != 124 || len(source.signals) != 0 {
+		t.Fatalf("unresolved unverified cleanup = remaining %+v signals %v; want PID 124 to block without signalling", cleanup.Remaining, source.signals)
+	}
+	if source.checks < 2 {
+		t.Fatalf("unresolved PID/start identity checked %d times; want observation during history and final classification", source.checks)
+	}
+	for _, field := range []string{"pid=124", "ppid=121", "state=S", "identity=\"start-124\"", "identity_check=observation-error", "marker=unreadable", "token=absent"} {
+		if !strings.Contains(cleanup.err.Error(), field) {
+			t.Errorf("unverified cleanup diagnostic %q does not identify %s", cleanup.err, field)
+		}
+	}
+}
+
 type persistentMarkerProcessSource struct{ signals []syscall.Signal }
 
 func (*persistentMarkerProcessSource) Snapshot(string) ([]Process, error) {
