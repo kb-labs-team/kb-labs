@@ -136,6 +136,7 @@ type PnpmConfig struct {
 	CacheRoot              string
 	PackageManagerRoot     string
 	Registry               string
+	DefaultRegistry        string
 	ReleaseCatalog         catalog.Verified
 	PreviousReleaseCatalog *catalog.Verified
 	MarketplaceRoot        string
@@ -395,10 +396,14 @@ func (p Pnpm) run(command string, specs ...string) error {
 		}
 		var commandFailure *externalCommandFailure
 		if errors.As(err, &commandFailure) {
+			cause := fmt.Errorf("pnpm %s exact artifacts: %w", command, err)
+			if stderrTail := strings.TrimSpace(commandFailure.stderrTail); stderrTail != "" {
+				cause = fmt.Errorf("%w; pnpm stderr tail: %s", cause, stderrTail)
+			}
 			failure := contracts.NewDiag(contracts.CodeApplyFailed,
 				"The package manager could not apply the exact artifacts.",
 				"Read the installer log and fix the reported pnpm failure, then rerun `kb-create install`.",
-				fmt.Errorf("pnpm %s exact artifacts: %w", command, err))
+				cause)
 			failure.Meta = map[string]any{
 				"packageManagerExitCode":   fmt.Sprint(commandFailure.exitCode),
 				"packageManagerStderrTail": commandFailure.stderrTail,
@@ -443,7 +448,7 @@ func (p Pnpm) prepare() error {
 }
 
 func (p Pnpm) prepareNpmrc() error {
-	if p.config.Registry == "" {
+	if p.config.Registry == "" && p.config.DefaultRegistry == "" {
 		return nil
 	}
 	path := filepath.Join(p.config.Root, ".npmrc")
@@ -452,17 +457,23 @@ func (p Pnpm) prepareNpmrc() error {
 		return err
 	}
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	filtered := make([]string, 0, len(lines)+1)
+	filtered := make([]string, 0, len(lines)+2)
 	for _, line := range lines {
 		key, _, found := strings.Cut(line, "=")
-		if found && strings.TrimSpace(key) == "@kb-labs:registry" {
+		if found && ((p.config.Registry != "" && strings.TrimSpace(key) == "@kb-labs:registry") ||
+			(p.config.DefaultRegistry != "" && strings.TrimSpace(key) == "registry")) {
 			continue
 		}
 		if line != "" {
 			filtered = append(filtered, line)
 		}
 	}
-	filtered = append(filtered, "@kb-labs:registry="+p.config.Registry)
+	if p.config.DefaultRegistry != "" {
+		filtered = append(filtered, "registry="+p.config.DefaultRegistry)
+	}
+	if p.config.Registry != "" {
+		filtered = append(filtered, "@kb-labs:registry="+p.config.Registry)
+	}
 	return os.WriteFile(path, []byte(strings.Join(filtered, "\n")+"\n"), 0o600)
 }
 

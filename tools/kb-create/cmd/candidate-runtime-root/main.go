@@ -102,9 +102,6 @@ func run(indexPath, packageDirectory, installRoot, sharedRegistryURL string) (ru
 	if err != nil {
 		return fmt.Errorf("create installer staging root: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(stage, ".npmrc"), []byte("@kb-labs:registry="+registryURL+"/\n"), 0o600); err != nil {
-		return fmt.Errorf("configure candidate package registry: %w", err)
-	}
 	plugins := make([]contracts.ComponentRequest, 0, len(source.Plugins))
 	for _, plugin := range source.Plugins {
 		plugins = append(plugins, contracts.ComponentRequest{
@@ -145,7 +142,7 @@ func run(indexPath, packageDirectory, installRoot, sharedRegistryURL string) (ru
 		item.ResolvedURL = artifactURL
 		item.ResolvedFrom = "candidate-registry"
 	}
-	installer, err := candidatePackageInstaller(layout, stage, sharedRegistryURL, verifiedCatalog)
+	installer, err := candidatePackageInstaller(layout, stage, sharedRegistryURL, registryURL, verifiedCatalog)
 	if err != nil {
 		return contracts.NewDiag(
 			contracts.CodeApplyFailed,
@@ -173,18 +170,19 @@ func candidateArtifactURL(registryURL string, item contracts.Artifact) string {
 	return registryURL + "/artifact?package=" + url.QueryEscape(item.Package) + "&version=" + url.QueryEscape(item.Version)
 }
 
-func candidatePackageInstaller(layout versionroot.Layout, stage, registryURL string, releaseCatalog catalog.Verified) (artifacts.Pnpm, error) {
+func candidatePackageInstaller(layout versionroot.Layout, stage, sharedRegistryURL, candidateRegistryURL string, releaseCatalog catalog.Verified) (artifacts.Pnpm, error) {
 	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
 	if err != nil {
 		return artifacts.Pnpm{}, err
 	}
 	return artifacts.NewPnpm(artifacts.PnpmConfig{
-		Root:               stage,
-		CacheRoot:          cacheRoot,
-		PackageManagerRoot: layout.PackageManagerStateDir(),
-		Registry:           registryURL,
-		ReleaseCatalog:     releaseCatalog,
-		Log:                os.Stderr,
+		Root:                  stage,
+		CacheRoot:             cacheRoot,
+		PackageManagerRoot:    layout.PackageManagerStateDir(),
+		Registry:              candidateRegistryURL,
+		DefaultRegistry:       sharedRegistryURL,
+		ReleaseCatalog:        releaseCatalog,
+		Log:                   os.Stderr,
 	})
 }
 

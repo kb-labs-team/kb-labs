@@ -841,6 +841,20 @@ func TestPnpmUpdatesExistingScopedRegistry(t *testing.T) {
 	}
 }
 
+func TestPnpmApplyRegistryOnlyWritesPlatformScope(t *testing.T) {
+	root := t.TempDir()
+	if err := (mustPnpm(t, PnpmConfig{Root: root, Registry: "https://scope.test"})).prepareNpmrc(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".npmrc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "@kb-labs:registry=https://scope.test\n"; got != want {
+		t.Fatalf("stage .npmrc = %q, want %q", got, want)
+	}
+}
+
 // case: S-284.20
 func TestPnpmExcludesOnlySealedTransitiveVersion(t *testing.T) {
 	root := t.TempDir()
@@ -1259,6 +1273,26 @@ func TestPnpmDiagnosticKeepsExitCodeAndStderrTail(t *testing.T) {
 		t.Fatalf("installer transcript dropped pnpm output: %s", transcript.String())
 	}
 }
+
+func TestPnpmDiagnosticCauseRetainsPackageManagerRegistryFailure(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{err: &externalCommandFailure{
+		exitCode:   1,
+		stderrTail: "ERR_PNPM_FETCH_404 GET http://127.0.0.1:4873/@kb-labs%2fcli-commands: Not Found - 404",
+		cause:      errors.New("exit status 1"),
+	}}
+	manager := mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t)})
+	err := manager.run("add", "@kb-labs/cli-bin@2.120.1")
+	var failure *diag.Diag
+	if !errors.As(err, &failure) {
+		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
+	}
+	for _, expected := range []string{"@kb-labs%2fcli-commands", "http://127.0.0.1:4873"} {
+		if !strings.Contains(failure.Cause, expected) {
+			t.Fatalf("typed cause %q does not retain %q", failure.Cause, expected)
+		}
+	}
+}
 func TestPnpmSkipsReleaseManagedBinary(t *testing.T) {
 	runner := &fakeRunner{}
 	if err := (mustPnpm(t, PnpmConfig{Root: t.TempDir(), Runner: runner, ReleaseCatalog: testReleaseCatalog(t)})).Install([]contracts.Artifact{{ID: "kb-dev", Kind: "binary", Version: "2.0.0"}}); err != nil {
@@ -1458,7 +1492,7 @@ func TestPnpmRoutesScopedAndThirdPartyPackagesToSeparateRegistries(t *testing.T)
 		t.Fatal(err)
 	}
 	scopedName, thirdName := "@kb-labs/scoped-fixture", "third-party-fixture"
-	scopedData := packageTarball(t, scopedName, "1.0.0", nil)
+	scopedData := packageTarball(t, scopedName, "1.0.0", map[string]string{thirdName: "1.0.0"})
 	thirdData := packageTarball(t, thirdName, "1.0.0", nil)
 	scopedItem := sealArtifactTarball(t, contracts.Artifact{Package: scopedName, Version: "1.0.0"}, scopedData)
 	thirdItem := sealArtifactTarball(t, contracts.Artifact{Package: thirdName, Version: "1.0.0"}, thirdData)
@@ -1469,28 +1503,33 @@ func TestPnpmRoutesScopedAndThirdPartyPackagesToSeparateRegistries(t *testing.T)
 			mu.Lock()
 			seen[kind] = append(seen[kind], r.URL.Path)
 			mu.Unlock()
+			if r.URL.Path != "/"+name && r.URL.Path != "/fixture.tgz" {
+				http.NotFound(w, r)
+				return
+			}
 			if strings.HasSuffix(r.URL.Path, ".tgz") {
 				_, _ = w.Write(data)
 				return
 			}
-			writeRegistryPackument(w, name, map[string]registryTarball{"1.0.0": {URL: serverURL(r) + "/fixture.tgz", Integrity: item.Provenance.Integrity}}, nil)
+			var dependencies map[string]string
+			if name == scopedName {
+				dependencies = map[string]string{thirdName: "1.0.0"}
+			}
+			writeRegistryPackument(w, name, map[string]registryTarball{"1.0.0": {URL: serverURL(r) + "/fixture.tgz", Integrity: item.Provenance.Integrity}}, dependencies)
 		}
 	}
 	scoped := httptest.NewServer(serve("scoped", scopedName, scopedData, scopedItem))
 	defer scoped.Close()
 	third := httptest.NewServer(serve("default", thirdName, thirdData, thirdItem))
 	defer third.Close()
-	t.Setenv("npm_config_registry", third.URL)
 	t.Setenv("HOME", t.TempDir())
 	var transcript strings.Builder
-	pm := mustPnpm(t, PnpmConfig{Root: root, PackageManagerRoot: managerRoot, Registry: scoped.URL, Log: &transcript})
-	if err := os.WriteFile(filepath.Join(root, ".npmrc"), []byte("registry="+third.URL+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	pm := mustPnpm(t, PnpmConfig{Root: root, PackageManagerRoot: managerRoot, Registry: scoped.URL,
+		DefaultRegistry: third.URL, Log: &transcript})
 	if err := pm.prepare(); err != nil {
 		t.Fatal(err)
 	}
-	err = pm.run("add", scopedName+"@1.0.0", thirdName+"@1.0.0")
+	err = pm.run("add", scopedName+"@1.0.0")
 	mu.Lock()
 	scopedRequests, thirdRequests := append([]string(nil), seen["scoped"]...), append([]string(nil), seen["default"]...)
 	mu.Unlock()
@@ -1509,6 +1548,6 @@ func TestPnpmRoutesScopedAndThirdPartyPackagesToSeparateRegistries(t *testing.T)
 		t.Fatalf("wrong registry requests: scoped=%v default=%v", scopedRequests, thirdRequests)
 	}
 	if err != nil {
-		t.Fatalf("pnpm routing fixture: %v; transcript: %s", err, transcript.String())
+		t.Fatalf("pnpm routing fixture: %#v; transcript: %s", err, transcript.String())
 	}
 }
