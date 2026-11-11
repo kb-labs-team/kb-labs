@@ -25,7 +25,7 @@ import { spawnSync } from 'node:child_process';
 import { closeSync, fstatSync, openSync, readSync, unlinkSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { writeCliResult, writeCliResultTo } from './runtime/result-serializer.js';
+import { writeAllSync, writeCliResult, writeCliResultTo } from './runtime/result-serializer.js';
 
 const INTERNAL_RESULT_CHANNEL = '--__kb_internal_result_channel=';
 
@@ -123,7 +123,10 @@ if (remappedChild) {
       stdio: [0, 2, 2, resultFd, challengeFd],
     });
     const resultBytes = fstatSync(resultFd).size;
-    if (child.error || child.signal || child.status === null || (resultBytes === 0 && child.status !== 0)) {
+    // Only `--json` promises an envelope for every outcome. A text-mode command reports its own
+    // failure on stderr (descriptor 2 is inherited), so an empty result channel is not a defect there.
+    const jsonRequested = process.argv.includes('--json');
+    if (child.error || child.signal || child.status === null || (jsonRequested && resultBytes === 0 && child.status !== 0)) {
       const cause = child.signal
         ? `terminated by signal ${child.signal}`
         : child.error
@@ -138,15 +141,12 @@ if (remappedChild) {
       let resultOffset = 0;
       let bytesRead = 0;
       while ((bytesRead = readSync(resultFd, buffer, 0, buffer.length, resultOffset)) > 0) {
-        let offset = 0;
-        while (offset < bytesRead) {
-          offset += writeSync(1, buffer, offset, bytesRead - offset);
-        }
+        writeAllSync(1, buffer.subarray(0, bytesRead));
         resultOffset += bytesRead;
       }
       exitCode = child.status;
     } else {
-      exitCode = 0;
+      exitCode = child.status;
     }
   } catch (error) {
     const cause = error instanceof Error

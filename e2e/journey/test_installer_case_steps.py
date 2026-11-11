@@ -832,7 +832,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     "providerPreferences": {"cache": "state-broker"},
                     "scenarioId": "commit",
                 }, "artifacts": []}, "marketplaceInstalls": [
-                    {"spec": "@kb-labs/commit", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+                    {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
                 ]}
                 apply_result = {"operation": "apply", "receipt": receipt, "logPath": "/tmp/apply.log"}
                 return subprocess.CompletedProcess(args, 0,
@@ -856,7 +856,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
         receipt = {"plan": {"request": {"scenarioId": "commit"}, "artifacts": [
             {"id": "@kb-labs/commit"},
         ]}, "marketplaceInstalls": [
-            {"spec": "@kb-labs/commit", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+            {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
         ]}
         with self.assertRaisesRegex(RuntimeError, "incorrectly resolved from the release index"):
             installer_case_steps.assert_commit_marketplace_receipt(receipt)

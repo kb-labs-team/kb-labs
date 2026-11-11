@@ -79,7 +79,7 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
 
     def test_clean_install_requires_the_marketplace_commit_receipt(self):
         self.assertIsNotNone(commit_marketplace_install_record({"marketplaceInstalls": [
-            {"spec": "@kb-labs/commit", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+            {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
         ]}))
         self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": []}))
         self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": [
@@ -667,7 +667,7 @@ thread.join()
                      "serviceGraph": {"platformVersion": "2.120.1"},
                      "artifacts": [{"id": "fixture-package", "kind": "plugin",
                                     "package": "@kb-labs/fixture-package", "version": "1.0.0"}]},
-            "marketplaceInstalls": [{"id": "@kb-labs/commit", "spec": "@kb-labs/commit",
+            "marketplaceInstalls": [{"id": "@kb-labs/commit", "spec": "@kb-labs/commit@1.0.0",
                                      "version": "1.0.0", "source": "registry"}],
         }
         receipt_path.write_text(json.dumps(install_receipt), encoding="utf-8")
@@ -1477,10 +1477,10 @@ thread.join()
             )
 
     def test_split_mode_resolver_claims_are_the_runner_completion_selection(self):
-        from select_from_cases import _coverage_results, selection_from_coverage
+        from select_from_cases import coverage_results, selection_from_coverage
 
         requested = "S-045.4,S-045.5"
-        coverage = _coverage_results()
+        coverage = coverage_results()
         Journey.reset_run_registry()
         try:
             for mode in ("local", "secured"):

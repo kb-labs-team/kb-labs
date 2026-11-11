@@ -1111,10 +1111,10 @@ def main() -> int:
         print_report_text(str(write_full_runner_plan_baseline(root)), flush=True)
         return 0
     if len(sys.argv) == 4 and sys.argv[1] == "--runners-for-mode":
-        results = _coverage_results()
+        results = coverage_results()
         print_report_text(json.dumps(runners_for_case_selection(results, sys.argv[3], sys.argv[2])), flush=True)
         return 0
-    results = _coverage_results()
+    results = coverage_results()
     requested = ",".join(read_requested_cases(os.environ))
     if requested:
         mode = journey_value("KB_JOURNEY_SELECTION_MODE")
@@ -1125,14 +1125,16 @@ def main() -> int:
     return 0
 
 
-def _coverage_results() -> list[dict]:
+def coverage_results(root: Path | None = None) -> list[dict]:
+    """Read the QA coverage of both modes from the workspace CLI; a failed run names its typed error."""
+    root = Path.cwd() if root is None else root
     results = []
     for mode in ("local", "secured"):
         command = ["node", "./cli/bin/dist/bin.js", "qa", "coverage", "show",
                    "--level", "all", "--mode", mode, "--json"]
         with invocation_context(step_id="journey.case-selection"):
-            result = run_hermetic_cli(command, cwd=Path.cwd(), env=os.environ, timeout=120,
-                                      workspace_root=Path.cwd())
+            result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120,
+                                      workspace_root=root)
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
         results.append(read_coverage_result(result))

@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 from dispatch_registry import RUNNERS, runners_for_source
 from hermetic_cli import run_hermetic_cli
-from select_from_cases import (read_coverage_result, selection_from_coverage,
+from select_from_cases import (coverage_results, read_coverage_result, selection_from_coverage,
                                _case_declarations,
                                _step_declaration, _source_step_declarations,
                                _imported_journey_sources, selectors_from_coverage,
@@ -1289,17 +1289,8 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertIn("step:apply a secret through an environment reference", refusal["requires"])
 
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
-        results = []
         root = Path(__file__).resolve().parents[2]
-        node = shutil.which("node")
-        self.assertIsNotNone(node, "A Node.js executable is required to run the workspace CLI")
-        for mode in ("local", "secured"):
-            command = [node, str(root / "cli/bin/dist/bin.js"), "qa", "coverage", "show", "--level", "all",
-                       "--mode", mode, "--json"]
-            result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120,
-                                      workspace_root=root)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            results.append(read_coverage_result(result))
+        results = coverage_results(root)
 
         registered: dict[str, dict[str, set[tuple[str, int]]]] = {}
         root = Path(__file__).resolve().parents[2]
@@ -1725,18 +1716,7 @@ class DispatchRegistryTests(unittest.TestCase):
                     validate_dependency_declarations({"fixture_steps.py"}, root)
 
     def _coverage(self):
-        root = Path(__file__).resolve().parents[2]
-        node = shutil.which("node")
-        self.assertIsNotNone(node)
-        results = []
-        for mode in ("local", "secured"):
-            command = [node, str(root / "cli/bin/dist/bin.js"), "qa", "coverage", "show", "--level", "all",
-                       "--mode", mode, "--json"]
-            result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120,
-                                      workspace_root=root)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            results.append(read_coverage_result(result))
-        return results
+        return coverage_results(Path(__file__).resolve().parents[2])
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 from invocations import catalogued_error_hint, invocation_context, run_command
 from journey_resources import read_installed_platform_resource
+from journey_values import journey_value
 from service_steps import Journey
 
 
@@ -428,7 +429,7 @@ def commit_tool_schema(project_id: str, token: str) -> str | None:
 
 
 def apply_commit_plan(project_id: str, token: str, project_root: str) -> str | None:
-    fixture_path = os.environ.get("KB_JOURNEY_PROJECT_FIXTURES_FILE", "")
+    fixture_path = journey_value("KB_JOURNEY_PROJECT_FIXTURES_FILE", "")
     preparation_result = None
     if fixture_path and Path(fixture_path).is_file():
         handoff = json.loads(Path(fixture_path).read_text(encoding="utf-8"))

@@ -985,7 +985,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 "KB_JOURNEY_PROJECT_B_ID", "KB_JOURNEY_PROJECT_B_ROOT")}
             downstream = []
             try:
-                with patch("service_runner.prepare_mcp_projects", return_value=("prj_fixture_b", str(home / "project-b"))):
+                with patch("service_runner.prepare_mcp_projects", return_value=("prj_fixture_b", str(home / "project-b"), {"planId": "journey-commit"})):
                     handoff = graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
                                          lambda: service_runner._prepare_mcp_projects(
                                              "prj_marketplace_fixture", str(project), "registry", env))
@@ -1116,7 +1116,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     self.assertEqual(state_probe.status, "PASS")
                     downstream = []
                     with patch("service_runner.prepare_mcp_projects",
-                                  return_value=("prj_fixture_b", str(home / "project-b"))):
+                                  return_value=("prj_fixture_b", str(home / "project-b"), {"planId": "journey-commit"})):
                         handoff = failure_graph.flow(
                             "prepare MCP project fixtures", "marketplace-fixtures", "mcp",
                             lambda: service_runner._prepare_mcp_projects(
