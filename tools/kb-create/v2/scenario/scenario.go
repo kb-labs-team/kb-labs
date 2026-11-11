@@ -356,7 +356,7 @@ func Answer(value Scenario, state State, id string, raw json.RawMessage) (State,
 	}
 	field, ok := fieldByID(value, id)
 	if !ok {
-		return state, fmt.Errorf("field %q is not declared", id)
+		return state, fmt.Errorf("field %q is not declared in active scenario %q", id, value.ID)
 	}
 	if err := validateField(field, raw); err != nil {
 		return state, err

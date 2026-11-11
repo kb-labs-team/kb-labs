@@ -306,3 +306,20 @@ func contains(values []string, want string) bool {
 	}
 	return false
 }
+
+// case: S-222.13
+func TestSkippedCompletedBootstrapFieldIsReportedOutsideActiveScenario(t *testing.T) {
+	definition, err := scenario.Load("explore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := withoutRequirements(definition, []string{secrets.BootstrapPassword})
+	state, err := scenario.New(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = scenario.Answer(active, state, "admin.password", json.RawMessage(`"must-not-be-restored"`))
+	if err == nil || err.Error() != `field "admin.password" is not declared in active scenario "explore"` {
+		t.Fatalf("answer for completed bootstrap field error = %v", err)
+	}
+}
