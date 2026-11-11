@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/config"
@@ -54,6 +55,30 @@ func TestBuildDAGRejectsPackageTaskWithMissingScript(t *testing.T) {
 	}
 	if got, want := err.Error(), `DevKit task "test" for package "@kb-labs/e2e-mcp" invokes missing package script "test"; declare it in package.json or remove the task assignment, then rerun kb-devkit run test --packages @kb-labs/e2e-mcp`; got != want {
 		t.Fatalf("buildDAG error = %q, want %q", got, want)
+	}
+}
+
+// case: S-179.49
+func TestBuildDAGPackageScriptValidationReadsPnpmFlags(t *testing.T) {
+	root := t.TempDir()
+	writeRootWorkspace(t, root)
+	pkg := newPkg(t, root, "plugins/agents", "@kb-labs/agents", `{"name":"@kb-labs/agents","scripts":{"build":"tsup"}}`)
+	pkg.Category = "plugin-entry"
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{pkg}}
+
+	ifPresent := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{
+		"test:cli": {{Categories: []string{"plugin-entry"}, Command: "pnpm run --if-present test:cli"}},
+	}}
+	if _, err := buildDAG(ws.Packages, []string{"test:cli"}, ifPresent, ws); err != nil {
+		t.Fatalf("buildDAG rejected pnpm run --if-present for an absent script: %v", err)
+	}
+
+	flagged := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{
+		"test:cli": {{Categories: []string{"plugin-entry"}, Command: "pnpm run --silent test:cli"}},
+	}}
+	_, err := buildDAG(ws.Packages, []string{"test:cli"}, flagged, ws)
+	if err == nil || !strings.Contains(err.Error(), `invokes missing package script "test:cli"`) {
+		t.Fatalf("buildDAG error = %v, want missing script \"test:cli\" (the script after the flags)", err)
 	}
 }
 

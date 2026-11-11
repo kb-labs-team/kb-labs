@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -151,7 +152,7 @@ type TaskGraphError struct {
 }
 
 func (e *TaskGraphError) Error() string {
-	return "workspace task dependency has no matching task variant"
+	return fmt.Sprintf("workspace task dependency has no matching task variant: %s %s needs %s %s", e.Package, e.Task, e.Dependency, e.DependencyTask)
 }
 
 // Run builds the (package × task) DAG and executes it in topological order.
@@ -601,6 +602,13 @@ func buildDAG(
 					}
 					depKey := nodeKey{depPkgName, depTask}
 					if _, hasNode := nodes[depKey]; !hasNode {
+						absent, err := dependencyTaskIsAbsent(ws, cfg, depTask, depPkg)
+						if err != nil {
+							return nil, err
+						}
+						if absent {
+							continue
+						}
 						if ResolvePackageTaskDef(ws, cfg, depTask, depPkg) == nil {
 							return nil, &TaskGraphError{Package: k.pkg, Task: k.task, Dependency: depPkgName, DependencyTask: depTask}
 						}
@@ -711,22 +719,65 @@ func validatePackageScriptTask(pkg workspace.Package, task, command string) erro
 	if len(parts) < 3 || filepath.Base(parts[0]) != "pnpm" || parts[1] != "run" {
 		return nil
 	}
-	script := parts[2]
+	// pnpm run [flags] <script> [args]: flags precede the script name.
+	// --if-present declares that a missing script is intended, so there is nothing to validate.
+	script := ""
+	for _, part := range parts[2:] {
+		if part == "--if-present" {
+			return nil
+		}
+		if !strings.HasPrefix(part, "-") {
+			script = part
+			break
+		}
+	}
+	if script == "" {
+		return nil
+	}
+	declared, err := packageDeclaresScript(pkg, script)
+	if err != nil {
+		return fmt.Errorf("DevKit task %q on %q: %w", task, pkg.Name, err)
+	}
+	if !declared {
+		return fmt.Errorf("DevKit task %q for package %q invokes missing package script %q; declare it in package.json or remove the task assignment, then rerun kb-devkit run %s --packages %s", task, pkg.Name, script, task, pkg.Name)
+	}
+	return nil
+}
+
+// packageDeclaresScript reports whether the package manifest declares the named script.
+// A package without a manifest declares no scripts.
+func packageDeclaresScript(pkg workspace.Package, script string) (bool, error) {
 	manifestPath := filepath.Join(pkg.Dir, "package.json")
 	data, err := os.ReadFile(manifestPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
-		return fmt.Errorf("read package manifest for DevKit task %q on %q: %w", task, pkg.Name, err)
+		return false, fmt.Errorf("read package manifest %s: %w", manifestPath, err)
 	}
 	var manifest struct {
 		Scripts map[string]json.RawMessage `json:"scripts"`
 	}
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return fmt.Errorf("parse package manifest for DevKit task %q on %q: %w", task, pkg.Name, err)
+		return false, fmt.Errorf("parse package manifest %s: %w", manifestPath, err)
 	}
-	if _, exists := manifest.Scripts[script]; !exists {
-		return fmt.Errorf("DevKit task %q for package %q invokes missing package script %q; declare it in package.json or remove the task assignment, then rerun kb-devkit run %s --packages %s", task, pkg.Name, script, task, pkg.Name)
+	_, declared := manifest.Scripts[script]
+	return declared, nil
+}
+
+// dependencyTaskIsAbsent reports whether a workspace dependency has nothing to
+// run for depTask: no DevKit variant and no package script of that name, as for
+// a source-only package. A declared script without a variant is a configuration
+// gap that must stay a graph error, so the dependency is never silently dropped.
+func dependencyTaskIsAbsent(ws *workspace.Workspace, cfg *config.DevkitConfig, depTask string, dep workspace.Package) (bool, error) {
+	if ResolvePackageTaskDef(ws, cfg, depTask, dep) != nil {
+		return false, nil
 	}
-	return nil
+	declared, err := packageDeclaresScript(dep, depTask)
+	if err != nil {
+		return false, err
+	}
+	return !declared, nil
 }
 
 // buildPkgDepMap reads package.json deps for each package.

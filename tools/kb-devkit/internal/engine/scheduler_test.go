@@ -260,7 +260,7 @@ func TestBuildDAGRejectsWorkspaceBuildDependencyWithoutTaskNode(t *testing.T) {
 	coreDir := filepath.Join(root, "core")
 	writePkgJSON(t, coreDir, `{"name":"@fixture/core"}`)
 	runtimeDir := filepath.Join(root, "runtime")
-	writePkgJSON(t, runtimeDir, `{"name":"@fixture/runtime","dependencies":{"@fixture/core":"workspace:*"}}`)
+	writePkgJSON(t, runtimeDir, `{"name":"@fixture/runtime","scripts":{"build":"tsup"},"dependencies":{"@fixture/core":"workspace:*"}}`)
 	appDir := filepath.Join(root, "app")
 	writePkgJSON(t, appDir, `{"name":"@fixture/app","dependencies":{"@fixture/runtime":"workspace:*"}}`)
 
@@ -285,6 +285,40 @@ func TestBuildDAGRejectsWorkspaceBuildDependencyWithoutTaskNode(t *testing.T) {
 	if graphErr.Package != "@fixture/app" || graphErr.Dependency != "@fixture/runtime" ||
 		graphErr.Task != "build" || graphErr.DependencyTask != "build" {
 		t.Fatalf("task graph error = %+v, want the omitted runtime build node", graphErr)
+	}
+}
+
+// case: S-179.49
+// A source-only workspace dependency (no DevKit variant, no package script for
+// the task) has nothing to run, so ^task is satisfied without a node.
+func TestBuildDAGSatisfiesWorkspaceDependencyWithNothingToRun(t *testing.T) {
+	root := t.TempDir()
+	sharedDir := filepath.Join(root, "shared")
+	writePkgJSON(t, sharedDir, `{"name":"@fixture/shared","scripts":{"test":"node --test"}}`)
+	suiteDir := filepath.Join(root, "suite")
+	writePkgJSON(t, suiteDir, `{"name":"@fixture/suite","scripts":{"e2e":"playwright test"},"devDependencies":{"@fixture/shared":"workspace:*"}}`)
+
+	pkgs := []workspace.Package{
+		{Name: "@fixture/shared", Dir: sharedDir, Category: "node-tests"},
+		{Name: "@fixture/suite", Dir: suiteDir, Category: "suites"},
+	}
+	cfg := &config.DevkitConfig{
+		Tasks: map[string]config.TaskConfig{
+			"e2e": {
+				{Categories: []string{"suites"}, Command: "pnpm run e2e", Deps: []string{"^build"}},
+			},
+		},
+	}
+
+	nodes, err := buildDAG(pkgs, []string{"e2e"}, cfg, &workspace.Workspace{Root: root, Packages: pkgs})
+	if err != nil {
+		t.Fatalf("buildDAG refused a source-only dependency: %v", err)
+	}
+	if _, planned := nodes[nodeKey{"@fixture/shared", "build"}]; planned {
+		t.Fatal("buildDAG planned a build for a package that declares nothing to build")
+	}
+	if _, planned := nodes[nodeKey{"@fixture/suite", "e2e"}]; !planned {
+		t.Fatal("buildDAG dropped the requested e2e task")
 	}
 }
 
