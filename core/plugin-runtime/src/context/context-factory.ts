@@ -11,6 +11,7 @@ import type {
   PluginServices,
   UIFacade,
   CleanupFn,
+  ProcessIdentity,
 } from "@kb-labs/plugin-contracts";
 import { getLoggerMetadataFromHost } from "@kb-labs/plugin-contracts";
 import { createContextLogger, createErrorEnvelope } from "@kb-labs/core-platform";
@@ -291,6 +292,11 @@ export function createPluginContextV3<TConfig = unknown>(
 
     // Cancellation
     signal,
+    ...(eventEmitter ? {
+      onProcessStarted: async (identity: ProcessIdentity) => {
+        await eventEmitter('process.started', identity);
+      },
+    } : {}),
 
     // Tracing
     trace,

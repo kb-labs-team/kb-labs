@@ -223,18 +223,7 @@ describe('live workflow failure terminalization', () => {
       serialization: 'advanced',
     });
     children.push(child);
-    child.on('message', async (message: unknown) => {
-      if (!message || typeof message !== 'object' || !('type' in message) || message.type !== 'adapter') { return; }
-      const request = message as AdapterRequest;
-      try {
-        const result = request.adapter === 'cache'
-          ? await performCacheOperation(cache, request)
-          : await performStorageOperation(storage, request);
-        child.send?.({ type: 'adapter-result', id: request.id, result });
-      } catch (error) {
-        child.send?.({ type: 'adapter-result', id: request.id, error: error instanceof Error ? error.message : String(error) });
-      }
-    });
+    serveAdapters(child, cache, storage);
     await waitForChildMessage(child, 'ready');
     const workerReady = waitForChildMessage(child, 'worker-ready');
     child.send({ type: 'start' });
@@ -270,7 +259,102 @@ describe('live workflow failure terminalization', () => {
       vi.useRealTimers();
     }
   });
+
+  // case: S-297.1
+  it('terminates the surviving shell child and records daemon-restart after the daemon is SIGKILLed', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'workflow-restart-live-child-'));
+    roots.push(workspaceRoot);
+    const pidFile = join(workspaceRoot, 'child.pid');
+    const cache = new InMemoryCache();
+    const storage = new InMemoryStorage();
+    const events = new InMemoryEventBus();
+    const projectId = 'prj_0000000000000001';
+    const engine = new WorkflowEngine({ projectId, cache, storage, events, logger: mockLogger(), secretProvider: new EnvSecretProvider(), workspaceRoot });
+    const daemon = fork(fileURLToPath(new URL('../test-fixtures/workflow-shell-daemon-child.ts', import.meta.url)), [], {
+      execArgv: ['--import', 'tsx'],
+      env: { ...process.env, WORKFLOW_FIXTURE_WORKSPACE: workspaceRoot },
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      serialization: 'advanced',
+    });
+    children.push(daemon);
+    serveAdapters(daemon, cache, storage);
+    await waitForChildMessage(daemon, 'ready');
+    const workerReady = waitForChildMessage(daemon, 'worker-ready');
+    daemon.send({ type: 'start' });
+    await workerReady;
+    const run = await engine.createRun({
+      spec: {
+        name: 'restart-live-child', version: '1.0.0', on: { manual: true },
+        jobs: { main: { runsOn: 'local', steps: [{
+          name: 'Long shell', uses: 'builtin:shell',
+          with: { command: `sleep 60 & echo $! > '${pidFile}'; wait`, throwOnError: true },
+        }] } },
+      },
+      trigger: { type: 'manual' }, metadata: { workflowId: 'restart-live-child' },
+    });
+
+    let childPid: number | undefined;
+    try {
+      await vi.waitFor(async () => {
+        const contents = await readFile(pidFile, 'utf8').catch((error: unknown) => {
+          if (error instanceof Error && 'code' in error && error.code === 'ENOENT') { return undefined; }
+          throw error;
+        });
+        if (contents === undefined) { throw new Error('waiting for the real shell child to start'); }
+        childPid = Number(contents);
+        expect(childPid).toBeGreaterThan(1);
+      }, { timeout: 8000 });
+      await vi.waitFor(async () => {
+        const step = (await engine.getRun(run.id))?.jobs[0]?.steps[0];
+        expect(step?.processIdentity).toMatchObject({ pid: expect.any(Number), startTime: expect.any(String) });
+      }, { timeout: 4000 });
+
+      // The daemon dies without any chance to clean up; its shell child lives in its own process group.
+      daemon.kill('SIGKILL');
+      await new Promise<void>((resolve) => daemon.once('exit', () => resolve()));
+      expect(isProcessAlive(childPid!)).toBe(true);
+      expect((await engine.getRun(run.id))?.status).toBe('running');
+
+      // The dead daemon's liveness lease lapses (as it does after DAEMON_LEASE_TTL_MS); only Date is faked.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(Date.now() + 60_000);
+        const restarted = new WorkflowEngine({ projectId, cache, storage, events, logger: mockLogger(), secretProvider: new EnvSecretProvider(), workspaceRoot });
+        await restarted.cleanupStaleRuns();
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(isProcessAlive(childPid!)).toBe(false);
+      const recovered = await engine.getRun(run.id);
+      expect(recovered).toMatchObject({
+        status: 'failed',
+        jobs: [{
+          status: 'failed',
+          error: { details: { terminationReason: 'daemon-restart' } },
+          steps: [{ status: 'failed', error: { details: { terminationReason: 'daemon-restart' } } }],
+        }],
+      });
+    } finally {
+      if (childPid !== undefined) {
+        try { process.kill(childPid, 'SIGKILL'); }
+        catch (error) {
+          if (!(error instanceof Error) || !('code' in error) || error.code !== 'ESRCH') { throw error; }
+        }
+      }
+    }
+  }, 30000);
 });
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ESRCH') { return false; }
+    throw error;
+  }
+}
 
 type AdapterRequest = { type: 'adapter'; id: number; adapter: 'cache' | 'storage'; method: string; args: unknown[] };
 
@@ -290,6 +374,21 @@ async function performStorageOperation(storage: InMemoryStorage, request: Adapte
   const method = storage[request.method as keyof InMemoryStorage];
   if (typeof method !== 'function') { throw new Error(`Unsupported storage method ${request.method}`); }
   return Reflect.apply(method, storage, args);
+}
+
+function serveAdapters(child: ChildProcess, cache: InMemoryCache, storage: InMemoryStorage): void {
+  child.on('message', async (message: unknown) => {
+    if (!message || typeof message !== 'object' || !('type' in message) || message.type !== 'adapter') { return; }
+    const request = message as AdapterRequest;
+    try {
+      const result = request.adapter === 'cache'
+        ? await performCacheOperation(cache, request)
+        : await performStorageOperation(storage, request);
+      child.send?.({ type: 'adapter-result', id: request.id, result });
+    } catch (error) {
+      child.send?.({ type: 'adapter-result', id: request.id, error: error instanceof Error ? error.message : String(error) });
+    }
+  });
 }
 
 function waitForChildMessage(child: ChildProcess, type: string): Promise<void> {

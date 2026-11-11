@@ -11,6 +11,7 @@ import type { PluginHandlerUIFacade, UIFacade } from './ui.js';
 import type { PluginServices } from './platform.js';
 import type { RuntimeAPI } from './runtime.js';
 import type { PluginAPI } from './api.js';
+import type { ProcessIdentity } from './process-identity.js';
 
 /**
  * Plugin Context V3
@@ -74,6 +75,9 @@ export interface PluginContextV3<TConfig = unknown> {
    * Plugins should check this and abort long-running operations.
    */
   readonly signal?: AbortSignal;
+
+  /** Persist ownership of a spawned long-running child before its handler continues. */
+  readonly onProcessStarted?: (identity: ProcessIdentity) => Promise<void>;
 
   // ==========================================================================
   // Tracing
