@@ -13,6 +13,11 @@ import (
 // readiness address.
 const HostControlCredentialEnv = diag.KB_HOST_CONTROL_TOKEN
 
+// HostLogFileEnv names the file the host's platform logger writes its
+// structured log to. The logger adapter bounds and rotates it; the launcher
+// only chooses the path. The name is read by @kb-labs/adapters-pino.
+const HostLogFileEnv = "KB_LOG_FILE"
+
 // HostActiveWorkAddressHeader carries the loopback control address on the
 // host's health response so the launcher can validate readiness.
 const HostActiveWorkAddressHeader = "x-kb-host-active-work-address"
