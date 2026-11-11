@@ -194,17 +194,10 @@ jobs:
 
       - name: Build publisher image
         if: inputs.prebuilt-artifact == ''
-        run: |
-          cache_args=()
-          if [ "${{ inputs.cache-mode }}" = "read-write" ]; then
-            cache_args=(--cache-from "type=gha,scope=e2e-publisher" --cache-to "type=gha,mode=max,scope=e2e-publisher")
-          fi
-          docker buildx build \
-            "${cache_args[@]}" \
-            --load \
-            -t kb-e2e-ci-publisher:latest \
-            -f e2e/publisher/Dockerfile \
-            e2e/
+        uses: ./.github/actions/build-publisher
+        with:
+          cache-from: ${{ inputs.cache-mode == 'read-write' && 'type=gha,scope=e2e-publisher' || '' }}
+          cache-to: ${{ inputs.cache-mode == 'read-write' && 'type=gha,mode=max,scope=e2e-publisher' || '' }}
 
       # ── Build idp-stub image (optional) ──────────────────────────────────────
 
@@ -289,7 +282,7 @@ jobs:
             if curl -sf http://localhost:4000/health > /dev/null 2>&1; then
               echo "Gateway ready after $((i * 5))s"; break
             fi
-            if [ "$i" -eq "${{ inputs.health-steps }}" ]; then
+            if [ "$i" = "${{ inputs.health-steps }}" ]; then
               echo "Gateway failed to start — dumping logs"
               docker compose logs platform | tail -100
               exit 1

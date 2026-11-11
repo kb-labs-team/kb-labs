@@ -1,0 +1,26 @@
+name: Build publisher image
+description: Build the E2E publisher image with the repository-root Docker context.
+inputs:
+  engine:
+    description: Docker command to use for the image build.
+    required: false
+    default: buildx
+  cache-from:
+    description: Optional BuildKit cache source.
+    required: false
+    default: ''
+  cache-to:
+    description: Optional BuildKit cache destination.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PUBLISHER_BUILD_ENGINE: ${{ inputs.engine }}
+        PUBLISHER_BUILD_CACHE_FROM: ${{ inputs.cache-from }}
+        PUBLISHER_BUILD_CACHE_TO: ${{ inputs.cache-to }}
+      run: |
+        args=(--engine "$PUBLISHER_BUILD_ENGINE")
+        bash e2e/publisher/build-image.sh "${args[@]}"

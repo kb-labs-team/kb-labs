@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"log"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +11,17 @@ import (
 
 	"github.com/kb-labs/create/v2/versionroot"
 )
+
+func TestRenderFailureWritesDiagnosticAndSelectsFailureStatus(t *testing.T) {
+	var stderr bytes.Buffer
+	status := renderFailure(errors.New("candidate installation failed"), &stderr)
+	if status.Code() == 0 {
+		t.Fatal("expected a non-zero status")
+	}
+	if stderr.Len() == 0 {
+		t.Fatal("expected a rendered diagnostic on stderr")
+	}
+}
 
 func TestRegistryReportsMetadataEncodingFailure(t *testing.T) {
 	var output bytes.Buffer

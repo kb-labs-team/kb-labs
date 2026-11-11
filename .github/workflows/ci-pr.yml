@@ -132,7 +132,7 @@ jobs:
       matrix:
         include:
           - shard: resolver-config
-            packages: ./v2/catalog ./v2/cmd/kb-create-v2 ./v2/cmd/kb-create-release-index ./v2/contracts ./v2/flow ./v2/preflight ./v2/release ./v2/resolve ./v2/render ./v2/scenario ./v2/secrets ./v2/telemetry ./v2/transport ./v2/wizard
+            packages: ./v2/catalog ./v2/cmd/kb-create-release-index ./v2/contracts ./v2/flow ./v2/preflight ./v2/release ./v2/resolve ./v2/render ./v2/scenario ./v2/secrets ./v2/telemetry ./v2/transport ./v2/wizard
           - shard: runtime-recovery
             packages: ./v2/artifacts ./v2/logs ./v2/receipt ./v2/lifecycle ./v2/runtime
           - shard: doctor-diagnostics
@@ -473,14 +473,10 @@ jobs:
 
       - name: Build publisher image
         if: steps.gate-result.outputs.run == 'true'
-        run: |
-          docker buildx build \
-            --cache-from "type=gha,scope=e2e-publisher" \
-            --cache-to "type=gha,mode=max,scope=e2e-publisher" \
-            --load \
-            -t kb-e2e-ci-publisher:latest \
-            -f e2e/publisher/Dockerfile \
-            e2e/
+        uses: ./.github/actions/build-publisher
+        with:
+          cache-from: type=gha,scope=e2e-publisher
+          cache-to: type=gha,mode=max,scope=e2e-publisher
 
       - name: Prepare Verdaccio storage permissions
         if: steps.gate-result.outputs.run == 'true'

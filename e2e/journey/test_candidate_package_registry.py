@@ -261,10 +261,16 @@ class CandidatePackageRegistryTests(unittest.TestCase):
                 encoding="utf-8",
             )
             pnpm.chmod(0o755)
+            corepack = bin_dir / "corepack"
+            corepack.write_text(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FAKE_COREPACK_ARGS\"\n",
+                encoding="utf-8",
+            )
+            corepack.chmod(0o755)
             env = isolated_environment(
                 root / "home", bin_dir, required_tools=("bash", "cat", "dirname"),
                 overrides={"FAKE_DOCKER_CALLS": str(calls_path), "FAKE_CLEAR_SCRIPT": str(clear_path),
-                           "FAKE_PNPM_ARGS": str(pnpm_args)},
+                           "FAKE_PNPM_ARGS": str(pnpm_args), "FAKE_COREPACK_ARGS": str(root / "corepack-args.txt")},
             )
             result = subprocess.run(
                 ["bash", str(ROOT / "e2e/journey/install-workspace-dependencies.sh")],
@@ -272,8 +278,10 @@ class CandidatePackageRegistryTests(unittest.TestCase):
             )
             compose_calls = calls_path.read_text(encoding="utf-8").splitlines()
             install_args = pnpm_args.read_text(encoding="utf-8").splitlines()
+            corepack_args = (root / "corepack-args.txt").read_text(encoding="utf-8").splitlines()
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(corepack_args, ["install"])
         self.assertTrue(any(call.endswith("port verdaccio 4873") for call in compose_calls), compose_calls)
         self.assertEqual(install_args, ["install", "--frozen-lockfile", "--registry", "http://127.0.0.1:49183"])
         self.assertNotIn("registry.npmjs.org", install_args)

@@ -23,6 +23,7 @@ import (
 
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -52,8 +53,12 @@ func main() {
 	registryURL := flag.String("registry", "", "required shared package registry URL")
 	flag.Parse()
 	if err := run(*indexPath, *packageDirectory, *installRoot, *registryURL); err != nil {
-		command.Exit(diag.ExitCode(diag.FromError(err)))
+		command.Exit(renderFailure(err, os.Stderr))
 	}
+}
+
+func renderFailure(err error, stderr io.Writer) diag.ExitStatus {
+	return result.RenderDiag(stderr, stderr, diag.FromError(err), result.ModeHuman)
 }
 
 func run(indexPath, packageDirectory, installRoot, sharedRegistryURL string) (runErr error) {

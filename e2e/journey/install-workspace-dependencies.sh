@@ -8,4 +8,5 @@ source "$ROOT/e2e/journey/candidate-services.sh"
 journey_compose_init "$ROOT"
 trap journey_compose_cleanup EXIT
 
+corepack install
 journey_install_workspace_dependencies

@@ -212,21 +212,11 @@ jobs:
 
       - name: Build publisher image
         if: inputs.prebuilt-artifact == ''
-        run: |
-          if [ "${{ inputs.fast-build }}" = "true" ]; then
-            docker build -t kb-e2e-ci-publisher:latest -f e2e/publisher/Dockerfile e2e/
-          else
-            cache_args=()
-            if [ "${{ inputs.cache-mode }}" = "read-write" ]; then
-              cache_args=(--cache-from "type=gha,scope=e2e-publisher" --cache-to "type=gha,mode=max,scope=e2e-publisher")
-            fi
-            docker buildx build \
-              "${cache_args[@]}" \
-              --load \
-              -t kb-e2e-ci-publisher:latest \
-              -f e2e/publisher/Dockerfile \
-              e2e/
-          fi
+        uses: ./.github/actions/build-publisher
+        with:
+          engine: ${{ inputs.fast-build && 'docker' || 'buildx' }}
+          cache-from: ${{ !inputs.fast-build && inputs.cache-mode == 'read-write' && 'type=gha,scope=e2e-publisher' || '' }}
+          cache-to: ${{ !inputs.fast-build && inputs.cache-mode == 'read-write' && 'type=gha,mode=max,scope=e2e-publisher' || '' }}
 
       # Verdaccio is reconstructed from this run's exact package tarballs.
 

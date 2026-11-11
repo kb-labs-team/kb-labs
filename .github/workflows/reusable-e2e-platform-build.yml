@@ -114,14 +114,10 @@ jobs:
             --load -t kb-e2e-ci-platform:latest --build-arg "SOURCE_REVISION=$GITHUB_SHA" -f e2e/platform/Dockerfile .
 
       - name: Build publisher image
-        run: |
-          cache_args=()
-          if [ "${{ inputs.cache-mode }}" = "read-write" ]; then
-            cache_args=(--cache-from "type=gha,scope=e2e-publisher" --cache-to "type=gha,mode=max,scope=e2e-publisher")
-          fi
-          docker buildx build \
-            "${cache_args[@]}" \
-            --load -t kb-e2e-ci-publisher:latest -f e2e/publisher/Dockerfile e2e/
+        uses: ./.github/actions/build-publisher
+        with:
+          cache-from: ${{ inputs.cache-mode == 'read-write' && 'type=gha,scope=e2e-publisher' || '' }}
+          cache-to: ${{ inputs.cache-mode == 'read-write' && 'type=gha,mode=max,scope=e2e-publisher' || '' }}
 
       - name: Prepare Verdaccio storage permissions
         run: |
