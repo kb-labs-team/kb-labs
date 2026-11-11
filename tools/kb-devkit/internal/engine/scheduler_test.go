@@ -288,9 +288,9 @@ func TestBuildDAGRejectsWorkspaceBuildDependencyWithoutTaskNode(t *testing.T) {
 	}
 }
 
-// case: S-179.49
 // A source-only workspace dependency (no DevKit variant, no package script for
 // the task) has nothing to run, so ^task is satisfied without a node.
+// case: S-179.49
 func TestBuildDAGSatisfiesWorkspaceDependencyWithNothingToRun(t *testing.T) {
 	root := t.TempDir()
 	sharedDir := filepath.Join(root, "shared")
