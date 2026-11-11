@@ -15,6 +15,70 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "e2e" / "journey" / "run.sh"
 
 
+class JourneyNativeLaneTests(unittest.TestCase):
+    """The native lane declares no container runtime; the registry owner runs Verdaccio natively."""
+
+    def test_native_smoke_declares_the_lane_instead_of_requiring_compose(self):
+        with tempfile.TemporaryDirectory(prefix="journey-native-lane-") as temp:
+            bin_dir = Path(temp) / "bin"
+            bin_dir.mkdir()
+            # A stand-in `npx` that serves /-/ping like Verdaccio and records its arguments.
+            server = bin_dir / "npx"
+            server.write_text("""#!/usr/bin/env python3
+import http.server, os, sys
+args = sys.argv[1:]
+open(os.environ["NPX_ARGS_OUT"], "w").write(" ".join(args))
+port = int(args[args.index("--listen") + 1].rsplit(":", 1)[1])
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.end_headers(); self.wfile.write(b"{}")
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+""")
+            server.chmod(0o755)
+            args_out = Path(temp) / "npx-args.txt"
+            env = isolated_environment(
+                Path(temp) / "home", bin_dir,
+                required_tools=("bash", "python3", "curl", "sed", "mktemp", "mkdir", "rm", "dirname", "kill", "sleep", "env"),
+                overrides={"NPX_ARGS_OUT": str(args_out), "RUNNER_TEMP": temp})
+            script = (
+                'set -e\n'
+                f'source "{ROOT}/e2e/compose-owner.sh"\nsource "{ROOT}/e2e/journey/candidate-services.sh"\n'
+                f'journey_compose_init "{ROOT}" native\n'
+                'journey_start_registry\n'
+                'curl --fail --silent "$JOURNEY_REGISTRY_HOST_URL/-/ping"\n'
+                'echo "lane=$JOURNEY_LANE_CONTAINER_RUNTIME compose=$COMPOSE_AVAILABLE"\n'
+                'journey_stop_registry\n'
+                'echo stopped\n'
+            )
+            result = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env, capture_output=True,
+                                    text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("lane=none compose=0", result.stdout)
+            self.assertIn("stopped", result.stdout)
+            self.assertNotIn("Docker Compose", result.stderr)
+            self.assertIn("verdaccio@5", args_out.read_text())
+
+    def test_native_lane_registry_version_matches_the_compose_image(self):
+        compose = (ROOT / "e2e" / "docker-compose.yml").read_text()
+        services = (ROOT / "e2e" / "journey" / "candidate-services.sh").read_text()
+        self.assertIn("image: verdaccio/verdaccio:5", compose)
+        self.assertIn('JOURNEY_NATIVE_VERDACCIO_SPEC="verdaccio@5"', services)
+
+    def test_container_lane_without_compose_still_refuses(self):
+        with tempfile.TemporaryDirectory(prefix="journey-container-lane-") as temp:
+            bin_dir = Path(temp) / "bin"
+            bin_dir.mkdir()
+            env = isolated_environment(Path(temp) / "home", bin_dir,
+                                       required_tools=("bash", "dirname", "python3"))
+            script = (f'source "{ROOT}/e2e/compose-owner.sh"\nsource "{ROOT}/e2e/journey/candidate-services.sh"\n'
+                      f'journey_compose_init "{ROOT}"\njourney_start_registry\n')
+            result = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env, capture_output=True,
+                                    text=True, check=False)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("Journey registry needs Docker Compose", result.stderr)
+
+
 class JourneyComposeMountTests(unittest.TestCase):
     def _fake_compose_environment(self, temp: str) -> tuple[dict[str, str], Path]:
         bin_dir = Path(temp) / "bin"

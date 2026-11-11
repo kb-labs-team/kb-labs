@@ -84,13 +84,6 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: installer-journey-candidate
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
-      - name: Restore Docker build cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: /tmp/.buildx-cache-journey
-          key: journey-buildx-${{ runner.os }}-${{ hashFiles('e2e/journey/**', 'e2e/publisher/**', 'e2e/packages/*.tgz') }}
-          restore-keys: journey-buildx-${{ runner.os }}-
       - name: Run journey in a fresh container
         env:
           KB_JOURNEY_SERVICE_PROFILE: ${{ startsWith(matrix.case, 'service-') && 'nightly' || '' }}

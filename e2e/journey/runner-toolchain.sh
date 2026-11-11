@@ -27,6 +27,7 @@ journey_toolchain_ensure() {
     echo "Journey runner toolchain derivation returned an incomplete contract. Next: python3 e2e/journey/journey_resources.py --toolchain-contract" >&2
     return 1
   fi
+  journey_toolchain_require_shared_store || return 1
   local -a build_command=(docker build --target toolchain -t "$toolchain_image"
     --label "${toolchain_label}=${toolchain_image#*:}"
     --build-arg "$image_argument=$node_base_image"
@@ -47,6 +48,28 @@ journey_toolchain_ensure() {
   journey_toolchain_reclaim "$toolchain_label" "$toolchain_image"
   export "$image_argument=$toolchain_image"
   export "$node_base_image_argument=$node_base_image"
+}
+
+# The toolchain is built with `docker build` into the local image store and the
+# compose runner build consumes it by tag (`FROM $KB_JOURNEY_TOOLCHAIN_IMAGE`).
+# That only resolves when the active buildx builder uses the docker driver; a
+# docker-container builder (for example the one docker/setup-buildx-action
+# makes default) cannot read the local store and falls back to a docker.io
+# pull. Refuse before the long build instead.
+journey_toolchain_require_shared_store() {
+  local inspection driver
+  if ! docker buildx version >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! inspection="$(docker buildx inspect 2>&1)"; then
+    printf 'Journey could not inspect the active Docker builder: %s\nNext: docker buildx inspect\n' "$inspection" >&2
+    return 1
+  fi
+  driver="$(awk '/^Driver:/ {print $2; exit}' <<< "$inspection")"
+  if [[ "$driver" != "docker" ]]; then
+    printf 'Journey image builds need the docker buildx driver so the runner build can read the toolchain image from the local store, but the active builder uses %q. Next: docker buildx use default (and do not add docker/setup-buildx-action to the journey lane)\n' "$driver" >&2
+    return 1
+  fi
 }
 
 journey_toolchain_reclaim() {

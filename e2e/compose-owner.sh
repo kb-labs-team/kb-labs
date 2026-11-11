@@ -26,12 +26,24 @@ compose_owner_json() {
 JOURNEY_COMPOSE=()
 JOURNEY_COMPOSE_FILES=()
 COMPOSE_AVAILABLE=0
+# Lane capability: "required" (container lanes need Docker Compose) or "none"
+# (the native lane runs on hosts without a container runtime). The candidate
+# service owner reads it; entries declare it once through journey_compose_init.
+JOURNEY_LANE_CONTAINER_RUNTIME="required"
 JOURNEY_COMPOSE_INITIALIZED=0
 REGISTRY_COMPOSITION_ROOT=""
 
 journey_compose_init() {
-  local root="${1:-}" canonical_root owner_directory owner_root rendered overlay_path owner_source
+  local root="${1:-}" lane="${2:-container}" canonical_root owner_directory owner_root rendered overlay_path owner_source
 
+  case "$lane" in
+    container) JOURNEY_LANE_CONTAINER_RUNTIME="required" ;;
+    native) JOURNEY_LANE_CONTAINER_RUNTIME="none" ;;
+    *)
+      printf 'journey_compose_init lane must be "container" or "native", got %q.\n' "$lane" >&2
+      return 2
+      ;;
+  esac
   JOURNEY_COMPOSE=()
   JOURNEY_COMPOSE_FILES=()
   COMPOSE_AVAILABLE=0
@@ -54,6 +66,9 @@ journey_compose_init() {
   export KB_JOURNEY_WORKSPACE_SOURCE="$canonical_root"
   JOURNEY_COMPOSE_INITIALIZED=1
 
+  if [[ "$JOURNEY_LANE_CONTAINER_RUNTIME" == "none" ]]; then
+    return 0
+  fi
   JOURNEY_COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
   if ! compose_owner_init; then
     COMPOSE_AVAILABLE=0

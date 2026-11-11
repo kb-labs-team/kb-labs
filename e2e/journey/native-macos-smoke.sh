@@ -5,7 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 source "$ROOT/e2e/compose-owner.sh"
 source "$ROOT/e2e/journey/candidate-services.sh"
-journey_compose_init "$ROOT"
+# Hosted macOS has no container runtime: the lane declares it and the candidate
+# service owner runs the same Verdaccio natively.
+journey_compose_init "$ROOT" native
 
 native_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/native-installer-smoke.XXXXXX")"
 export HOME="$native_root/home"

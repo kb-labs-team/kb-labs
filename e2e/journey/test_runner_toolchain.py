@@ -385,7 +385,11 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
             "state.setdefault('calls', [])\n"
             "args = sys.argv[1:]\n"
             "state['calls'].append(args)\n"
-            "if args[:2] == ['images', '-q']:\n"
+            "if args[:2] == ['buildx', 'version']:\n"
+            "    raise SystemExit(0 if state.get('driver') else 1)\n"
+            "elif args[:2] == ['buildx', 'inspect']:\n"
+            "    print('Name:   builder\\nDriver: ' + state['driver'])\n"
+            "elif args[:2] == ['images', '-q']:\n"
             "    print('\\n'.join(image['id'] for image in state['images'] if image['ref'] == args[2]))\n"
             "elif args[0] == 'build':\n"
             f"    build_args = [arg for arg in args if arg.startswith({(image_argument + '=')!r})]\n"
@@ -511,6 +515,38 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
         self.assertIn("ensure-completed", result.stdout)
         self.assertIn("could not remove previous journey runner toolchain image", result.stderr)
         self.assertIn("id-stuck", [image["id"] for image in state["images"]])
+
+    def _run_ensure(self, temporary: str, driver: str | None):
+        fixture = self._fixture_root(Path(temporary))
+        bin_dir = Path(temporary) / "bin"
+        state_path = Path(temporary) / "docker-state.json"
+        state_path.write_text(json.dumps({"images": [], **({"driver": driver} if driver else {})}))
+        image_argument = runner_toolchain_contract()["imageArgument"]
+        node_base_image_argument = json.loads(
+            (fixture / "tools/clikit/toolchain/node_policy_gen.json").read_text())["nodeBaseImageArgument"]
+        self._fake_docker(bin_dir, state_path, image_argument, node_base_image_argument)
+        env = isolated_environment(Path(temporary) / "home", bin_dir, required_tools=("bash", "python3", "awk"),
+                                   overrides={"PYTHONDONTWRITEBYTECODE": "1"})
+        driver_script = f"set -e\nsource {TOOLCHAIN_SCRIPT}\njourney_toolchain_ensure {fixture}\n"
+        result = subprocess.run(["bash", "-c", driver_script], cwd=fixture, env=env,
+                                text=True, capture_output=True, check=False)
+        return result, json.loads(state_path.read_text())
+
+    def test_ensure_refuses_a_builder_that_cannot_read_the_local_image_store(self):
+        with temporary_directory(prefix="journey-toolchain-builder-") as temporary:
+            result, state = self._run_ensure(temporary, "docker-container")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("docker-container", result.stderr)
+        self.assertIn("docker buildx use default", result.stderr)
+        self.assertEqual(state["images"], [], "no image may be built when the consumer could not resolve it")
+        self.assertFalse(any(call[0] == "build" for call in state["calls"]))
+
+    def test_ensure_accepts_the_docker_driver_and_a_docker_without_buildx(self):
+        for driver in ("docker", None):
+            with self.subTest(driver=driver), temporary_directory(prefix="journey-toolchain-builder-ok-") as temporary:
+                result, state = self._run_ensure(temporary, driver)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(state["images"]), 1)
 
 
 if __name__ == "__main__":
