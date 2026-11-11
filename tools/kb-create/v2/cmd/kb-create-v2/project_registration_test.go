@@ -28,12 +28,14 @@ import (
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/flow"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/internal/testprocess"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/scenario"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/transport"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -43,6 +45,69 @@ import (
 type projectRegistrationTestClock struct{ now time.Time }
 
 func (c projectRegistrationTestClock) Now() time.Time { return c.now }
+
+type unexpectedWizardQuestionReader struct{ output *bytes.Buffer }
+
+func (r unexpectedWizardQuestionReader) Read([]byte) (int, error) {
+	output := strings.TrimSpace(r.output.String())
+	lines := strings.Split(output, "\n")
+	return 0, fmt.Errorf("unexpected wizard prompt after keyed scenario answers: %s", strings.TrimSpace(lines[len(lines)-1]))
+}
+
+func TestUnexpectedWizardQuestionReaderReportsWrittenPrompt(t *testing.T) {
+	var output bytes.Buffer
+	output.WriteString("Session signing secret: ")
+	reader := unexpectedWizardQuestionReader{output: &output}
+	_, err := reader.Read(make([]byte, 1))
+	if err == nil || !strings.Contains(err.Error(), "Session signing secret:") {
+		t.Fatalf("reader error = %v; want the prompt just written to output", err)
+	}
+}
+
+// assertScenarioAnswersMatchQuestions keeps scripted answers aligned with the
+// scenario owner's visible field definitions. New, missing, or stale field IDs
+// fail here with the question label before the command can consume answers in
+// a different order.
+func assertScenarioAnswersMatchQuestions(t *testing.T, scenarioID string, answers map[string]string) {
+	t.Helper()
+	definition, err := scenario.Load(scenarioID)
+	if err != nil {
+		t.Fatalf("load scenario %q: %v", scenarioID, err)
+	}
+	session, err := flow.New(definition, nil, nil)
+	if err != nil {
+		t.Fatalf("create scenario flow %q: %v", scenarioID, err)
+	}
+	seen := make(map[string]bool, len(answers))
+	for !session.State.Done {
+		for _, request := range session.Inspect() {
+			field := request.Field
+			if field.ProviderFor != "" {
+				continue
+			}
+			value, ok := answers[field.ID]
+			if !ok {
+				t.Fatalf("wizard question %q (%s) has no keyed answer", field.Label, field.ID)
+			}
+			raw, err := json.Marshal(value)
+			if err != nil {
+				t.Fatalf("encode answer for wizard question %q (%s): %v", field.Label, field.ID, err)
+			}
+			if err := session.Apply(field.ID, raw, flow.SourceAgent); err != nil {
+				t.Fatalf("apply answer for wizard question %q (%s): %v", field.Label, field.ID, err)
+			}
+			seen[field.ID] = true
+		}
+		if err := session.Next(); err != nil {
+			t.Fatalf("advance scenario flow %q: %v", scenarioID, err)
+		}
+	}
+	for id := range answers {
+		if !seen[id] {
+			t.Fatalf("keyed answer %q does not match a visible wizard question in scenario %q", id, scenarioID)
+		}
+	}
+}
 
 type projectRegistrationTestHost struct {
 	mu           sync.Mutex
@@ -94,6 +159,21 @@ func (host *projectRegistrationTestHost) running() bool {
 
 // case: S-187.12, S-222.12
 func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testing.T) {
+	humanJWTSecret := strings.Repeat("j", 32)
+	humanScenarioValues := map[string]string{
+		"access.mode":    "secured",
+		"admin.email":    "admin@example.test",
+		"admin.tenant":   "workspace",
+		"admin.password": humanJWTSecret,
+		"jwt.secret":     humanJWTSecret,
+	}
+	assertScenarioAnswersMatchQuestions(t, "explore", humanScenarioValues)
+	humanAnswerValues := map[string]string{
+		"access.mode":  "secured",
+		"admin.email":  "admin@example.test",
+		"admin.tenant": "workspace",
+		"jwt.secret":   humanJWTSecret,
+	}
 	project := t.TempDir()
 	selected := filepath.Join(t.TempDir(), "selected-project")
 	if err := os.Symlink(project, selected); err != nil {
@@ -326,8 +406,9 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		command := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
 			deps := productionCommandDependencies(cmd)
 			deps.NodeCheck = func() error { return nil }
+			deps.ArtifactRunner = systemPnpmRunner{}
 			deps.Executable = launcher
-			deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release)}, Clock: clock}
+			deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release), runner: systemPnpmRunner{}}, Clock: clock}
 			deps.ProjectRegistrar = func(platformRoot, selectedProject string) (projectRegistrationResult, error) {
 				registrarCalls++
 				return registerInstalledProject(platformRoot, selectedProject, nil)
@@ -474,8 +555,9 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	noticeCommand := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
 		deps := productionCommandDependencies(cmd)
 		deps.NodeCheck = func() error { return nil }
+		deps.ArtifactRunner = systemPnpmRunner{}
 		deps.Executable = launcher
-		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release)}, Host: testHost, Clock: clock}
+		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, release), runner: systemPnpmRunner{}}, Host: testHost, Clock: clock}
 		deps.ProjectRegistrar = func(platformRoot, selectedProject string) (projectRegistrationResult, error) {
 			registrarCalls++
 			return registerInstalledProject(platformRoot, selectedProject, nil)
@@ -554,9 +636,10 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	}
 	humanSource := testReleaseCatalog(t, "2.0.0")
 	humanSource.Platforms[0].Host = &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", hostPort)}
-	humanSource.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {
-		PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: gatewayPort, Required: true}},
-	}}
+	humanSource.Platforms[0].Profiles = map[string]contracts.ServiceGraph{
+		"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: gatewayPort, Required: true}}},
+		"secured": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: gatewayPort, Required: true}}},
+	}
 	humanSource.Platforms[0].Config = []catalog.ConfigRequirement{
 		{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`},
 		{ID: "gateway.bootstrap.adminEmail", Path: "/gateway/bootstrap/adminEmail", Default: `"admin@example.test"`},
@@ -581,15 +664,18 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	testHost.stop()
 	var humanStdout, humanStderr bytes.Buffer
 	humanRegistrarCallsBefore := registrarCalls
-	humanJWTSecret := strings.Repeat("j", 32)
+	humanAnswers, err := json.Marshal(humanAnswerValues)
+	if err != nil {
+		t.Fatal(err)
+	}
 	humanCommand := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
 		deps := productionCommandDependencies(cmd)
 		deps.NodeCheck = func() error { return nil }
+		deps.ArtifactRunner = systemPnpmRunner{}
 		deps.Marketplace = recordingMarketplaceInstaller{}
 		deps.Executable = launcher
-		answers := []string{"", "", "secured", "admin@example.test", "workspace", humanJWTSecret, humanJWTSecret, ""}
-		deps.InstallInput = strings.NewReader(strings.Join(answers, "\n"))
-		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, humanRelease)}, Host: testHost, Clock: clock}
+		deps.InstallInput = unexpectedWizardQuestionReader{output: &humanStdout}
+		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, humanRelease), runner: systemPnpmRunner{}}, Host: testHost, Clock: clock}
 		deps.ProjectRegistrar = func(platformRoot, selectedProject string) (projectRegistrationResult, error) {
 			registrarCalls++
 			return registerInstalledProject(platformRoot, selectedProject, nil)
@@ -598,7 +684,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	})
 	humanCode := clikitcommand.Execute(humanCommand,
 		[]string{"install", "--index", humanIndexPath, "--platform-root", root, "--project-root", selected,
-			"--gateway-url", fmt.Sprintf("http://127.0.0.1:%d", gatewayPort)},
+			"--gateway-url", fmt.Sprintf("http://127.0.0.1:%d", gatewayPort), "--platform-channel", "stable", "--scenario", "explore", "--service-profile", "default", "--scenario-answers", string(humanAnswers)},
 		&humanStdout, &humanStderr)
 	if humanCode.Code() != 0 {
 		redact := func(value string) string {
@@ -744,8 +830,9 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 				command := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
 					deps := productionCommandDependencies(cmd)
 					deps.NodeCheck = func() error { return nil }
+					deps.ArtifactRunner = systemPnpmRunner{}
 					deps.Executable = launcher
-					deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, registrationRelease)}, Host: testHost, Clock: clock}
+					deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verifiedFixtureCatalog(t, registrationRelease), runner: systemPnpmRunner{}}, Host: testHost, Clock: clock}
 					return deps
 				})
 				var stdout, stderr bytes.Buffer

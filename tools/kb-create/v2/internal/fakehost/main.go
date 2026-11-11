@@ -136,7 +136,7 @@ func run() diag.ExitStatus {
 		installed := make([]contracts.MarketplaceInstallRecord, 0, len(request.Specs))
 		for _, spec := range request.Specs {
 			installed = append(installed, contracts.MarketplaceInstallRecord{
-				ID: spec, Spec: spec, Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
+				ID: packageIdentity(spec), Spec: spec, Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -153,6 +153,16 @@ func run() diag.ExitStatus {
 		_ = controlServer.Shutdown(ctx)
 	}
 	return diag.SuccessStatus()
+}
+
+func packageIdentity(spec string) string {
+	if spec == "" {
+		return spec
+	}
+	if separator := strings.LastIndex(spec, "@"); separator > 0 {
+		return spec[:separator]
+	}
+	return spec
 }
 
 func childExitStatus(code int) diag.ExitStatus {

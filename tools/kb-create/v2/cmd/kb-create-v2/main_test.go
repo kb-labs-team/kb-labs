@@ -279,7 +279,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Executable: launcher,
-		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verified}, Host: installedHostStarter{root: root, executable: launcherBinary}}}
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root, release: verified, runner: systemPnpmRunner{}}, Host: installedHostStarter{root: root, executable: launcherBinary}}}
 	commandFactory := func(cmd *cobra.Command) commandDependencies {
 		deps.Command = cmd
 		return deps
@@ -294,13 +294,18 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		t.Fatalf("install argv exit=%d: stdout=%s stderr=%s hostLog=%s supervisorLog=%s", installCode.Code(), installOutput.String(), installError.String(), hostLog, supervisorLog)
 	}
 	installedReceipt, err := receipt.Read(platformRootForTest(t, root))
-	if err != nil || installedReceipt.Plan.Request.PlatformRoot != root {
-		t.Fatalf("install receipt request root = %q, error=%v; want selected install root %q", installedReceipt.Plan.Request.PlatformRoot, err, root)
+	canonicalRoot, canonicalErr := contracts.CanonicalPath(root)
+	if err != nil || canonicalErr != nil || installedReceipt.Plan.Request.PlatformRoot != canonicalRoot {
+		t.Fatalf("install receipt request root = %q, read error=%v, canonicalize error=%v; want canonical install root %q", installedReceipt.Plan.Request.PlatformRoot, err, canonicalErr, canonicalRoot)
 	}
-	if len(installedReceipt.MarketplaceInstalls) != 1 || installedReceipt.MarketplaceInstalls[0].Spec != "@kb-labs/commit" || installedReceipt.MarketplaceInstalls[0].ID != "@kb-labs/commit" ||
-		installedReceipt.MarketplaceInstalls[0].Version != "1.0.0" || installedReceipt.MarketplaceInstalls[0].Source != "registry" ||
-		installedReceipt.MarketplaceInstalls[0].SignatureStatus != "verified" {
-		t.Fatalf("install receipt Marketplace results = %#v; want @kb-labs/commit", installedReceipt.MarketplaceInstalls)
+	expectedMarketplaceInstall := contracts.MarketplaceInstallRecord{
+		ID: "@kb-labs/commit", Spec: "@kb-labs/commit@1.0.0", Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
+	}
+	if len(installedReceipt.MarketplaceInstalls) != 1 {
+		t.Fatalf("install receipt Marketplace results = %#v; want []contracts.MarketplaceInstallRecord{%#v}", installedReceipt.MarketplaceInstalls, expectedMarketplaceInstall)
+	}
+	if actual := installedReceipt.MarketplaceInstalls[0]; actual != expectedMarketplaceInstall {
+		t.Fatalf("install receipt Marketplace result = %#v; want %#v", actual, expectedMarketplaceInstall)
 	}
 	layout, err := versionroot.New(root)
 	if err != nil {
@@ -378,7 +383,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		t.Fatalf("schema-1 plan result code=%d output=%s stderr=%s decode=%v", planCode.Code(), planOut.String(), planErr.String(), err)
 	}
 	removeCommand := contracts.ShellCommand("rm", "--", registryPath)
-	repairCommand := contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root)
+	repairCommand := contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", canonicalRoot)
 	if !strings.Contains(failedPlan.Error.Message, registryPath) || !strings.Contains(failedPlan.Error.Message, "unsupported schema 1") ||
 		!strings.Contains(failedPlan.Error.Hint, removeCommand) || !strings.Contains(failedPlan.Error.Hint, repairCommand) {
 		t.Fatalf("schema-1 diagnostic message/hint = %q / %q", failedPlan.Error.Message, failedPlan.Error.Hint)
@@ -764,6 +769,16 @@ func verifiedFixtureCatalogFile(t *testing.T, path string) catalog.Verified {
 type installArtifacts struct {
 	root    string
 	release catalog.Verified
+	runner  artifacts.Runner
+}
+
+type systemPnpmRunner struct{}
+
+func (systemPnpmRunner) Run(ctx context.Context, output io.Writer, command string, args ...string) error {
+	process := exec.CommandContext(ctx, command, args...)
+	process.Stdout = output
+	process.Stderr = output
+	return process.Run()
 }
 
 func (a installArtifacts) Prepare(items []contracts.Artifact) (contracts.PreparedArtifacts, error) {
@@ -825,7 +840,7 @@ func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progre
 			return err
 		}
 	}
-	pnpm := artifacts.Pnpm{Root: root, CacheRoot: cacheRoot, PackageManagerRoot: layout.PackageManagerStateDir(), ReleaseCatalog: a.release}
+	pnpm := artifacts.Pnpm{Root: root, CacheRoot: cacheRoot, PackageManagerRoot: layout.PackageManagerStateDir(), ReleaseCatalog: a.release, Runner: a.runner}
 	err = pnpm.Install(items)
 	if progress != nil {
 		progress("Install packages", false)
