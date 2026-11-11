@@ -1008,21 +1008,20 @@ exec "$REAL_TAR" "$@"
         self.assertIn("baseline", spec["on"]["workflow_dispatch"]["inputs"])
         self.assertIn("recorded in batch metadata", spec["on"]["workflow_dispatch"]["inputs"]["baseline"]["description"])
         self.assertNotIn("cases", spec["on"]["workflow_dispatch"]["inputs"])
-        self.assertEqual(spec["jobs"]["producer"]["outputs"]["cases_b64"], "${{ steps.selection.outputs.cases_b64 }}")
-        self.assertEqual(spec["jobs"]["local"]["env"]["BATCH_CASES_B64"], "${{ needs.producer.outputs.cases_b64 }}")
-        self.assertEqual(spec["jobs"]["secured"]["env"]["BATCH_CASES_B64"], "${{ needs.producer.outputs.cases_b64 }}")
+        self.assertEqual(spec["jobs"]["producer"]["outputs"]["selection"], "${{ steps.selection.outputs.selection }}")
+        self.assertEqual(spec["jobs"]["local"]["env"]["BATCH_SELECTION"], "${{ needs.producer.outputs.selection }}")
+        self.assertEqual(spec["jobs"]["secured"]["env"]["BATCH_SELECTION"], "${{ needs.producer.outputs.selection }}")
         for mode in ("local", "secured"):
             command = next(step["run"] for step in spec["jobs"][mode]["steps"]
                            if step.get("name") == f"Run {mode} journey stage")
-            self.assertIn('base64 --decode', command)
-            self.assertIn(f'--cases "$BATCH_CASES"', command)
+            self.assertIn('journey-batch-selection.mjs run "$BATCH_SELECTION" --', command)
         self.assertNotIn("docs/**", spec["on"]["pull_request"]["paths"])
         self.assertEqual(spec["concurrency"]["group"], "journey-batch")
         jobs = spec["jobs"]
         self.assertEqual(set(jobs), {"producer", "local", "secured", "summary"})
         producer_steps = jobs["producer"]["steps"]
         selection_step = next(step for step in producer_steps if step.get("id") == "selection")
-        self.assertIn('GITHUB_REF_NAME##*/cases/', selection_step["run"])
+        self.assertIn('journey-batch-selection.mjs resolve "$GITHUB_EVENT_NAME" "$GITHUB_REF_NAME"', selection_step["run"])
         producer_entry = next(step for step in producer_steps if step.get("name") == "Produce shared build and candidate")
         self.assertEqual(
             producer_entry["run"],
@@ -1042,7 +1041,7 @@ exec "$REAL_TAR" "$@"
                                 and step.get("with", {}).get("name") == "journey-build-candidate"
                                 for step in steps))
             run = next(step for step in steps if "batch.sh" in step.get("run", ""))
-            self.assertIn(f'e2e/journey/batch.sh mode {mode} "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$BATCH_CASES"', run["run"])
+            self.assertIn(f'-- e2e/journey/batch.sh mode {mode} "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT"', run["run"])
             upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
             self.assertEqual(upload["with"]["name"], f"journey-{mode}")
         shared_upload = next(step for step in jobs["summary"]["steps"]

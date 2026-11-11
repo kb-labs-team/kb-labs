@@ -37,7 +37,7 @@ jobs:
     name: Shared build and candidate
     runs-on: ubuntu-latest
     outputs:
-      cases_b64: ${{ steps.selection.outputs.cases_b64 }}
+      selection: ${{ steps.selection.outputs.selection }}
     timeout-minutes: 60
     env:
       GOTOOLCHAIN: local
@@ -51,12 +51,8 @@ jobs:
         with:
           fetch-depth: 0
       - id: selection
-        name: Read selection from the pushed batch ref
-        run: |
-          case "$GITHUB_REF_NAME" in
-            batch/*/cases/*) printf 'cases_b64=%s\n' "${GITHUB_REF_NAME##*/cases/}" >> "$GITHUB_OUTPUT" ;;
-            *) printf 'cases_b64=\n' >> "$GITHUB_OUTPUT" ;;
-          esac
+        name: Resolve the case selection for this trigger
+        run: node scripts/ci/journey-batch-selection.mjs resolve "$GITHUB_EVENT_NAME" "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
       - id: pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with:
@@ -97,7 +93,7 @@ jobs:
       GOTOOLCHAIN: local
       BATCH_PRODUCER_INPUT: .journey/batch-input/producer
       BATCH_OUTPUT: .journey/batch/${{ github.run_id }}/local
-      BATCH_CASES_B64: ${{ needs.producer.outputs.cases_b64 }}
+      BATCH_SELECTION: ${{ needs.producer.outputs.selection }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -120,9 +116,7 @@ jobs:
           name: journey-build-candidate
           path: ${{ env.BATCH_PRODUCER_INPUT }}
       - name: Run local journey stage
-        run: |
-          BATCH_CASES="$(printf '%s' "$BATCH_CASES_B64" | tr '_-' '/+' | base64 --decode)"
-          e2e/journey/batch.sh mode local "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$BATCH_CASES"
+        run: node scripts/ci/journey-batch-selection.mjs run "$BATCH_SELECTION" -- e2e/journey/batch.sh mode local "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
@@ -142,7 +136,7 @@ jobs:
       GOTOOLCHAIN: local
       BATCH_PRODUCER_INPUT: .journey/batch-input/producer
       BATCH_OUTPUT: .journey/batch/${{ github.run_id }}/secured
-      BATCH_CASES_B64: ${{ needs.producer.outputs.cases_b64 }}
+      BATCH_SELECTION: ${{ needs.producer.outputs.selection }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -165,9 +159,7 @@ jobs:
           name: journey-build-candidate
           path: ${{ env.BATCH_PRODUCER_INPUT }}
       - name: Run secured journey stage
-        run: |
-          BATCH_CASES="$(printf '%s' "$BATCH_CASES_B64" | tr '_-' '/+' | base64 --decode)"
-          e2e/journey/batch.sh mode secured "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$BATCH_CASES"
+        run: node scripts/ci/journey-batch-selection.mjs run "$BATCH_SELECTION" -- e2e/journey/batch.sh mode secured "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
