@@ -16,6 +16,7 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/spf13/cobra"
 )
@@ -204,6 +205,7 @@ func TestDoctorFailuresUseSharedHumanAndJSONBoundary(t *testing.T) {
 		t.Run(mode+" unexpected", func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
+			t.Setenv("XDG_DATA_HOME", filepath.Join(home, "launcher-data"))
 			root := newRootCommand()
 			doctor := findCommand(root, "kb-create doctor")
 			doctor.RunE = func(*cobra.Command, []string) error {
@@ -228,9 +230,12 @@ func TestDoctorFailuresUseSharedHumanAndJSONBoundary(t *testing.T) {
 			if correlationID == "" {
 				t.Fatalf("failure has no correlation ID: %s", visible)
 			}
-			log, err := os.ReadFile(filepath.Join(home, ".kb", "logs", "kb-create.jsonl"))
+			log, err := os.ReadFile(filepath.Join(gateway.DataDir(home), "logs", "kb-create.jsonl"))
 			if err != nil || !bytes.Contains(log, []byte(correlationID)) || !bytes.Contains(log, []byte(`"stack"`)) {
 				t.Fatalf("structured diagnostics lack correlation/stack: %s (%v)", log, err)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".kb")); !os.IsNotExist(err) {
+				t.Fatalf("unexpected diagnostic created legacy HOME state: %v", err)
 			}
 		})
 	}
@@ -311,7 +316,7 @@ func TestJSONInstallProgressEndsWithTerminalRecord(t *testing.T) {
 	var stdout bytes.Buffer
 	cmd := &cobra.Command{Use: "kb-create install"}
 	cmd.SetOut(&stdout)
-	inv := operationTestSetup{Operation: "install", Index: index, JSON: true, Direct: directRequest{PlatformRoot: platformRoot}, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot}, Host: installHost{}}, NodePreflight: func() error { return nil }}
+	inv := operationTestSetup{Operation: "install", Index: index, JSON: true, Direct: directRequest{PlatformRoot: platformRoot}, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot, release: verifiedFixtureCatalog(t, release)}, Host: installHost{}}, NodePreflight: func() error { return nil }}
 	descriptor, _ := lookupOperationDescriptor("install")
 	err = descriptorTestCall(cmd, descriptor, inv)
 	if code, ok := result.StreamExitCode(err); !ok || code != diag.SuccessStatus() {
@@ -442,8 +447,8 @@ func TestJSONInstallFailureEndsWithTerminalRecord(t *testing.T) {
 		t.Fatalf("stream result = %v, %v; out=%s", code, ok, stdout.String())
 	}
 	lines := bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte("\n"))
-	if len(lines) != 2 {
-		t.Fatalf("expected failure and terminal records, got %s", stdout.String())
+	if len(lines) != 1 {
+		t.Fatalf("expected one terminal failure record, got %s", stdout.String())
 	}
 	var failure struct {
 		OK    bool `json:"ok"`
@@ -466,10 +471,10 @@ func TestJSONInstallFailureEndsWithTerminalRecord(t *testing.T) {
 			} `json:"stream"`
 		} `json:"meta"`
 	}
-	if err := json.Unmarshal(lines[1], &terminal); err != nil {
+	if err := json.Unmarshal(lines[0], &terminal); err != nil {
 		t.Fatal(err)
 	}
 	if !terminal.Meta.Stream.Terminal || terminal.Meta.Stream.ExitCode != 2 {
-		t.Fatalf("terminal record = %s", lines[1])
+		t.Fatalf("terminal record = %s", lines[0])
 	}
 }

@@ -137,7 +137,7 @@ export class SubprocessBackend implements RawExecutionBackend {
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
   }
 
-  // eslint-disable-next-line sonarjs/cognitive-complexity
+
   async execute(
     request: ExecutionRequest,
     options?: ExecuteOptions

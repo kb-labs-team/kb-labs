@@ -50,7 +50,7 @@
 // packages/changelog/src/mind-enhancer.ts
 
 import type { Change, PackageRelease } from './types';
-import type { ShellApi } from '@kb-labs/plugin-contracts';
+import type { ShellAPI } from '@kb-labs/sdk/contracts';
 
 export interface MindEnhancement {
   schemaChanges: SchemaChange[];
@@ -80,7 +80,7 @@ export async function enhanceWithMind(
   from: string,
   to: string,
   cwd: string,
-  shell?: ShellApi  // Passed from ctx.runtime.shell in CLI commands
+  shell?: ShellAPI  // Passed from ctx.runtime.shell in CLI commands
 ): Promise<Map<string, MindEnhancement>> {
   const enhancements = new Map<string, MindEnhancement>();
   
@@ -158,7 +158,7 @@ export async function enhanceWithMindBatch(
   from: string,
   to: string,
   cwd: string,
-  shell?: ShellApi
+  shell?: ShellAPI
 ): Promise<Map<string, MindEnhancement>> {
   const enhancements = new Map<string, MindEnhancement>();
   
@@ -537,12 +537,12 @@ permissions: {
 
 1. **Неделя 1:**
    - [ ] Добавить `mind-enhancer.ts` в `changelog`
-   - [ ] Реализовать вызовы `kb mind query` через `ctx.runtime.shell` (ShellApi)
+   - [ ] Реализовать вызовы `kb mind query` через `ctx.runtime.shell` (ShellAPI)
    - [ ] Добавить права `shell:execute` в manifest permissions для команды changelog
    - [ ] Добавить проверку доступности `ctx.runtime.shell` перед использованием
    - [ ] Реализовать graceful degradation при недоступности shell или mind
    - [ ] Добавить типы для `SchemaChange`, `MindEnhancement`
-   - [ ] Тесты для mind интеграции (с моками ShellApi)
+   - [ ] Тесты для mind интеграции (с моками ShellAPI)
 
 2. **Неделя 2:**
    - [ ] Обновить форматтер markdown для отображения schema changes

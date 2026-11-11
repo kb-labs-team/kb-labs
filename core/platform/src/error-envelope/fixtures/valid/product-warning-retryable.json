@@ -5,6 +5,6 @@
   "severity": "warning",
   "retryable": true,
   "message": "The LLM provider did not answer; falling back to a template message.",
-  "hint": "Retry in a moment or run \"kb commit generate --no-llm\".",
+  "hint": "Retry in a moment or run \"kb commit plan create --no-llm\".",
   "details": { "statusCode": "503" }
 }

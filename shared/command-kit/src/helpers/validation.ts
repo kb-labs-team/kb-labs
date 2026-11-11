@@ -12,7 +12,7 @@ import type { DetailsFor } from '@kb-labs/core-platform';
  * Validation error with formatted message.
  */
 export class ValidationError extends Error {
-  readonly code: 'KB_RUNTIME_INPUT_INVALID' = 'KB_RUNTIME_INPUT_INVALID';
+  readonly code = 'KB_RUNTIME_INPUT_INVALID' as const;
   readonly details: DetailsFor<'KB_RUNTIME_INPUT_INVALID'>;
 
   constructor(

@@ -86,7 +86,10 @@ func runBundle(cmd *cobra.Command, args []string) error {
 	}
 
 	// BFS transitive closure of workspace:* deps.
-	closure := buildClosure(target, pkgByName, bundleProd)
+	closure, err := buildClosure(target, pkgByName, bundleProd)
+	if err != nil {
+		return err
+	}
 
 	// Determine output directory.
 	outDir := bundleOut
@@ -190,7 +193,7 @@ func resolvePackageFrom(pkgs []workspace.Package, wsRoot, arg string) (workspace
 // buildClosure returns the transitive workspace dependency closure for target,
 // sorted by RelPath for deterministic output.
 // If prod is true, devDependencies are excluded from the closure (for Docker images).
-func buildClosure(target workspace.Package, pkgByName map[string]workspace.Package, prod bool) []workspace.Package {
+func buildClosure(target workspace.Package, pkgByName map[string]workspace.Package, prod bool) ([]workspace.Package, error) {
 	visited := map[string]workspace.Package{target.Name: target}
 	queue := []workspace.Package{target}
 
@@ -203,7 +206,11 @@ func buildClosure(target workspace.Package, pkgByName map[string]workspace.Packa
 		pkg := queue[0]
 		queue = queue[1:]
 
-		for _, depName := range depsFunc(pkg.Dir, pkgByName) {
+		depNames, err := depsFunc(pkg.Dir, pkgByName)
+		if err != nil {
+			return nil, err
+		}
+		for _, depName := range depNames {
 			if _, seen := visited[depName]; !seen {
 				dep := pkgByName[depName]
 				visited[depName] = dep
@@ -219,7 +226,7 @@ func buildClosure(target workspace.Package, pkgByName map[string]workspace.Packa
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].RelPath < result[j].RelPath
 	})
-	return result
+	return result, nil
 }
 
 // writeManifests writes the pruned pnpm-workspace.yaml and all package.json files.

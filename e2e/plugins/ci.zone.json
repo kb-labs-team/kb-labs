@@ -1,1 +1,1 @@
-{"zone":"plugins","watch":["plugins/commit/**","plugins/review/**","plugins/scaffold/**","e2e/plugins/**"],"suites":["e2e-plugins"]}
+{"zone":"plugins","watch":["plugins/commit/**","plugins/review/**","e2e/plugins/**"],"suites":["e2e-plugins"]}

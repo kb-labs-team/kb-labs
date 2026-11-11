@@ -7,7 +7,7 @@ import type { FastifyBaseLogger } from 'fastify/types/logger';
 import type { FastifySchema } from 'fastify/types/schema';
 import type { FastifyTypeProvider, FastifyTypeProviderDefault } from 'fastify/types/type-provider';
 import type { ContextConfigDefault, RawReplyDefaultExpression, RawRequestDefaultExpression, RawServerBase, RawServerDefault } from 'fastify/types/utils';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { ReadinessState } from '../routes/readiness';
 import '@fastify/type-provider-typebox';
 // @fastify/swagger augments FastifySchema with `tags`/`hide`/etc. Previously

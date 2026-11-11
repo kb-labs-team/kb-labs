@@ -4,7 +4,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { SnapshotWithoutIntegrity } from '../types.js';
+import type { SnapshotWithoutIntegrity } from '@kb-labs/plugin-contracts';
 
 export const SNAPSHOT_CHECKSUM_ALGORITHM = 'sha256';
 

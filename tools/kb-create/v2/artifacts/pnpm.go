@@ -18,8 +18,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/toolchain"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/semrange"
 	"gopkg.in/yaml.v3"
 )
@@ -28,23 +32,87 @@ type Runner interface {
 	Run(context.Context, io.Writer, string, ...string) error
 }
 
-type commandRunner struct {
-	environment []string
+type CommandRunner struct {
+	environment  []string
+	corepackHome string
+	registry     string
+	offline      bool
 }
 
-func (r commandRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
-	if name == "pnpm" {
-		// Corepack downloads and caches this exact package-manager release; the
-		// user's globally installed pnpm never participates in an install.
-		args = append([]string{"pnpm@11.4.0"}, args...)
-		name = "corepack"
-	}
-	cmd := exec.CommandContext(ctx, name, args...)
+const externalCommandStderrTailBytes = 4096
+
+type externalCommandFailure struct {
+	exitCode   int
+	stderrTail string
+	cause      error
+}
+
+func (f *externalCommandFailure) Error() string { return f.cause.Error() }
+func (f *externalCommandFailure) Unwrap() error { return f.cause }
+
+func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
+	var env []string
 	if len(r.environment) > 0 {
-		cmd.Env = packageManagerEnvironment(os.Environ(), r.environment)
+		env = packageManagerEnvironment(os.Environ(), r.environment)
 	}
-	cmd.Stdout, cmd.Stderr = output, output
-	return cmd.Run()
+	var executable string
+	if name == "pnpm" {
+		var node, script string
+		var err error
+		if r.corepackHome == "" {
+			node, script, err = toolchain.PnpmExecutable()
+		} else {
+			node, script, err = toolchain.PnpmExecutableAt(r.corepackHome)
+		}
+		if err != nil {
+			if r.corepackHome == "" {
+				return err
+			}
+			source := "Corepack's default npm registry"
+			if !r.offline {
+				var provision toolchain.Result
+				provision, err = toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env, Operation: toolchain.OperationPackageManager})
+				if provision.Stdout != "" {
+					_, _ = io.WriteString(output, provision.Stdout)
+				}
+				if provision.Stderr != "" {
+					_, _ = io.WriteString(output, provision.Stderr)
+				}
+				if err == nil {
+					node, script, err = toolchain.PnpmExecutableAt(r.corepackHome)
+				}
+			}
+			if err != nil {
+				return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s.", toolchain.SupportedPnpm, source), "Check the default npm registry and rerun the install command.", err)
+			}
+		}
+		executable = node
+		args = append([]string{script}, args...)
+	} else {
+		executable = name
+	}
+	result, err := toolchain.Run(ctx, toolchain.Invocation{Tool: name, Executable: executable, Args: args, Env: env, Operation: toolchain.OperationPackageManager})
+	if result.Stdout != "" {
+		_, _ = io.WriteString(output, result.Stdout)
+	}
+	if result.Stderr != "" {
+		_, _ = io.WriteString(output, result.Stderr)
+	}
+	if err != nil {
+		var commandFailure *toolchain.CommandError
+		if errors.As(err, &commandFailure) {
+			return &externalCommandFailure{exitCode: commandFailure.ExitCode, stderrTail: commandFailure.StderrTail, cause: err}
+		}
+		return err
+	}
+	return nil
+}
+
+func tailText(content []byte, limit int) string {
+	if len(content) > limit {
+		content = content[len(content)-limit:]
+	}
+	return strings.TrimRight(strings.ToValidUTF8(string(content), "�"), "\r\n")
 }
 
 func packageManagerEnvironment(base, overrides []string) []string {
@@ -63,18 +131,52 @@ func packageManagerEnvironment(base, overrides []string) []string {
 	return append(result, overrides...)
 }
 
-type Pnpm struct {
-	Root               string
-	CacheRoot          string
-	PackageManagerRoot string
-	Registry           string
-	Offline            bool
-	Client             *http.Client
-	Runner             Runner
+type PnpmConfig struct {
+	Root                   string
+	CacheRoot              string
+	PackageManagerRoot     string
+	Registry               string
+	DefaultRegistry        string
+	ReleaseCatalog         catalog.Verified
+	PreviousReleaseCatalog *catalog.Verified
+	MarketplaceRoot        string
+	Offline                bool
+	Client                 *http.Client
+	Runner                 Runner
 	// Log receives the complete package-manager transcript. It is deliberately
 	// file-oriented: raw package-manager output must never pollute human or JSON
 	// command output.
 	Log io.Writer
+}
+
+type Pnpm struct {
+	config PnpmConfig
+}
+
+// NewPnpm creates an installer only after every required path and the release
+// catalog have been validated.
+func NewPnpm(config PnpmConfig) (Pnpm, error) {
+	for name, value := range map[string]string{
+		"root": config.Root, "cache root": config.CacheRoot,
+		"package-manager root": config.PackageManagerRoot,
+	} {
+		if strings.TrimSpace(value) == "" {
+			cause := fmt.Errorf("package installer %s is required", name)
+			return Pnpm{}, contracts.NewDiag(contracts.CodeApplyFailed, "Could not configure the package installer.",
+				"Correct the installer configuration and retry the operation that requested package installation.", cause)
+		}
+	}
+	if _, err := config.ReleaseCatalog.Catalog(); err != nil {
+		return Pnpm{}, contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The package installer requires a verified release index.",
+			"Provide a valid sealed release index and retry the operation that requested package installation.", err)
+	}
+	if config.PreviousReleaseCatalog != nil {
+		if _, err := config.PreviousReleaseCatalog.Catalog(); err != nil {
+			return Pnpm{}, contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The previous package release index is invalid.",
+				"Provide a valid sealed previous release index and retry the operation that requested package installation.", err)
+		}
+	}
+	return Pnpm{config: config}, nil
 }
 
 // pnpm refuses to run any dependency's install/postinstall script unless it
@@ -102,6 +204,27 @@ type Pnpm struct {
 var approvedNativeBuilds = []string{"better-sqlite3", "esbuild", "unrs-resolver"}
 
 func (p Pnpm) Install(items []contracts.Artifact) error {
+	verified, err := p.verifyTarballs(items)
+	if err != nil {
+		return err
+	}
+	return p.installVerified(items, verified)
+}
+
+func (p Pnpm) installVerified(items []contracts.Artifact, verified map[string][]byte) error {
+	for _, item := range items {
+		data, ok := verified[item.SHA256]
+		if !ok {
+			continue
+		}
+		path := filepath.Join(p.config.CacheRoot, "packages", item.SHA256+".tgz")
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			return err
+		}
+	}
 	if err := p.prepare(); err != nil {
 		return err
 	}
@@ -130,12 +253,52 @@ func (p Pnpm) Install(items []contracts.Artifact) error {
 	return p.verifyAndRecord(items)
 }
 
+func (p Pnpm) verifyTarballs(items []contracts.Artifact) (map[string][]byte, error) {
+	verified := make(map[string][]byte)
+	for _, item := range items {
+		if item.IsBinary() || item.Tarball == "" {
+			continue
+		}
+		if item.SHA256 == "" {
+			return nil, fmt.Errorf("artifact %q tarball requires sha256", item.ID)
+		}
+		if p.config.CacheRoot == "" {
+			return nil, fmt.Errorf("artifact %q tarball requires the install root shared cache", item.ID)
+		}
+		path := filepath.Join(p.config.CacheRoot, "packages", item.SHA256+".tgz")
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			if p.config.Offline {
+				return nil, fmt.Errorf("offline package %s is absent from V2 cache", item.ID)
+			}
+			target := item.ResolvedURL
+			if target == "" {
+				return nil, fmt.Errorf("artifact %s lacks a resolved download URL", item.ID)
+			}
+			data, err = fetchArtifact(p.config.Client, item, target)
+			if err != nil {
+				return nil, err
+			}
+		} else if err != nil {
+			return nil, err
+		}
+		if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != item.SHA256 {
+			if p.config.Offline {
+				return nil, fmt.Errorf("package %s checksum mismatch in offline cache: expected %s, got %s", item.ID, item.SHA256, actual)
+			}
+			return nil, downloadFailure(item, item.ResolvedURL, fmt.Errorf("checksum mismatch: expected %s, got %s", item.SHA256, actual))
+		}
+		verified[item.SHA256] = data
+	}
+	return verified, nil
+}
+
 func (p Pnpm) materializeManifests(items []contracts.Artifact) error {
 	for _, item := range items {
 		if item.IsBinary() {
 			continue
 		}
-		if err := installed.Write(p.Root, item); err != nil {
+		if err := installed.Write(p.config.Root, item); err != nil {
 			return err
 		}
 	}
@@ -161,7 +324,7 @@ func (p Pnpm) Restore(items []contracts.Artifact) error {
 }
 
 func (p Pnpm) verifyAndRecord(items []contracts.Artifact) error {
-	verified, err := VerifyInstalledProvenance(p.Root, items)
+	verified, err := VerifyInstalledProvenance(p.config.Root, items)
 	if err != nil {
 		return err
 	}
@@ -170,7 +333,7 @@ func (p Pnpm) verifyAndRecord(items []contracts.Artifact) error {
 
 func (p Pnpm) accept(verified VerifiedArtifactSet) error {
 	if len(verified.Manifest().Packages) > 0 {
-		return WriteInstalledProvenance(p.Root, verified.Manifest())
+		return WriteInstalledProvenance(p.config.Root, verified.Manifest())
 	}
 	return nil
 }
@@ -193,11 +356,11 @@ func (p Pnpm) Uninstall(items []contracts.Artifact) error {
 }
 
 func (p Pnpm) run(command string, specs ...string) error {
-	if p.Root == "" {
+	if p.config.Root == "" {
 		return fmt.Errorf("V2 platform root is required")
 	}
-	args := []string{command, "--dir", p.Root, "--reporter=append-only"}
-	if p.Offline {
+	args := []string{command, "--dir", p.config.Root, "--reporter=append-only"}
+	if p.config.Offline {
 		args = append(args, "--offline")
 	}
 	// remove works exclusively on the already-installed lockfile. Rechecking
@@ -208,33 +371,43 @@ func (p Pnpm) run(command string, specs ...string) error {
 	if command == "remove" {
 		args = append(args, "--config.minimumReleaseAge=0")
 	}
-	// pnpm rejects --registry for remove, but pruning a dependency graph can
-	// still need package metadata from the registry that supplied the install.
-	// Keep that registry in config form so private release candidates can be
-	// uninstalled without falling back to the public npm registry.
-	if p.Registry != "" && command == "remove" {
-		args = append(args, "--config.registry="+p.Registry)
-	}
 	args = append(args, specs...)
-	if p.Registry != "" && command != "remove" {
-		args = append(args, "--registry", p.Registry)
-	}
-	runner := p.Runner
+	runner := p.config.Runner
 	if runner == nil {
-		if p.PackageManagerRoot == "" {
+		if p.config.PackageManagerRoot == "" {
 			return fmt.Errorf("pnpm package-manager state root is required")
 		}
-		runner = commandRunner{environment: p.packageManagerEnvironment()}
+		runner = CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry, offline: p.config.Offline}
 	}
-	log := p.Log
+	log := p.config.Log
 	if log == nil {
 		log = io.Discard
 	}
 	if err := runner.Run(context.Background(), log, "pnpm", args...); err != nil {
+		var diagnostic *diag.Diag
+		if errors.As(err, &diagnostic) {
+			return diagnostic
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() < 0 {
 			failure := contracts.NewDiag(contracts.CodePackageManagerKilled, "The package manager was killed, likely out of memory. The tuned install peaked at 992.3 MiB RSS (the unbounded run reached 1.14 GiB); this install requires 1.20 GiB available memory.", "Free memory, then rerun `kb-create install`.", err)
 			failure.Meta = map[string]any{"requiredAvailableMemory": "1.20 GiB", "unboundedPeakMemory": "1.14 GiB", "tunedPeakMemory": "992.3 MiB"}
+			return failure
+		}
+		var commandFailure *externalCommandFailure
+		if errors.As(err, &commandFailure) {
+			cause := fmt.Errorf("pnpm %s exact artifacts: %w", command, err)
+			if stderrTail := strings.TrimSpace(commandFailure.stderrTail); stderrTail != "" {
+				cause = fmt.Errorf("%w; pnpm stderr tail: %s", cause, stderrTail)
+			}
+			failure := contracts.NewDiag(contracts.CodeApplyFailed,
+				"The package manager could not apply the exact artifacts.",
+				"Read the installer log and fix the reported pnpm failure, then rerun `kb-create install`.",
+				cause)
+			failure.Meta = map[string]any{
+				"packageManagerExitCode":   fmt.Sprint(commandFailure.exitCode),
+				"packageManagerStderrTail": commandFailure.stderrTail,
+			}
 			return failure
 		}
 		return fmt.Errorf("pnpm %s exact artifacts: %w", command, err)
@@ -243,22 +416,26 @@ func (p Pnpm) run(command string, specs ...string) error {
 }
 
 func (p Pnpm) packageManagerEnvironment() []string {
-	root := p.PackageManagerRoot
-	return []string{
-		"COREPACK_HOME=" + filepath.Join(root, "corepack"),
+	root := p.config.PackageManagerRoot
+	env := []string{
+		"COREPACK_HOME=" + p.corepackHome(),
 		"XDG_CACHE_HOME=" + filepath.Join(root, "xdg-cache"),
 		"XDG_DATA_HOME=" + filepath.Join(root, "xdg-data"),
 		"XDG_STATE_HOME=" + filepath.Join(root, "xdg-state"),
 		"npm_config_cache=" + filepath.Join(root, "pnpm-cache"),
+		"npm_config_devdir=" + filepath.Join(root, "node-gyp"),
 		"npm_config_store_dir=" + filepath.Join(root, "pnpm-store"),
 	}
+	return env
 }
 
+func (p Pnpm) corepackHome() string { return filepath.Join(p.config.PackageManagerRoot, "corepack") }
+
 func (p Pnpm) prepare() error {
-	if p.Root == "" {
+	if p.config.Root == "" {
 		return fmt.Errorf("V2 platform root is required")
 	}
-	if err := os.MkdirAll(p.Root, 0o750); err != nil {
+	if err := os.MkdirAll(p.config.Root, 0o750); err != nil {
 		return err
 	}
 	if err := p.preparePackageJSON(); err != nil {
@@ -271,20 +448,37 @@ func (p Pnpm) prepare() error {
 }
 
 func (p Pnpm) prepareNpmrc() error {
-	if p.Registry == "" {
+	if p.config.Registry == "" && p.config.DefaultRegistry == "" {
 		return nil
 	}
-	path := filepath.Join(p.Root, ".npmrc")
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
+	path := filepath.Join(p.config.Root, ".npmrc")
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return os.WriteFile(path, []byte("registry="+p.Registry+"\n"), 0o600)
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	filtered := make([]string, 0, len(lines)+2)
+	for _, line := range lines {
+		key, _, found := strings.Cut(line, "=")
+		if found && ((p.config.Registry != "" && strings.TrimSpace(key) == "@kb-labs:registry") ||
+			(p.config.DefaultRegistry != "" && strings.TrimSpace(key) == "registry")) {
+			continue
+		}
+		if line != "" {
+			filtered = append(filtered, line)
+		}
+	}
+	if p.config.DefaultRegistry != "" {
+		filtered = append(filtered, "registry="+p.config.DefaultRegistry)
+	}
+	if p.config.Registry != "" {
+		filtered = append(filtered, "@kb-labs:registry="+p.config.Registry)
+	}
+	return os.WriteFile(path, []byte(strings.Join(filtered, "\n")+"\n"), 0o600)
 }
 
 func (p Pnpm) preparePackageJSON() error {
-	path := filepath.Join(p.Root, "package.json")
+	path := filepath.Join(p.config.Root, "package.json")
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
@@ -302,11 +496,20 @@ func (p Pnpm) preparePackageJSON() error {
 // Plan release-age exclusions are merged separately on every install/restore,
 // preserving pnpm and user entries from previous operations.
 func (p Pnpm) prepareWorkspaceYAML() error {
-	path := filepath.Join(p.Root, "pnpm-workspace.yaml")
+	path := filepath.Join(p.config.Root, "pnpm-workspace.yaml")
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
+	}
+	if p.config.MarketplaceRoot != "" && p.config.MarketplaceRoot != p.config.Root {
+		data, err := os.ReadFile(filepath.Join(p.config.MarketplaceRoot, "pnpm-workspace.yaml"))
+		if err == nil {
+			return os.WriteFile(path, data, 0o600)
+		}
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("read previous pnpm workspace configuration: %w", err)
+		}
 	}
 	var buf bytes.Buffer
 	buf.WriteString("autoInstallPeers: false\n")
@@ -324,7 +527,7 @@ func (p Pnpm) prepareWorkspaceYAML() error {
 // plan. This lets pnpm install freshly published sealed artifacts without
 // weakening its release-age policy for dependencies resolved outside the plan.
 func (p Pnpm) mergeMinimumReleaseAgeExclude(items []contracts.Artifact) error {
-	path := filepath.Join(p.Root, "pnpm-workspace.yaml")
+	path := filepath.Join(p.config.Root, "pnpm-workspace.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read pnpm workspace configuration: %w", err)
@@ -350,6 +553,25 @@ func (p Pnpm) mergeMinimumReleaseAgeExclude(items []contracts.Artifact) error {
 	} else if exclusions.Kind != yaml.SequenceNode {
 		return fmt.Errorf("pnpm workspace minimumReleaseAgeExclude must be a list")
 	}
+	previous := make(map[string]bool)
+	pins := make(map[string]bool)
+	if p.config.PreviousReleaseCatalog != nil {
+		source, err := p.config.PreviousReleaseCatalog.Catalog()
+		if err != nil {
+			return fmt.Errorf("verify previous release index: %w", err)
+		}
+		for _, item := range source.Provenance {
+			previous[item.Package+"@"+item.Version] = true
+		}
+		root := p.config.MarketplaceRoot
+		if root == "" {
+			root = p.config.Root
+		}
+		pins, err = marketplace.MarketplacePins(root)
+		if err != nil {
+			return fmt.Errorf("read Marketplace pins: %w", err)
+		}
+	}
 	versionsByPackage := make(map[string]map[string]struct{}, len(exclusions.Content)+len(items))
 	retained := make([]string, 0, len(exclusions.Content))
 	for _, entry := range exclusions.Content {
@@ -361,14 +583,27 @@ func (p Pnpm) mergeMinimumReleaseAgeExclude(items []contracts.Artifact) error {
 			retained = append(retained, entry.Value)
 			continue
 		}
-		addExactReleaseAgeVersions(versionsByPackage, packageName, versions...)
-	}
-	for _, item := range items {
-		if item.IsBinary() {
-			continue
+		for _, version := range versions {
+			key := packageName + "@" + version
+			if !previous[key] || pins[key] {
+				addExactReleaseAgeVersions(versionsByPackage, packageName, version)
+			}
 		}
-		if item.Package == "" || item.Version == "" {
-			return fmt.Errorf("artifact %q must declare package and exact version", item.ID)
+	}
+	for pin := range pins {
+		name, versions, ok := exactReleaseAgeExclusion(pin)
+		if !ok || len(versions) != 1 {
+			return fmt.Errorf("Marketplace pin %q is not an exact package version", pin)
+		}
+		addExactReleaseAgeVersions(versionsByPackage, name, versions...)
+	}
+	source, err := p.config.ReleaseCatalog.Catalog()
+	if err != nil {
+		return fmt.Errorf("verify release index for package installation: %w", err)
+	}
+	for _, item := range source.Provenance {
+		if _, err := semrange.ParseVersion(item.Version); err != nil {
+			return fmt.Errorf("sealed package %s has invalid version: %w", item.Package, err)
 		}
 		addExactReleaseAgeVersions(versionsByPackage, item.Package, item.Version)
 	}
@@ -429,7 +664,7 @@ func addExactReleaseAgeVersions(target map[string]map[string]struct{}, packageNa
 // rule. Each sealed package name must resolve to its exact cached archive,
 // including when it appears as a transitive dependency of another artifact.
 func (p Pnpm) mergeSealedArtifactOverrides(items []contracts.Artifact) error {
-	path := filepath.Join(p.Root, "pnpm-workspace.yaml")
+	path := filepath.Join(p.config.Root, "pnpm-workspace.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read pnpm workspace configuration: %w", err)
@@ -449,12 +684,12 @@ func (p Pnpm) mergeSealedArtifactOverrides(items []contracts.Artifact) error {
 		if item.Package == "" || item.SHA256 == "" {
 			return fmt.Errorf("sealed artifact %q must declare package and sha256 for pnpm override", item.ID)
 		}
-		sealed[item.Package] = "file:" + filepath.ToSlash(filepath.Join(p.CacheRoot, "packages", item.SHA256+".tgz"))
+		sealed[item.Package] = "file:" + filepath.ToSlash(filepath.Join(p.config.CacheRoot, "packages", item.SHA256+".tgz"))
 	}
 	if len(sealed) == 0 {
 		return nil
 	}
-	if p.CacheRoot == "" {
+	if p.config.CacheRoot == "" {
 		return fmt.Errorf("sealed package overrides require the install root shared cache")
 	}
 	root := document.Content[0]
@@ -472,7 +707,7 @@ func (p Pnpm) mergeSealedArtifactOverrides(items []contracts.Artifact) error {
 		return fmt.Errorf("pnpm workspace overrides must be a mapping")
 	}
 
-	packageCachePrefix := "file:" + filepath.ToSlash(filepath.Join(p.CacheRoot, "packages")) + "/"
+	packageCachePrefix := "file:" + filepath.ToSlash(filepath.Join(p.config.CacheRoot, "packages")) + "/"
 	for i := 0; i+1 < len(overrides.Content); {
 		name := overrides.Content[i].Value
 		value := overrides.Content[i+1]
@@ -564,7 +799,7 @@ func packageNames(items []contracts.Artifact) ([]string, error) {
 }
 
 func (p Pnpm) installedExact(pkg, version string) bool {
-	data, err := os.ReadFile(filepath.Join(p.Root, "node_modules", filepath.FromSlash(pkg), "package.json"))
+	data, err := os.ReadFile(filepath.Join(p.config.Root, "node_modules", filepath.FromSlash(pkg), "package.json"))
 	if err != nil {
 		return false
 	}
@@ -578,27 +813,25 @@ func (p Pnpm) tarball(item contracts.Artifact) (string, error) {
 	if item.SHA256 == "" {
 		return "", fmt.Errorf("artifact %q tarball requires sha256", item.ID)
 	}
-	if p.CacheRoot == "" {
+	if p.config.CacheRoot == "" {
 		return "", fmt.Errorf("artifact %q tarball requires the install root shared cache", item.ID)
 	}
-	path := filepath.Join(p.CacheRoot, "packages", item.SHA256+".tgz")
+	path := filepath.Join(p.config.CacheRoot, "packages", item.SHA256+".tgz")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		if p.Offline {
+		if p.config.Offline {
 			return "", fmt.Errorf("offline package %s is absent from V2 cache", item.ID)
 		}
-		client := p.Client
-		if client == nil {
-			client = http.DefaultClient
+		target := item.ResolvedURL
+		if target == "" {
+			return "", fmt.Errorf("artifact %s lacks a resolved download URL", item.ID)
 		}
-		response, getErr := client.Get(item.Tarball)
-		if getErr != nil {
-			return "", fmt.Errorf("download package %s: %w", item.ID, getErr)
+		data, err = fetchArtifact(p.config.Client, item, target)
+		if err != nil {
+			return "", err
 		}
-		data, err = io.ReadAll(response.Body)
-		_ = response.Body.Close()
-		if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
-			return "", fmt.Errorf("download package %s: status %d: %v", item.ID, response.StatusCode, err)
+		if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != item.SHA256 {
+			return "", downloadFailure(item, target, fmt.Errorf("checksum mismatch: expected %s, got %s", item.SHA256, actual))
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return "", err
@@ -612,8 +845,8 @@ func (p Pnpm) tarball(item contracts.Artifact) (string, error) {
 	} else if err != nil {
 		return "", err
 	}
-	if fmt.Sprintf("%x", sha256.Sum256(data)) != item.SHA256 {
-		return "", fmt.Errorf("package %s checksum mismatch: expected %s, got %x", item.ID, item.SHA256, sha256.Sum256(data))
+	if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != item.SHA256 {
+		return "", fmt.Errorf("package %s checksum mismatch: expected %s, got %s", item.ID, item.SHA256, actual)
 	}
 	return path, nil
 }

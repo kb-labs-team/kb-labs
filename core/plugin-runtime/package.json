@@ -34,7 +34,7 @@
     "lint:fix": "eslint . --fix",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit && node ../../scripts/checks/typecheck-authored-esm.mjs"
   },
   "dependencies": {
     "@kb-labs/core-contracts": "workspace:*",

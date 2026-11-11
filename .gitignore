@@ -84,6 +84,7 @@ _private/
 .kb/bundle/
 .kb/release/history/
 .kb/release/backup.json
+.kb/release/plans/
 
 # ───────────────
 # Deploy runtime data (docker volumes, db state)
@@ -172,7 +173,7 @@ tools/kb-runner/kb-runner
 # `git status` so the release doctor clean-tree probe is not tripped.
 .kb/release/candidates/
 
-# Tarballs `release stage plan` publishes to the staging registry; the pack-static /
+# Tarballs `release candidate publish` publishes to the staging registry; the pack-static /
 # pack-install checks verify these instead of re-packing.
 .kb/release/staging/
 
@@ -183,3 +184,6 @@ tools/kb-runner/kb-runner
 .journey/
 __pycache__/
 *.pyc
+
+# Root Playwright test output
+/test-results/

@@ -140,6 +140,10 @@ export class DocumentLogPersistence implements ILogPersistence {
       return;
     }
     this.buffer.push(record);
+    if (record.level === "error" || record.level === "fatal") {
+      await this.flush();
+      return;
+    }
     if (this.buffer.length >= this.batchSize) {
       this.scheduleFlush();
     }
@@ -159,39 +163,37 @@ export class DocumentLogPersistence implements ILogPersistence {
   }
 
   private async flush(): Promise<void> {
-    if (this.flushing) {
-      await this.flushing;
-      return;
-    }
-    if (this.buffer.length === 0) {
-      return;
-    }
-    const batch = this.buffer.splice(0, this.buffer.length);
-
-    this.flushing = (async () => {
-      try {
-        await this.initialised;
-        await this.docs.insertMany<LogDoc>(
-          this.collection,
-          batch.map((r) => ({
-            logId: r.id,
-            timestamp: r.timestamp,
-            level: r.level,
-            message: r.message,
-            fields: r.fields,
-            source: r.source,
-          })),
-        );
-      } catch (err) {
-        // Re-queue on failure so the next attempt picks up the lost batch.
-        this.buffer.unshift(...batch);
-        throw err;
-      } finally {
-        this.flushing = null;
+    while (this.flushing || this.buffer.length > 0) {
+      if (this.flushing) {
+        await this.flushing;
+        continue;
       }
-    })();
+      const batch = this.buffer.splice(0, this.buffer.length);
 
-    await this.flushing;
+      this.flushing = (async () => {
+        try {
+          await this.initialised;
+          await this.docs.insertMany<LogDoc>(
+            this.collection,
+            batch.map((r) => ({
+              logId: r.id,
+              timestamp: r.timestamp,
+              level: r.level,
+              message: r.message,
+              fields: r.fields,
+              source: r.source,
+            })),
+          );
+        } catch (err) {
+          // Re-queue on failure so the next attempt picks up the lost batch.
+          this.buffer.unshift(...batch);
+          throw err;
+        } finally {
+          this.flushing = null;
+        }
+      })();
+      await this.flushing;
+    }
   }
 
   private scheduleFlush(): void {

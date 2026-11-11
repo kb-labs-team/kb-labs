@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -51,6 +52,16 @@ def _journey_modules(journey_root: Path = JOURNEY_DIR,
 
 
 class JourneyImportOrderTests(unittest.TestCase):
+    def test_runner_image_keeps_ux_contract_at_its_repository_relative_path(self):
+        from journey_resources import RUNNER_IMAGE_RESOURCES
+
+        resource = next(item for item in RUNNER_IMAGE_RESOURCES
+                        if item.source == "core/platform/contracts/ux-result")
+        self.assertEqual(
+            resource.destination,
+            "/opt/kb-journey/core/platform/contracts/ux-result",
+        )
+
     def test_workspace_layout_resolves_the_built_config_parser(self):
         env = os.environ.copy()
         env.pop("KB_JOURNEY_RESOURCE_LAYOUT", None)
@@ -118,6 +129,38 @@ class JourneyImportOrderTests(unittest.TestCase):
             f"runner input stage failed\nstdout:\n{staged.stdout}\nstderr:\n{staged.stderr}",
         )
 
+    def test_runner_marketplace_fixture_starts_from_its_bundled_workspace_closure(self):
+        from journey_resources import stage_marketplace_sync_fixture, workspace_resource
+        from marketplace_sync_fixture import marketplace_sync_fixture_command
+
+        stage_marketplace_sync_fixture()
+        bundle = workspace_resource(".journey", "runner-inputs", "marketplace-sync-server.mjs")
+        with tempfile.TemporaryDirectory(prefix="journey-marketplace-runner-root-") as temporary:
+            process = subprocess.Popen(
+                marketplace_sync_fixture_command(temporary, fixture_path=bundle),
+                cwd=REPOSITORY_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=3)
+            except subprocess.TimeoutExpired as error:
+                process.terminate()
+                stdout, stderr = process.communicate(timeout=3)
+                self.assertEqual(process.returncode, 0, stderr)
+                self.assertTrue(stdout.splitlines(), "bundled Marketplace fixture did not emit its URL")
+                self.assertTrue(json.loads(stdout.splitlines()[0])["url"].startswith("http://127.0.0.1:"))
+            else:
+                self.fail(f"bundled Marketplace fixture exited before serving: {stdout}\n{stderr}")
+
+    def test_marketplace_fixture_command_uses_plain_node(self):
+        from marketplace_sync_fixture import marketplace_sync_fixture_command
+
+        command = marketplace_sync_fixture_command(Path("/tmp/marketplace-root"),
+                                                   fixture_path=Path("/tmp/fixture.mjs"))
+        self.assertEqual(command, ["node", "/tmp/fixture.mjs", "/tmp/marketplace-root"])
+
     def test_every_journey_module_imports_first_in_a_fresh_interpreter(self):
         env = os.environ.copy()
         env["PYTHONPATH"] = str(JOURNEY_DIR)
@@ -174,6 +217,32 @@ class JourneyImportOrderTests(unittest.TestCase):
                     shutil.copy2(source_path, target_path)
 
             journey_root = image_root / "opt/kb-journey/e2e/journey"
+            command_bin = image_root / "command-bin"
+            command_bin.mkdir()
+            docker = command_bin / "docker"
+            docker.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1 $2\" = 'compose version' ]; then exit 0; fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o755)
+            git = command_bin / "git"
+            git.write_text("#!/bin/sh\nprintf 'runner-image-test\\n'\n", encoding="utf-8")
+            git.chmod(0o755)
+            run = subprocess.run(
+                ["bash", str(journey_root / "run.sh"), "--render-compose-config"],
+                cwd=image_root / "opt/kb-journey",
+                env={**os.environ, "PATH": f"{command_bin}{os.pathsep}{os.environ['PATH']}"},
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(
+                run.returncode,
+                0,
+                f"copied runner could not resolve its shared Compose owner\n"
+                f"stdout:\n{run.stdout}\nstderr:\n{run.stderr}",
+            )
+
             env = os.environ.copy()
             env["PYTHONPATH"] = str(journey_root)
             probe = "\n".join((

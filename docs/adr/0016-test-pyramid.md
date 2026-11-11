@@ -16,7 +16,7 @@ Adopt a three-level test pyramid enforced by devkit:
 
 ### Level 1 — Handler tests (fast, no daemon)
 
-- **Location:** `plugins/*/entry/src/__tests__/cli/*.cli.test.ts`
+- **Location:** `plugins/*/src/__tests__/cli/*.cli.test.ts`
 - **Tool:** Vitest + `vi.mock` for the HTTP client
 - **Helpers:** `@kb-labs/shared-testing-e2e` — `mockCLIInput`, `createCapturedUI`, `createMockContext`, `mockObject`
 - **Run:** `pnpm run test:cli` (per plugin) or `kb-devkit run test:cli` (all)
@@ -50,12 +50,12 @@ Adopt a three-level test pyramid enforced by devkit:
 ## Consequences
 
 - Plugin owners must add a `test:cli` script (3-line config, inherits from `@kb-labs/devkit/vitest/cli`)
-- First real tests live in `plugins/workflow/entry` as the canonical example
+- First real tests live in `services/workflow/entry` as the canonical example
 - `@kb-labs/shared-testing-e2e` gains CLI-specific helpers (`captured-ui`, `mock-context`, `mock-cli-input`)
 
 ## References
 
 - `.claude/skills/testing.md` — decision tree and templates
-- `plugins/workflow/entry/src/__tests__/cli/` — canonical examples
+- `services/workflow/entry/src/__tests__/cli/` — canonical examples
 - `e2e/workflows/specs/sse/` — SSE integration tests
 - `e2e/workflows/specs/ws/` — WS integration tests

@@ -24,7 +24,6 @@ import { metricsCollector } from '../middleware/metrics.js';
 export async function registerObservabilityRoutes(
   fastify: FastifyInstance,
   config: RestApiConfig,
-  repoRoot: string,
   historicalMetrics?: HistoricalMetricsCollector,
   platform?: PlatformServices
 ): Promise<void> {

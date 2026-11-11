@@ -276,7 +276,6 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
       return await this.queueManager.queueRequest(
         request,
         options?.signal,
-        timeoutMs,
         startTime,
         options?.onLog,
         options?.onLoggerLog,

@@ -5,20 +5,20 @@
  * Simple by default, enterprise when needed.
  */
 
-import type { BackendOptions, ExecutionBackend, ExecutionDiagnostics, ExecutionRequest, ExecutionResult, NormalizedHealthStatus, RawExecutionBackend } from './types.js';
+import type { BackendOptions, ExecutionBackend, ExecutionRequest, ExecutionResult, NormalizedHealthStatus, RawExecutionBackend } from './types.js';
 import { InProcessBackend } from './backends/in-process.js';
 import { SubprocessBackend } from './backends/subprocess.js';
 import { WorkerPoolBackend } from './backends/worker-pool/backend.js';
 import { SubprocessRunnerAdapter } from './adapters/index.js';
 import { BrokeredProcessExecutor, createDefaultProcessExecutor } from '@kb-labs/plugin-runtime';
-import { isErrorEnvelope, type IPlatformAdapters } from '@kb-labs/core-platform';
+import { LOG_PERSISTENCE_ERROR_FLUSH_TIMEOUT_MS, logDiagnosticEvent, type IPlatformAdapters } from '@kb-labs/core-platform';
 import { isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import type { ILogger } from '@kb-labs/core-platform';
 import { normalizePluginHandlerFailure } from './plugin-handler-failure.js';
 import { brandNormalizedExecutionResult, isFactoryNormalizedExecutionResult } from './normalized-result.js';
 import type { NormalizedExecutionResult } from './normalized-result.js';
-import { executionDiagnostics, normalizeExecutionFailure } from './utils.js';
+import { normalizeExecutionFailure } from './utils.js';
 
 export function ensureHostProcessExecutor(platform: BackendOptions['platform']): void {
   const host = platform as BackendOptions['platform'] & IPlatformAdapters & {
@@ -85,7 +85,7 @@ export function createExecutionBackend(options: BackendOptions): ExecutionBacken
       });
       break;
 
-    // eslint-disable-next-line sonarjs/no-duplicate-string
+
     case 'worker-pool':
       backend = new WorkerPoolBackend({
         platform: options.platform,
@@ -184,6 +184,7 @@ class NormalizingExecutionBackend implements ExecutionBackend {
       correlationId,
       logger: this.logger,
       diagnosticStack: executionDiagnostics?.errorStack,
+      workerDiagnostic: executionDiagnostics?.worker,
       serializedError: executionError.error,
       returnedFailureError,
       executionEnvelope,
@@ -195,6 +196,7 @@ class NormalizingExecutionBackend implements ExecutionBackend {
       },
       returnedFailure,
     });
+    await this.flushFailureLog(correlationId);
     return brandNormalizedExecutionResult({
       ...normalizedResult,
       ok: false,
@@ -205,6 +207,34 @@ class NormalizingExecutionBackend implements ExecutionBackend {
         envelope: error,
       },
     });
+  }
+
+  private async flushFailureLog(correlationId: string): Promise<void> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const flush = Promise.resolve().then(() => this.logger.flush());
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error('log persistence flush timed out')), LOG_PERSISTENCE_ERROR_FLUSH_TIMEOUT_MS);
+    });
+
+    try {
+      await Promise.race([flush, deadline]);
+    } catch (persistenceFailure) {
+      const error = persistenceFailure instanceof Error
+        ? persistenceFailure
+        : new Error(String(persistenceFailure));
+      logDiagnosticEvent(this.logger, {
+        event: 'platform.log.persistence.flush.failed',
+        message: 'Failed to persist a normalized plugin handler failure.',
+        reasonCode: 'LOG_PERSISTENCE_FLUSH_FAILED',
+        level: 'error',
+        domain: 'service',
+        outcome: 'failed',
+        error,
+        evidence: { correlationId, timeoutMs: LOG_PERSISTENCE_ERROR_FLUSH_TIMEOUT_MS },
+      });
+    } finally {
+      if (timeout) {clearTimeout(timeout);}
+    }
   }
 
   async health(): Promise<NormalizedHealthStatus> {

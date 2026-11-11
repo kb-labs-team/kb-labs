@@ -1,6 +1,9 @@
 import { ErrorEnvelopeError } from '@kb-labs/core-platform';
-import { describe, expect, it } from 'vitest';
+import { getCatalogEntry } from '@kb-labs/core-platform/error-envelope';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { requireProjectContext } from '../project-context.js';
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe('requireProjectContext', () => {
   it('returns a registered project root', () => {
@@ -17,11 +20,33 @@ describe('requireProjectContext', () => {
 
     expect(caught).toBeInstanceOf(ErrorEnvelopeError);
     if (caught instanceof ErrorEnvelopeError) {
+      const entry = getCatalogEntry('KB_PROJECT_UNKNOWN');
+      const values = { path: '/workspace/unregistered' };
       expect(caught.envelope).toMatchObject({
         code: 'KB_PROJECT_UNKNOWN',
-        message: 'The project /workspace/unregistered is not in the registry (the folder may have moved).',
-        hint: 'Register it with "kb project add /workspace/unregistered".',
+        message: entry.message.replace('{path}', values.path),
+        hint: entry.hint.replace('{path}', values.path),
       });
+    }
+  });
+
+  // case: S-051.1
+  it('redacts the active HOME prefix in the catalogued project error', () => {
+    vi.stubEnv('HOME', '/fixture/home');
+    let caught: unknown;
+    try {
+      requireProjectContext(undefined, '/fixture/home/unregistered');
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ErrorEnvelopeError);
+    if (caught instanceof ErrorEnvelopeError) {
+      const entry = getCatalogEntry('KB_PROJECT_UNKNOWN');
+      expect(caught.envelope.details).toMatchObject({ path: '~/unregistered' });
+      expect(caught.envelope.message).toBe(entry.message.replace('{path}', '~/unregistered'));
+      expect(caught.envelope.hint).toBe(entry.hint.replace('{path}', '~/unregistered'));
+      expect(caught.envelope.cause).toBeUndefined();
     }
   });
 });

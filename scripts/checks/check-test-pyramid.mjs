@@ -1,17 +1,17 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 /**
  * check-test-pyramid custom check
  *
  * Validates that plugin-entry packages have CLI handler tests:
  *   - src/__tests__/cli/ directory exists
  *   - each src/commands/<name>.ts has a matching src/__tests__/cli/<name>.cli.test.ts
- *   - package.json has a "test:cli" script
+ * `test:cli` presence is governed by the manifest-derived plugin-cli-test-policy check.
  *
- * Output format (TypedCheckOutput):
- *   { ok: boolean, items: [{ target, message, fix? }] }
+ * Output format consumed by kb-devkit's external-check contract:
+ *   { issues: [{ check, severity, message, file, fix? }] }
  *
- * Runs with cwd = package directory.
- * Receives package JSON on stdin.
+ * Runs as a package-scoped source-tree check; script-presence policy is separate.
  */
 
 import { existsSync, readdirSync } from 'node:fs';
@@ -19,25 +19,7 @@ import { join, basename, extname } from 'node:path';
 
 const cwd = process.cwd();
 
-function readStdin() {
-  const chunks = [];
-  process.stdin.resume();
-  process.stdin.setEncoding('utf-8');
-  return new Promise((resolve) => {
-    process.stdin.on('data', (c) => chunks.push(c));
-    process.stdin.on('end', () => resolve(chunks.join('')));
-  });
-}
-
 async function main() {
-  const raw = await readStdin();
-  let pkg = {};
-  try {
-    pkg = JSON.parse(raw);
-  } catch {
-    // stdin may be empty in some devkit versions; proceed with cwd-based check
-  }
-
   const items = [];
   const commandsDir = join(cwd, 'src/commands');
   const testCliDir = join(cwd, 'src/__tests__/cli');
@@ -83,23 +65,15 @@ async function main() {
     });
   }
 
-  // ── 5. Missing test:cli script ─────────────────────────────────────────────
-
-  const scripts = pkg?.scripts ?? {};
-  if (!scripts['test:cli']) {
-    items.push({
-      target: 'package.json#scripts.test:cli',
-      severity: 'error',
-      message: `Missing "test:cli" script. Add: "test:cli": "vitest run --config vitest.cli.config.ts --passWithNoTests"`,
-      fix: 'pnpm pkg set scripts.test:cli="vitest run --config vitest.cli.config.ts --passWithNoTests"',
-    });
-  }
-
-  const hasErrors = items.some((i) => i.severity === 'error');
-  const result = { ok: !hasErrors, items };
-
-  process.stdout.write(JSON.stringify(result, null, 2));
-  process.exit(0);
+  const check = process.env.KB_DEVKIT_CHECK_NAME;
+  const issues = items.map(({ target, severity, message, fix }) => ({
+    check,
+    severity,
+    message,
+    file: target,
+    ...(fix ? { fix } : {}),
+  }));
+  writeCheckResult(issues);
 }
 
 main().catch((err) => {

@@ -56,8 +56,9 @@ func (r recoverRequest) args() []string {
 }
 
 type doctorCommandResult struct {
-	Operation string `json:"operation"`
-	Status    string `json:"status"`
+	Operation          string           `json:"operation"`
+	Status             string           `json:"status"`
+	MarketplaceSources []map[string]any `json:"marketplaceSources,omitempty"`
 	doctor.Response
 }
 
@@ -70,6 +71,16 @@ func (d doctorCommandResult) human() string {
 	}
 	if d.PlatformVersion != "" {
 		lines = append(lines, "Platform version: "+d.PlatformVersion)
+	}
+	for _, source := range d.MarketplaceSources {
+		line := fmt.Sprintf("Marketplace source: %s %s", source["kind"], source["url"])
+		if source["signingKeyConfigured"] == true {
+			line += " (signing key configured)"
+		}
+		if source["authTokenConfigured"] == true {
+			line += " (token configured)"
+		}
+		lines = append(lines, line)
 	}
 	if d.PendingRestart != nil {
 		lines = append(lines, renderPendingRestart(d.PendingRestart))
@@ -226,6 +237,7 @@ func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult
 	result, err := swap.Run(ctx, lifecycleHost{command: command, state: state}, swap.Operation{
 		Name:            "repair",
 		PreviousVersion: installedVersion(platformRoot),
+		KeepStoppedIf:   func() bool { return unresolvedRequiredInput },
 		Change: func(context.Context, bool) (string, error) {
 			active, receiptErr := receipt.Read(activeRoot)
 			if receiptErr != nil {
@@ -264,12 +276,8 @@ func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult
 	}
 	if active, receiptErr := receipt.Read(platformRoot); receiptErr == nil && active.Plan.Host != nil {
 		if origin := recordedGatewayURL(active); origin != "" {
-			launcherState, stateErr := host.StateHome()
-			if stateErr != nil {
-				return doctorFixResult{}, asDiag(stateErr)
-			}
-			registry := gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}
-			if registryErr := registry.Register(platformRoot, origin); registryErr != nil {
+			registry := gateway.Registry{OperationRoot: root}
+			if registryErr := registry.Writer(gateway.DoctorFix).Register(platformRoot, origin); registryErr != nil {
 				return doctorFixResult{}, asDiag(registryErr)
 			}
 		}
@@ -284,7 +292,7 @@ func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult
 	// user input. Return through clikit's success boundary so that the structured
 	// repair.requiredInput details remain in data instead of becoming a generic
 	// unhealthy-status error.
-	return doctorFixResult{OK: fixOK, Operation: "doctor-fix", Findings: response.Findings, Repair: response.Repair, Snapshot: snapshotSummary(snapshot), HostRestarted: result.WasRunning}, nil
+	return doctorFixResult{OK: fixOK, Operation: "doctor-fix", Findings: response.Findings, Repair: response.Repair, Snapshot: snapshotSummary(snapshot), HostRestarted: result.WasRunning && !unresolvedRequiredInput}, nil
 }
 
 // runRecover runs the platform's recovery tool with the host stopped, so the

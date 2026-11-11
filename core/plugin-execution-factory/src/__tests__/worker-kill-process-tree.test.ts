@@ -35,7 +35,7 @@ function makeRequest(overrides: Partial<ExecutionRequest> = {}): ExecutionReques
     input: {},
     descriptor: {
       hostType: 'cli',
-      pluginId: '@kb-labs/release-manager-cli',
+      pluginId: '@kb-labs/release',
       handlerId: 'checks',
     } as unknown as ExecutionRequest['descriptor'],
     ...overrides,

@@ -1,6 +1,0 @@
-id: rest
-describe: |
-  Adds a REST route (`GET /<name>/hello`) backed by the same `-core` logic.
-  Routes are handled through the gateway when the host plugin runs.
-  Requires `base`.
-requires: [base]

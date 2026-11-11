@@ -9,8 +9,7 @@
     "./tokens.css": "./tokens.css"
   },
   "scripts": {
-    "build": "tsc --noEmit",
-    "lint": "eslint ."
+    "build": "tsc --noEmit"
   },
   "dependencies": {
     "@kb-labs/web-site-tokens": "workspace:*",

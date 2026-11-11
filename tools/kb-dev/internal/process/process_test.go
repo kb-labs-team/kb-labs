@@ -3,6 +3,8 @@ package process
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -80,11 +82,30 @@ func TestKillGroup(t *testing.T) {
 	logFile := filepath.Join(dir, "test.log")
 
 	result, err := Spawn(SpawnOpts{
-		Command: "sleep 60",
+		Command: "sleep 60 & echo $!; wait",
 		LogFile: logFile,
 	})
 	if err != nil {
 		t.Fatalf("Spawn() error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = KillGroup(result.PGID, 2*time.Second)
+		_, _ = result.Process.Wait()
+	})
+	var grandchildPID int
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		data, readErr := os.ReadFile(logFile)
+		if readErr == nil {
+			grandchildPID, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+			if grandchildPID > 0 {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if grandchildPID == 0 {
+		t.Fatal("spawned shell did not report its grandchild PID")
 	}
 
 	if err := KillGroup(result.PGID, 2*time.Second); err != nil {
@@ -101,6 +122,9 @@ func TestKillGroup(t *testing.T) {
 		if IsAlive(result.PID) {
 			t.Error("process should be dead after KillGroup")
 		}
+	}
+	if IsAlive(grandchildPID) {
+		t.Errorf("grandchild %d should be dead after KillGroup", grandchildPID)
 	}
 }
 

@@ -47,7 +47,7 @@ Get your API key at **ClickUp → Settings → Apps**.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/clickup-entry
+pnpm kb marketplace install @kb-labs/clickup
 ```
 
 ---
@@ -57,9 +57,9 @@ pnpm kb marketplace install @kb-labs/clickup-entry
 ### Workspace
 
 ```bash
-kb clickup workspace                   # full hierarchy: spaces → folders → lists
-kb clickup workspace --json            # slim JSON
-kb clickup workspace --json --full     # raw API response
+kb clickup workspace show                   # full hierarchy: spaces → folders → lists
+kb clickup workspace show --json            # slim JSON
+kb clickup workspace show --json --full     # raw API response
 ```
 
 ### Tasks
@@ -83,8 +83,8 @@ kb clickup task comments add  <taskId> --text "Fixed in branch feature/x"
 ### Lists
 
 ```bash
-kb clickup list tasks    <listId>
-kb clickup list statuses <listId>
+kb clickup task list    <listId>
+kb clickup status list <listId>
 kb clickup list create   --folder <folderId> --name "Backlog"
 kb clickup list update   <listId> --name "Sprint 5"
 kb clickup list delete   <listId> --force

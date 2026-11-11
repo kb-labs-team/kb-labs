@@ -72,11 +72,10 @@ export const run = defineCommand({
 
 ```typescript
 // src/rest/handlers/user-handler.ts
-import { definePluginHandler } from '@kb-labs/plugin-runtime';
+import { defineHandler } from '@kb-labs/sdk';
 
-export const handleListUsers = definePluginHandler({
-  schema: { input: ListUsersSchema, output: UsersResponseSchema },
-  async handle(input, ctx) {
+export const handleListUsers = defineHandler({
+  async execute(ctx, input) {
     const tenantId = ctx.tenantId ?? 'default';
 
     ctx.output?.info('Listing users', {
@@ -190,9 +189,8 @@ import { getQuotasForTier, TenantRateLimiter } from '@kb-labs/tenant';
 
 const limiter = new TenantRateLimiter(broker);
 
-export const handleCreateWorkflow = definePluginHandler({
-  schema: { input: CreateWorkflowSchema, output: WorkflowResponseSchema },
-  async handle(input, ctx) {
+export const handleCreateWorkflow = defineHandler({
+  async execute(ctx, input) {
     const tenantId = ctx.tenantId ?? 'default';
     const tier = process.env.KB_TENANT_DEFAULT_TIER ?? 'free';
 

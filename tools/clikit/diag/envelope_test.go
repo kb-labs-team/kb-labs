@@ -1,6 +1,7 @@
 package diag
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -119,5 +120,52 @@ func TestToEnvelopeRequiresGeneratedUnknownCommandTemplateParameter(t *testing.T
 	var violation *Diag
 	if !errors.As(err, &violation) || violation.Code != "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION" || violation.Meta["fields"] != "binary" {
 		t.Fatalf("ToEnvelope error = %v, want missing generated binary contract diagnostic", err)
+	}
+}
+
+func TestToEnvelopePreservesStructuredDetails(t *testing.T) {
+	items := []map[string]string{{"kind": "workflow", "id": "run-1", "owningService": "workflow"}}
+	diagnostic := New("KB_RESTART_WORK_IN_FLIGHT", "Active work prevents restart.", WithMeta(map[string]any{
+		"items":            items,
+		"interruptCommand": "kb-create restart --interrupt",
+	}))
+	envelope, err := ToEnvelope(diagnostic)
+	if err != nil {
+		t.Fatalf("ToEnvelope() error = %v", err)
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var received map[string]any
+	if err := json.Unmarshal(encoded, &received); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	details, ok := received["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("details = %#v, want object", received["details"])
+	}
+	got, ok := details["items"].([]any)
+	if !ok || len(got) != 1 {
+		t.Fatalf("details.items = %#v, want one JSON object", details["items"])
+	}
+	item, ok := got[0].(map[string]any)
+	if !ok || item["owningService"] != "workflow" {
+		t.Fatalf("details.items[0] = %#v, want structured owner", got[0])
+	}
+}
+
+func TestToEnvelopeEnforcesRequiredStructuredDetailSchema(t *testing.T) {
+	for name, details := range map[string]map[string]any{
+		"missing items": {"interruptCommand": "kb-create restart --interrupt"},
+		"invalid item":  {"interruptCommand": "kb-create restart --interrupt", "items": []map[string]any{{"kind": "workflow", "id": "run-1", "owningService": "workflow", "extra": true}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ToEnvelope(New("KB_RESTART_WORK_IN_FLIGHT", "Active work prevents restart.", WithMeta(details)))
+			var violation *Diag
+			if !errors.As(err, &violation) || violation.Code != "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION" {
+				t.Fatalf("ToEnvelope error = %v, want catalog contract violation", err)
+			}
+		})
 	}
 }

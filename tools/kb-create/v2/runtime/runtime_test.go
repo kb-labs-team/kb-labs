@@ -2,7 +2,12 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,9 +16,12 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/artifacts"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
-	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
+	receiptpkg "github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -23,18 +31,34 @@ type fixedClock struct{ time.Time }
 func (c fixedClock) Now() time.Time { return c.Time }
 
 type fakeInstaller struct {
-	artifacts []contracts.Artifact
-	restored  []contracts.Artifact
-	err       error
-	removed   []contracts.Artifact
-	restores  int
+	artifacts  []contracts.Artifact
+	restored   []contracts.Artifact
+	err        error
+	removed    []contracts.Artifact
+	restores   int
+	prepareErr error
+	prepares   int
 }
+
+func (f *fakeInstaller) Prepare(items []contracts.Artifact) (contracts.PreparedArtifacts, error) {
+	f.prepares++
+	if f.prepareErr != nil {
+		return nil, f.prepareErr
+	}
+	return fakePreparedArtifacts{install: func() error { return f.Install(items) }}, nil
+}
+
+type fakePreparedArtifacts struct{ install func() error }
+
+func (f fakePreparedArtifacts) Install(func(string, bool) error) error { return f.install() }
+func (fakePreparedArtifacts) Close() error                             { return nil }
 
 func (f *fakeInstaller) Install(items []contracts.Artifact) error {
 	f.artifacts = append(f.artifacts, items...)
 	return f.err
 }
-func (f *fakeInstaller) Restore(items []contracts.Artifact) error {
+func (f *fakeInstaller) Restore(plan, _ contracts.ResolvedInstallPlan) error {
+	items := plan.Artifacts
 	f.restored = append(f.restored, items...)
 	f.restores++
 	return nil
@@ -84,6 +108,8 @@ func planIn(root, hash string) contracts.ResolvedInstallPlan {
 func TestApplyCommitsReceiptOnlyAfterVerification(t *testing.T) {
 	root := t.TempDir()
 	plan := planIn(root, "123456789012345")
+	plan.BinarySource = "http://127.0.0.1:8787"
+	plan.Registry = "http://127.0.0.1:4873"
 	plan.Artifacts = []contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2.0.0"}}
 	installer := &fakeInstaller{}
 	receipt, err := Apply(context.Background(), plan, Dependencies{Artifacts: installer, Clock: fixedClock{time.Unix(0, 0)}, CorrelationID: "c1"})
@@ -92,6 +118,10 @@ func TestApplyCommitsReceiptOnlyAfterVerification(t *testing.T) {
 	}
 	if receipt.ID != "19700101T000000Z-123456789012" || len(installer.artifacts) != 1 {
 		t.Fatalf("receipt/installer = %#v / %#v", receipt, installer)
+	}
+	persisted, err := receiptpkg.Read(root)
+	if err != nil || persisted.Plan.BinarySource != plan.BinarySource || persisted.Plan.Registry != plan.Registry {
+		t.Fatalf("persisted sources = %q / %q; error = %v", persisted.Plan.BinarySource, persisted.Plan.Registry, err)
 	}
 	if receipt.Verification.HostHealthURL != plan.Host.HealthURL || receipt.Verification.ConfigSHA256 == "" {
 		t.Fatalf("verification = %#v", receipt.Verification)
@@ -253,7 +283,7 @@ func TestApplyStartsAndRetainsTheResolvedHost(t *testing.T) {
 func TestApplyStopsHostAndPreservesPreviousStateWhenVerificationFails(t *testing.T) {
 	root := t.TempDir()
 	previous := contracts.InstallReceipt{ID: "previous", InstallationID: "stable"}
-	if err := receipt.Write(root, previous); err != nil {
+	if err := receiptpkg.Write(root, previous); err != nil {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(root, ".kb", "kb.config.jsonc")
@@ -285,7 +315,7 @@ func TestApplyStopsHostAndPreservesPreviousStateWhenVerificationFails(t *testing
 	if host.stops != 1 {
 		t.Fatalf("failed verification left the host running: stops = %d", host.stops)
 	}
-	got, readErr := receipt.Read(root)
+	got, readErr := receiptpkg.Read(root)
 	if readErr != nil || got.ID != previous.ID || got.InstallationID != previous.InstallationID {
 		t.Fatalf("previous receipt = %#v, %v", got, readErr)
 	}
@@ -331,7 +361,7 @@ func TestApplyClientProfileInstallsWithoutRuntimeConfigOrHostProbe(t *testing.T)
 	if _, err := os.Stat(filepath.Join(root, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
 		t.Fatalf("client runtime config stat error = %v", err)
 	}
-	if _, err := receipt.Read(root); err != nil {
+	if _, err := receiptpkg.Read(root); err != nil {
 		t.Fatalf("client receipt was not committed: %v", err)
 	}
 }
@@ -361,7 +391,7 @@ func TestUpdateSnapshotsPreviousVerifiedReceipt(t *testing.T) {
 	previous := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", InstallationID: "stable-installation",
 		ProjectSelectedPath: "/work/selected-alias", ProjectID: "prj_0123456789abcdef", ProjectCanonicalPath: "/work/project",
 		Plan: contracts.ResolvedInstallPlan{PlanHash: "old"}}
-	if err := receipt.Write(root, previous); err != nil {
+	if err := receiptpkg.Write(root, previous); err != nil {
 		t.Fatal(err)
 	}
 	result, snapshot, err := Update(context.Background(), planIn(root, "new-plan-123456"), Dependencies{Artifacts: &fakeInstaller{}, Clock: fixedClock{time.Unix(4, 0)}})
@@ -393,7 +423,7 @@ func TestUninstallRemovesPlatformRootAfterRemovingReceiptArtifacts(t *testing.T)
 	installed := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", InstallationID: installationID,
 		Plan: contracts.ResolvedInstallPlan{PlanHash: "old", Request: contracts.InstallRequest{PlatformRoot: root},
 			ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"}, Artifacts: []contracts.Artifact{{ID: "plugin", Package: "@kb/plugin"}}}}
-	if err := receipt.Write(stage, installed); err != nil {
+	if err := receiptpkg.Write(stage, installed); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(stage, ".kb"), 0o750); err != nil {
@@ -414,7 +444,7 @@ func TestUninstallRemovesPlatformRootAfterRemovingReceiptArtifacts(t *testing.T)
 	}
 	installed.ID, installed.Plan.PlanHash = "after", "new"
 	installed.Plan.ServiceGraph.PlatformVersion = "2.0.0"
-	if err := receipt.Write(stage, installed); err != nil {
+	if err := receiptpkg.Write(stage, installed); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := layout.Activate(stage, "2.0.0", "new", ""); err != nil {
@@ -438,7 +468,7 @@ func TestUninstallRemovesPlatformRootAfterRemovingReceiptArtifacts(t *testing.T)
 func TestUpdateRestoresPreviousReceiptWhenTheNewHostDoesNotStart(t *testing.T) {
 	root := t.TempDir()
 	previousArtifacts := []contracts.Artifact{{ID: "previous", Package: "@kb/previous", Version: "1.0.0"}}
-	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", InstallationID: "stable-installation", Plan: contracts.ResolvedInstallPlan{PlanHash: "old", Artifacts: previousArtifacts}}); err != nil {
+	if err := receiptpkg.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", InstallationID: "stable-installation", Plan: contracts.ResolvedInstallPlan{PlanHash: "old", Artifacts: previousArtifacts}}); err != nil {
 		t.Fatal(err)
 	}
 	installer := &fakeInstaller{}
@@ -449,7 +479,7 @@ func TestUpdateRestoresPreviousReceiptWhenTheNewHostDoesNotStart(t *testing.T) {
 	if !reflect.DeepEqual(installer.restored, previousArtifacts) {
 		t.Fatalf("restored artifacts = %#v, want previous receipt plan %#v", installer.restored, previousArtifacts)
 	}
-	active, readErr := receipt.Read(root)
+	active, readErr := receiptpkg.Read(root)
 	if readErr != nil || active.ID != "before" || active.InstallationID != "stable-installation" {
 		t.Fatalf("receipt = %#v, %v", active, readErr)
 	}
@@ -466,6 +496,9 @@ func TestFreshApplyGeneratesStableInstallationIdentityForHostAndReceipt(t *testi
 	}
 	if result.InstallationID == "" || probe.specs[0].Env["KB_INSTALLATION_ID"] != result.InstallationID {
 		t.Fatalf("receipt identity %q, probed host identity %q", result.InstallationID, probe.specs[0].Env["KB_INSTALLATION_ID"])
+	}
+	if result.Plan.Host == nil || result.Plan.Host.Env["KB_INSTALLATION_ID"] != "" {
+		t.Fatalf("launcher-owned process identity leaked into the persisted host declaration: %#v", result.Plan.Host)
 	}
 	if stored, present, err := store.Get("installation.id"); err != nil || !present || stored != result.InstallationID {
 		t.Fatalf("persistent installation ID = %q, present=%v, error=%v", stored, present, err)
@@ -504,7 +537,7 @@ func TestGatewayAddressPersistsAcrossUpdateAndRollback(t *testing.T) {
 	if _, err := Rollback(root, snapshot.ID, Dependencies{Artifacts: &fakeInstaller{}}); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := receipt.Read(root)
+	restored, err := receiptpkg.Read(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +550,7 @@ func TestGatewayAddressPersistsAcrossUpdateAndRollback(t *testing.T) {
 // case: PC-001.14
 func TestUpdateRejectsReceiptWithoutInstallationIdentity(t *testing.T) {
 	root := t.TempDir()
-	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "receipt-old"}); err != nil {
+	if err := receiptpkg.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "receipt-old"}); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err := Update(context.Background(), planIn(root, "new-plan"), Dependencies{Artifacts: &fakeInstaller{}})
@@ -538,6 +571,81 @@ func TestUpdateRejectsMissingDependenciesBeforeSnapshot(t *testing.T) {
 	}
 }
 
+func TestUpdateRequiresArtifactPreparationBeforeSnapshot(t *testing.T) {
+	root := t.TempDir()
+	preparationFailure := errors.New("sealed digest mismatch")
+	installer := &fakeInstaller{prepareErr: preparationFailure}
+	_, snapshot, err := Update(context.Background(), planIn(root, "verified-update-plan"), Dependencies{Artifacts: installer})
+	if !errors.Is(err, preparationFailure) || snapshot.ID != "" || installer.prepares != 1 || len(installer.artifacts) != 0 {
+		t.Fatalf("update = snapshot %#v, installer %#v, error %v; want verification refusal before snapshot/install", snapshot, installer, err)
+	}
+	layout, layoutErr := versionroot.New(root)
+	if layoutErr != nil {
+		t.Fatal(layoutErr)
+	}
+	if _, statErr := os.Stat(layout.SnapshotsDir()); !os.IsNotExist(statErr) {
+		t.Fatalf("verification refusal created snapshot storage: %v", statErr)
+	}
+}
+
+func TestUpdateInstallsTheSingleVerifiedArtifactResponse(t *testing.T) {
+	root := t.TempDir()
+	var source catalog.Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("2.0.0", "2.0.0", "darwin", "arm64"), &source); err != nil {
+		t.Fatal(err)
+	}
+	source = testfixtures.MustSealCatalog(source)
+	verified, err := catalog.VerifyCatalog(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receiptpkg.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before",
+		InstallationID: "stable-installation", Plan: contracts.ResolvedInstallPlan{PlanHash: "old", ReleaseCatalog: encoded}}); err != nil {
+		t.Fatal(err)
+	}
+	good := []byte("sealed binary bytes")
+	corrupt := []byte("second response is corrupt")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requests++
+		if requests == 1 {
+			_, _ = writer.Write(good)
+			return
+		}
+		_, _ = writer.Write(corrupt)
+	}))
+	t.Cleanup(server.Close)
+	item := contracts.Artifact{ID: "kb-dev", Kind: "binary", URL: server.URL, ResolvedURL: server.URL,
+		SHA256: fmt.Sprintf("%x", sha256.Sum256(good)), Target: "kb-dev"}
+	plan := planIn(root, "new-plan-123456")
+	plan.Artifacts = []contracts.Artifact{item}
+	cacheRoot := filepath.Join(root, ".kb", "v2", "cache")
+	packages, err := artifacts.NewPnpm(artifacts.PnpmConfig{Root: root, CacheRoot: cacheRoot,
+		PackageManagerRoot: filepath.Join(root, "state"), Registry: "https://registry.test", ReleaseCatalog: verified})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := artifacts.Composite{
+		Packages: packages,
+		Binaries: artifacts.Binaries{Root: root, CacheRoot: cacheRoot},
+	}
+	_, snapshot, err := Update(context.Background(), plan, Dependencies{Artifacts: installer, Probe: &fakeProbe{}, Clock: fixedClock{time.Unix(4, 0)}})
+	if err != nil || snapshot.ID == "" {
+		t.Fatalf("update = snapshot %#v, error %v", snapshot, err)
+	}
+	installed, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "bin", "kb-dev"))
+	if err != nil || !reflect.DeepEqual(installed, good) {
+		t.Fatalf("installed bytes = %q, error %v; want the first verified response %q", installed, err, good)
+	}
+	if requests != 1 {
+		t.Fatalf("artifact source received %d requests; want exactly one", requests)
+	}
+}
+
 // case: PC-001.14
 func TestRollbackRestoresSnapshotAndVerifiesTheRestoredInstallation(t *testing.T) {
 	root := t.TempDir()
@@ -549,7 +657,7 @@ func TestRollbackRestoresSnapshotAndVerifiesTheRestoredInstallation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := receipt.CreateSnapshot(root, layout.SnapshotsDir(), time.Unix(9, 0))
+	snapshot, err := receiptpkg.CreateSnapshot(root, layout.SnapshotsDir(), time.Unix(9, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,12 +668,35 @@ func TestRollbackRestoresSnapshotAndVerifiesTheRestoredInstallation(t *testing.T
 	if installer.restores != 1 {
 		t.Fatalf("restores = %d", installer.restores)
 	}
-	active, err := receipt.Read(root)
+	active, err := receiptpkg.Read(root)
 	if err != nil || active.InstallationID != installed.InstallationID {
 		t.Fatalf("restored identity = %q, error=%v; want %q", active.InstallationID, err, installed.InstallationID)
 	}
 	if _, err := Rollback(root, "", Dependencies{Artifacts: installer}); err == nil {
 		t.Fatal("rollback must name its snapshot")
+	}
+}
+
+func TestRollbackVerifiesConfigAtRestoredRootWhenReceiptKeepsItsOriginalRequestPath(t *testing.T) {
+	root := t.TempDir()
+	installed, err := Apply(context.Background(), planIn(root, "before"), Dependencies{Artifacts: &fakeInstaller{}, Clock: fixedClock{time.Unix(18, 0)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed.Plan.Request.PlatformRoot = filepath.Join(t.TempDir(), "removed-version-root")
+	if err := receiptpkg.Write(root, installed); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := receiptpkg.CreateSnapshot(root, layout.SnapshotsDir(), time.Unix(19, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Rollback(root, snapshot.ID, Dependencies{Artifacts: &fakeInstaller{}}); err != nil {
+		t.Fatalf("rollback must verify the restored config under %s, not the stale plan path: %v", root, err)
 	}
 }
 

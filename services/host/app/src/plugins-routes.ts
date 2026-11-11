@@ -4,7 +4,7 @@
  * Host-owned `/api/v1/plugins` API (stage 6, second slice): per-project
  * list/enable/disable, over HTTP, so Studio can manage a project's plugins
  * without a terminal. It calls the exact same marketplace operations as `kb
- * marketplace plugins list|enable|disable` (`plugins/marketplace/entry/src/
+ * marketplace plugins list|enable|disable` (`cli/commands/src/commands/system/marketplace/src/
  * commands/plugins/*`) through {@link MarketplaceClient} — the host's internal
  * loopback address for the co-located marketplace module (ADR-0043), so there
  * is never a second `.kb/marketplace.lock` writer. Mounted on the gateway as
@@ -23,8 +23,8 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from "@kb-labs/core-platform";
-import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { projectErrorEnvelope, showProject } from "@kb-labs/core-project-registry";
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import type { HostRoutes } from "@kb-labs/gateway-app";
 import { invalidBody, sendData, sendEnvelope } from "./envelope.js";
 import { MarketplaceClientError, type MarketplaceClient } from "./marketplace-client.js";

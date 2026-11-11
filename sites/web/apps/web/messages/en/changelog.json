@@ -157,7 +157,7 @@
           },
           {
             "type": "new",
-            "text": "release is now a registered installable plugin target (@kb-labs/release-manager-cli)"
+            "text": "release is now a registered installable plugin target (@kb-labs/release/cli)"
           },
           {
             "type": "improved",

@@ -1,3 +1,5 @@
+import ts from 'typescript';
+
 const FUNCTION_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
 
 function parameterIdentifiers(pattern, result = []) {
@@ -32,7 +34,70 @@ function parameterIdentifiers(pattern, result = []) {
 }
 
 function publicClassMember(member) {
-  return member.accessibility !== 'private' && member.key?.type !== 'PrivateIdentifier';
+  return member.accessibility !== 'private' && member.accessibility !== 'protected' && member.key?.type !== 'PrivateIdentifier';
+}
+
+function contractMemberName(member) {
+  return member.key?.name ?? member.key?.value;
+}
+
+function localInterfaceDeclaresMember(classNode, member, program) {
+  const heritage = classNode.implements ?? (classNode.superClass ? [{ expression: classNode.superClass }] : []);
+  if (!heritage?.length) {
+    return false;
+  }
+  const names = new Set(heritage.map(({ expression }) => expression?.name).filter(Boolean));
+  return program.body.some((statement) =>
+    (statement.type === 'TSInterfaceDeclaration' && names.has(statement.id.name)
+      || statement.type === 'ClassDeclaration' && names.has(statement.id?.name))
+    && statement.body.body.some((declaration) => contractMemberName(declaration) === contractMemberName(member)));
+}
+
+function hasExplicitJSDocType(node, sourceCode) {
+  const comment = sourceCode.getJSDocComment(node);
+  if (!comment) return false;
+  const parsed = ts.createSourceFile(
+    'jsdoc-contract.js',
+    `${sourceCode.getText(comment)}\nconst value = {};`,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const declaration = parsed.statements.find(ts.isVariableStatement)?.declarationList.declarations[0];
+  return Boolean(declaration && ts.getJSDocTypeTag(declaration)?.typeExpression?.type);
+}
+
+function contextualContract(fn, context) {
+  const services = context.sourceCode.parserServices;
+  const program = services?.program;
+  if (program && services.esTreeNodeToTSNodeMap) {
+    const ts = services.esTreeNodeToTSNodeMap.get(fn);
+    const checker = program.getTypeChecker();
+    const parent = fn.parent;
+    if (parent?.type === 'MethodDefinition') {
+      const classNode = parent.parent?.parent;
+      const classTs = services.esTreeNodeToTSNodeMap.get(classNode);
+      for (const clause of classTs?.heritageClauses ?? []) {
+        const methodName = parent.key.name ?? parent.key.value;
+        for (const heritageType of clause.types) {
+          const type = checker.getTypeAtLocation(heritageType);
+          if (type.getProperty(methodName)) return true;
+        }
+      }
+    }
+    const contextualType = checker.getContextualType(ts);
+    if (contextualType?.getCallSignatures().length) return true;
+  }
+
+  const member = fn.parent?.type === 'MethodDefinition' ? fn.parent : undefined;
+  if (member && localInterfaceDeclaresMember(member.parent.parent, member, context.sourceCode.ast)) return true;
+
+  const variable = fn.parent?.type === 'VariableDeclarator' ? fn.parent : undefined;
+  if (variable?.id.typeAnnotation?.typeAnnotation) return true;
+  if (fn.parent?.type === 'TSSatisfiesExpression') return true;
+  if (fn.parent?.parent?.type === 'TSSatisfiesExpression') return true;
+  if (hasExplicitJSDocType(fn, context.sourceCode)) return true;
+  return false;
 }
 
 function callablesFromClass(classNode, moduleScope, visited) {
@@ -125,6 +190,8 @@ export default {
         return;
       }
       checkedFunctions.add(fn);
+
+      if (contextualContract(fn, context)) return;
 
       const functionScope = context.sourceCode.getScope(fn);
       for (const param of fn.params) {

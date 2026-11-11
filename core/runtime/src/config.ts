@@ -12,6 +12,7 @@ import type {
 } from "@kb-labs/core-platform";
 import type { AdapterSlot } from "@kb-labs/core-platform";
 import type { ResolvedExecutionMode } from "@kb-labs/core-contracts";
+import type { DeploymentTopology } from "./config-schemas.js";
 import type {
   RateLimitConfig,
   RateLimitPreset,
@@ -126,25 +127,26 @@ export interface AdaptersConfig {
   notifier?: AdapterValue;
 }
 
-/** The platform config keys that configure each plugin-visible adapter slot. */
+/** Platform config ownership for each plugin-visible adapter slot. */
 export const ADAPTER_CONFIG_KEYS = {
-  logger: ['logger'],
-  analytics: ['analytics'],
-  vectorStore: ['vectorStore'],
-  llm: ['llm'],
-  embeddings: ['embeddings'],
-  cache: ['cache'],
-  config: [],
-  storage: ['storage'],
-  eventBus: ['eventBus'],
-  invoke: [],
-  documentDatabase: ['documentDatabase'],
-  kvStore: ['kvStore'],
-  logs: ['logRingBuffer', 'logPersistence'],
-  artifacts: [],
-  snapshotManager: ['snapshot'],
-  notifier: ['notifier'],
-} as const satisfies Record<AdapterSlot, readonly (keyof AdaptersConfig)[]>;
+  logger: { keys: ['logger'], projection: 'package' },
+  analytics: { keys: ['analytics'], projection: 'package' },
+  vectorStore: { keys: ['vectorStore'], projection: 'package' },
+  llm: { keys: ['llm'], projection: 'package' },
+  embeddings: { keys: ['embeddings'], projection: 'package' },
+  cache: { keys: ['cache'], projection: 'package' },
+  config: { keys: [], projection: 'package' },
+  storage: { keys: ['storage'], projection: 'package' },
+  eventBus: { keys: ['eventBus'], projection: 'package' },
+  invoke: { keys: [], projection: 'package' },
+  documentDatabase: { keys: ['documentDatabase'], projection: 'package' },
+  kvStore: { keys: ['kvStore'], projection: 'package' },
+  logs: { keys: ['logRingBuffer', 'logPersistence'], projection: 'composite' },
+  artifacts: { keys: [], projection: 'package' },
+  snapshotManager: { keys: ['snapshot'], projection: 'package' },
+  notifier: { keys: ['notifier'], projection: 'package' },
+  workspaceProvider: { keys: ['workspace'], projection: 'package' },
+} as const satisfies Record<AdapterSlot | 'workspaceProvider', { keys: readonly (keyof AdaptersConfig)[]; projection: 'package' | 'composite' }>;
 
 /**
  * Resource manager configuration.
@@ -369,6 +371,7 @@ export interface PlatformConfig {
   core?: CoreFeaturesConfig;
   /** Execution backend configuration (NEW: unified plugin execution) */
   execution?: ExecutionConfig;
+  deployment?: { topology: DeploymentTopology };
 }
 
 /**
@@ -390,4 +393,5 @@ export const CONFIG_FIELD_SCOPE: Record<
   adapterOptions: "platform-only",
   core: "platform-only",
   execution: "platform-only",
+  deployment: "platform-only",
 };

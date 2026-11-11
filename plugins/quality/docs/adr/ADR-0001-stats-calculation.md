@@ -96,9 +96,9 @@ GET /api/v1/plugins/quality/stats
 ## Implementation
 
 Changed files:
-- `plugins/quality/core/src/stats/calculate-stats.ts` — new algorithm
-- `plugins/quality/entry/src/rest/handlers/stats-handler.ts` — `useCache` + TTL
-- `plugins/quality/entry/src/manifest.ts` — `timeoutMs: 120_000` on stats route
+- `plugins/quality/src/core/stats/calculate-stats.ts` — new algorithm
+- `plugins/quality/src/rest/handlers/stats-handler.ts` — `useCache` + TTL
+- `plugins/quality/src/manifest.ts` — `timeoutMs: 120_000` on stats route
 
 ## References
 

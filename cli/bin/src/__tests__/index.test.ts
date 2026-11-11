@@ -28,23 +28,21 @@ describe("CLI run function", () => {
 
   it("delegates execution to executeCli", async () => {
     executeCliMock.mockResolvedValue(0);
+    const resultWriter = vi.fn();
+    const result = await run(["--help"], { resultWriter });
 
-    const result = await run(["--help"]);
-
-    // run() now forwards a second options arg carrying moduleUrl (undefined
-    // when none was passed). The runtime reads moduleUrl for platformRoot
-    // resolution.
     expect(executeCliMock).toHaveBeenCalledWith(
       ["--help"],
-      { moduleUrl: undefined },
+      { moduleUrl: undefined, resultWriter },
     );
     expect(result).toBe(0);
   });
 
   it("propagates exit codes from executeCli", async () => {
     executeCliMock.mockResolvedValue(42);
+    const resultWriter = vi.fn();
 
-    const result = await run(["version"]);
+    const result = await run(["version"], { resultWriter });
 
     expect(result).toBe(42);
   });

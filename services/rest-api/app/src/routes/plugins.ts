@@ -8,7 +8,7 @@ import { noBodySchema, withUxErrorResponses } from './route-schema.js';
 
 import type { FastifyInstance } from "fastify";
 import type { RestApiConfig } from "@kb-labs/rest-api-core";
-import type { IEntityRegistry, RegistrySnapshot } from "@kb-labs/core-registry";
+import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/plugin-contracts';
 import type { ManifestV3 } from "@kb-labs/plugin-contracts";
 import { resolvePluginBasePath, validateManifest } from "@kb-labs/plugin-contracts";
 import { mountRoutes } from "@kb-labs/plugin-execution/http";

@@ -63,7 +63,7 @@ describe('DiscoveryManager', () => {
     const pluginDir = path.join(tmpDir, 'plugins', 'release-manager-cli');
     await fs.mkdir(pluginDir, { recursive: true });
     await fs.writeFile(path.join(pluginDir, 'package.json'), JSON.stringify({
-      name: '@kb-labs/release-manager-cli',
+      name: '@kb-labs/release',
       kb: { manifest: './dist/manifest.js' },
     }));
     const lock = createEmptyLock();
@@ -120,6 +120,8 @@ describe('DiscoveryManager', () => {
       integrity: 'sha256-abc',
       package: '@kb-labs/ghost',
       source: 'marketplace',
+      marketplaceSource: 'registry',
+      signatureStatus: 'verified',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });

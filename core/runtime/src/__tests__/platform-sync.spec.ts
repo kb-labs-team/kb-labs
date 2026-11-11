@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { platformSync } from '../platform-sync.js';
+import { openCatalog } from '@kb-labs/core-registry';
 import type { PackageInstaller } from '../platform-sync-installer.js';
 
 /**
@@ -20,6 +21,10 @@ interface TestLockEntry {
   primaryKind: 'adapter' | 'plugin';
   provides: string[];
   enabled?: boolean;
+}
+
+async function openTestCatalog(root: string) {
+  return openCatalog({ platformRoot: root, projectRoot: root }, { resolvePlatformVersion: async () => 'test' });
 }
 
 async function writeLock(root: string, entries: Record<string, TestLockEntry>): Promise<void> {
@@ -93,7 +98,7 @@ describe('platformSync', () => {
   });
 
   it('returns ok with lockMissing when there is no lock file', async () => {
-    const result = await platformSync({ root: tmpDir, mode: 'validate' });
+    const result = await platformSync({ root: tmpDir, catalog: await openTestCatalog(tmpDir), mode: 'validate' });
     expect(result.ok).toBe(true);
     expect(result.checked).toBe(0);
     expect(result.lockMissing).toBe(true);
@@ -115,7 +120,7 @@ describe('platformSync', () => {
       },
     });
 
-    const result = await platformSync({ root: tmpDir, mode: 'validate' });
+    const result = await platformSync({ root: tmpDir, catalog: await openTestCatalog(tmpDir), mode: 'validate' });
     expect(result.ok).toBe(true);
     expect(result.checked).toBe(1);
     expect(result.missing).toEqual([]);
@@ -137,6 +142,7 @@ describe('platformSync', () => {
 
     const result = await platformSync({
       root: tmpDir,
+      catalog: await openTestCatalog(tmpDir),
       mode: 'validate',
       installer,
     });
@@ -162,7 +168,7 @@ describe('platformSync', () => {
       },
     });
 
-    const result = await platformSync({ root: tmpDir, mode: 'validate' });
+    const result = await platformSync({ root: tmpDir, catalog: await openTestCatalog(tmpDir), mode: 'validate' });
     expect(result.ok).toBe(false);
     expect(result.mismatched).toEqual(['@kb-labs/marketplace-pkg']);
   });
@@ -183,7 +189,7 @@ describe('platformSync', () => {
       },
     });
 
-    const result = await platformSync({ root: tmpDir, mode: 'validate' });
+    const result = await platformSync({ root: tmpDir, catalog: await openTestCatalog(tmpDir), mode: 'validate' });
     expect(result.ok).toBe(true);
     expect(result.mismatched).toEqual([]);
   });
@@ -203,7 +209,7 @@ describe('platformSync', () => {
       },
     });
 
-    const result = await platformSync({ root: tmpDir, mode: 'validate' });
+    const result = await platformSync({ root: tmpDir, catalog: await openTestCatalog(tmpDir), mode: 'validate' });
     expect(result.lockMissing).toBe(true);
   });
 
@@ -221,7 +227,7 @@ describe('platformSync', () => {
       },
     });
 
-    const result = await platformSync({ root: tmpDir, mode: 'validate', installer });
+    const result = await platformSync({ root: tmpDir, catalog: await openTestCatalog(tmpDir), mode: 'validate', installer });
     expect(result.ok).toBe(true);
     expect(result.missing).toEqual([]);
     expect(installer.calls).toEqual([]);
@@ -242,6 +248,7 @@ describe('platformSync', () => {
 
     const result = await platformSync({
       root: tmpDir,
+      catalog: await openTestCatalog(tmpDir),
       mode: 'reconcile',
       installer,
     });
@@ -271,6 +278,7 @@ describe('platformSync', () => {
 
     const result = await platformSync({
       root: tmpDir,
+      catalog: await openTestCatalog(tmpDir),
       mode: 'reconcile',
       installer,
     });
@@ -299,6 +307,7 @@ describe('platformSync', () => {
 
     const result = await platformSync({
       root: tmpDir,
+      catalog: await openTestCatalog(tmpDir),
       mode: 'reconcile',
       installer,
     });
@@ -324,6 +333,7 @@ describe('platformSync', () => {
 
     const result = await platformSync({
       root: tmpDir,
+      catalog: await openTestCatalog(tmpDir),
       mode: 'reconcile',
       dryRun: true,
       installer,
@@ -339,14 +349,14 @@ describe('platformSync', () => {
     await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
     await writeLock(tmpDir, {});
 
-    const result = await platformSync({ root: tmpDir, mode: 'auto' });
+    const result = await platformSync({ root: tmpDir, catalog: await openTestCatalog(tmpDir), mode: 'auto' });
     expect(result.mode).toBe('validate');
   });
 
   it('auto mode: picks reconcile when there is no monorepo marker', async () => {
     await writeLock(tmpDir, {});
 
-    const result = await platformSync({ root: tmpDir, mode: 'auto' });
+    const result = await platformSync({ root: tmpDir, catalog: await openTestCatalog(tmpDir), mode: 'auto' });
     expect(result.mode).toBe('reconcile');
   });
 });

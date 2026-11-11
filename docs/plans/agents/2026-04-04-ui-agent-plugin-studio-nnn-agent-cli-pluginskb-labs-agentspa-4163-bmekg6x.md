@@ -164,19 +164,19 @@
 
 ```bash
 # Сборка agent-cli после изменений
-pnpm --filter @kb-labs/agent-cli build
+pnpm --filter @kb-labs/agents/cli build
 
 # TypeScript проверка (нет неиспользуемых импортов, нет any)
-pnpm --filter @kb-labs/agent-cli typecheck
+pnpm --filter @kb-labs/agents/cli typecheck
 
 # Убедиться что commit-plugin не сломан (shared UIKit зависимость)
-pnpm --filter @kb-labs/commit-cli build
+pnpm --filter @kb-labs/commit/cli build
 
 # Если есть тесты
-pnpm --filter @kb-labs/agent-cli test
+pnpm --filter @kb-labs/agents/cli test
 
 # Проверка всей цепочки зависимостей
-pnpm run build --filter @kb-labs/agent-cli...
+pnpm run build --filter @kb-labs/agents/cli...
 ```
 
 **Финальный чек-лист:**

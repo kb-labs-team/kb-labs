@@ -1,5 +1,13 @@
 # Fresh install journey runner
 
+For a retained local install from the current candidate, use
+`bash e2e/journey/prepare-isolated-installed-root.sh` from the repository root.
+Docker Compose must be available; the script starts the shared journey
+Verdaccio service and keeps its persistent third-party cache volume. It invokes
+`prepare-candidate.sh`, plans an explicit non-default Gateway URL
+and verifies the complete service-port graph before installation. The output
+includes the isolated HOME and the commands to stop and remove the root.
+
 `run.sh` installs a candidate platform into a fresh container HOME, exercises
 it, and uninstalls it before the container exits. The service modes also run
 HTTP capability checks and a Studio browser journey while the gateway is still
@@ -35,6 +43,20 @@ diagnosis. Unselected named steps appear as `SKIPPED (not selected)` in the
 result. A filtered scoreboard lists the selection and marks itself partial;
 partial evidence does not count toward case status or full-run deltas. Run the
 normal mode without `KB_JOURNEY_CASES` to produce full scoreboard evidence.
+
+For a hosted iteration with selected cases, run the orchestration entry from
+its root, for example:
+
+```bash
+sh prompts/journey-batch.sh --remote --cases S-023,S-024 x229-round3
+```
+
+The entry encodes the selection in the pushed `batch/<tag>/cases/<base64url>`
+ref; the `Journey batch` workflow decodes it and passes the same selection to
+the local and secured jobs. Both scoreboards identify the selected evidence,
+and finalization exits non-zero before reading gate metadata, so partial
+evidence cannot produce a gate verdict. A normal full dispatch or a push ref
+without `/cases/` runs the full gating batch.
 
 The installed smoke covers successful fresh installation and the registered
 project workflow and REST runtime health claims. Run these two commands to
@@ -92,6 +114,11 @@ Callback state held in closures and `FlowGraph.states` is not covered by
 step to depend on install/start/registration producers. Those gaps are the
 follow-up stream **journey state migration**; until it lands, do not treat the
 static lints or declared edges as proof of those broader properties.
+The workflow history checkpoint runs its host restart inside the workflow
+group. After that group, the runner re-probes the declared `host-running`
+prerequisite even when the checkpoint failed, so later groups can continue if
+the installed host is still healthy; later groups remain blocked when that
+health check fails.
 
 The local run verifies loopback access without login. The secured run creates
 an isolated admin during installation, creates and activates a member through
@@ -104,6 +131,15 @@ inside its own container and cannot use a browser installed on the host. The
 fresh-host test is copied into that image at build time and targets the gateway
 at `http://127.0.0.1:4000` from within the same container. The image is built by
 `e2e/journey/run.sh`; no browser installation is needed on the host.
+
+The slow, rarely-changing toolchain layers (apt packages, pnpm, Playwright and
+Chromium) live in the `toolchain` stage of `e2e/journey/Dockerfile.runner`.
+`run.sh` builds and tags that stage as `kb-journey-runner-toolchain:<hash>` —
+the hash covers the stage and the staged Playwright version — and the runner
+stage starts `FROM` that tagged image, so per-run build-cache trimming cannot
+evict the toolchain. Each run logs one line, `==> journey runner toolchain
+<image> built` or `reused`, and reclaims older toolchain tags by their
+`org.kb-labs.journey.runner-toolchain` label.
 
 The runner image keeps `runner.py`, `service_runner.py`, `service_steps.py`,
 `studio_steps.py`, and the other journey Python modules together in

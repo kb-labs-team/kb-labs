@@ -34,6 +34,7 @@ import { rehydrateWSInput } from '../ws/sender.js';
 import type { WSInputReference } from '@kb-labs/plugin-contracts';
 import { executeCleanup, type PluginInvokerFn, type EventEmitterFn } from '../api/index.js';
 import type { LoadedMiddleware } from '../platform/pipeline.js';
+import { installPlatformResolveHook } from '../platform-resolve/index.js';
 
 /**
  * Create execution metadata from descriptor and timing
@@ -138,9 +139,18 @@ export async function runInProcess<T = unknown>(
       });
     }
 
+    // Plugin code can be outside the installed platform tree (for example, a
+    // Marketplace store entry). Resolve its platform packages from the one
+    // platform copy in this process before importing the handler.
+    const platformRoot = process.env.KB_PLATFORM_ROOT;
+    if (platformRoot) {
+      installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
+    }
+
     // Import and execute handler
-    const handlerModule = await import(handlerPath);
-    const handler = handlerModule.default ?? handlerModule;
+    const [modulePath = handlerPath, exportName] = handlerPath.split('#', 2);
+    const handlerModule = await import(modulePath);
+    const handler = exportName ? handlerModule[exportName] : handlerModule.default ?? handlerModule;
 
     if (typeof handler.execute !== 'function') {
       throw new PluginError(
@@ -253,13 +263,13 @@ export async function runInSubprocess<T = unknown>(
 
     let completed = false;
     let stderrBuffer = '';
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutId: { timer?: ReturnType<typeof setTimeout> } = {};
     let cancelId: ReturnType<typeof setTimeout> | undefined;
     const channel = createStdioChannel(child.stdout, child.stdin);
     const platformServer = new StdioPlatformServer(channel, platform);
     const finish = () => {
       completed = true;
-      clearTimeout(timeoutId);
+      clearTimeout(timeoutId.timer);
       clearTimeout(cancelId);
       signal?.removeEventListener('abort', abortHandler);
       platformServer.close();
@@ -307,8 +317,8 @@ export async function runInSubprocess<T = unknown>(
     });
 
     // Set timeout
-    // eslint-disable-next-line prefer-const
-    timeoutId = setTimeout(() => {
+
+    timeoutId.timer = setTimeout(() => {
       if (!completed) {
         fail(new TimeoutError(`Plugin execution timed out after ${timeoutMs}ms`));
       }

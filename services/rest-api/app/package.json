@@ -55,8 +55,6 @@
     "@kb-labs/shared-daemon": "workspace:*",
     "@kb-labs/shared-http": "workspace:*",
     "@kb-labs/workflow-constants": "workspace:*",
-    "@kb-labs/workflow-contracts": "workspace:*",
-    "@kb-labs/workflow-engine": "workspace:*",
     "fastify": "^5.12.1",
     "fastify-plugin": "^5.0.1",
     "fastify-type-provider-zod": "^4.0.2",
@@ -84,5 +82,8 @@
   },
   "kb": {
     "manifest": "./dist/manifest.js"
+  },
+  "kbLabs": {
+    "catalogRole": "reader"
   }
 }

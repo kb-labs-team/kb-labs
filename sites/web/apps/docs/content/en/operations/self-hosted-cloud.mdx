@@ -1,7 +1,7 @@
 ---
 title: "Self-Hosted Cloud"
 description: "Deploy KB Labs to your own VPS — full platform in the cloud with automated SSL, tenant routing, and CI-driven updates."
-updatedAt: "2026-10-01"
+updatedAt: "2026-10-21"
 order: 2
 ---
 
@@ -206,31 +206,21 @@ services:
     version: "2.94.0"
     adapters: *adapters
     plugins:
-      "@kb-labs/commit-entry":  "2.94.0"
-      "@kb-labs/review-entry":  "2.94.0"
-      "@kb-labs/mind-entry":    "2.94.0"
-      "@kb-labs/agents-entry":  "2.94.0"
+      "@kb-labs/commit":  "2.94.0"
+      "@kb-labs/review":  "2.94.0"
+      "@kb-labs/mind":    "2.94.0"
+      "@kb-labs/agents":  "2.94.0"
     targets:
       hosts: [vm-1]
       strategy: all
       healthGate: "60s"
 ```
 
-Plugins that hook into the workflow engine are loaded by `workflow-daemon`:
-
-```yaml
-services:
-  workflow:
-    service: "@kb-labs/workflow-daemon"
-    version: "2.94.0"
-    adapters: *adapters
-    plugins:
-      "@kb-labs/workflow-entry": "2.94.0"
-    targets:
-      hosts: [vm-1]
-      strategy: all
-      healthGate: "60s"
-```
+The workflow daemon is a platform service, and the `kb workflow` commands
+and Studio pages ship with the platform release. Do not add
+`@kb-labs/workflow-entry` to a service's `plugins` map. Plugin packages
+that contribute workflow handlers remain plugin entries and are loaded by the
+workflow daemon.
 
 ### Adapters required by plugins
 
@@ -239,11 +229,11 @@ service that loads the plugin — not globally.
 
 | Plugin | Extra adapters needed |
 |---|---|
-| `mind-entry` (RAG, vector search) | `vectorStore: @kb-labs/adapters-qdrant@{ver}` + `embeddings: @kb-labs/adapters-openai/embeddings@{ver}` |
-| `agents-entry` | none (uses `llm` from base adapters) |
-| `commit-entry` | none |
-| `review-entry` | none |
-| `inbox-entry` | `notifier: @kb-labs/adapters-telegram@{ver}` (optional) |
+| `mind` (RAG, vector search) | `vectorStore: @kb-labs/adapters-qdrant@{ver}` + `embeddings: @kb-labs/adapters-openai/embeddings@{ver}` |
+| `agents` | none (uses `llm` from base adapters) |
+| `commit` | none |
+| `review` | none |
+| `inbox` | `notifier: @kb-labs/adapters-telegram@{ver}` (optional) |
 
 Example — enabling the mind plugin with Qdrant:
 
@@ -265,7 +255,7 @@ services:
       vectorStore:     "@kb-labs/adapters-qdrant@2.94.0"
       embeddings:      "@kb-labs/adapters-openai/embeddings@2.94.0"
     plugins:
-      "@kb-labs/mind-entry": "2.94.0"
+      "@kb-labs/mind": "2.94.0"
 ```
 
 Qdrant also needs to be running. Add it to your `infrastructure` block:

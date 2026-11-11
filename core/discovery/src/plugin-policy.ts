@@ -2,7 +2,7 @@
 
 import { readJsonWithDiagnostics, resolveUserConfigFile } from '@kb-labs/core-config';
 import type { Diagnostic } from '@kb-labs/core-config';
-import * as fs from 'node:fs/promises';
+import { fs, readFile } from './recording-filesystem.js';
 
 export interface PluginPolicy {
   allow?: string[];
@@ -35,7 +35,7 @@ export function isFirstPartyPluginSource(source: PluginProvenance): boolean {
 }
 
 function readNames(value: unknown, field: 'allow' | 'block' | 'linked', configPath: string, diagnostics: Diagnostic[]): string[] | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {return undefined;}
   if (!Array.isArray(value)) {
     diagnostics.push(diagnostic('PLUGIN_POLICY_TYPE_INVALID', `plugins.${field} must be an array of package names`, configPath, { field: `$.plugins.${field}` }));
     return undefined;
@@ -54,25 +54,23 @@ function readNames(value: unknown, field: 'allow' | 'block' | 'linked', configPa
 /** Read policy with missing optional config distinct from every present-file failure. */
 export async function readPluginPolicy(
   root: string,
-  onInputRead?: (filePath: string) => void,
 ): Promise<PluginPolicyResult> {
   let configPath: string;
   try {
-    configPath = await resolveUserConfigFile(root);
+    configPath = await resolveUserConfigFile(root, fs.access);
   } catch (error) {
     const fallback = `${root}/.kb/kb.config.jsonc`;
     return { kind: 'invalid', configPath: fallback, diagnostics: [diagnostic('CONFIG_PATH_RESOLUTION_FAILED', `Could not resolve plugin policy config path: ${String(error)}`, fallback, error)] };
   }
-  onInputRead?.(configPath);
   try {
     await fs.access(configPath);
   } catch (error) {
-    if (isMissing(error)) return { kind: 'valid', policy: {} };
+    if (isMissing(error)) {return { kind: 'valid', policy: {} };}
     return { kind: 'invalid', configPath, diagnostics: [diagnostic('FILE_READ_FAILED', `Failed to access config file: ${configPath}`, configPath, error)] };
   }
 
-  const result = await readJsonWithDiagnostics<{ plugins?: unknown }>(configPath);
-  if (!result.ok) return { kind: 'invalid', configPath, diagnostics: result.diagnostics };
+  const result = await readJsonWithDiagnostics<{ plugins?: unknown }>(configPath, undefined, readFile);
+  if (!result.ok) {return { kind: 'invalid', configPath, diagnostics: result.diagnostics };}
 
   const diagnostics: Diagnostic[] = [];
   if (result.data === null || typeof result.data !== 'object' || Array.isArray(result.data)) {
@@ -100,8 +98,8 @@ export async function readPluginPolicy(
 }
 
 export function checkPluginPolicy(policy: PluginPolicy, ids: string[], source: PluginProvenance): PolicyVerdict {
-  if (isFirstPartyPluginSource(source)) return 'ok';
-  if (policy.block?.some(blocked => ids.includes(blocked))) return 'blocked';
-  if (policy.allow && !ids.some(id => policy.allow?.includes(id) || policy.linked?.includes(id))) return 'not-allowed';
+  if (isFirstPartyPluginSource(source)) {return 'ok';}
+  if (policy.block?.some(blocked => ids.includes(blocked))) {return 'blocked';}
+  if (policy.allow && !ids.some(id => policy.allow?.includes(id) || policy.linked?.includes(id))) {return 'not-allowed';}
   return 'ok';
 }

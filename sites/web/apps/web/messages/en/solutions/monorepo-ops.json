@@ -7,14 +7,12 @@
     "page": {
       "healthEyebrow": "Health",
       "buildLead": "Dependency graph + topological order + SHA256 content-addressable cache. Same content — 0ms, regardless of package count.",
-      "impactEyebrow": "Impact",
       "installBtn": "Install KB Labs",
       "buildEyebrow": "Build",
       "ctaEyebrow": "Install",
       "heroEyebrow": "Monorepo Ops · kb-devkit",
-      "ctaTitle": "Graph. Cache. Impact. All in one.",
-      "ctaNote": "kb-devkit ships with the platform. Impact is a separate plugin.",
-      "impactTitle": "What breaks. What to test.",
+      "ctaTitle": "Graph. Cache. Build.",
+      "ctaNote": "kb-devkit ships with the platform.",
       "healthCommands": [
         {
           "cmd": "kb-devkit check",
@@ -60,28 +58,9 @@
         }
       ],
       "healthLead2": "Need custom logic? {code} in devkit.yaml — a shell command that receives a JSON package context and returns {result}. License headers, barrel exports, naming conventions — anything.",
-      "impactCommands": [
-        {
-          "cmd": "kb-devkit run build --affected",
-          "note": "Resolve affected set via git diff + BFS through the dependency graph."
-        },
-        {
-          "cmd": "pnpm kb impact analyze",
-          "note": "Show which packages and tests are affected by current changes."
-        },
-        {
-          "cmd": "pnpm kb impact report",
-          "note": "Export a structured impact report with dependency paths."
-        },
-        {
-          "cmd": "pnpm kb marketplace plugins refresh",
-          "note": "Force-invalidate the CLI discovery cache after a build."
-        }
-      ],
       "heroTitle": "150+ packages.",
       "heroDescription": "kb-devkit orchestrates the monorepo: topological builds, content-addressable cache, --affected via git diff, health score per preset. We build KB Labs with it every day.",
       "healthLead1": "Static audit of every package by presets: ESLint config, TSConfig, README, engines, exports. Health score 0–100 with A–F grade — degradation is immediately visible per category.",
-      "impactLead": "The Impact plugin builds a reverse graph and shows the cascade: direct → dependent → transitive packages. Tests — only what's actually affected. Build plan with the devkit command included.",
       "healthTitle": "Health score. Checks. Auto-fix.",
       "tabCached": "full (all cached)"
     }

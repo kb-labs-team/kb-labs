@@ -258,16 +258,16 @@ Delivered across 8 steps:
 4. `core/workspace/src/workspace/root-resolver.ts` — export
    `findProjectConfigRoot`, `findPlatformMarkerRoot`; fix walk-up to
    accept both `kb.config.json` and `kb.config.jsonc`.
-5. `plugins/marketplace/contracts/src/types.ts` — `MarketplaceScope`,
+5. `services/marketplace/contracts/src/types.ts` — `MarketplaceScope`,
    `ScopeContext`, `QueryScopeContext`, `ScopedMarketplaceEntry`,
    `MarketplaceDiagnostic`.
-6. `plugins/marketplace/core/src/scope.ts` — `resolveScopeRoot`,
+6. `services/marketplace/core/src/scope.ts` — `resolveScopeRoot`,
    `resolveQueryRoots`, `ScopeResolutionError`.
-7. `plugins/marketplace/core/src/marketplace-service.ts` — scope-bound
+7. `services/marketplace/core/src/marketplace-service.ts` — scope-bound
    API, `assertScopeAllowsKind`, `mergeScopedEntries`.
-8. `plugins/marketplace/api/src/scope-parser.ts` + routes — body/query
+8. `services/marketplace/api/src/scope-parser.ts` + routes — body/query
    parsing, shared `ScopeRequestError`, global Fastify error handler.
-9. `plugins/marketplace/entry/src/scope.ts` — CLI `resolveCliScope`,
+9. `cli/commands/src/commands/system/marketplace/scope.ts` — CLI `resolveCliScope`,
    `scopeBody()` helper. All commands (`link`, `unlink`, `list`, `install`,
    `uninstall`, `update`, `sync`, `enable`, `disable`, `doctor`) updated.
 10. `cli/commands/src/registry/{types,discover}.ts` —
@@ -292,7 +292,7 @@ kb scaffold run plugin demo --yes --mode standalone
 cd .kb/plugins/demo && pnpm install && pnpm build && cd -
 
 # Link under project scope (default, because cwd has .kb/kb.config.*)
-kb marketplace plugins link ./.kb/plugins/demo/packages/demo-entry
+kb marketplace plugins link ./.kb/plugins/demo
 # Writes /tmp/plugin-scope-test/.kb/marketplace.lock, NOT platform lock.
 
 kb marketplace plugins list                   # project
@@ -311,6 +311,6 @@ Automated coverage:
 - `core/config` runtime tests (mergeWithFieldPolicy paths).
 - `core/runtime` config-loader tests (policy enforcement, platform.dir).
 - `core/workspace` root-resolver tests (walk-up both filenames).
-- `plugins/marketplace/core` — 41 service tests (scope-bound variants).
+- `services/marketplace/core` — 41 service tests (scope-bound variants).
 - `cli/commands` — 99 tests (scope-aware discover/cache/dedup).
 - `cli/bin` — 98 tests (bootstrap threading).

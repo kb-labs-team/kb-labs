@@ -83,7 +83,7 @@ link: paths that are stale.
 ```bash
 git status
 pnpm kb devlink status
-pnpm kb devlink switch --mode=local --install
+pnpm kb devlink mode set --mode=local --install
 ```
 
 If the user is on a worktree, `pnpm done` style scripts intentionally skip
@@ -123,7 +123,7 @@ This file is the platform's main configuration. **Do not try to recreate it.**
 Usually means the project's workspace yaml is missing cross-repo paths.
 
 ```bash
-pnpm kb devlink switch --mode=local --install
+pnpm kb devlink mode set --mode=local --install
 ```
 
 ## Step 9: Still stuck

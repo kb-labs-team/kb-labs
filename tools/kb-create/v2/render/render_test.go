@@ -1,13 +1,20 @@
 package render
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
+	"github.com/kb-labs/create/v2/testworkspace"
 )
 
 func TestBuildKeepsSecretValuesOutOfConfigAndChecksTheirServices(t *testing.T) {
@@ -23,6 +30,197 @@ func TestBuildKeepsSecretValuesOutOfConfigAndChecksTheirServices(t *testing.T) {
 	plan.ConfigPatches[0].Services = []string{"missing"}
 	if _, err := Build(plan); err == nil {
 		t.Fatal("a secret bound to a service that is not in the plan must be rejected")
+	}
+}
+
+func TestBuildOwnsLocalDeploymentTopology(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.ConfigPatches = []contracts.ConfigPatch{{
+		Path:  "/platform/deployment/topology",
+		JSON:  `"cloud"`,
+		Owner: "manifest:platform.deployment.topology",
+	}}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Platform struct {
+			Deployment struct {
+				Topology string `json:"topology"`
+			} `json:"deployment"`
+		} `json:"platform"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Platform.Deployment.Topology != "local" {
+		t.Fatalf("topology = %q, want local; config: %s", config.Platform.Deployment.Topology, output.Config)
+	}
+}
+
+func TestBuildPersistsMarketplaceSourceOrderAndSecretReferences(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.Request.MarketplaceSources = &contracts.MarketplaceSources{
+		RegistryURL: "https://registry.example.test", SigningPublicKeyEnv: "KB_REGISTRY_PUBLIC_KEY",
+		RegistryTokenEnv: "KB_REGISTRY_TOKEN", NpmURL: "https://npm-mirror.example.test",
+	}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Marketplace struct {
+			Sources []map[string]string `json:"sources"`
+		} `json:"marketplace"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Marketplace.Sources) != 2 || config.Marketplace.Sources[0]["kind"] != "registry" || config.Marketplace.Sources[1]["kind"] != "npm" {
+		t.Fatalf("marketplace source order = %#v", config.Marketplace.Sources)
+	}
+	if config.Marketplace.Sources[0]["signingPublicKey"] != "${KB_REGISTRY_PUBLIC_KEY}" || config.Marketplace.Sources[0]["authToken"] != "${KB_REGISTRY_TOKEN}" {
+		t.Fatalf("secret references were not kept literal in config: %#v", config.Marketplace.Sources[0])
+	}
+	if strings.Contains(string(output.Config), "secret-value") {
+		t.Fatalf("resolved secret value entered generated config: %s", output.Config)
+	}
+}
+
+// case: S-268.12
+func TestBuildPersistsNpmOnlyMarketplaceMirror(t *testing.T) {
+	testworkspace.Require(t)
+	plan := testPlan(t.TempDir())
+	plan.Request.MarketplaceSources = &contracts.MarketplaceSources{NpmURL: "http://verdaccio:4873"}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Marketplace struct {
+			Sources []map[string]string `json:"sources"`
+		} `json:"marketplace"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Marketplace.Sources) != 1 || config.Marketplace.Sources[0]["kind"] != "npm" || config.Marketplace.Sources[0]["url"] != "http://verdaccio:4873" {
+		t.Fatalf("npm-only mirror config = %#v, want one npm source at Verdaccio", config.Marketplace.Sources)
+	}
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate render test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "../../../.."))
+	validateRenderedMarketplaceSources(t, root, output.Config)
+}
+
+func TestGoRenderedMarketplaceSourcesValidateAgainstCoreConfigSchema(t *testing.T) {
+	testworkspace.Require(t)
+	plan := testPlan(t.TempDir())
+	plan.Request.MarketplaceSources = &contracts.MarketplaceSources{
+		RegistryURL: "https://registry.example.test", SigningPublicKeyEnv: "KB_REGISTRY_PUBLIC_KEY",
+		RegistryTokenEnv: "KB_REGISTRY_TOKEN", NpmURL: "https://npm-mirror.example.test",
+	}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate render test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "../../../.."))
+	validateRenderedMarketplaceSources(t, root, output.Config)
+}
+
+// case: S-268.9
+func TestDefaultInstallRendersReleaseMarketplaceSourcesAndBootsMarketplace(t *testing.T) {
+	testworkspace.Require(t)
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate render test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "../../../.."))
+	defaultSourcesJSON := releaseMarketplaceSources(t, root)
+	plan := testPlan(t.TempDir())
+	plan.ConfigPatches = append(plan.ConfigPatches, contracts.ConfigPatch{
+		Path: "/marketplace/sources", JSON: string(defaultSourcesJSON), Owner: "release:marketplace.sources",
+	})
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Request.MarketplaceSources != nil {
+		t.Fatal("default install unexpectedly received Marketplace source flags")
+	}
+	var config struct {
+		Marketplace struct {
+			Sources []map[string]string `json:"sources"`
+		} `json:"marketplace"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Marketplace.Sources) != 1 || config.Marketplace.Sources[0]["kind"] != "npm" || config.Marketplace.Sources[0]["url"] != "https://registry.npmjs.org" {
+		t.Fatalf("default Marketplace sources = %#v; want the release-declared npm source", config.Marketplace.Sources)
+	}
+	validateRenderedMarketplaceSources(t, root, output.Config)
+
+	platformRoot := plan.Request.PlatformRoot
+	configDir := filepath.Join(platformRoot, ".kb")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "kb.config.jsonc"), output.Config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bootScript := fmt.Sprintf(`import { setup } from %q;
+import { NoOpLogger } from %q;
+const stop = await setup({ logger: new NoOpLogger(), port: 0, host: "127.0.0.1", platformRoot: process.argv[1] });
+try { /* setup returning a stop function proves the service listened successfully. */ } finally { await stop(); }`,
+		"file://"+filepath.ToSlash(filepath.Join(root, "services/marketplace/app/dist/index.js")),
+		"file://"+filepath.ToSlash(filepath.Join(root, "core/platform/dist/noop/index.js")))
+	bootCommand := exec.Command("node", "--input-type=module", "-e", bootScript, platformRoot)
+	bootCommand.Dir = root
+	if result, err := bootCommand.CombinedOutput(); err != nil {
+		t.Fatalf("Marketplace bootstrap rejected the default rendered config: %v: %s", err, result)
+	}
+}
+
+func releaseMarketplaceSources(t *testing.T, root string) []byte {
+	t.Helper()
+	script := fmt.Sprintf(`import { readPlatformReleaseConfig } from %q;
+const config = readPlatformReleaseConfig(%q);
+process.stdout.write(JSON.stringify(config.marketplaceSources));`,
+		"file://"+filepath.ToSlash(filepath.Join(root, "tools/kb-create/scripts/platform-release-config.mjs")),
+		filepath.Join(root, "tools/kb-create/config/platform-release.jsonc"))
+	command := exec.Command("node", "--input-type=module", "-e", script)
+	command.Dir = root
+	data, err := command.Output()
+	if err != nil {
+		t.Fatalf("read release-declared Marketplace sources: %v", err)
+	}
+	return data
+}
+
+func validateRenderedMarketplaceSources(t *testing.T, root string, config []byte) {
+	t.Helper()
+	schemaPath := filepath.Join(root, "core/config/dist/index.js")
+	if _, err := os.Stat(schemaPath); err != nil {
+		t.Fatalf("core-config schema build precondition %s: %v; run from workspace root: corepack pnpm --filter @kb-labs/core-config build", schemaPath, err)
+	}
+	validate := fmt.Sprintf(`import { validateProductConfig } from %q;
+let input = '';
+for await (const chunk of process.stdin) input += chunk;
+const result = validateProductConfig('marketplace', JSON.parse(input).marketplace);
+if (!result.ok) { process.stderr.write(JSON.stringify(result.errors)); process.exit(1); }`, "file://"+filepath.ToSlash(schemaPath))
+	cmd := exec.Command("node", "--input-type=module", "-e", validate)
+	cmd.Dir = root
+	cmd.Stdin = bytes.NewReader(config)
+	if result, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Go-rendered Marketplace config failed core-config schema validation: %v: %s", err, result)
 	}
 }
 
@@ -46,10 +244,10 @@ func TestBuildDerivesHostAuthFromTheAccessMode(t *testing.T) {
 		patches []contracts.ConfigPatch
 		want    string
 	}{
-		"local install has no login":       {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"local"`, Owner: "manifest:gateway.access.mode"}}, "off"},
-		"secured install requires login":   {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"secured"`, Owner: "manifest:gateway.access.mode"}}, "on"},
-		"no answer is the secured default": {nil, "on"},
-		"an explicit host.auth is kept":    {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"local"`, Owner: "manifest:a"}, {Path: "/host/auth", JSON: `"on"`, Owner: "manifest:b"}}, "on"},
+		"local install has no login":          {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"local"`, Owner: "manifest:gateway.access.mode"}}, "off"},
+		"secured install requires login":      {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"secured"`, Owner: "manifest:gateway.access.mode"}}, "on"},
+		"no answer is the secured default":    {nil, "on"},
+		"host auth follows the selected mode": {[]contracts.ConfigPatch{{Path: "/gateway/access/mode", JSON: `"local"`, Owner: "manifest:a"}, {Path: "/host/auth", JSON: `"on"`, Owner: "manifest:b"}}, "off"},
 	}
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -243,5 +441,51 @@ func testPlan(root string) contracts.ResolvedInstallPlan {
 		Schema:       contracts.ResolvedPlanSchema,
 		Request:      contracts.InstallRequest{PlatformRoot: root},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Command: "serve", Port: 4000}}},
+	}
+}
+
+// case: S-285.14
+func TestBuildUsesRegistryForDefaultMarketplaceNpmSource(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.Registry = "http://127.0.0.1:4873"
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate release configuration")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "../../../.."))
+	var index catalog.Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("2.0.0", "2.0.0", runtime.GOOS, runtime.GOARCH), &index); err != nil {
+		t.Fatal(err)
+	}
+	index.Platforms[0].Config = append(index.Platforms[0].Config, catalog.ConfigRequirement{ID: "marketplace.sources", Path: "/marketplace/sources", Default: string(releaseMarketplaceSources(t, root))})
+	index = testfixtures.MustSealCatalog(index)
+	if _, err := catalog.VerifyCatalog(index); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range index.Platforms[0].Config {
+		if item.Path == "/marketplace/sources" {
+			plan.ConfigPatches = append(plan.ConfigPatches, contracts.ConfigPatch{Path: item.Path, JSON: item.Default})
+		}
+	}
+	if len(plan.ConfigPatches) == 0 {
+		t.Fatal("fixture index does not declare Marketplace sources")
+	}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Marketplace struct {
+			Sources []struct {
+				Kind string `json:"kind"`
+				URL  string `json:"url"`
+			} `json:"sources"`
+		} `json:"marketplace"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Marketplace.Sources) != 1 || config.Marketplace.Sources[0].URL != plan.Registry {
+		t.Fatalf("Marketplace sources = %+v, want registry %s", config.Marketplace.Sources, plan.Registry)
 	}
 }

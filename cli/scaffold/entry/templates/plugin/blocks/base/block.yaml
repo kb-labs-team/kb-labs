@@ -1,0 +1,5 @@
+id: base
+describe: |
+  Required. Scaffolds one plugin package with internal source folders (CLI / core / contracts)
+  with a working `hello` CLI command and inline examples showing how to use
+  the LLM, cache, and logger from the platform.

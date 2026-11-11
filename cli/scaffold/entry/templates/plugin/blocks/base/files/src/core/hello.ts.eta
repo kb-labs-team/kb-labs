@@ -1,0 +1,59 @@
+import type { HelloInput, HelloResult } from '../contracts/index.js';
+
+/**
+ * Business logic for the `hello` command.
+ *
+ * This is a pure function so it can be unit-tested without any platform
+ * scaffolding. The handler in `-entry` is responsible for wiring platform
+ * services (logger, cache, LLM) and passing the results in — keep this
+ * function free of side effects.
+ */
+export function hello(input: HelloInput): HelloResult {
+  const who = input.who?.trim() || 'World';
+  return { greeting: `Hello, ${who} from <%= it.name %>!` };
+}
+
+/*
+ * ───────────────────────────────────────────────────────────────────────────
+ *  Cookbook: reach for these patterns when you grow past "hello".
+ *  Everything flows through `@kb-labs/sdk` — DO NOT import from
+ *  `@kb-labs/core-*` or `@kb-labs/platform-*` directly.
+ * ───────────────────────────────────────────────────────────────────────────
+ */
+
+// ── 1. Call an LLM ─────────────────────────────────────────────────────────
+//
+// import { useLLM, type PluginContextV3 } from '@kb-labs/sdk';
+//
+// export async function greetWithLLM(ctx: PluginContextV3, who: string) {
+//   const llm = await useLLM(ctx);            // throws if no LLM adapter bound
+//   const res = await llm.complete({
+//     prompt: `Write a one-line greeting for ${who}.`,
+//     maxTokens: 40,
+//   });
+//   return res.text;
+// }
+
+// ── 2. Cache the result ────────────────────────────────────────────────────
+//
+// import { useCache, type PluginContextV3 } from '@kb-labs/sdk';
+//
+// export async function cachedGreeting(ctx: PluginContextV3, who: string) {
+//   const cache = await useCache(ctx);        // namespaced per plugin
+//   const key = `greeting:${who}`;
+//   const hit = await cache.get<string>(key);
+//   if (hit) return hit;
+//
+//   const greeting = `Hello, ${who}!`;
+//   await cache.set(key, greeting, { ttlMs: 60_000 });
+//   return greeting;
+// }
+
+// ── 3. Structured logging ──────────────────────────────────────────────────
+//
+// import { useLogger, type PluginContextV3 } from '@kb-labs/sdk';
+//
+// export function logGreeting(ctx: PluginContextV3, who: string) {
+//   const log = useLogger(ctx);
+//   log.info({ who }, 'computed greeting');
+// }

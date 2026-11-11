@@ -147,7 +147,7 @@ async function main() {
 
     // Phase 3: Build dependency graph
     const { buildDependencyGraph } = await import('../src/freshness/graph.js');
-    const graph = buildDependencyGraph(packages, metadata);
+    const graph = buildDependencyGraph(metadata);
 
     // Phase 4: Analyze staleness
     const { analyzeStaleness } = await import('../src/freshness/analyzer.js');
@@ -159,7 +159,7 @@ async function main() {
       const meta = metadata.get(packageName);
 
       if (meta) {
-        const result = analyzeStaleness(packageName, meta, graph, metadata, options);
+        const result = analyzeStaleness(packageName, meta, graph, options);
         freshnessResults.set(packageName, result);
       }
     }
@@ -172,13 +172,13 @@ async function main() {
     const formatters = await import('../src/freshness/formatters.js');
 
     if (options.json) {
-      formatters.printJSON(freshnessResults, graph, metadata, options);
+      formatters.printJSON(freshnessResults, graph, options);
     } else if (options.md) {
-      formatters.printMarkdown(freshnessResults, graph, metadata, options);
+      formatters.printMarkdown(freshnessResults, graph);
     } else if (options.tree) {
-      formatters.printTree(freshnessResults, graph, metadata, options);
+      formatters.printTree(freshnessResults, graph, options);
     } else {
-      formatters.printTable(freshnessResults, graph, metadata, options);
+      formatters.printTable(freshnessResults, graph, options);
     }
 
     // Exit code: 1 if stale packages found, 0 otherwise

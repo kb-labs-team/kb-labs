@@ -299,13 +299,11 @@ export const pluginsRegistry = defineSystemCommand<PluginsRegistryFlags, Plugins
     ctx.platform?.logger?.info('Plugins registry scan completed', { count: manifests.length });
 
     if (flags.json) {
-      const jsonData = {
+      return {
         manifests: manifests.map((p) => p.manifest),
         manifestsWithPaths,
         total: manifests.length,
       };
-
-      return jsonData;
     }
 
     const sections: Array<{ header?: string; items: string[] }> = [

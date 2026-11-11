@@ -21,11 +21,13 @@
 !.kb/deploy/**/node_modules
 !.kb/deploy/**/node_modules/**
 
-# Build output — same story: excluded broadly, except the CI-produced
-# deploy artifacts Dockerfiles actually COPY from.
+# Build output — same story: excluded broadly, except candidate fixture
+# manifests and the CI-produced deploy artifacts used by Docker builds.
 **/dist
-!e2e/journey/fixtures/analytics-emitter/dist
-!e2e/journey/fixtures/analytics-emitter/dist/**
+!dist
+!dist/**
+!e2e/journey/fixtures/*/dist
+!e2e/journey/fixtures/*/dist/**
 !.kb/deploy/**/dist
 !.kb/deploy/**/dist/**
 !.kb/bundle/**/dist

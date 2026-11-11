@@ -251,7 +251,7 @@ try {
 }
 ```
 
-See [validation-examples.md](./validation-examples.md#error-handling) and [utils/errors.ts](../../packages/plugin-template-core/src/utils/errors.ts).
+See [validation-examples.md](./validation-examples.md#error-handling) and [utils/errors.ts](../../src/utils/errors.ts).
 
 ## Contributing examples
 
@@ -278,4 +278,4 @@ Found a useful pattern? Add it to the examples:
 - [CLI Guide](../cli-guide.md) - CLI patterns
 - [REST Guide](../rest-guide.md) - REST patterns
 - [Studio Guide](../studio-guide.md) - Widget patterns
-- [Folder READMEs](../../packages/plugin-template-core/src/) - Detailed per-folder docs
+- [Folder READMEs](../../src/) - Detailed per-folder docs

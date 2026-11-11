@@ -111,8 +111,8 @@ Each platform service becomes its own deployable unit. The gateway fronts them a
 Every service that ships a `ServiceManifest` has a `Dockerfile` you can build from:
 
 - `plugins/rest-api/Dockerfile`
-- `plugins/workflow/daemon/Dockerfile` (check for one)
-- `plugins/marketplace/Dockerfile`
+- `services/workflow/daemon/Dockerfile` (check for one)
+- `services/marketplace/Dockerfile`
 - `plugins/gateway/app/Dockerfile`
 
 For services without a pre-made Dockerfile, use a multi-stage Node image pattern:

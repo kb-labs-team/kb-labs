@@ -1,11 +1,11 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type APIRequestContext } from '@playwright/test'
 import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
 
 // Workflow engine tests: execution lifecycle, stats, job tracking
 // Relies on e2e-hello and e2e-fail workflows scaffolded in .kb/workflows/
 
 async function findWorkflow(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   name: string,
 ): Promise<{ id?: string; name?: string } | undefined> {
   const res = await request.get(`${WORKFLOW}/api/v1/workflows`)
@@ -16,7 +16,7 @@ async function findWorkflow(
 }
 
 async function startRun(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   workflowId: string,
 ): Promise<string> {
   const res = await request.post(`${WORKFLOW}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`, { data: {} })
@@ -28,7 +28,7 @@ async function startRun(
 }
 
 async function pollRunStatus(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   runId: string,
 ): Promise<string | undefined> {
   const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`)

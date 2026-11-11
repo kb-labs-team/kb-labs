@@ -2,13 +2,17 @@
 """One isolated end-user install journey; each invocation runs in a fresh container."""
 from __future__ import annotations
 
+from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_tool_names
+
 from kb_invocation import kb_command, kb_login_shell, kb_login_shell_sequence
 from installed_fixture import layout_relative, layout_value
 from journey_values import journey_value
 
 import json
+import base64
 import os
 import re
+import stat
 import shutil
 import sys
 import tempfile
@@ -19,7 +23,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Callable
+from typing import Callable, Union
 
 from studio_steps import (create_studio_access_tokens, create_studio_environment,
                           create_studio_member, run_studio_browser_step,
@@ -33,7 +37,9 @@ from platform_channel_steps import run_platform_channel_steps
 from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_installer_case_steps, run_invalid_request_step,
                                   run_apply_scenario_step,
-                                  run_uninstall_decline_step, run_missing_project_request_steps)
+                                  run_uninstall_decline_step, run_missing_project_request_steps,
+                                  commit_marketplace_install_record,
+                                  add_installed_host_stop_case_step)
 from installer_case_steps import parse_install_refusal
 from journey_resources import case_catalog_root, journey_module, parse_shell_commands, resource_root, workspace_resource
 from project_service_path import project_service_path
@@ -93,12 +99,36 @@ ACTIVE_MAIN_ENV: dict[str, str] | None = None
 ACTIVE_LAUNCHER: str | None = None
 LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
 LAST_COMMAND_CWD: str | None = None
+
+
+def marketplace_install_flags(env: dict[str, str]) -> list[str]:
+    """Configure the journey npm mirror and translate Registry secrets to env references."""
+    registry_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
+    encoded_key = env.get("KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64", "")
+    if bool(registry_url) != bool(encoded_key):
+        raise ValueError("journey Marketplace Registry URL and generated public key must be configured together")
+    flags = []
+    if registry_url:
+        try:
+            key = base64.b64decode(encoded_key, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as error:
+            raise ValueError("journey Registry public key is not valid base64-encoded UTF-8") from error
+        env["KB_JOURNEY_MARKETPLACE_PUBLIC_KEY"] = key
+        store_report_secret(env, "KB_JOURNEY_MARKETPLACE_TOKEN",
+                            "journey-registry-token-reference-test-value", "journey Marketplace Registry token")
+        flags.extend(["--marketplace-registry-url", registry_url,
+                      "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
+                      "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN"])
+    flags.extend(["--marketplace-npm-url", REGISTRY])
+    return flags
+
+
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
 RUNNER_SCENARIOS = {
     "commit": {
         "installer": "commit",
         "secured_installer": "custom",
-        "secured_marketplace_packages": ("@kb-labs/commit-entry",),
+        "secured_marketplace_packages": ("@kb-labs/commit",),
         "command_help_paths": (("commit", "commit", "--help"),),
     },
     "explore": {
@@ -240,6 +270,20 @@ class ProjectRegistration:
     name: str
 
 
+@dataclass(frozen=True)
+class ProjectBRootValid:
+    project_id: str
+    root: Path
+
+
+@dataclass(frozen=True)
+class ProjectBRootInvalid:
+    diagnostic: dict
+
+
+ProjectBRootHandoff = Union[ProjectBRootValid, ProjectBRootInvalid]
+
+
 def project_registration_from_state(value: object) -> ProjectRegistration:
     """Parse a passed state value into the non-optional project contract."""
     project = value
@@ -250,15 +294,67 @@ def project_registration_from_state(value: object) -> ProjectRegistration:
     return ProjectRegistration(project_id=project["id"], root=project["root"], name=project["name"])
 
 
-def project_b_fixture_from_state(graph: FlowGraph) -> dict[str, str] | None:
-    fixtures = graph.state_value_if_passed("fixtures-installed")
-    if fixtures is None:
-        return None
-    if (not isinstance(fixtures, dict) or not isinstance(fixtures.get("projectBId"), str)
-            or not fixtures["projectBId"] or not isinstance(fixtures.get("projectBRoot"), str)
-            or not fixtures["projectBRoot"]):
-        raise RuntimeError("fixtures-installed state passed without a registered project B id and root")
-    return fixtures
+def project_b_fixture_from_state(graph: FlowGraph) -> ProjectBRootHandoff:
+    """Resolve the fixtures-installed state to a validated Project B handoff."""
+    state = graph.states.get("fixtures-installed")
+    value = state.get("value") if state else None
+    project_id = value.get("projectBId") if isinstance(value, dict) else None
+    serialized_root = value.get("projectBRoot") if isinstance(value, dict) else None
+    if state is None or state.get("passed") is not True or "value" not in state:
+        return invalid_project_b_root(serialized_root, graph.state_failure("fixtures-installed"))
+    return validate_project_b_root(project_id, serialized_root)
+
+
+def invalid_project_b_root(serialized_value: object, reason: str, *,
+                           realpath: str | None = None, mode: int | None = None,
+                           owner: dict[str, int] | None = None) -> ProjectBRootInvalid:
+    diagnostic = {
+        "code": "PROJECT_B_ROOT_INVALID",
+        "serializedValue": serialized_value,
+        "realpath": realpath,
+        "mode": mode,
+        "owner": owner,
+        "reason": reason,
+    }
+    return ProjectBRootInvalid(diagnostic)
+
+
+def validate_project_b_root(project_id: object, serialized_value: object) -> ProjectBRootHandoff:
+    """Validate the fixture's host-visible Project B identity and root at handoff."""
+    if not isinstance(serialized_value, str) or not serialized_value:
+        return invalid_project_b_root(serialized_value, "must be a non-empty directory path")
+
+    candidate = Path(serialized_value)
+    try:
+        resolved = candidate.resolve(strict=True)
+        info = resolved.stat()
+        metadata = {
+            "realpath": str(resolved),
+            "mode": stat.S_IMODE(info.st_mode),
+            "owner": {"uid": info.st_uid, "gid": info.st_gid},
+        }
+        if not stat.S_ISDIR(info.st_mode):
+            return invalid_project_b_root(serialized_value, "not a directory", **metadata)
+        if not os.access(resolved, os.W_OK):
+            return invalid_project_b_root(serialized_value, "not writable", **metadata)
+        if not isinstance(project_id, str) or not project_id:
+            return invalid_project_b_root(serialized_value, "fixture state has no registered Project B ID", **metadata)
+        return ProjectBRootValid(project_id=project_id, root=resolved)
+    except OSError as error:
+        reason = "missing or inaccessible"
+        if error.errno not in (None, 2, 13):
+            reason = f"filesystem error: {error.strerror}"
+        return invalid_project_b_root(serialized_value, reason)
+
+
+def invalidate_project_b_handoff(graph: FlowGraph, handoff: ProjectBRootHandoff) -> None:
+    if isinstance(handoff, ProjectBRootInvalid):
+        graph.invalidate_state(
+            "fixtures-installed",
+            group="journey",
+            step="Project B fixture handoff",
+            evidence=json.dumps(handoff.diagnostic, sort_keys=True),
+        )
 
 
 def cleanup_partial_install(graph: FlowGraph, env: dict[str, str], launcher: str) -> None:
@@ -420,6 +516,15 @@ def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
                                        stderr=result.stderr or ""), duration
 
 
+def installer_command(args: list[str], *, env: Mapping[str, str], secret: str,
+                      input: str | None = None) -> CompletedProcess[str]:
+    installer_env = dict(env)
+    if "--secret-env" in args:
+        store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", secret,
+                            "installer scenario password")
+    return run(args, env=installer_env, timeout=1200, input_text=input)[0]
+
+
 def _sample_pnpm_rss_for_run(pid: int) -> None:
     global MAX_PNPM_RSS_MIB
     MAX_PNPM_RSS_MIB = max(MAX_PNPM_RSS_MIB, sample_pnpm_rss(pid))
@@ -544,19 +649,10 @@ def capture_case_failure() -> None:
     fail(f"{first.get('name', 'journey step')}: {first.get('message', 'reported FAIL')}")
 
 
-def check_selected_claim_completion(journey_results: list[dict], selection: str | None = None) -> list[str]:
+def check_selected_claim_completion(journey_results: list[dict]) -> list[str]:
     """Fail the run if selected claims were not recorded by any of its journeys."""
-    raw_selection = (selection if selection is not None else
-                     ",".join(sorted(CASE_JOURNEY.selection)) if CASE_JOURNEY is not None else "")
-    selected = set(filter(None, raw_selection.split(",")))
-    executed = {
-        case_id
-        for journey_result in journey_results
-        for step in journey_result.get("steps", [])
-        if step.get("status") in {"PASS", "FAIL", "BLOCKED"}
-        for case_id in step.get("cases", [])
-    }
-    missing = sorted(selected - executed)
+    missing = (CASE_JOURNEY.missing_selected_claims(journey_results)
+               if CASE_JOURNEY is not None else [])
     if missing:
         fail("selected claim steps did not execute: " + ", ".join(missing)
              + "; the selected runner did not call their registered step functions")
@@ -668,7 +764,7 @@ def mcp_rpc(url: str, method: str, request_id: int, params=None, token=None):
     return json.loads(body)
 
 
-def verify_project_mcp(env: dict[str, str], local: bool):
+def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: frozenset[str] = DEFAULT_ENABLED_SERVICES):
     registered, _ = run(kb_login_shell(["project", "add", "--json"]),
                         env=env, cwd=PROJECT, timeout=180)
     if not require(registered, step="register project for MCP"):
@@ -699,9 +795,9 @@ def verify_project_mcp(env: dict[str, str], local: bool):
         listed = mcp_rpc(url, "tools/list", 2, token=token)
         tools = listed.get("result", {}).get("tools", [])
         names = {tool.get("name") for tool in tools}
-        expected = {"kb-labs-commit__commit_commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics"}
+        expected = {commit_tool("commit commit"), *service_tool_names(enabled_service_ids), "kb-labs__mcp_diagnostics"}
         if not expected.issubset(names):
-            raise RuntimeError(f"tools/list missing expected tools: {sorted(expected - names)}")
+            raise RuntimeError(f"tools/list missing expected tools: expected={sorted(expected)} served={sorted(names)[:50]}")
         called = mcp_rpc(url, "tools/call", 3, {"name": "kb-labs__mcp_diagnostics", "arguments": {}}, token)
         content = called.get("result", {}).get("content", [])
         text = "\n".join(item.get("text", "") for item in content)
@@ -912,6 +1008,17 @@ def restart_shared_host(graph: FlowGraph, launcher: str, env: dict[str, str], st
     return restarted_url
 
 
+def run_workflow_with_host_boundary(graph: FlowGraph, *, env: dict[str, str], launcher: str,
+                                    action: Callable[[], object]) -> object:
+    """Re-establish the shared-host prerequisite after workflow cases mutate its lifecycle."""
+    try:
+        return action()
+    finally:
+        probe_platform_state(graph, env, launcher, mutator_group="workflow",
+                             mutator_step="workflow case host boundary",
+                             include_installed=False, include_version=False)
+
+
 def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
     receipt = PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json"
     hidden_receipt = receipt.with_name("receipt.journey-hidden.json")
@@ -1049,6 +1156,7 @@ def _run_final_uninstall(graph: FlowGraph, env: dict[str, str], launcher: str) -
         "uninstall platform", "uninstall", "platform.uninstall",
         lambda: run_uninstall_group(graph, env, launcher),
         cases=["S-050.1", "S-050.4", "S-050.6", "S-050.7"], role="lifecycle",
+        plan_phase="teardown",
     )
     if status == "SKIPPED":
         return not FIRST_FAILURE
@@ -1073,6 +1181,7 @@ def _main(*, update_variant_runner=None):
     env["KB_JOURNEY_INVOCATIONS"] = str(Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).resolve().parent)
     os.environ["KB_JOURNEY_INVOCATIONS"] = env["KB_JOURNEY_INVOCATIONS"]
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
+    marketplace_flags = marketplace_install_flags(env)
     (HOME / ".profile").write_text("if [ -f ~/.bashrc ]; then . ~/.bashrc; fi\n")
     (HOME / ".bash_profile").write_text("if [ -f ~/.profile ]; then . ~/.profile; fi\n")
     (HOME / ".npmrc").write_text(f"registry={REGISTRY}\n")
@@ -1085,6 +1194,7 @@ def _main(*, update_variant_runner=None):
     selection_groups = outer_selection_groups()
     outer_graph = FlowGraph(CASE_JOURNEY, OUTER_GROUP_DEPENDENCIES,
                             diagnostics_path=diagnostics, groups=selection_groups)
+    project_b_handoff: ProjectBRootHandoff | None = None
 
     def produce_project_registration_state() -> None:
         establish_project_registration(outer_graph, PROJECT, env)
@@ -1151,6 +1261,7 @@ def _main(*, update_variant_runner=None):
         return finalize_run(False)
 
     launcher = str(BIN / "kb-create")
+    env["KB_JOURNEY_KB_CREATE_PATH"] = launcher
     ACTIVE_LAUNCHER = launcher
     version, _ = run([launcher, "--version"], env=env, timeout=30)
     version_ok = version.returncode == 0 and re.fullmatch(r"kb-create [^\s]+\s*", version.stdout) is not None
@@ -1187,12 +1298,13 @@ def _main(*, update_variant_runner=None):
         return finalize_run(passed)
     first_admin_shown_once = False
     install_plan_summary_ok = False
+    install_marketplace_ok = False
     if FRONT == "human" and not VARIANT.endswith("secured"):
         PROJECT.mkdir(parents=True, exist_ok=True)
         choice = "commit" if VARIANT == "human-nondefault" else ""
         access_mode = "secured" if VARIANT.endswith("secured") else "local"
         code, output, duration, apply_offset = pty_install(
-            [launcher, "install", "--registry", REGISTRY], env, choice, access_mode
+            [launcher, "install", "--registry", REGISTRY, *marketplace_flags], env, choice, access_mode
         )
         TIMES["questions"] = apply_offset if apply_offset is not None else duration
         if apply_offset is not None:
@@ -1229,7 +1341,7 @@ def _main(*, update_variant_runner=None):
         install_scenario = scenario_setup["installer"]
         args = [launcher, operation, "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
                 "--platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", install_scenario,
-                "--registry", REGISTRY, "--project-root", str(PROJECT)]
+                "--registry", REGISTRY, *marketplace_flags, "--project-root", str(PROJECT)]
         if VARIANT.endswith("secured"):
             answers = json.dumps({
                 "access.mode": "secured",
@@ -1267,6 +1379,7 @@ def _main(*, update_variant_runner=None):
                               and record.get("meta", {}).get("stream", {}).get("result") is True]
             install_receipt = result_records[0].get("data", {}).get("receipt", {}) if len(result_records) == 1 else {}
             install_plan = install_receipt.get("plan", {}) if isinstance(install_receipt, dict) else {}
+            install_marketplace_ok = commit_marketplace_install_record(install_receipt) is not None
             install_plan_summary_ok = (isinstance(install_plan, dict)
                                        and bool(install_plan.get("serviceGraph", {}).get("platformVersion"))
                                        and bool(install_plan.get("artifacts")))
@@ -1390,8 +1503,9 @@ def _main(*, update_variant_runner=None):
                     requires=("step:candidate provenance",),
                     runners=("human:default", "human:nondefault"))
     record_case("clean install leaves a running host and reports its resolved plan",
-                install_running and install_plan_summary_ok and (mode != "secured" or first_admin_shown_once),
-                "install did not leave a reachable host, return one result with a resolved plan, or return the secured credential exactly once",
+                install_running and install_plan_summary_ok and install_marketplace_ok
+                and (mode != "secured" or first_admin_shown_once),
+                "install did not leave a reachable host, return its Commit Marketplace receipt and resolved plan, or return the secured credential exactly once",
                 cases=["PC-001.2"], requires=("step:candidate provenance",),
                 runners=("agent:commit", "agent-secured:commit", "service-local:explore",
                          "service-secured:explore"))
@@ -1477,7 +1591,7 @@ def _main(*, update_variant_runner=None):
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
 
     if FRONT == "agent" and SCENARIO == "commit":
-        verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local")
+        verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local", DEFAULT_ENABLED_SERVICES)
 
     update_group_selected = outer_graph.group_selected("update")
     update_journey = update_group_selected and (
@@ -1713,12 +1827,11 @@ def _main(*, update_variant_runner=None):
                 store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", installer_secret,
                                     "root-isolation installer password")
             return run(args, env=installer_env, timeout=1200)[0]
-        def installer_command(args: list[str]):
-            installer_env = env.copy()
-            if "--secret-env" in args:
-                store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", installer_secret,
-                                    "installer scenario password")
-            return run(args, env=installer_env, timeout=1200)[0]
+        fixture_env = env
+        def installer_command_for_fixture(args: list[str], *, input: str | None = None,
+                                          env: Mapping[str, str] | None = None):
+            return installer_command(args, env=env if env is not None else fixture_env,
+                                     secret=installer_secret, input=input)
         fixture_groups = ISOLATED_FIXTURE_GROUPS
         fixture_group_keys = {group: f"isolated-fixture:{group.__name__}" for group in fixture_groups}
         selected_groups = tuple(group for group in fixture_groups
@@ -1752,7 +1865,7 @@ def _main(*, update_variant_runner=None):
                     update_index=container_update_indexes["update"],
                     jump_index=container_update_indexes["jump"], canary_index=canary_index,
                     platform_root=PLATFORM, secret_value=installer_secret, registry=REGISTRY,
-                    run_command=installer_command)
+                    run_command=installer_command_for_fixture)
                 register_supplied_password_absence_step(
                     fixture_journey, Path(env["HOME"]), installer_secret)
                 return fixture_journey
@@ -1764,13 +1877,13 @@ def _main(*, update_variant_runner=None):
                 INSTALLER_CASE_GROUP: run_installer_case_group,
                 APPLY_SCENARIO_GROUP: lambda: run_apply_scenario_step(
                     mode=mode, launcher=launcher, stable_index=stable_index,
-                    platform_root=PLATFORM, run_command=installer_command),
+                    platform_root=PLATFORM, run_command=installer_command_for_fixture),
                 INVALID_REQUEST_GROUP: lambda: run_invalid_request_step(
                     mode=mode, launcher=launcher, stable_index=stable_index,
-                    platform_root=PLATFORM, run_command=installer_command),
+                    platform_root=PLATFORM, run_command=installer_command_for_fixture),
                 MISSING_PROJECT_REQUEST_GROUP: lambda: run_missing_project_request_steps(
                     mode=mode, launcher=launcher, stable_index=stable_index,
-                    home=HOME, run_command=installer_command),
+                    home=HOME, run_command=installer_command_for_fixture),
             }
 
             def execute_fixture_group(group):
@@ -2106,25 +2219,13 @@ def _main(*, update_variant_runner=None):
             or bool(outer_graph.selected_groups & {"workflow", "studio"})
             or outer_graph.group_selected("update-variants")
         )
-        project_b_id = ""
-        project_b_root_value = ""
-        if fixture_state_needed:
-            fixture_state = outer_graph.states.get("fixtures-installed", {})
-            if fixture_state.get("passed") is not True:
-                evidence = str(fixture_state.get("evidence") or "state probe has not run")
-                fail(f"project B fixture handoff blocked by state fixtures-installed: {evidence}")
-                block_outer_dependents(outer_graph, ["marketplace-fixtures", "adapters", "plugin-author",
-                                                     "workflow", "analytics", "studio"])
-            elif project_b_consumers_selected:
-                fixture_projects = project_b_fixture_from_state(outer_graph)
-                if fixture_projects is None:
-                    fail("project B fixture handoff blocked by state fixtures-installed: "
-                         + outer_graph.state_failure("fixtures-installed"))
-                    block_outer_dependents(outer_graph, ["marketplace-fixtures", "adapters", "plugin-author",
-                                                         "workflow", "analytics", "studio"])
-                else:
-                    project_b_id = fixture_projects["projectBId"]
-                    project_b_root_value = fixture_projects["projectBRoot"]
+        if fixture_state_needed or project_b_consumers_selected:
+            project_b_handoff = project_b_fixture_from_state(outer_graph)
+            if isinstance(project_b_handoff, ProjectBRootInvalid):
+                handoff_diagnostic = json.dumps(project_b_handoff.diagnostic, sort_keys=True)
+                fail(handoff_diagnostic)
+                invalidate_project_b_handoff(outer_graph, project_b_handoff)
+                export_graph_state_to_child_environment(outer_graph, service_env)
         workflow_journey = Journey(mode, f"workflow-{mode}")
         def restart_for_workflow_history() -> None:
             restart_shared_host(outer_graph, launcher, env, "workflow history checkpoint")
@@ -2136,28 +2237,20 @@ def _main(*, update_variant_runner=None):
                            + [f"S-143.{step}" for step in range(1, 5)])
         outer_graph.flow(
             "workflow execution journey", "workflow", "workflow",
-            lambda: run_workflow_journey(
-                workflow_journey,
-                env=service_env,
-                project=PROJECT,
-                restart_host=restart_for_workflow_history,
+            lambda: run_workflow_with_host_boundary(
+                outer_graph, env=env, launcher=launcher,
+                action=lambda: run_workflow_journey(
+                    workflow_journey,
+                    env=service_env,
+                    project=PROJECT,
+                    restart_host=restart_for_workflow_history,
+                ),
             ),
             cases=workflow_claims, record_empty_success=False,
             runners=("service-local:explore", "service-secured:explore"),
         )
-        fixture_state = outer_graph.states.get("fixtures-installed", {})
-        if fixture_state.get("passed") is True:
-            fixture_projects = project_b_fixture_from_state(outer_graph)
-            if fixture_projects is None:
-                fail("project B fixture handoff blocked by state fixtures-installed: "
-                     + outer_graph.state_failure("fixtures-installed"))
-                block_outer_dependents(outer_graph, ["marketplace-fixtures", "adapters", "plugin-author",
-                                                     "workflow", "analytics", "studio"])
-            else:
-                project_b_root_value = fixture_projects["projectBRoot"]
-                project_b_id = fixture_projects["projectBId"]
-        if project_b_root_value and project_b_id:
-            project_b_fixture_root = Path(project_b_root_value)
+        if isinstance(project_b_handoff, ProjectBRootValid):
+            project_b_fixture_root = project_b_handoff.root
             prepare_workflow_fixtures(project_b_fixture_root)
             definitions_deadline = time.monotonic() + 30
             healthy_workflow_ready = False
@@ -2210,14 +2303,12 @@ def _main(*, update_variant_runner=None):
             fail(f"{mode} workflow journey: {workflow_result.first_failure}")
             first = workflow_result.first_failure or {}
 
-        studio_claims = "S-106.1,S-106.2,S-106.3,S-106.4,S-106.5,S-106.6,S-107.1,S-107.2,S-107.3"
         oauth_claims = (release_claims_for_case("S-109", case_catalog_root())
                         if mode == "secured" else [])
-        if oauth_claims:
-            studio_claims += "," + ",".join(oauth_claims)
 
         run_studio_browser_group = reject_unprepared_studio_flow
-        if not outer_graph.selection_active or "studio" in outer_graph.selected_groups:
+        if isinstance(project_b_handoff, ProjectBRootValid) and (
+                not outer_graph.selection_active or "studio" in outer_graph.selected_groups):
             project_state = outer_graph.states.get("project-registered")
             if project_state is not None and project_state.get("passed") is True:
                 project_result = project_registration_from_state(
@@ -2272,9 +2363,7 @@ def _main(*, update_variant_runner=None):
                     time.sleep(1)
                 else:
                     fail(f"Studio schedule journey could not list project A crons: {project_a_cron_error}")
-                if not project_b_root_value or not project_b_id:
-                    fail("installed Studio fixture requires the fixtures-installed project B state")
-                project_b_root = Path(project_b_root_value)
+                project_b_root = project_b_handoff.root
                 (project_b_root / ".kb" / "workflows").mkdir(parents=True, exist_ok=True)
                 (project_b_root / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
                 (project_b_root / ".kb" / "workflows" / "studio-b-workflow.yml").write_text(
@@ -2288,7 +2377,7 @@ def _main(*, update_variant_runner=None):
                     "KB_STUDIO_CRON_ID": cron_id,
                     "KB_STUDIO_PROJECT_A_PLUGIN_CRON_IDS": ",".join(project_a_plugin_cron_ids),
                     "KB_STUDIO_PROJECT_A_USER_CRON_IDS": ",".join(project_a_user_cron_ids),
-                    "KB_STUDIO_PROJECT_B_ID": project_b_id,
+                    "KB_STUDIO_PROJECT_B_ID": project_b_handoff.project_id,
                     "KB_STUDIO_PROJECT_B_CRON_ID": "studio-b",
                     "KB_STUDIO_PLAYWRIGHT_JSON": str(service_report.with_name(f"studio-playwright-{mode}.json")),
                     "KB_STUDIO_PROJECT_A_NAME": project_name,
@@ -2297,7 +2386,7 @@ def _main(*, update_variant_runner=None):
                 try:
                     studio_env.update(prepare_studio_fixtures(
                         service_env,
-                        project_b_id=project_b_id,
+                        project_b_id=project_b_handoff.project_id,
                         project_a=PROJECT,
                         project_b=project_b_root,
                     ))
@@ -2366,27 +2455,58 @@ def _main(*, update_variant_runner=None):
                             )
                     except (KeyError, RuntimeError, urllib.error.URLError, ValueError) as error:
                         fail(f"Studio secured member setup: {error}")
-                def run_studio_browser_group() -> str | None:
+                def run_studio_browser_group(studio_cases: tuple[str, ...]) -> str | None:
+                    studio_claims = ",".join([*studio_cases, *oauth_claims])
                     with invocation_context(step_id=studio_claims):
                         studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
                             "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
                             "--config=/opt/kb-studio-playwright/playwright.config.mjs",
-                        ], studio_env, service_report, mode, studio_shell_passed, timeout=660)
+                        ], studio_env, service_report, mode, studio_shell_passed,
+                            cases=list(studio_cases), timeout=660)
                     TIMES["Studio browser journey"] = studio_elapsed
                     return None if studio_passed else studio_message
-        outer_graph.flow("Studio browser journey", "studio", "studio",
-                         run_studio_browser_group, cases=studio_claims.split(","),
-                         runners=("service-local:explore", "service-secured:explore"))
+        else:
+            run_studio_browser_group = lambda _studio_cases: reject_unprepared_studio_flow()
+        if project_b_handoff is None:
+            if outer_graph.group_selected("studio"):
+                raise JourneyContractError("Studio selection has no Project B fixture handoff result")
+            studio_case_action = lambda _studio_cases: reject_unprepared_studio_flow()
+        elif isinstance(project_b_handoff, ProjectBRootInvalid):
+            studio_case_action = lambda _studio_cases: json.dumps(
+                project_b_handoff.diagnostic, sort_keys=True)
+        else:
+            studio_case_action = run_studio_browser_group
+        outer_graph.flow(
+            "Studio browser journey", "studio", "studio", None,
+            cases=[
+                "S-106.1", "S-106.2", "S-106.3", "S-106.4", "S-106.5", "S-106.6",
+                "S-107.1", "S-107.2", "S-107.3",
+            ], runners=("service-local:explore", "service-secured:explore"),
+            case_action=studio_case_action,
+        )
         capture_case_failure()
     update_variants_selected = outer_graph.group_selected("update-variants")
+    variant_gate = "SKIPPED"
     if update_variants_selected:
+        if project_b_handoff is None:
+            project_b_handoff = project_b_fixture_from_state(outer_graph)
+            if isinstance(project_b_handoff, ProjectBRootInvalid):
+                fail(json.dumps(project_b_handoff.diagnostic, sort_keys=True))
+                invalidate_project_b_handoff(outer_graph, project_b_handoff)
+        if isinstance(project_b_handoff, ProjectBRootValid):
+            variant_action = lambda: None
+        elif isinstance(project_b_handoff, ProjectBRootInvalid):
+            variant_action = lambda: json.dumps(project_b_handoff.diagnostic, sort_keys=True)
+        else:
+            raise JourneyContractError("update variants have no Project B fixture handoff result")
         variant_gate = outer_graph.flow(
             "platform update variant prerequisites", "update-variants", "platform.update",
-            lambda: None,
+            variant_action,
             cases=outer_graph.groups.get("update-variants", {}).get("cases", ()),
-            record_empty_success=False,
         )
-        update_variants_selected = variant_gate != "BLOCKED"
+        update_variants_selected = variant_gate == "PASS"
+    else:
+        outer_graph.skip_unselected("platform update variant prerequisites", "platform.update")
     if update_variants_selected:
         try:
             candidate_base = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/"
@@ -2412,7 +2532,9 @@ def _main(*, update_variant_runner=None):
             variant_request = HOME / "platform-update-variant-request.json"
             active_receipt = json.loads((PLATFORM_CURRENT / ".kb/v2/receipt.json").read_text())
             variant_request.write_text(json.dumps(active_receipt["plan"]["request"]) + "\n")
-            project_b_path = Path(project_b_root_value)
+            if not isinstance(project_b_handoff, ProjectBRootValid):
+                raise JourneyContractError("update variants reached execution without a valid Project B root handoff")
+            project_b_path = project_b_handoff.root
             def variant_run(args, cwd):
                 result, _ = run(args, env=service_env, cwd=cwd, timeout=1200)
                 return result
@@ -2452,8 +2574,15 @@ def _main(*, update_variant_runner=None):
         except Exception as error:
             log_group_exception("platform update variants")
             fail(f"platform update variants: {error}")
-    elif outer_graph.selection_active:
+    elif outer_graph.selection_active and variant_gate != "BLOCKED":
         outer_graph.skip_unselected("platform update variant journey", "platform.update")
+    add_installed_host_stop_case_step(
+        outer_graph.journey, PLATFORM, env,
+        runner=lambda command, **options: run(
+            command, env=options.get("env"), cwd=options.get("cwd"),
+            timeout=options.get("timeout", 120),
+        )[0],
+    )
     passed = _run_final_uninstall(outer_graph, env, launcher)
     return finalize_run(passed)
 

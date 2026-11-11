@@ -19,7 +19,7 @@ import (
 	"github.com/kb-labs/clikit/diag/catalogcheck"
 )
 
-// case: S-203.2, S-203.6
+// case: S-203.2
 func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
@@ -31,7 +31,8 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	var catalog struct {
-		Codes []CatalogEntry `json:"codes"`
+		Codes                []CatalogEntry `json:"codes"`
+		EnvironmentVariables []string       `json:"environmentVariables"`
 	}
 	if err := json.Unmarshal(content, &catalog); err != nil {
 		t.Fatal(err)
@@ -48,7 +49,10 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 		if embedded, ok := LookupCatalog(entry.Code); ok {
 			embedded.TemplateParameters = nil
 			embedded.RequiredTemplateParameters = nil
-			if !reflect.DeepEqual(embedded, CatalogEntry(entry)) {
+			platformEntry := CatalogEntry(entry)
+			platformEntry.TemplateParameters = nil
+			platformEntry.RequiredTemplateParameters = nil
+			if !reflect.DeepEqual(embedded, platformEntry) {
 				t.Errorf("clikit metadata for %s differs from the platform catalog", entry.Code)
 			}
 		} else {
@@ -59,7 +63,10 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 		t.Fatalf("generated Go catalog has %d entries; platform catalog has %d", len(catalogEntries), len(entries))
 	}
 
-	scan, err := catalogcheck.Scan(filepath.Join(root, "tools"))
+	if !reflect.DeepEqual(catalog.EnvironmentVariables, CatalogEnvironmentVariableNames()) {
+		t.Fatalf("generated environment variables = %v, want catalogue values %v", CatalogEnvironmentVariableNames(), catalog.EnvironmentVariables)
+	}
+	scan, err := catalogcheck.Scan(filepath.Join(root, "tools"), CatalogEnvironmentVariableNames())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +79,51 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 			}
 		}
 		t.Errorf("Go tool emits uncatalogued code %s in %s", code, strings.Join(relative, ", "))
+	}
+}
+
+func TestCatalogDeclaresEnvironmentVariableNames(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "core", "platform", "src", "error-envelope", "errors.catalog.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		EnvironmentVariables []string `json:"environmentVariables"`
+	}
+	if err := json.Unmarshal(content, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.EnvironmentVariables) == 0 {
+		t.Fatal("shared error catalogue declares no environment variable names")
+	}
+	if !reflect.DeepEqual(catalog.EnvironmentVariables, CatalogEnvironmentVariableNames()) {
+		t.Fatalf("generated environment variables = %v, want catalogue values %v", CatalogEnvironmentVariableNames(), catalog.EnvironmentVariables)
+	}
+	toolsDir := filepath.Join(t.TempDir(), "tools", "fixture")
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var source strings.Builder
+	source.WriteString("package fixture\n")
+	for _, name := range catalog.EnvironmentVariables {
+		fmt.Fprintf(&source, "var _ = %q\n", name)
+	}
+	fixture := filepath.Join(toolsDir, "fixture.go")
+	if err := os.WriteFile(fixture, []byte(source.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scan, err := catalogcheck.Scan(filepath.Dir(filepath.Dir(toolsDir)), CatalogEnvironmentVariableNames())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range catalog.EnvironmentVariables {
+		if _, exists := scan.Codes[name]; exists {
+			t.Errorf("catalogued environment variable %s was reported as a diagnostic code", name)
+		}
 	}
 }
 
@@ -453,6 +505,15 @@ func TestExitStatusTypeRejectsIntegerAndWrappedLiteralMutations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir, err := os.MkdirTemp(root, ".exitstatusmutation-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove mutation fixtures: %v", err)
+		}
+	})
 	fixtures := []string{
 		`package mutation
 import ("github.com/kb-labs/clikit/diag"; "github.com/kb-labs/clikit/result")
@@ -468,16 +529,16 @@ func middle() int { return leaf() }
 func bad() { _ = result.StreamComplete(middle()) }`,
 	}
 	for index, source := range fixtures {
-		dir, err := os.MkdirTemp(root, "exit-status-mutation-")
-		if err != nil {
+		fixtureDir := filepath.Join(dir, fmt.Sprintf("fixture-%d", index+1))
+		if err := os.Mkdir(fixtureDir, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = os.RemoveAll(dir) })
-		if err := os.WriteFile(filepath.Join(dir, "mutation.go"), []byte(source), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(fixtureDir, "mutation.go"), []byte(source), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		command := exec.Command("go", "test", "./"+filepath.Base(dir))
-		command.Dir = root
+		command := exec.Command("go", "test", "-mod=readonly", ".")
+		command.Dir = fixtureDir
+		command.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
 		if output, err := command.CombinedOutput(); err == nil {
 			t.Errorf("mutation fixture %d compiled; typed exit status accepted a literal: %s", index+1, output)
 		} else if !strings.Contains(string(output), "diag.ExitStatus") {
@@ -495,7 +556,7 @@ func TestCatalogScannerRejectsUncataloguedFixtureLiteral(t *testing.T) {
 	if err := os.WriteFile(fixture, []byte("package fixture\nconst code = \"KB_FIXTURE_404\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	scan, err := catalogcheck.Scan(filepath.Dir(filepath.Dir(toolsDir)))
+	scan, err := catalogcheck.Scan(filepath.Dir(filepath.Dir(toolsDir)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +576,7 @@ func TestCatalogScannerIgnoresKBMapIndexKeys(t *testing.T) {
 	if err := os.WriteFile(fixture, []byte("package fixture\nvar env = map[string]string{}\nfunc set() { env[\"KB_INSTALLATION_ID\"] = \"id\" }\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	scan, err := catalogcheck.Scan(filepath.Dir(filepath.Dir(toolsDir)))
+	scan, err := catalogcheck.Scan(filepath.Dir(filepath.Dir(toolsDir)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

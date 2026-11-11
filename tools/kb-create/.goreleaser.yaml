@@ -23,7 +23,6 @@ builds:
     goarch:
       - amd64
       - arm64
-    ignore:
 archives:
   - id: default
     format: tar.gz

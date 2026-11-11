@@ -70,7 +70,7 @@ All types are exported via `InboundMessage` / `OutboundMessage` union types. **S
 
 Discrepancy vs ADR: ADR listed only llm/cache/vectorStore in allowlist. Code adds `embeddings`, `storage`, `state`. **OK as-is** — superset is safe, the doc is stale.
 
-#### GatewayClient (`plugins/host-agent/core/src/ws/gateway-client.ts`)
+#### GatewayClient (`services/gateway-host-agent/core/src/ws/gateway-client.ts`)
 
 ✅ Full implementation:
 - WS connect with JWT Bearer auth
@@ -85,7 +85,7 @@ Discrepancy vs ADR: ADR listed only llm/cache/vectorStore in allowlist. Code add
 Missing vs ADR:
 - `adapter:chunk` handling in `pendingAdapterCalls` (streaming Phase 2) — **gap for TD-11**
 
-#### GatewayTransport (`plugins/host-agent/core/src/transport/gateway-transport.ts`)
+#### GatewayTransport (`services/gateway-host-agent/core/src/transport/gateway-transport.ts`)
 
 ✅ Implements `ITransport` interface:
 - `send(AdapterCall) → AdapterResponse` via `GatewayClient.sendAdapterCall()`
@@ -94,7 +94,7 @@ Missing vs ADR:
 
 Note: `ITransport` interface is locally defined (copy of `@kb-labs/core-runtime/transport`). Should import from canonical package — **minor cleanup, TD scope OK as-is.**
 
-#### Daemon (`plugins/host-agent/app/src/daemon.ts`)
+#### Daemon (`services/host-agent/app/src/daemon.ts`)
 
 ✅ Full startup sequence:
 1. Load `~/.kb/agent.json` (AgentConfigSchema)
@@ -108,7 +108,7 @@ Note: SearchHandler and ShellHandler are registered and tagged as `@see Phase 3`
 
 #### ExecutionHandler + LocalPluginResolver
 
-`plugins/host-agent/app/src/handlers/execution-handler.ts` — ✅ Full implementation:
+`services/host-agent/app/src/handlers/execution-handler.ts` — ✅ Full implementation:
 - Receives `call(adapter:'execution', method:'execute')`
 - `LocalPluginResolver.resolve(pluginId, handlerRef)` → absolute path
 - Creates `ProxyPlatform` with `GatewayTransport`

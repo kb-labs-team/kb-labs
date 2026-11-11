@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { PluginSettingsSchemaLoadError, resolvePluginSettingsValidator } from '../plugin-settings-schema.js';
+import type { PluginSettingsSchemaLoadError} from '../plugin-settings-schema.js';
+import { resolvePluginSettingsValidator } from '../plugin-settings-schema.js';
 
 let temporaryRoot: string;
 
@@ -13,7 +14,7 @@ async function makePluginRoot(): Promise<string> {
 }
 
 afterEach(async () => {
-  if (temporaryRoot) await fs.rm(temporaryRoot, { recursive: true, force: true });
+  if (temporaryRoot) {await fs.rm(temporaryRoot, { recursive: true, force: true });}
 });
 
 describe('resolvePluginSettingsValidator', () => {

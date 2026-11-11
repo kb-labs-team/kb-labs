@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/config"
@@ -35,6 +36,49 @@ func TestResolveTaskDefResolvesMatchingVariantAndDefaultCache(t *testing.T) {
 
 	if got := ResolveTaskDef(cfg, "missing", "tools"); got != nil {
 		t.Fatalf("ResolveTaskDef missing task = %+v, want nil", got)
+	}
+}
+
+func TestBuildDAGRejectsPackageTaskWithMissingScript(t *testing.T) {
+	root := t.TempDir()
+	writeRootWorkspace(t, root)
+	pkg := newPkg(t, root, "e2e/mcp", "@kb-labs/e2e-mcp", `{"name":"@kb-labs/e2e-mcp","scripts":{"e2e":"playwright test"}}`)
+	pkg.Category = "e2e-suite"
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{pkg}}
+	cfg := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{
+		"test": {{Categories: []string{"e2e-suite"}, Command: "pnpm run test"}},
+	}}
+
+	_, err := buildDAG(ws.Packages, []string{"test"}, cfg, ws)
+	if err == nil {
+		t.Fatal("buildDAG accepted pnpm run test without a package test script")
+	}
+	if got, want := err.Error(), `DevKit task "test" for package "@kb-labs/e2e-mcp" invokes missing package script "test"; declare it in package.json or remove the task assignment, then rerun kb-devkit run test --packages @kb-labs/e2e-mcp`; got != want {
+		t.Fatalf("buildDAG error = %q, want %q", got, want)
+	}
+}
+
+// case: S-179.49
+func TestBuildDAGPackageScriptValidationReadsPnpmFlags(t *testing.T) {
+	root := t.TempDir()
+	writeRootWorkspace(t, root)
+	pkg := newPkg(t, root, "plugins/agents", "@kb-labs/agents", `{"name":"@kb-labs/agents","scripts":{"build":"tsup"}}`)
+	pkg.Category = "plugin-entry"
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{pkg}}
+
+	ifPresent := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{
+		"test:cli": {{Categories: []string{"plugin-entry"}, Command: "pnpm run --if-present test:cli"}},
+	}}
+	if _, err := buildDAG(ws.Packages, []string{"test:cli"}, ifPresent, ws); err != nil {
+		t.Fatalf("buildDAG rejected pnpm run --if-present for an absent script: %v", err)
+	}
+
+	flagged := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{
+		"test:cli": {{Categories: []string{"plugin-entry"}, Command: "pnpm run --silent test:cli"}},
+	}}
+	_, err := buildDAG(ws.Packages, []string{"test:cli"}, flagged, ws)
+	if err == nil || !strings.Contains(err.Error(), `invokes missing package script "test:cli"`) {
+		t.Fatalf("buildDAG error = %v, want missing script \"test:cli\" (the script after the flags)", err)
 	}
 }
 
@@ -92,8 +136,8 @@ func TestBuildDAGAndAffectedPackages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AffectedPackages error: %v", err)
 	}
-	if len(affected) != 3 {
-		t.Fatalf("affected count = %d, want 3", len(affected))
+	if len(affected.Packages) != 3 {
+		t.Fatalf("affected count = %d, want 3", len(affected.Packages))
 	}
 
 	_ = libA

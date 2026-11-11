@@ -1,11 +1,11 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
 
 // Observability e2e tests.
 // Covers: short run ID resolution (OBS-001..003) and hasPendingApproval (OBS-004..005).
 
 async function startRun(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   workflowId: string,
 ): Promise<string> {
   const res = await request.post(

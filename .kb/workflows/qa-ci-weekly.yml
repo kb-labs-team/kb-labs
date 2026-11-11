@@ -25,7 +25,7 @@ jobs:
         phase: collect
         summary: Uses GitHub artifact IDs as the immutable per-run evidence source
         run: |
-          kb qa ci evidence sync --workflow e2e-platform.yml --output .kb/qa/ci/evidence --json
+          kb qa ci evidence update --workflow e2e-platform.yml --output .kb/qa/ci/evidence --json
 
       - name: Build weekly reliability brief
         id: brief
@@ -34,7 +34,7 @@ jobs:
         run: |
           WEEK=$(date -u +%G-W%V)
           REPORT=".kb/qa/weekly/${WEEK}.json"
-          kb qa ci overview --input .kb/qa/ci/evidence --output "$REPORT" --json
+          kb qa ci overview show --input .kb/qa/ci/evidence --output "$REPORT" --json
           echo "::kb-output::$(cat "$REPORT")"
         artifacts:
           weekly-ci-brief:

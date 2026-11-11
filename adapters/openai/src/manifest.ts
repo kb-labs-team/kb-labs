@@ -4,6 +4,7 @@
  */
 
 import type { AdapterManifest } from "@kb-labs/sdk/adapters";
+import { DEFAULT_OPENAI_MODEL } from "./openai-defaults.js";
 
 /**
  * Adapter manifest for OpenAI LLM.
@@ -18,9 +19,9 @@ export const manifest: AdapterManifest = {
   author: "KB Labs Team",
   license: "KBPL-1.1",
   type: "core",
-  implements: "ILLM",
+  implements: ["ILLM", "IEmbeddings"],
   networkRequired: true,
-  defaultFor: { llm: ["llm"] },
+  defaultFor: { llm: ["llm"], embeddings: ["embeddings"] },
   capabilities: {
     streaming: true,
     custom: {
@@ -34,18 +35,30 @@ export const manifest: AdapterManifest = {
       secret: true,
       env: "OPENAI_API_KEY",
       description: "OpenAI API key (defaults to OPENAI_API_KEY env var)",
-      doctor: {
-        id: "openai.apiKey",
-        optional: true,
-        severity: "warning",
-        services: ["gateway"],
-        action: "set OPENAI_API_KEY to enable LLM features",
-        hint: "Set OPENAI_API_KEY or run kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env",
-      },
+      doctor: [
+        {
+          slot: "llm",
+          id: "openai.apiKey",
+          optional: true,
+          severity: "warning",
+          services: ["gateway"],
+          action: "set OPENAI_API_KEY to enable LLM features",
+          hint: "Set OPENAI_API_KEY or run kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env",
+        },
+        {
+          slot: "embeddings",
+          id: "openai.embeddings.apiKey",
+          optional: true,
+          severity: "warning",
+          services: ["gateway"],
+          action: "set OPENAI_API_KEY to enable embeddings",
+          hint: "Set OPENAI_API_KEY or run kb config set --scope platform platform.adapterOptions.embeddings.apiKey '${OPENAI_API_KEY}' --allow-missing-env",
+        },
+      ],
     },
     model: {
       type: "string",
-      default: "gpt-4o",
+      default: DEFAULT_OPENAI_MODEL,
       description: "Model to use (gpt-4o, gpt-4-turbo, gpt-3.5-turbo, etc.)",
     },
     temperature: {

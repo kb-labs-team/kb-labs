@@ -2,102 +2,77 @@
   "schema": "kb.marketplace/3",
   "plugins": {
     "@kb-labs/agents": {
-      "link": "./plugins/agents/entry",
+      "link": "./plugins/agents",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/clickup": {
-      "link": "./plugins/clickup/entry",
+      "link": "./plugins/clickup",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/commit": {
-      "link": "./plugins/commit/entry",
+      "link": "./plugins/commit",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/devlink": {
-      "link": "./plugins/devlink/entry",
+      "link": "./plugins/devlink",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/github": {
-      "link": "./plugins/github/entry",
-      "enabled": true,
-      "source": "local"
-    },
-    "@kb-labs/host-agent": {
-      "link": "./plugins/host-agent/entry",
-      "enabled": true,
-      "source": "local"
-    },
-    "@kb-labs/impact": {
-      "link": "./plugins/impact/core",
+      "link": "./plugins/github",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/inbox": {
-      "link": "./plugins/inbox/entry",
-      "enabled": true,
-      "source": "local"
-    },
-    "@kb-labs/marketplace": {
-      "link": "./plugins/marketplace/entry",
+      "link": "./plugins/inbox",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/marketplace-registry": {
-      "link": "./plugins/marketplace-registry/entry",
+      "link": "./plugins/marketplace-registry",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/mind": {
-      "link": "./plugins/mind/entry",
-      "enabled": true,
-      "source": "local"
-    },
-    "@kb-labs/policy": {
-      "link": "./plugins/policy/core",
+      "link": "./plugins/mind",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/qa": {
-      "link": "./plugins/qa/entry",
+      "link": "./plugins/qa",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/quality": {
-      "link": "./plugins/quality/entry",
+      "link": "./plugins/quality",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/release": {
-      "link": "./plugins/release/manager-cli",
+      "link": "./plugins/release",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/review": {
-      "link": "./plugins/review/entry",
-      "enabled": true,
-      "source": "local"
-    },
-    "@kb-labs/scaffold": {
-      "link": "./plugins/scaffold/entry",
+      "link": "./plugins/review",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/site-tools": {
-      "link": "./plugins/site-tools/entry",
+      "link": "./plugins/site-tools",
       "enabled": true,
       "source": "local"
     },
     "@kb-labs/steward": {
-      "link": "./plugins/steward/entry",
+      "link": "./plugins/steward",
       "enabled": true,
       "source": "local"
     },
-    "@kb-labs/workflow": {
-      "link": "./plugins/workflow/entry",
+    "@kb-labs/viewer": {
+      "link": "./plugins/viewer",
       "enabled": true,
       "source": "local"
     }
@@ -282,6 +257,13 @@
       "version": "2.120.1",
       "integrity": "sha256-u0XR/7vXjSz7nANDrVwuoPUeRfKxGM1zpxiDnTerSCk=",
       "resolvedPath": "./adapters/diskio",
+      "enabled": true,
+      "source": "platform"
+    },
+    "@kb-labs/notifier-router": {
+      "version": "2.120.1",
+      "integrity": "sha256-Tz8zlhkUiQqlXIbUPbWCh8kKkx5ypqaH7z0POXvHrnY=",
+      "resolvedPath": "./adapters/notifier-router",
       "enabled": true,
       "source": "platform"
     }

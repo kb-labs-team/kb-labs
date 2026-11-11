@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
@@ -36,13 +38,14 @@ type Lock struct {
 }
 
 type Item struct {
-	Version      string `json:"version"`
-	Integrity    string `json:"integrity"`
-	ResolvedPath string `json:"resolvedPath"`
-	Package      string `json:"package,omitempty"`
-	// Source identifies machine-installed platform artifacts.
-	Source  string `json:"source"`
-	Enabled bool   `json:"enabled"`
+	Version           string `json:"version"`
+	Integrity         string `json:"integrity"`
+	ResolvedPath      string `json:"resolvedPath,omitempty"`
+	Package           string `json:"package,omitempty"`
+	Source            string `json:"source"`
+	MarketplaceSource string `json:"marketplaceSource,omitempty"`
+	SignatureStatus   string `json:"signatureStatus,omitempty"`
+	Enabled           bool   `json:"enabled"`
 }
 
 // WriteLock regenerates .kb/marketplace.lock at platformRoot from the exact
@@ -53,13 +56,28 @@ type Item struct {
 // The platform lock is machine-local: it records its platform-relative path.
 // Integrity matches core-discovery's package.json hash contract, not the
 // artifact tarball digest in the resolved plan.
-func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Time) error {
-	existing, err := readLock(platformRoot)
+func WriteLock(platformRoot, existingRoot string, artifacts []contracts.Artifact, now time.Time) error {
+	if existingRoot == "" {
+		existingRoot = platformRoot
+	}
+	existing, err := readLock(existingRoot)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read existing marketplace lock: %w", err)
+		return fmt.Errorf("read existing marketplace lock at %s: %w", existingRoot, err)
 	}
 
 	lock := Lock{Schema: Schema, Plugins: make(map[string]Item), Adapters: make(map[string]Item)}
+	if existing != nil {
+		for id, item := range existing.Plugins {
+			if item.Source != "platform" {
+				lock.Plugins[id] = item
+			}
+		}
+		for id, item := range existing.Adapters {
+			if item.Source != "platform" {
+				lock.Adapters[id] = item
+			}
+		}
+	}
 	_ = now // retained for call-site compatibility; lock declarations have no timestamp.
 	for _, a := range artifacts {
 		kind := a.Kind
@@ -118,6 +136,42 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 	return versionroot.AtomicWriteFile(target, data, 0o600)
 }
 
+// PreserveInstalledComponents adds active platform adapter identities to a
+// new update request. Marketplace plugins remain owned by Marketplace and are
+// carried forward in the Marketplace lock rather than resolved by the release
+// index.
+func PreserveInstalledComponents(platformRoot string, request *contracts.InstallRequest) (bool, error) {
+	if request == nil {
+		return false, fmt.Errorf("update request is required")
+	}
+	lock, err := readLock(platformRoot)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read active marketplace lock: %w", err)
+	}
+	changed := false
+	adapters := make(map[string]struct{}, len(request.Adapters))
+	for _, component := range request.Adapters {
+		adapters[component.ID] = struct{}{}
+	}
+	adapterIDs := make([]string, 0, len(lock.Adapters))
+	for id := range lock.Adapters {
+		adapterIDs = append(adapterIDs, id)
+	}
+	sort.Strings(adapterIDs)
+	for _, id := range adapterIDs {
+		if _, exists := adapters[id]; exists {
+			continue
+		}
+		request.Adapters = append(request.Adapters, contracts.ComponentRequest{ID: id})
+		adapters[id] = struct{}{}
+		changed = true
+	}
+	return changed, nil
+}
+
 func packageIntegrity(platformRoot, packageName string) (string, error) {
 	if packageName == "" {
 		return "", fmt.Errorf("package name is required")
@@ -144,9 +198,83 @@ func readLock(platformRoot string) (*Lock, error) {
 		return nil, fmt.Errorf("invalid marketplace lock schema %q", lock.Schema)
 	}
 	for id, entry := range lock.Plugins {
-		if entry.Source != "platform" || entry.Package == "" {
-			return nil, fmt.Errorf("invalid marketplace lock plugin %q: platform entries require a package", id)
+		if err := validateLockItem("plugin", id, entry); err != nil {
+			return nil, err
+		}
+	}
+	for id, entry := range lock.Adapters {
+		if err := validateLockItem("adapter", id, entry); err != nil {
+			return nil, err
 		}
 	}
 	return &lock, nil
+}
+
+func validateLockItem(kind, id string, item Item) error {
+	switch item.Source {
+	case "platform":
+		if kind == "plugin" && item.Package == "" {
+			return fmt.Errorf("invalid marketplace lock %s %q: platform entries require a package", kind, id)
+		}
+	case "marketplace":
+		if item.MarketplaceSource != "registry" && item.MarketplaceSource != "npm" {
+			return fmt.Errorf("invalid marketplace lock %s %q: Marketplace entries require their resolved source", kind, id)
+		}
+		if item.SignatureStatus != "verified" && item.SignatureStatus != "unsigned" {
+			return fmt.Errorf("invalid marketplace lock %s %q: Marketplace entries require signature status", kind, id)
+		}
+	case "local":
+		if item.ResolvedPath == "" {
+			return fmt.Errorf("invalid marketplace lock %s %q: local entries require a resolved path", kind, id)
+		}
+	default:
+		return fmt.Errorf("invalid marketplace lock %s %q: unknown source %q", kind, id, item.Source)
+	}
+	return nil
+}
+
+// MarketplacePins returns exact identities owned by the installed Marketplace lock.
+func MarketplacePins(platformRoot string) (map[string]bool, error) {
+	pins := make(map[string]bool)
+	lock, err := readLock(platformRoot)
+	if os.IsNotExist(err) {
+		return pins, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, entries := range []map[string]Item{lock.Plugins, lock.Adapters} {
+		for _, entry := range entries {
+			if entry.Source != "marketplace" {
+				continue
+			}
+			name := entry.Package
+			if name == "" {
+				path := filepath.Clean(entry.ResolvedPath)
+				if filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) {
+					return nil, fmt.Errorf("invalid Marketplace package path %q", entry.ResolvedPath)
+				}
+				data, err := os.ReadFile(filepath.Join(platformRoot, path, "package.json"))
+				if err != nil {
+					return nil, err
+				}
+				var manifest struct {
+					Name    string `json:"name"`
+					Version string `json:"version"`
+				}
+				if err := json.Unmarshal(data, &manifest); err != nil {
+					return nil, err
+				}
+				if manifest.Name == "" || manifest.Version != entry.Version {
+					return nil, fmt.Errorf("Marketplace adapter identity does not match lock")
+				}
+				name = manifest.Name
+			}
+			if name == "" || entry.Version == "" {
+				return nil, fmt.Errorf("Marketplace lock package and version are required")
+			}
+			pins[name+"@"+entry.Version] = true
+		}
+	}
+	return pins, nil
 }

@@ -116,6 +116,7 @@ export function createExtensionStore(options: ExtensionStoreOptions = {}): IExte
         name,
         version,
         spec,
+        expectedIntegrity,
         projectDir: staging,
         casDir,
         ...(options.platformRoot ? { platformRoot: options.platformRoot } : {}),

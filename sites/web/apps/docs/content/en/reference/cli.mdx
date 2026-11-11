@@ -140,10 +140,10 @@ Cross-repo dependency management.
 
 ```bash
 pnpm kb devlink status
-pnpm kb devlink switch --mode local --install
-pnpm kb devlink switch --mode npm
-pnpm kb devlink switch --mode local --dry-run
-pnpm kb devlink undo
+pnpm kb devlink mode set --mode local --install
+pnpm kb devlink mode set --mode npm
+pnpm kb devlink mode set --mode local --dry-run
+pnpm kb devlink rollback
 ```
 
 ## Global flags

@@ -14,7 +14,7 @@ const mockSave = vi.fn();
 const mockSessionSave = vi.fn();
 const mockMachineLogin = vi.fn();
 const mockHumanLogin = vi.fn();
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({
+vi.mock('@kb-labs/sdk/gateway', () => ({
   AuthSessionOwner: class { loginMachine = mockMachineLogin; loginSession = mockHumanLogin; },
 }));
 

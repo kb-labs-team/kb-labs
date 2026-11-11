@@ -62,6 +62,7 @@ import { resolveExecutionTarget } from '../target-resolver.js';
 import {
   AbortError,
   HandlerNotFoundError,
+  TimeoutError,
 } from '../errors.js';
 
 /**
@@ -122,6 +123,17 @@ export class InProcessBackend implements RawExecutionBackend {
     options?: ExecuteOptions
   ): Promise<ExecutionResult> {
     const start = performance.now();
+    const timeoutController = request.timeoutMs === undefined ? undefined : new AbortController();
+    let timeoutExpired = false;
+    const timeoutId = request.timeoutMs === undefined ? undefined : setTimeout(() => {
+      timeoutExpired = true;
+      timeoutController?.abort();
+    }, request.timeoutMs);
+    const executionSignal = timeoutController
+      ? options?.signal
+        ? AbortSignal.any([options.signal, timeoutController.signal])
+        : timeoutController.signal
+      : options?.signal;
     let lease: WorkspaceLease | undefined;
     let resolvedTarget = request.target;
     let workspaceDescriptor: WorkspaceDescriptor | undefined;
@@ -129,7 +141,7 @@ export class InProcessBackend implements RawExecutionBackend {
 
     try {
       // 1. Check abort before starting
-      if (options?.signal?.aborted) {
+      if (executionSignal?.aborted) {
         throw new AbortError('Execution aborted before start');
       }
 
@@ -168,6 +180,7 @@ export class InProcessBackend implements RawExecutionBackend {
       // handlerRef format: './path/to/file.js#exportName' or './path/to/file.js'
       const hashIndex = requestToExecute.handlerRef.indexOf('#');
       const relPath = hashIndex > 0 ? requestToExecute.handlerRef.slice(0, hashIndex) : requestToExecute.handlerRef;
+      const exportSelector = hashIndex > 0 ? requestToExecute.handlerRef.slice(hashIndex) : '';
       let handlerPath = path.resolve(lease.pluginRoot, relPath);
       // Manifest handler paths are relative to the manifest file (typically in dist/).
       // If not found at pluginRoot, try resolving from dist/ subdirectory.
@@ -188,7 +201,7 @@ export class InProcessBackend implements RawExecutionBackend {
 
       // 5. Create eventEmitter from onLog/onLoggerLog callbacks (if provided).
       // Routes by event name — no payload inspection.
-      // See: plugins/workflow/docs/adr/0019-log-stream-separation.md
+      // See: services/workflow/docs/adr/0019-log-stream-separation.md
       const onLog = options?.onLog;
       const onLoggerLog = options?.onLoggerLog;
       const eventEmitter = (onLog || onLoggerLog)
@@ -219,7 +232,7 @@ export class InProcessBackend implements RawExecutionBackend {
       // Optional loggerOverride in request.context allows hosts (e.g. workflow daemon)
       // to replace platform.logger with a context-aware logger (e.g. stepLogger with runId/jobId/stepId).
       // This makes ctx.logger.* write to SQLite with workflow context instead of generic platform context.
-      // See: plugins/workflow/docs/adr/0019-log-stream-separation.md
+      // See: services/workflow/docs/adr/0019-log-stream-separation.md
       const loggerOverride = requestToExecute.context?.loggerOverride as ILogger | undefined;
       // PlatformServices fields (processExecutor, cache, llm, storage, ...) are class
       // getters on PlatformContainer.prototype, not own properties of the instance —
@@ -241,14 +254,18 @@ export class InProcessBackend implements RawExecutionBackend {
         ui,
         pluginInvoker,
         eventEmitter,
-        handlerPath,
+        handlerPath: `${handlerPath}${exportSelector}`,
         input: requestToExecute.input,
         environment: requestToExecute.env,
-        signal: options?.signal,
+        signal: executionSignal,
         cwd: lease.cwd,           // From WorkspaceLease
         outdir: undefined,        // Optional, defaults to cwd/.kb/output
         adapterMiddlewares,
       });
+
+      if (timeoutExpired) {
+        throw new TimeoutError(`Execution timed out after ${request.timeoutMs}ms`, request.timeoutMs);
+      }
 
       // 6. Success is determined by absence of thrown error
       // v5: No exitCode - handlers throw on failure
@@ -271,10 +288,13 @@ export class InProcessBackend implements RawExecutionBackend {
     } catch (error) {
       const executionTimeMs = performance.now() - start;
       this.updateStats(false, executionTimeMs);
+      const executionFailure = timeoutExpired
+        ? new TimeoutError(`Execution timed out after ${request.timeoutMs}ms`, request.timeoutMs)
+        : error;
 
       return {
         ok: false,
-        ...normalizeExecutionFailure(error, request),
+        ...normalizeExecutionFailure(executionFailure, request),
         executionTimeMs,
         metadata: {
           backend: 'in-process',
@@ -283,6 +303,7 @@ export class InProcessBackend implements RawExecutionBackend {
         },
       };
     } finally {
+      if (timeoutId) { clearTimeout(timeoutId); }
       // Release materialized workspace (best-effort)
       if (workspaceDescriptor?.workspaceId && workspaceProvider?.release) {
         await workspaceProvider.release(workspaceDescriptor.workspaceId).catch(() => {});

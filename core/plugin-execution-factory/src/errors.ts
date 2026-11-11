@@ -7,6 +7,7 @@
  * ExecutionError interface in types.ts. This is intentional.
  */
 
+import { createCatalogErrorEnvelope, type CatalogErrorRequest, type PlatformErrorCode, type ValidatedErrorEnvelope } from '@kb-labs/core-platform';
 import type { ExecutionErrorCode } from './types.js';
 
 /**
@@ -59,6 +60,18 @@ export class ExecutionLayerError extends Error {
     this.details = details;
   }
 
+}
+
+type CataloguedExecutionCode = Extract<ExecutionErrorCode, PlatformErrorCode>;
+export type CataloguedExecutionDiagnostic = Extract<CatalogErrorRequest, { code: CataloguedExecutionCode }>;
+
+/** An execution failure whose public details are checked against the catalog. */
+export class CataloguedExecutionError extends ExecutionLayerError {
+  readonly envelope: ValidatedErrorEnvelope;
+  constructor(message: string, diagnostic: CataloguedExecutionDiagnostic) {
+    super(message, diagnostic.code, diagnostic.details);
+    this.envelope = createCatalogErrorEnvelope(diagnostic);
+  }
 }
 
 /**
@@ -152,15 +165,14 @@ export class ValidationError extends ExecutionLayerError {
  * Queue is full - 429 response.
  * New requests should be rejected when queue is at capacity.
  */
-export class QueueFullError extends ExecutionLayerError {
+export class QueueFullError extends CataloguedExecutionError {
   readonly queueSize: number;
   readonly maxQueueSize: number;
 
   constructor(queueSize: number, maxQueueSize: number) {
     super(
       `Queue full: ${queueSize}/${maxQueueSize} requests pending`,
-      'QUEUE_FULL',
-      { queueSize, maxQueueSize }
+      { code: 'QUEUE_FULL', details: { queueSize: String(queueSize), maxQueueSize: String(maxQueueSize) } }
     );
     this.name = 'QueueFullError';
     this.queueSize = queueSize;
@@ -171,14 +183,13 @@ export class QueueFullError extends ExecutionLayerError {
 /**
  * No worker became available within timeout - 503 response.
  */
-export class AcquireTimeoutError extends ExecutionLayerError {
+export class AcquireTimeoutError extends CataloguedExecutionError {
   readonly acquireTimeoutMs: number;
 
   constructor(acquireTimeoutMs: number) {
     super(
       `No worker available within ${acquireTimeoutMs}ms`,
-      'ACQUIRE_TIMEOUT',
-      { acquireTimeoutMs }
+      { code: 'ACQUIRE_TIMEOUT', details: { acquireTimeoutMs: String(acquireTimeoutMs) } }
     );
     this.name = 'AcquireTimeoutError';
     this.acquireTimeoutMs = acquireTimeoutMs;
@@ -188,7 +199,7 @@ export class AcquireTimeoutError extends ExecutionLayerError {
 /**
  * Worker process crashed unexpectedly - 500 response.
  */
-export class WorkerCrashedError extends ExecutionLayerError {
+export class WorkerCrashedError extends CataloguedExecutionError {
   readonly workerId: string;
   readonly exitCode?: number;
   readonly signal?: string;
@@ -196,8 +207,7 @@ export class WorkerCrashedError extends ExecutionLayerError {
   constructor(workerId: string, exitCode?: number, signal?: string) {
     super(
       `Worker ${workerId} crashed${exitCode !== undefined ? ` with exit code ${exitCode}` : ''}${signal ? ` (signal: ${signal})` : ''}`,
-      'WORKER_CRASHED',
-      { workerId, exitCode, signal }
+      { code: 'WORKER_CRASHED', details: { workerId, ...(exitCode !== undefined ? { exitCode: String(exitCode) } : {}), ...(signal ? { signal } : {}) } }
     );
     this.name = 'WorkerCrashedError';
     this.workerId = workerId;
@@ -227,15 +237,11 @@ export class WorkerUnhealthyError extends ExecutionLayerError {
 }
 
 /** No worker is currently available and pool maintenance cannot replace one. */
-export class WorkerUnavailableError extends ExecutionLayerError {
+export class WorkerUnavailableError extends CataloguedExecutionError {
   constructor(failure: WorkerFailureDiagnostic) {
-    super('No worker is available and worker startup is failing', 'WORKER_UNAVAILABLE', {
-      failureCode: failure.code,
-      failureMessage: failure.message,
-      failureAttempt: failure.attempt,
-      retryInMs: failure.retryInMs,
-      failedAt: failure.at,
-    });
+    super('No worker is available and worker startup is failing', { code: 'WORKER_UNAVAILABLE', details: {
+      failureCode: failure.code, failureMessage: failure.message, failureAttempt: String(failure.attempt), retryInMs: String(failure.retryInMs), failedAt: failure.at,
+    } });
     this.name = 'WorkerUnavailableError';
   }
 }

@@ -48,7 +48,7 @@ describe('Gateway global auth gate', () => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end('{"ok":true}');
     });
-    await new Promise<void>((resolve) => upstream!.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => { upstream!.listen(0, '127.0.0.1', resolve); });
     const upstreamPort = (upstream.address() as { port: number }).port;
     const routeInventory: Array<{ method: string | string[]; url: string }> = [];
     previousInternalSecret = process.env.GATEWAY_INTERNAL_SECRET;
@@ -358,7 +358,7 @@ describe('Gateway global auth gate', () => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end('{"ok":true}');
     });
-    await new Promise<void>((resolve) => upstream!.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => { upstream!.listen(0, '127.0.0.1', resolve); });
     const upstreamPort = (upstream.address() as { port: number }).port;
     previousInternalSecret = process.env.GATEWAY_INTERNAL_SECRET;
     process.env.GATEWAY_INTERNAL_SECRET = 'gateway-internal-secret';

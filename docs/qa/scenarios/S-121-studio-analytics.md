@@ -16,8 +16,10 @@ Review tracked product events and LLM/embeddings usage in Studio, then narrow a 
 
 ## Prerequisites
 
-- [ ] Analytics adapter configured and seeded with events from two sources/types and LLM usage for at least two models on distinct dates.
-- [ ] LLM and embeddings usage events are seeded for at least two models on distinct dates.
+- [ ] For S-121.1–S-121.5, configure analytics and seed events from two sources/types plus LLM usage for at least two models on distinct dates.
+- [ ] For S-121.8, configure an analytics adapter that does not implement aggregate stats.
+- [ ] For S-121.1–S-121.5, seed LLM and embeddings usage events for at least two models on distinct dates.
+- S-121.6 uses the installed SQLite analytics default on a fresh install and needs no analytics configuration.
 
 ## Steps
 
@@ -28,8 +30,9 @@ Review tracked product events and LLM/embeddings usage in Studio, then narrow a 
 | S-121.3 | Open `/analytics/llm` and choose `Last 7 days` | Request and cost metrics use events within the selected date range and the page displays its date-range control. |
 | S-121.4 | On the LLM Usage page, select one model in the model filter | The Daily Usage Trend chart reflects only the selected model; clearing the filter restores all models for the selected date range. |
 | S-121.5 | Open an event row | The event detail drawer shows its exact event type, time, source product/version, actor when present, and event payload. |
-| S-121.6 | Open Analytics when no analytics adapter is configured | Studio displays `Analytics Not Configured` with guidance to configure an analytics adapter; it does not present an empty chart as measured zero usage. |
+| S-121.6 | Open Analytics on a fresh install using the installed SQLite analytics default | Studio displays measured aggregate stats from the installed SQLite adapter. The stats response declares `persistence.kind: durable`; Studio shows no volatility notice. |
 | S-121.7 | Open `/analytics/cache`, `/analytics/storage`, and `/analytics/vectorstore` directly | Each retired path is not found; Studio does not show an empty usage page or redirect to another analytics view. |
+| S-121.8 | Open Analytics when the configured analytics adapter cannot read aggregate statistics | Studio displays catalogued error `KB_ANALYTICS_STATS_UNSUPPORTED` and its configuration hint; it does not present an empty chart as measured zero usage. |
 
 ## Removed views
 

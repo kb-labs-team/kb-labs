@@ -86,6 +86,11 @@ func assertLoadFileDiagnostic(t *testing.T, gate, expected, actual, code string,
 	if actual != "" && !strings.Contains(fmt.Sprint(typed.Meta["actual"]), actual) {
 		t.Errorf("actual detail = %#v; want %q", typed.Meta["actual"], actual)
 	}
+	if gate == "schema version" {
+		if typed.Meta["actual"] != actual || typed.Meta["schema"] != nil {
+			t.Errorf("schema detail contract = %#v; want actual=%q and no undeclared schema field", typed.Meta, actual)
+		}
+	}
 	if gate == "digest" && (typed.Meta["actual"] == "" || typed.Meta["expected"] != "wrong-digest") {
 		t.Errorf("digest comparison details = %#v", typed.Meta)
 	}

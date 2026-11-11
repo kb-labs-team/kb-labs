@@ -36,7 +36,6 @@
     "@kb-labs/cli-runtime": "workspace:*",
     "@kb-labs/core-config": "workspace:*",
     "@kb-labs/core-contracts": "workspace:*",
-    "@kb-labs/core-discovery": "workspace:*",
     "@kb-labs/core-ipc": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/core-project-registry": "workspace:*",
@@ -47,15 +46,20 @@
     "@kb-labs/core-sys": "workspace:*",
     "@kb-labs/core-workspace": "workspace:*",
     "@kb-labs/gateway-contracts": "workspace:*",
+    "@kb-labs/host-agent-client": "workspace:*",
+    "@kb-labs/host-agent-transport": "workspace:*",
+    "@kb-labs/marketplace-contracts": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/plugin-execution": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",
     "@kb-labs/shared-cli-ui": "workspace:*",
     "@kb-labs/shared-command-kit": "workspace:*",
+    "@kb-labs/sdk": "workspace:*",
     "@kb-labs/workflow-artifacts": "workspace:*",
     "@kb-labs/workflow-constants": "workspace:*",
     "@kb-labs/workflow-contracts": "workspace:*",
     "@kb-labs/workflow-engine": "workspace:*",
+    "@kb-labs/workflow-entry": "workspace:*",
     "@kb-labs/workflow-runtime": "workspace:*",
     "ajv": "^8.17.1",
     "chokidar": "^4.0.0",
@@ -68,16 +72,19 @@
     "pino": "^9.0.0",
     "semver": "^7.6.3",
     "yaml": "^2.8.0",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@kb-labs/scaffold": "workspace:*"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
+    "@kb-labs/shared-testing-e2e": "workspace:*",
     "@types/node": "^24.3.3",
     "@types/picomatch": "^4",
     "rimraf": "^6.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@kb-labs/core-discovery": "workspace:*"
   },
   "engines": {
     "node": "24.x",
@@ -86,5 +93,8 @@
   "publishConfig": {
     "access": "public"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "kbLabs": {
+    "catalogRole": "reader"
+  }
 }

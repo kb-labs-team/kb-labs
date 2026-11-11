@@ -10,7 +10,7 @@ slug: marketplace
 Выполните команду из каталога проекта, указав точную версию:
 
 ```bash
-kb marketplace install @kb-labs/commit-entry@1.2.3
+kb marketplace install @kb-labs/commit@1.2.3
 ```
 
 Проект хранит точную версию, целостность tarball, тип источника и состояние плагина в `.kb/marketplace.lock` схемы v3. В lock-файле нет машинного пути или времени установки. Сам пакет устанавливается в общее хранилище машины. Команда не меняет `package.json`, lock-файл пакетного менеджера или `node_modules`. Добавьте marketplace lock в git вместе с проектом. Если обнаружен lock-файл v2, выполните `kb marketplace sync`, чтобы создать его заново.
@@ -25,7 +25,7 @@ cd .kb/plugins/my-plugin
 pnpm install
 pnpm -w build
 cd ../../..
-kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry
+kb marketplace plugins add --link .kb/plugins/my-plugin
 kb my-plugin hello
 ```
 

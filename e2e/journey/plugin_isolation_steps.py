@@ -30,13 +30,13 @@ def run_project_plugin_availability_steps(journey: Journey, cli: str, project_a:
     def check(command_env: dict[str, str]) -> str | None:
         failure = unavailable(
             project_a, ["review", "run", "--mode=heuristic", "--json"],
-            "@kb-labs/review-entry", "S-197.5", command_env,
+            "@kb-labs/review", "S-197.5", command_env,
         )
         if failure:
             return failure
         return unavailable(
             project_b, ["commit", "commit", "--dry-run", "--json"],
-            "@kb-labs/commit-entry", "S-197.5", command_env,
+            "@kb-labs/commit", "S-197.5", command_env,
         )
 
     def check_in_isolated_platform() -> str | None:
@@ -79,6 +79,12 @@ def run_project_plugin_availability_steps(journey: Journey, cli: str, project_a:
             return "Project B already contains the review fixture path"
         fixture.write_text("Project B review fixture.\n", encoding="utf-8")
         try:
+            staged = run_command(
+                ["git", "-C", str(project_b), "add", "--", str(fixture)],
+                cwd=project_b, env=env, runner=runner, timeout=30,
+            )
+            if staged.returncode != 0:
+                return f"could not stage the Project B review fixture: {(staged.stderr or staged.stdout).strip()}"
             with invocation_context(step_id="S-197.3"):
                 result = run_command(
                     kb_command([ "review", "run", "--mode=heuristic", "--json"], executable=cli),
@@ -106,6 +112,10 @@ def run_project_plugin_availability_steps(journey: Journey, cli: str, project_a:
                         return f"Review included a finding outside Project B: {file_path}"
             return None
         finally:
+            run_command(
+                ["git", "-C", str(project_b), "reset", "--", str(fixture)],
+                cwd=project_b, env=env, runner=runner, timeout=30,
+            )
             fixture.unlink(missing_ok=True)
 
     journey.step("review changed files from Project B with the heuristic engine", "review",

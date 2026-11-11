@@ -14,6 +14,10 @@ export interface SerializedError {
   message: string;
   stack?: string;
   cause?: SerializedError;
+  moduleResolution?: {
+    code: 'ERR_MODULE_NOT_FOUND' | 'MODULE_NOT_FOUND';
+    specifier: string;
+  };
 }
 
 /** Reconstructed IPC failure that preserves both its public envelope and source diagnostics. */
@@ -31,18 +35,29 @@ export class SerializedErrorEnvelopeError extends ErrorEnvelopeError {
 
 /** The sole producer for thrown and transported handler diagnostics. */
 export function serializeError(value: unknown): SerializedError {
-  if (value instanceof SerializedErrorEnvelopeError) return value.serializedError;
+  if (value instanceof SerializedErrorEnvelopeError) {return value.serializedError;}
   if (value instanceof Error) {
     const cause = value.cause === undefined ? undefined : serializeError(value.cause);
+    const moduleResolution = moduleResolutionOf(value);
     return {
       name: value.name || 'Error',
       message: value.message,
       ...(value.stack ? { stack: value.stack } : {}),
       ...(cause ? { cause } : {}),
+      ...(moduleResolution ? { moduleResolution } : {}),
     };
   }
 
-  if (isSerializedError(value)) return value;
+  if (isSerializedError(value)) {return value;}
+
+  if (typeof value === 'object' && value !== null && !Array.isArray(value) &&
+      'message' in value && typeof value.message === 'string') {
+    return {
+      name: 'name' in value && typeof value.name === 'string' ? value.name : 'Error',
+      message: value.message,
+      ...('stack' in value && typeof value.stack === 'string' ? { stack: value.stack } : {}),
+    };
+  }
 
   return {
     name: 'NonErrorThrown',
@@ -50,8 +65,17 @@ export function serializeError(value: unknown): SerializedError {
   };
 }
 
+function moduleResolutionOf(error: Error): SerializedError['moduleResolution'] {
+  const candidate = error as Error & { code?: unknown; specifier?: unknown };
+  if ((candidate.code === 'ERR_MODULE_NOT_FOUND' || candidate.code === 'MODULE_NOT_FOUND') &&
+      typeof candidate.specifier === 'string' && candidate.specifier.length > 0) {
+    return { code: candidate.code, specifier: candidate.specifier };
+  }
+  return undefined;
+}
+
 function isSerializedError(value: unknown): value is SerializedError {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {return false;}
   const candidate = value as Record<string, unknown>;
   return typeof candidate.name === 'string' &&
     typeof candidate.message === 'string' &&
@@ -102,6 +126,7 @@ export type ExecutionError = ErrorEnvelope & { error: SerializedError };
 /** Private execution diagnostics travel beside the user-facing failure envelope. */
 export interface ExecutionDiagnostics {
   errorStack?: string;
+  worker?: { workerId: string; executionId: string; requestId: string; pluginId: string; handlerRef: string };
 }
 
 export interface ExecutionMetadata {

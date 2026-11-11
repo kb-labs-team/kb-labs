@@ -1,12 +1,15 @@
-import { test, expect } from '@playwright/test'
-import { REST, WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
+import { test, expect, type APIRequestContext } from '@playwright/test'
+import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
+import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes'
+
+const projectId = process.env.KB_PROJECT_ID
 
 /**
  * Workflow runs lifecycle tests.
  *
  * Tests run against the workflow daemon directly (WORKFLOW :7778) for
- * low-level run state, and against the REST API proxy (REST :5050/plugins/workflow)
- * for the full stack.
+ * low-level run state, and against the built-in workflow REST API proxy
+ * (the project-scoped Gateway workflow route) for the full stack.
  *
  * All tests that need an actual run pick the first available workflow from
  * the catalog — they do NOT depend on `e2e-hello` being scaffolded.
@@ -18,7 +21,7 @@ type WorkflowEntry = { id?: string; name?: string }
 type RunEntry = { id?: string; runId?: string; status?: string }
 
 async function getFirstWorkflow(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
 ): Promise<WorkflowEntry | undefined> {
   const res = await request.get(`${WORKFLOW}/api/v1/workflows`)
   if (!res.ok()) return undefined
@@ -31,7 +34,7 @@ async function getFirstWorkflow(
 }
 
 async function startRun(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   workflowId: string,
 ): Promise<string | undefined> {
   const res = await request.post(`${WORKFLOW}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`, { data: {} })
@@ -142,27 +145,28 @@ test('WR-07: GET /jobs — returns a jobs array', async ({ request }) => {
   expect(Array.isArray(jobs)).toBe(true)
 })
 
-// ── WR-08: REST API proxy — GET /plugins/workflow/runs accessible ────────────
+// ── WR-08: built-in workflow REST API — list runs ───────────────────────────
 
-test('WR-08: REST proxy GET /plugins/workflow/runs responds 200', async ({ request }) => {
-  const res = await request.get(`${REST}/plugins/workflow/runs`)
-  // 404 = plugin not mounted in REST API (minimal install without workflow plugin)
-  expect(res.status() === 404, 'workflow plugin not mounted in REST API').toBe(false)
+test('WR-08: built-in workflow route GET /runs responds 200', async ({ request }) => {
+  expect(projectId, 'KB_PROJECT_ID must identify the registered workflow project').toBeTruthy()
+  const res = await request.get(`${GATEWAY}${projectWorkflowRoute(projectId!, 'runs')}`)
+  expect(res.status() === 404, 'built-in workflow REST route is missing').toBe(false)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const runs: unknown[] = body.data?.runs ?? body.data ?? body.runs ?? (Array.isArray(body) ? body : [])
   expect(Array.isArray(runs)).toBe(true)
 })
 
-// ── WR-09: REST proxy — POST /plugins/workflow/workflows/:id/run starts a run ─
+// ── WR-09: built-in workflow REST API — start a run ─────────────────────────
 
-test('WR-09: REST proxy — POST /plugins/workflow/workflows/:id/run returns runId', async ({ request }) => {
+test('WR-09: built-in workflow route POST /workflows/:id/run returns runId', async ({ request }) => {
+  expect(projectId, 'KB_PROJECT_ID must identify the registered workflow project').toBeTruthy()
   const wf = await getFirstWorkflow(request)
   expect(!wf, 'no workflows in catalog').toBe(false)
 
   const id = wf!.id ?? wf!.name!
-  const res = await request.post(`${REST}/plugins/workflow/workflows/${id}/run`)
-  expect(res.status() === 404, 'workflow REST proxy not mounted').toBe(false)
+  const res = await request.post(`${GATEWAY}${projectWorkflowRoute(projectId!, `workflows/${encodeURIComponent(id)}/run`)}`)
+  expect(res.status() === 404, 'built-in workflow REST route is missing').toBe(false)
   expect([200, 201]).toContain(res.status())
   const body = await res.json()
   const data = body.data ?? body

@@ -8,7 +8,7 @@
 
 ## Context
 
-Plugin manifests in `plugins/*/entry/src/manifest.ts` are large literal TypeScript objects
+Plugin manifests in `plugins/*/src/manifest.ts` are large literal TypeScript objects
 (200–500 lines). Two sections account for the majority of the verbosity:
 
 **CLI commands** — each declaration requires 8–10 lines due to:
@@ -94,7 +94,7 @@ export type HandlerRef = `./${string}.js` | `./${string}.js#${string}`;
 
 ### Impact on workflow manifest
 
-The workflow plugin manifest (`plugins/workflow/entry/src/manifest.ts`) shrinks from
+The workflow plugin manifest (`services/workflow/entry/src/manifest.ts`) shrinks from
 ~515 lines to ~220 lines (~57% reduction) using these helpers.
 
 ## Consequences

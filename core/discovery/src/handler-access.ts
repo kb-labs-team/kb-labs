@@ -1,4 +1,4 @@
-import type { DiagnosticCode } from './types.js';
+import type { DiagnosticCode } from '@kb-labs/plugin-contracts';
 
 export interface HandlerAccessFailure {
   code: Extract<DiagnosticCode, 'COMMAND_HANDLER_MISSING' | 'COMMAND_HANDLER_UNREADABLE'>;

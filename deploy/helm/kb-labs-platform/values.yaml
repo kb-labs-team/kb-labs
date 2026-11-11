@@ -30,12 +30,12 @@ services:
     replicas: 1
     healthPath: /health
   marketplace-registry:
-    enabled: true
+    enabled: false
     image: kb-marketplace-registry
     port: 5071
     replicas: 1
     healthPath: /health
-    # Real runtime dependency (plugins/marketplace-registry/README.md:44) —
+    # Real runtime dependency (services/marketplace-registry/README.md:46) —
     # an initContainer waits for state-daemon before starting.
     dependsOn: [state-daemon]
   marketplace:
@@ -44,7 +44,6 @@ services:
     port: 5070
     replicas: 1
     healthPath: /health
-    dependsOn: [marketplace-registry]
   gateway:
     enabled: true
     image: kb-gateway
@@ -62,11 +61,11 @@ services:
     image: kb-workflow
     port: 7778
     # HARD CONSTRAINT, enforced in templates/deployment.yaml: JobBroker and
-    # CronScheduler run in-process (plugins/workflow/daemon/src/bootstrap.ts)
+    # CronScheduler run in-process (services/workflow/daemon/src/bootstrap.ts)
     # — a second replica double-fires every scheduled job. Raising this value
     # fails the Helm render with an explicit error, not a silent bad deploy.
     # See docs/adr/0037-containers-are-canonical-cloud-delivery.md and
-    # plugins/workflow/docs/adr/0014-worker-deployment-architecture.md (the
+    # services/workflow/docs/adr/0014-worker-deployment-architecture.md (the
     # worker/scheduler split that would lift this constraint — not built).
     replicas: 1
     healthPath: /health

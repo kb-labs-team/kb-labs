@@ -10,9 +10,54 @@ import type {
   ProcessUsage,
 } from '@kb-labs/core-platform/adapters';
 import type { ILogger } from '@kb-labs/core-platform/adapters';
-import { GovernedProcessError } from './errors.js';
+import { GovernedProcessError, type GovernedProcessLimit } from './errors.js';
 
 interface ProcessSnapshot { cpuMs: number; memoryMb: number; processCount: number; }
+
+function processTerminationError(
+  reason: Exclude<ProcessTerminationReason, 'completed'>,
+  request: GovernedProcessRequest,
+  result: ProcessResult,
+  maxOutputBytes: number,
+): GovernedProcessError {
+  const { usage } = result;
+  switch (reason) {
+    case 'timeout':
+      return new GovernedProcessError('PROCESS_TIMEOUT', `Process terminated: ${reason}`, { result }, {
+        resource: 'time (ms)', observed: usage.wallTimeMs, allowed: request.limits.timeoutMs,
+      });
+    case 'memory_limit': {
+      const allowed = request.limits.memoryMb;
+      const limit: GovernedProcessLimit | undefined = allowed === undefined ? undefined : {
+        resource: 'memory (MB)', observed: usage.peakMemoryMb, allowed,
+      };
+      return new GovernedProcessError('PROCESS_MEMORY_LIMIT', `Process terminated: ${reason}`, { result }, limit);
+    }
+    case 'cpu_limit': {
+      const allowed = request.limits.cpuMs;
+      const limit: GovernedProcessLimit | undefined = allowed === undefined ? undefined : {
+        resource: 'CPU time (ms)', observed: usage.cpuMs, allowed,
+      };
+      return new GovernedProcessError('PROCESS_CPU_LIMIT', `Process terminated: ${reason}`, { result }, limit);
+    }
+    case 'process_limit': {
+      const allowed = request.limits.maxProcesses;
+      const limit: GovernedProcessLimit | undefined = allowed === undefined ? undefined : {
+        resource: 'process count', observed: usage.processCount, allowed,
+      };
+      return new GovernedProcessError('PROCESS_LIMIT', `Process terminated: ${reason}`, { result }, limit);
+    }
+    case 'output_limit':
+      return new GovernedProcessError('PROCESS_OUTPUT_LIMIT', `Process terminated: ${reason}`, { result }, {
+        resource: 'captured output (bytes)',
+        observed: usage.stdoutBytes + usage.stderrBytes,
+        allowed: maxOutputBytes,
+      });
+    case 'cancelled':
+    case 'shutdown':
+      return new GovernedProcessError('PROCESS_CANCELLED', `Process terminated: ${reason}`, { result });
+  }
+}
 
 function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (!child.pid) { return; }
@@ -36,9 +81,7 @@ export abstract class NodeProcessBackend implements IProcessExecutor {
 
   abstract capabilities(): ProcessBackendCapabilities;
 
-  protected configureProcess(_pid: number, _request: GovernedProcessRequest): () => void {
-    return () => {};
-  }
+  protected abstract configureProcess(pid: number, request: GovernedProcessRequest): () => void;
 
   private treePids(rootPid: number): number[] {
     if (process.platform !== 'linux') { return [rootPid]; }
@@ -186,11 +229,8 @@ export abstract class NodeProcessBackend implements IProcessExecutor {
           usage: result.usage, attempts: result.attempts,
         });
         if (reason === 'completed') { resolve(result); return; }
-        const codes: Record<Exclude<ProcessTerminationReason, 'completed'>, 'PROCESS_TIMEOUT' | 'PROCESS_CANCELLED' | 'PROCESS_MEMORY_LIMIT' | 'PROCESS_CPU_LIMIT' | 'PROCESS_LIMIT' | 'PROCESS_OUTPUT_LIMIT'> = {
-          timeout: 'PROCESS_TIMEOUT', cancelled: 'PROCESS_CANCELLED', memory_limit: 'PROCESS_MEMORY_LIMIT',
-          cpu_limit: 'PROCESS_CPU_LIMIT', process_limit: 'PROCESS_LIMIT', output_limit: 'PROCESS_OUTPUT_LIMIT', shutdown: 'PROCESS_CANCELLED',
-        };
-        const governedError = new GovernedProcessError(codes[reason as keyof typeof codes], `Process terminated: ${reason}`, { result });
+        const terminationReason = reason;
+        const governedError = processTerminationError(terminationReason, request, result, maxOutput);
         this.logger?.warn('process.execution.terminated', {
           component: 'process-executor', operation: 'execute', processId,
           executionId: request.identity.executionId, requestId: request.identity.requestId,

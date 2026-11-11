@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ICache, ILogger } from '@kb-labs/core-platform';
 import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
-import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
+import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { ManifestV3, CliCommandDecl } from '@kb-labs/plugin-contracts';
 import type { Permits } from '../mcp/authz.js';
@@ -11,9 +11,9 @@ import type { AuthContext } from '@kb-labs/gateway-contracts';
 import type { McpTool } from '../mcp/tool-builder.js';
 import { callOutput } from '../mcp/output-capture.js';
 import { uiOutputContractCases, renderUIOutputText } from '@kb-labs/plugin-contracts';
-import resultSchema from '../../../../../contracts/ux-result/machine-result.schema.json';
-import successFixture from '../../../../../contracts/ux-result/fixtures/valid/success.json';
-import failureFixture from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
+import resultSchema from '@kb-labs/core-platform/contracts/ux-result/machine-result.schema.json';
+import successFixture from '@kb-labs/core-platform/contracts/ux-result/fixtures/valid/success.json';
+import failureFixture from '@kb-labs/core-platform/contracts/ux-result/fixtures/valid/failure.json';
 import { filterTools } from '../mcp/tool-builder.js';
 
 // Mock the command runtime boundary so executeToolCall exercises the real
@@ -146,7 +146,7 @@ describe('resolveVisibleTools', () => {
   // case: S-045.4
   it('does not reuse a tokenless catalog from another project runtime', async () => {
     const projectA = makeRegistry([cmd('workflow run', 'execute')]);
-    const projectB = makeRegistry([cmd('commit apply', 'execute')]);
+    const projectB = makeRegistry([cmd('commit plan apply', 'execute')]);
     const toolsA = await resolveVisibleTools({
       permits: allow, authHeader: null, cacheScope: '/projects/a', registry: projectA, cache,
     });
@@ -154,7 +154,7 @@ describe('resolveVisibleTools', () => {
       permits: allow, authHeader: null, cacheScope: '/projects/b', registry: projectB, cache,
     });
     expect(toolsA.map((item) => item.name)).toEqual(['mind__workflow_run']);
-    expect(toolsB.map((item) => item.name)).toEqual(['mind__commit_apply']);
+    expect(toolsB.map((item) => item.name)).toEqual(['mind__commit_plan_apply']);
     expect(projectB.snapshot).toHaveBeenCalledOnce();
   });
 
@@ -347,7 +347,7 @@ describe('executeToolCall', () => {
     );
   });
 
-  // case: S-041.11
+  // case: S-255.7
   it('returns catalog auth envelopes for unauthenticated and forbidden tool calls', async () => {
     const unauthenticated = await executeToolCall({
       name: 'plugin__command', args: {}, visibleTools: [], permits: null, tenantId: 'tenant',

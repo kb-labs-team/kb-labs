@@ -22,8 +22,9 @@ type Manifest struct {
 
 // OutputRef maps a relative file path to its SHA256 object key.
 type OutputRef struct {
-	Path   string `json:"path"`   // relative to package dir
-	Object string `json:"object"` // SHA256 hex → ObjectStore key
+	Path   string  `json:"path"`           // relative to package dir
+	Object string  `json:"object"`         // SHA256 hex → ObjectStore key
+	Mode   *uint32 `json:"mode,omitempty"` // original permission bits; absent means an invalid legacy entry
 }
 
 // ManifestStore reads and writes Manifest files.

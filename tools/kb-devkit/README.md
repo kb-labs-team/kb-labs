@@ -110,6 +110,8 @@ Controlled by `affected.strategy` in `devkit.yaml`:
 | `submodules` | Walks `.gitmodules`, runs `git diff` inside each submodule |
 | `command` | Runs `affected.command`, reads one file path per line from stdout |
 
+CI may pass a generated JSON path manifest with `affected --changed-files-file <path>`; kb-devkit resolves the paths against its discovered workspace and uses the same dependency graph as the configured strategies.
+
 After finding directly changed packages, BFS expands through the reverse dependency graph to include all downstream dependents.
 
 ---
@@ -117,12 +119,13 @@ After finding directly changed packages, BFS expands through the reverse depende
 ### `check` — quality checks
 
 ```bash
-kb-devkit check                           # check all packages
+kb-devkit check                           # check gating packages and workspace rules
 kb-devkit check --package @acme/core     # check single package
+kb-devkit check --internal-tool-package github.com/kb-labs/kb-runner # package-scoped internal-tool checks
 kb-devkit check --json
 ```
 
-Validates each package against the rules declared in its matched preset: naming, tsconfig, eslint, required scripts, deps, files.
+Package checks follow the declared release lane: the default check runs package rules for gating packages and workspace rules against the full workspace. `--package <name>` selects one package while retaining workspace rules. `--internal-tool-package <name>` requires the selected package's category to declare `releaseLane: internal-tool` and runs package rules only; workspace checks remain in the candidate full check. Rules validate the matched preset: naming, tsconfig, eslint, required scripts, deps, and files.
 
 `check --json` returns:
 - `summary`
@@ -131,6 +134,28 @@ Validates each package against the rules declared in its matched preset: naming,
 - `results`
 
 External command-based checks declared in `custom_checks` are included in the same pipeline.
+For each invocation, kb-devkit sets `KB_DEVKIT_CHECK_RESULT_FILE` to a private
+temporary result path. The check must synchronously write its JSON
+`{ "issues": [...] }` result there before exiting. stdout and stderr are kept
+for human diagnostics; kb-devkit does not decode results from either stream.
+Missing or invalid result files are reported as execution failures naming the
+check and the file problem.
+
+Node checks under `scripts/checks/` use the shared synchronous writer:
+
+```js
+import { writeCheckResult } from './lib/check-result.mjs';
+
+writeCheckResult(issues);
+```
+
+The helper writes to `KB_DEVKIT_CHECK_RESULT_FILE` when kb-devkit sets it.
+The workspace `checks.timeout_ms` value bounds each external check. It defaults
+to 900000 milliseconds (15 minutes); the KB Labs workspace declares 2400000
+milliseconds (40 minutes) to cover its two-pass Go suite. While checks run,
+`kb-devkit check` writes their package, check name, and elapsed time to stderr;
+an expired external check returns `KB_DEVKIT_CHECK_EXECUTION_FAILED` with its
+check name.
 
 ### `fix` — auto-fix violations
 
@@ -235,10 +260,18 @@ workspace:
       match:
         - "tools/devkit"   # literal path — Go package without package.json
       preset: go-binary
+
+    private-tool:
+      match:
+        - "tools/private-tool"
+      preset: go-binary
+      releaseLane: internal-tool
 ```
 
 **Matching rules:**
 - Categories are evaluated top-to-bottom; first match wins — declaration order matters.
+- `releaseLane: internal-tool` marks a private developer tool. Categories without this declaration keep their existing gating membership.
+- Candidate verification removes only selected internal tools from its gating package set. Internal tools retain build, test, and package check tasks, and their candidate results are reported separately from the candidate verdict.
 - Literal paths (no `*` or `**`) and glob patterns can be mixed freely in any order.
 - Go packages or other non-JS directories don't need `package.json` — use a literal path in `match`.
 - Packages that don't match any category are silently ignored by all commands.

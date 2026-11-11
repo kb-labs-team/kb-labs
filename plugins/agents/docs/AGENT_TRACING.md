@@ -18,17 +18,17 @@ KB Labs Agents include a comprehensive incremental tracing system for debugging 
 
 ### Components
 
-1. **IncrementalTraceWriter** (`@kb-labs/agent-core`)
+1. **IncrementalTraceWriter** (`@kb-labs/agents/core`)
    - Real-time NDJSON writing with dual flush mechanism
    - Privacy redaction with shallow clone optimization
    - Automatic index generation for fast lookups
 
-2. **Trace CLI Commands** (`@kb-labs/agent-cli`)
+2. **Trace CLI Commands** (`@kb-labs/agents/cli`)
    - `agent:trace:stats` - Statistics with cost analysis
    - `agent:trace:filter` - Filter events by type
    - `agent:trace:iteration` - View specific iteration details
 
-3. **Privacy Redactor** (`@kb-labs/agent-core`)
+3. **Privacy Redactor** (`@kb-labs/agents/core`)
    - Pattern-based secret detection (API keys, tokens, passwords)
    - Path replacement for privacy compliance
    - Shallow clone optimization (only clones if secrets found)
@@ -69,7 +69,7 @@ KB Labs Agents include a comprehensive incremental tracing system for debugging 
 Tracing is automatically enabled when running agents:
 
 ```typescript
-import { AgentExecutor } from '@kb-labs/agent-core';
+import { AgentExecutor } from '@kb-labs/agents/core';
 
 const executor = new AgentExecutor({
   agentId: 'my-agent',
@@ -458,7 +458,7 @@ pnpm kb agent:trace:filter --task-id=task-abc --type=invalid
 ### IncrementalTraceWriter
 
 ```typescript
-import { IncrementalTraceWriter } from '@kb-labs/agent-core';
+import { IncrementalTraceWriter } from '@kb-labs/agents/core';
 
 const writer = new IncrementalTraceWriter(taskId, {
   privacy: {

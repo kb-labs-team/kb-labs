@@ -125,7 +125,7 @@ export default async function InstallPage({ params }: Props) {
     {
       icon: Package,
       title: t('install.afterInstall.installPlugin'),
-      cmd: 'kb marketplace install @kb-labs/commit-entry', // i18n-ignore
+      cmd: 'kb marketplace install @kb-labs/commit', // i18n-ignore
     },
     {
       icon: Lightbulb,

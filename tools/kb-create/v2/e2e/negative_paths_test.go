@@ -15,6 +15,7 @@ import (
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"github.com/kb-labs/create/v2/preflight"
 	"github.com/kb-labs/create/v2/resolve"
 )
@@ -23,17 +24,25 @@ func TestV2CompatibilityFailureIsRejectedBeforeArtifactExecution(t *testing.T) {
 	source := catalog.Catalog{
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Platforms: []catalog.PlatformBundle{{
-			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
 			Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}},
 		}},
 		Plugins: []catalog.Component{{
-			ID: "future-plugin", Version: "3.0.0", Package: "@kb/future-plugin", SHA256: "plugin", PlatformRange: "^3.0.0",
+			ID: "future-plugin", Version: "3.0.0", Package: "@kb/future-plugin", Tarball: "https://example.test/future-plugin.tgz", SHA256: "plugin", PlatformRange: "^3.0.0",
 		}},
 	}
-	_, err := resolve.Plan(contracts.InstallRequest{
+	sealed, err := testfixtures.SealCatalog(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err = catalog.Seal(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = resolve.Plan(contracts.InstallRequest{
 		PlatformRoot: t.TempDir(),
 		Plugins:      []contracts.ComponentRequest{{ID: "future-plugin"}},
-	}, source)
+	}, sealed)
 	var launcherErr *diag.Diag
 	if !errors.As(err, &launcherErr) || launcherErr.Code != contracts.CodeIncompatibleComponents {
 		t.Fatalf("error = %T %#v, want %s", err, err, contracts.CodeIncompatibleComponents)
@@ -46,13 +55,23 @@ func TestV2NetworkFailureIsReportedBeforePnpmMutation(t *testing.T) {
 	}))
 	defer server.Close()
 	root := t.TempDir()
-	err := (artifacts.Pnpm{
-		Root:   root,
-		Client: server.Client(),
-	}).Install([]contracts.Artifact{{
-		ID: "platform", Package: "@kb/platform", Version: "2.0.0",
-		Tarball: server.URL + "/platform.tgz", SHA256: "not-the-response",
-	}})
+	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := catalog.VerifyCatalog(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform := source.Platforms[0]
+	item := contracts.Artifact{ID: platform.ID, Package: platform.Package, Version: platform.Version,
+		Tarball: server.URL + "/platform.tgz", ResolvedURL: server.URL + "/platform.tgz", SHA256: platform.SHA256}
+	installer, err := artifacts.NewPnpm(artifacts.PnpmConfig{Root: root, CacheRoot: filepath.Join(root, "cache"),
+		PackageManagerRoot: filepath.Join(root, "state"), Registry: server.URL, ReleaseCatalog: verified, Client: server.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = installer.Install([]contracts.Artifact{item})
 	if err == nil {
 		t.Fatal("expected registry failure")
 	}

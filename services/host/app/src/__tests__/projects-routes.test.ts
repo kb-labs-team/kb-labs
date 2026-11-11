@@ -9,8 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
-import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import { createProjectsRoutes } from "../projects-routes.js";
 import type { ManagerSnapshot, ProjectRuntimeManager } from "../project-runtime/manager.js";
 
@@ -130,7 +130,7 @@ describe("createProjectsRoutes", () => {
     const body = res.json() as DataBody<{ path: string; runtime: { state: string } }>;
     expect(body.data.path).toBe(dir);
     expect(body.data.runtime.state).toBe("stopped");
-    expect(await registry.list()).toHaveLength(1);
+    expect((await registry.list()).projects).toHaveLength(1);
   });
 
   it("POST registers a folder without .kb/ and leaves it unchanged", async () => {
@@ -145,7 +145,7 @@ describe("createProjectsRoutes", () => {
 
     expect(res.statusCode).toBe(201);
     expect(await readdir(dir)).toEqual([]);
-    expect(await registry.list()).toHaveLength(1);
+    expect((await registry.list()).projects).toHaveLength(1);
   });
 
   it("POST rejects a missing path with KB_RUNTIME_INPUT_INVALID", async () => {
@@ -188,7 +188,7 @@ describe("createProjectsRoutes", () => {
 
     expect(res.statusCode).toBe(200);
     expect((res.json() as DataBody<{ id: string }>).data.id).toBe(project.id);
-    expect(await registry.list()).toHaveLength(0);
+    expect((await registry.list()).projects).toHaveLength(0);
   });
 
   it("DELETE of an unknown id returns KB_PROJECT_UNKNOWN", async () => {

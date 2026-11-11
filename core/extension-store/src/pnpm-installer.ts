@@ -1,7 +1,7 @@
 /**
  * @module @kb-labs/core-extension-store/pnpm-installer
  * The only place in this package that calls `pnpm` (mirrors
- * `plugins/marketplace/npm/src/npm-source.ts`).
+ * `services/marketplace/npm/src/npm-source.ts`).
  *
  * Installs one package into a synthetic single-dependency pnpm project, with
  * `autoInstallPeers: false` (ADR-0048 D2/D5: a store entry carries the package
@@ -15,9 +15,10 @@ import { execa } from 'execa';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import type { PackageInstallOptions, PackageInstallResult, PackageInstaller } from './types.js';
-import { StoreInstallError } from './errors.js';
+import { IntegrityMismatchError, StoreInstallError } from './errors.js';
 
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -47,7 +48,8 @@ export class PnpmInstaller implements PackageInstaller {
 
     await fs.mkdir(projectDir, { recursive: true });
     await fs.mkdir(casDir, { recursive: true });
-    await writeSyntheticProject(projectDir, name, spec);
+    const installSpec = await prepareVerifiedTarball(projectDir, name, spec, options.expectedIntegrity);
+    await writeSyntheticProject(projectDir, name, installSpec);
     const platformRoot = options.platformRoot ?? this.platformRoot;
     const platformKbDir = platformRoot ? path.join(platformRoot, '.kb') : undefined;
     const syntheticKbDir = path.join(projectDir, '.kb');
@@ -77,10 +79,84 @@ export class PnpmInstaller implements PackageInstaller {
     }
 
     const packageRoot = await resolveInstalledPackageRoot(projectDir, name, version);
-    const integrity =
+    const integrity = options.expectedIntegrity && installSpec !== spec
+      ? options.expectedIntegrity
+      :
       (await readIntegrityFromLockfile(projectDir, name, version)) ?? (await computeFallbackIntegrity(packageRoot));
 
     return { integrity, packageRoot };
+  }
+}
+
+async function prepareVerifiedTarball(
+  projectDir: string,
+  name: string,
+  spec: string,
+  expectedIntegrity: string | undefined,
+): Promise<string> {
+  if (!expectedIntegrity) { return spec; }
+
+  let url: URL;
+  try {
+    url = new URL(spec);
+  } catch {
+    return spec;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') { return spec; }
+
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch (err) {
+    throw new StoreInstallError({ plugin: name }, err instanceof Error ? err.message : String(err));
+  }
+  if (!response.ok) {
+    throw new StoreInstallError({ plugin: name }, `Package tarball request failed with HTTP ${response.status}.`);
+  }
+
+  const tarball = Buffer.from(await response.arrayBuffer());
+  const separator = expectedIntegrity.indexOf('-');
+  if (separator <= 0 || separator === expectedIntegrity.length - 1) {
+    throw new StoreInstallError({ plugin: name }, 'Registry returned an invalid package integrity value.');
+  }
+  const algorithm = expectedIntegrity.slice(0, separator);
+  const actualIntegrity = `${algorithm}-${crypto.createHash(algorithm).update(tarball).digest('base64')}`;
+  if (actualIntegrity !== expectedIntegrity) {
+    throw new IntegrityMismatchError({ plugin: name, expected: expectedIntegrity, actual: actualIntegrity });
+  }
+
+  const tarballPath = path.join(projectDir, `${name.replaceAll('/', '-')}.tgz`);
+  await fs.writeFile(tarballPath, tarball);
+  await rejectPlatformRuntimeDependencies(tarballPath, name);
+  return pathToFileURL(tarballPath).href;
+}
+
+async function rejectPlatformRuntimeDependencies(tarballPath: string, name: string): Promise<void> {
+  let manifest: Record<string, unknown>;
+  try {
+    const { stdout } = await execa('tar', ['-xOf', tarballPath, 'package/package.json']);
+    const parsed: unknown = JSON.parse(stdout);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('package manifest must be an object');
+    }
+    manifest = parsed as Record<string, unknown>;
+  } catch (err) {
+    throw new StoreInstallError(
+      { plugin: name },
+      `Unable to read package manifest from verified tarball: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  for (const field of ['dependencies', 'optionalDependencies'] as const) {
+    const dependencies = manifest[field];
+    if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) { continue; }
+    const platformDependency = Object.keys(dependencies).find((dependency) => dependency.startsWith('@kb-labs/'));
+    if (platformDependency) {
+      throw new StoreInstallError(
+        { plugin: name },
+        `Package manifest declares platform runtime dependency "${platformDependency}" in ${field}.`,
+      );
+    }
   }
 }
 

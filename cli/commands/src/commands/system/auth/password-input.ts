@@ -12,7 +12,7 @@ export async function readPasswordFromStdin(input: Readable = process.stdin): Pr
 export async function promptForPassword(command: string): Promise<string> {
   const input = process.stdin;
   requireInteractiveInput(command, 'The password prompt requires an interactive terminal.');
-  if (!input.setRawMode) throw new Error('The terminal does not support secure password input.');
+  if (!input.setRawMode) {throw new Error('The terminal does not support secure password input.');}
   input.setRawMode(true);
   input.setEncoding('utf8');
   input.resume();

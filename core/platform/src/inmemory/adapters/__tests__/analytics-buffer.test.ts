@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { createErrorEnvelope } from '../../../error-envelope/index.js';
 import { InMemoryAnalyticsBuffer } from '../analytics-buffer.js';
 
 describe('InMemoryAnalyticsBuffer', () => {
@@ -103,6 +104,22 @@ describe('InMemoryAnalyticsBuffer', () => {
     expect(stats.bySource['kb-labs']).toBe(3);
     expect(typeof stats.timeRange.from).toBe('string');
     expect(typeof stats.timeRange.to).toBe('string');
+  });
+
+  // case: S-275.1
+  it('declares process-local persistence with catalog-owned setup guidance', async () => {
+    const analytics = new InMemoryAnalyticsBuffer();
+    await analytics.track('workflow.completed');
+    await analytics.track('workflow.completed');
+    await analytics.track('llm.requested');
+    const stats = await analytics.getStats();
+    const notice = createErrorEnvelope('KB_ANALYTICS_PERSISTENCE_VOLATILE');
+
+    expect(stats.totalEvents).toBe(3);
+    expect(stats.persistence).toEqual({
+      kind: 'ephemeral',
+      notice: { message: notice.message, hint: notice.hint },
+    });
   });
 
   it('getSource / setSource', () => {

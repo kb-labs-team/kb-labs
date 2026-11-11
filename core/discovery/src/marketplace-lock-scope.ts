@@ -1,4 +1,4 @@
-import * as fs from 'node:fs/promises';
+import { fs } from './recording-filesystem.js';
 import * as path from 'node:path';
 import type { MarketplaceLockScope, MarketplaceLockValidationResult } from './marketplace-lock.js';
 import { validateMarketplaceLock } from './marketplace-lock.js';
@@ -24,8 +24,8 @@ export async function resolveMarketplaceLockScope(
     roots.projectRoot ? canonicalPath(roots.projectRoot) : undefined,
   ]);
 
-  if (platform && target === platform) return 'platform';
-  if (project && target === project) return 'project';
+  if (platform && target === platform) {return 'platform';}
+  if (project && target === project) {return 'project';}
   throw new Error(`Marketplace lock root "${lockRoot}" is neither the resolved platform root nor project root.`);
 }
 

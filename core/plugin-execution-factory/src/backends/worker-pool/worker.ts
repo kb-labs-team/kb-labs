@@ -505,7 +505,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
    * leader of a brand-new process group — it does NOT stay a member of this
    * worker's process group. That means neither a bare `this.process.kill()`
    * (single PID) nor even a process-group kill of this worker's own group
-   * (`process.kill(-pid, ...)`, the pattern plugins/workflow/steps/src/
+   * (`process.kill(-pid, ...)`, the pattern services/workflow/steps/src/
    * shell.ts uses for its own direct children) reaches it: it already
    * escaped into a different group by design.
    *

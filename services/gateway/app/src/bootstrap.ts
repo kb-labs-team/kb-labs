@@ -7,7 +7,7 @@ import {
   readInstalledPlatformIdentity,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
-import { requireProjectContext } from "@kb-labs/core-runtime";
+import { requireProjectContext, resolveDeploymentTopology } from "@kb-labs/core-runtime";
 import {
   createInMemoryDocumentDatabase,
   createInMemoryKVStore,
@@ -46,9 +46,8 @@ import {
   OAuthStateStore,
 } from "@kb-labs/gateway-auth";
 import type { IKVStore } from "@kb-labs/core-platform/adapters";
-import { createRegistry } from "@kb-labs/core-registry";
 import { loadGatewayConfig } from "./config.js";
-import { resolveAccess, resolveBootstrapTenantId } from "./access.js";
+import { assertDeploymentAuth, resolveAccess, resolveBootstrapTenantId } from "./access.js";
 import { resolveGatewayPressureConfig } from "@kb-labs/gateway-contracts";
 import { createServer, type UserAuthServerDeps } from "./server.js";
 import { HostRegistry } from "./hosts/registry.js";
@@ -114,6 +113,8 @@ export interface GatewayEmbedOptions {
    * (so they need no auth of their own).
    */
   hostRoutes?: HostRoutes;
+  /** Private loopback control endpoint reported only through readiness. */
+  readinessControlAddress?: string;
 }
 
 /** Select the config root using the same scope contract for preflight and startup. */
@@ -134,6 +135,7 @@ export async function startGateway(
     platformRoot,
     port: listenPort,
     logger: serviceLogger,
+    runtime,
   }: ServiceContext,
   options: GatewayEmbedOptions,
 ): Promise<() => Promise<void>> {
@@ -147,11 +149,12 @@ export async function startGateway(
   // machine Gateway uses platformRoot; standalone Gateway uses projectRoot.
   // Keep the platform root separate so installed-mode defaults resolve from
   // the platform even when the selected project lives elsewhere.
-  const loadedConfig = await loadGatewayConfig(configRoot, platformRoot);
+  const loadedConfig = await loadGatewayConfig(platformRoot);
   const config = options.configure
     ? options.configure(loadedConfig)
     : loadedConfig;
   const access = resolveAccess(config);
+  assertDeploymentAuth(resolveDeploymentTopology(runtime.effectiveConfig), config);
   logger.info("Gateway config loaded", {
     port: listenPort,
     upstreams: Object.keys(config.upstreams),
@@ -396,12 +399,7 @@ export async function startGateway(
   //     Graceful: failure disables webhook routes but does not block gateway startup.
   let webhookManifests: WebhookManifestEntry[] = [];
   try {
-    const pluginRegistry = await createRegistry({
-      root: configRoot,
-      platformRoot: platformRoot !== configRoot ? platformRoot : undefined,
-      cache: { ttlMs: 600_000, adapter: cache },
-    });
-    const snapshot = pluginRegistry.snapshot();
+    const snapshot = runtime.catalog.snapshot();
     webhookManifests = snapshot.manifests
       .filter((entry) => (entry.manifest.webhooks?.handlers?.length ?? 0) > 0)
       .map((entry) => ({
@@ -516,6 +514,7 @@ export async function startGateway(
     { installationId: installationId ?? installedIdentity?.id },
     options.projectServices,
     options.projectServiceTransport,
+    options.readinessControlAddress,
   );
 
   // 11. Listen

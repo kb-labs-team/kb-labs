@@ -1,0 +1,97 @@
+{
+  "name": "@kb-labs/viewer",
+  "description": "KB Labs Viewer plugin REST routes and Studio page.",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./plugin-manifest": {
+      "types": "./dist/manifest.d.ts",
+      "import": "./dist/manifest.js"
+    },
+    "./package.json": "./package.json",
+    "./contracts": {
+      "types": "./dist/contracts/index.d.ts",
+      "import": "./dist/contracts/index.js"
+    },
+    "./contracts/package.json": "./package.json",
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./core/package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup --config tsup.config.ts && pnpm run build:studio",
+    "dev": "pnpm run build:studio --watch",
+    "build:studio": "rspack build --config rspack.studio.config.mjs",
+    "clean": "rimraf dist",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests",
+    "build:cli": "tsup --config tsup.config.ts"
+  },
+  "dependencies": {
+    "zod": "^3.25.76",
+    "fflate": "^0.8.3",
+    "js-yaml": "^4.2.0",
+    "mermaid": "^11.4.1",
+    "pdfjs-dist": "^4.10.38"
+  },
+  "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.11",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.3.3",
+    "@kb-labs/studio-plugin-tools": "workspace:*",
+    "@rspack/cli": "^2.1.2",
+    "@rspack/core": "^2.1.2",
+    "@types/react": "^19.0.0",
+    "rimraf": "^6.0.1"
+  },
+  "peerDependencies": {
+    "@ant-design/icons": "^5.4.0",
+    "antd": "^5.21.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0",
+    "@kb-labs/sdk": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@ant-design/icons": {
+      "optional": true
+    },
+    "antd": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "react-router-dom": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": "24.x",
+    "pnpm": ">=9.0.0"
+  },
+  "kb": {
+    "manifest": "./dist/manifest.js"
+  },
+  "sideEffects": false
+}

@@ -51,13 +51,21 @@ def _layout_path_values() -> dict[str, str]:
             if identity in paths:
                 raise ValueError(f"platform layout has ambiguous path identity {identity!r}")
             paths[identity] = projection[field]
-    for field in ("versionStatePaths", "runtimeStatePaths"):
-        for value in contract[field]:
-            slug = _path_slug(value)
-            identity = f"{field}.{slug}"
-            if identity in paths:
-                raise ValueError(f"platform layout has ambiguous path identity {identity!r}")
-            paths[identity] = value
+    for value in contract["runtimeStatePaths"]:
+        slug = _path_slug(value)
+        identity = f"runtimeStatePaths.{slug}"
+        if identity in paths:
+            raise ValueError(f"platform layout has ambiguous path identity {identity!r}")
+        paths[identity] = value
+    for entry in contract["versionStatePaths"]:
+        value = entry["path"]
+        if not isinstance(value, str) or not value:
+            raise ValueError("platform layout version-state path omits its path")
+        slug = _path_slug(value)
+        identity = f"versionStatePaths.{slug}"
+        if identity in paths:
+            raise ValueError(f"platform layout has ambiguous path identity {identity!r}")
+        paths[identity] = value
     paths.update({f"installerRecords.{name}": value
                   for name, value in contract["installerRecords"].items() if isinstance(value, str)})
     return paths
@@ -100,6 +108,21 @@ def installed_path(root: Path, identity: str, *suffix: str) -> Path:
             raise ValueError(f"path suffix escapes layout identity {identity!r}")
         path /= child
     return path
+
+
+def preserved_user_state_files(root: Path) -> tuple[Path, ...]:
+    """Return every file the platform layout declares as preserved user state."""
+    contract = _layout()
+    files = []
+    for projection in contract["sharedRuntimePaths"]:
+        if projection.get("preserveUserState") is not True or projection.get("kind") != "file":
+            continue
+        files.append(installed_path(root, "currentLink", projection["platformPath"]))
+    for entry in contract["versionStatePaths"]:
+        if entry.get("preserveUserState") is not True or entry.get("kind") != "file":
+            continue
+        files.append(installed_path(root, "currentLink", entry["path"]))
+    return tuple(files)
 
 
 def active_path(root: Path, identity: str, *suffix: str) -> Path:
@@ -213,7 +236,7 @@ def configure_hermetic_cli_fixture(
     home = Path(home)
     home.mkdir(parents=True, exist_ok=True)
     fixture_env = dict(os.environ if env is None else env)
-    for key in ("KB_PLATFORM_ROOT", "KB_PROJECT_ROOT", "KB_HOME", "KB_NET_OFFSET"):
+    for key in ("KB_PLATFORM_ROOT", "KB_PROJECT_ROOT", "KB_HOME", "KB_NET_OFFSET", "FORCE_COLOR"):
         fixture_env.pop(key, None)
 
     fixture_env["HOME"] = str(home)

@@ -41,7 +41,7 @@ services:
     description: Distributed state management
     group: infra
     type: node
-    command: node ./plugins/state/daemon/core-state-daemon/dist/bin.cjs
+    command: node ./services/state/daemon/dist/bin.cjs
     healthCheck: http://localhost:7777/health
     port: 7777
     url: http://localhost:7777

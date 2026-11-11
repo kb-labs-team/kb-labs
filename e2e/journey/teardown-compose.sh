@@ -24,7 +24,7 @@ else
   status=1
 fi
 
-if ! "${compose[@]}" down --volumes --remove-orphans >/dev/null; then
+if ! "${compose[@]}" down --remove-orphans >/dev/null; then
   echo "Journey Compose cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
   status=1
 fi

@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/kb-labs/create/v2/contracts"
 )
 
 const ProcessIdentityEnv = "KB_CREATE_PROCESS_IDENTITY"
@@ -50,9 +52,10 @@ func ProcessEnvironmentWithIdentity(env []string, token string) []string {
 
 func ProcessEnvironmentWithoutIdentity(env []string) []string {
 	result := make([]string, 0, len(env))
-	prefix := ProcessIdentityEnv + "="
+	identityPrefix := ProcessIdentityEnv + "="
+	controlPrefix := contracts.HostControlCredentialEnv + "="
 	for _, entry := range env {
-		if !strings.HasPrefix(entry, prefix) {
+		if !strings.HasPrefix(entry, identityPrefix) && !strings.HasPrefix(entry, controlPrefix) {
 			result = append(result, entry)
 		}
 	}

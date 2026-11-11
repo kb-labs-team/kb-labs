@@ -124,6 +124,9 @@ export async function createStudioRemoteConfig(options: KbStudioRemoteOptions): 
     },
     resolve: {
       extensions: ['.tsx', '.ts', '.jsx', '.js'],
+      extensionAlias: {
+        '.js': ['.ts', '.tsx', '.js'],
+      },
     },
     module: {
       rules: [

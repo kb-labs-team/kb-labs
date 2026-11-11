@@ -12,6 +12,8 @@ import { platform } from '@kb-labs/core-runtime';
 import { createHttpLogger } from '@kb-labs/shared-http';
 import { ZodError } from 'zod';
 
+const httpErrorProducers = new WeakMap<object, Error>();
+
 function requestFailureOptions(request: FastifyRequest, statusCode: number) {
   const limitBytes = request.routeOptions.bodyLimit;
   return {
@@ -43,15 +45,15 @@ export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
   // Keep error payloads intact for onSend; response schemas may otherwise strip
   // raw handler replies before the single normalization phase.
   server.addHook('preSerialization', async (_request, reply, payload) => {
-    if (reply.statusCode >= 400) reply.serializer((value) => JSON.stringify(value));
+    if (reply.statusCode >= 400) {reply.serializer((value) => JSON.stringify(value));}
     return payload;
   });
 
   // onSend is the only response normalization phase.
   server.addHook('onSend', async (request, reply, payload) => {
     // Preserve the response metadata for raw routes; only envelope shaping is skipped.
-    if (!reply.raw.headersSent) reply.header('x-schema-version', config.apiVersion);
-    if (request.routeOptions.config.ux === 'raw' && reply.statusCode < 400) return payload;
+    if (!reply.raw.headersSent) {reply.header('x-schema-version', config.apiVersion);}
+    if (request.routeOptions.config.ux === 'raw' && reply.statusCode < 400) {return payload;}
 
     // Serialize plain objects that reached onSend without going through
     // Fastify's serializer (happens with non-JSON content-type or in error
@@ -112,8 +114,28 @@ export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
       const result = normalizeHttpFailure(parsedPayload, {
         ...requestFailureOptions(request, reply.statusCode),
       });
-      reply.code(statusForHttpFailure(parsedPayload, reply.statusCode));
-      return JSON.stringify(result);
+      const statusCode = statusForHttpFailure(parsedPayload, reply.statusCode);
+      reply.code(statusCode);
+      const requestLogger = createHttpLogger(platform.logger, {
+        serviceId: 'rest',
+        layer: 'service',
+        component: 'http-error',
+        operation: 'http.request.error',
+        method: request.method,
+        url: request.routeOptions.url,
+      }).forOperation('http.request.error', { correlationId: String(request.id || '') });
+      const safeResult = requestLogger.redactSensitiveValues(result);
+      const originalError = httpErrorProducers.get(reply);
+      const producerStack = safeResult.error.cause ?? originalError?.stack;
+      const failure = originalError ?? new Error(safeResult.error.message);
+      if (!originalError && producerStack) {failure.stack = producerStack;}
+      requestLogger.error('Request error', failure, {
+        errorCode: safeResult.error.code,
+        statusCode,
+        ...(safeResult.error.details ?? {}),
+        ...(producerStack ? { producerStack } : {}),
+      });
+      return JSON.stringify(safeResult);
     }
 
     // Skip raw OpenAPI spec — marked by x-openapi-spec header set in shared-http
@@ -140,7 +162,7 @@ export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
 
     // Set Content-Type header if not set
     if (!reply.getHeader('content-type')) {
-      if (!reply.raw.headersSent) reply.header('content-type', 'application/json');
+      if (!reply.raw.headersSent) {reply.header('content-type', 'application/json');}
     }
 
     // Serialize and return envelope as string
@@ -160,19 +182,7 @@ export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
 
     const correlationId = String(request.id || '');
     reply.errorCode = codeForHttpFailure(error, statusCode);
-
-    createHttpLogger(platform.logger, {
-      serviceId: 'rest',
-      layer: 'service',
-      component: 'http-error',
-      operation: 'http.request.error',
-      method: request.method,
-      url: request.routeOptions.url,
-    }).forOperation('http.request.error', { correlationId }).error(
-      'Request error',
-      error instanceof Error ? error : new Error(String(error)),
-      { errorCode: reply.errorCode, statusCode },
-    );
+    if (error instanceof Error) {httpErrorProducers.set(reply, error);}
 
     reply.serializer((payload) => JSON.stringify(payload));
     reply.status(statusCode).send({ error });

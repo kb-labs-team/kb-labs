@@ -128,6 +128,20 @@ describe('Host Wrappers', () => {
       expect(result.error).toMatchObject({ code: 'KB_RUNTIME_COMMAND_FAILED', message: 'failed', hint: 'Resolve the failure, then retry.' });
     });
 
+    it('fills the execution correlation ID on a returned command failure that omitted it', () => {
+      const result = wrapCliResult({
+        ok: true,
+        data: {
+          ok: false,
+          error: { code: 'KB_HOST_UNREACHABLE', message: 'The host is unavailable.' },
+        },
+        executionMeta: mockExecutionMeta,
+      }, mockDescriptor);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.error?.correlationId).toBe(mockExecutionMeta.requestId);
+    });
+
     it('fills an omitted catalogued failure hint from the platform error catalogue', () => {
       const result = wrapCliResult({
         ok: true,

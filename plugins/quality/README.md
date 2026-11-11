@@ -47,7 +47,7 @@ cached and served via REST API to the Studio UI.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/quality-entry
+pnpm kb marketplace install @kb-labs/quality
 ```
 
 ---
@@ -57,10 +57,10 @@ pnpm kb marketplace install @kb-labs/quality-entry
 ### Overview
 
 ```bash
-kb quality stats                                # monorepo stats + health score
-kb quality stats --health --json
-kb quality health                               # health score with recommendations
-kb quality health --package @kb-labs/core       # single package health
+kb quality stats show                                # monorepo stats + health score
+kb quality stats show --health --json
+kb quality health show                               # health score with recommendations
+kb quality health show --package @kb-labs/core       # single package health
 ```
 
 ### Dependencies
@@ -68,16 +68,16 @@ kb quality health --package @kb-labs/core       # single package health
 ```bash
 kb quality build-order                          # topological build order with layers
 kb quality build-order --package @kb-labs/core  # deps of one package
-kb quality cycles                               # find all circular dependency chains
+kb quality cycles list                               # find all circular dependency chains
 kb quality fix-deps --dry-run                   # preview dependency fixes
 kb quality fix-deps --remove-unused             # remove unused dependencies
 kb quality fix-deps --align-versions            # align duplicate versions
 kb quality fix-deps --all                       # all fixes at once
-kb quality visualize --stats                    # graph statistics
-kb quality visualize --tree --package @kb-labs/sdk
-kb quality visualize --reverse --package @kb-labs/core  # who depends on this
-kb quality visualize --impact --package @kb-labs/core   # what changes affect
-kb quality visualize --dot > deps.dot           # export for graphviz
+kb quality graph show --stats                    # graph statistics
+kb quality graph show --tree --package @kb-labs/sdk
+kb quality graph show --reverse --package @kb-labs/core  # who depends on this
+kb quality graph show --impact --package @kb-labs/core   # what changes affect
+kb quality graph show --dot > deps.dot           # export for graphviz
 ```
 
 ### Checks
@@ -101,12 +101,12 @@ kb quality dead-code --restore 2026-05-01T10-00-00
 
 | Command | Description |
 |---------|-------------|
-| `kb quality stats` | Monorepo statistics and health score |
-| `kb quality health` | Health score with recommendations |
+| `kb quality stats show` | Monorepo statistics and health score |
+| `kb quality health show` | Health score with recommendations |
 | `kb quality fix-deps` | Auto-fix dependency issues |
 | `kb quality build-order` | Topological build order |
-| `kb quality cycles` | Circular dependency detection |
-| `kb quality visualize` | Dependency graph visualization |
+| `kb quality cycles list` | Circular dependency detection |
+| `kb quality graph show` | Dependency graph visualization |
 | `kb quality check-builds` | Build staleness check |
 | `kb quality check-types` | TypeScript type safety analysis |
 | `kb quality check-tests` | Test execution and coverage |

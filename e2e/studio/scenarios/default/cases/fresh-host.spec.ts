@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
 import { runKbCommand } from '../../../kb-command'
+import { errorCatalog } from '@kb-labs/core-platform/error-envelope'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 
@@ -8,6 +9,7 @@ const enabled = process.env.KB_STUDIO_FRESH_HOST_JOURNEY === '1'
 const mode = process.env.KB_ACCESS_MODE ?? 'local'
 const projectId = process.env.KB_STUDIO_PROJECT_ID
 const projectName = process.env.KB_STUDIO_PROJECT_NAME
+const analyticsPersistenceNotice = errorCatalog.codes.find(({ code }) => code === 'KB_ANALYTICS_PERSISTENCE_VOLATILE')
 
 async function signIn(page: import('@playwright/test').Page, email: string, password: string) {
   await page.goto(`${GATEWAY}/`)
@@ -122,6 +124,24 @@ test('Studio navigation opens first-tier pages @S-020.6 @S-125.2', async ({ page
     await expect(page.getByRole('heading', { name: heading, exact: true }).first()).toBeVisible()
     await expect(page.getByText(projectName!, { exact: true }).first()).toBeVisible()
   }
+})
+
+test('fresh-host analytics uses durable default history @S-121.6', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
+  expect(analyticsPersistenceNotice).toBeDefined()
+  await page.addInitScript((id) => localStorage.setItem('kb-studio-active-project', id), projectId)
+  await openAdminStudio(page)
+
+  const statsResponse = page.waitForResponse(response => response.url().includes('/analytics/stats'))
+  await page.goto(`${GATEWAY}/analytics/overview`)
+  const stats = await (await statsResponse).json()
+  expect(stats.data.totalEvents).toEqual(expect.any(Number))
+  expect(stats.data.persistence).toEqual({ kind: 'durable' })
+  await expect(page.getByRole('heading', { name: 'Analytics Overview', exact: true })).toBeVisible()
+  await expect(page.getByText('Total Events', { exact: true })).toBeVisible()
+  await expect(page.getByText(analyticsPersistenceNotice!.message, { exact: true })).toHaveCount(0)
+  await expect(page.getByText(analyticsPersistenceNotice!.hint, { exact: true })).toHaveCount(0)
 })
 
 test('secured logout returns to login @S-020.7', async ({ page }) => {
@@ -278,9 +298,9 @@ test('project selector scopes plugin attachments @S-046.1 @S-046.2 @S-046.3', as
   await openAdminStudio(page)
   await page.goto(`${GATEWAY}/plugins`)
   await expect(page.getByRole('heading', { name: 'Plugins', exact: true })).toBeVisible()
-  await expect(page.getByText('@kb-labs/workflow', { exact: true })).toBeVisible()
+  await expect(page.getByText('No plugins found', { exact: true })).toBeVisible()
   await expect(page.getByText(projectAName!, { exact: true }).first()).toBeVisible()
-  await expect(page.getByRole('row')).toHaveCount(2)
+  await expect(page.getByRole('row')).toHaveCount(0)
   await expect(page.getByText(/adapter settings/i)).toHaveCount(0)
   await page.getByRole('combobox', { name: 'Active project' }).click()
   await page.getByRole('option', { name: projectBName!, exact: true }).click()

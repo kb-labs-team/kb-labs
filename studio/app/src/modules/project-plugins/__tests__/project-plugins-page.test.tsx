@@ -18,7 +18,7 @@ import { ProjectPluginsPage } from '../pages/project-plugins-page';
 
 function makePlugin(overrides: Partial<ProjectPluginEntry> = {}): ProjectPluginEntry {
   return {
-    id: '@kb-labs/commit-entry',
+    id: '@kb-labs/commit',
     version: '1.0.0',
     source: 'workspace',
     primaryKind: 'plugin',
@@ -52,29 +52,29 @@ describe('ProjectPluginsPage', () => {
   });
 
   it('uses the active project and lists its plugins', async () => {
-    const listPlugins = vi.fn().mockResolvedValue([makePlugin({ id: '@kb-labs/review-entry', enabled: false })]);
+    const listPlugins = vi.fn().mockResolvedValue([makePlugin({ id: '@kb-labs/review', enabled: false })]);
     renderPage({
       projectPlugins: { listPlugins } as never,
     });
 
-    await waitFor(() => expect(screen.getByText('@kb-labs/review-entry')).toBeDefined());
+    await waitFor(() => expect(screen.getByText('@kb-labs/review')).toBeDefined());
     expect(listPlugins).toHaveBeenCalledWith('prj_1');
   });
 
   it('toggles a plugin on via the switch', async () => {
     const listPlugins = vi.fn().mockResolvedValue([makePlugin({ enabled: false })]);
-    const enablePlugin = vi.fn().mockResolvedValue({ id: '@kb-labs/commit-entry', enabled: true });
+    const enablePlugin = vi.fn().mockResolvedValue({ id: '@kb-labs/commit', enabled: true });
     renderPage({
       projectPlugins: { listPlugins, enablePlugin } as never,
     });
 
-    await waitFor(() => expect(screen.getByText('@kb-labs/commit-entry')).toBeDefined());
+    await waitFor(() => expect(screen.getByText('@kb-labs/commit')).toBeDefined());
 
     await act(async () => {
       fireEvent.click(screen.getByRole('switch'));
     });
 
-    await waitFor(() => expect(enablePlugin).toHaveBeenCalledWith('prj_1', '@kb-labs/commit-entry'));
+    await waitFor(() => expect(enablePlugin).toHaveBeenCalledWith('prj_1', '@kb-labs/commit'));
   });
 
   // case: S-182.5

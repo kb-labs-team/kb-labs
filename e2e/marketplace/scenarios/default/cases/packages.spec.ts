@@ -24,7 +24,7 @@ test('MKT-02: marketplace diagnostics — lock file OK, no errors', async ({ req
 })
 
 test('MKT-03: install a test package and verify it appears in listing', async ({ request }) => {
-  const SPEC = '@kb-labs/qa-entry'
+  const SPEC = '@kb-labs/qa'
   const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
     data: { specs: [SPEC] },
     timeout: 60_000,  // pnpm install can take 30-60s on first run

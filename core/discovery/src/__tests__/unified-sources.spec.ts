@@ -86,23 +86,20 @@ async function writeLock(
 describe('DiscoveryManager — one pipeline over locks and workspace', () => {
   let platform: string;
   let project: string;
-  let outside: string;
 
   beforeEach(async () => {
     platform = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-unified-platform-'));
     project = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-unified-project-'));
-    outside = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-unified-outside-'));
   });
 
   afterEach(async () => {
     await fs.rm(platform, { recursive: true, force: true });
     await fs.rm(project, { recursive: true, force: true });
-    await fs.rm(outside, { recursive: true, force: true });
   });
 
   it('reports scope and origin for each source', async () => {
     const platformPlugin = await makePlugin({ dir: path.join(platform, 'node_modules', 'plat'), id: '@x/plat' });
-    const linkedPlugin = await makePlugin({ dir: path.join(outside, 'linked'), id: '@x/linked' });
+    const linkedPlugin = await makePlugin({ dir: path.join(platform, 'linked', 'linked'), id: '@x/linked' });
     const projectPlugin = await makePlugin({ dir: path.join(project, 'node_modules', 'proj'), id: '@x/proj' });
     await makePlugin({ dir: path.join(platform, 'packages', 'ws'), id: '@x/ws' });
     await fs.writeFile(path.join(platform, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
@@ -136,14 +133,14 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
     expect(result.failures).toEqual([]);
   });
 
-  it('falls back to importing the compiled module when there is no static manifest', async () => {
+  it('rejects a declared module when its static JSON artifact is missing', async () => {
     const dir = await makePlugin({ dir: path.join(project, 'node_modules', 'js'), id: '@x/js', staticJson: false, workingModule: true });
     await writeLock(project, { '@x/js': await lockEntry(project, dir, 'platform') });
 
     const result = await new DiscoveryManager({ root: project }).discover();
 
-    expect(result.plugins.map(p => p.id)).toEqual(['@x/js']);
-    expect(result.plugins[0]!.manifestKind).toBe('module');
+    expect(result.plugins.map(p => p.id)).toEqual([]);
+    expect(result.diagnostics.map(event => event.code)).toContain('MANIFEST_PARSE_ERROR');
   });
 
   it('does not find a package that is in node_modules but in no lock', async () => {
@@ -212,7 +209,7 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
       packageName: '@x/broken',
       reason: 'manifest',
       origin: 'workspace',
-      manifestPath: path.join(broken, 'dist', 'manifest.js'),
+      manifestPath: path.join(broken, 'dist', 'manifest.json'),
     });
     expect(result.diagnostics.find(d => d.code === 'MANIFEST_NOT_PLUGIN')?.severity).toBe('info');
   });
@@ -254,6 +251,8 @@ describe('plugins.allow / plugins.block / plugins.linked gate', () => {
         integrity,
         package: id,
         source: 'marketplace',
+        marketplaceSource: 'registry',
+        signatureStatus: 'verified',
         primaryKind: 'plugin',
         provides: ['plugin'],
       });
@@ -305,10 +304,12 @@ describe('plugins.allow / plugins.block / plugins.linked gate', () => {
       '@kb-labs/name-only': createMarketplaceEntry({
         version: '1.0.0', integrity: await computePackageIntegrity(thirdParty), package: '@kb-labs/name-only',
         source: 'marketplace', primaryKind: 'plugin', provides: ['plugin'],
+        marketplaceSource: 'registry', signatureStatus: 'verified',
       }),
       '@x/bad': createMarketplaceEntry({
         version: '1.0.0', integrity: await computePackageIntegrity(bad), package: '@x/bad',
         source: 'marketplace', primaryKind: 'plugin', provides: ['plugin'],
+        marketplaceSource: 'registry', signatureStatus: 'verified',
       }),
     });
     store = new Map([

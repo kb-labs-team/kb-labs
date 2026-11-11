@@ -130,21 +130,21 @@ export { buildPlanPrompt } from './plan-profile.js';
 После каждой фазы запускать сборку и тесты пакета:
 
 ```
-pnpm --filter @kb-labs/agent-core build
+pnpm --filter @kb-labs/agents/core build
 ```
 
 ```
-pnpm --filter @kb-labs/agent-core test
+pnpm --filter @kb-labs/agents/core test
 ```
 
 После всех четырёх фаз — проверить зависимые пакеты:
 
 ```
-pnpm --filter @kb-labs/agent-cli run build
+pnpm --filter @kb-labs/agents/cli run build
 ```
 
 ```
-pnpm --filter @kb-labs/agent-cli test
+pnpm --filter @kb-labs/agents/cli test
 ```
 
 Финальная проверка размера адаптера (ожидаем значительно меньше 608 строк):

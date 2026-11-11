@@ -3,7 +3,7 @@
 Runs the Mind golden query-set against the **live** REST surface backed by the
 platform's configured adapters (OpenAI embeddings + Qdrant). This is the only
 place a semantic feature produces a real A/B signal — the in-process
-deterministic harness in `@kb-labs/mind-core` uses a toy bag-of-words embedder
+deterministic harness in `@kb-labs/mind/core` uses a toy bag-of-words embedder
 and reports `neutral` for rerank/dedup/HyDE.
 
 ## Why this exists
@@ -33,7 +33,7 @@ kb-dev start                                   # bring up rest + qdrant + adapte
 MIND_BENCH_REAL=1 pnpm --filter @kb-labs/e2e-mind e2e
 ```
 
-Corpus: `plugins/mind/contracts/src` (small, stable, known files), indexed under
+Corpus: `plugins/mind/src/contracts` (small, stable, known files), indexed under
 a dedicated `e2e-bench` index so it never collides with a developer's corpus.
 
 ## Adding a new feature A/B

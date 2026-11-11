@@ -184,7 +184,7 @@ pnpm done
 |-----|----------|-----------|
 | 1 | Найти все changed суб-репо | — |
 | 2 | Показать diff (какие коммиты в каких репо) | — |
-| 3 | `pnpm kb qa regressions` | **Да** — если регрессии, стоп |
+| 3 | `pnpm kb qa regressions list` | **Да** — если регрессии, стоп |
 | 4 | Sync submodule pointers | — |
 | 5 | Commit + push workspace branch | — |
 | 6 | PR: draft → ready for review | — |
@@ -315,7 +315,7 @@ pnpm kb workflow:run --workflow-id=dev-done
 
 | Type | QA при `pnpm done` | AI Review | Branch prefix |
 |------|-------------------|-----------|---------------|
-| `code` | Полный (`pnpm kb qa regressions`) | Да (в dev-cycle) | `code/` |
+| `code` | Полный (`pnpm kb qa regressions list`) | Да (в dev-cycle) | `code/` |
 | `docs` | Пропускается | Нет | `docs/` |
 | `infra` | Только build | Нет | `infra/` |
 | `release` | Полный | Нет | `release/` |

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ManifestV3, CliCommandDecl } from '@kb-labs/plugin-contracts';
-import type { RegistrySnapshotManifestEntry } from '@kb-labs/core-registry';
-import { filterTools, validateManifests } from '../mcp/tool-builder.js';
+import type { RegistrySnapshotManifestEntry } from '@kb-labs/plugin-contracts';
+import { buildServiceTools, filterTools, mcpToolName, validateManifests } from '../mcp/tool-builder.js';
 import type { Permits } from '../mcp/authz.js';
 
 const allow: Permits = () => true;
@@ -76,11 +76,11 @@ describe('filterTools', () => {
   });
 
   it('sanitizes scoped npm package names in tool names', () => {
-    // Real pluginIds look like "@kb-labs/policy". The @ and / must be stripped
+    // Real pluginIds look like "@kb-labs/commit". The @ and / must be stripped
     // so tool names match /^[a-z0-9-]+__[a-z0-9_]+$/ (MCP name constraint).
-    const snap = { manifests: [entry('@kb-labs/policy', [cmd('policy detect', 'read')])] };
+    const snap = { manifests: [entry('@kb-labs/commit', [cmd('commit plan create', 'read')])] };
     const [tool] = filterTools(snap, allow);
-    expect(tool!.name).toBe('kb-labs-policy__policy_detect');
+    expect(tool!.name).toBe('kb-labs-commit__commit_plan_create');
     expect(tool!.name).toMatch(/^[a-z0-9-]+__[a-z0-9_]+$/);
   });
 
@@ -131,6 +131,43 @@ describe('filterTools', () => {
     const tools = filterTools({ manifests: [entry('notifier-test', [malformed, good])] }, allow);
     expect(tools).toHaveLength(1);
     expect(tools[0]!.name).toBe('notifier-test__mind_search');
+  });
+});
+
+describe('service command tools', () => {
+  it('derives names and input schemas only from enabled service manifests', () => {
+    const [tool] = buildServiceTools([{
+      schema: 'kb.service/1', id: 'workflow', name: 'Workflow', version: '1',
+      runtime: { entry: 'dist/index.js', port: 1, healthCheck: '/health' },
+      commands: [{
+        kind: 'service',
+        name: 'workflow run', description: 'Run a workflow', scope: 'project', category: 'workflow',
+        jsonTest: {}, flags: { 'workflow-id': { type: 'string', required: true } },
+        route: { method: 'POST', path: '/workflows/{workflow-id}/runs', mount: 'project-api' },
+      }],
+    }]);
+    expect(tool).toMatchObject({
+      name: mcpToolName('workflow', 'workflow run'),
+      serviceId: 'workflow',
+      inputSchema: { type: 'object', required: ['workflow-id'] },
+    });
+    const renamed = buildServiceTools([{
+      schema: 'kb.service/1', id: 'workflow', name: 'Workflow', version: '1',
+      runtime: { entry: 'dist/index.js', port: 1, healthCheck: '/health' },
+      commands: [{
+        kind: 'service',
+        name: 'workflow start', description: 'Run a workflow', scope: 'project', category: 'workflow',
+        jsonTest: {}, flags: { 'workflow-id': { type: 'string', required: true } },
+        route: { method: 'POST', path: '/workflows/{workflow-id}/runs', mount: 'project-api' },
+      }],
+    }]);
+    expect(renamed[0]?.name).toBe(mcpToolName('workflow', 'workflow start'));
+    expect(buildServiceTools([])).toEqual([]);
+    expect(buildServiceTools([{
+      schema: 'kb.service/1', id: 'local', name: 'Local', version: '1',
+      runtime: { entry: 'dist/index.js', port: 1, healthCheck: '/health' },
+      commands: [{ kind: 'local', name: 'local lint', description: 'Lint local files', scope: 'project', category: 'workflow', jsonTest: {}, flags: {} }],
+    }])).toEqual([]);
   });
 });
 

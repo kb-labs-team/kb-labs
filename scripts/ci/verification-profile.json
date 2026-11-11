@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "buildStage": "workspace-build",
+  "packageTestStage": "workspace-unit-tests",
+  "maxParallel": 20,
+  "shardTimeoutMinutes": 30,
+  "stages": {
+    "workspace-build": { "runner": "kb-devkit-build" },
+    "workspace-unit-tests": { "runner": "kb-devkit-test" },
+    "internal-tool-tests": { "runner": "kb-devkit-internal-tool-suite" },
+    "ci-script-suite": { "runner": "node-test-directory", "directory": "scripts/ci" },
+    "kb-create-go-suite": { "runner": "kb-devkit-test-package", "packageManifest": "tools/kb-create/package.json" },
+    "kb-devkit-check": { "runner": "executable", "command": "./tools/kb-devkit/kb-devkit", "args": ["check"] },
+    "journey-unit-suite": { "runner": "process", "command": "python3", "args": ["-m", "unittest", "discover", "-s", "e2e/journey", "-p", "test_*.py"] }
+  },
+  "independentTestStages": {
+    "stream": ["ci-script-suite"],
+    "candidate": ["ci-script-suite"]
+  },
+  "buildDependentTestStages": {
+    "stream": [],
+    "candidate": ["kb-devkit-check", "kb-create-go-suite", "journey-unit-suite"]
+  }
+}

@@ -1,8 +1,13 @@
-import { bold, dim, gray, green, red, yellow, cyan, blue } from "colorette";
+import { createColors } from "colorette";
+import { resolveColorSupport } from '@kb-labs/plugin-contracts/color-policy';
+
+const colorsWithPolicy = createColors({
+  useColor: resolveColorSupport(process.stdout?.isTTY, process.env.NO_COLOR, process.env.FORCE_COLOR, process.env.TERM),
+});
+const { bold, dim, gray, green, red, yellow, cyan, blue } = colorsWithPolicy;
 
 /**
- * Color utilities for CLI output
- * All functions respect NO_COLOR environment variable (handled by colorette)
+ * Color utilities for CLI output using the shared host color policy.
  */
 export const colors = {
   bold,

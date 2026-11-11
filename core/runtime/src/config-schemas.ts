@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import { flattenZodIssues, registerZodEnumIssueHint } from '@kb-labs/core-config';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import { RESOLVED_EXECUTION_MODES, ROADMAP_EXECUTION_MODES } from '@kb-labs/core-contracts';
 
 // ── ExecutionRetryConfig ──────────────────────────────────────────────────────
@@ -147,6 +148,22 @@ export const PlatformAdapterOptionsSchema = z.record(
   z.record(z.string(), z.unknown(), { invalid_type_error: 'adapter options must be an object' }),
 );
 
+export const DeploymentTopologySchema = z.enum(['local', 'cloud', 'k8s']);
+export const DeploymentConfigSchema = z.object({ topology: DeploymentTopologySchema }).strict();
+export type DeploymentTopology = z.output<typeof DeploymentTopologySchema>;
+
+export function resolveDeploymentTopology(raw: unknown): DeploymentTopology {
+  const result = PlatformUserConfigSchema.safeParse(raw);
+  const platform = result.success && typeof result.data.platform === 'object'
+    ? result.data.platform
+    : undefined;
+  const topology = platform?.deployment?.topology;
+  if (!topology) {
+    throw new ErrorEnvelopeError(createErrorEnvelope('KB_DEPLOYMENT_TOPOLOGY_REQUIRED'));
+  }
+  return topology;
+}
+
 const positiveInt = z.number().int().positive();
 
 /** `core`: platform feature switches. Sub-sections not listed are passed through. */
@@ -178,6 +195,7 @@ export const PlatformSectionSchema = z.union([
       mode: z.enum(["development", "production"]).optional(),
       adapters: PlatformAdaptersSchema.optional(),
       adapterOptions: PlatformAdapterOptionsSchema.optional(),
+      deployment: DeploymentConfigSchema.optional(),
       core: CoreFeaturesConfigSchema.optional(),
       execution: ExecutionConfigSchema.optional(),
     })

@@ -7,7 +7,7 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import { mergeOpenAPISpecs } from '@kb-labs/core-registry';
+import { mergeOpenAPISpecs, type OpenAPISpec } from '@kb-labs/plugin-contracts';
 import type { ICache, IServiceTransport } from '@kb-labs/core-platform';
 import type { GatewayConfig } from '@kb-labs/gateway-contracts';
 
@@ -57,7 +57,7 @@ export function registerAggregatedDocsRoutes(
       .filter((r): r is PromiseFulfilledResult<unknown> => r.status === 'fulfilled')
       .map((r) => r.value);
 
-    const merged = mergeOpenAPISpecs(specs as Parameters<typeof mergeOpenAPISpecs>[0]);
+    const merged = mergeOpenAPISpecs(specs as OpenAPISpec[]);
 
     // Cache result — but not a degraded merge from zero real specs (every
     // upstream still booting/unreachable): caching that for the full TTL would

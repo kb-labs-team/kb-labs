@@ -1,0 +1,66 @@
+{
+  "name": "@kb-labs/workflow-runtime",
+  "description": "Runtime adapters and step executors for the KB Labs workflow engine.",
+  "version": "2.120.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "pnpm clean && tsup --config tsup.config.ts",
+    "clean": "rimraf dist",
+    "dev": "tsup --config tsup.config.ts --watch",
+    "lint": "eslint . --ignore-pattern 'dist/**'",
+    "lint:fix": "eslint . --fix --ignore-pattern 'dist/**'",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kb-labs/core-contracts": "workspace:*",
+    "@kb-labs/core-retry": "workspace:*",
+    "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/core-registry": "workspace:*",
+    "@kb-labs/plugin-contracts": "workspace:*",
+    "@kb-labs/plugin-execution": "workspace:*",
+    "@kb-labs/workflow-artifacts": "workspace:*",
+    "@kb-labs/workflow-steps": "workspace:*",
+    "@kb-labs/workflow-constants": "workspace:*",
+    "@kb-labs/workflow-contracts": "workspace:*",
+    "execa": "^9.5.3",
+    "fast-glob": "^3.3.2",
+    "pino": "^9.0.0",
+    "yaml": "^2.8.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
+    "@types/node": "^24.3.3",
+    "@typescript-eslint/eslint-plugin": "^8",
+    "@typescript-eslint/parser": "^8",
+    "eslint": "^9",
+    "rimraf": "^6.0.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": "24.x",
+    "pnpm": ">=9.0.0"
+  },
+  "sideEffects": false,
+  "kbLabs": {
+    "catalogRole": "reader"
+  }
+}

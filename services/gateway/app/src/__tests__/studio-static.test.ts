@@ -116,6 +116,14 @@ async function studioApp(
 }
 
 describe("studio hosting enabled", () => {
+  // case: S-285.17
+  it("reports the served Studio URL in health", async () => {
+    const app = await studioApp();
+    const response = await app.inject({ method: "GET", url: "/health", headers: { host: "127.0.0.1:5500" } });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().data.studio, response.body).toEqual({ url: "http://127.0.0.1:5500/" });
+    await app.close();
+  });
   it("serves index.html at / with injected runtime config and no-cache", async () => {
     const app = await studioApp({ eventsBaseUrl: "/events" });
     const res = await app.inject({ method: "GET", url: "/" });
@@ -296,6 +304,13 @@ describe("studio URL rewriter", () => {
 });
 
 describe("studio hosting disabled (default): existing routes untouched", () => {
+  // case: S-285.17
+  it("omits Studio from health when it is not mounted", async () => {
+    const app = await build(baseConfig());
+    const response = await app.inject({ method: "GET", url: "/health" });
+    expect(response.json().data).not.toHaveProperty("studio");
+    await app.close();
+  });
   it("does not serve Studio and keeps native routes", async () => {
     for (const config of [baseConfig(), baseConfig({ enabled: false, dir: studioDir })]) {
       const app = await build(config);

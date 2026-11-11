@@ -1,37 +1,33 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 /**
  * new-tests check
  *
  * Finds newly added .ts source files that have no corresponding test file.
  * A test file is any file matching: *.spec.ts, *.test.ts, or __tests__/*.ts
  *
- * Outputs TypedCheckOutput JSON:
- *   { ok: boolean, items: Array<{ target, message, fix }> }
+ * Outputs the kb-devkit external-check contract:
+ *   { issues: Array<{ check, severity, file, message, fix }> }
  *
- * Runs in pkg.dir (cwd = package directory).
- * Base ref comes from KB_QA_BASE env var (set by kb qa check via --base flag),
- * falling back to the first CLI argument, then 'main'.
+ * Runs from the workspace root. The diff base comes from KB_DEVKIT_BASE_REF,
+ * which the affected-workspace runner and diff-aware local QA workflow provide.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 
-const base = process.env.KB_QA_BASE ?? process.argv[2] ?? 'main';
+const base = process.env.KB_DEVKIT_BASE_REF ?? 'HEAD';
 const cwd = process.cwd();
 
 /** Get files added in this diff within the current package dir */
 function getNewFiles() {
-  try {
-    const out = execSync(
-      `git diff --diff-filter=A ${base}...HEAD --name-only`,
-      { cwd, encoding: 'utf-8' },
-    ).trim();
-    if (!out) return [];
-    return out.split('\n').filter(Boolean);
-  } catch {
-    return [];
-  }
+  const out = execFileSync('git', ['diff', '--diff-filter=A', `${base}...HEAD`, '--name-only'], {
+    cwd,
+    encoding: 'utf-8',
+  }).trim();
+  if (!out) return [];
+  return out.split('\n').filter(Boolean);
 }
 
 /** Check if a source file has a matching test file */
@@ -69,10 +65,12 @@ const newFiles = getNewFiles();
 const sourceFiles = newFiles.filter(isSourceFile);
 const missing = sourceFiles.filter(f => !hasTest(f));
 
-const items = missing.map(f => ({
-  target: f,
+const issues = missing.map((file) => ({
+  check: 'new-tests',
+  severity: 'warning',
+  file,
   message: 'New source file has no corresponding test',
-  fix: `Create ${dirname(f)}/${basename(f, '.ts')}.spec.ts`,
+  fix: `Create ${dirname(file)}/${basename(file, '.ts')}.spec.ts`,
 }));
 
-process.stdout.write(JSON.stringify({ ok: items.length === 0, items }));
+writeCheckResult(issues);

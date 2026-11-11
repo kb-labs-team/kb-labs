@@ -18,7 +18,7 @@ globs:
 ### Перед задачей — получить контекст пакета
 
 ```bash
-kb quality context --package @kb-labs/sdk --json
+kb quality context show --package @kb-labs/sdk --json
 ```
 
 Возвращает без AST-анализа (только package.json):
@@ -29,7 +29,7 @@ kb quality context --package @kb-labs/sdk --json
   "layerName": "sdk / shared",
   "dir": "sdk/sdk",
   "coupling": { "afferent": 38, "efferent": 18, "instability": 0.32 },
-  "dependents": ["@kb-labs/agent-core", "..."],
+  "dependents": ["@kb-labs/agents/core", "..."],
   "dependencies": [],
   "devDependencies": ["@kb-labs/core-platform", "..."]
 }
@@ -40,7 +40,7 @@ kb quality context --package @kb-labs/sdk --json
 ### После задачи — проверить архитектуру
 
 ```bash
-kb quality gate --json
+kb quality gate run --json
 ```
 
 Сравнивает с последним снапшотом — fail только на **новые** нарушения:
@@ -70,20 +70,20 @@ kb quality check-layers --package @kb-labs/sdk --json
 
 Нарушение = пакет на слое N импортирует из слоя M где M > N.
 
-**Правило:** Если добавляешь зависимость — проверь слои обоих пакетов через `quality context`.
+**Правило:** Если добавляешь зависимость — проверь слои обоих пакетов через `quality context show`.
 
 ---
 
 ## Команды владельца
 
 ```bash
-kb quality health          # score/100 по 5 измерениям
+kb quality health show          # score/100 по 5 измерениям
 kb quality check-layers    # все нарушения, grouped by package
-kb quality coupling        # Ca/Ce/instability top-N (по умолчанию top 10)
+kb quality coupling show        # Ca/Ce/instability top-N (по умолчанию top 10)
 kb quality dead-code       # knip: unused files/exports/deps
-kb quality stats           # packages, LOC, size
-kb quality snapshot        # сохранить снапшот
-kb quality history         # история снапшотов + delta
+kb quality stats show           # packages, LOC, size
+kb quality snapshot create        # сохранить снапшот
+kb quality history list         # история снапшотов + delta
 ```
 
 Все поддерживают `--json`.
@@ -132,14 +132,14 @@ kb quality history         # история снапшотов + delta
 
 ```bash
 # 1. Понять куда писать код
-kb quality context --package @kb-labs/target-pkg --json
+kb quality context show --package @kb-labs/target-pkg --json
 
 # 2. Убедиться в слое новой зависимости
-kb quality context --package @kb-labs/new-dep --json
+kb quality context show --package @kb-labs/new-dep --json
 # → Смотришь layer: N. Если N > layer целевого пакета — нельзя импортировать.
 
 # 3. После изменений — проверить что не сломал архитектуру
-kb quality gate --json
+kb quality gate run --json
 # passed: true → всё чисто
 # passed: false, newViolations: 2 → откатить/исправить импорты
 ```
@@ -150,9 +150,9 @@ kb quality gate --json
 
 ```
 plugins/quality/
-├── contracts/   @kb-labs/quality-contracts  — типы, константы, роуты
-├── core/        @kb-labs/quality-core       — анализаторы (AST, knip, coupling)
-└── entry/       @kb-labs/quality-entry      — CLI, REST handlers, Studio UI
+├── contracts/   @kb-labs/quality/contracts  — типы, константы, роуты
+├── core/        @kb-labs/quality/core       — анализаторы (AST, knip, coupling)
+└── entry/       @kb-labs/quality      — CLI, REST handlers, Studio UI
 ```
 
 Данные хранятся в `.kb/quality/snapshots/quality.json`.

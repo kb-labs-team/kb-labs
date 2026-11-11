@@ -11,9 +11,10 @@ import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { ICronManager } from '@kb-labs/core-platform';
 import { z } from 'zod';
 import type { z as ZodType } from 'zod';
+import type {
+  JobSchema} from '@kb-labs/rest-api-contracts';
 import {
   ListJobsQuerySchema,
-  JobSchema,
   JobsListResponseSchema,
   JobResponseSchema,
   JobStatsResponseSchema,

@@ -4,17 +4,24 @@ from __future__ import annotations
 
 from kb_invocation import kb_command
 from installed_fixture import layout_relative, layout_value
+from marketplace_sync_fixture import (
+    marketplace_sync_request_count,
+    start_marketplace_sync_fixture,
+    stop_marketplace_sync_fixture,
+)
 
 import json
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
 from invocations import (
     CompletedProcess,
+    decode_ux_error_result,
     decode_ux_success_result,
     invocation_context,
     read_ux_cli_result,
@@ -26,8 +33,8 @@ from invocations import (
 
 PLUGIN_NAME = "demo"
 PLUGIN_DIR = Path(".kb/plugins/demo")
-ENTRY_DIR = PLUGIN_DIR / "packages/demo-entry"
-CORE_SOURCE = PLUGIN_DIR / "packages/demo-core/src/hello.ts"
+ENTRY_DIR = PLUGIN_DIR
+CORE_SOURCE = PLUGIN_DIR / "src/core/hello.ts"
 ORIGINAL_GREETING = "Hello, ${who} from demo!"
 EDITED_GREETING = "Edited demo greeting for ${who}!"
 
@@ -55,6 +62,40 @@ def _plugins(kb: Path, *, cwd: Path, env: dict[str, str], command_runner) -> lis
     if not isinstance(entries, list):
         raise RuntimeError("kb marketplace plugins list --json returned no entries array")
     return entries
+
+
+def _record_local_anonymous_scope_step(journey: Journey, project: Path, kb_path: Path,
+                                       env: dict[str, str], command_runner) -> None:
+    """Prove local commands and the newly linked plugin work without a saved session."""
+    session_path = Path(env.get("HOME", Path.home())) / ".kb/session.json"
+
+    def local_commands_and_plugin_work() -> str | None:
+        if session_path.exists():
+            return f"local anonymous command fixture unexpectedly has a saved human session at {session_path}"
+        for arguments in (["workflow", "defs", "list", "--json"],
+                          ["marketplace", "plugins", "list", "--json"]):
+            command = [str(kb_path), *arguments]
+            with invocation_context(step_id="S-041.10"):
+                result = run_with_runner(command_runner, command, cwd=project, env=env,
+                                         timeout=120)
+            try:
+                payload = read_ux_cli_result(result)
+            except ValueError as error:
+                return f"{' '.join(command)} returned an invalid UX result: {error}"
+            if result.returncode != 0 or payload.get("ok") is not True:
+                return f"{' '.join(command)} did not pass the local auth gate: {payload}"
+
+        command = [str(kb_path), "demo", "hello"]
+        with invocation_context(step_id="S-041.10"):
+            result = run_with_runner(command_runner, command, cwd=project, env=env,
+                                     timeout=120)
+        output = (result.stdout or "") + (result.stderr or "")
+        if result.returncode != 0 or "Hello, World from demo!" not in output:
+            return f"{' '.join(command)} did not pass local authorization and invoke the linked plugin: {output.strip()}"
+        return None
+
+    journey.step("run local platform and linked-plugin commands without a saved session",
+                 "plugin-author", local_commands_and_plugin_work, cases=["S-041.10"])
 
 
 def _lock_entry(project: Path) -> tuple[dict, str, dict]:
@@ -120,6 +161,97 @@ def _stage_case_file(project: Path, env: dict[str, str], label: str) -> Path:
     return path
 
 
+def _validate_plugin_route_help(route: list[str], result: CompletedProcess[str]) -> None:
+    if result.returncode == 0:
+        return
+
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    error_code = None
+    for part in (result.stdout, result.stderr):
+        try:
+            envelope = json.loads(part)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        error = envelope.get("error") if isinstance(envelope, dict) else None
+        if isinstance(error, dict) and isinstance(error.get("code"), str):
+            error_code = error["code"]
+            break
+
+    if error_code == "KB_RUNTIME_UNKNOWN_COMMAND":
+        raise RuntimeError(
+            f"journey command {' '.join(route)!r} is absent from the live CLI registry: "
+            f"{output or 'no output'}"
+        )
+
+    raise RuntimeError(
+        f"journey command {' '.join(route)!r} help preflight failed "
+        f"(exit {result.returncode}): {output or 'no output'}"
+    )
+
+
+def preflight_installed_plugin_command(
+    args: list[str],
+    project: Path,
+    env: dict[str, str],
+    command_runner: Callable[..., CompletedProcess[str]],
+    kb_path: Path,
+) -> None:
+    """Check a plugin route against declarations in the enabled installed packages."""
+    workspace_root = env.get("KB_JOURNEY_WORKSPACE_ROOT")
+    lock_path = project / ".kb" / "marketplace.lock"
+    if not workspace_root or not lock_path.is_file() or not args:
+        return
+
+    script = """
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const workspace = process.env.KB_JOURNEY_WORKSPACE_ROOT;
+const { createExtensionStore } = await import(pathToFileURL(path.join(workspace, 'core/extension-store/dist/index.js')).href);
+const lock = JSON.parse(await readFile(process.argv[1], 'utf8'));
+const store = createExtensionStore({ env: process.env });
+const routes = new Set();
+for (const [id, pin] of Object.entries(lock.plugins ?? {})) {
+  if (!pin || pin.enabled === false || !pin.version || !pin.integrity) continue;
+  const name = pin.package ?? id;
+  const installed = await store.lookup({ name, version: pin.version, expectedIntegrity: pin.integrity });
+  if (!installed?.entry.manifest) throw new Error(`enabled plugin ${id} has no installed manifest`);
+  for (const declaration of installed.entry.manifest.cli?.groupMeta ?? []) routes.add(declaration.path);
+  for (const declaration of installed.entry.manifest.cli?.commands ?? []) routes.add(declaration.path);
+}
+process.stdout.write(JSON.stringify([...routes]));
+"""
+    result = run_with_runner(
+        command_runner,
+        ["node", "--input-type=module", "-e", script, str(lock_path)],
+        cwd=Path(workspace_root),
+        env=env,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        detail = " ".join((result.stdout + result.stderr).split())
+        raise RuntimeError(f"could not read enabled plugin command declarations: {detail or 'no output'}")
+
+    declared_routes = frozenset(tuple(route.split()) for route in json.loads(result.stdout))
+
+    group_roots = {route[0] for route in declared_routes if route}
+    if args[0] not in group_roots:
+        return
+
+    route_tokens = args[:next((index for index, token in enumerate(args) if token.startswith("-")), len(args))]
+    matches = [route for route in declared_routes if len(route) <= len(route_tokens)
+               and tuple(route_tokens[:len(route)]) == route]
+    if route_tokens == [args[0]]:
+        routes_to_check = sorted(route for route in declared_routes if route[0] == args[0])
+    else:
+        routes_to_check = [max(matches, key=len)] if matches else [tuple(route_tokens)]
+    for route in routes_to_check:
+        help_command = [str(kb_path), *route, "--help", "--json"]
+        with invocation_context():
+            route_result = run_with_runner(command_runner, help_command, cwd=project, env=env, timeout=120)
+        _validate_plugin_route_help(list(route), route_result)
+
+
 def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, registry: str,
                           command_runner: Callable[..., CompletedProcess[str]],
                           env: dict[str, str]) -> None:
@@ -130,6 +262,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
 
     def cli(args: list[str], *, step_id: str | None = None) -> CompletedProcess[str]:
         command = [str(kb_path), *args]
+        preflight_installed_plugin_command(args, project, env, command_runner, kb_path)
         context = invocation_context(step_id=step_id) if step_id else invocation_context()
         with context:
             return run_with_runner(command_runner, command, cwd=project, env=env, timeout=180)
@@ -143,24 +276,25 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         plugins = lock.get("plugins") if isinstance(lock, dict) else None
         commit = plugins.get("@kb-labs/commit") if isinstance(plugins, dict) else None
         if (not isinstance(commit, dict) or commit.get("enabled", True) is not True
-                or commit.get("package") != "@kb-labs/commit-entry"):
-            raise RuntimeError("Commit case flow requires @kb-labs/commit (package @kb-labs/commit-entry) enabled by the Marketplace flow")
-        package = "@kb-labs/review-entry"
+                or commit.get("package") != "@kb-labs/commit"):
+            raise RuntimeError("Commit case flow requires @kb-labs/commit (package @kb-labs/commit) enabled by the Marketplace flow")
+        package = "@kb-labs/review"
         result = cli(["marketplace", "install", package, "--json"])
         if result.returncode != 0:
             raise RuntimeError(f"marketplace could not install {package}: {(result.stdout + result.stderr)[-800:]}")
 
     def ensure_git_fixture() -> None:
-        marker = project / ".git"
-        is_new_repo = not marker.exists()
-        if is_new_repo:
+        head = run_with_runner(run_command, ["git", "rev-parse", "--verify", "HEAD"],
+                               cwd=project, env=env, timeout=60)
+        needs_initial_commit = head.returncode != 0
+        if needs_initial_commit:
             _git(["init"], project=project, env=env)
             seed = project / ".kb" / "journey-commit-cases" / "seed.txt"
             seed.parent.mkdir(parents=True, exist_ok=True)
             seed.write_text("commit fixture seed\n", encoding="utf-8")
         _git(["config", "user.name", "Journey Fixture"], project=project, env=env)
         _git(["config", "user.email", "journey@example.test"], project=project, env=env)
-        if is_new_repo:
+        if needs_initial_commit:
             _git(["add", ".kb"], project=project, env=env)
             _git(["commit", "-m", "chore: initialize journey fixture"], project=project, env=env)
 
@@ -169,6 +303,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     if prepared.status != "PASS":
         cases = [f"S-014.{step}" for step in range(1, 4)]
         cases.extend(f"S-015.{step}" for step in range(1, 5))
+        cases.append("S-203.1")
         cases.extend(f"S-030.{step}" for step in range(1, 5))
         cases.extend(f"S-160.{step}" for step in range(1, 5))
         for case_id in cases:
@@ -192,7 +327,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("S-014.1 expected a preview-only LLM plan without changing Git state")
 
     journey.step("generate a real-provider Commit plan without applying it", "plugin-author",
-                 s014_dry_run, cases=["S-014.1"])
+                 s014_dry_run, cases=["S-014.1", "S-203.1"])
 
     def s014_provider() -> None:
         adapter_cmd = ["adapter", "list", "--json"]
@@ -223,8 +358,10 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         result = cli(command, step_id="S-015.1")
         if result.returncode != 0 or "Files:" not in result.stdout:
             raise RuntimeError("S-015.1 did not complete and identify the reviewed change set")
+        if "Found " not in result.stderr:
+            raise RuntimeError("S-203.1 human-mode progress was not written to stderr")
 
-    journey.step("review changed files with heuristic mode", "plugin-author", s015_heuristic, cases=["S-015.1"])
+    journey.step("review changed files with heuristic mode", "plugin-author", s015_heuristic, cases=["S-015.1", "S-203.1"])
 
     def s015_findings() -> None:
         command = ["review", "run", "--mode=heuristic", "--json"]
@@ -238,7 +375,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
                     or not isinstance(finding.get("line"), int)):
                 raise RuntimeError("S-015.2 produced a finding without file path and line reference")
 
-    journey.step("inspect heuristic review findings", "plugin-author", s015_findings, cases=["S-015.2"])
+    journey.step("inspect heuristic review findings", "plugin-author", s015_findings, cases=["S-015.2", "S-203.1"])
 
     def s015_json() -> None:
         command = ["review", "run", "--json"]
@@ -405,12 +542,24 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
                  s030_history, cases=["S-030.4"])
 
     def cleanup_review_plugin() -> None:
-        command = ["marketplace", "uninstall", "@kb-labs/review-entry", "--json"]
+        command = ["marketplace", "uninstall", "@kb-labs/review", "--json"]
         result = cli(command)
         if result.returncode != 0:
             raise RuntimeError("could not remove the temporary Review plugin fixture")
 
     journey.step("remove temporary Review plugin fixture", "plugin-author", cleanup_review_plugin)
+
+    def finalize_project_baseline() -> None:
+        _git(["add", "-A"], project=project, env=env)
+        status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
+        if not status:
+            return
+        _git(["commit", "-m", "chore(journey): finalize Commit case fixture"], project=project, env=env)
+        remaining = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
+        if remaining:
+            raise RuntimeError("Commit case fixture still has staged or untracked changes after finalization")
+
+    finalize_project_baseline()
 
 
 def run_plugin_author_flow(
@@ -456,8 +605,11 @@ def run_plugin_author_flow(
               "--mode", "standalone", "--yes"], executable=str(kb_path)),
              cwd=project, env=child_env, command_runner=command_runner)
         if not entry.is_dir() or not (entry / "package.json").is_file() or not core_source.is_file():
-            raise RuntimeError("kb scaffold run did not create .kb/plugins/demo with entry and core packages")
-        command_source = entry / "src/commands/hello.ts"
+            raise RuntimeError("kb scaffold run did not create one .kb/plugins/demo package with CLI and core source")
+        package = json.loads((entry / "package.json").read_text(encoding="utf-8"))
+        if package.get("name") != "@kb-labs/demo":
+            raise RuntimeError("generated demo package name does not match its @kb-labs/demo manifest identity")
+        command_source = entry / "src/cli/commands/hello.ts"
         source = command_source.read_text(encoding="utf-8")
         marker = "const { greeting } = hello({ who: input.flags.who ?? 'World' });"
         if marker not in source:
@@ -470,13 +622,13 @@ def run_plugin_author_flow(
 
     def _build() -> None:
         _run(["pnpm", "install"], cwd=plugin_root, env=child_env, command_runner=command_runner)
-        _run(["pnpm", "-w", "build"], cwd=plugin_root, env=child_env, command_runner=command_runner)
+        _run(["pnpm", "build"], cwd=plugin_root, env=child_env, command_runner=command_runner)
         if not (entry / "dist/manifest.js").is_file():
-            raise RuntimeError("pnpm -w build did not emit the plugin entry manifest")
+            raise RuntimeError("pnpm -w build did not emit the plugin manifest")
 
     def _link() -> None:
         nonlocal linked
-        _run(kb_command([ "marketplace", "plugins", "add", "--link", ".kb/plugins/demo/packages/demo-entry"], executable=str(kb_path)),
+        _run(kb_command([ "marketplace", "plugins", "add", "--link", ".kb/plugins/demo"], executable=str(kb_path)),
              cwd=project, env=child_env, command_runner=command_runner)
         linked = True
         _, plugin_id, lock_entry = _lock_entry(project)
@@ -486,6 +638,67 @@ def run_plugin_author_flow(
             raise RuntimeError("linked plugin ID is not listed as a local project plugin after marketplace plugins add")
         if lock_entry.get("source") != "local" or lock_entry.get("link") != str(ENTRY_DIR):
             raise RuntimeError("project marketplace.lock does not record demo's local relative link path")
+
+    def _docs_reference() -> None:
+        docs_dir = project / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        output_path = docs_dir / "CLI-REFERENCE.md"
+        output_path.unlink(missing_ok=True)
+        command = kb_command(["docs", "generate-cli-reference", "--output", "docs/CLI-REFERENCE.md"],
+                             executable=str(kb_path))
+        with invocation_context(step_id="S-003.7"):
+            result = _invoke(command, cwd=project, env=child_env, command_runner=command_runner)
+        if result.returncode != 0 or not output_path.is_file():
+            raise RuntimeError("kb docs generate-cli-reference did not write docs/CLI-REFERENCE.md from the registered project")
+        if "# KB Labs CLI Reference" not in output_path.read_text(encoding="utf-8"):
+            raise RuntimeError("generated docs/CLI-REFERENCE.md does not contain the CLI reference")
+
+        with tempfile.TemporaryDirectory(prefix="kb-cli-reference-unregistered-") as outside:
+            outside_project = Path(outside)
+            (outside_project / "docs").mkdir()
+            outside_output = outside_project / "docs/CLI-REFERENCE.md"
+            with invocation_context(step_id="S-003.7"):
+                outside_result = _invoke(command, cwd=outside_project, env=child_env,
+                                         command_runner=command_runner)
+            if outside_result.returncode == 0 or outside_output.exists():
+                raise RuntimeError("kb docs generate-cli-reference succeeded or wrote output outside a registered project")
+            try:
+                error = read_ux_cli_result(outside_result).get("error", {})
+            except ValueError as parse_error:
+                raise RuntimeError(f"outside-project docs command returned an invalid UX result: {parse_error}") from parse_error
+            if not isinstance(error, dict) or error.get("code") != "KB_PROJECT_UNKNOWN":
+                raise RuntimeError("outside-project docs command did not return KB_PROJECT_UNKNOWN")
+
+    def _reject_absolute_plugin_link() -> None:
+        fixture_process, marketplace_url, startup_error = start_marketplace_sync_fixture(
+            project, child_env, request_recorder=True)
+        if startup_error or fixture_process is None or marketplace_url is None:
+            raise RuntimeError(startup_error or "Marketplace request recorder did not start")
+        try:
+            lock_path = project / layout_value('versionStatePaths.kb_marketplace_lock')
+            before = lock_path.read_bytes()
+            command = kb_command(["marketplace", "plugins", "add", "--link", str(entry.resolve())],
+                                 executable=str(kb_path))
+            command_env = child_env.copy()
+            command_env["KB_MARKETPLACE_URL"] = marketplace_url
+            with invocation_context(step_id="S-003.8"):
+                result = _invoke(command, cwd=project, env=command_env, command_runner=command_runner)
+            request_count = marketplace_sync_request_count(marketplace_url, command_env)
+        finally:
+            cleanup_error = stop_marketplace_sync_fixture(fixture_process)
+        if cleanup_error:
+            raise RuntimeError(cleanup_error)
+        try:
+            payload = read_ux_cli_result(result)
+            failure = decode_ux_error_result(payload)
+        except ValueError as error:
+            raise RuntimeError(f"absolute plugin link returned an invalid UX result: {error}") from error
+        message = failure["message"]
+        if (result.returncode == 0 or failure["code"] != "KB_RUNTIME_INPUT_INVALID"
+                or "The --link path must be relative to the selected scope directory." not in message
+                or request_count != 0
+                or lock_path.read_bytes() != before):
+            raise RuntimeError("absolute --link path was not rejected with its catalog code before Marketplace access or project registration mutation")
 
     def _invoke_original() -> None:
         help_output = _run(kb_command([ "--help"], executable=str(kb_path)), cwd=project, env=child_env,
@@ -505,7 +718,7 @@ def run_plugin_author_flow(
         if ORIGINAL_GREETING not in source:
             raise RuntimeError("generated demo greeting source no longer matches the scaffold template")
         core_source.write_text(source.replace(ORIGINAL_GREETING, EDITED_GREETING, 1), encoding="utf-8")
-        _run(["pnpm", "-w", "build"], cwd=plugin_root, env=child_env, command_runner=command_runner)
+        _run(["pnpm", "build"], cwd=plugin_root, env=child_env, command_runner=command_runner)
         output = _run(kb_command([ "demo", "hello"], executable=str(kb_path)), cwd=project, env=child_env,
                       command_runner=command_runner)
         if "Edited demo greeting for World!" not in output:
@@ -557,6 +770,13 @@ def run_plugin_author_flow(
             journey.blocked("remove plugin registration", "plugin-author", "plugin was not added")
         shutil.rmtree(plugin_root, ignore_errors=True)
         return
+
+    if journey.mode == "local":
+        _record_local_anonymous_scope_step(journey, project, kb_path, child_env, command_runner)
+    record("generate CLI reference in registered plugin workspace", cases=["S-003.7"],
+           check=_docs_reference)
+    record("reject absolute local plugin link", cases=["S-003.8"],
+           check=_reject_absolute_plugin_link)
 
     try:
         record("invoke generated plugin", cases=["S-003.4", "S-210.1"], check=_invoke_original)

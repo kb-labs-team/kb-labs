@@ -23,7 +23,7 @@ class WorkspaceCliStepsTest(unittest.TestCase):
         self.assertIn("KB_JOURNEY_WORKSPACE_ROOT", result.steps[0]["message"])
         claims = {claim["claimId"] for claim in result.case_run["claims"]}
         self.assertEqual(claims, {
-            "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13",
+            "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13", "S-179.33",
             "S-142.5", "S-203.1", "S-203.19", "S-204.7",
         })
 
@@ -36,7 +36,7 @@ class WorkspaceCliStepsTest(unittest.TestCase):
         claims = {claim["claimId"] for claim in result.case_run["claims"]}
         self.assertEqual(result.status, "PASS", result.first_failure)
         self.assertEqual(claims, {
-            "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13", "S-142.5", "S-203.1", "S-203.19",
+            "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13", "S-179.33", "S-142.5", "S-203.1", "S-203.19",
             "S-203.27",
         })
 

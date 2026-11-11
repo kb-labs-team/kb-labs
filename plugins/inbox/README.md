@@ -75,7 +75,7 @@ The wildcard `INBOX_ACCOUNT_*` is declared in the manifest — adding a new acco
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/inbox-entry
+pnpm kb marketplace install @kb-labs/inbox
 ```
 
 ---
@@ -98,8 +98,8 @@ kb inbox get <uid>
 kb inbox get <uid> --attachments --json
 
 # Get full thread
-kb inbox thread <uid>
-kb inbox thread <uid> --json
+kb inbox thread show <uid>
+kb inbox thread show <uid> --json
 
 # Search
 kb inbox search --from boss@company.com
@@ -107,12 +107,12 @@ kb inbox search --subject "invoice" --since 30d
 kb inbox search --text "urgent" --limit 5 --json
 
 # List folders
-kb inbox folders
-kb inbox folders --account work --json
+kb inbox folder list
+kb inbox folder list --account work --json
 
 # List configured accounts
-kb inbox accounts
-kb inbox accounts --json
+kb inbox account list
+kb inbox account list --json
 ```
 
 ### Write
@@ -123,18 +123,18 @@ kb inbox send --to user@example.com --subject "Hello" --body "Hi there"
 kb inbox send --to user@example.com --subject "Report" --body "..." --cc cto@co.com
 
 # Reply (preserves In-Reply-To + References)
-kb inbox reply <uid> --body "Thanks, will do"
+kb inbox thread send <uid> --body "Thanks, will do"
 
 # Move to folder
-kb inbox move <uid> --folder Work
-kb inbox move <uid> --folder Archive --from Sent
+kb inbox message update <uid> --folder Work
+kb inbox message update <uid> --folder Archive --from Sent
 
 # Mark
-kb inbox mark <uid> --read
-kb inbox mark <uid> --unread
-kb inbox mark <uid> --spam           # moves to Junk folder
-kb inbox mark <uid> --flagged
-kb inbox mark <uid> --unflagged
+kb inbox message set <uid> --read
+kb inbox message set <uid> --unread
+kb inbox message set <uid> --spam           # moves to Junk folder
+kb inbox message set <uid> --flagged
+kb inbox message set <uid> --unflagged
 
 # Delete (moves to Trash)
 kb inbox delete <uid>
@@ -180,11 +180,11 @@ Every command returns a consistent envelope:
 | Code | Meaning | Hint |
 |------|---------|------|
 | `ENV_MISSING` | Account vars not set | Which vars to add |
-| `ACCOUNT_NOT_FOUND` | `--account X` not in config | Run `kb inbox accounts` |
+| `ACCOUNT_NOT_FOUND` | `--account X` not in config | Run `kb inbox account list` |
 | `IMAP_AUTH_FAILED` | Wrong password | Create app-password in Yandex ID |
 | `IMAP_CONNECT_FAILED` | Can't reach IMAP server | Check host/port |
 | `IMAP_TIMEOUT` | Connection timed out | Retry |
-| `IMAP_MAILBOX_NOT_FOUND` | Folder doesn't exist | Run `kb inbox folders` |
+| `IMAP_MAILBOX_NOT_FOUND` | Folder doesn't exist | Run `kb inbox folder list` |
 | `MESSAGE_NOT_FOUND` | UID stale | Refresh with `kb inbox list` |
 | `SMTP_AUTH_FAILED` | SMTP auth error | Check app-password |
 | `SMTP_CONNECT_FAILED` | Can't reach SMTP server | Check host/port |
@@ -199,9 +199,9 @@ Every command returns a consistent envelope:
 # Agent flow: triage unread emails
 kb inbox list --unread --since 24h --json          # get all unread
 kb inbox get <uid> --json                          # read specific email
-kb inbox mark <uid> --spam                         # mark as spam
-kb inbox move <uid> --folder Work                  # file to folder
-kb inbox reply <uid> --body "On it, will follow up tomorrow"
+kb inbox message set <uid> --spam                         # mark as spam
+kb inbox message update <uid> --folder Work                  # file to folder
+kb inbox thread send <uid> --body "On it, will follow up tomorrow"
 ```
 
 ---

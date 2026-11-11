@@ -5,7 +5,7 @@ persona: solo-developer
 area: studio
 priority: P1
 status: active
-release: true
+release: false
 modes: [local, secured]
 surfaces: [studio]
 ---

@@ -1,11 +1,27 @@
 {
   "name": "kb-create",
   "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    "./scripts/package-provenance.mjs": "./scripts/package-provenance.mjs",
+    "./scripts/platform-release-config.mjs": "./scripts/platform-release-config.mjs"
+  },
   "description": "Standalone Go installer for the KB Labs platform",
   "private": true,
   "repository": {
     "type": "git",
     "url": "https://github.com/kb-labs-team/kb-labs"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@kb-labs/adapters-openai": "workspace:*",
+    "@kb-labs/core-config": "workspace:*",
+    "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
+    "@kb-labs/gateway-app": "workspace:*",
+    "@kb-labs/host-app": "workspace:*",
+    "@kb-labs/marketplace-app": "workspace:*",
+    "@kb-labs/marketplace-npm": "workspace:*",
+    "@kb-labs/plugin-runtime": "workspace:*"
+  }
 }

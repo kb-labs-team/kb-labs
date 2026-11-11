@@ -15,7 +15,7 @@ import type { IExecutionTransport } from '@kb-labs/core-platform';
 import type { ExecutionRequest } from '../types.js';
 
 const platform = {
-  logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {}, child: () => ({}) },
+  logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {}, flush: async () => {}, child: () => ({}) },
   cache: { get: async () => null, set: async () => {}, delete: async () => {}, clear: async () => {} },
   config: {},
 } as unknown as Parameters<typeof createIsolatedExecutionBackend>[0]['localBackend']['platform'];

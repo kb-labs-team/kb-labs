@@ -69,10 +69,10 @@ func (w *Writer) Fail(d *diag.Diag) error {
 	d = diag.FromError(d)
 	w.failure = d
 	w.exitStatus = diag.ExitCode(d)
-	return json.NewEncoder(w.output).Encode(result.FailureEnvelope(d))
+	return nil
 }
 
-// Finish writes the terminal success envelope and closes the stream.
+// Finish writes the terminal envelope and closes the stream.
 func (w *Writer) Finish(status diag.ExitStatus) error {
 	if w.finished {
 		return fmt.Errorf("stream already has a terminal record")
@@ -87,6 +87,11 @@ func (w *Writer) Finish(status diag.ExitStatus) error {
 		"ok":   true,
 		"data": nil,
 		"meta": map[string]any{"stream": map[string]any{"terminal": true, "exitCode": status.Code()}},
+	}
+	if w.failure != nil {
+		record = result.FailureEnvelope(w.failure)
+		delete(record, "data")
+		record["meta"] = map[string]any{"stream": map[string]any{"terminal": true, "exitCode": status.Code()}}
 	}
 	if err := json.NewEncoder(w.output).Encode(record); err != nil {
 		return err

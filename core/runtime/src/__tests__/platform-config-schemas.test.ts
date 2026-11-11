@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -9,6 +12,7 @@ import {
   AdapterValueSchema,
   KNOWN_ADAPTER_SLOTS,
   PlatformAdaptersSchema,
+  resolveDeploymentTopology,
   validatePlatformUserConfig,
 } from '../config-schemas.js'
 
@@ -34,6 +38,23 @@ describe('AdapterValueSchema / platform.adapters', () => {
     for (const slot of ['llm', 'cache', 'storage', 'documentDatabase', 'kvStore', 'serviceTransport', 'workspace', 'environment']) {
       expect(KNOWN_ADAPTER_SLOTS).toContain(slot)
     }
+  })
+})
+
+describe('resolveDeploymentTopology', () => {
+  it.each(['local', 'cloud', 'k8s'] as const)('resolves declared topology %s', (topology) => {
+    expect(resolveDeploymentTopology({ platform: { deployment: { topology } } })).toBe(topology)
+  })
+
+  it('refuses a missing topology with the catalogued producer hint', () => {
+    expect(() => resolveDeploymentTopology({ platform: {} })).toThrow(
+      expect.objectContaining({
+        envelope: expect.objectContaining({
+          code: 'KB_DEPLOYMENT_TOPOLOGY_REQUIRED',
+          hint: expect.stringContaining('kb-create'),
+        }),
+      }),
+    )
   })
 })
 
@@ -86,5 +107,22 @@ describe('validatePlatformUserConfig', () => {
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..')
     const real = parseJsonc(readFileSync(path.join(repoRoot, '.kb', 'kb.config.jsonc'), 'utf8'))
     expect(validatePlatformUserConfig(real)).toEqual([])
+    expect(resolveDeploymentTopology(real)).toBe('local')
+  })
+
+  it('resolves the config produced for release images as cloud', () => {
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..')
+    const tmp = mkdtempSync(path.join(os.tmpdir(), 'kb-image-default-config-'))
+    const configPath = path.join(tmp, 'kb.config.json')
+    try {
+      execFileSync(process.execPath, [
+        path.join(repoRoot, 'tools/release/generate-platform-image-default.mjs'),
+        configPath,
+      ], { cwd: repoRoot })
+      const imageConfig = JSON.parse(readFileSync(configPath, 'utf8'))
+      expect(resolveDeploymentTopology(imageConfig)).toBe('cloud')
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
   })
 })

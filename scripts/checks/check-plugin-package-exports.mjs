@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -63,7 +64,7 @@ if (!exportMap || typeof exportMap !== 'object' || Array.isArray(exportMap)) {
   }
 }
 
-process.stdout.write(JSON.stringify({ issues }));
+writeCheckResult(issues);
 
 function readStdin() {
   return new Promise((resolve, reject) => {

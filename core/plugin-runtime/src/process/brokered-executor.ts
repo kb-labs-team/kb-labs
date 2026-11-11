@@ -17,6 +17,7 @@ export class BrokeredProcessExecutor implements IProcessExecutor {
 
   async execute(request: GovernedProcessRequest): Promise<ProcessResult> {
     const resource = `process:shell:${request.identity.pluginId}`;
+    const started = Date.now();
     const resources = registered.get(this.broker) ?? new Set<string>();
     if (!resources.has(resource)) {
       this.broker.registerLimit(resource, { maxConcurrentRequests: request.limits.maxConcurrent ?? 1 });
@@ -44,10 +45,11 @@ export class BrokeredProcessExecutor implements IProcessExecutor {
       });
       lastWait = Math.min(lastWait * 2, 500);
     }
+    const observed = Date.now() - started;
     throw new GovernedProcessError('PROCESS_ADMISSION_TIMEOUT', 'Shell capacity was not available before execution deadline', {
       resource,
       timeoutMs: request.limits.timeoutMs,
-    });
+    }, { resource: 'admission time (ms)', observed, allowed: request.limits.timeoutMs });
   }
 
   async shutdown(): Promise<void> { await this.delegate.shutdown(); }

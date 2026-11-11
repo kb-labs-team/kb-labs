@@ -21,6 +21,7 @@ from invocations import (
     run_command,
     run_pty_command,
     write_report_json,
+    write_report_jsonl,
 )
 
 
@@ -356,7 +357,7 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
 
     def reject_repeat_cancel() -> None:
         result = _case_cli("S-008.4", ["workflow", "runs", "cancel", run_id[0]], env=env, cwd=project)
-        output = result.stdout + result.stderr
+        output = (result.stdout or "") + (result.stderr or "")
         if result.returncode == 0 or "finished" not in output.lower():
             raise AssertionError(f"repeat cancellation was not refused as already finished: {output!r}")
         detail = _case_json_cli("S-008.4", ["workflow", "runs", "view", run_id[0], "--json=status"],
@@ -469,9 +470,9 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
                 raise AssertionError("secured auth evidence did not establish registered and unregistered project roots")
             report_root = env.get("KB_JOURNEY_INVOCATIONS")
             if report_root:
-                write_report_json(Path(report_root) / "project-registries.jsonl", {
+                write_report_jsonl(Path(report_root) / "project-registries.jsonl", {
                     "mode": "secured", "projects": projects,
-                }, env=setup_env, append=True, indent=None)
+                }, env=setup_env, append=True)
             with invocation_context(step_id="S-041.17"):
                 command_listing = run_cli(["registry", "commands", "--json"], env=setup_env, cwd=project)
                 if command_listing.returncode != 0:
@@ -964,8 +965,9 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
             raise AssertionError("cron list did not include a plugin cron to verify read-only behavior")
         before = {key: plugin.get(key) for key in ("enabled", "schedule", "target", "input")}
         result = _case_cli("S-044.8", ["workflow", "crons", "enable", plugin["id"]], env=env, cwd=cwd)
-        if result.returncode == 0 or "plugin" not in result.stdout.lower() or "read-only" not in result.stdout.lower():
-            raise AssertionError(f"plugin cron enable was not refused with its reason: {result.stdout!r}")
+        output = (result.stdout or "") + (result.stderr or "")
+        if result.returncode == 0 or "plugin" not in output.lower() or "read-only" not in output.lower():
+            raise AssertionError(f"plugin cron enable was not refused with its reason: {output!r}")
         after_list = _case_json_cli("S-044.8", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
         after_crons = _workflow_cron_list_data(after_list)["crons"]
         after = next((item for item in after_crons if item["id"] == plugin["id"]), None)
@@ -983,12 +985,12 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
     """Run each workflow release case in the registered project."""
 
     def install_plugin_cron_fixture() -> None:
-        _json_cli(["marketplace", "install", "@kb-labs/steward-entry", "--json"], env=env, cwd=project)
+        _json_cli(["marketplace", "install", "@kb-labs/steward", "--json"], env=env, cwd=project)
         restart_host()
         data = _json_cli(["workflow", "crons", "list", "--json"], env=env, cwd=project)
         crons = _workflow_cron_list_data(data)["crons"]
         if not any(item["source"] == "plugin" for item in crons):
-            raise AssertionError("workflow cron list omitted the cron declared by installed @kb-labs/steward-entry")
+            raise AssertionError("workflow cron list omitted the cron declared by installed @kb-labs/steward")
 
     if journey.mode == "secured":
         run_secured_cli_auth_step(journey, env=env, project=project)
@@ -998,6 +1000,11 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
 
     def discover_fixtures() -> None:
         _wait_for_workflow_fixtures(env=env, cwd=project, clock=clock, sleep=sleep)
+        lock_path = project / ".kb" / "marketplace.lock"
+        lock = json.loads(lock_path.read_text()) if lock_path.exists() else {"plugins": {}}
+        plugins = lock.get("plugins", {}) if isinstance(lock, dict) else None
+        if not isinstance(plugins, dict) or "@kb-labs/workflow" in plugins:
+            raise AssertionError("workflow definitions must be available without the workflow plugin installed")
 
     discovery = journey.step("discover installed project workflow definitions", "workflow",
                              discover_fixtures, cases=["S-006.3"])

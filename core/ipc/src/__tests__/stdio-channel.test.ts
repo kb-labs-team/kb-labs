@@ -42,7 +42,7 @@ describe('stdio framed channel', () => {
       encodeStdioFrame({ type: 'platform:request', requestId: 'rpc1', payload: { op: 'ws.send' } }),
       encodeStdioFrame({ type: 'log', level: 'info', message: 'hello', stream: 'stdout' }),
     ]));
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
     expect(seen).toEqual(['exec1', 'ready', 'rpc1', 'hello']);
     channel.close();
     input.destroy();
@@ -64,7 +64,7 @@ describe('stdio framed channel', () => {
     const input = new PassThrough();
     const output = new PassThrough();
     const channel = createStdioChannel(input, output);
-    const rejected = new Promise<Error>((resolve) => channel.onError(resolve));
+    const rejected = new Promise<Error>((resolve) => { channel.onError(resolve); });
     input.write('unexpected raw line\n');
     await expect(rejected).resolves.toMatchObject({
       envelope: { code: 'KB_RUNTIME_FRAME_TOO_LARGE' },

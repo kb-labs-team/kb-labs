@@ -5,7 +5,7 @@ persona: team-member
 area: agents
 priority: P1
 status: planned
-release: true
+release: false
 modes: [local, secured]
 surfaces: [cli, agent, api]
 ---

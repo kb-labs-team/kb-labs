@@ -24,10 +24,11 @@ from invocations import (
     print_report_text,
     read_ux_cli_result,
 )
-from dispatch_registry import RUNNERS, RUNNER_GROUPS, runners_for_source
+from dispatch_registry import RUNNERS, RUNNER_GROUPS, lanes_for_runners, runners_for_source
 from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import read_journey_selection, read_requested_cases
 from journey_resources import resource_root
+from journey_values import journey_value
 
 
 RUNNER_CONTEXT_NAMES = {"FRONT", "FRONT_DOOR", "SCENARIO", "VARIANT", "mode",
@@ -71,6 +72,8 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
         prerequisites = keywords.get("requires")
         role = keywords.get("role")
+        plan_after_phase = keywords.get("plan_after_phase")
+        plan_phase = keywords.get("plan_phase")
         runners_node = keywords.get("runners")
         runners = []
         if runners_node is not None:
@@ -103,6 +106,15 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         else:
             raise ValueError(f"step {name!r} in {source} must declare prerequisites as a literal sequence")
         role_name = role.value if isinstance(role, ast.Constant) else None
+        if plan_after_phase is not None and (
+                not isinstance(plan_after_phase, ast.Constant)
+                or plan_after_phase.value != "all-steps"):
+            raise ValueError(f"{source}:{call.lineno}: plan_after_phase must be 'all-steps'")
+        if plan_phase is not None and (
+                not isinstance(plan_phase, ast.Constant)
+                or plan_phase.value != "teardown"
+                or role_name != "lifecycle"):
+            raise ValueError(f"{source}:{call.lineno}: plan_phase must be 'teardown' on a lifecycle step")
         provides_node = keywords.get("provides")
         if provides_node is None:
             provides = []
@@ -116,7 +128,9 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         declaration = {"name": name, "kind": "flow" if function == "flow" else "step",
                        "capability": capability,
                        "requires": required, "provides": provides,
-                       "role": role_name, "runners": runners}
+                       "role": role_name, "runners": runners,
+                       "plan_after_phase": plan_after_phase.value if plan_after_phase is not None else None,
+                       "plan_phase": plan_phase.value if plan_phase is not None else None}
         cases_node = keywords.get("cases")
         if isinstance(cases_node, (ast.Tuple, ast.List)) and all(
                 isinstance(item, ast.Constant) and isinstance(item.value, str)
@@ -205,19 +219,33 @@ def _imported_journey_sources(sources: set[str], root: Path) -> set[str]:
     return set(_imported_journey_sources_cached(tuple(sorted(sources)), root))
 
 
-def journey_source_group_declaration(source: str, root: Path) -> dict[str, tuple[str, ...]]:
+def journey_source_group_declaration(source: str, root: Path,
+                                     selector: str = "") -> dict[str, tuple[str, ...]]:
     """Resolve every step and claim registered by a journey module and its local imports."""
     sources = _imported_journey_sources({source}, root)
     registrations = _source_step_declarations(sources, root)
     cases: set[str] = set()
     steps: set[str] = set()
+    mode = RUNNERS[selector].mode if selector else ""
     for declaration in registrations.values():
         name = declaration.get("name")
         if name is None:
             continue
+        declared_runners = declaration.get("runners", ())
+        if selector:
+            if declared_runners and selector not in declared_runners:
+                continue
+            if not declared_runners and RUNNERS[selector].lane:
+                continue
         steps.add(str(name))
     for registered_source in sources:
         for declaration in _case_declarations(registered_source, root).values():
+            declared_runners = declaration.get("runners") or ()
+            if selector:
+                if declared_runners and selector not in declared_runners:
+                    continue
+                if not declared_runners and RUNNERS[selector].lane:
+                    continue
             cases.update(str(case) for case in declaration.get("cases") or ())
     return {"cases": tuple(sorted(cases)), "steps": tuple(sorted(steps))}
 
@@ -341,7 +369,8 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
                 forwarding_call_sites[call_name(node)].append((source, node))
 
     def add_declaration(source: str, line: int, kind: str, name: str | None,
-                        required: list[str], role: str | None, runners: list[str]) -> None:
+                        required: list[str], role: str | None, runners: list[str],
+                        plan_after_phase: str | None = None, plan_phase: str | None = None) -> None:
         # Dynamic step names can carry checked edges, but are not selector
         # producers. Only a literal name or a statically resolved wrapper
         # call site can enter the producer graph.
@@ -349,6 +378,7 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
             key = f"@dynamic:{source}:{line}"
             declarations[key] = {"name": None, "kind": kind, "requires": required,
                                  "sources": {source}, "role": role, "runners": runners,
+                                 "plan_after_phase": plan_after_phase, "plan_phase": plan_phase,
                                  "locations": [(source, line, required)],
                                  "producer": False}
             return
@@ -359,6 +389,12 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
         declaration["requires"] = sorted(set(declaration["requires"]) | set(required))
         declaration["sources"].add(source)
         declaration["locations"].append((source, line, required))
+        for field, value in (("plan_after_phase", plan_after_phase), ("plan_phase", plan_phase)):
+            if value is not None:
+                existing = declaration.get(field)
+                if existing is not None and existing != value:
+                    raise ValueError(f"{source}:{line}: conflicting plan ordering for {name!r}")
+                declaration[field] = value
         if role is not None:
             declaration["role"] = role
         declaration["runners"] = sorted(set(declaration.get("runners", [])) | set(runners))
@@ -438,11 +474,18 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
             kind = "flow" if call_name(node) == "flow" else "step"
             role_node = keywords.get("role")
             role = role_node.value if isinstance(role_node, ast.Constant) else None
+            plan_after_node = keywords.get("plan_after_phase")
+            plan_after_phase = (plan_after_node.value if isinstance(plan_after_node, ast.Constant)
+                                else None)
+            plan_phase_node = keywords.get("plan_phase")
+            plan_phase = (plan_phase_node.value if isinstance(plan_phase_node, ast.Constant)
+                          else None)
             runners_node = keywords.get("runners")
             runners = [item.value for item in runners_node.elts
                        if isinstance(item, ast.Constant) and isinstance(item.value, str)] \
                 if isinstance(runners_node, (ast.Tuple, ast.List)) else []
-            add_declaration(source, node.lineno, kind, name, required, role, runners)
+            add_declaration(source, node.lineno, kind, name, required, role, runners,
+                            plan_after_phase, plan_phase)
     return declarations
 
 
@@ -514,10 +557,16 @@ def lint_direct_module_global_state_handoffs(sources: set[str], root: Path) -> N
             case_declaration = next((keyword.value for keyword in call.keywords if keyword.arg == "cases"), None)
             if case_declaration is not None and not isinstance(case_declaration, (ast.List, ast.Tuple)):
                 continue
+            callback_keyword = next((keyword.value for keyword in call.keywords
+                                     if keyword.arg == "case_action"), None)
             callback_index = (3 if _call_name(call) == "flow" or len(call.args) >= 4 else 2)
-            if len(call.args) <= callback_index:
+            if callback_keyword is not None:
+                callback_node = callback_keyword
+            elif len(call.args) > callback_index:
+                callback_node = call.args[callback_index]
+            else:
                 continue
-            callback_node = call.args[callback_index]
+            callback_reference = callback_node
             if isinstance(callback_node, ast.Name):
                 callback_node = functions.get(callback_node.id)
                 if callback_node is None:
@@ -529,11 +578,13 @@ def lint_direct_module_global_state_handoffs(sources: set[str], root: Path) -> N
                         for local_node in ast.walk(owner):
                             if isinstance(local_node, ast.Assign):
                                 assigned = [target.id for target in local_node.targets if isinstance(target, ast.Name)]
-                                if call.args[callback_index].id in assigned:
+                                if (isinstance(callback_reference, ast.Name)
+                                        and callback_reference.id in assigned):
                                     local_values.append(local_node.value)
                             elif (isinstance(local_node, ast.AnnAssign)
                                   and isinstance(local_node.target, ast.Name)
-                                  and local_node.target.id == call.args[callback_index].id):
+                                  and isinstance(callback_reference, ast.Name)
+                                  and local_node.target.id == callback_reference.id):
                                 local_values.append(local_node.value)
                         if local_values:
                             forwarded_callbacks = []
@@ -551,8 +602,9 @@ def lint_direct_module_global_state_handoffs(sources: set[str], root: Path) -> N
                             forwarded_callbacks = []
                         parameters = [argument.arg for argument in
                                       [*owner.args.posonlyargs, *owner.args.args, *owner.args.kwonlyargs]]
-                        if not local_values and call.args[callback_index].id in parameters:
-                            parameter = call.args[callback_index].id
+                        if (not local_values and isinstance(callback_reference, ast.Name)
+                                and callback_reference.id in parameters):
+                            parameter = callback_reference.id
                             parameter_index = parameters.index(parameter)
                             forwarded = []
                             for site in ast.walk(tree):
@@ -697,11 +749,31 @@ def full_runner_plans(root: Path) -> dict[str, list[str]]:
         sources = set().union(*(_imported_journey_sources({source}, root)
                                 for source in runner.journey_sources))
         registrations = _source_step_declarations(sources, root)
-        plans[selector] = [
-            declaration["name"] for declaration in registrations.values()
+        selected = [
+            declaration for declaration in registrations.values()
             if declaration.get("name") is not None
             and (not declaration.get("runners") or selector in declaration["runners"])
         ]
+        barriers = [declaration for declaration in selected
+                    if declaration.get("plan_after_phase") == "all-steps"]
+        teardowns = [declaration for declaration in selected
+                     if declaration.get("plan_phase") == "teardown"]
+        if len(barriers) != 1 or len(teardowns) != 1:
+            raise ValueError(
+                f"{selector}: expected exactly one plan_after_phase='all-steps' barrier "
+                f"(found {len(barriers)}) and exactly one plan_phase='teardown' step "
+                f"(found {len(teardowns)}). Correct the journey declarations, then run "
+                "python3 e2e/journey/select_from_cases.py --write-plan-baseline")
+        barrier, teardown = barriers[0], teardowns[0]
+        if barrier is teardown or teardown.get("role") != "lifecycle":
+            raise ValueError(f"{selector}: plan barrier and teardown must be distinct, with lifecycle teardown")
+        ordered = [declaration for declaration in selected
+                   if declaration is not barrier and declaration is not teardown]
+        ordered.extend((barrier, teardown))
+        if ordered[-2] is not barrier or ordered[-1] is not teardown:
+            raise ValueError(f"{selector}: lifecycle plan barrier was not placed before teardown")
+        selected = ordered
+        plans[selector] = [declaration["name"] for declaration in selected]
     return plans
 
 
@@ -887,6 +959,7 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
             "steps": sorted(selected),
             "prerequisiteSteps": step_prerequisites, "prerequisiteFlows": flow_prerequisites,
             "stepSources": sorted(sources), "capabilities": sorted(capabilities),
+            "composeProfiles": lanes_for_runners(runners),
             "selectedOwningSteps": {key: sorted(value) for key, value in sorted(selected_owners.items())}}
 
 
@@ -914,8 +987,11 @@ def selectors_from_coverage(results: list[dict]) -> list[str]:
     return sorted(selected)
 
 
-def selection_from_coverage(results: list[dict], requested: str) -> dict:
+def selection_from_coverage(results: list[dict], requested: str, *, mode: str | None = None,
+                            requested_runners: str | None = None) -> dict:
     """Resolve requested cases/steps against the QA coverage claim registry."""
+    if mode is not None and mode not in {"local", "secured"}:
+        raise ValueError(f"unsupported QA coverage mode: {mode!r}")
     registry: dict[str, set[str]] = {}
     sources_by_step: dict[str, set[str]] = {}
     declarations_by_step: dict[str, dict] = {}
@@ -949,20 +1025,29 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
                             continue
                         sources_by_step.setdefault(step_id, set()).add(source)
                         declaration = _step_declaration(source, int(claim.get("line", 0)), root)
-                        mode = str(coverage.get("mode", ""))
-                        selectors = declaration.get("runners") or runners_for_source(source, mode)
+                        coverage_mode = str(coverage.get("mode", ""))
+                        selectors = declaration.get("runners") or runners_for_source(source, coverage_mode)
                         if declaration.get("runners"):
                             for selector in selectors:
-                                if RUNNERS[selector].mode != mode:
+                                if RUNNERS[selector].mode != coverage_mode:
                                     ineligible_by_step.setdefault(step_id, set()).add(selector)
                             selectors = [selector for selector in selectors
-                                         if RUNNERS[selector].mode == mode]
+                                         if RUNNERS[selector].mode == coverage_mode]
                         for selector in selectors:
                             owners_by_step.setdefault(step_id, {}).setdefault(selector, set()).add(step_id)
                         if declaration:
                             declarations = declarations_by_step.setdefault(step_id, [])
                             if declaration not in declarations:
                                 declarations.append(declaration)
+
+    if mode is not None:
+        for step_id, owners in owners_by_step.items():
+            ineligible_by_step.setdefault(step_id, set()).update(
+                selector for selector in owners if RUNNERS[selector].mode != mode)
+            owners_by_step[step_id] = {
+                selector: claims for selector, claims in owners.items()
+                if RUNNERS[selector].mode == mode
+            }
 
     case_ids = set(registry)
     step_ids = set().union(*registry.values()) if registry else set()
@@ -989,13 +1074,35 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
                 f"unknown or unclaimed journey case/step ID: {token}. "
                 "Check available IDs with `node ./cli/bin/dist/bin.js qa cases list --json`, then rerun the journey."
             )
+    if mode is not None:
+        selected_mode_steps = {step_id for step_id in selected if owners_by_step.get(step_id)}
+        selected_other_mode_steps = {
+            step_id for step_id in selected
+            if not owners_by_step.get(step_id) and ineligible_by_step.get(step_id)
+        }
+        if len(selected_mode_steps | selected_other_mode_steps) == len(selected):
+            if selected_mode_steps:
+                selected = selected_mode_steps
+            else:
+                return {"selection": sorted(set(tokens)), "steps": [], "owners": {}, "runners": [],
+                        "prerequisiteSteps": [], "prerequisiteFlows": [], "stepSources": [],
+                        "capabilities": [], "composeProfiles": [], "selectedOwningSteps": {}}
     claim_sources = set().union(*sources_by_step.values()) if sources_by_step else set()
     declarations_by_name = validate_dependency_declarations(claim_sources, root)
     resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name,
-                                 owners_by_step, read_journey_selection(
-                                     os.environ, default_runner_selector="").requested_runners,
+                                 owners_by_step, (read_journey_selection(
+                                     os.environ, default_runner_selector="").requested_runners
+                                     if requested_runners is None else requested_runners),
                                  ineligible_by_step)
     return {"selection": sorted(set(tokens)), **resolved}
+
+
+def runners_for_case_selection(results: list[dict], requested: str, mode: str) -> list[str]:
+    """Return registered owners for selected claims in one execution mode."""
+    if mode not in {"local", "secured"}:
+        raise ValueError(f"unsupported QA coverage mode: {mode!r}")
+    selected = selection_from_coverage(results, requested, mode=mode, requested_runners="")
+    return selected["runners"]
 
 
 def main() -> int:
@@ -1003,22 +1110,35 @@ def main() -> int:
         root = resource_root()
         print_report_text(str(write_full_runner_plan_baseline(root)), flush=True)
         return 0
+    if len(sys.argv) == 4 and sys.argv[1] == "--runners-for-mode":
+        results = coverage_results()
+        print_report_text(json.dumps(runners_for_case_selection(results, sys.argv[3], sys.argv[2])), flush=True)
+        return 0
+    results = coverage_results()
+    requested = ",".join(read_requested_cases(os.environ))
+    if requested:
+        mode = journey_value("KB_JOURNEY_SELECTION_MODE")
+        print_report_text(json.dumps(selection_from_coverage(
+            results, requested, mode=mode, requested_runners="" if mode else None)), flush=True)
+    else:
+        print_report_text(json.dumps(selectors_from_coverage(results)), flush=True)
+    return 0
+
+
+def coverage_results(root: Path | None = None) -> list[dict]:
+    """Read the QA coverage of both modes from the workspace CLI; a failed run names its typed error."""
+    root = Path.cwd() if root is None else root
     results = []
     for mode in ("local", "secured"):
         command = ["node", "./cli/bin/dist/bin.js", "qa", "coverage", "show",
                    "--level", "all", "--mode", mode, "--json"]
         with invocation_context(step_id="journey.case-selection"):
-            result = run_hermetic_cli(command, cwd=Path.cwd(), env=os.environ, timeout=120,
-                                      workspace_root=Path.cwd())
+            result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120,
+                                      workspace_root=root)
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
         results.append(read_coverage_result(result))
-    requested = ",".join(read_requested_cases(os.environ))
-    if requested:
-        print_report_text(json.dumps(selection_from_coverage(results, requested)), flush=True)
-    else:
-        print_report_text(json.dumps(selectors_from_coverage(results)), flush=True)
-    return 0
+    return results
 
 
 if __name__ == "__main__":

@@ -43,8 +43,8 @@ log remains backend-specific and is not represented as a product analytics row.
 
 ## Pass criteria
 
-The fresh default config selects `@kb-labs/adapters-analytics-sqlite`
-(`.kb/kb.config.jsonc:2-14`; `reports/w3-marketplace.md:24` identifies
+The fresh-install release config selects `@kb-labs/adapters-analytics-sqlite`
+(`tools/kb-create/config/platform-release.jsonc`; `reports/w3-marketplace.md:24` identifies
 S-054 as the fresh-default adapter case, though that case is not in this
 worktree). The SQLite adapter stores events in its per-project runtime
 database and writes event context and payload (`adapters/analytics-sqlite/src/index.ts:130-170,233-257`). The REST query accepts `type`, `source`, `from`,

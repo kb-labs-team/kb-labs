@@ -15,10 +15,24 @@ import (
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
 const registrySchema = 2
+
+const (
+	// AllocatedGatewayPortMin is the first automatically allocated Gateway port.
+	AllocatedGatewayPortMin = 4000
+	// AllocatedGatewayPortMax is the last automatically allocated Gateway port.
+	AllocatedGatewayPortMax = 9900
+	// AllocatedGatewayPortStep is the fixed allocation increment.
+	AllocatedGatewayPortStep = 100
+)
+
+// The lower conventional ephemeral boundary is shared by Linux and macOS;
+// derived service ports must remain below it.
+const firstEphemeralPort = 32768
 
 type Root struct {
 	PlatformRoot   string `json:"platformRoot"`
@@ -39,7 +53,68 @@ type Registry struct {
 	OperationRoot string
 }
 
+// DataDir is the launcher-owned data directory shared by the saved index and registry.
+func DataDir(home string) string {
+	if data := os.Getenv("XDG_DATA_HOME"); data != "" {
+		return filepath.Join(data, "kb-create")
+	}
+	return filepath.Join(home, ".local", "share", "kb-create")
+}
+
+func (r Registry) resolved() (Registry, error) {
+	if r.Path != "" {
+		return r, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return r, fmt.Errorf("resolve launcher data directory: %w", err)
+	}
+	r.Path = RegistryPath(home)
+	return r, nil
+}
+
+func RegistryPath(home string) string { return filepath.Join(DataDir(home), "gateway-roots.json") }
+
+// Mutation identifies a user-invoked operation permitted to change the registry.
+type Mutation uint8
+
+const (
+	Apply Mutation = iota + 1
+	Install
+	Update
+	Rollback
+	DoctorFix
+	Uninstall
+)
+
+// Writer exposes registry changes only with an explicit mutation capability.
+type Writer struct {
+	Registry
+	mutation Mutation
+}
+
+func (r Registry) Writer(mutation Mutation) Writer { return Writer{Registry: r, mutation: mutation} }
+
+func (w Writer) authorize() error {
+	if w.mutation < Apply || w.mutation > Uninstall {
+		return fmt.Errorf("invalid Gateway registry mutation")
+	}
+	return nil
+}
+
 func (r Registry) Read() ([]Root, error) {
+	roots, err := r.readFile()
+	if err != nil {
+		return nil, err
+	}
+	return r.removeMissingRoots(roots)
+}
+
+func (r Registry) readFile() ([]Root, error) {
+	r, err := r.resolved()
+	if err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(r.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -108,11 +183,11 @@ func OriginFromHealthURL(value string) (string, error) {
 
 // Allocate keeps a root's registered address, honors an explicit URL, and
 // otherwise advances in 100-port offsets until no installed root claims it.
-func (r Registry) Allocate(platformRoot, defaultURL, explicitURL string) (string, error) {
-	return r.AllocateWithKnown(platformRoot, defaultURL, explicitURL, nil)
+func (r Registry) Allocate(platformRoot, defaultURL, explicitURL string, graph contracts.ServiceGraph) (string, error) {
+	return r.AllocateWithKnown(platformRoot, defaultURL, explicitURL, nil, graph)
 }
 
-func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string, known []Root) (string, error) {
+func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string, known []Root, graph contracts.ServiceGraph) (string, error) {
 	if explicitURL != "" {
 		return explicitURL, nil
 	}
@@ -144,18 +219,49 @@ func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string
 	if err != nil {
 		return "", fmt.Errorf("release Gateway origin %q has no valid port", defaultURL)
 	}
-	for {
+	baseGatewayPort := 0
+	for _, service := range graph.Services {
+		if service.ID == "gateway" {
+			baseGatewayPort = service.Port
+			break
+		}
+	}
+	if baseGatewayPort < 1 {
+		return "", fmt.Errorf("service graph has no valid Gateway port for allocation")
+	}
+	if !inAllocatedGatewayDomain(port) || !derivedServicePortsAreAllocatable(port, baseGatewayPort, graph.Services) {
+		port = AllocatedGatewayPortMin
+	}
+	for ; port <= AllocatedGatewayPortMax; port += AllocatedGatewayPortStep {
+		if !derivedServicePortsAreAllocatable(port, baseGatewayPort, graph.Services) {
+			continue
+		}
 		candidate := *parsed
 		candidate.Host = strings.TrimSuffix(parsed.Host, ":"+parsed.Port()) + ":" + strconv.Itoa(port)
 		origin := candidate.String()
 		if _, exists := claimed[origin]; !exists {
 			return origin, nil
 		}
-		port += 100
-		if port > 65535 {
-			return "", fmt.Errorf("no Gateway port remains after release port %s", parsed.Port())
+	}
+	return "", fmt.Errorf("no Gateway port remains in the allocated port domain after release port %s", parsed.Port())
+}
+
+func inAllocatedGatewayDomain(port int) bool {
+	return port >= AllocatedGatewayPortMin && port <= AllocatedGatewayPortMax &&
+		(port-AllocatedGatewayPortMin)%AllocatedGatewayPortStep == 0
+}
+
+func derivedServicePortsAreAllocatable(gatewayPort, baseGatewayPort int, services []contracts.Service) bool {
+	for _, service := range services {
+		if service.Port == 0 {
+			continue
+		}
+		port := gatewayPort + service.Port - baseGatewayPort
+		if port < 1 || port > 65535 || port >= firstEphemeralPort {
+			return false
 		}
 	}
+	return true
 }
 
 func (r Registry) Claimant(platformRoot, gatewayURL string) (Root, bool, error) {
@@ -183,7 +289,36 @@ func (r Registry) ClaimantAmong(platformRoot, gatewayURL string, known []Root) (
 	return Root{}, false, nil
 }
 
-func (r Registry) RegisterMany(values []Root) error {
+// removeMissingRoots filters allocations whose active receipt is absent without
+// mutating the index during planning.
+func (r Registry) removeMissingRoots(roots []Root) ([]Root, error) {
+	kept := make([]Root, 0, len(roots))
+	for _, root := range roots {
+		layout, err := versionroot.ForPlatformPath(root.PlatformRoot)
+		if err != nil {
+			return nil, err
+		}
+		active, err := layout.ExistingPlatformRoot()
+		if errors.Is(err, versionroot.ErrPlatformNotInstalled) || errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(receipt.Path(active)); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		kept = append(kept, root)
+	}
+	return kept, nil
+}
+
+func (r Writer) RegisterMany(values []Root) error {
+	if err := r.authorize(); err != nil {
+		return err
+	}
 	if r.OperationRoot == "" && len(values) > 0 {
 		r.OperationRoot = values[0].PlatformRoot
 	}
@@ -217,7 +352,10 @@ func (r Registry) RegisterMany(values []Root) error {
 	return r.write(byRoot)
 }
 
-func (r Registry) Register(platformRoot, gatewayURL string) error {
+func (r Writer) Register(platformRoot, gatewayURL string) error {
+	if err := r.authorize(); err != nil {
+		return err
+	}
 	r.OperationRoot = platformRoot
 	if !filepath.IsAbs(platformRoot) || !validOrigin(gatewayURL) {
 		return fmt.Errorf("platform root and Gateway URL must be absolute and valid")
@@ -245,7 +383,76 @@ func (r Registry) Register(platformRoot, gatewayURL string) error {
 	return r.write(roots)
 }
 
-func (r Registry) Remove(platformRoot string) error {
+// RegisterForTransaction publishes a root registration only for the duration of
+// a caller-owned commit. If the commit fails, the exact prior registry bytes (or
+// prior absence) are restored before the error is returned.
+func (r Writer) RegisterForTransaction(platformRoot, gatewayURL string, commit func() error) error {
+	if err := r.authorize(); err != nil {
+		return err
+	}
+	if commit == nil {
+		return fmt.Errorf("Gateway registration transaction requires a commit operation")
+	}
+	resolved, err := r.Registry.resolved()
+	if err != nil {
+		return err
+	}
+	r.Registry = resolved
+	previous, err := os.ReadFile(r.Path)
+	previousExists := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return r.unavailable(err)
+	}
+	if err := r.Register(platformRoot, gatewayURL); err != nil {
+		return err
+	}
+	if err := commit(); err != nil {
+		if restoreErr := r.restoreBytes(previous, previousExists); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("restore Gateway registry after failed update commit: %w", restoreErr))
+		}
+		return err
+	}
+	return nil
+}
+
+func (r Registry) restoreBytes(data []byte, existed bool) error {
+	if !existed {
+		if err := os.Remove(r.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(r.Path), 0o700); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(r.Path), ".gateway-roots-restore-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := temporary.Name()
+	defer os.Remove(name)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, r.Path)
+}
+
+func (r Writer) Remove(platformRoot string) error {
+	if err := r.authorize(); err != nil {
+		return err
+	}
 	r.OperationRoot = platformRoot
 	installationID, err := validatedInstallationID(platformRoot)
 	if err != nil {
@@ -256,7 +463,10 @@ func (r Registry) Remove(platformRoot string) error {
 
 // RemoveInstallation releases the Gateway row for an identity captured while
 // its installation was still validated, including after uninstall removed it.
-func (r Registry) RemoveInstallation(installationID string) error {
+func (r Writer) RemoveInstallation(installationID string) error {
+	if err := r.authorize(); err != nil {
+		return err
+	}
 	if !validInstallationID(installationID) {
 		return fmt.Errorf("installation identity is invalid")
 	}
@@ -331,6 +541,11 @@ func validInstallationID(value string) bool {
 }
 
 func (r Registry) write(roots []Root) error {
+	var err error
+	r, err = r.resolved()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(r.Path), 0o700); err != nil {
 		return fmt.Errorf("create installed Gateway root index directory: %w", err)
 	}

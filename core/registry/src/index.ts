@@ -7,14 +7,22 @@
  */
 
 import { EntityRegistry } from './registry.js';
-import type { RegistryOptions, IEntityRegistry } from './types.js';
+import type { CatalogScope, IEntityRegistry } from '@kb-labs/plugin-contracts';
+import type { RegistryOptions } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
-export async function createRegistry(opts?: RegistryOptions): Promise<IEntityRegistry> {
-  const registry = new EntityRegistry(opts ?? {});
+export async function openCatalog(
+  scope: CatalogScope,
+  opts: Omit<RegistryOptions, 'root' | 'platformRoot'>,
+): Promise<IEntityRegistry> {
+  const registry = new EntityRegistry({
+    ...opts,
+    root: scope.projectRoot ?? scope.platformRoot ?? process.cwd(),
+    platformRoot: scope.platformRoot,
+  });
   await registry.initialize();
   return registry;
 }
@@ -36,7 +44,7 @@ export type { EntityExtractor } from './catalog/extractors.js';
 // Generators
 // ---------------------------------------------------------------------------
 
-export { generateOpenAPISpec, mergeOpenAPISpecs } from './generators/openapi-spec.js';
+export { generateOpenAPISpec } from './generators/openapi-spec.js';
 export { generateStudioRegistry } from './generators/studio-registry.js';
 
 // ---------------------------------------------------------------------------
@@ -62,7 +70,6 @@ export {
   enablePlugin,
   disablePlugin,
   recordCrash,
-  computePackageIntegrity,
 } from './state/plugin-state.js';
 export type { PluginState } from './state/plugin-state.js';
 
@@ -70,41 +77,6 @@ export type { PluginState } from './state/plugin-state.js';
 // Diagnostics
 // ---------------------------------------------------------------------------
 
-export { buildDiagnosticReport, formatDiagnosticReport } from './diagnostics/reporter.js';
+export { buildDiagnosticReport } from './diagnostics/reporter.js';
 
 // ---------------------------------------------------------------------------
-// Types (public API)
-// ---------------------------------------------------------------------------
-
-export type {
-  // Registry interface
-  IEntityRegistry,
-  RegistryOptions,
-  // Entity model
-  EntityKind,
-  EntitySignature,
-  EntityRef,
-  EntityEntry,
-  EntityFilter,
-  // Plugin
-  PluginBrief,
-  RegistryDiff,
-  // Snapshot
-  RegistrySnapshot,
-  RegistrySnapshotManifestEntry,
-  // Health
-  SystemHealthSnapshot,
-  HealthContributor,
-  HealthContributorResult,
-  SystemHealthOptions,
-  GitInfo,
-  // Generators
-  OpenAPISpec,
-  StudioRegistry,
-  StudioRegistryEntry,
-  // Diagnostics
-  DiagnosticReport,
-  DiagnosticEvent,
-  DiagnosticSeverity,
-  DiagnosticCode,
-} from './types.js';

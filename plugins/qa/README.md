@@ -20,7 +20,7 @@ tracking over time.
 ## Features
 
 - Single command (`qa run`) to run all checks: build, lint, types, tests
-- Atomic single-check runner (`qa check`) for workflow steps — exit 0 = pass, exit 1 = fail
+- Atomic single-check runner (`qa check run`) for workflow steps — exit 0 = pass, exit 1 = fail
 - Baseline system — save a known-good state and diff against it on every run
 - Regression detection — compare last two history entries and fail on new failures
 - Trend analysis — quality direction over a sliding window of runs
@@ -47,7 +47,7 @@ tracking over time.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/qa-entry
+pnpm kb marketplace install @kb-labs/qa
 ```
 
 ---
@@ -59,16 +59,16 @@ pnpm kb marketplace install @kb-labs/qa-entry
 ```bash
 kb qa run                              # all checks: build, lint, types, tests
 kb qa run --json
-kb qa check --id=types                 # single check atomically
+kb qa check run --id=types                 # single check atomically
 kb qa save                             # run + save to history
 ```
 
 ### History and trends
 
 ```bash
-kb qa history                          # run history with pass/fail per check
-kb qa trends                           # quality direction over time
-kb qa regressions                      # detect new failures vs last run (exits 1 if found)
+kb qa history list                          # run history with pass/fail per check
+kb qa trends show                           # quality direction over time
+kb qa regressions list                      # detect new failures vs last run (exits 1 if found)
 ```
 
 ### Baseline management
@@ -99,11 +99,11 @@ comma-separated paths to `--run`.
 | Command | Description |
 |---------|-------------|
 | `kb qa run` | Run all QA checks |
-| `kb qa check` | Run a single check atomically |
+| `kb qa check run` | Run a single check atomically |
 | `kb qa save` | Run + save to history |
-| `kb qa history` | Show run history |
-| `kb qa trends` | Quality trends |
-| `kb qa regressions` | Detect regressions (CI gate) |
+| `kb qa history list` | Show run history |
+| `kb qa trends show` | Quality trends |
+| `kb qa regressions list` | Detect regressions (CI gate) |
 | `kb qa baseline update` | Save current results as baseline |
 | `kb qa baseline status` | Show baseline snapshot |
 | `kb qa cases list` | List cases in the configured catalog |

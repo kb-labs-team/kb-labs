@@ -6,6 +6,7 @@
     "e2e": "kb-labs-e2e-runner"
   },
   "devDependencies": {
+    "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/e2e-shared": "workspace:*",
     "@kb-labs/gateway-app": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",

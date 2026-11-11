@@ -22,27 +22,26 @@ class JourneyTeardownTests(unittest.TestCase):
                 "volumes": ["journey-data"],
                 "calls": [],
             }), encoding="utf-8")
-            docker = root / "docker"
-            docker.write_text(
+            compose = root / "compose"
+            compose.write_text(
                 "#!/usr/bin/env python3\n"
                 "import json, pathlib, sys\n"
                 f"state_path = pathlib.Path({str(state_path)!r})\n"
                 "state = json.loads(state_path.read_text())\n"
                 "args = sys.argv[1:]\n"
-                "if args == ['compose', 'ps', '-aq', '--all']:\n"
-                "    state['calls'].append('compose ps')\n"
+                "if args[-3:] == ['ps', '-aq', '--all']:\n"
+                "    state['calls'].append(['ps', args[:-3]])\n"
                 "    state_path.write_text(json.dumps(state))\n"
                 "    print('\\n'.join(state['containers']))\n"
-                "elif args == ['compose', 'down', '--volumes', '--remove-orphans']:\n"
-                "    state['calls'].append('compose down')\n"
+                "elif args[-2:] == ['down', '--remove-orphans']:\n"
+                "    state['calls'].append(['down', args[:-2]])\n"
                 "    state['containers'] = []\n"
-                "    state['volumes'] = []\n"
                 "    state_path.write_text(json.dumps(state))\n"
                 "else:\n"
                 "    raise SystemExit(f'unmodeled Docker command: {args!r}')\n",
                 encoding="utf-8",
             )
-            docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
+            compose.chmod(compose.stat().st_mode | stat.S_IXUSR)
             invalid_report = root / "report-path-is-a-file"
             invalid_report.write_text("forces the real outcome collector to fail", encoding="utf-8")
             environment = os.environ.copy()
@@ -54,8 +53,7 @@ class JourneyTeardownTests(unittest.TestCase):
                     "0",
                     str(invalid_report),
                     "2026-10-14T00:00:00Z",
-                    "docker",
-                    "compose",
+                    str(compose),
                 ],
                 cwd=JOURNEY_DIR.parents[1],
                 env=environment,
@@ -68,9 +66,11 @@ class JourneyTeardownTests(unittest.TestCase):
             self.assertIn("Journey container outcome capture failed", result.stderr)
             self.assertIn("Next: e2e/journey/run.sh --down", result.stderr)
             state = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(state["calls"], ["compose ps", "compose down"])
+            self.assertEqual([call[0] for call in state["calls"]], ["ps", "down"])
+            self.assertEqual(state["calls"][0][1], state["calls"][1][1],
+                             "outcome ps and teardown down used different owner arguments")
             self.assertEqual(state["containers"], [])
-            self.assertEqual(state["volumes"], [])
+            self.assertEqual(state["volumes"], ["journey-data"])
 
 
 if __name__ == "__main__":

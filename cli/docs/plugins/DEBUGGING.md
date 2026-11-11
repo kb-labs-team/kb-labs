@@ -202,7 +202,7 @@ $ kb replay 2025-01-15-123456-mind-init
 Replaying snapshot: 2025-01-15-123456-mind-init
 Command: mind init
 Timestamp: 2025-01-15T12:34:56.789Z
-Plugin: @kb-labs/mind-cli@0.1.0
+Plugin: @kb-labs/mind/cli@0.1.0
 ```
 
 ### `kb trace`

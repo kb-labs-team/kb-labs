@@ -26,6 +26,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/internal/tempdirguard"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -76,7 +77,7 @@ func TestBuiltCLICompatibilityRefusalsMatchCasesWithoutMutatingRoots(t *testing.
 		args = append(args, extra...)
 		command := exec.Command(launcher, args...)
 		command.Env = childEnvironment(os.Environ(), map[string]string{"HOME": home,
-			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": ""})
+			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": "", "XDG_DATA_HOME": ""})
 		output, err := command.CombinedOutput()
 		if err == nil {
 			t.Fatalf("plan unexpectedly succeeded: %s", output)
@@ -183,8 +184,8 @@ func TestBuiltCLIAllocatesAndRetainsSecondaryGatewayOffsets(t *testing.T) {
 	writeVersionedReceipt(t, rootA, contracts.InstallReceipt{ID: "registered-gateway-root",
 		Plan: contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{HealthURL: "http://127.0.0.1:4000/health"},
 			ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"}}})
-	registry := gateway.Registry{Path: filepath.Join(home, ".kb", "launcher", "gateway-roots.json")}
-	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
+	registry := gateway.Registry{Path: gateway.RegistryPath(home)}
+	if err := registry.Writer(gateway.Apply).Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -215,7 +216,7 @@ func TestBuiltCLIAllocatesAndRetainsSecondaryGatewayOffsets(t *testing.T) {
 		}
 		command := exec.Command(launcher, args...)
 		command.Env = childEnvironment(os.Environ(), map[string]string{"HOME": home,
-			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": ""})
+			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": "", "XDG_DATA_HOME": ""})
 		output, err := command.CombinedOutput()
 		if err != nil {
 			t.Fatalf("built kb-create plan %s: %v\n%s", root, err, output)
@@ -236,7 +237,7 @@ func TestBuiltCLIAllocatesAndRetainsSecondaryGatewayOffsets(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := registry.Register(root, origin); err != nil {
+		if err := registry.Writer(gateway.Apply).Register(root, origin); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -267,6 +268,9 @@ func childEnvironment(base []string, overrides map[string]string) []string {
 	env := make([]string, 0, len(base)+len(overrides))
 	for _, entry := range base {
 		key, _, _ := strings.Cut(entry, "=")
+		if key == "HOME" || key == "GOFLAGS" || strings.HasPrefix(key, "KB_") {
+			continue
+		}
 		if _, overridden := overrides[key]; overridden {
 			continue
 		}
@@ -278,6 +282,69 @@ func childEnvironment(base []string, overrides map[string]string) []string {
 		}
 	}
 	return env
+}
+
+func TestChildEnvironmentClearsAmbientHomePlatformInputsAndGoFlags(t *testing.T) {
+	home := t.TempDir()
+	kbHome := t.TempDir()
+	envPath, err := exec.LookPath("env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(envPath)
+	command.Env = childEnvironment([]string{
+		"HOME=/ambient/home", "KB_HOME=/ambient/kb", "KB_PLATFORM_ROOT=/ambient/root",
+		"KB_NET_OFFSET=900", "KB_SECRET_SENTINEL=secret", "GOFLAGS=-mod=vendor", "PATH=" + os.Getenv("PATH"),
+	}, map[string]string{"HOME": home, "KB_HOME": kbHome})
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("read isolated child environment: %v", err)
+	}
+	values := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	if values["HOME"] != home || values["KB_HOME"] != kbHome {
+		t.Fatalf("child HOME/KB_HOME = %q/%q, want fixture paths %q/%q", values["HOME"], values["KB_HOME"], home, kbHome)
+	}
+	for _, key := range []string{"KB_PLATFORM_ROOT", "KB_NET_OFFSET", "KB_SECRET_SENTINEL", "GOFLAGS"} {
+		if _, exists := values[key]; exists {
+			t.Errorf("child environment retained %s", key)
+		}
+	}
+}
+
+func TestInstallationSubprocessHelpersUseSanitizedEnvironment(t *testing.T) {
+	inst := newInstallation(t)
+	for key, value := range map[string]string{
+		"KB_PLATFORM_ROOT": "/ambient/root", "KB_NET_OFFSET": "900", "KB_TEST_SECRET": "ambient-secret", "GOFLAGS": "-mod=vendor",
+	} {
+		t.Setenv(key, value)
+	}
+	t.Setenv("HOME", "/ambient/home")
+	t.Setenv("KB_HOME", "/ambient/kb-home")
+	result := inst.runArgv([]string{"env"}, "KB_TEST_INPUT=fixture-value")
+	if result.code != 0 {
+		t.Fatalf("inspect installation helper environment: code=%d output=%s", result.code, result.output)
+	}
+	values := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(result.output), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	if values["HOME"] != inst.home || values["KB_HOME"] != inst.kbHome || values["KB_TEST_INPUT"] != "fixture-value" {
+		t.Fatalf("fixture child environment = %#v; want fixture HOME/KB_HOME and explicit test input", values)
+	}
+	for _, key := range []string{"KB_PLATFORM_ROOT", "KB_NET_OFFSET", "KB_TEST_SECRET", "GOFLAGS"} {
+		if _, exists := values[key]; exists {
+			t.Errorf("installation helper child inherited %s", key)
+		}
+	}
 }
 
 var (
@@ -326,38 +393,49 @@ func hostSupervisorHelperBinary(t *testing.T) string {
 }
 
 func TestMain(m *testing.M) {
+	checkLeakedTempEntries := tempdirguard.Own("kb-create-cli-")
 	code := m.Run()
 	if buildDir != "" {
-		for _, binary := range []string{filepath.Join(buildDir, "kb-create"), filepath.Join(buildDir, "fakehost"), filepath.Join(buildDir, "kb-create-supervisor.test")} {
-			if _, err := os.Stat(binary); os.IsNotExist(err) {
+		binaries := []struct{ name, path string }{
+			{name: "kb-create launcher", path: filepath.Join(buildDir, "kb-create")},
+			{name: "kb-create supervisor", path: filepath.Join(buildDir, "kb-create")},
+			{name: "fakehost", path: filepath.Join(buildDir, "fakehost")},
+			{name: "test supervisor helper", path: filepath.Join(buildDir, "kb-create-supervisor.test")},
+		}
+		for _, process := range binaries {
+			if _, err := os.Stat(process.path); os.IsNotExist(err) {
 				continue
 			}
-			output, err := exec.Command("lsof", "-nP", "-t", binary).CombinedOutput()
+			output, err := exec.Command("lsof", "-nP", "-t", process.path).CombinedOutput()
 			if err == nil && len(bytes.TrimSpace(output)) > 0 {
-				fmt.Fprintf(os.Stderr, "test process remains alive for %s:\n%s", binary, output)
+				fmt.Fprintf(os.Stderr, "test process remains alive for %s (%s):\n%s", process.name, process.path, output)
 				code = 1
 			} else if err != nil {
 				if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 || len(bytes.TrimSpace(output)) != 0 {
-					fmt.Fprintf(os.Stderr, "could not audit test process path %s: %v\n%s", binary, err, output)
+					fmt.Fprintf(os.Stderr, "could not audit test process path %s (%s): %v\n%s", process.name, process.path, err, output)
 					code = 1
 				} else {
-					fmt.Fprintf(os.Stdout, "process audit %s: none\n", binary)
+					fmt.Fprintf(os.Stdout, "process audit %s (%s): none\n", process.name, process.path)
 				}
 			} else {
-				fmt.Fprintf(os.Stdout, "process audit %s: none\n", binary)
+				fmt.Fprintf(os.Stdout, "process audit %s (%s): none\n", process.name, process.path)
 			}
 		}
 	}
 	if buildDir != "" {
 		os.RemoveAll(buildDir)
 	}
+	if leaked := checkLeakedTempEntries(); len(leaked) > 0 {
+		fmt.Fprintf(os.Stderr, "kb-create-v2 tests left their own temp entries in %s: %v; entries with this prefix must be removed by the suite that created them\n", os.TempDir(), leaked)
+		code = 1
+	}
 	os.Exit(code)
 }
 
 type installation struct {
-	launcher, root, kbHome, state string
-	port                          int
-	t                             *testing.T
+	launcher, root, home, kbHome, state string
+	port                                int
+	t                                   *testing.T
 }
 
 func newInstallation(t *testing.T, hostArgs ...string) installation {
@@ -377,20 +455,26 @@ func newInstallationWithRoot(t *testing.T, launcher, fakehost, root, kbHome stri
 	spec := &contracts.HostSpec{Command: fakehost, Args: append([]string{"-port", fmt.Sprint(port)}, hostArgs...), HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: spec,
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}}}
+	fixtureCatalog, err := sealTestCatalog(t, testReleaseCatalog(t, "1.0.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.ReleaseCatalog, err = json.Marshal(fixtureCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
 	writeVersionedReceipt(t, root, contracts.InstallReceipt{ID: "r1", InstallationID: "installation-r1", Plan: plan})
 	registerTestHostProcessTreeCleanup(t, root)
 	if err := os.WriteFile(filepath.Join(root, "state", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "current", ".kb", "marketplace.lock"), []byte("old package set\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv(host.KBHomeEnv, kbHome)
-	state, err := host.StateHome()
+	home := t.TempDir()
+	state, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
+	inst := installation{launcher: launcher, root: root, home: home, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	return inst
 }
 
@@ -405,26 +489,14 @@ func newEmptyInstallation(t *testing.T) installation {
 	listener.Close()
 	root := t.TempDir()
 	kbHome := t.TempDir()
+	home := t.TempDir()
 	t.Setenv(host.KBHomeEnv, kbHome)
-	state, err := host.StateHome()
+	state, err := host.StateHome(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
-	t.Cleanup(func() {
-		layout, layoutErr := versionroot.New(inst.root)
-		if layoutErr != nil || layout.Validate() != nil {
-			return
-		}
-		_, code, output := inst.run("stop", "--json")
-		if code != 0 {
-			t.Errorf("test cleanup stop failed: %s", output)
-		}
-		status, statusCode, statusOutput := inst.run("status", "--json")
-		if statusCode != 0 || status["running"] == true {
-			t.Errorf("test cleanup left host running: %s", statusOutput)
-		}
-	})
+	inst := installation{launcher: launcher, root: root, home: home, kbHome: kbHome, state: state.Dir, port: port, t: t}
+	registerTestHostProcessTreeCleanup(t, root)
 	return inst
 }
 
@@ -434,7 +506,7 @@ func (i installation) run(args ...string) (map[string]any, int, string) {
 
 func (i installation) runAt(root string, args ...string) (map[string]any, int, string) {
 	command := exec.Command(i.launcher, append(args, "--platform-root", root)...)
-	command.Env = append(os.Environ(), "KB_HOME="+i.kbHome)
+	command.Env = i.childEnvironment()
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
@@ -446,29 +518,6 @@ func (i installation) runAt(root string, args ...string) (map[string]any, int, s
 	_ = json.Unmarshal(stdout.Bytes(), &parsed)
 	if data, ok := parsed["data"].(map[string]any); ok {
 		parsed = data
-	}
-	if code == 0 && len(args) > 0 && (args[0] == "start" || args[0] == "restart") {
-		pid := 0
-		if hostStatus, ok := parsed["host"].(map[string]any); ok {
-			if value, ok := hostStatus["pid"].(float64); ok {
-				pid = int(value)
-			}
-		}
-		i.t.Cleanup(func() {
-			if _, rootErr := os.Stat(i.root); rootErr == nil {
-				_, stopCode, stopOutput := i.run("stop", "--json")
-				if stopCode != 0 {
-					i.t.Errorf("test cleanup stop failed: %s", stopOutput)
-				}
-				status, statusCode, statusOutput := i.run("status", "--json")
-				if statusCode != 0 || status["running"] == true {
-					i.t.Errorf("test cleanup left host running: %s", statusOutput)
-				}
-			}
-			if pid != 0 && !waitHostExit(pid, 5*time.Second) {
-				i.t.Errorf("test cleanup host process %d did not exit", pid)
-			}
-		})
 	}
 	return parsed, code, stdout.String() + stderr.String()
 }
@@ -509,8 +558,7 @@ func (i installation) runArgv(argv []string, extraEnv ...string) commandResult {
 		program = i.launcher
 	}
 	command := exec.Command(program, argv[1:]...)
-	command.Env = append(os.Environ(), "KB_HOME="+i.kbHome, "PATH="+filepath.Dir(i.launcher)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	command.Env = append(command.Env, extraEnv...)
+	command.Env = i.childEnvironment(extraEnv...)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
@@ -525,6 +573,28 @@ func (i installation) runArgv(argv []string, extraEnv ...string) commandResult {
 		payload = data
 	}
 	return commandResult{payload: payload, code: code, output: output}
+}
+
+func (i installation) childEnvironment(extraEnv ...string) []string {
+	home := i.home
+	if home == "" {
+		home = i.t.TempDir()
+	}
+	kbHome := i.kbHome
+	if kbHome == "" {
+		kbHome = i.t.TempDir()
+	}
+	overrides := map[string]string{
+		"HOME": home, "KB_HOME": kbHome,
+		"PATH": filepath.Dir(i.launcher) + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}
+	for _, entry := range extraEnv {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key != "" {
+			overrides[key] = value
+		}
+	}
+	return childEnvironment(os.Environ(), overrides)
 }
 
 func waitHostExit(pid int, timeout time.Duration) bool {
@@ -604,6 +674,58 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	idle, code, _ := inst.run("stop", "--json")
 	if code != 0 || idle["stopped"].(map[string]any)["wasRunning"] != false {
 		t.Fatalf("stopping an idle host must succeed: %v", idle)
+	}
+}
+
+func TestRestartRefusesActiveWorkBeforeStoppingUnlessInterrupted(t *testing.T) {
+	inst := newInstallation(t, "-active-work-json", `[{"kind":"workflow","id":"run-23","owningService":"workflow"}]`)
+	started, code, output := inst.run("start", "--json")
+	if code != 0 {
+		t.Fatalf("start host: code=%d output=%s", code, output)
+	}
+	pid := started["host"].(map[string]any)["pid"].(float64)
+	refused, code, output := inst.run("restart", "--json")
+	if code != 1 || errorCode(refused) != "KB_RESTART_WORK_IN_FLIGHT" {
+		t.Fatalf("restart with active work: code=%d payload=%#v output=%s", code, refused, output)
+	}
+	failure := refused["error"].(map[string]any)
+	details := failure["details"].(map[string]any)
+	items := details["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["owningService"] != "workflow" {
+		t.Fatalf("active-work diagnostic details = %#v", details)
+	}
+	status, statusCode, statusOutput := inst.run("status", "--json")
+	if statusCode != 0 || status["host"].(map[string]any)["pid"].(float64) != pid {
+		t.Fatalf("host after refusal: %#v %s", status, statusOutput)
+	}
+	interrupted, code, output := inst.run("restart", "--interrupt", "--json")
+	if code != 0 || interrupted["host"].(map[string]any)["pid"].(float64) == pid {
+		t.Fatalf("explicit interrupt did not replace host: code=%d payload=%#v output=%s", code, interrupted, output)
+	}
+}
+
+func TestRestartControlUnavailableReturnsHostUnreachableWithoutStoppingHost(t *testing.T) {
+	inst := newInstallation(t)
+	started, code, output := inst.run("start", "--json")
+	if code != 0 {
+		t.Fatalf("start host: code=%d output=%s", code, output)
+	}
+	pid := started["host"].(map[string]any)["pid"].(float64)
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(state.Control()); err != nil {
+		t.Fatal(err)
+	}
+	restarted, code, output := inst.run("restart", "--json")
+	if code != 1 || errorCode(restarted) != "KB_HOST_UNREACHABLE" {
+		t.Fatalf("restart without supervisor channel: code=%d payload=%#v output=%s", code, restarted, output)
+	}
+	status, statusCode, statusOutput := inst.run("status", "--json")
+	hostStatus := status["host"].(map[string]any)
+	if statusCode != 0 || hostStatus["state"] != "running" || hostStatus["pid"].(float64) != pid {
+		t.Fatalf("host after unreachable restart: code=%d status=%#v output=%s", statusCode, hostStatus, statusOutput)
 	}
 }
 
@@ -703,8 +825,9 @@ func TestIndependentPlatformRootsOwnTheirHostLifecycle(t *testing.T) {
 
 func runForRoot(t *testing.T, inst installation, root, operation string) map[string]any {
 	t.Helper()
+	inst.t = t
 	command := exec.Command(inst.launcher, operation, "--platform-root", root, "--json")
-	command.Env = append(os.Environ(), "KB_HOME="+inst.kbHome)
+	command.Env = inst.childEnvironment()
 	output, err := command.CombinedOutput()
 	code := 0
 	if exit, ok := err.(*exec.ExitError); ok {
@@ -798,6 +921,7 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
 	kbHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", kbHome)
 	rootA := filepath.Join(t.TempDir(), "KB Labs ' $ROOT `tick`\nline")
 	rootB := filepath.Join(t.TempDir(), "secondary")
 	a := newInstallationWithRoot(t, launcher, fakehost, rootA, kbHome, port)
@@ -811,7 +935,7 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	activeReceiptRoot := layoutA.PlatformRoot()
-	if err := (gateway.Registry{Path: filepath.Join(kbHome, "launcher", "gateway-roots.json")}).Register(activeReceiptRoot, fmt.Sprintf("http://127.0.0.1:%d", port)); err != nil {
+	if err := (gateway.Registry{Path: filepath.Join(kbHome, "kb-create", "gateway-roots.json")}).Writer(gateway.Apply).Register(activeReceiptRoot, fmt.Sprintf("http://127.0.0.1:%d", port)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := receipt.Read(activeReceiptRoot); err != nil {
@@ -857,7 +981,7 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 		t.Fatalf("printed stop command does not preserve root: %#v, %v", commands, err)
 	}
 	command := exec.Command("/bin/sh", "-c", commandText+" --json")
-	command.Env = append(os.Environ(), "KB_HOME="+kbHome, "PATH="+filepath.Dir(launcher)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	command.Env = a.childEnvironment()
 	stopped, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("execute printed stop command: %v\n%s", err, stopped)
@@ -1192,6 +1316,7 @@ func TestStaleLiveHostRecoveryEndsAtPortConflict(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
 	kbHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", kbHome)
 	rootA := filepath.Join(t.TempDir(), "platform A")
 	rootB := filepath.Join(t.TempDir(), "platform B")
 	a := newInstallationWithRoot(t, launcher, fakehost, rootA, kbHome, port)
@@ -1207,7 +1332,7 @@ func TestStaleLiveHostRecoveryEndsAtPortConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (gateway.Registry{Path: filepath.Join(kbHome, "launcher", "gateway-roots.json")}).Register(
+	if err := (gateway.Registry{Path: filepath.Join(kbHome, "kb-create", "gateway-roots.json")}).Writer(gateway.Apply).Register(
 		layoutA.PlatformRoot(), fmt.Sprintf("http://127.0.0.1:%d", port)); err != nil {
 		t.Fatal(err)
 	}
@@ -1286,10 +1411,8 @@ func TestStartPrintsHumanTextWithoutJSONFlag(t *testing.T) {
 func TestForegroundStartRunsTheHostDirectly(t *testing.T) {
 	inst := newInstallation(t)
 	command := exec.Command(inst.launcher, "start", "--foreground", "--json", "--platform-root", inst.root)
-	command.Env = append(os.Environ(), "KB_HOME="+inst.kbHome)
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
-	}
+	command.Env = inst.childEnvironment()
+	startTestProcessGroup(t, command)
 	waited := make(chan error, 1)
 	go func() { waited <- command.Wait() }()
 	finished := false

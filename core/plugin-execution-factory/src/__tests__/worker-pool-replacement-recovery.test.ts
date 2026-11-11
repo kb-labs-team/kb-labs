@@ -31,7 +31,7 @@ async function waitForHealthy(backend: WorkerPoolBackend): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     if ((await backend.health()).healthy) { return; }
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
   }
   throw new Error('Worker pool did not recover before the test deadline.');
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -84,7 +85,7 @@ async function main() {
     }
   }
 
-  process.stdout.write(JSON.stringify({ issues: items }));
+  writeCheckResult(items);
 }
 
 function readStdin() {

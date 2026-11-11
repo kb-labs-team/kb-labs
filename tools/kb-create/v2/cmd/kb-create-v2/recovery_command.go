@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/artifacts"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
@@ -115,11 +115,7 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 	if layoutErr := layout.Validate(); layoutErr != nil {
 		return recoveryCommandResult{}, unsupportedPlatformLayout(root, layoutErr)
 	}
-	launcherState, err := host.StateHome()
-	if err != nil {
-		return recoveryCommandResult{}, asDiag(err)
-	}
-	registry := gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}
+	registry := gateway.Registry{OperationRoot: root}
 	if _, err := registry.Read(); err != nil {
 		return recoveryCommandResult{}, asDiag(err)
 	}
@@ -153,7 +149,7 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 	} else if shimClassification.Kind == shim.ClassificationForeign {
 		shimAction = "left-foreign"
 	}
-	if err := registry.RemoveInstallation(active.InstallationID); err != nil {
+	if err := registry.Writer(gateway.Uninstall).RemoveInstallation(active.InstallationID); err != nil {
 		return recoveryCommandResult{}, asDiag(err)
 	}
 	return recoveryCommandResult{OK: true, Operation: "uninstall", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: false, LogPath: result.LogPath,
@@ -164,10 +160,6 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	root := input.PlatformRoot
 	if root == "" {
 		return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil)
-	}
-	launcherState, err := host.StateHome()
-	if err != nil {
-		return recoveryCommandResult{}, asDiag(err)
 	}
 	layout, layoutErr := versionroot.ForPlatformPath(root)
 	if layoutErr == nil {
@@ -237,9 +229,9 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	if restored, readErr := receipt.Read(platformRoot); readErr == nil && restored.Plan.Host != nil {
 		origin, originErr := gateway.OriginFromHealthURL(restored.Verification.HostHealthURL)
 		if originErr != nil {
-			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the restored Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "rollback", "--platform-root", root, "--snapshot", target, "--yes")+"`", originErr)
+			return recoveryCommandResult{}, contracts.HostSpecDiagnostic("the restored Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "rollback", "--platform-root", root, "--snapshot", target, "--yes")+"`", originErr.Error(), originErr)
 		}
-		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: platformRoot}).Register(platformRoot, origin); err != nil {
+		if err := (gateway.Registry{OperationRoot: platformRoot}).Writer(gateway.Rollback).Register(platformRoot, origin); err != nil {
 			return recoveryCommandResult{}, asDiag(err)
 		}
 	}
@@ -254,7 +246,7 @@ type recoveryMutationResult struct {
 }
 
 func restoreReceiptArtifacts(installer interface {
-	Restore([]contracts.Artifact) error
+	Restore(contracts.ResolvedInstallPlan, contracts.ResolvedInstallPlan) error
 }) lifecycle.PackageRestore {
 	return installer.Restore
 }
@@ -278,7 +270,20 @@ func runRecoveryMutation(ctx context.Context, input recoveryRuntimeInput, root s
 	defer transcript.Close()
 	var installer runtime.ArtifactInstaller = input.Artifacts
 	if installer == nil {
-		executor, executorErr := newArtifactExecutor(layout, activeRoot, input.Registry, false, transcript, input.ArtifactRunner)
+		activeReceipt, receiptErr := receipt.Read(platformRoot)
+		if receiptErr != nil {
+			return recoveryMutationResult{}, asDiag(receiptErr)
+		}
+		activeRelease, verifyErr := catalog.DecodeVerified(activeReceipt.Plan.ReleaseCatalog)
+		if verifyErr != nil {
+			return recoveryMutationResult{}, indexFailure(verifyErr, contracts.ShellCommand("kb-create", operation, "--platform-root", platformRoot))
+		}
+		registry := input.Registry
+		if registry == "" {
+			registry = activeReceipt.Plan.Registry
+		}
+		executor, executorErr := newArtifactExecutor(layout, activeRoot, registry, false, transcript, input.ArtifactRunner,
+			activeRelease, nil, platformRoot)
 		if executorErr != nil {
 			return recoveryMutationResult{}, asDiag(executorErr)
 		}

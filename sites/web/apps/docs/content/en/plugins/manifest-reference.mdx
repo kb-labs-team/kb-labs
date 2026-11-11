@@ -236,7 +236,7 @@ interface CliGroupMeta {
 
 ### Example
 
-From [plugins/commit/entry/src/manifest.ts](plugins/commit/entry/src/manifest.ts):
+From [plugins/commit/src/manifest.ts](plugins/commit/src/manifest.ts):
 
 ```ts
 cli: {
@@ -325,8 +325,8 @@ rest: {
       method: 'POST',
       path: '/generate',
       handler: './rest/handlers/generate-handler.js#default',
-      input: { zod: '@kb-labs/commit-contracts#GenerateRequestSchema' },
-      output: { zod: '@kb-labs/commit-contracts#GenerateResponseSchema' },
+      input: { zod: '@kb-labs/commit/contracts#GenerateRequestSchema' },
+      output: { zod: '@kb-labs/commit/contracts#GenerateResponseSchema' },
       timeoutMs: 300_000,
     },
   ],
@@ -597,7 +597,7 @@ Where `host` is one of `'cli' | 'rest' | 'ws' | 'workflow' | 'webhook'`. Permiss
 
 ## Full working example
 
-The most exercised reference manifest in the monorepo is [plugins/commit/entry/src/manifest.ts](plugins/commit/entry/src/manifest.ts). It demonstrates:
+The most exercised reference manifest in the monorepo is [plugins/commit/src/manifest.ts](plugins/commit/src/manifest.ts). It demonstrates:
 
 - Composable permissions via `combinePermissions()`.
 - Six CLI commands with typed flags from a shared module.

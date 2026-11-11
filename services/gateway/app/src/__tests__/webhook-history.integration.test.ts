@@ -166,6 +166,7 @@ describe('Gateway webhook history through createServer', () => {
     const home = await mkdtemp(path.join(os.tmpdir(), 'kb-webhook-cli-history-'));
     const previousHome = process.env.HOME;
     const previousGatewayUrl = process.env.KB_GATEWAY_URL;
+    const previousGatewayPort = process.env.GATEWAY_PORT;
     process.env.HOME = home;
     let app: Awaited<ReturnType<typeof createServer>> | undefined;
     try {
@@ -191,6 +192,7 @@ describe('Gateway webhook history through createServer', () => {
         throw new Error('Gateway did not bind an ephemeral TCP port');
       }
       process.env.KB_GATEWAY_URL = `http://127.0.0.1:${address.port}`;
+      process.env.GATEWAY_PORT = String(address.port);
 
       const deliver = async (correlationId: string) => fetch(`${process.env.KB_GATEWAY_URL}/webhooks/${pluginId}/${event}`, {
         method: 'POST',
@@ -260,6 +262,11 @@ describe('Gateway webhook history through createServer', () => {
       } else {
         process.env.KB_GATEWAY_URL = previousGatewayUrl;
       }
+      if (previousGatewayPort === undefined) {
+        delete process.env.GATEWAY_PORT;
+      } else {
+        process.env.GATEWAY_PORT = previousGatewayPort;
+      }
       await rm(home, { recursive: true, force: true });
     }
   });
@@ -269,6 +276,7 @@ describe('Gateway webhook history through createServer', () => {
     const home = await mkdtemp(path.join(os.tmpdir(), 'kb-webhook-signature-history-'));
     const previousHome = process.env.HOME;
     const previousGatewayUrl = process.env.KB_GATEWAY_URL;
+    const previousGatewayPort = process.env.GATEWAY_PORT;
     let app: Awaited<ReturnType<typeof createServer>> | undefined;
     try {
       const fixture = await makeApp();
@@ -280,6 +288,7 @@ describe('Gateway webhook history through createServer', () => {
       }
       process.env.HOME = home;
       process.env.KB_GATEWAY_URL = `http://127.0.0.1:${address.port}`;
+      process.env.GATEWAY_PORT = String(address.port);
 
       const rejected = await fetch(`${process.env.KB_GATEWAY_URL}/webhooks/${pluginId}/${event}`, {
         method: 'POST',
@@ -340,6 +349,11 @@ describe('Gateway webhook history through createServer', () => {
       } else {
         process.env.KB_GATEWAY_URL = previousGatewayUrl;
       }
+      if (previousGatewayPort === undefined) {
+        delete process.env.GATEWAY_PORT;
+      } else {
+        process.env.GATEWAY_PORT = previousGatewayPort;
+      }
       await rm(home, { recursive: true, force: true });
     }
   });
@@ -349,6 +363,7 @@ describe('Gateway webhook history through createServer', () => {
     const home = await mkdtemp(path.join(os.tmpdir(), 'kb-webhook-body-history-'));
     const previousHome = process.env.HOME;
     const previousGatewayUrl = process.env.KB_GATEWAY_URL;
+    const previousGatewayPort = process.env.GATEWAY_PORT;
     let app: Awaited<ReturnType<typeof createServer>> | undefined;
     try {
       const fixture = await makeApp();
@@ -360,6 +375,7 @@ describe('Gateway webhook history through createServer', () => {
       }
       process.env.HOME = home;
       process.env.KB_GATEWAY_URL = `http://127.0.0.1:${address.port}`;
+      process.env.GATEWAY_PORT = String(address.port);
       const oversizedBody = JSON.stringify({ value: 'x'.repeat(1_048_576) });
       const rejected = await fetch(`${process.env.KB_GATEWAY_URL}/webhooks/${pluginId}/${event}`, {
         method: 'POST',
@@ -374,7 +390,7 @@ describe('Gateway webhook history through createServer', () => {
       expect(rejected.status).toBe(413);
       const responseEnvelope = await rejected.json() as {
         ok: boolean;
-        error: { code: string; correlationId: string; details: Record<string, string> };
+        error: { code: string; correlationId: string; details: Record<string, unknown> };
       };
       expect(responseEnvelope).toMatchObject({
         ok: false,
@@ -433,6 +449,11 @@ describe('Gateway webhook history through createServer', () => {
         delete process.env.KB_GATEWAY_URL;
       } else {
         process.env.KB_GATEWAY_URL = previousGatewayUrl;
+      }
+      if (previousGatewayPort === undefined) {
+        delete process.env.GATEWAY_PORT;
+      } else {
+        process.env.GATEWAY_PORT = previousGatewayPort;
       }
       await rm(home, { recursive: true, force: true });
     }

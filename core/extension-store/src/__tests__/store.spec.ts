@@ -124,6 +124,35 @@ describe('createExtensionStore (real pnpm, temp-dir store, no real HOME)', () =>
   }, INSTALL_TIMEOUT);
 
   it(
+    'passes a resolved registry integrity pin to the package installer',
+    async () => {
+      const fixture = await createFixturePackage({ name: 'sample-plugin', version: '1.0.0' });
+      const expectedIntegrity = 'sha512-cmVnaXN0cnkgdGFyYmFsbCBieXRlcw==';
+      let observedIntegrity: string | undefined;
+      const installer: PackageInstaller = {
+        install: async (options) => {
+          observedIntegrity = options.expectedIntegrity;
+          await fs.mkdir(options.projectDir, { recursive: true });
+          return { integrity: expectedIntegrity, packageRoot: fixture };
+        },
+      };
+      const store = createExtensionStore({ root: kbHome, installer });
+
+      const resolved = await store.resolve({
+        name: 'sample-plugin',
+        version: '1.0.0',
+        kind: 'plugin',
+        spec: 'https://registry.example.test/sample-plugin-1.0.0.tgz',
+        expectedIntegrity,
+      });
+
+      expect(observedIntegrity).toBe(expectedIntegrity);
+      expect(resolved.entry.integrity).toBe(expectedIntegrity);
+    },
+    INSTALL_TIMEOUT,
+  );
+
+  it(
     'does not reinstall a version already in the store',
     async () => {
       const fixture = await createFixturePackage({ name: 'sample-plugin', version: '1.0.0' });

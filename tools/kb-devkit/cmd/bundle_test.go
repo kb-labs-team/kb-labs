@@ -78,7 +78,7 @@ func TestBuildClosureIncludesTransitiveDeps(t *testing.T) {
 		"@kb/app":   {Name: "@kb/app", Dir: appDir, RelPath: "apps/app"},
 	}
 
-	closure := buildClosure(pkgByName["@kb/app"], pkgByName, false)
+	closure := mustBuildClosure(t, pkgByName["@kb/app"], pkgByName, false)
 
 	names := make([]string, len(closure))
 	for i, p := range closure {
@@ -108,7 +108,7 @@ func TestBuildClosureIncludesDevDeps(t *testing.T) {
 		"@kb/lib":    {Name: "@kb/lib", Dir: libDir, RelPath: "packages/lib"},
 	}
 
-	closure := buildClosure(pkgByName["@kb/lib"], pkgByName, false)
+	closure := mustBuildClosure(t, pkgByName["@kb/lib"], pkgByName, false)
 
 	names := make(map[string]bool)
 	for _, p := range closure {
@@ -130,7 +130,7 @@ func TestBuildClosureIsSortedByRelPath(t *testing.T) {
 		"@kb/a": {Name: "@kb/a", Dir: aDir, RelPath: "packages/a"},
 	}
 
-	closure := buildClosure(pkgByName["@kb/a"], pkgByName, false)
+	closure := mustBuildClosure(t, pkgByName["@kb/a"], pkgByName, false)
 
 	if len(closure) != 2 {
 		t.Fatalf("closure len = %d, want 2", len(closure))
@@ -158,7 +158,7 @@ func TestBuildClosureHandlesDiamondDeps(t *testing.T) {
 		"@kb/app":    {Name: "@kb/app", Dir: appDir, RelPath: "apps/app"},
 	}
 
-	closure := buildClosure(pkgByName["@kb/app"], pkgByName, false)
+	closure := mustBuildClosure(t, pkgByName["@kb/app"], pkgByName, false)
 	if len(closure) != 4 {
 		names := make([]string, len(closure))
 		for i, p := range closure {
@@ -342,4 +342,13 @@ func must(t *testing.T, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func mustBuildClosure(t *testing.T, target workspace.Package, packages map[string]workspace.Package, prod bool) []workspace.Package {
+	t.Helper()
+	closure, err := buildClosure(target, packages, prod)
+	if err != nil {
+		t.Fatalf("buildClosure: %v", err)
+	}
+	return closure
 }

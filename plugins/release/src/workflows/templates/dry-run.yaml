@@ -1,0 +1,37 @@
+name: Release Dry Run
+version: '1.0.0'
+on:
+  manual: true
+
+inputs:
+  scope:
+    type: string
+    default: platform
+    description: Package scope to preview
+  bump:
+    type: string
+    default: auto
+    description: Version bump strategy (patch, minor, major, auto)
+
+jobs:
+  dry_run:
+    runsOn: local
+    steps:
+      - name: Plan
+        id: plan
+        run: pnpm kb release plan --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --json
+
+      - name: Checks
+        run: pnpm kb release checks run --scope ${{ inputs.scope }} --json
+
+      - name: Pack verify
+        run: pnpm kb release pack validate --scope ${{ inputs.scope }} --json
+
+      - name: Changelog preview
+        run: pnpm kb release changelog show --scope ${{ inputs.scope }}
+
+      - name: Version preview
+        run: pnpm kb release version update --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --dry-run --json
+
+      - name: Git preview
+        run: pnpm kb release git commit --scope ${{ inputs.scope }} --bump ${{ inputs.bump }} --dry-run --json

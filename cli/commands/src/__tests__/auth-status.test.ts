@@ -15,7 +15,7 @@ const mockSessionLoad = vi.fn();
 const mockSessionIsExpired = vi.fn();
 const mockSessionPath = vi.fn(() => '/tmp/test-home/.kb/session.json');
 const mockInspect = vi.fn();
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({
+vi.mock('@kb-labs/sdk/gateway', () => ({
   AuthSessionOwner: class { inspect = mockInspect; },
 }));
 

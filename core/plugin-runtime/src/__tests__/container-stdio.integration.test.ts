@@ -27,7 +27,7 @@ function platform(): IPlatformAdapters {
 describe('container stdio dispatch integration', () => {
   // case: S-244.8
   it('dispatches a plugin over the attached no-network container stream and removes the container', async ({ skip }) => {
-    if (!dockerAvailable) skip(`Docker is unavailable: ${dockerSkipReason}`);
+    if (!dockerAvailable) {skip(`Docker is unavailable: ${dockerSkipReason}`);}
     const repositoryRoot = resolve(process.cwd(), '../..');
     const name = `kb-stdio-${process.pid}-${Date.now()}`;
     const bootstrapPath = '/workspace/core/plugin-runtime/dist/sandbox/bootstrap.js';

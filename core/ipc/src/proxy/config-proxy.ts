@@ -63,7 +63,7 @@ export class ConfigProxy extends RemoteAdapter<IConfig, ConfigIPCOperation> impl
    * }
    * ```
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   async getConfig(productId: string, profileId?: string): Promise<any> {
     return this.callRemote('getConfig', [productId, profileId]);
   }
@@ -81,7 +81,7 @@ export class ConfigProxy extends RemoteAdapter<IConfig, ConfigIPCOperation> impl
    * }
    * ```
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   async getRawConfig(): Promise<any> {
     return this.callRemote('getRawConfig', []);
   }

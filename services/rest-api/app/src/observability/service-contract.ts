@@ -14,7 +14,7 @@ import {
   createServiceObservabilityDescribe,
   createServiceObservabilityHealth,
 } from '@kb-labs/shared-http';
-import type { SystemHealthSnapshot } from '@kb-labs/core-registry';
+import type { SystemHealthSnapshot } from '@kb-labs/plugin-contracts';
 import type { ReadinessState } from '../routes/readiness.js';
 import { restDomainOperationMetrics, type MetricsSnapshot } from '../middleware/metrics.js';
 import { getLatestSystemMetrics } from '../daemon/metrics/index.js';

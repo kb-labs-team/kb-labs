@@ -7,8 +7,7 @@
  */
 
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
-import type { DiscoveredPlugin } from '@kb-labs/core-discovery';
-import type { EntityEntry } from '../types.js';
+import type { DiscoveredPlugin, EntityEntry } from '@kb-labs/plugin-contracts';
 
 export interface EntityExtractor {
   (plugin: DiscoveredPlugin, manifest: ManifestV3): EntityEntry[];

@@ -2,12 +2,66 @@ package workspace
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/config"
 )
+
+func TestClassifyCarriesInternalToolReleaseLane(t *testing.T) {
+	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{
+		{Name: "internal-tool", Category: config.CategoryConfig{
+			Match: []string{"tools/kb-runner"}, Preset: "go-binary", ReleaseLane: "internal-tool",
+		}},
+	}}}
+	category, preset, language, releaseLane := classify("tools/kb-runner", cfg)
+	if category != "internal-tool" || preset != "go-binary" || language != "go" || releaseLane != "internal-tool" {
+		t.Fatalf("classify = (%q, %q, %q, %q)", category, preset, language, releaseLane)
+	}
+}
+
+func TestTrackedUnownedFilesUsesPackageOwnershipAndIgnoresUntracked(t *testing.T) {
+	root := t.TempDir()
+	mustWritePackage(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*"]}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "alpha", "package.json"), `{"name":"@kb/alpha"}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "alpha", "src", "index.ts"), "export {}\n")
+	mustWritePackage(t, filepath.Join(root, "packages", "beta", "package.json"), `{"name":"@kb/beta"}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "beta", "src", "index.ts"), "export {}\n")
+	mustWritePackage(t, filepath.Join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")
+	if output, err := exec.Command("git", "-C", root, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	if output, err := exec.Command("git", "-C", root, "add", "--all").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+
+	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{
+		{Name: "libs", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}},
+	}}}
+	ws, err := New(root, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWritePackage(t, filepath.Join(root, "untracked.txt"), "ignored\n")
+
+	got, owned, modes, err := ws.TrackedFileOwnership()
+	if err != nil {
+		t.Fatalf("TrackedFiles: %v", err)
+	}
+	if len(got) != 2 || filepath.Base(got[0]) != "package.json" || filepath.Base(got[1]) != "pnpm-lock.yaml" {
+		t.Fatalf("tracked unowned files = %v; want root package.json and pnpm-lock.yaml", got)
+	}
+	if len(owned["@kb/alpha"]) != 2 || len(owned["@kb/beta"]) != 2 {
+		t.Fatalf("tracked package ownership = %v; want package.json and src file for alpha and beta", owned)
+	}
+	for _, path := range append(append([]string(nil), got...), owned["@kb/alpha"]...) {
+		if modes[filepath.Clean(path)].Mode != 0100644 {
+			t.Errorf("tracked mode for %s = %o; want 100644", path, modes[filepath.Clean(path)].Mode)
+		}
+	}
+}
 
 func TestDiscoverPackagesFallsBackToPackageJSONWorkspaces(t *testing.T) {
 	root := t.TempDir()
@@ -30,11 +84,41 @@ func TestDiscoverPackagesFallsBackToPackageJSONWorkspaces(t *testing.T) {
 	if len(pkgs) != 2 {
 		t.Fatalf("packages count = %d, want 2", len(pkgs))
 	}
+	if pkgs[0].ReleaseLane != "" || pkgs[1].ReleaseLane != "" {
+		t.Fatalf("default package release lanes = %q and %q, want empty default", pkgs[0].ReleaseLane, pkgs[1].ReleaseLane)
+	}
 
 	names := []string{pkgs[0].Name, pkgs[1].Name}
 	sort.Strings(names)
 	if names[0] != "@kb/alpha" || names[1] != "@kb/beta" {
 		t.Fatalf("package names = %#v", names)
+	}
+}
+
+func TestDiscoverPackagesDefaultsToGatingExceptDeclaredInternalTool(t *testing.T) {
+	root := t.TempDir()
+	mustWritePackage(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*","tools/*"]}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "host", "package.json"), `{"name":"@kb/host"}`)
+	mustWritePackage(t, filepath.Join(root, "tools", "runner", "package.json"), `{"name":"@kb/runner"}`)
+
+	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{
+		{Name: "host", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}},
+		{Name: "internal-tool", Category: config.CategoryConfig{Match: []string{"tools/runner"}, Preset: "go-binary", ReleaseLane: "internal-tool"}},
+	}}}
+
+	pkgs, err := discoverPackages(root, cfg)
+	if err != nil {
+		t.Fatalf("discoverPackages error: %v", err)
+	}
+	if len(pkgs) != 2 {
+		t.Fatalf("packages count = %d, want 2", len(pkgs))
+	}
+	lanes := map[string]string{}
+	for _, pkg := range pkgs {
+		lanes[pkg.Name] = pkg.ReleaseLane
+	}
+	if lanes["@kb/host"] != "" || lanes["@kb/runner"] != "internal-tool" {
+		t.Fatalf("release lane defaults = %#v, want host default gating and runner internal-tool", lanes)
 	}
 }
 
@@ -259,6 +343,12 @@ func TestCategoryPatternsDiscoverNonPnpmPackagesAndResolveBuildTask(t *testing.T
 	fixture, ok := ws.PackageByPath(filepath.Join(root, "e2e", "fixtures", "adapters", "deterministic"))
 	if !ok || fixture.Category != "e2e-pack-extra" || !fixture.BuildTarget {
 		t.Fatalf("fixture graph entry = (%+v, %v), want category and resolved build task", fixture, ok)
+	}
+	if fixture.PnpmMember {
+		t.Fatalf("fixture package = %+v, category-discovered fixture must not be a pnpm member", fixture)
+	}
+	if library, ok := ws.PackageByPath(filepath.Join(root, "packages", "library")); !ok || !library.PnpmMember {
+		t.Fatalf("workspace package = (%+v, %v), want pnpm membership", library, ok)
 	}
 	cfg.Tasks["build"] = config.TaskConfig{{Categories: []string{"library"}, Command: "tsup"}}
 	withoutTarget, err := New(root, cfg)

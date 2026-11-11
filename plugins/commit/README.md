@@ -59,7 +59,7 @@ No more hand-writing `feat(auth): ...` for every PR.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/commit-entry
+pnpm kb marketplace install @kb-labs/commit
 ```
 
 ---
@@ -79,26 +79,26 @@ kb commit commit --scope "src/**"        # limit to a path glob
 
 ```bash
 # 1. Generate the commit plan
-kb commit generate
-kb commit generate --json                # machine-readable output
-kb commit generate --scope "packages/**"
+kb commit plan create
+kb commit plan create --json                # machine-readable output
+kb commit plan create --scope "packages/**"
 
 # 2. Review & inspect
-kb commit open                           # show current plan
-kb commit open --json
+kb commit plan show                           # show current plan
+kb commit plan show --json
 
 # 3. Apply local commits
-kb commit apply
-kb commit apply --force                  # skip staleness check
+kb commit plan apply
+kb commit plan apply --force                  # skip staleness check
 
 # 4. Push to remote
-kb commit push
+kb commit publish
 ```
 
 ### Plan management
 
 ```bash
-kb commit reset                          # clear the saved plan
+kb commit plan delete                          # clear the saved plan
 ```
 
 **Full command reference**
@@ -109,13 +109,13 @@ kb commit reset                          # clear the saved plan
 | `kb commit commit --dry-run` | Preview plan without committing |
 | `kb commit commit --with-push` | Apply and push in one step |
 | `kb commit commit --scope <glob>` | Limit diff scope |
-| `kb commit generate` | Generate commit plan from git changes |
-| `kb commit generate --json` | Output plan as JSON |
-| `kb commit apply` | Create git commits from the saved plan |
-| `kb commit apply --force` | Apply even if working tree changed since generation |
-| `kb commit push` | Push local commits to remote |
-| `kb commit open` | Display the current plan |
-| `kb commit reset` | Delete the current plan |
+| `kb commit plan create` | Generate commit plan from git changes |
+| `kb commit plan create --json` | Output plan as JSON |
+| `kb commit plan apply` | Create git commits from the saved plan |
+| `kb commit plan apply --force` | Apply even if working tree changed since generation |
+| `kb commit publish` | Push local commits to remote |
+| `kb commit plan show` | Display the current plan |
+| `kb commit plan delete` | Delete the current plan |
 
 ---
 

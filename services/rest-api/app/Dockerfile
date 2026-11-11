@@ -10,10 +10,10 @@ RUN addgroup --system --gid 1001 nodejs && \
 # deploy/ produced on CI by: pnpm deploy --filter @kb-labs/rest-api-app --prod .kb/deploy/rest-api-app
 COPY --chown=kb:nodejs .kb/deploy/rest-api-app/node_modules ./node_modules
 COPY --chown=kb:nodejs .kb/deploy/rest-api-app/dist ./dist
+COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json
 
-# Composition is deliberately absent from the release image. kb-create writes
-# the user's explicit config and lock into their derived image; the entrypoint
-# refuses to boot without both files.
+# The release composition declares cloud topology; deployment-specific config
+# may be layered at runtime.
 COPY --chown=kb:nodejs services/rest-api/app/docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN mkdir -p .kb && chown -R kb:nodejs .kb && chmod +x /app/docker-entrypoint.sh

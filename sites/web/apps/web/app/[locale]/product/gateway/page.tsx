@@ -125,7 +125,7 @@ export default async function GatewayPage({ params }: Props) {
               </div>
             </div>
             <div className="mx-auto mt-14 max-w-lg">
-              <GatewayAdapterSwapDiagram />
+              <GatewayAdapterSwapDiagram caption={t('adapterDiagramCaption')} />
             </div>
           </Container>
         </section>

@@ -1,0 +1,13 @@
+/**
+ * Public contracts for <%= it.name %>.
+ *
+ * Keep this package tiny — it is the stable boundary between plugin modules. If a type is only used inside one package, it does not belong here.
+ */
+
+export interface HelloInput {
+  who: string;
+}
+
+export interface HelloResult {
+  greeting: string;
+}

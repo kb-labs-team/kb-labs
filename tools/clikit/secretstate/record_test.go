@@ -129,15 +129,19 @@ func TestRecordPathAccessorCannotCompileInAnotherPackage(t *testing.T) {
 	if !ok {
 		t.Fatal("locate repository root for compile rail")
 	}
-	repository := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", "..", ".."))
-	mutation := filepath.Join(repository, "tools", "clikit", "operationlock", "record_path_mutation_test.go")
-	contents := "package operationlock\nimport \"github.com/kb-labs/clikit/secretstate\"\nvar _ = secretstate.RecordPath\n"
-	if err := os.WriteFile(mutation, []byte(contents), 0o600); err != nil {
+	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), ".."))
+	dir := t.TempDir()
+	module := "module recordpathmutation\n\ngo 1.22\n\nrequire github.com/kb-labs/clikit v0.0.0\n\nreplace github.com/kb-labs/clikit => " + filepath.ToSlash(moduleRoot) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(module), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Remove(mutation) })
-	command := exec.Command("go", "test", "./operationlock", "-run", "^$")
-	command.Dir = filepath.Join(repository, "tools", "clikit")
+	contents := "package operationlock\nimport \"github.com/kb-labs/clikit/secretstate\"\nvar _ = secretstate.RecordPath\n"
+	if err := os.WriteFile(filepath.Join(dir, "record_path_mutation.go"), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "test", "-mod=mod", ".")
+	command.Dir = dir
+	command.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "undefined: secretstate.RecordPath") {
 		t.Fatalf("path-accessor mutation compiled or failed for another reason: %v\n%s", err, output)

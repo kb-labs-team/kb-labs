@@ -13,7 +13,7 @@ import {
 import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import { formatError } from './errors/index';
-import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, createValidatedErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type DetailsFor, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
+import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, createCatalogErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type DetailsFor, type CatalogErrorRequest, type ErrorCode, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
 import { renderErrorEnvelope } from '@kb-labs/shared-cli-ui';
@@ -28,6 +28,7 @@ interface FlagDefinition {
   description?: string;
   default?: unknown;
   required?: boolean;
+  secret?: boolean;
   choices?: string[];
 }
 
@@ -41,7 +42,7 @@ export type SystemCommandContext = PluginContextV3 & {
 
 export interface Command {
   name: string;
-  scope: 'platform' | 'project';
+  scope: CommandScope;
   /** Public access is explicit; system commands otherwise require a user session. */
   authProtection?: 'public' | 'session';
   /** Registry test fixture for the command's safe JSON success path. */
@@ -54,6 +55,9 @@ export interface Command {
   examples?: string[];
   run: (ctx: SystemCommandContext, argv: string[], flags: Record<string, unknown>) => Promise<number>;
 }
+
+export type CommandScope = 'platform' | 'project' |
+  ((argv: readonly string[], flags: Readonly<Record<string, unknown>>) => 'platform' | 'project');
 
 export type SystemCommandJsonTest =
   | { safeArgs: readonly string[] }
@@ -76,7 +80,7 @@ function validateSystemFlags(
   }
   for (const flagName of Object.keys(rawFlags)) {
     const normalizedName = flagName.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
-    if (schemaNames.has(flagName) || schemaNames.has(normalizedName) || GLOBAL_FLAG_NAMES.has(flagName)) continue;
+    if (schemaNames.has(flagName) || schemaNames.has(normalizedName) || GLOBAL_FLAG_NAMES.has(flagName)) {continue;}
     throw new FlagValidationError(
       flagName,
       `Unknown flag: --${flagName}`,
@@ -133,6 +137,7 @@ function convertFlagSchema(schema: FlagSchemaDefinition): FlagDefinition[] {
       description: def.description,
       default: def.default,
       required: def.required,
+      secret: def.secret,
     };
 
     // Add choices if present (for string flags with choices)
@@ -162,7 +167,7 @@ export interface SystemCommandConfig<
   /** Command name (required for system commands) */
   name: string;
   /** Startup scope required before command execution. */
-  scope: 'platform' | 'project';
+  scope: CommandScope;
   /** Public access is explicit; system commands otherwise require a user session. */
   authProtection?: 'public' | 'session';
   /** Registry test fixture or explicit reason this command has no safe valid path. */
@@ -385,12 +390,6 @@ export function defineSystemCommand<
       let result: number | TResult;
       try {
         result = await handler(handlerContext, argv as unknown as TArgv, validatedFlags);
-        if (isUxResult(result)) {
-          throw createContractViolation();
-        }
-        if (isFailureClaim(result) && !isCommandFailure(result)) {
-          throw createContractViolation();
-        }
         if (isCommandFailure(result)) {
           const envelope = toErrorEnvelope(result.error, {
             correlationId: ctx.requestId,
@@ -402,6 +401,12 @@ export function defineSystemCommand<
             ctx.ui?.error(renderErrorEnvelope(envelope), { hint: envelope.hint });
           }
           return mapErrorEnvelopeToExitCode(envelope.code);
+        }
+        if (isUxResult(result)) {
+          throw createContractViolation();
+        }
+        if (isFailureClaim(result) && !isCommandFailure(result)) {
+          throw createContractViolation();
         }
       } catch (error) {
         const envelope = toErrorEnvelope(error, {
@@ -485,28 +490,8 @@ export function throwSystemCommandError(
   });
 }
 
-type RequiredKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? never : K }[keyof T];
-type CataloguedDetailsArgument<C extends PlatformErrorCode> = [RequiredKeys<DetailsFor<C>>] extends [never]
-  ? [details?: DetailsFor<C>]
-  : [details: DetailsFor<C>];
-
-export function throwSystemCataloguedFailure<C extends PlatformErrorCode>(
-  code: C,
-  message: string,
-  hint: string,
-  ...details: CataloguedDetailsArgument<C>
-): never;
-export function throwSystemCataloguedFailure(
-  code: PlatformErrorCode,
-  message: string,
-  hint: string,
-  details?: unknown,
-): never {
-  throwSystemCataloguedError(createValidatedErrorEnvelope(code, {
-    message,
-    hint,
-    ...(details === undefined ? {} : { details }),
-  }));
+export function throwSystemCataloguedFailure(request: CatalogErrorRequest): never {
+  throwSystemCataloguedError(createCatalogErrorEnvelope(request));
 }
 
 export function throwSystemCataloguedError(envelope: ErrorEnvelope): never {

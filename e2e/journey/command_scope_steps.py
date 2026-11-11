@@ -20,7 +20,9 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
                 tempfile.TemporaryDirectory(prefix="kb-command-scope-project-") as project:
             env = configure_hermetic_cli_fixture(
                 Path(home), env=os.environ,
+                workspace_root=repo_root,
                 source_config=Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc")
+            env.pop("KB_PROJECT_ROOT", None)
 
             def invoke(args: list[str]) -> tuple[int, dict]:
                 result = run_command(
@@ -77,7 +79,9 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
                 tempfile.TemporaryDirectory(prefix="kb-global-flags-cwd-") as cwd:
             env = configure_hermetic_cli_fixture(
                 Path(home), env=os.environ,
+                workspace_root=repo_root,
                 source_config=Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc")
+            env.pop("KB_PROJECT_ROOT", None)
             for args in (["--help"], ["--version"]):
                 result = run_command(
                     ["node", str(cli), *args],
@@ -110,7 +114,9 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
                 tempfile.TemporaryDirectory(prefix="kb-platform-command-cwd-") as cwd:
             env = configure_hermetic_cli_fixture(
                 Path(home), env=os.environ,
+                workspace_root=repo_root,
                 source_config=Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc")
+            env.pop("KB_PROJECT_ROOT", None)
             for args in (["hello", "--json"], ["logs", "query", "--json"]):
                 result = run_command(
                     ["node", str(cli), *args],
@@ -153,7 +159,9 @@ def run_config_failure_steps(journey: Journey, repo_root: Path) -> None:
                 tempfile.TemporaryDirectory(prefix="kb-config-failure-projects-") as projects:
             env = configure_hermetic_cli_fixture(
                 Path(home), env=os.environ,
+                workspace_root=repo_root,
                 source_config=Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc")
+            env.pop("KB_PROJECT_ROOT", None)
 
             def invoke(args: list[str], command_cwd: Path = cwd) -> tuple[int, dict]:
                 result = run_command(

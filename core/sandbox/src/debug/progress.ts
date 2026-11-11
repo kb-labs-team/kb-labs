@@ -2,6 +2,7 @@
  * @module @kb-labs/core-sandbox/debug/progress
  * Progress indicators and streaming log formatting
  */
+import { resolveColorSupport } from '@kb-labs/plugin-contracts/color-policy';
 
 /**
  * Progress bar options
@@ -144,14 +145,10 @@ export function formatLogLine(
 }
 
 /**
- * Check if colors should be used (TTY and not NO_COLOR)
+ * Check the shared host color policy for this process's stdout.
  */
 export function shouldUseColors(): boolean {
-  return (
-    process.stdout.isTTY &&
-    process.env.NO_COLOR === undefined &&
-    process.env.FORCE_COLOR !== '0'
-  );
+  return resolveColorSupport(process.stdout.isTTY, process.env.NO_COLOR, process.env.FORCE_COLOR, process.env.TERM);
 }
 
 /**

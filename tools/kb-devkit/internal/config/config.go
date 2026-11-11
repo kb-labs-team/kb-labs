@@ -32,6 +32,9 @@ type AffectedConfig struct {
 	// Executed in workspace root. Output: one absolute or workspace-relative path per line.
 	// Example: "./scripts/changed-files.sh"
 	Command string `yaml:"command"`
+
+	// FullInputs are tracked paths whose change invalidates package-level selection.
+	FullInputs []string `yaml:"fullInputs"`
 }
 
 // TaskVariant is one implementation of a named task.
@@ -97,9 +100,10 @@ type NamedCategory struct {
 
 // CategoryConfig matches packages to a preset by glob patterns.
 type CategoryConfig struct {
-	Match    []string `yaml:"match"`
-	Language string   `yaml:"language"`
-	Preset   string   `yaml:"preset"`
+	Match       []string `yaml:"match"`
+	Language    string   `yaml:"language"`
+	Preset      string   `yaml:"preset"`
+	ReleaseLane string   `yaml:"releaseLane"`
 }
 
 // PresetConfig resolves the preset for this category from the given config.
@@ -245,24 +249,33 @@ type RunConfig struct {
 	// Concurrency is the max number of parallel (package, task) pairs.
 	// Default: NumCPU-1. Override with --concurrency flag or this field.
 	Concurrency int `yaml:"concurrency"`
+	// TaskMemoryMB is the expected peak memory of one running task. The
+	// scheduler starts a task only while running tasks plus this estimate fit
+	// the host memory budget. Zero disables memory admission.
+	TaskMemoryMB int `yaml:"task_memory_mb"`
 }
 
 // ─── Custom checks ────────────────────────────────────────────────────────────
 
 // CustomCheck is an escape-hatch checker executed as a shell command.
 type CustomCheck struct {
-	Name       string   `yaml:"name"`
-	Run        string   `yaml:"run"`
-	Fix        string   `yaml:"fix"`
-	On         []string `yaml:"on"`       // check | gate
-	Language   string   `yaml:"language"` // any | typescript | go
-	Categories []string `yaml:"categories"`
-	Scope      string   `yaml:"scope"` // package | workspace
+	Name           string   `yaml:"name"`
+	Run            string   `yaml:"run"`
+	Fix            string   `yaml:"fix"`
+	On             []string `yaml:"on"`       // check | gate
+	Language       string   `yaml:"language"` // any | typescript | go
+	Categories     []string `yaml:"categories"`
+	AnchorPackages []string `yaml:"anchor_packages"` // package contexts where the check runs
+	RequiresBuild  []string `yaml:"requires_build"`  // workspace packages whose dist output the check reads
+	Scope          string   `yaml:"scope"`           // package | workspace
 }
 
 type ChecksConfig struct {
-	Packages map[string]CheckPackConfig `yaml:"packages"`
+	TimeoutMS int                        `yaml:"timeout_ms"`
+	Packages  map[string]CheckPackConfig `yaml:"packages"`
 }
+
+const DefaultCheckTimeoutMS = 900000
 
 type CheckPackConfig struct {
 	Enabled bool           `yaml:"enabled"`

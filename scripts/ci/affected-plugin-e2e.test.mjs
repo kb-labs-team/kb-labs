@@ -32,7 +32,7 @@ test('direct changes in an e2e suite select that suite', () => {
 });
 
 test('workspace dependency changes select the transitive suite', () => {
-  assert.deepEqual(computeSuites({ affected: ['@kb-labs/mind-core'] }), ['mind']);
+  assert.deepEqual(computeSuites({ affected: ['@kb-labs/mind'] }), ['mind']);
 });
 
 test('shared dependency selects exactly the suites that declare it', () => {

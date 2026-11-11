@@ -96,6 +96,56 @@ class OpenAIStreamFixtureTests(unittest.TestCase):
         self.assertEqual(body["error"]["type"], "authentication_error")
         self.assertEqual(body["error"]["code"], "invalid_api_key")
 
+    def test_failure_modes_apply_to_openai_and_vibeproxy_protocols(self):
+        base = self.url.split("/v1/", 1)[0]
+        protocols = [
+            ("/v1/chat/completions", {"Authorization": "Bearer journey-fake-openai-key"}),
+            ("/v1/messages", {"x-api-key": "journey-fake-vibeproxy-key"}),
+        ]
+        for path, headers in protocols:
+            for model in ("journey-provider-401", "journey-provider-stream-error"):
+                request = urllib.request.Request(
+                    base + path,
+                    data=json.dumps({
+                        "model": model,
+                        "messages": [{"role": "user", "content": "stream fixture"}],
+                        "max_tokens": 100,
+                        "stream": True,
+                    }).encode(),
+                    headers={**headers, "Content-Type": "application/json"},
+                    method="POST",
+                )
+                if model == "journey-provider-401":
+                    with self.assertRaises(urllib.error.HTTPError) as caught:
+                        urllib.request.urlopen(request)
+                    self.assertEqual(caught.exception.code, 401)
+                    response_body = json.loads(caught.exception.read())
+                    caught.exception.close()
+                    if path == "/v1/chat/completions":
+                        self.assertEqual(response_body["error"]["code"], "invalid_api_key")
+                    else:
+                        self.assertEqual(response_body["type"], "error")
+                        self.assertEqual(response_body["error"]["type"], "authentication_error")
+                else:
+                    with urllib.request.urlopen(request) as response:
+                        body = response.read().decode()
+                    self.assertEqual(response.headers.get_content_type(), "text/event-stream")
+                    if path == "/v1/chat/completions":
+                        self.assertIn('"content": "OPENAI_MOCK_RESPONSE"', body)
+                        self.assertIn("data: {malformed provider stream frame\n\n", body)
+                        self.assertLess(body.index('"content": "OPENAI_MOCK_RESPONSE"'),
+                                        body.index("data: {malformed provider stream frame"))
+                    else:
+                        frames = [frame for frame in body.split("\n\n") if frame]
+                        delta = next(frame for frame in frames if frame.startswith("event: content_block_delta"))
+                        terminal_error = next(frame for frame in frames if frame.startswith("event: error"))
+                        delta_payload = json.loads(next(line[6:] for line in delta.splitlines() if line.startswith("data: ")))
+                        error_payload = json.loads(next(line[6:] for line in terminal_error.splitlines() if line.startswith("data: ")))
+                        self.assertEqual(delta_payload["delta"]["text"], "VIBEPROXY_MOCK_RESPONSE")
+                        self.assertEqual(error_payload["error"]["type"], "api_error")
+                        self.assertLess(frames.index(delta), frames.index(terminal_error))
+                    self.assertNotIn("[DONE]", body)
+
     def test_stream_failure_model_emits_a_chunk_then_a_malformed_provider_frame(self):
         request = urllib.request.Request(
             self.url,

@@ -1,41 +1,65 @@
+ARG KB_JOURNEY_TOOLCHAIN_IMAGE
+ARG KB_JOURNEY_NODE_BASE_IMAGE
+
 FROM golang:1.26-bookworm AS release-index-sealer
 
 WORKDIR /src/kb-create
 COPY tools/clikit /src/clikit
-COPY tools/kb-create /src/kb-create
+COPY tools/kb-create/go.mod tools/kb-create/go.sum /src/kb-create/
+COPY tools/kb-create/main.go /src/kb-create/main.go
+COPY tools/kb-create/v2 /src/kb-create/v2
 RUN go build -trimpath -o /out/kb-create-release-index ./v2/cmd/kb-create-release-index
 
-FROM node:24-bookworm
+# The toolchain stage owns the slow, rarely-changing layers (apt packages, pnpm,
+# Playwright and Chromium). e2e/journey/run.sh builds and tags it from these
+# inputs, and the runner stage below starts FROM that tagged image so per-run
+# build-cache trimming cannot evict the toolchain. Its inputs are declared in
+# journey_resources.TOOLCHAIN_STAGE_INPUTS and hashed into the image tag.
+FROM ${KB_JOURNEY_NODE_BASE_IMAGE} AS toolchain
 
-ARG KB_JOURNEY_GIT_REVISION=unknown
-ENV KB_JOURNEY_GIT_REVISION=${KB_JOURNEY_GIT_REVISION}
-
+COPY package.json /tmp/workspace-package.json
+ENV COREPACK_HOME=/opt/kb-corepack
 RUN apt-get update -qq && apt-get install -y -qq ca-certificates curl git jq python3 procps iproute2 lsof \
-    && npm install -g pnpm@12.8.1 \
+    && corepack enable \
+    && install -d -m 0755 "$COREPACK_HOME" \
+    && corepack prepare "$(node -p 'require("/tmp/workspace-package.json").packageManager')" --activate \
+    && chmod -R a+rX "$COREPACK_HOME" \
+    && rm /tmp/workspace-package.json \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV NODE_PATH=/opt/kb-studio-playwright/node_modules
-ENV KB_JOURNEY_RESOURCE_LAYOUT=runner-image
 
-COPY .journey/runner-inputs/studio-playwright-version /tmp/studio-playwright-version
-RUN npm install --prefix /opt/kb-studio-playwright "@playwright/test@$(cat /tmp/studio-playwright-version)" \
+COPY e2e/studio/package.json /tmp/studio-package.json
+RUN npm install --prefix /opt/kb-studio-playwright "@playwright/test@$(node -p 'require("/tmp/studio-package.json").devDependencies["@playwright/test"]')" \
     && /opt/kb-studio-playwright/node_modules/.bin/playwright install --with-deps chromium
-RUN rm /tmp/studio-playwright-version
+RUN rm /tmp/studio-package.json
 
 ENV PATH="/root/.local/bin:/root/.local/share/pnpm:$PATH"
+
+FROM ${KB_JOURNEY_TOOLCHAIN_IMAGE}
+
+ARG KB_JOURNEY_GIT_REVISION=unknown
+ENV KB_JOURNEY_GIT_REVISION=${KB_JOURNEY_GIT_REVISION}
+ENV KB_JOURNEY_RESOURCE_LAYOUT=runner-image
+
 COPY tools/kb-create/install.sh /usr/local/share/kb-create/install.sh
 COPY --from=release-index-sealer /out/kb-create-release-index /usr/local/bin/kb-create-release-index
 COPY e2e/journey /opt/kb-journey/e2e/journey
+COPY e2e/compose-owner.sh /opt/kb-journey/e2e/compose-owner.sh
 COPY .journey/runner-inputs/config-jsonc-edit.mjs /opt/kb-journey/core/config/dist/jsonc-edit.mjs
 COPY .journey/runner-inputs/project-service-path.js /opt/kb-journey/core/plugin-contracts/dist/project-service-path.js
 COPY docs/qa/scenarios /opt/kb-journey/docs/qa/scenarios
 COPY e2e/platform/fixtures/installer-cases /opt/kb-journey/e2e/platform/fixtures/installer-cases
+COPY .journey/runner-inputs/marketplace-sync-server.mjs /opt/kb-journey/e2e/platform/fixtures/marketplace-sync-server.mjs
+COPY .journey/runner-inputs/static/logo.svg /opt/kb-journey/e2e/platform/fixtures/static/logo.svg
 COPY e2e/platform/journey-update-packages.mjs /opt/kb-journey/e2e/platform/journey-update-packages.mjs
-COPY e2e/platform/package-provenance.mjs /opt/kb-journey/e2e/platform/package-provenance.mjs
+COPY tools/kb-create/package.json /opt/kb-journey/node_modules/kb-create/package.json
+COPY tools/kb-create/scripts/package-provenance.mjs /opt/kb-journey/node_modules/kb-create/scripts/package-provenance.mjs
+COPY tools/kb-create/scripts/platform-release-config.mjs /opt/kb-journey/node_modules/kb-create/scripts/platform-release-config.mjs
 COPY e2e/platform/registry-manifest.json /opt/kb-journey/e2e/platform/registry-manifest.json
 COPY e2e/publisher/publish.sh /opt/kb-journey/e2e/publisher/publish.sh
-COPY contracts/ux-result /opt/kb-journey/contracts/ux-result
+COPY core/platform/contracts/ux-result /opt/kb-journey/core/platform/contracts/ux-result
 COPY core/platform/src/error-envelope/error-envelope.schema.json /opt/kb-journey/core/platform/src/error-envelope/error-envelope.schema.json
 COPY core/platform/src/error-envelope/errors.catalog.json /opt/kb-journey/core/platform/src/error-envelope/errors.catalog.json
 COPY tools/kb-create/v2/contracts/platform-layout.json /opt/kb-journey/tools/kb-create/v2/contracts/platform-layout.json
@@ -52,7 +76,7 @@ COPY tools/kb-devkit/main.go /opt/kb-journey/tools/kb-devkit/main.go
 COPY tools/kb-env/main.go /opt/kb-journey/tools/kb-env/main.go
 COPY tools/kb-dev/main.go /opt/kb-journey/tools/kb-dev/main.go
 COPY tools/kb-monitor/main.go /opt/kb-journey/tools/kb-monitor/main.go
-COPY contracts/ux-result /opt/kb-contracts/ux-result
+COPY core/platform/contracts/ux-result /opt/kb-contracts/ux-result
 COPY core/platform/src/error-envelope/error-envelope.schema.json /opt/kb-contracts/error-envelope.schema.json
 COPY e2e/journey/entrypoint.py /usr/local/bin/kb-journey-runner
 ENV PYTHONPATH="/opt/kb-journey/e2e/journey"

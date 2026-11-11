@@ -127,6 +127,13 @@ The `PluginContextV3` provided to handlers contains:
 
 ### UI Facade (13 methods)
 
+CLI command handlers receive the narrower `PluginCommandContextV3` facade. Its
+`ui` type is `PluginHandlerUIFacade`, which omits `json()` and `error()` because
+the CLI host returns command data and emits the result once. A JavaScript CLI
+handler that calls either method receives the catalogued
+`KB_PLUGIN_CONTRACT_VIOLATION` error. The examples below describe the broader
+UI facade used by other plugin execution contexts.
+
 ```typescript
 ctx.ui.info('message');
 ctx.ui.success('message');

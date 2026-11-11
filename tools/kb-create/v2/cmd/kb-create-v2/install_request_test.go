@@ -35,3 +35,31 @@ func TestInstallWizardPreservesCallerRequestFields(t *testing.T) {
 		t.Fatalf("scenario request fields were lost during merge: %#v", request)
 	}
 }
+
+func TestInstallWizardCarriesMarketplaceSourcesFromInstallFlags(t *testing.T) {
+	request, err := mergeDirectRequest(contracts.InstallRequest{
+		PlatformRoot: "/tmp/platform", Platform: contracts.VersionSelector{Channel: contracts.ChannelStable},
+	}, directRequest{
+		MarketplaceRegistryURL: "https://registry.example.test", MarketplaceSigningKeyEnv: "KB_MARKETPLACE_KEY",
+		MarketplaceTokenEnv: "KB_MARKETPLACE_TOKEN", MarketplaceNpmURL: "https://npm.example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &contracts.MarketplaceSources{RegistryURL: "https://registry.example.test", SigningPublicKeyEnv: "KB_MARKETPLACE_KEY", RegistryTokenEnv: "KB_MARKETPLACE_TOKEN", NpmURL: "https://npm.example.test"}
+	if request.MarketplaceSources == nil || *request.MarketplaceSources != *want {
+		t.Fatalf("marketplace sources = %#v, want %#v", request.MarketplaceSources, want)
+	}
+}
+
+func TestInstallWizardCarriesNpmOnlyMarketplaceMirror(t *testing.T) {
+	request, err := mergeDirectRequest(contracts.InstallRequest{
+		PlatformRoot: "/tmp/platform", Platform: contracts.VersionSelector{Channel: contracts.ChannelStable},
+	}, directRequest{MarketplaceNpmURL: "http://verdaccio:4873"})
+	if err != nil {
+		t.Fatalf("mergeDirectRequest() rejected an npm-only Marketplace mirror: %v", err)
+	}
+	if request.MarketplaceSources == nil || request.MarketplaceSources.NpmURL != "http://verdaccio:4873" {
+		t.Fatalf("MarketplaceSources = %#v, want the Verdaccio npm source", request.MarketplaceSources)
+	}
+}

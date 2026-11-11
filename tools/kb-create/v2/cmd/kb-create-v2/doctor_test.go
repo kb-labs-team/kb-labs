@@ -32,6 +32,22 @@ func TestDoctorTextExplainsUnboundPersistentAdapter(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsMarketplaceSourcesWithoutCredentialValues(t *testing.T) {
+	result := doctorCommandResult{MarketplaceSources: []map[string]any{
+		{"kind": "registry", "url": "https://registry.example.test", "signingKeyConfigured": true, "authTokenConfigured": true},
+		{"kind": "npm", "url": "https://npm.example.test", "signingKeyConfigured": false, "authTokenConfigured": false},
+	}}
+	output := result.human()
+	for _, expected := range []string{"Marketplace source: registry https://registry.example.test (signing key configured) (token configured)", "Marketplace source: npm https://npm.example.test"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("doctor output omits %q: %s", expected, output)
+		}
+	}
+	if strings.Contains(output, "authToken") || strings.Contains(output, "signingPublicKey") {
+		t.Fatalf("doctor output includes credential field names: %s", output)
+	}
+}
+
 func TestDoctorNamesForeignShimAndGivesOrderedCleanupAndRepairCommands(t *testing.T) {
 	inst := newInstallation(t)
 	link := shim.Path(inst.launcher)

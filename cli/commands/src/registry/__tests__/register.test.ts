@@ -208,7 +208,7 @@ describe('registerManifests', () => {
       {
         scope: 'platform',
     source: 'workspace',
-        packageName: '@kb-labs/agent-entry',
+        packageName: '@kb-labs/agents',
         manifestPath: '/test/agent-manifest.js',
         pkgRoot: '/test/agent',
         manifests: [agentRun],
@@ -224,7 +224,7 @@ describe('registerManifests', () => {
       {
         scope: 'platform',
     source: 'workspace',
-        packageName: '@kb-labs/review-entry',
+        packageName: '@kb-labs/review',
         manifestPath: '/test/review-manifest.js',
         pkgRoot: '/test/review',
         manifests: [reviewRun],
@@ -270,7 +270,7 @@ describe('registerManifests', () => {
       {
         scope: 'platform',
     source: 'workspace',
-        packageName: '@kb-labs/agent-entry',
+        packageName: '@kb-labs/agents',
         manifestPath: '/test/agent-manifest.js',
         pkgRoot: '/test/agent',
         manifests: [first],

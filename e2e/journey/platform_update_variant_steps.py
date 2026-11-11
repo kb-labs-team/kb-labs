@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from kb_invocation import kb_command
-from installed_fixture import layout_relative, layout_value
+from installed_fixture import layout_relative, layout_value, preserved_user_state_files
 
 from project_service_path import project_service_path
+from redaction import redact_text
 
 import hashlib
 import json
@@ -17,6 +18,8 @@ from urllib.request import Request, urlopen
 
 from invocations import (
     CompletedProcess,
+    catalogued_error_hint,
+    catalogued_error_message,
     decode_ux_error_result,
     decode_ux_success_result,
     read_kb_create_cli_result,
@@ -24,6 +27,7 @@ from invocations import (
 )
 from service_steps import Journey, StructuredJourneyError
 from journey_resources import active_platform_root, shared_runtime_file_fingerprints, snapshot_state_tree
+from service_port_assertions import service_ports
 
 
 Run = Callable[[list[str], Path], CompletedProcess]
@@ -67,18 +71,11 @@ def _component_version(payload: dict) -> str | None:
 
 
 def _file_fingerprints(root: Path, projects: tuple[Path, ...]) -> dict[str, str]:
-    names = {layout_relative('currentLink', layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath'))}
     result = {}
-    paths = [root / name for name in names]
+    paths = list(preserved_user_state_files(root))
     paths.extend(project / ".kb" / name for project in projects
                  for name in ("marketplace.lock.json", "project.json", "kb.config.jsonc"))
     for path in paths:
-        if path.is_file():
-            result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
-    for path in (root / layout_value('sharedStateDirectory') / "data").rglob("*.sqlite"):
-        if path.is_file():
-            result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
-    for path in sorted((root / layout_value('sharedStateDirectory')).rglob("*")):
         if path.is_file():
             result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
     return result
@@ -164,7 +161,7 @@ def run_platform_update_variant_steps(
         nonlocal before_services
         _install_vibeproxy_adapter(kb_binary, run, project_a)
         for project in (project_a, project_b):
-            installed = cli(kb_command([ "marketplace", "install", "@kb-labs/commit-entry", "--json"], executable=kb_binary), project)
+            installed = cli(kb_command([ "marketplace", "install", "@kb-labs/commit", "--json"], executable=kb_binary), project)
             _payload(installed, f"install preservation plugin in {project}")
             setting = [{"id": f"update-{project.name}", "label": f"{project.name} update scope", "path": "."}]
             configured = cli(kb_command([ "config", "set", "plugins.commit.scope.scopes",
@@ -211,7 +208,7 @@ def run_platform_update_variant_steps(
         plan = _payload(cli([launcher, "plan", "--json", "--index", str(jump_index),
                              "--input", str(request)]), "plan N+2 release notes")
         notes = plan.get("updateSummary", {}).get("releaseNotes")
-        expected_versions = [_target(index) for index in (base_index, update_index, jump_index)]
+        expected_versions = [_target(index) for index in (update_index, jump_index)]
         if not isinstance(notes, list) or [item.get("version") for item in notes] != expected_versions or any(
                 not isinstance(item.get("notes"), str) or not item["notes"] for item in notes):
             raise RuntimeError("N+2 plan did not list every intervening release note from the sealed index")
@@ -228,10 +225,16 @@ def run_platform_update_variant_steps(
         before_receipt = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
         before_config = hashlib.sha256((platform_root / layout_relative('currentLink', layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath'))).read_bytes()).hexdigest()
         shared_before = capture_shared_update_state()
-        error = _error(cli([launcher, "update", "--platform-root", root, "--json", "--index",
-                            str(bad_checksum_index), "--input", str(request)]), "bad-checksum update")
-        if not error.get("code") or not error.get("hint"):
-            raise RuntimeError("bad-checksum update did not return a typed error with a hint")
+        result = cli([launcher, "update", "--platform-root", root, "--json", "--index",
+                      str(bad_checksum_index), "--input", str(request)])
+        if result.returncode != 1:
+            raise RuntimeError(f"bad-checksum update exited {result.returncode}; expected operation-failure status 1")
+        error = _error(result, "bad-checksum update")
+        expected_code = "KB_INSTALL_APPLY_FAILED"
+        if (error.get("code") != expected_code
+                or error.get("message") != catalogued_error_message(expected_code)
+                or error.get("hint") != catalogued_error_hint(expected_code)):
+            raise RuntimeError("bad-checksum update did not return the exact catalogued apply failure")
         if hashlib.sha256(receipt_path.read_bytes()).hexdigest() != before_receipt:
             raise RuntimeError("checksum failure changed the active receipt")
         if hashlib.sha256((platform_root / layout_relative('currentLink', layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath'))).read_bytes()).hexdigest() != before_config:
@@ -255,8 +258,11 @@ def run_platform_update_variant_steps(
             config_path = platform_root / layout_relative('currentLink', layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath'))
             config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
             shared_before = capture_shared_update_state()
-            error = _error(cli([launcher, "update", "--platform-root", root, "--index", str(index),
-                                "--input", str(request), "--json"]), f"staged {label} verification")
+            result = cli([launcher, "update", "--platform-root", root, "--index", str(index),
+                          "--input", str(request), "--json"])
+            if result.returncode != 1:
+                raise RuntimeError(f"staged {label} verification exited {result.returncode}; expected operation-failure status 1")
+            error = _error(result, f"staged {label} verification")
             if not error.get("code") or not error.get("hint"):
                 raise RuntimeError(f"staged {label} verification failure omitted its typed error and hint")
             if label == "config" and error["code"] != "KB_INSTALL_CONFIG_REQUIRED":
@@ -276,6 +282,28 @@ def run_platform_update_variant_steps(
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
                            "state:project-registered"))
+
+    def missing_cli_version_owner_fails() -> None:
+        unavailable = receipt_path.with_name(receipt_path.name + '.unavailable')
+        receipt_path.rename(unavailable)
+        try:
+            offline_command = cli(kb_command(["commit", "plan", "delete", "--json"], executable=kb_binary))
+            _payload(offline_command, "non-version CLI command without platform receipt")
+            for args in ([kb_binary, "--version", "--json"], [kb_binary, "version", "--json"]):
+                result = cli(list(args))
+                error = _error(result, "CLI version without installed receipt")
+                code = "KB_CLI_PLATFORM_VERSION_UNAVAILABLE"
+                if (result.returncode != 1 or error.get("code") != code
+                        or error.get("message") != catalogued_error_message(code)
+                        or error.get("hint") != catalogued_error_hint(code)):
+                    raise RuntimeError("CLI version surfaces did not return the catalogued missing-owner failure")
+        finally:
+            unavailable.rename(receipt_path)
+
+    claim_step("refuse CLI version when the platform receipt is missing", "platform.update",
+               missing_cli_version_owner_fails, cases=["S-023.9"],
+               requires=("step:candidate provenance", "step:launcher version",
+                         "flow:start platform host", "step:start host"))
 
     def kill_during_staging() -> None:
         target = _target(next_index)
@@ -409,10 +437,32 @@ def run_platform_update_variant_steps(
             status = _payload(cli([launcher, "status", "--platform-root", root, "--json"]), f"status after {label} start")
             if status.get("runningVersion") != target or status.get("installedVersion") != target:
                 raise RuntimeError(f"start did not bring up unified {label} target")
+            cli_version = ""
             for executable in (kb_binary, str(platform_root / layout_relative('currentLink', '.kb/v2/bin/kb-create'))):
                 version = cli(kb_command([ "--version"], executable=executable))
                 if version.returncode or target not in version.stdout:
                     raise RuntimeError(f"{executable} --version did not report unified target {target}")
+                if executable == kb_binary:
+                    cli_version = version.stdout.strip().splitlines()[0].removeprefix("KB Labs CLI v")
+            for args in (["--version", "--json"], ["--json", "--version"]):
+                version_json = cli(kb_command(args, executable=kb_binary))
+                if version_json.returncode:
+                    raise RuntimeError(f"kb {' '.join(args)} failed after update")
+                if _payload(version_json, f"kb {' '.join(args)}").get("version") != target:
+                    raise RuntimeError(f"kb {' '.join(args)} did not report unified target {target}")
+            version_command = cli(kb_command(["version", "--json"], executable=kb_binary))
+            if version_command.returncode:
+                raise RuntimeError("kb version --json failed after update")
+            if _payload(version_command, "kb version --json after update").get("version") != target:
+                raise RuntimeError("kb version --json did not report unified target")
+            service_port_map = service_ports(json.loads(receipt_path.read_text()))
+            if "rest" not in service_port_map:
+                raise RuntimeError("active receipt omitted the REST service port")
+            with urlopen(f"http://127.0.0.1:{service_port_map['rest']}/api/v1/health", timeout=20) as response:
+                health = json.loads(response.read())
+            health_version = health.get("version", {}).get("kbLabs")
+            if health_version != cli_version or health_version != status.get("installedVersion"):
+                raise RuntimeError("REST health, kb --version, and kb-create status disagree on the installed platform version")
             _payload(cli([launcher, "stop", "--platform-root", root, "--json"]), f"stop after {label} update")
         _payload(cli([launcher, "start", "--platform-root", root, "--json"]), "start N+2 host for follow-up checks")
 
@@ -442,7 +492,7 @@ def run_platform_update_variant_steps(
         if len(projects) < 2:
             raise RuntimeError("one or more registered projects disappeared after update")
         for project in (project_a, project_b):
-            result = cli(kb_command([ "commit", "open", "--help"], executable=kb_binary), project)
+            result = cli(kb_command(["commit", "plan", "show", "--help"], executable=kb_binary), project)
             if result.returncode:
                 raise RuntimeError(f"compatible project plugin command disappeared after update: {result.stdout}")
             settings = _payload(cli(kb_command([ "config", "get", "plugins.commit.scope.scopes", "--json"], executable=kb_binary), project),
@@ -458,6 +508,14 @@ def run_platform_update_variant_steps(
                            "state:project-registered"))
 
     def verify_clients() -> None:
+        try:
+            verify_clients_after_update()
+        except Exception as error:
+            host_log = platform_root / layout_value('hostStateDirectory') / 'host.log'
+            tail = host_log.read_text(errors='replace')[-16000:] if host_log.is_file() else 'host.log unavailable'
+            raise RuntimeError(f"{error}; host log tail: {redact_text(tail)}") from error
+
+    def verify_clients_after_update() -> None:
         with urlopen("http://127.0.0.1:3000/", timeout=20) as response:
             html = response.read().decode("utf-8", errors="replace")
             status_code = response.status

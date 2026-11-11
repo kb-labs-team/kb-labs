@@ -4,30 +4,23 @@
 package runner
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 
+	"github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/devkit/internal/checks"
 )
 
 // RunCustom executes a custom checker script for the given package directory.
 // Returns any issues parsed from stdout, plus an error issue on failure.
 func RunCustom(script, pkgDir string) ([]checks.Issue, error) {
-	cmd := exec.Command("sh", "-c", script+" "+pkgDir)
-	cmd.Dir = pkgDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	result, err := toolchain.Run(context.Background(), toolchain.Invocation{Tool: "sh", Executable: "sh", Args: []string{"-c", script + " " + pkgDir}, Dir: pkgDir, Operation: toolchain.OperationWorkspaceTask})
 
 	// Try to parse stdout as JSON issues regardless of exit code.
 	var issues []checks.Issue
-	if stdout.Len() > 0 {
-		if jsonErr := json.Unmarshal(stdout.Bytes(), &issues); jsonErr != nil {
+	if result.Stdout != "" {
+		if jsonErr := json.Unmarshal([]byte(result.Stdout), &issues); jsonErr != nil {
 			// stdout is not JSON — treat as human-readable output.
 		}
 	}
@@ -35,8 +28,8 @@ func RunCustom(script, pkgDir string) ([]checks.Issue, error) {
 	if err != nil {
 		// Non-zero exit: add a synthetic error issue.
 		msg := fmt.Sprintf("custom check %q failed: %v", script, err)
-		if stderr.Len() > 0 {
-			msg += "\n" + stderr.String()
+		if result.Stderr != "" {
+			msg += "\n" + result.Stderr
 		}
 		issues = append(issues, checks.Issue{
 			Check:    "custom:" + script,

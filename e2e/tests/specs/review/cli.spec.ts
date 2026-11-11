@@ -27,8 +27,8 @@ test('RV-02: review heuristic command registered', async ({ request }) => {
   expect(res.status()).toBe(200)
 })
 
-// RV-03: review-entry plugin manifest loads correctly
-test('RV-03: review-entry plugin manifest loads correctly', async ({ request }) => {
+// RV-03: review plugin manifest loads correctly
+test('RV-03: review plugin manifest loads correctly', async ({ request }) => {
   const res = await request.get(`${REST}/api/v1/plugins/registry`)
   expect(res.status()).toBe(200)
   const body = await res.json()

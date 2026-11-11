@@ -3,12 +3,25 @@ import os
 import subprocess
 import tempfile
 import unittest
+import urllib.request
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from plugin_author_steps import run_commit_case_steps, run_plugin_author_flow
+from plugin_author_steps import (
+    _validate_plugin_route_help,
+    preflight_installed_plugin_command,
+    run_commit_case_steps,
+    run_plugin_author_flow,
+)
 from service_steps import Journey
+from invocations import open_http
+from marketplace_sync_fixture import (
+    marketplace_sync_request_count,
+    start_marketplace_sync_fixture,
+    stop_marketplace_sync_fixture,
+)
 
 
 FAKE_KB = r'''#!/usr/bin/env python3
@@ -22,29 +35,48 @@ from pathlib import Path
 
 args = sys.argv[1:]
 root = Path.cwd()
+declared_plugin_commands = {("commit", "commit"), ("review", "run")}
+help_args = args[:-2] if args[-2:] == ["--help", "--json"] else args[:-1]
+is_help = args[-2:] == ["--help", "--json"] or args[-1:] == ["--help"]
+if is_help and tuple(help_args) in declared_plugin_commands:
+    print("Registered plugin command help")
+    raise SystemExit(0)
 log = Path(os.environ["FAKE_JOURNEY_LOG"])
 with log.open("a", encoding="utf-8") as stream:
     stream.write("kb " + " ".join(args) + "\n")
 plugin = root / ".kb/plugins/demo"
 lock_path = root / ".kb/marketplace.lock"
 if args[:6] == ["scaffold", "run", "plugin", "demo", "--mode", "standalone"] and args[6:] == ["--yes"]:
-    entry = plugin / "packages/demo-entry"
-    core = plugin / "packages/demo-core/src/hello.ts"
-    entry.mkdir(parents=True)
-    (entry / "src/commands").mkdir(parents=True)
+    plugin.mkdir(parents=True)
+    (plugin / "src/cli/commands").mkdir(parents=True)
+    core = plugin / "src/core/hello.ts"
     core.parent.mkdir(parents=True, exist_ok=True)
-    (entry / "package.json").write_text('{"name":"demo-entry","version":"0.1.0","kb":{"manifest":"manifest.json"}}')
-    (entry / "manifest.json").write_text(json.dumps({"id": "@kb-labs/demo"}))
-    (entry / "src/commands/hello.ts").write_text(
+    (plugin / "package.json").write_text('{"name":"@kb-labs/demo","version":"0.1.0","kb":{"manifest":"manifest.json"}}')
+    (plugin / "manifest.json").write_text(json.dumps({"id": "@kb-labs/demo"}))
+    (plugin / "src/cli/commands/hello.ts").write_text(
         "const { greeting } = hello({ who: input.flags.who ?? 'World' });\n")
     core.write_text('return { greeting: `Hello, ${who} from demo!` };\n')
 elif args[:3] == ["marketplace", "plugins", "add"]:
+    link_path = args[args.index("--link") + 1]
+    if link_path.startswith("/"):
+        request_log = os.environ.get("FAKE_MARKETPLACE_URL_LOG")
+        if request_log:
+            Path(request_log).write_text(os.environ.get("KB_MARKETPLACE_URL", ""), encoding="utf-8")
+        print(json.dumps({"ok": False, "error": {"code": "KB_RUNTIME_INPUT_INVALID",
+            "message": "The --link path must be relative to the selected scope directory."}}))
+        raise SystemExit(1)
+    if os.environ.get("KB_MARKETPLACE_URL"):
+        import urllib.request
+        request = urllib.request.Request(
+            os.environ["KB_MARKETPLACE_URL"].rstrip("/") + "/api/v1/marketplace/packages/link",
+            data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=10):
+            pass
     if os.environ.get("FAIL_MARKETPLACE_ADD"):
         print("simulated marketplace plugins add failure")
         raise SystemExit(1)
-    link_path = args[args.index("--link") + 1]
     if not (root / link_path / "package.json").is_file():
-        raise SystemExit("entry package is missing")
+        raise SystemExit("plugin package is missing")
     manifest = json.loads((root / link_path / "manifest.json").read_text())
     plugin_id = manifest["id"]
     lock_path.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {plugin_id: {
@@ -57,6 +89,17 @@ elif args[:4] == ["marketplace", "plugins", "list", "--json"]:
     print(json.dumps({"ok": True, "data": {"entries": entries, "total": len(entries)}}))
     if os.environ.get("FAKE_DISCOVERY_WARNING"):
         print("[discover] non-blocking diagnostic", file=sys.stderr)
+elif args[:4] == ["workflow", "defs", "list", "--json"]:
+    print(json.dumps({"ok": True, "data": {"defs": []}}))
+elif args[:2] == ["docs", "generate-cli-reference"]:
+    if not (root / ".kb/kb.config.json").is_file():
+        print(json.dumps({"ok": False, "error": {"code": "KB_PROJECT_UNKNOWN",
+            "message": "The current directory is not a registered project."}}))
+        raise SystemExit(1)
+    output = Path(args[args.index("--output") + 1])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("# KB Labs CLI Reference\n", encoding="utf-8")
+    print(f"CLI reference generated: {output}")
 elif args[:3] == ["marketplace", "plugins", "remove"]:
     lock = json.loads(lock_path.read_text())
     lock["plugins"].pop(args[3], None)
@@ -113,6 +156,7 @@ elif args[:2] == ["commit", "commit"]:
         print("Commits created successfully")
 elif args[:3] == ["review", "run", "--mode=heuristic"] and "--json" not in args:
     print("Files: 1\nFindings: 0\n")
+    print("Found 0 issue(s)", file=sys.stderr)
 elif args[:3] == ["review", "run", "--mode=heuristic"]:
     print(json.dumps({"ok": True, "data": {"findings": [{"file": ".kb/journey-commit-cases/s015-review.ts", "line": 1}], "metadata": {"mode": "heuristic", "analyzedFiles": 1}}}))
 elif args[:2] == ["review", "run"] and "--mode=llm" in args:
@@ -148,16 +192,16 @@ with Path(os.environ["FAKE_JOURNEY_LOG"]).open("a", encoding="utf-8") as stream:
     stream.write("pnpm " + " ".join(args) + "\n")
 if args == ["install"]:
     raise SystemExit(0)
-if args == ["-w", "build"]:
+if args == ["build"]:
     if os.environ.get("FAIL_PNPM_BUILD"):
         detail = os.environ.get("LONG_BUILD_ERROR", "simulated build error")
         print(detail)
         raise SystemExit(2)
     plugin = Path.cwd()
-    source = (plugin / "packages/demo-core/src/hello.ts").read_text()
+    source = (plugin / "src/core/hello.ts").read_text()
     output = "Edited demo greeting for World!" if "Edited demo greeting" in source else "Hello, World from demo!"
-    (plugin / "packages/demo-entry/dist").mkdir(parents=True, exist_ok=True)
-    (plugin / "packages/demo-entry/dist/manifest.js").write_text("export default {};\n")
+    (plugin / "dist").mkdir(parents=True, exist_ok=True)
+    (plugin / "dist/manifest.js").write_text("export default {};\n")
     (plugin / ".built-output").write_text(output)
     raise SystemExit(0)
 raise SystemExit("unexpected pnpm command: " + " ".join(args))
@@ -187,10 +231,70 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             "HOME": str(self.home),
             "PATH": f"{self.bin}:{self.env.get('PATH', '')}",
             "FAKE_JOURNEY_LOG": str(self.log),
+            "FAKE_MARKETPLACE_URL_LOG": str(self.root / "marketplace-url.log"),
         })
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_fake_cli_rejects_unregistered_nested_plugin_routes(self):
+        result = subprocess.run([str(self.kb), "commit", "bogus", "--help"],
+                                cwd=self.project, env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_nonzero_route_help_reports_preflight_failure_and_actual_output(self):
+        result = subprocess.CompletedProcess(
+            [str(self.kb), "commit", "commit", "--help", "--json"],
+            1,
+            "",
+            "plugin startup failed while loading configuration",
+        )
+
+        with self.assertRaises(RuntimeError) as raised:
+            _validate_plugin_route_help(["commit", "commit"], result)
+
+        self.assertEqual(str(raised.exception),
+                         "journey command 'commit commit' help preflight failed (exit 1): "
+                         "plugin startup failed while loading configuration")
+
+    def test_only_unknown_command_result_reports_route_absent(self):
+        result = subprocess.CompletedProcess(
+            [str(self.kb), "commit", "bogus", "--help", "--json"],
+            2,
+            json.dumps({"ok": False, "error": {"code": "KB_RUNTIME_UNKNOWN_COMMAND"}}),
+            "",
+        )
+
+        with self.assertRaises(RuntimeError) as raised:
+            _validate_plugin_route_help(["commit", "bogus"], result)
+
+        self.assertEqual(str(raised.exception),
+                         "journey command 'commit bogus' is absent from the live CLI registry: "
+                         '{"ok": false, "error": {"code": "KB_RUNTIME_UNKNOWN_COMMAND"}}')
+
+    def test_group_preflight_rejects_a_missing_manifest_declared_child_route(self):
+        routes = ["commit", "commit commit", "commit plan show"]
+        missing_route = next(route for route in routes if route.startswith("commit ") and route != "commit commit")
+        lock = self.project / ".kb/marketplace.lock"
+        lock.write_text(json.dumps({"plugins": {"@kb-labs/commit": {"enabled": True}}}))
+        env = {**self.env, "KB_JOURNEY_WORKSPACE_ROOT": str(self.root)}
+
+        def command_runner(_runner, command, **kwargs):
+            if command[:3] == ["node", "--input-type=module", "-e"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps(routes), "")
+            invoked_route = command[1:-2]
+            if invoked_route == missing_route.split():
+                return subprocess.CompletedProcess(
+                    command, 2,
+                    json.dumps({"ok": False, "error": {"code": "KB_RUNTIME_UNKNOWN_COMMAND"}}), "",
+                )
+            return subprocess.CompletedProcess(command, 0, "group or child help", "")
+
+        with patch("plugin_author_steps.run_with_runner", side_effect=command_runner):
+            with self.assertRaisesRegex(RuntimeError, "commit plan show"):
+                preflight_installed_plugin_command(
+                    ["commit", "--help"], self.project, env, command_runner, self.kb,
+                )
 
     def run_flow(self, *, mode="local", fail_build=False):
         if fail_build:
@@ -199,6 +303,22 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         run_plugin_author_flow(journey, self.project, self.kb, "http://verdaccio:4873",
                                command_runner=subprocess.run, base_env=self.env)
         return journey.result()
+
+    def test_marketplace_sync_fixture_records_marketplace_requests(self):
+        process, marketplace_url, startup_error = start_marketplace_sync_fixture(
+            self.project, self.env, request_recorder=True)
+        self.assertIsNone(startup_error, startup_error)
+        self.assertIsNotNone(process)
+        self.assertIsNotNone(marketplace_url)
+        self.addCleanup(stop_marketplace_sync_fixture, process)
+
+        request = urllib.request.Request(
+            f"{marketplace_url}/api/v1/marketplace/packages/link",
+            data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+        status, _, _ = open_http(urllib.request.urlopen, request, timeout=10, env=self.env)
+        self.assertEqual(status, 204)
+
+        self.assertEqual(marketplace_sync_request_count(marketplace_url, self.env), 1)
 
     # case: S-014.1
     def test_commit_and_review_case_steps_are_claimed_from_fake_cli_responses(self):
@@ -209,7 +329,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                 "version": "2.120.1",
                 "integrity": "sha256-fixture",
                 "source": "marketplace",
-                "package": "@kb-labs/commit-entry",
+                "package": "@kb-labs/commit",
             }},
         }))
         journey = Journey("local", "commit-case-fixture")
@@ -219,6 +339,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         expected = {
             *(f"S-014.{step}" for step in range(1, 4)),
             *(f"S-015.{step}" for step in range(1, 5)),
+            "S-203.1",
             *(f"S-030.{step}" for step in range(1, 5)),
             *(f"S-160.{step}" for step in range(1, 5)),
         }
@@ -230,6 +351,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual({step: claims[step] for step in ("S-015.1", "S-015.2", "S-015.3", "S-015.4")}, {
             "S-015.1": "PASS", "S-015.2": "PASS", "S-015.3": "PASS", "S-015.4": "PASS",
         })
+        self.assertEqual(claims["S-203.1"], "PASS")
         self.assertEqual({step: claims[step] for step in ("S-160.1", "S-160.2", "S-160.3", "S-160.4")}, {
             "S-160.1": "PASS", "S-160.2": "PASS", "S-160.3": "PASS", "S-160.4": "PASS",
         }, result.steps)
@@ -237,7 +359,51 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             "S-030.1": "PASS", "S-030.2": "PASS", "S-030.3": "PASS", "S-030.4": "PASS",
         })
 
+    def test_commit_and_review_fixture_finishes_with_a_clean_worktree(self):
+        (self.project / ".kb/marketplace.lock").write_text(json.dumps({
+            "schema": "kb.marketplace/3",
+            "plugins": {"@kb-labs/commit": {
+                "enabled": True,
+                "version": "2.120.1",
+                "integrity": "sha256-fixture",
+                "source": "marketplace",
+                "package": "@kb-labs/commit",
+            }},
+        }))
+
+        journey = Journey("local", "commit-case-clean-worktree")
+        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                              subprocess.run, self.env)
+
+        status = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                                cwd=self.project, capture_output=True, text=True, check=True)
+        self.assertEqual(status.stdout, "", journey.result().steps)
+
+    def test_commit_fixture_recovers_repository_without_head(self):
+        (self.project / ".git").mkdir()
+        (self.project / ".kb/marketplace.lock").write_text(json.dumps({
+            "schema": "kb.marketplace/3",
+            "plugins": {"@kb-labs/commit": {
+                "enabled": True,
+                "version": "2.120.1",
+                "integrity": "sha256-fixture",
+                "source": "marketplace",
+                "package": "@kb-labs/commit",
+            }},
+        }))
+
+        journey = Journey("local", "commit-case-headless-repository")
+        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                              subprocess.run, self.env)
+
+        result = journey.result()
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.project,
+                              capture_output=True, text=True, check=True)
+        self.assertTrue(head.stdout.strip())
+        self.assertEqual(result.steps[0]["status"], "PASS", result.steps)
+
     # case: S-003.1
+    # case: S-003.7, S-003.8, S-041.10
     # case: S-210.1
     def test_scaffold_add_edit_invoke_and_remove_records_all_case_steps(self):
         result = self.run_flow()
@@ -245,30 +411,42 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.status, "PASS")
         self.assertEqual(
             [step["cases"] for step in result.steps],
-            [["S-003.1"], ["S-003.2"], ["S-003.3"], ["S-003.4", "S-210.1"],
-             ["S-003.5"], ["S-003.6"]],
+            [["S-003.1"], ["S-003.2"], ["S-003.3"], ["S-041.10"], ["S-003.7"],
+             ["S-003.8"], ["S-003.4", "S-210.1"], ["S-003.5"], ["S-003.6"]],
         )
+        claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
+        self.assertEqual({case_id: claims[case_id] for case_id in
+                          ("S-003.7", "S-003.8", "S-041.10")},
+                         {"S-003.7": "PASS", "S-003.8": "PASS", "S-041.10": "PASS"})
         self.assertEqual(
-            result.case_run["claims"],
-            [{"claimId": f"S-003.{step}", "kind": "journey", "status": "PASS"}
-             for step in range(1, 7)] +
-            [{"claimId": "S-210.1", "kind": "journey", "status": "PASS"}],
+            {claim["claimId"]: (claim["kind"], claim["status"])
+             for claim in result.case_run["claims"]},
+            {f"S-003.{step}": ("journey", "PASS") for step in range(1, 9)}
+            | {"S-041.10": ("journey", "PASS"), "S-210.1": ("journey", "PASS")},
         )
         self.assertEqual(json.loads((self.project / ".kb/marketplace.lock").read_text())["plugins"], {})
+        marketplace_url = (self.root / "marketplace-url.log").read_text(encoding="utf-8")
+        self.assertTrue(marketplace_url.startswith("http://127.0.0.1:"))
         commands = self.log.read_text().splitlines()
-        self.assertEqual(commands[:9], [
+        self.assertEqual(commands[:15], [
             "kb scaffold run plugin demo --mode standalone --yes",
             "pnpm install",
-            "pnpm -w build",
-            "kb marketplace plugins add --link .kb/plugins/demo/packages/demo-entry",
+            "pnpm build",
+            "kb marketplace plugins add --link .kb/plugins/demo",
             "kb marketplace plugins list --json",
+            "kb workflow defs list --json",
+            "kb marketplace plugins list --json",
+            "kb demo hello",
+            "kb docs generate-cli-reference --output docs/CLI-REFERENCE.md",
+            "kb docs generate-cli-reference --output docs/CLI-REFERENCE.md",
+            f"kb marketplace plugins add --link {self.project / '.kb/plugins/demo'}",
             "kb --help",
             "kb demo hello",
-            "pnpm -w build",
+            "pnpm build",
             "kb demo hello",
         ])
-        self.assertTrue(commands[9].startswith("kb marketplace plugins remove "))
-        self.assertEqual(commands[10:], ["kb marketplace plugins list --json"])
+        self.assertTrue(commands[15].startswith("kb marketplace plugins remove "))
+        self.assertEqual(commands[16:], ["kb marketplace plugins list --json"])
         self.assertFalse((self.project / ".kb/plugins/demo").exists())
         self.assertEqual(json.loads((self.project / ".kb/marketplace.lock").read_text())["plugins"], {})
 
@@ -277,7 +455,10 @@ class PluginAuthorJourneyTests(unittest.TestCase):
 
         self.assertEqual(result.status, "PASS")
         self.assertTrue(all(step["mode"] == "secured" for step in result.steps))
-        self.assertEqual(len(result.case_run["claims"]), 7)
+        claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
+        self.assertEqual(claims["S-003.7"], "PASS")
+        self.assertEqual(claims["S-003.8"], "PASS")
+        self.assertNotIn("S-041.10", claims)
 
     # case: S-003.3
     def test_parseable_plugin_list_stdout_survives_discovery_stderr(self):
@@ -293,7 +474,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
 
         self.assertEqual(result.status, "FAIL")
         self.assertEqual(result.first_failure["name"], "build generated plugin")
-        self.assertIn("pnpm -w build exited 2; simulated build error", result.first_failure["message"])
+        self.assertIn("pnpm build exited 2; simulated build error", result.first_failure["message"])
         self.assertEqual(result.case_run["claims"], [
             {"claimId": "S-003.1", "kind": "journey", "status": "PASS"},
             {"claimId": "S-003.2", "kind": "journey", "status": "FAIL"},

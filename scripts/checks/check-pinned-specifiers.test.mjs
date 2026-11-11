@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { runExternalCheck } from './lib/run-external-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const checker = path.join(root, 'scripts/checks/check-pinned-specifiers.mjs');
@@ -24,8 +24,8 @@ test('workspace package check rejects a dist-tag and wildcard dependency specifi
     }));
     const result = runCheck(workspaceRoot, [{ name: '@fixture/package', dir: packageDir }]);
 
-    assert.equal(result.status, 0, result.stderr);
-    const issues = JSON.parse(result.stdout).issues;
+    assert.equal(result.exitCode, 0, result.stderr);
+    const issues = result.result.issues;
     assert.equal(issues.length, 8);
     assert.deepEqual(issues.map(({ file, message, fix }) => ({ file, message, fix })), [
       {
@@ -75,7 +75,7 @@ test('workspace package check rejects a dist-tag and wildcard dependency specifi
 });
 
 function runCheck(workspaceRoot, packages) {
-  return spawnSync(process.execPath, [checker], {
+  return runExternalCheck(checker, [], {
     cwd: root,
     input: JSON.stringify({
       workspaceRoot,

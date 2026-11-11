@@ -3,15 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "prebuild": "pnpm --filter @kb-labs/studio-ui-kit build && pnpm --filter @kb-labs/sdk build",
     "build": "next build",
-    "predev": "pnpm --filter @kb-labs/studio-ui-kit build && pnpm --filter @kb-labs/sdk build",
     "dev": "next dev -p 3001",
     "docs:source-check": "node scripts/docs-source-check.mjs",
     "docs:source-sync": "node scripts/docs-source-check.mjs --write",
     "lint": "eslint .",
     "start": "next start -p 3001",
-    "test": "node --test scripts/docs-source-sync.test.mjs",
+    "test": "node --test scripts/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -36,6 +34,8 @@
     "shiki": "^4.0.2"
   },
   "devDependencies": {
+    "@kb-labs/plugin-contracts": "workspace:*",
+    "@kb-labs/plugin-runtime": "workspace:*",
     "@kb-labs/web-config": "workspace:*",
     "@types/node": "^24.3.3",
     "@types/react": "^19.0.0",

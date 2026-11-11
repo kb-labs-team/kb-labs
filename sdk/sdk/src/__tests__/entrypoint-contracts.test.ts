@@ -29,6 +29,12 @@ describe("SDK Entrypoint Contracts", () => {
     expect(runtime).toContain("@kb-labs/shared-command-kit");
   });
 
+  it("publishes the errors subpath through the platform-owned catalogue", async () => {
+    const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+    const errors = await readFile(path.join(packageRoot, "dist", "errors/index.js"), "utf8");
+    expect(errors).toContain("@kb-labs/core-platform/error-envelope");
+  });
+
   it("keeps required root exports", () => {
     expectRequiredExports("@kb-labs/sdk", SDK, [
       "defineCommand",

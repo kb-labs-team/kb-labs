@@ -404,10 +404,10 @@ output:
 
 ```bash
 # Build affected packages
-pnpm --filter @kb-labs/agent-core run build
-pnpm --filter @kb-labs/agent-contracts run build
+pnpm --filter @kb-labs/agents/core run build
+pnpm --filter @kb-labs/agents/contracts run build
 pnpm --filter @kb-labs/agent-executor run build
-pnpm --filter @kb-labs/agent-cli run build
+pnpm --filter @kb-labs/agents/cli run build
 
 # Test
 pnpm kb agent:list

@@ -3,48 +3,16 @@
 package host
 
 import (
-	"os/exec"
-	"strconv"
-	"syscall"
-
+	"github.com/kb-labs/clikit/proc/child"
 	"golang.org/x/sys/windows"
 )
 
-const detachedProcess = 0x00000008
-
-// configureHostProcess gives the host its own process group so console
-// control events sent to the launcher do not reach it.
-func configureHostProcess(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
-}
-
-// ConfigureDetached starts cmd without a console so it outlives the caller.
-func ConfigureDetached(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | detachedProcess}
-}
-
-// Windows has no SIGTERM. taskkill without /F asks windowed processes to
-// close; console hosts typically ignore it and are ended by the forced pass
-// after the grace period. /T includes the whole process tree.
-func terminateProcessGroup(pid int) {
-	_ = exec.Command("taskkill", "/T", "/PID", strconv.Itoa(pid)).Run()
-}
-func killProcessGroup(pid int) {
-	_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
-}
-
 func TerminateProcessIfIdentity(pid int, processIdentity string) bool {
-	return signalWithProcessIdentity(pid, processIdentity, func() error {
-		terminateProcessGroup(pid)
-		return nil
-	})
+	return signalWithProcessIdentity(pid, processIdentity, func() error { return child.TerminateTree(pid) })
 }
 
 func KillProcessIfIdentity(pid int, processIdentity string) bool {
-	return signalWithProcessIdentity(pid, processIdentity, func() error {
-		killProcessGroup(pid)
-		return nil
-	})
+	return signalWithProcessIdentity(pid, processIdentity, func() error { return child.KillTree(pid) })
 }
 
 func TerminateProcessGroupIfIdentity(pid int, processIdentity string) bool {

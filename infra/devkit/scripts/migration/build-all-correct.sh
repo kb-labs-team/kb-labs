@@ -155,10 +155,7 @@ BUILD_ORDER=(
   # Phase 17: Tooling
   "kb-labs-devlink/packages/contracts"
   "kb-labs-devlink/packages/core"
-  "kb-labs-release-manager/packages/release-core"
-  "kb-labs-release-manager/packages/release-checks"
-  "kb-labs-release-manager/packages/changelog"
-  "kb-labs-release-manager/packages/release-cli"
+  "plugins/release"
   "kb-labs-setup-engine/packages/setup-engine"
   "kb-labs-setup-engine/packages/setup-operations"
 

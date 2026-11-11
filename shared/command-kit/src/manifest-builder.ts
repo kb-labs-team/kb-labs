@@ -351,13 +351,23 @@ export function webhook(
  * Writing manifests as plain object literals without this wrapper
  * is always valid.
  *
+ * Built-in workflow routes use the project-scoped service contract instead
+ * of a plugin manifest base path:
+ *
  * @example
  * ```ts
- * export const manifest = createManifest('@kb-labs/workflow', '1.0.0', {
- *   display: { name: 'Workflow CLI' },
- *   cli: mergeCliGroups(daemonGroup, runsGroup),
+ * import { projectWorkflowRoute, WORKFLOW_ROUTES } from '@kb-labs/workflow-contracts/routes'
+ *
+ * const statsPath = projectWorkflowRoute(projectId, WORKFLOW_ROUTES.STATS)
+ * ```
+ *
+ * @example
+ * ```ts
+ * export const manifest = createManifest('@kb-labs/example', '1.0.0', {
+ *   display: { name: 'Example' },
+ *   cli: exampleGroup,
  *   rest: {
- *     basePath: WORKFLOW_BASE_PATH,
+ *     basePath: '/v1/plugins/example',
  *     routes: [
  *       GET(ROUTES.STATS, './rest/stats.js#default', { describe: 'Dashboard stats' }),
  *     ],

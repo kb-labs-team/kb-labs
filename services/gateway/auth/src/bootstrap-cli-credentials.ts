@@ -25,7 +25,7 @@
 
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
+import { credentialsFilePath } from '@kb-labs/core-platform';
 import type { AuthService } from './service.js';
 
 /** Reserved handle for the auto-provisioned CLI bootstrap client. */
@@ -48,9 +48,6 @@ export interface EnsureBootstrapCliCredentialsOptions {
   logger: BootstrapCliCredentialsLogger;
 }
 
-const defaultCredentialsPath = (): string =>
-  path.join(os.homedir(), '.kb', 'credentials.json');
-
 const fileExists = async (filePath: string): Promise<boolean> => {
   try {
     await fs.access(filePath);
@@ -64,7 +61,7 @@ export const ensureBootstrapCliCredentials = async (
   opts: EnsureBootstrapCliCredentialsOptions,
 ): Promise<void> => {
   const { enabled, authService, gatewayUrl, logger } = opts;
-  const credentialsPath = opts.credentialsPath ?? defaultCredentialsPath();
+  const credentialsPath = opts.credentialsPath ?? credentialsFilePath();
 
   if (!enabled) {
     logger.info('bootstrap-cli-credentials: not enabled, skipping');

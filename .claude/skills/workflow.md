@@ -2,7 +2,7 @@
 name: workflow
 description: Workflow engine investigation, debugging, and development — logs, gate decisions, runs CLI
 globs:
-  - "plugins/workflow/**"
+  - "services/workflow/**"
 ---
 
 # Workflow Investigation & Development
@@ -148,7 +148,7 @@ export default defineCommand<unknown, CLIInput<MyFlags>, { exitCode: number }>({
 
 **Критично:** использовать `CLIInput<FlagsInterface>` из `@kb-labs/sdk`, не `typeof flagsDef` и не ручные cast'ы.
 
-После добавления команды — зарегистрировать в `plugins/workflow/entry/src/manifest.ts`.
+После добавления команды — зарегистрировать в `cli/commands/src/utils/register.ts` и `cli/commands/src/commands/system/workflow.ts`.
 
 ---
 

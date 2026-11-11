@@ -20,9 +20,11 @@ import (
 
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/proc"
 	"github.com/kb-labs/clikit/result"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
+
+const runnerVersion = "kb-runner version 1"
 
 func main() {
 	command.Exit(executeCommand(os.Args[1:], os.Stdout, os.Stderr))
@@ -34,8 +36,19 @@ func executeCommand(args []string, stdout, stderr io.Writer) diag.ExitStatus {
 
 func executeInvocation(invocation string, args []string, stdout, stderr io.Writer) diag.ExitStatus {
 	root := runnerRoot{Root: command.InvocationRoot(invocation), invocation: invocation}
-	if len(args) > 0 && args[0] == "__keeper" {
-		return diag.ProcessExitStatus(proc.KeeperMain())
+	if len(args) == 1 && args[0] == "--version" {
+		if _, err := fmt.Fprintln(stdout, runnerVersion); err != nil {
+			fmt.Fprintf(stderr, "%s --version: write version output: %v\n", root.Name(), err)
+			return diag.ProcessExitStatus(1)
+		}
+		return diag.SuccessStatus()
+	}
+	if len(args) > 0 && args[0] == "__agent_worker" {
+		code, err := agentStartCommand(root, args[1:], stdout, stderr)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+		}
+		return diag.ProcessExitStatus(code)
 	}
 	if command.HandleRootHelp(args, root, runnerUsage(), stdout) {
 		return diag.SuccessStatus()
@@ -63,11 +76,24 @@ func execute(args []string, stdout, stderr io.Writer) (int, error) {
 type runnerRoot struct {
 	command.Root
 	invocation string
+	executable string
+	supervisor schedulerJobSupervisor
 }
 
 func (root runnerRoot) Invocation() string { return root.invocation }
 
 func (root runnerRoot) InvocationCommand() string { return shellQuote(root.invocation) }
+
+func (root runnerRoot) startProcess(ctx context.Context, config proc.Config) (*proc.Run, error) {
+	return proc.Start(ctx, config)
+}
+
+func (root runnerRoot) executablePath() (string, error) {
+	if root.executable != "" {
+		return root.executable, nil
+	}
+	return os.Executable()
+}
 
 func executeRoot(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
 	if len(args) == 0 {
@@ -107,6 +133,19 @@ var runnerCommands = []runnerCommand{
 	{name: "gc", execute: func(root runnerRoot, args []string, stdout, _ io.Writer) (int, error) {
 		return gcCommand(root, args, stdout)
 	}},
+	{name: "status", execute: statusCommand},
+	{name: "limits", execute: limitsCommand},
+	{name: "agent", execute: agentCommand},
+	{name: "test-channel", execute: testChannelRequestCommand},
+	{name: "verify", execute: verifyCommand},
+	{name: "worktree", execute: worktreeCommand},
+	{name: "hygiene", execute: hygieneCommand},
+	{name: "land", execute: landCommand},
+	{name: "sched", execute: schedulerCommand},
+	{name: "streams", execute: func(root runnerRoot, args []string, stdout, _ io.Writer) (int, error) {
+		return streamsCommand(root, args, stdout)
+	}},
+	{name: "self-install", execute: selfInstallCommand},
 }
 
 func runnerUsage() string {
@@ -164,21 +203,30 @@ func procIdentityFailure(rootName, invocation string, pid int, err error) error 
 }
 
 func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	return runCommandWithContext(ctx, root, args, stdout, stderr)
+}
+
+func runCommandWithContext(ctx context.Context, root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	tag := fs.String("tag", "", "run label")
 	latestTag := fs.String("latest-tag", "", "stable stream key used to resolve the newest run record")
 	state := fs.String("state", "", "directory for run records and events")
 	stall := fs.Duration("stall", 0, "report no-output intervals at this duration")
-	stdoutPath := fs.String("stdout", "", "tee stdout to this file")
-	stderrPath := fs.String("stderr", "", "tee stderr to this file")
+	stdoutPath := fs.String("stdout", "", "tee command stdout to this file and the terminal")
+	stderrPath := fs.String("stderr", "", "tee command stderr to this file and the terminal")
 	stdinPath := fs.String("stdin", "", "read command stdin from this file")
 	slotGroup := fs.String("slot-group", "", "serialize starts within this capacity group")
 	slots := fs.Int("slots", 0, "maximum live runs allowed in the slot group")
+	slotWeight := fs.Int("slot-weight", 0, "tokens acquired in the slot group (default 1)")
 	waitGate := fs.String("wait-gate", "", "wait for this named gate to be released")
 	holdGate := fs.String("hold-gate", "", "hold this named gate for the command tree lifetime")
 	minFree := fs.String("min-free", "", "minimum free bytes on the state filesystem")
 	costKey := fs.String("cost-key", "", "key used to learn completed run resource costs")
+	cost := fs.String("cost", "light", "expected resource cost class: light or heavy")
+	priority := fs.Int("priority", 0, "run priority; lower values are paused first under hard pressure")
 	memory := fs.String("mem", "", "declared memory reservation, for example 2G")
 	cpus := fs.String("cpus", "", "minimum or minimum..maximum CPU cores")
 	disk := fs.String("disk", "", "declared disk growth reservation, for example 3G")
@@ -199,8 +247,16 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	if *tag == "" || *state == "" || *stall <= 0 || *stdoutPath == "" || *stderrPath == "" {
 		return 2, fmt.Errorf("%s run: --tag, --state, positive --stall, --stdout, and --stderr are required; next: %s run --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "run", *state)
+	if err != nil {
+		return 2, fmt.Errorf("%s run: invalid runner state path: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
+	}
+	*state = resolvedState
+	costClass, err := proc.ParseCostClass(*cost)
+	if err != nil {
+		return 2, fmt.Errorf("%s run: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
+	}
 	var minFreeBytes uint64
-	var err error
 	if *minFree == "" {
 		minFreeBytes = 0
 	} else {
@@ -229,14 +285,16 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 	if err != nil {
 		return 2, fmt.Errorf("%s run: invalid --cpus: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	helper, err := os.Executable()
+	workdir, err := os.Getwd()
 	if err != nil {
-		return 1, fmt.Errorf("kb-runner run: locate keeper executable: %w", err)
+		return 1, fmt.Errorf("%s run: inspect current workdir for lease: %w", root.Name(), err)
+	}
+	leasePaths, err := runnerWorktreeLeasePaths(workdir)
+	if err != nil {
+		return 1, fmt.Errorf("%s run: acquire owned-worktree lease: %w", root.Name(), err)
 	}
 	keepPaths = append(keepPaths, *stdoutPath, *stderrPath)
-	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, Command: command})
+	run, err := root.startProcess(ctx, proc.Config{StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, SlotWeight: *slotWeight, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, CostClass: costClass, Priority: *priority, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, SharedLeasePaths: leasePaths, Command: command})
 	if err != nil {
 		return 1, fmt.Errorf("%s run: %w\nInspect state directory access before retrying:\nnext: ls -ld %s\nnext: %s", root.Name(), err, shellQuote(*state), shellJoin(os.Args))
 	}
@@ -250,6 +308,13 @@ func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, 
 			return code, supervisedCommandFailure(root, *state, code)
 		}
 		return 1, keeperWaitFailure(root, *state, err)
+	}
+	completed, err := proc.WaitRunID(context.Background(), *state, run.RunID)
+	if err != nil {
+		return 1, keeperWaitFailure(root, *state, err)
+	}
+	if completed.Status != proc.StatusCompleted {
+		return renderWaitOutcome(completed, *state, stdout, root.Invocation())
 	}
 	if _, err := fmt.Fprintf(stdout, "run %s completed\n", *tag); err != nil {
 		return 1, fmt.Errorf("%s: write completion output: %w", root.Name(), err)
@@ -305,6 +370,11 @@ func quotaCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int
 		}
 		return 2, fmt.Errorf("%s quota: --state is required; next: %s quota %s --help", root.Name(), root.InvocationCommand(), helpAction)
 	}
+	resolvedState, err := resolveRunnerState(root, "quota "+action, *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	switch action {
 	case "set":
 		if *memory == "" && *cpus == "" && *minFree == "" {
@@ -374,6 +444,7 @@ func (values *pathListFlag) Set(value string) error {
 func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
 	state := fs.String("state", "", "directory containing run records")
+	jsonOutput := fs.Bool("json", false, "write run and host resource state as JSON")
 	leftovers := fs.Bool("leftovers", false, "list every uncleaned owned resource")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
@@ -381,17 +452,34 @@ func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	if *state == "" {
 		return 2, fmt.Errorf("%s ps: --state is required; next: %s ps --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "ps", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
+	if err := reconcileJobsForState(*state); err != nil {
+		return 1, fmt.Errorf("%s ps: reconcile agent jobs: %w; next: %s status --state %s --json", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
+	}
 	if *leftovers {
 		entries, err := proc.Leftovers(*state)
 		if err != nil {
 			return 1, fmt.Errorf("%s ps: list leftovers: %w\nnext: ls -ld %s", root.Name(), err, shellQuote(*state))
+		}
+		if *jsonOutput {
+			if entries == nil {
+				entries = []proc.LeftoverEntry{}
+			}
+			if err := json.NewEncoder(output).Encode(entries); err != nil {
+				return 1, fmt.Errorf("kb-runner ps: write JSON: %w", err)
+			}
+			return 0, nil
 		}
 		if len(entries) == 0 {
 			_, err := fmt.Fprintln(output, "No resource leftovers.")
 			return 0, err
 		}
 		for _, entry := range entries {
-			if _, err := fmt.Fprintf(output, "%s\t%s\t%s\t%s\n", entry.Resource.Kind, entry.Resource.ID, entry.Outcome, entry.Error); err != nil {
+			if _, err := fmt.Fprintf(output, "%s\t%s\t%s\t%s\n", entry.Kind, entry.ID, entry.Outcome, entry.Error); err != nil {
 				return 1, err
 			}
 		}
@@ -399,7 +487,16 @@ func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	}
 	listing := proc.List(*state)
 	if listing.Error != nil {
+		if older := olderEventFormatDiagnostic(root, *state, listing.Error); older != nil {
+			return 1, older
+		}
 		return 1, fmt.Errorf("%s ps: read run state: %w\nnext: ls -ld %s", root.Name(), listing.Error, shellQuote(*state))
+	}
+	if *jsonOutput {
+		if err := json.NewEncoder(output).Encode(listing); err != nil {
+			return 1, fmt.Errorf("%s ps: write JSON: %w", root.Name(), err)
+		}
+		return 0, nil
 	}
 	if len(listing.Runs) == 0 {
 		if _, err := fmt.Fprintln(output, "No supervised runs."); err != nil {
@@ -454,11 +551,20 @@ func eventsCommand(root runnerRoot, args []string, output io.Writer) (int, error
 	state := fs.String("state", "", "directory containing events.jsonl")
 	follow := fs.Bool("follow", false, "continue streaming appended events")
 	filter := fs.String("filter", "", "comma-separated event types to emit")
+	offset := fs.Int64("offset", 0, "start reading events.jsonl at this byte offset")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
 	if *state == "" {
 		return 2, fmt.Errorf("%s events: --state is required; next: %s events --help", root.Name(), root.InvocationCommand())
+	}
+	resolvedState, err := resolveRunnerState(root, "events", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
+	if *offset < 0 {
+		return 2, fmt.Errorf("%s events: --offset must not be negative; next: %s events --help", root.Name(), root.InvocationCommand())
 	}
 	ctx := context.Background()
 	if *follow {
@@ -470,13 +576,22 @@ func eventsCommand(root runnerRoot, args []string, output io.Writer) (int, error
 	if err != nil {
 		return 2, fmt.Errorf("%s events: %w; next: %s events --help", root.Name(), err, root.InvocationCommand())
 	}
-	if err := proc.Events(ctx, *state, *follow, filters, output); err != nil && !errors.Is(err, context.Canceled) {
+	if err := reconcileJobsForState(*state); err != nil {
+		return 1, fmt.Errorf("%s events: reconcile agent jobs: %w; next: %s status --state %s --json", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
+	}
+	if err := proc.Events(ctx, *state, *follow, filters, *offset, output); err != nil && !errors.Is(err, context.Canceled) {
+		if older := olderEventFormatDiagnostic(root, *state, err); older != nil {
+			return 1, older
+		}
 		return 1, fmt.Errorf("%s events: %w\nnext: ls -l %s", root.Name(), err, shellQuote(filepath.Join(*state, "events.jsonl")))
 	}
 	return 0, nil
 }
 
 func gateCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
+	if len(args) > 0 && args[0] == "command" {
+		return gateCommandExec(root, args, stdout, stderr)
+	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 		_, err := fmt.Fprintf(stdout, "Usage: %s gate status <name> --state <dir> | %s gate hold <name> [run flags] -- <command>\n", root.Name(), root.Name())
 		if err != nil {
@@ -501,6 +616,11 @@ func gateCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int,
 		if *state == "" {
 			return 2, fmt.Errorf("%s gate status: --state is required; next: %s gate status --help", root.Name(), root.InvocationCommand())
 		}
+		resolvedState, err := resolveRunnerState(root, "gate status", *state)
+		if err != nil {
+			return 2, err
+		}
+		*state = resolvedState
 		gate, held, err := proc.GateStatus(*state, args[1])
 		if err != nil {
 			return 1, fmt.Errorf("%s gate status: %w; next: %s ps --state %s", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
@@ -525,27 +645,50 @@ func gateCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int,
 }
 
 func waitCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
+	for _, arg := range args {
+		if arg == "--any" || arg == "--all" {
+			return agentWaitCommand(root, args, stdout, stderr)
+		}
+	}
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	tag := fs.String("tag", "", "run tag to await")
 	latestTag := fs.String("latest-tag", "", "stable stream key whose newest run record to await")
 	state := fs.String("state", "", "directory for run records")
+	appearWithin := fs.Duration("appear-within", 2*time.Minute, "maximum time to wait for a --latest-tag run record to appear")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
 	if (*tag == "") == (*latestTag == "") || *state == "" {
 		return 2, fmt.Errorf("%s wait: provide exactly one of --tag or --latest-tag, and --state; next: %s wait --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "wait", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	var run proc.RunInfo
-	var err error
 	if *latestTag != "" {
-		run, err = proc.WaitLatestTag(ctx, *state, *latestTag)
+		run, err = proc.WaitLatestTagWithin(ctx, *state, *latestTag, *appearWithin)
 	} else {
 		run, err = proc.WaitTag(ctx, *state, *tag)
 	}
 	if err != nil {
+		var notFound *proc.WaitNotFoundError
+		if errors.As(err, &notFound) {
+			entry, ok := diag.LookupCatalog("KB_RUNTIME_JOB_NOT_FOUND")
+			if !ok {
+				return 1, errors.New("kb-runner wait: not-found diagnostic is missing from the platform catalog")
+			}
+			next := fmt.Sprintf("%s ps --state %s", root.InvocationCommand(), shellQuote(*state))
+			return 1, waitDiagnosticError{diagnostic: diag.New(entry.Code, entry.Message,
+				diag.WithReason(notFound.Error()),
+				diag.WithHint("next: "+next),
+				diag.WithBinary(root.InvocationCommand()),
+			)}
+		}
 		return 1, fmt.Errorf("%s wait: %w; next: %s ps --state %s", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
 	}
 	return renderWaitOutcome(run, *state, stdout, root.Invocation())
@@ -567,7 +710,7 @@ func renderWaitOutcome(run proc.RunInfo, state string, stdout io.Writer, executa
 		return 1, waitDiagnosticError{diagnostic: diagnostic}
 	}
 	switch run.Status {
-	case proc.StatusDead:
+	case proc.StatusCompleted, proc.StatusFailed, proc.StatusDead:
 		if _, err := fmt.Fprintf(stdout, "run %s exited after %dms\n", run.Tag, run.DurationMS); err != nil {
 			return 1, fmt.Errorf("kb-runner wait: write output: %w", err)
 		}
@@ -594,6 +737,25 @@ func renderWaitOutcome(run proc.RunInfo, state string, stdout io.Writer, executa
 
 type waitDiagnosticError struct {
 	diagnostic *diag.Diag
+}
+
+func olderEventFormatDiagnostic(root runnerRoot, state string, err error) error {
+	var oldFormat *proc.OlderEventFormatError
+	if !errors.As(err, &oldFormat) {
+		return nil
+	}
+	entry, ok := diag.LookupCatalog("KB_RUNTIME_INPUT_INVALID")
+	if !ok {
+		return errors.New("kb-runner state diagnostic is missing from the platform catalog")
+	}
+	rotated := state + ".pre-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+	next := fmt.Sprintf("mv %s %s && mkdir %s", shellQuote(state), shellQuote(rotated), shellQuote(state))
+	diagnostic := diag.New(entry.Code, entry.Message,
+		diag.WithReason(err.Error()),
+		diag.WithHint("Drain all keepers, then rotate the state directory.\nnext: "+next),
+		diag.WithBinary(root.InvocationCommand()),
+	)
+	return waitDiagnosticError{diagnostic: diagnostic}
 }
 
 func (err waitDiagnosticError) Error() string {
@@ -726,6 +888,11 @@ func gcCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	if *state == "" {
 		return 2, fmt.Errorf("%s gc: --state is required; next: %s gc --help", root.Name(), root.InvocationCommand())
 	}
+	resolvedState, err := resolveRunnerState(root, "gc", *state)
+	if err != nil {
+		return 2, err
+	}
+	*state = resolvedState
 	outcomes, err := proc.GarbageCollect(*state)
 	if err != nil {
 		return 1, fmt.Errorf("%s gc: cleanup failed: %w\nnext: %s ps --state %s --leftovers", root.Name(), err, root.InvocationCommand(), shellQuote(*state))

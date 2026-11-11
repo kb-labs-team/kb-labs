@@ -1,6 +1,8 @@
 package contracts
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
@@ -31,7 +33,7 @@ type Artifact struct {
 	// Registry names the discovery kind ("plugin" or "adapter") of an artifact
 	// that is installed under another Kind, e.g. a platform member that is also
 	// a catalog plugin/adapter. Empty for artifacts that are not registry entities.
-	Registry   string              `json:"registry,omitempty"`
+	Registry   string             `json:"registry,omitempty"`
 	Provenance ArtifactProvenance `json:"provenance"`
 }
 
@@ -39,6 +41,27 @@ type ArtifactProvenance struct {
 	SourceRevision string `json:"sourceRevision"`
 	Integrity      string `json:"integrity"`
 	DistSHA256     string `json:"distSha256"`
+	ContentScope   string `json:"contentScope"`
+	PackageSHA256  string `json:"packageSha256,omitempty"`
+}
+
+const (
+	ProvenanceScopeDist    = "dist"
+	ProvenanceScopePackage = "package"
+)
+
+// HasContentDigest accepts only the provenance shape produced by the sealer:
+// a compiled package records a dist digest, while a static package records a
+// whole-package digest.
+func (p ArtifactProvenance) HasContentDigest() bool {
+	switch p.ContentScope {
+	case ProvenanceScopeDist:
+		return p.DistSHA256 != "" && p.PackageSHA256 == ""
+	case ProvenanceScopePackage:
+		return p.PackageSHA256 != "" && p.DistSHA256 == ""
+	default:
+		return false
+	}
 }
 
 // Identity is the single installed-unit identity shared by plan producers and
@@ -89,6 +112,19 @@ func ValidateArtifactIdentities(artifacts []Artifact) error {
 // installed package with a manifest projection.
 func (a Artifact) IsBinary() bool { return a.Kind == "binary" }
 
+// IsFetchBinary rejects kinds outside the release artifact contract.
+func (a Artifact) IsFetchBinary() (bool, error) {
+	if a.IsBinary() {
+		return true, nil
+	}
+	switch a.Kind {
+	case "platform", "platform-member", "sdk", "plugin", "adapter":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unknown artifact kind %q", a.Kind)
+	}
+}
+
 type Service struct {
 	ID          string   `json:"id"`
 	Command     string   `json:"command"`
@@ -116,8 +152,11 @@ type ProviderBinding struct {
 // re-resolve versions or discover unplanned services.
 type ResolvedInstallPlan struct {
 	Schema           string            `json:"schema"`
+	BinarySource     string            `json:"binarySource,omitempty"`
+	Registry         string            `json:"registry,omitempty"`
 	Request          InstallRequest    `json:"request"`
 	Artifacts        []Artifact        `json:"artifacts"`
+	ReleaseCatalog   json.RawMessage   `json:"releaseCatalog"`
 	ServiceGraph     ServiceGraph      `json:"serviceGraph"`
 	PlatformChannel  string            `json:"platformChannel"`
 	ProviderBindings []ProviderBinding `json:"providerBindings,omitempty"`
@@ -183,17 +222,18 @@ type Verification struct {
 // InstallReceipt is written only after the renderer and verifier succeed.
 // It is the authoritative input for update, doctor and rollback.
 type InstallReceipt struct {
-	Schema               string              `json:"schema"`
-	ID                   string              `json:"id"`
-	InstallationID       string              `json:"installationId"`
-	ProjectSelectedPath  string              `json:"projectSelectedPath,omitempty"`
-	ProjectID            string              `json:"projectId,omitempty"`
-	ProjectCanonicalPath string              `json:"projectCanonicalPath,omitempty"`
-	CreatedAt            time.Time           `json:"createdAt"`
-	CorrelationID        string              `json:"correlationId"`
-	Plan                 ResolvedInstallPlan `json:"plan"`
-	Verification         Verification        `json:"verification"`
-	SnapshotID           string              `json:"snapshotId,omitempty"`
+	Schema               string                     `json:"schema"`
+	ID                   string                     `json:"id"`
+	InstallationID       string                     `json:"installationId"`
+	ProjectSelectedPath  string                     `json:"projectSelectedPath,omitempty"`
+	ProjectID            string                     `json:"projectId,omitempty"`
+	ProjectCanonicalPath string                     `json:"projectCanonicalPath,omitempty"`
+	CreatedAt            time.Time                  `json:"createdAt"`
+	CorrelationID        string                     `json:"correlationId"`
+	Plan                 ResolvedInstallPlan        `json:"plan"`
+	Verification         Verification               `json:"verification"`
+	MarketplaceInstalls  []MarketplaceInstallRecord `json:"marketplaceInstalls,omitempty"`
+	SnapshotID           string                     `json:"snapshotId,omitempty"`
 }
 
 type Snapshot struct {

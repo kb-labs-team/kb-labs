@@ -808,8 +808,8 @@ export function resolvePluginBasePath(
   const basePath = declaredBasePath || (surface === "ws"
     ? `/v1/ws/plugins/${manifest.id}`
     : `/plugins/${manifest.id}`);
-  if (basePath.startsWith("/api/")) return basePath;
-  if (basePath.startsWith("/v1/")) return basePath.replace(/^\/v1/, configBase);
+  if (basePath.startsWith("/api/")) {return basePath;}
+  if (basePath.startsWith("/v1/")) {return basePath.replace(/^\/v1/, configBase);}
   return `${configBase}${basePath.startsWith("/") ? "" : "/"}${basePath}`;
 }
 
@@ -959,8 +959,42 @@ export interface ServiceManifest {
   /** Public URL identity and internal mount for a project-scoped service. */
   projectApi?: ProjectServiceApiDeclaration;
 
+  /** Commands exposed by this service through project MCP. */
+  commands?: ServiceCommandDeclaration[];
+
   /** Environment variables required/supported */
   env?: Record<string, ServiceEnvVar>;
+}
+
+/** A service-owned command contract consumed by CLI and project MCP. */
+export type ServiceCommandDeclaration = ServiceCommandMetadata & (
+  | { kind: "local" }
+  | {
+      kind: "service";
+      route: ServiceCommandRouteDeclaration;
+    }
+);
+
+export type ServiceCommandRouteDeclaration = {
+  method: "GET" | "DELETE";
+  path: string;
+  mount: "project-api" | "service-root";
+  body?: never;
+} | {
+  method: "POST" | "PUT" | "PATCH";
+  path: string;
+  mount: "project-api" | "service-root";
+  body?: true;
+};
+
+interface ServiceCommandMetadata {
+  name: string;
+  description: string;
+  flags: Record<string, { type: "string" | "boolean" | "number" | "array"; description?: string; required?: boolean }>;
+  scope: "project" | "global";
+  jsonTest: { safeArgs?: string[]; noSafeValidPath?: string };
+  category: string;
+  examples?: string[];
 }
 
 export interface ProjectServiceApiDeclaration {

@@ -1,13 +1,13 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readPlatformReleaseConfig } from './platform-release-config.mjs';
-import { invokePackageProvenanceOwner } from '../../../e2e/platform/package-provenance.mjs';
-import { isPlatformPackage } from '../../../core/plugin-runtime/src/platform-resolve/platform-package.js';
+import { readPlatformReleaseConfig, releaseArtifactPackageNames } from './platform-release-config.mjs';
+import { invokePackageProvenanceOwner } from './package-provenance.mjs';
+import { isPlatformPackage } from '@kb-labs/plugin-runtime';
 
 const script = new URL('./prepare-release-index.mjs', import.meta.url);
 const temporaryRoots = new Set();
@@ -36,64 +36,6 @@ test('dropping the provenance manifest refuses release-index production', () => 
   assert.equal(existsSync(join(root, 'release-index.json')), false);
 });
 
-// case: S-054.16
-test('seals the SDK runtime peer declared by its installed package contract', () => {
-  const root = temporaryRoot('kb-release-index-sdk-runtime-peer-');
-  const stage = join(root, 'stage');
-  const packageRoot = join(root, 'packages');
-  mkdirSync(stage, { recursive: true });
-  const sdkPeer = '@kb-labs/shared-command-kit';
-  const helperPeer = '@kb-labs/shared-testing';
-  const artifacts = [
-    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', {
-      peerDependencies: {
-        '@kb-labs/core-runtime': '^2.0.0',
-        [sdkPeer]: '^2.0.0',
-        [helperPeer]: '^2.0.0',
-      },
-      peerDependenciesMeta: { [helperPeer]: { optional: true } },
-    }),
-    packageArtifact(root, packageRoot, stage, sdkPeer, '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, helperPeer, '2.0.0', ''),
-  ];
-  writeStageManifest(root, packageRoot, stage, artifacts);
-  const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
-  const output = join(root, 'release-index.json');
-  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage),
-    '--binary-manifest', binaryManifest, '--output', output], { stdio: 'pipe' });
-  const members = JSON.parse(readFileSync(output, 'utf8')).platforms[0].members.map(member => member.package);
-  assert.ok(members.includes(sdkPeer), `${sdkPeer} is a required SDK peer`);
-  assert.ok(!members.includes(helperPeer), `${helperPeer} is an optional SDK peer`);
-});
-
-// case: S-054.16
-test('does not seal optional SDK peer packages', () => {
-  const root = temporaryRoot('kb-release-index-optional-runtime-import-');
-  const stage = join(root, 'stage');
-  const packageRoot = join(root, 'packages');
-  mkdirSync(stage, { recursive: true });
-  const artifacts = [
-    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', {
-      peerDependencies: { '@kb-labs/core-runtime': '^2.0.0', '@kb-labs/shared-testing': '^2.0.0' },
-      peerDependenciesMeta: { '@kb-labs/shared-testing': { optional: true } },
-    }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/shared-testing', '2.0.0', ''),
-  ];
-  writeStageManifest(root, packageRoot, stage, artifacts);
-  const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
-  const output = join(root, 'release-index.json');
-  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage),
-    '--binary-manifest', binaryManifest, '--output', output], { stdio: 'pipe' });
-  const members = JSON.parse(readFileSync(output, 'utf8')).platforms[0].members.map(member => member.package);
-  assert.ok(!members.includes('@kb-labs/shared-testing'));
-});
-
 test('prepares a sealed index from staged plugin, service and adapter manifests', () => {
   const root = temporaryRoot('kb-release-index-');
   const stage = join(root, 'stage');
@@ -102,12 +44,13 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-contracts', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/scaffold', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/commit-entry', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0', platform: { requires: ['cache'] } })),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/commit', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0', platform: { requires: ['cache'] } })),
     // The package name doesn't follow the "-entry" convention, so the catalog
     // ID must come from the manifest's own id, not a package-name heuristic.
-    packageArtifact(root, packageRoot, stage, '@kb-labs/release-manager-cli', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/release', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })),
     packageArtifact(root, packageRoot, stage, '@kb-labs/workflow-daemon', '2.0.0', '{"schema":"kb.service/1","id":"workflow","runtime":{"port":7778,"healthCheck":"/health"}}', { bin: { 'kb-workflow': './dist/index.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-pino', '2.0.0', '{"schema":"kb.adapter/1","id":"pino-logger","implements":["ILogger"],"defaultFor":{"logger":[] }}'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-service-transport-http', '2.0.0', '{"schema":"kb.adapter/1","id":"service-transport-http","implements":["IServiceTransport"]}'),
@@ -118,7 +61,9 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
-  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","kvStore":"@kb-labs/adapters-sqlite/kv","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}},"llm":{"apiKey":"${OPENAI_API_KEY}"}}', '--platform-member-packages', '@kb-labs/core-contracts,@kb-labs/release-manager-cli', '--release-notes', 'Candidate release notes from the journey fixture.', '--output', output], { stdio: 'pipe' });
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","kvStore":"@kb-labs/adapters-sqlite/kv","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}},"llm":{"apiKey":"${OPENAI_API_KEY}"}}', '--platform-member-packages', '@kb-labs/core-contracts,@kb-labs/scaffold,@kb-labs/release', '--release-notes', 'Candidate release notes from the journey fixture.', '--output', output], { stdio: 'pipe' });
+  assert.equal(existsSync(join(stage, 'v2-manifest-root')), false, 'release-index inspection files must stay out of the staged npm artifact directory');
+  assert.equal(existsSync(join(stage, 'manifest-export.json')), false, 'release-index input files must stay out of the staged npm artifact directory');
   const index = JSON.parse(readFileSync(output, 'utf8'));
   assert.equal(index.schema, 'kb.create.release-index/v2');
   assert.equal(index.compatibility.schema, 'kb.release-compatibility/2');
@@ -133,7 +78,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   assert.equal(index.platforms[0].releaseNotes, 'Candidate release notes from the journey fixture.');
   assert.ok(index.platforms[0].sizeBytes > 0, 'platform bundle must carry its sealed tarball size');
   assert.equal(index.plugins[0].id, '@kb-labs/commit');
-  assert.equal(index.plugins.find(p => p.package === '@kb-labs/release-manager-cli')?.id, '@kb-labs/release');
+  assert.equal(index.plugins.find(p => p.package === '@kb-labs/release')?.id, '@kb-labs/release');
   // The launcher runs the platform as one host process; the index must say how.
   assert.deepEqual(index.platforms[0].host, {
     command: 'node_modules/.bin/kb-host',
@@ -154,17 +99,19 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   assert.deepEqual(index.platforms[0].config, [
     { id: 'platform.adapters', path: '/platform/adapters', default: '{"serviceTransport":"@kb-labs/adapters-service-transport-http"}' },
     { id: 'platform.adapterOptions', path: '/platform/adapterOptions', default: '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}}}' },
+    { id: 'marketplace.sources', path: '/marketplace/sources', default: '[{"kind":"npm","url":"https://registry.npmjs.org"}]' },
   ]);
-  assert.deepEqual(index.platforms[0].members.map(({ package: packageName }) => packageName), ['@kb-labs/workflow-daemon', '@kb-labs/host-app', '@kb-labs/core-contracts', '@kb-labs/release-manager-cli', '@kb-labs/adapters-service-transport-http', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-openai']);
+  assert.deepEqual(index.platforms[0].members.map(({ package: packageName }) => packageName), ['@kb-labs/workflow-daemon', '@kb-labs/host-app', '@kb-labs/core-contracts', '@kb-labs/scaffold', '@kb-labs/release', '@kb-labs/adapters-service-transport-http', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-openai']);
   // Regression coverage for the members[]-id divergence bug: this array used
   // to re-derive each member's catalog id from its package name (falling
   // back to idFor() whenever the package wasn't a staged service or adapter),
   // instead of reusing the same normalizedID already written into that
-  // package's own kb-create.manifest.json. For @kb-labs/release-manager-cli
+  // package's own kb-create.manifest.json. For @kb-labs/release
   // that produced "release-manager-cli" here but "release" in the shipped
   // manifest file, so installed.Load()'s id equality check failed at publish
   // time with a misleading "does not match resolved artifact" error.
-  assert.equal(index.platforms[0].members.find(m => m.package === '@kb-labs/release-manager-cli')?.id, '@kb-labs/release');
+  assert.equal(index.platforms[0].members.find(m => m.package === '@kb-labs/release')?.id, '@kb-labs/release');
+  assert.equal(index.plugins.some(plugin => plugin.package === '@kb-labs/scaffold'), false);
   assert.ok(index.platforms[0].members.every(member => member.sizeBytes > 0), 'members must carry their sealed tarball sizes');
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'pino-logger')?.provides, ['logger']);
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'pino-logger')?.defaultFor, ['logger']);
@@ -179,7 +126,8 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'sqlite-stores')?.provides, ['documentDatabase', 'kvStore']);
 });
 
-test('seals SDK runtime peers declared by the workspace package contract', () => {
+// case: S-214.12
+test('seals the runtime range from the packed workspace SDK contract', () => {
   const workspaceRoot = fileURLToPath(new URL('../../../', import.meta.url));
   const root = temporaryRoot('kb-release-index-workspace-artifacts-');
   const stage = join(root, 'stage');
@@ -190,11 +138,15 @@ test('seals SDK runtime peers declared by the workspace package contract', () =>
     JSON.parse(readFileSync(join(pkg.path, 'package.json'), 'utf8')).name,
     pkg,
   ]));
+  const releaseConfig = readPlatformReleaseConfig(join(workspaceRoot, 'tools/kb-create/config/platform-release.jsonc'));
+  const registryManifest = JSON.parse(readFileSync(join(workspaceRoot, 'e2e/platform/registry-manifest.json'), 'utf8'));
+  const releasePackageNames = new Set(releaseArtifactPackageNames(registryManifest, releaseConfig.platformMembers));
   const builtManifests = [];
   for (const workspacePackage of workspacePackages) {
     const relativePackagePath = relative(workspaceRoot, workspacePackage.path);
     if (!relativePackagePath.startsWith('adapters/') && !relativePackagePath.startsWith('services/')) continue;
     const packageJSON = JSON.parse(readFileSync(join(workspacePackage.path, 'package.json'), 'utf8'));
+    if (!releasePackageNames.has(packageJSON.name)) continue;
     if (!packageJSON.kb?.manifest && !packageJSON.kb?.adapter?.manifest) continue;
     const builtManifestPath = join(workspacePackage.path, 'dist', 'manifest.json');
     assert.ok(
@@ -206,22 +158,20 @@ test('seals SDK runtime peers declared by the workspace package contract', () =>
   }
   const sdkWorkspace = workspaceByName.get('@kb-labs/sdk');
   assert.ok(sdkWorkspace, 'the workspace must include the published SDK package');
-  const sdkPackageJSON = JSON.parse(readFileSync(join(sdkWorkspace.path, 'package.json'), 'utf8'));
-  const sdkRequiredPeers = Object.keys(sdkPackageJSON.peerDependencies ?? {}).filter(name =>
-    sdkPackageJSON.peerDependenciesMeta?.[name]?.optional !== true);
-  const releaseConfig = readPlatformReleaseConfig(join(workspaceRoot, '.kb/kb.config.jsonc'));
-  const registryManifest = JSON.parse(readFileSync(join(workspaceRoot, 'e2e/platform/registry-manifest.json'), 'utf8'));
+  const sdkArtifact = packedWorkspacePackageArtifact(root, stage, sdkWorkspace.path);
+  const sdkPackageJSON = sdkArtifact.packageJSON;
+  const sdkRequiredDependencies = Object.keys(sdkPackageJSON.dependencies ?? {});
   const version = JSON.parse(readFileSync(join(workspaceRoot, 'core/runtime/package.json'), 'utf8')).version;
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', version, ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', version, '', { bin: { 'kb-host': './dist/bin.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/commit-entry', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0' })),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/release-manager-cli', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/commit', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0' })),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/release', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })),
     ...builtManifests.map(({ packageJSON, manifest }) => packageArtifact(
       root, packageRoot, stage, packageJSON.name, '2.0.0', JSON.stringify(manifest),
       packageJSON.bin ? { bin: packageJSON.bin } : {},
     )),
-    packageArtifact(root, packageRoot, stage, sdkPackageJSON.name, sdkPackageJSON.version, '', sdkPackageJSON),
+    sdkArtifact.artifact,
   ];
   const artifactNames = new Set(artifacts.map(artifact => artifact.name));
   const candidatePackageNames = new Set([
@@ -264,7 +214,7 @@ test('seals SDK runtime peers declared by the workspace package contract', () =>
     artifactNames.add(packageName);
   }
   const stagedNames = new Set(artifacts.map(artifact => artifact.name));
-  for (const packageName of sdkRequiredPeers) {
+  for (const packageName of sdkRequiredDependencies) {
     if (!packageName.startsWith('@kb-labs/')) continue;
     if (stagedNames.has(packageName)) continue;
     const workspacePackage = workspaceByName.get(packageName);
@@ -303,9 +253,11 @@ test('seals SDK runtime peers declared by the workspace package contract', () =>
   assert.deepEqual(index.platforms[0].profiles.default.services.map(item => item.id).sort(), expectedServices);
   assert.deepEqual(index.adapters.map(item => item.id).sort(), expectedAdapters);
 
-  const sealedMembers = new Set([index.platforms[0].package,
-    ...index.platforms[0].members.map(member => member.package)]);
-  for (const peer of sdkRequiredPeers) assert.ok(sealedMembers.has(peer), `SDK required peer ${peer} must be available in the sealed platform`);
+  const platformLabel = index.compatibility.labels.find(label => label.kind === 'platform');
+  assert.deepEqual(platformLabel?.requires, [{
+    label: `sdk@${sdkPackageJSON.version}`,
+    constraint: sdkPackageJSON.dependencies['@kb-labs/core-runtime'],
+  }]);
 });
 
 test('filesystem adapter contributes the project storage directory default to the release index', () => {
@@ -321,7 +273,7 @@ test('filesystem adapter contributes the project storage directory default to th
   };
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-fs', '2.0.0', '{"schema":"kb.adapter/1","id":"fs-storage","implements":"IStorage","defaultFor":{"storage":[] }}', {}, {
       'kb-create.requirements.json': JSON.stringify({ schema: 'kb.create.requirements/v1', requirements: [requirement] }),
@@ -347,7 +299,7 @@ test('fails closed when a configured platform adapter is not staged', () => {
   mkdirSync(stage, { recursive: true });
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
@@ -358,6 +310,27 @@ test('fails closed when a configured platform adapter is not staged', () => {
   assert.match(`${result.stdout}\n${result.stderr}`, /configured platform adapter @kb-labs\/adapters-redis is absent/);
 });
 
+// case: S-214.12
+test('derives the platform compatibility range from the SDK runtime dependency', () => {
+  const root = temporaryRoot('kb-release-index-sdk-runtime-dependency-');
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
+  ];
+  writeStageManifest(root, packageRoot, stage, artifacts);
+  const binaryManifest = join(root, 'binary-manifest.json');
+  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  const output = join(root, 'release-index.json');
+  const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--output', output], { encoding: 'utf8' });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const index = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(index.compatibility.labels[0].requires, [{ label: 'sdk@2.0.0', constraint: '^2.0.0' }]);
+});
+
 test('records the SDK and platform versions without a second range compatibility gate', () => {
   const root = temporaryRoot('kb-release-index-incompatible-');
   const stage = join(root, 'stage');
@@ -365,7 +338,7 @@ test('records the SDK and platform versions without a second range compatibility
   mkdirSync(stage, { recursive: true });
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.155.2', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.155.2', '', { peerDependencies: { '@kb-labs/core-runtime': '<2.150.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.155.2', '', { dependencies: { '@kb-labs/core-runtime': '<2.150.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.155.2', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
@@ -382,7 +355,7 @@ test('records the SDK and platform versions without a second range compatibility
     version: '2.155.2',
     requires: [{ label: 'sdk@2.155.2', constraint: '<2.150.0' }],
     status: 'prepared',
-    validatedBy: ['stage', 'package-manifest', 'artifact-hash', 'sdk-peer-dependency'],
+    validatedBy: ['stage', 'package-manifest', 'artifact-hash', 'sdk-runtime-dependency'],
   });
 });
 
@@ -394,15 +367,16 @@ test('each staged plugin must have its declared platform peers provided by the p
   mkdirSync(stage, { recursive: true });
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/cli-bin', '2.0.0', '', { dependencies: { '@kb-labs/cli-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/cli-bin', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/workflow-entry', '2.0.0', '', {
       peerDependencies: { '@kb-labs/cli-runtime': '^2.0.0' },
     }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/marketplace-plugin', '2.0.0', '', {
       peerDependencies: { '@kb-labs/cli-runtime': '^2.0.0' },
     }, { 'dist/manifest.json': JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/marketplace-plugin', version: '2.0.0' }) }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/cli-runtime', '2.0.0', ''),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
@@ -415,8 +389,7 @@ test('each staged plugin must have its declared platform peers provided by the p
   assert.notEqual(missingPeer.status, 0);
   assert.match(`${missingPeer.stdout}\n${missingPeer.stderr}`, /declares platform peer @kb-labs\/cli-runtime, which the platform package graph does not provide/);
 
-  artifacts.push(packageArtifact(root, packageRoot, stage, '@kb-labs/cli-runtime', '2.0.0', ''));
-  writeStageManifest(root, packageRoot, stage, artifacts);
+  args[args.indexOf('--platform-member-packages') + 1] = '@kb-labs/cli-bin,@kb-labs/workflow-entry,@kb-labs/cli-runtime';
   const providedPeer = spawnSync(process.execPath, args, { encoding: 'utf8' });
   assert.equal(providedPeer.status, 0, `${providedPeer.stdout}\n${providedPeer.stderr}`);
 });
@@ -428,7 +401,7 @@ test('fails closed when a required platform member was not staged', () => {
   mkdirSync(stage, { recursive: true });
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
@@ -446,7 +419,7 @@ test('reads the structured service port from the emitted manifest artifact', () 
   mkdirSync(stage, { recursive: true });
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
     // The JSON artifact preserves the declared numeric port independently of
     // how the corresponding JavaScript bundle is minified.
@@ -475,11 +448,11 @@ function provenanceArgs(stage) {
 function writeStageManifest(root, packageRoot, stage, artifacts) {
   const staged = [...artifacts];
   const packages = new Set(staged.map(item => item.name));
-  if (!packages.has('@kb-labs/commit-entry')) {
-    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/commit-entry', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0', platform: { requires: ['cache'] } })));
+  if (!packages.has('@kb-labs/commit')) {
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/commit', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0', platform: { requires: ['cache'] } })));
   }
-  if (!packages.has('@kb-labs/release-manager-cli')) {
-    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/release-manager-cli', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })));
+  if (!packages.has('@kb-labs/release')) {
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/release', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })));
   }
   if (!packages.has('@kb-labs/adapters-state-broker')) {
     staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-state-broker', '2.0.0', '{"schema":"kb.adapter/1","id":"state-broker","implements":"ICache","defaultFor":{"cache":[] }}'));
@@ -494,6 +467,23 @@ function writeStageManifest(root, packageRoot, stage, artifacts) {
     staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/gateway-app', '2.0.0', '{"schema":"kb.service/1","id":"gateway","runtime":{"port":4000,"healthCheck":"/health"}}', { bin: { 'gateway-app': './dist/index.js' } }));
   }
   writeFileSync(join(stage, 'manifest.json'), JSON.stringify(staged));
+}
+
+function packedWorkspacePackageArtifact(root, stage, packageDirectory) {
+  const packedDirectory = join(root, 'packed');
+  mkdirSync(packedDirectory, { recursive: true });
+  execFileSync('pnpm', ['pack', '--pack-destination', packedDirectory, '--silent'], { cwd: packageDirectory, stdio: 'pipe' });
+  const [packedPath] = readdirSync(packedDirectory).filter(name => name.endsWith('.tgz'));
+  assert.ok(packedPath, `pnpm pack produced no package for ${packageDirectory}`);
+  const source = join(packedDirectory, packedPath);
+  const tarball = join(stage, packedPath);
+  copyFileSync(source, tarball);
+  const packageJSON = JSON.parse(execFileSync('tar', ['-xOzf', source, 'package/package.json'], { encoding: 'utf8' }));
+  const sha256 = execFileSync('shasum', ['-a', '256', tarball], { encoding: 'utf8' }).split(' ')[0];
+  return {
+    artifact: { name: packageJSON.name, version: packageJSON.version, tarball: packedPath, sha256 },
+    packageJSON,
+  };
 }
 
 function packageArtifact(root, packageRoot, stage, name, version, manifest, extra = {}, files = {}) {
@@ -531,7 +521,7 @@ test('the default platform.adapters baseline keeps the credential-free logger an
   mkdirSync(stage, { recursive: true });
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/workflow-daemon', '2.0.0', '{"schema":"kb.service/1","id":"workflow","runtime":{"port":7778,"healthCheck":"/health"}}', { bin: { 'kb-workflow': './dist/index.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-pino', '2.0.0', '{"schema":"kb.adapter/1","id":"pino-logger","implements":["ILogger"]}'),
@@ -562,7 +552,7 @@ test('the release index requires and binds the persistent fresh-install defaults
   mkdirSync(stage, { recursive: true });
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-fs', '2.0.0', '{"schema":"kb.adapter/1","id":"fs","implements":"IStorage","defaultFor":{"storage":[] }}'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-state-broker', '2.0.0', '{"schema":"kb.adapter/1","id":"state-broker","implements":"ICache","defaultFor":{"cache":[] }}'),
@@ -612,7 +602,7 @@ function prepareWithGateway(files) {
   mkdirSync(stage, { recursive: true });
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/gateway-app', '2.0.0', GATEWAY_MANIFEST, { bin: { 'gateway-app': './dist/index.js' } }, files),
   ];
@@ -733,7 +723,7 @@ function versionFixture(prefix, sdkVersion) {
   mkdirSync(stage, { recursive: true });
   writeStageManifest(root, packageRoot, stage, [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', sdkVersion, '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', sdkVersion, '', { dependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
   ]);
   const binaryManifest = join(root, 'binary-manifest.json');
@@ -751,7 +741,7 @@ test('fails preparation when a staged package declares a manifest but lacks the 
   mkdirSync(stage, { recursive: true });
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-missing-artifact', '2.0.0', '', { kb: { adapter: { manifest: './dist/manifest.js' } } }),
   ];
@@ -782,7 +772,7 @@ test('writes minLauncherVersion on the platform entry only when requested', () =
   const withMinimum = spawnSync(process.execPath, [...base, '--min-launcher-version', '2.0.0'], { encoding: 'utf8' });
   assert.notEqual(withMinimum.status, 0);
   assert.match(JSON.parse(withMinimum.stderr.split('\n')[0]).error.cause, /Launcher version \"\" is not a valid semantic version/);
-  const exported = JSON.parse(readFileSync(join(base[base.indexOf('--artifacts-dir') + 1], 'manifest-export.json'), 'utf8'));
+  const exported = JSON.parse(readFileSync(join(dirname(output), 'manifest-export.json'), 'utf8'));
   assert.equal(exported.platforms[0].minLauncherVersion, '2.0.0');
 });
 
@@ -819,7 +809,7 @@ function hostFixture(hostExtra) {
   mkdirSync(stage, { recursive: true });
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { dependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     ...(hostExtra ? [packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', hostExtra)] : []),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);

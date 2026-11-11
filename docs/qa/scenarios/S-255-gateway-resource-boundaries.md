@@ -1,6 +1,6 @@
 ---
 id: S-255
-title: Gateway — enforce configured resource limits and project boundaries
+title: Gateway — enforce secured access, resource limits, and project boundaries
 persona: platform-admin
 area: gateway
 priority: P1
@@ -12,13 +12,14 @@ surfaces: [api]
 
 ## Goal
 
-Confirm that authenticated Gateway traffic is rate-limited by its configured resource and tenant limits, bounded telemetry batches are enforced, and project-scoped requests cannot read another project's resources.
+Confirm that secured Gateway access boundaries are enforced, authenticated traffic is limited by its configured resource and tenant limits, bounded telemetry batches are enforced, and project-scoped requests cannot read another project's resources.
 
 ## Prerequisites
 
 - [ ] A running Gateway with a deterministic test pressure configuration: the selected route's limit and per-tenant limit are enabled and low enough to exceed with a fixed request batch.
 - [ ] Two registered projects with distinct test resources and credentials for each project.
 - [ ] An analytics adapter and valid telemetry fixtures.
+- [ ] A declared webhook route, a protected MCP route, and a registry fixture with public and private package metadata.
 
 ## Steps
 
@@ -30,6 +31,10 @@ Confirm that authenticated Gateway traffic is rate-limited by its configured res
 | S-255.4 | Send the same project resource request without credentials in secured mode | Gateway returns HTTP 401 with the catalogued `KB_AUTH_REQUIRED` envelope before the project service is reached. |
 | S-255.5 | Send a request whose body is larger than the Gateway's explicit default byte limit of 1 MiB | Gateway rejects it with HTTP 413 and error code `KB_RUNTIME_PAYLOAD_TOO_LARGE` before forwarding it; the error message and hint identify the enforced 1 MiB limit. |
 | S-255.6 | Send a body below the 1 MiB Gateway default but above a lower limit declared by the target route schema | The route rejects the request under its lower schema limit; the shared Gateway default remains the upper byte bound. |
+| S-255.7 | In secured mode, send an anonymous request to `GET /api/v1/studio/registry`, `GET /api/v1/projects/$PROJECT_ID/workflow/health`, and `POST /api/v1/projects/$PROJECT_ID/mcp` | Each request stops at the gateway and returns HTTP 401 with the `KB_AUTH_REQUIRED` catalog envelope; the service, project runtime, or MCP tool handler is not reached. |
+| S-255.8 | In secured mode, send a declared webhook request with its valid manifest-configured signature, then send it with a missing or invalid signature; also send an unsigned request to an undeclared `/webhooks/...` path | The declared valid request reaches its webhook handler without a user session. Missing/invalid signatures return HTTP 401 with the `KB_AUTH_REQUIRED` catalog envelope before the handler runs. An undeclared path cannot bypass the gateway gate by resembling a webhook route. |
+| S-255.9 | In secured mode, send `OPTIONS /api/v1/mcp` with `Origin` and `Access-Control-Request-Method: POST`, then send an OPTIONS request without `Access-Control-Request-Method` to a protected route | The CORS preflight gets only the configured CORS response, without dispatching to a session, tool, service or plugin handler. An ordinary OPTIONS request remains behind the auth gate and returns HTTP 401 with the `KB_AUTH_REQUIRED` envelope. |
+| S-255.10 | Through the Gateway, request the registry package list, public package metadata, and package stats anonymously, then request private package metadata anonymously and as an authenticated caller with access | Public catalog reads remain available without a user session. Private package access is decided by the registry's `canAccess`: anonymous callers receive 403, and an authenticated caller's forwarded namespace is used for the access decision. |
 
 ## Decision note
 

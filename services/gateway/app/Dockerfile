@@ -9,10 +9,10 @@ RUN addgroup --system --gid 1001 nodejs && \
 # deploy/ produced on CI by: pnpm deploy --filter @kb-labs/gateway-app --prod .kb/deploy/gateway-app
 COPY --chown=kb:nodejs .kb/deploy/gateway-app/node_modules ./node_modules
 COPY --chown=kb:nodejs .kb/deploy/gateway-app/dist ./dist
+COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json
 
-# Composition is deliberately absent from the release image. kb-create writes
-# the user's explicit config and lock into their derived image; the entrypoint
-# refuses to boot without both files.
+# The release composition declares cloud topology. Helm and kb-create provide
+# their own topology through their mounted configuration.
 COPY --chown=kb:nodejs services/gateway/app/docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN mkdir -p .kb/data && chown -R kb:nodejs .kb && \

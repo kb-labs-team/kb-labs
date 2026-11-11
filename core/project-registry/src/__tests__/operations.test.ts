@@ -42,8 +42,8 @@ describe('addProject', () => {
     expect(existsSync(join(dir, '.kb'))).toBe(true);
     expect(readdirSync(dir)).toEqual(filesBefore);
     const listed = await listProjects(registry);
-    expect(listed).toHaveLength(1);
-    expect(listed[0]!.path).toBe(dir);
+    expect(listed.projects).toHaveLength(1);
+    expect(listed.projects[0]!.path).toBe(dir);
   });
 
   it('registers a folder without .kb/ and does not modify it', async () => {
@@ -59,7 +59,7 @@ describe('addProject', () => {
     }
     expect(existsSync(join(dir, '.kb'))).toBe(false);
     expect(readdirSync(dir)).toEqual(filesBefore);
-    expect(await listProjects(registry)).toHaveLength(1);
+    expect((await listProjects(registry)).projects).toHaveLength(1);
   });
 
   it('dry-run plans registration without writing files', async () => {
@@ -70,7 +70,7 @@ describe('addProject', () => {
 
     expect(outcome.status).toBe('planned');
     expect(existsSync(join(dir, '.kb'))).toBe(false);
-    expect(await listProjects(registry)).toHaveLength(0);
+    expect((await listProjects(registry)).projects).toHaveLength(0);
   });
 
   it('resolves a relative path against the provided cwd', async () => {
@@ -95,7 +95,7 @@ describe('addProject', () => {
 
     expect(duplicate).toMatchObject({ status: 'added', alreadyExisted: true });
     expect(duplicate.project).toEqual(first.project);
-    expect(await listProjects(registry)).toHaveLength(1);
+    expect((await listProjects(registry)).projects).toHaveLength(1);
   });
 
   it('keeps a refusal when a duplicate path requests a different name', async () => {

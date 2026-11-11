@@ -125,10 +125,10 @@ for (const packageRoot of packageRoots) {
       if (!resolvePluginHandlerPath) {
         try {
           const runtimePackage = realpathSync(join(nodeModulesRoot, '@kb-labs', 'core-runtime', 'package.json'));
-          const resolverURL = import.meta.resolve('@kb-labs/core-discovery', pathToFileURL(runtimePackage));
+          const resolverURL = import.meta.resolve('@kb-labs/core-platform', pathToFileURL(runtimePackage));
           resolvePluginHandlerPath = (await import(resolverURL)).resolveCliHandlerPath;
         } catch (error) {
-          throw new Error(`installed runtime handler resolver @kb-labs/core-discovery failed: ${error.message}`);
+          throw new Error(`installed runtime handler resolver @kb-labs/core-platform failed: ${error.message}`);
         }
       }
       const file = resolvePluginHandlerPath(packageRoot, handler);

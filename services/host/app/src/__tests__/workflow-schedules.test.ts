@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { IProjectRegistry, ProjectView } from "@kb-labs/core-contracts";
+import type { ProjectView } from "@kb-labs/core-contracts";
 import { findScheduledProjects } from "../project-runtime/workflow-schedules.js";
 
 describe("findScheduledProjects", () => {
@@ -35,7 +35,7 @@ describe("findScheduledProjects", () => {
       pathExists: true,
       stateDir: join(root, ".state"),
     } as ProjectView;
-    const registry = { list: async () => [view] } as IProjectRegistry;
+    const registry = { list: async () => ({ projects: [view], diagnostics: [] }) };
 
     await expect(findScheduledProjects(registry)).resolves.toMatchObject([
       { id: "prj_test", root, keptRunningSchedules: 2 },

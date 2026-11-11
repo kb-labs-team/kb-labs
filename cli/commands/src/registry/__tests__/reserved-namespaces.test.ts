@@ -63,7 +63,7 @@ describe('Reserved namespaces in registerManifest', () => {
   });
 
   it('tier F: allowed for @kb-labs/* packages', () => {
-    const { cmd, logger } = register('commit', '@kb-labs/commit-cli');
+    const { cmd, logger } = register('commit', '@kb-labs/commit/cli');
     expect(cmd.shadowed).toBe(false);
     expect(logger.warns).toHaveLength(0);
   });

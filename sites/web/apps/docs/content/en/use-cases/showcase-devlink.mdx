@@ -21,22 +21,22 @@ DevLink turns it into one command.
 
 ```bash
 # Switch every cross-repo dep to local link: mode (development)
-pnpm kb devlink switch --mode=local --install
+pnpm kb devlink mode set --mode=local --install
 
 # Switch back to npm versions (before publishing)
-pnpm kb devlink switch --mode=npm
+pnpm kb devlink mode set --mode=npm
 
 # Preview without applying
-pnpm kb devlink switch --mode=local --dry-run
+pnpm kb devlink mode set --mode=local --dry-run
 
 # Limit to specific repos
-pnpm kb devlink switch --mode=npm --repos=kb-labs-cli,kb-labs-core
+pnpm kb devlink mode set --mode=npm --repos=kb-labs-cli,kb-labs-core
 
 # See current state and diagnose drift
 pnpm kb devlink status
 
 # Undo the last switch
-pnpm kb devlink undo
+pnpm kb devlink rollback
 ```
 
 The `--install` flag triggers `pnpm install` at the root and inside each touched sub-repo, so you go from "wrong state" to "working state" in one step.
@@ -55,11 +55,11 @@ devlink:switch
   └─ optional: pnpm install (root + per-repo)
 ```
 
-The backup is the safety net — every switch can be undone with `devlink undo`, which restores `package.json` files and lockfiles from the most recent backup.
+The backup is the safety net — every switch can be undone with `devlink rollback`, which restores `package.json` files and lockfiles from the most recent backup.
 
 ## KB Labs primitives used
 
-From the [manifest](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/devlink/entry/src/manifest.ts), DevLink is the smallest of the four — it barely needs the platform at all:
+From the [manifest](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/devlink/src/manifest.ts), DevLink is the smallest of the four — it barely needs the platform at all:
 
 ```ts
 platform: {
@@ -76,11 +76,11 @@ platform: {
 
 ## What to steal
 
-**Backups before destructive ops.** Every command that modifies files writes a versioned backup first, and `devlink undo` is a first-class command — not a flag. This is the right pattern for any plugin that touches user-owned files: `apply` should be cheap to reverse, and reversing should be one command, not "restore from git".
+**Backups before destructive ops.** Every command that modifies files writes a versioned backup first, and `devlink rollback` is a first-class command — not a flag. This is the right pattern for any plugin that touches user-owned files: `apply` should be cheap to reverse, and reversing should be one command, not "restore from git".
 
 It also shows that **a useful KB Labs plugin doesn't have to use AI**. The platform's value here is pure plumbing: permission scoping, manifest discovery, CLI registration, scoped filesystem access. DevLink is an example of "I had a chore script, I made it a plugin, now everyone on the team has the same command".
 
 ## Going deeper
 
-- [Manifest source](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/devlink/entry/src/manifest.ts)
+- [Manifest source](https://github.com/kb-labs-team/kb-labs/blob/main/plugins/devlink/src/manifest.ts)
 - [Guide: Your First Plugin](/guides/first-plugin) — DevLink is a good "non-AI" template to study

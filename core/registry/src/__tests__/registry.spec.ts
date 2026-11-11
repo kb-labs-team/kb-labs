@@ -66,7 +66,7 @@ describe('EntityRegistry', () => {
   });
 
   it('initializes empty when no lock file', async () => {
-    const registry = new EntityRegistry({ root: tmpDir });
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => 'test' });
     await registry.initialize();
 
     expect(registry.listPlugins()).toEqual([]);
@@ -89,7 +89,7 @@ describe('EntityRegistry', () => {
     });
     await writeMarketplaceLock(tmpDir, lock);
 
-    const registry = new EntityRegistry({ root: tmpDir });
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => 'test' });
     await registry.initialize();
 
     const plugins = registry.listPlugins();
@@ -118,7 +118,7 @@ describe('EntityRegistry', () => {
     });
     await writeMarketplaceLock(tmpDir, lock);
 
-    const registry = new EntityRegistry({ root: tmpDir });
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => 'test' });
     await registry.initialize();
 
     expect(registry.queryEntities({ kind: 'cli-command' })).toHaveLength(2);
@@ -142,7 +142,7 @@ describe('EntityRegistry', () => {
     });
     await writeMarketplaceLock(tmpDir, lock);
 
-    const registry = new EntityRegistry({ root: tmpDir });
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => 'test' });
     await registry.initialize();
 
     const entity = registry.getEntity({
@@ -171,11 +171,11 @@ describe('EntityRegistry', () => {
     });
     await writeMarketplaceLock(tmpDir, lock);
 
-    const registry = new EntityRegistry({ root: tmpDir });
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => 'test' });
     await registry.initialize();
 
     const snap = registry.snapshot();
-    expect(snap.schema).toBe('kb.registry/1');
+    expect(snap.schema).toBe('kb.registry/2');
     expect(snap.plugins).toHaveLength(1);
     expect(snap.manifests).toHaveLength(1);
     expect(snap.partial).toBe(false);
@@ -199,7 +199,7 @@ describe('EntityRegistry', () => {
     });
     await writeMarketplaceLock(tmpDir, lock);
 
-    const registry = new EntityRegistry({ root: tmpDir });
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => 'test' });
     await registry.initialize();
 
     const spec = registry.getOpenAPISpec('@kb-labs/api');
@@ -227,7 +227,7 @@ describe('EntityRegistry', () => {
     }
     await writeMarketplaceLock(tmpDir, lock);
 
-    const registry = new EntityRegistry({ root: tmpDir });
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => 'test' });
     await registry.initialize();
 
     const studioReg = registry.getStudioRegistry();
@@ -249,7 +249,7 @@ describe('EntityRegistry', () => {
     });
     await writeMarketplaceLock(tmpDir, lock);
 
-    const registry = new EntityRegistry({ root: tmpDir });
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => 'test' });
     await registry.initialize();
 
     const report = registry.getDiagnostics();
@@ -261,7 +261,7 @@ describe('EntityRegistry', () => {
   });
 
   it('onChange notifies on refresh', async () => {
-    const registry = new EntityRegistry({ root: tmpDir });
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => 'test' });
     await registry.initialize();
 
     const diffs: unknown[] = [];
@@ -289,7 +289,7 @@ describe('EntityRegistry', () => {
   });
 
   it('getManifest returns null for unknown plugin', async () => {
-    const registry = new EntityRegistry({ root: tmpDir });
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => 'test' });
     await registry.initialize();
     expect(registry.getManifest('@kb-labs/unknown')).toBeNull();
     await registry.dispose();
@@ -298,6 +298,7 @@ describe('EntityRegistry', () => {
   it('adds execution health contributors to the shared snapshot and degrades the aggregate', async () => {
     const registry = new EntityRegistry({
       root: tmpDir,
+      resolvePlatformVersion: async () => 'test',
       healthContributors: [createHealthContributor('execution', async () => ({
         healthy: false,
         executionMode: 'worker-pool',
@@ -312,7 +313,7 @@ describe('EntityRegistry', () => {
   });
 
   it('getSystemHealth returns valid health snapshot', async () => {
-    const registry = new EntityRegistry({ root: tmpDir });
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => 'test' });
     await registry.initialize();
 
     const health = await registry.getSystemHealth({ uptimeSec: 42 });
@@ -322,5 +323,40 @@ describe('EntityRegistry', () => {
     expect(health.status).toBe('healthy');
 
     await registry.dispose();
+  });
+
+  it('uses the platform version owner despite a conflicting KB_LABS_VERSION', async () => {
+    const previousVersion = process.env.KB_LABS_VERSION;
+    process.env.KB_LABS_VERSION = '2.120.1';
+    const registry = new EntityRegistry({ root: tmpDir, resolvePlatformVersion: async () => '2.120.2-cand.d84c8f013160' });
+    try {
+      await registry.initialize();
+      const health = await registry.getSystemHealth();
+      expect(health.version.kbLabs).toBe('2.120.2-cand.d84c8f013160');
+    } finally {
+      await registry.dispose();
+      if (previousVersion === undefined) {delete process.env.KB_LABS_VERSION;}
+      else {process.env.KB_LABS_VERSION = previousVersion;}
+    }
+  });
+
+  it('resolves the platform version only when health reports it', async () => {
+    let calls = 0;
+    const registry = new EntityRegistry({
+      root: tmpDir,
+      resolvePlatformVersion: async () => {
+        calls++;
+        return '2.120.2-cand.d84c8f013160';
+      },
+    });
+    try {
+      await registry.initialize();
+      expect(calls).toBe(0);
+      const health = await registry.getSystemHealth();
+      expect(calls).toBe(1);
+      expect(health.version.kbLabs).toBe('2.120.2-cand.d84c8f013160');
+    } finally {
+      await registry.dispose();
+    }
   });
 });

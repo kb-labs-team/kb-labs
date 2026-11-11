@@ -37,9 +37,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 // ── Content ───────────────────────────────────────────────────────────────────
 
 // i18n-ignore: terminal commands
-const INSTALL_ALL = `kb marketplace install @kb-labs/qa-entry
-kb marketplace install @kb-labs/quality-entry
-kb marketplace install @kb-labs/review-entry`;
+const INSTALL_ALL = `kb marketplace install @kb-labs/qa
+kb marketplace install @kb-labs/quality
+kb marketplace install @kb-labs/review`;
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 

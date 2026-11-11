@@ -47,7 +47,7 @@ Four forms:
 
 ### `builtin:shell`
 
-Runs a shell command via [execa](plugins/workflow/builtins/src/shell.ts). Parameters:
+Runs a shell command via [execa](services/workflow/builtins/src/shell.ts). Parameters:
 
 ```ts
 interface ShellInput {
@@ -228,7 +228,7 @@ Invokes another workflow as a step. Internally this creates a child run and (by 
 }
 ```
 
-Via [`parseWorkflowUses()`](plugins/workflow/contracts/src/expressions.ts), this resolves to `{ type: 'workflow', workflowId: 'security-audit', mode: 'wait', inheritEnv: true }`. The child run's trigger records `parentRunId`, `parentJobId`, `parentStepId`, and `invokedByWorkflowId` so you can trace the call stack.
+Via [`parseWorkflowUses()`](services/workflow/contracts/src/expressions.ts), this resolves to `{ type: 'workflow', workflowId: 'security-audit', mode: 'wait', inheritEnv: true }`. The child run's trigger records `parentRunId`, `parentJobId`, `parentStepId`, and `invokedByWorkflowId` so you can trace the call stack.
 
 ## `id`: making outputs referenceable
 
@@ -346,7 +346,7 @@ This does not apply to `builtin:shell`'s `throwOnError`. Those are independent:
 
 ## Step lifecycle states
 
-A `StepRun` transitions through the following states (from [workflow-constants](plugins/workflow/constants/src/index.ts)):
+A `StepRun` transitions through the following states (from [workflow-constants](services/workflow/constants/src/index.ts)):
 
 ```ts
 type StepState =

@@ -26,22 +26,26 @@ export async function emitManifestJson({ manifestModule, outputPath }) {
     const requirements = []
     for (const [key, option] of Object.entries(manifest.configSchema ?? {})) {
       if (!option.doctor) continue
-      if (!option.required || !option.secret || !option.env || Object.keys(manifest.defaultFor ?? {}).length !== 1) {
-        throw new TypeError(`adapter manifest ${manifest.id} option ${key} has doctor metadata without required secret, env, and exactly one default slot declaration`)
+      if (!option.required || !option.secret || !option.env || !Array.isArray(option.doctor)) {
+        throw new TypeError(`adapter manifest ${manifest.id} option ${key} doctor metadata must be a list for a required secret with an environment source`)
       }
-      for (const slot of Object.keys(manifest.defaultFor)) {
+      for (const doctor of option.doctor) {
+        if (typeof doctor.slot !== 'string' || !Object.hasOwn(manifest.defaultFor ?? {}, doctor.slot)) {
+          throw new TypeError(`adapter manifest ${manifest.id} option ${key} doctor metadata must name a declared default slot`)
+        }
+        const slot = doctor.slot
         const pointer = value => value.replaceAll('~', '~0').replaceAll('/', '~1')
         requirements.push({
-          id: option.doctor.id,
+          id: doctor.id,
           path: `/platform/adapterOptions/${pointer(slot)}/${pointer(key)}`,
           required: option.required,
-          ...(option.doctor.optional !== undefined ? { optional: option.doctor.optional } : {}),
-          ...(option.doctor.severity ? { severity: option.doctor.severity } : {}),
+          ...(doctor.optional !== undefined ? { optional: doctor.optional } : {}),
+          ...(doctor.severity ? { severity: doctor.severity } : {}),
           secret: option.secret,
           env: option.env,
-          services: option.doctor.services,
-          ...(option.doctor.action ? { action: option.doctor.action } : {}),
-          hint: option.doctor.hint,
+          services: doctor.services,
+          ...(doctor.action ? { action: doctor.action } : {}),
+          hint: doctor.hint,
         })
       }
     }

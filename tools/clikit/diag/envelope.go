@@ -1,6 +1,7 @@
 package diag
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -17,18 +18,18 @@ type Action struct {
 // Envelope is the canonical platform error wire shape. Required catalog
 // metadata is always populated from the generated platform catalog.
 type Envelope struct {
-	Code          string            `json:"code"`
-	Area          string            `json:"area"`
-	Stage         string            `json:"stage"`
-	Severity      string            `json:"severity"`
-	Retryable     bool              `json:"retryable"`
-	Message       string            `json:"message"`
-	Cause         string            `json:"cause,omitempty"`
-	Hint          string            `json:"hint"`
-	Actions       []Action          `json:"actions,omitempty"`
-	Docs          string            `json:"docs,omitempty"`
-	CorrelationID string            `json:"correlationId,omitempty"`
-	Details       map[string]string `json:"details,omitempty"`
+	Code          string         `json:"code"`
+	Area          string         `json:"area"`
+	Stage         string         `json:"stage"`
+	Severity      string         `json:"severity"`
+	Retryable     bool           `json:"retryable"`
+	Message       string         `json:"message"`
+	Cause         string         `json:"cause,omitempty"`
+	Hint          string         `json:"hint"`
+	Actions       []Action       `json:"actions,omitempty"`
+	Docs          string         `json:"docs,omitempty"`
+	CorrelationID string         `json:"correlationId,omitempty"`
+	Details       map[string]any `json:"details,omitempty"`
 }
 
 // ToEnvelope serializes a diagnostic with all required canonical metadata.
@@ -54,6 +55,10 @@ func ToEnvelope(d *Diag) (Envelope, error) {
 	}
 	templateValues := make(map[string]string, len(d.Meta)+2)
 	for key, value := range d.Meta {
+		switch value.(type) {
+		case map[string]any, map[string]string, []any, []map[string]string:
+			continue
+		}
 		templateValues[key] = fmt.Sprint(value)
 	}
 	if d.Binary != "" {
@@ -73,6 +78,16 @@ func ToEnvelope(d *Diag) (Envelope, error) {
 	}
 	for _, name := range entry.RequiredTemplateParameters {
 		if value, exists := templateValues[name]; !exists || strings.TrimSpace(value) == "" {
+			violations[name] = struct{}{}
+		}
+	}
+	for _, name := range entry.RequiredStructuredDetailFields {
+		if _, exists := d.Meta[name]; !exists {
+			violations[name] = struct{}{}
+		}
+	}
+	for name, schema := range entry.StructuredDetailSchemas {
+		if value, exists := d.Meta[name]; exists && !matchesCatalogDetailSchema(value, schema) {
 			violations[name] = struct{}{}
 		}
 	}
@@ -99,12 +114,87 @@ func ToEnvelope(d *Diag) (Envelope, error) {
 		envelope.Cause = d.Reason
 	}
 	if len(d.Meta) > 0 {
-		envelope.Details = make(map[string]string, len(d.Meta))
+		envelope.Details = make(map[string]any, len(d.Meta))
 		for key, value := range d.Meta {
-			envelope.Details[key] = fmt.Sprint(value)
+			envelope.Details[key] = value
 		}
 	}
 	return envelope, nil
+}
+
+func matchesCatalogDetailSchema(value any, encoded json.RawMessage) bool {
+	var schema map[string]any
+	if json.Unmarshal([]byte(encoded), &schema) != nil {
+		return false
+	}
+	serialized, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	var normalized any
+	if json.Unmarshal(serialized, &normalized) != nil {
+		return false
+	}
+	return matchesSchemaValue(normalized, schema)
+}
+
+func matchesSchemaValue(value any, schema map[string]any) bool {
+	switch schema["type"] {
+	case "string":
+		_, ok := value.(string)
+		return ok
+	case "array":
+		items, ok := value.([]any)
+		if !ok {
+			return false
+		}
+		itemSchema, ok := schema["items"].(map[string]any)
+		if !ok {
+			return false
+		}
+		for _, item := range items {
+			if !matchesSchemaValue(item, itemSchema) {
+				return false
+			}
+		}
+		return true
+	case "object":
+		object, ok := value.(map[string]any)
+		if !ok {
+			return false
+		}
+		properties, ok := schema["properties"].(map[string]any)
+		if !ok {
+			return false
+		}
+		if required, ok := schema["required"].([]any); ok {
+			for _, field := range required {
+				name, ok := field.(string)
+				if !ok {
+					return false
+				}
+				if _, exists := object[name]; !exists {
+					return false
+				}
+			}
+		}
+		for name, item := range object {
+			property, exists := properties[name]
+			if !exists {
+				if schema["additionalProperties"] == false {
+					return false
+				}
+				continue
+			}
+			propertySchema, ok := property.(map[string]any)
+			if !ok || !matchesSchemaValue(item, propertySchema) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func templateParameterSet(entry CatalogEntry) map[string]struct{} {

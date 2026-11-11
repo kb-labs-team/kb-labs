@@ -147,7 +147,6 @@ export function validateManifest(manifest: ManifestV3): {
 export function resolveHeaderPolicy(
   manifest: ManifestV3,
   route?: { path: string; method: string },
-  _basePath?: string,
 ): {
   allowList?: string[];
   denyList?: string[];

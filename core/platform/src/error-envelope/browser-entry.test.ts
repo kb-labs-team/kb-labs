@@ -21,9 +21,9 @@ function sourcePathForImport(from: string, specifier: string): string | undefine
 
   const target = resolve(dirname(from), specifier);
   const extension = extname(target);
-  if (extension === '.json') return undefined;
-  if (extension === '.js') return target.slice(0, -3) + '.ts';
-  if (extension === '.ts') return target;
+  if (extension === '.json') {return undefined;}
+  if (extension === '.js') {return target.slice(0, -3) + '.ts';}
+  if (extension === '.ts') {return target;}
   return join(target, 'index.ts');
 }
 
@@ -32,12 +32,12 @@ function walkModuleGraph(entry: string): Set<string> {
   const pending = [entry];
   while (pending.length > 0) {
     const current = pending.pop();
-    if (!current || visited.has(current)) continue;
+    if (!current || visited.has(current)) {continue;}
     visited.add(current);
     const source = readFileSync(current, 'utf8');
     for (const specifier of importsOf(source)) {
       const imported = sourcePathForImport(current, specifier);
-      if (imported) pending.push(imported);
+      if (imported) {pending.push(imported);}
     }
   }
   return visited;

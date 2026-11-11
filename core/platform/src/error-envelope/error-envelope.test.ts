@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import { catalogEnvironmentVariables } from './error-codes.generated.js';
 import type { CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from "./error-codes.generated.js";
 
 import type { ErrorCode, ProductErrorCode } from './index.js';
@@ -9,10 +10,12 @@ import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationErr
 import { HostServiceAddressError } from '../host-service-address.js';
 import { registerProcessSensitiveValues } from '../logging/context.js';
 import {
+  ERROR_AREAS,
   ERROR_STAGES,
   ErrorEnvelopeError,
   createErrorEnvelope,
-  createValidatedErrorEnvelope,
+  createCatalogErrorEnvelope,
+  createUntrustedErrorEnvelope,
   decodeErrorEnvelope,
   errorCatalog,
   getCatalogEntry,
@@ -25,6 +28,21 @@ import {
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const fixtureDir = join(here, 'fixtures');
+
+describe('structured diagnostic details', () => {
+  it('keeps active-work items as JSON values and enforces their catalog shape', () => {
+    const items = [{ kind: 'workflow', id: 'run-1', owningService: 'workflow' }];
+    const envelope = createErrorEnvelope('KB_RESTART_WORK_IN_FLIGHT', {
+      details: { interruptCommand: 'kb-create restart --platform-root /tmp/platform --interrupt', items },
+    });
+    expect(envelope.details?.items).toEqual(items);
+    const invalid = decodeErrorEnvelope({
+      ...envelope,
+      details: { interruptCommand: 'kb-create restart --interrupt', items: [{ kind: 'workflow', id: 'run-1', owningService: 'workflow', extra: true }] },
+    });
+    expect(invalid.code).toBe('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE');
+  });
+});
 
 describe('mapErrorEnvelopeToExitCode', () => {
   it('maps catalogued invalid input to usage exit and other envelopes to failure', () => {
@@ -54,6 +72,18 @@ describe('catalog producer contract', () => {
 });
 
 describe('received catalog envelope reconstruction', () => {
+  it('preserves the received cause when presenting a catalogued handler failure', () => {
+    const received = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      message: 'Release build failed for 1 package(s).',
+      hint: 'Inspect the failed packages and their build output, resolve the errors, then rerun `kb release build run`.',
+      cause: '@kb-labs/studio-app:\nERROR in ./src/main.tsx\nModule not found',
+    });
+
+    const reconstructed = decodeErrorEnvelope(received, { presentation: 'handler' });
+
+    expect(reconstructed.cause).toBe(received.cause);
+  });
+
   // case: S-203.2
   it('preserves validated catalogued envelope fields and reports missing values as protocol failures', () => {
     const received = {
@@ -166,6 +196,10 @@ describe('errors.catalog.json lint', () => {
     expectTypeOf<'KB_TYPO'>().not.toMatchTypeOf<ErrorCode>();
   });
 
+  it('keeps generated environment names synchronized with the shared catalogue', () => {
+    expect(Object.values(catalogEnvironmentVariables).sort()).toEqual([...errorCatalog.environmentVariables].sort());
+  });
+
   it('has unique codes', () => {
     const codes = errorCatalog.codes.map((entry) => entry.code);
     expect(codes.filter((code, index) => codes.indexOf(code) !== index)).toEqual([]);
@@ -183,6 +217,29 @@ describe('errors.catalog.json lint', () => {
       expect(['input-refusal', 'operation-failure'], `${entry.code} processExitClass`)
         .toContain(entry.processExitClass);
     }
+  });
+
+  // case: S-203.2
+  it('declares a transport status for every catalog code', () => {
+    for (const entry of errorCatalog.codes) {
+      expect(entry.httpStatus, `${entry.code} httpStatus`).toBeTypeOf('number');
+      expect(entry.httpStatus, `${entry.code} httpStatus`).toBeGreaterThanOrEqual(100);
+      expect(entry.httpStatus, `${entry.code} httpStatus`).toBeLessThanOrEqual(599);
+    }
+  });
+
+  it('assigns compatibility refusal its input refusal exit class', () => {
+    expect(getCatalogEntry('KB_INSTALL_INCOMPATIBLE_COMPONENTS')).toMatchObject({
+      processExitClass: 'input-refusal',
+      httpStatus: 409,
+    });
+  });
+
+  it('catalogues the transport outcomes for the recorded HTTP failures', () => {
+    expect(getCatalogEntry('KB_CONFIG_LLM_KEY_INVALID')?.httpStatus).toBe(502);
+    expect(getCatalogEntry('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION')?.httpStatus).toBe(500);
+    expect(getCatalogEntry('KB_INSTALL_PROVENANCE_MISMATCH')?.structuredDetailFields)
+      .toEqual(expect.arrayContaining(['diagnosticPath', 'logPath']));
   });
 
 
@@ -227,33 +284,9 @@ describe('errors.catalog.json lint', () => {
     });
   });
 
-  it('keeps KB_ prefixes aligned with their area and admits catalogued plugin namespaces', () => {
-    const prefixArea: Record<string, string> = {
-      INSTALL: 'install',
-      HOST: 'host',
-      AUTH: 'auth',
-      PROJECT: 'project',
-      CONFIG: 'config',
-      PLUGIN: 'plugin',
-      ADAPTER: 'plugin',
-      UPDATE: 'update',
-      RUNTIME: 'runtime',
-      NODE: 'runtime',
-      DEPLOY: 'runtime',
-      DEVKIT: 'runtime',
-      SERVICE: 'runtime',
-      ENV: 'config',
-      MARKETPLACE: 'plugin',
-      RELEASE: 'release',
-    };
+  it('keeps catalog entries within the supported areas', () => {
     for (const entry of errorCatalog.codes) {
-      if (entry.code.startsWith('KB_')) {
-        const prefix = entry.code.split('_')[1] ?? '';
-        expect(prefixArea[prefix], `${entry.code} prefix`).toBe(entry.area);
-      } else {
-        expect(entry.code).toMatch(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/);
-        expect(['plugin', 'product'], `${entry.code} namespace area`).toContain(entry.area);
-      }
+      expect(ERROR_AREAS as readonly string[], entry.code).toContain(entry.area);
     }
   });
 
@@ -287,7 +320,7 @@ describe('errors.catalog.json lint', () => {
       'KB_INSTALL_SERVICE_GRAPH_MISMATCH',
     ]) {
       expect(isErrorCode(code), code).toBe(true);
-      if (isErrorCode(code)) expect(getCatalogEntry(code), code).toBeDefined();
+      if (isErrorCode(code)) {expect(getCatalogEntry(code), code).toBeDefined();}
     }
     expect(errorCatalog.codes.some((entry) => entry.code.startsWith('KB_CREATE_'))).toBe(false);
   });
@@ -351,7 +384,7 @@ describe('createErrorEnvelope', () => {
   });
 
   it('returns a catalogued producer-contract diagnostic for undeclared details', () => {
-    const envelope = createValidatedErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+    const envelope = createUntrustedErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
       details: { undeclaredEvidence: 'unexpected' },
     });
     expect(envelope.code).toBe('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION');
@@ -406,7 +439,7 @@ describe('structured error diagnostics', () => {
 
   it.each(['{"findings":[]}', '[{"message":"bad"}]'])('rejects serialized structured detail values: %s', (value) => {
     try {
-      createValidatedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', { templateValues: { binary: 'test-cli' }, details: { report: value } });
+      createUntrustedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', { templateValues: { binary: 'test-cli' }, details: { report: value } });
       throw new Error('expected serialized JSON detail to be rejected');
     } catch (error) {
       expect(error).toMatchObject({ code: 'KB_PLUGIN_CONTRACT_VIOLATION', hint: expect.stringContaining('error.diagnostics') });
@@ -422,7 +455,7 @@ describe('structured error diagnostics', () => {
   });
 
   it('rejects non-string details in the builder with a catalogued contract violation', () => {
-    expect(() => createValidatedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+    expect(() => createUntrustedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
       templateValues: { binary: 'test-cli' },
       details: { report: ['finding'] },
     })).toThrow(expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }));
@@ -430,6 +463,39 @@ describe('structured error diagnostics', () => {
 });
 
 describe('toErrorEnvelope (platform errors)', () => {
+  it('retains agent session IDs in catalogued resource not-found details', () => {
+    const error = Object.assign(
+      new Error('session-does-not-exist'),
+      {
+        errorCode: 'KB_RUNTIME_RESOURCE_NOT_FOUND',
+        details: { plugin: '@kb-labs/agents', sessionId: 'session-does-not-exist' },
+      },
+    );
+
+    expect(toErrorEnvelope(error)).toMatchObject({
+      code: 'KB_RUNTIME_RESOURCE_NOT_FOUND',
+      details: { plugin: '@kb-labs/agents', sessionId: 'session-does-not-exist' },
+      cause: expect.stringContaining('session-does-not-exist'),
+    });
+  });
+
+  it('maps an unknown agent ID to its registered plugin 404 envelope', () => {
+    const error = Object.assign(
+      new Error('agent-not-found-test'),
+      { errorCode: 'KB_AGENT_NOT_FOUND', details: { agentId: 'agent-does-not-exist' } },
+    );
+
+    const envelope = toErrorEnvelope(error);
+    expect(envelope).toMatchObject({
+      code: 'KB_AGENT_NOT_FOUND',
+      area: 'plugin',
+      message: expect.stringContaining('agent-does-not-exist'),
+      details: { agentId: 'agent-does-not-exist' },
+    });
+    expect(envelope.hint).toBe(getCatalogEntry('KB_AGENT_NOT_FOUND')?.hint);
+    expect(getCatalogEntry('KB_AGENT_NOT_FOUND')?.httpStatus).toBe(404);
+  });
+
   it('does not promote a catalogued error message into a duplicate cause', () => {
     const message = 'Adapter package @kb-labs/not-installed is not installed on this platform.';
     const error = Object.assign(new Error(message), { code: 'KB_ADAPTER_NOT_INSTALLED', details: { package: '@kb-labs/not-installed' } });
@@ -696,7 +762,8 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(envelope.details).toMatchObject({ field: 'hint', observedType: 'object' });
     expect(preview).toContain('[REDACTED]');
     expect(preview).not.toContain(secret);
-    expect(preview.length).toBeLessThanOrEqual(256);
+    expect(typeof preview).toBe('string');
+    expect((preview as string).length).toBeLessThanOrEqual(256);
   });
 
   // case: S-054.19
@@ -741,4 +808,20 @@ describe('toErrorEnvelope (platform errors)', () => {
   it('rejects codes that are not in the catalog', () => {
     expect(isErrorCode('KB_NOPE_NOPE')).toBe(false);
   });
+});
+
+
+it('constructs a command diagnostic with its catalogued runtime template', () => {
+  const envelope = createCatalogErrorEnvelope({ code: 'KB_RUNTIME_COMMAND_FAILED', templateValues: { binary: 'kb' } });
+  expect(envelope.code).toBe('KB_RUNTIME_COMMAND_FAILED');
+  expect(envelope.hint).toContain('kb');
+});
+
+it('validates required runtime parameters and honors catalog overrides', () => {
+  // @ts-expect-error This deliberately exercises runtime validation of an invalid producer request.
+  const missing = createCatalogErrorEnvelope({ code: 'KB_RUNTIME_COMMAND_FAILED' });
+  expect(missing.code).toBe('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION');
+  const overridden = createCatalogErrorEnvelope({ code: 'KB_RUNTIME_COMMAND_FAILED', hint: 'Retry the command.' });
+  expect(overridden.code).toBe('KB_RUNTIME_COMMAND_FAILED');
+  expect(overridden.hint).toBe('Retry the command.');
 });

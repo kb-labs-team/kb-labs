@@ -5,7 +5,20 @@ import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
 
 // Mutable platform object that tests can configure
-const mockPlatform: any = { analytics: {} };
+const mockPlatform = vi.hoisted(() => {
+  const logger = {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    trace: vi.fn(),
+    fatal: vi.fn(),
+    flush: vi.fn(async () => {}),
+    child: vi.fn(),
+  };
+  logger.child.mockImplementation(() => logger);
+  return { analytics: {} as Record<string, unknown>, logger };
+});
 
 vi.mock('@kb-labs/core-runtime', () => ({
   platform: mockPlatform,

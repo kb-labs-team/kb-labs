@@ -5,7 +5,7 @@ persona: plugin-author
 area: plugin-execution
 priority: P1
 status: planned
-release: false
+release: true
 modes: [local, secured]
 surfaces: [cli, api]
 ---

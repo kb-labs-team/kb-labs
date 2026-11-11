@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
 import { createErrorEnvelope, PLATFORM_AUDIT_COLLECTION } from '@kb-labs/core-platform';
 import { createInMemoryDocumentDatabase, InMemoryCache } from '@kb-labs/core-platform/inmemory';
+import { openCatalog } from '@kb-labs/core-registry';
 import type { BaseDocument } from '@kb-labs/core-platform/adapters';
 import { forwardedIdentityHeaders } from '@kb-labs/gateway-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
@@ -49,18 +50,22 @@ async function postMcp(port: number, id: number, method: string, params: unknown
 
 describe('project MCP wire fixture producer', () => {
   let daemon: McpDaemonServer | undefined;
+  let catalog: Awaited<ReturnType<typeof openCatalog>> | undefined;
   let projectRoot: string | undefined;
 
   afterEach(async () => {
     const runningDaemon = daemon;
+    const resolvedCatalog = catalog;
     const temporaryProjectRoot = projectRoot;
     daemon = undefined;
+    catalog = undefined;
     projectRoot = undefined;
     try {
       await runningDaemon?.stop();
     } finally {
+      await resolvedCatalog?.dispose();
       vi.unstubAllEnvs();
-      if (temporaryProjectRoot) await rm(temporaryProjectRoot, { recursive: true, force: true });
+      if (temporaryProjectRoot) {await rm(temporaryProjectRoot, { recursive: true, force: true });}
     }
   });
 
@@ -91,11 +96,13 @@ describe('project MCP wire fixture producer', () => {
       callOutput.getStore()?.text.push('output from the external command adapter');
       return 0;
     });
+    catalog = await openCatalog({ platformRoot: projectRoot, projectRoot }, { resolvePlatformVersion: async () => 'test' });
     daemon = new McpDaemonServer({
       port: 0,
       host: '127.0.0.1',
       logger: new NoOpLogger(),
       cache: new InMemoryCache(),
+      catalog,
       platform: {
         analytics: { track: async () => undefined },
         documentDatabase: createInMemoryDocumentDatabase(),
@@ -157,8 +164,9 @@ describe('project MCP wire fixture producer', () => {
       callOutput.getStore()?.text.push('mutation complete');
       return 0;
     });
+    catalog = await openCatalog({ platformRoot: projectRoot, projectRoot }, { resolvePlatformVersion: async () => 'test' });
     daemon = new McpDaemonServer({
-      port: 0, host: '127.0.0.1', logger: new NoOpLogger(), cache: new InMemoryCache(),
+      port: 0, host: '127.0.0.1', logger: new NoOpLogger(), cache: new InMemoryCache(), catalog,
       platform: {
         analytics: { track }, documentDatabase: docs,
       } as unknown as PlatformContainer,
@@ -201,7 +209,7 @@ describe('project MCP wire fixture producer', () => {
     const success = await postMcp(port, 1, 'tools/call', {
       name: 'fixture-audit-plugin__mutate', arguments: { value: 'private argument' },
     }, identity);
-    expect(success.status).toBe(200);
+    expect(success.status, success.body).toBe(200);
     const error = await postMcp(port, 2, 'tools/call', {
       name: 'missing-tool', arguments: { secret: 'private secret' },
     }, identity);

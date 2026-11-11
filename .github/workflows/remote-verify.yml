@@ -1,0 +1,438 @@
+name: Remote agent verification
+run-name: Remote agent verification (${{ inputs.profile || 'stream' }}) for ${{ github.ref_name }}
+
+on:
+  workflow_call:
+    inputs:
+      profile:
+        type: string
+        required: true
+      target_sha:
+        type: string
+        required: true
+      base_ref:
+        type: string
+        required: false
+        default: ''
+  push:
+    branches: ['verify/**']
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Verification profile
+        required: true
+        type: choice
+        options: [stream, candidate]
+        default: candidate
+      base_ref:
+        description: Optional diff base selected by the local candidate verifier
+        required: false
+        type: string
+  schedule:
+    - cron: '17 4 * * *'
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+
+jobs:
+  prepare:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      test_matrix: ${{ steps.plan.outputs.test_matrix }}
+      independent_matrix: ${{ steps.plan.outputs.independent_matrix }}
+      build_dependent_matrix: ${{ steps.plan.outputs.build_dependent_matrix }}
+      internal_tool_matrix: ${{ steps.plan.outputs.internal_tool_matrix }}
+      internal_tool_packages: ${{ steps.plan.outputs.internal_tool_packages }}
+      build_stage: ${{ steps.plan.outputs.build_stage }}
+      packages: ${{ steps.plan.outputs.packages }}
+      selected_package_count: ${{ steps.plan.outputs.selected_package_count }}
+      max_parallel: ${{ steps.plan.outputs.max_parallel }}
+      shard_timeout_minutes: ${{ steps.plan.outputs.shard_timeout_minutes }}
+    env:
+      GOTOOLCHAIN: local
+      VERIFICATION_PROFILE: ${{ inputs.profile || github.event.inputs.profile || 'stream' }}
+      REMOTE_REF_NAME: ${{ github.ref_name }}
+      REMOTE_BASE_REF: ${{ inputs.base_ref || github.event.inputs.base_ref || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.target_sha || github.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        id: setup-node
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        id: setup-go
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-create/go.sum
+      - name: Run remote prepare stage
+        id: plan
+        env:
+          REMOTE_PREPARE_RESULT: stage-result-prepare.json
+          REMOTE_AFFECTED_PACKAGES: ${{ runner.temp }}/affected-packages.json
+          REMOTE_TEST_PLAN: ${{ runner.temp }}/test-matrix.json
+          PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
+          GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
+        run: node scripts/ci/run-remote-prepare.mjs
+
+      - name: Upload prepare stage result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-result-prepare
+          path: stage-result-prepare.json
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Upload prepared kb-devkit binary
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-kb-devkit
+          path: tools/kb-devkit/kb-devkit
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      build_dependent_matrix: ${{ needs.prepare.outputs.build_dependent_matrix }}
+      selected_package_count: ${{ needs.prepare.outputs.selected_package_count }}
+      max_parallel: ${{ needs.prepare.outputs.max_parallel }}
+      shard_timeout_minutes: ${{ needs.prepare.outputs.shard_timeout_minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.target_sha || github.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        id: setup-node
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        id: setup-go
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-create/go.sum
+      - name: Install workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Restore kb-devkit content-addressed cache
+        id: devkit-cache
+        uses: ./.github/actions/devkit-cas
+      - name: Download prepared kb-devkit binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: remote-kb-devkit
+          path: .
+      - name: Build selected workspace packages once
+        env:
+          REMOTE_STAGE: ${{ needs.prepare.outputs.build_stage }}
+          REMOTE_STAGE_RESULT: stage-result-build.json
+          REMOTE_RESOURCE_SAMPLES: stage-resource-samples.jsonl
+          AFFECTED_PACKAGES: ${{ needs.prepare.outputs.packages }}
+          REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count }}
+          PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
+          GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
+          DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+        run: node scripts/ci/run-remote-stage.mjs
+      - name: Archive workspace build outputs
+        if: success()
+        run: |
+          find . -path '*/node_modules/*' -prune -o -path '*/.kb/*' -prune -o -type d -name dist -print > "$RUNNER_TEMP/dist-paths.txt"
+          if [ -s "$RUNNER_TEMP/dist-paths.txt" ]; then
+            tar cf workspace-dist.tar -T "$RUNNER_TEMP/dist-paths.txt"
+          else
+            tar cf workspace-dist.tar --files-from /dev/null
+          fi
+      - name: Upload build result and resource evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-result-build
+          path: |
+            stage-result-build.json
+            stage-resource-samples.jsonl
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Upload workspace build artifact
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-workspace-build
+          path: |
+            workspace-dist.tar
+            tools/kb-devkit/kb-devkit
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 3
+
+  independent-test-shards:
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}
+    name: Independent test ${{ matrix.stage }}
+    strategy:
+      fail-fast: ${{ inputs.profile != 'candidate' }}
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.independent_matrix) }}
+    env:
+      REMOTE_STAGE: ${{ matrix.stage }}
+      REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.target_sha || github.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        id: setup-node
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        id: setup-go
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-create/go.sum
+      - name: Install workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Restore kb-devkit content-addressed cache
+        id: devkit-cache
+        uses: ./.github/actions/devkit-cas
+      - name: Download prepared kb-devkit binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: remote-kb-devkit
+          path: .
+      - name: Run independent test
+        env:
+          REMOTE_STAGE_RESULT: stage-result-independent-${{ strategy.job-index }}.json
+          PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
+          GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
+          DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+        run: node scripts/ci/run-remote-stage.mjs
+      - name: Upload independent test result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-result-independent-${{ strategy.job-index }}
+          path: stage-result-independent-${{ strategy.job-index }}.json
+          if-no-files-found: warn
+          retention-days: 1
+
+  build-dependent-test-shards:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.build.outputs.shard_timeout_minutes) }}
+    name: Build-dependent test ${{ matrix.shard || matrix.stage }}
+    strategy:
+      fail-fast: ${{ inputs.profile != 'candidate' }}
+      max-parallel: ${{ fromJSON(needs.build.outputs.max_parallel) }}
+      matrix: ${{ fromJSON(needs.build.outputs.build_dependent_matrix) }}
+    env:
+      REMOTE_STAGE: ${{ matrix.stage }}
+      REMOTE_PACKAGES: ${{ join(matrix.packages, ',') }}
+      REMOTE_SHARD: ${{ matrix.shard || '' }}
+      REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.build.outputs.selected_package_count }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.target_sha || github.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        id: setup-node
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        id: setup-go
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-create/go.sum
+      - name: Install workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Restore kb-devkit content-addressed cache
+        id: devkit-cache
+        uses: ./.github/actions/devkit-cas
+      - name: Download producer build outputs and kb-devkit
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: remote-workspace-build
+          path: .
+      - name: Restore workspace dist outputs
+        run: tar xf workspace-dist.tar
+      - name: Run build-dependent test
+        env:
+          REMOTE_STAGE_RESULT: stage-result-dependent-${{ matrix.stage }}-${{ matrix.shard || strategy.job-index }}.json
+          PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
+          GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
+          DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+        run: node scripts/ci/run-remote-stage.mjs
+      - name: Upload build-dependent test result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-result-dependent-${{ matrix.stage }}-${{ matrix.shard || strategy.job-index }}
+          path: stage-result-dependent-${{ matrix.stage }}-${{ matrix.shard || strategy.job-index }}.json
+          if-no-files-found: warn
+          retention-days: 1
+
+  internal-tool-test-shards:
+    needs: prepare
+    if: needs.prepare.result == 'success' && needs.prepare.outputs.internal_tool_packages != ''
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}
+    name: Internal tool test ${{ matrix.shard }}
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.internal_tool_matrix) }}
+    env:
+      REMOTE_STAGE: internal-tool-tests
+      REMOTE_PACKAGES: ${{ join(matrix.packages, ',') }}
+      REMOTE_SHARD: ${{ matrix.shard }}
+      REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        id: setup-node
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        id: setup-go
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-create/go.sum
+      - name: Install workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Restore kb-devkit content-addressed cache
+        id: devkit-cache
+        uses: ./.github/actions/devkit-cas
+      - name: Download prepared kb-devkit binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: remote-kb-devkit
+          path: .
+      - name: Build, test, and check internal tools
+        env:
+          REMOTE_STAGE_RESULT: stage-result-internal-tool-${{ strategy.job-index }}.json
+          PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
+          GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
+          DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+        run: node scripts/ci/run-remote-stage.mjs
+      - name: Upload internal-tool result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-result-internal-tool-${{ strategy.job-index }}
+          path: stage-result-internal-tool-${{ strategy.job-index }}.json
+          if-no-files-found: warn
+          retention-days: 1
+
+  verdict:
+    if: always() && github.event_name != 'schedule'
+    needs: [prepare, build, independent-test-shards, build-dependent-test-shards, internal-tool-test-shards]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.target_sha || github.sha }}
+      - name: Download build and test shard results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: remote-result-*
+          path: remote-results
+          merge-multiple: true
+          if-no-files-found: ignore
+      - name: Aggregate commit-bound verdict
+        env:
+          REMOTE_TEST_MATRIX: ${{ needs.prepare.outputs.test_matrix }}
+          REMOTE_INTERNAL_TOOL_MATRIX: ${{ needs.prepare.outputs.internal_tool_matrix }}
+          REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count || '0' }}
+          PREPARE_JOB_RESULT: ${{ needs.prepare.result }}
+          BUILD_JOB_RESULT: ${{ needs.build.result }}
+          VERIFICATION_SHA: ${{ inputs.target_sha || github.sha }}
+          BUILD_RESOURCE_SAMPLES: remote-results/stage-resource-samples.jsonl
+          VERIFICATION_PROFILE: ${{ inputs.profile || github.event.inputs.profile || 'stream' }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/aggregate-remote-verdict.mjs remote-results verdict.json
+      - name: Upload commit-bound verdict
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-verdict
+          path: verdict.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload bounded diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: remote-verification-log
+          path: remote-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  sweep-verify-refs:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Delete verification refs older than three days
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cutoff=$(date -u -d '3 days ago' +%s)
+          gh api --paginate "repos/$GH_REPO/git/matching-refs/heads/verify/" --jq '.[].ref' |
+          while IFS= read -r full_ref; do
+            branch=${full_ref#refs/heads/}
+            suffix=${branch##*/}
+            created=${suffix%%-*}
+            [[ "$created" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || continue
+            created_epoch=$(date -u -d "${created:0:8} ${created:9:6} UTC" +%s)
+            if [ "$created_epoch" -lt "$cutoff" ]; then
+              encoded=$(printf '%s' "$branch" | sed 's#/#%2F#g')
+              gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$encoded"
+            fi
+          done

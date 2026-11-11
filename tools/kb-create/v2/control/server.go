@@ -29,7 +29,7 @@ type Server struct {
 	Runner  host.Runner
 	State   host.State
 	Version string
-	Restart func(context.Context) (RestartResponse, error)
+	Restart func(context.Context, bool) (RestartResponse, error)
 
 	token     string
 	address   string
@@ -158,8 +158,13 @@ func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
 	// which is the least surprising behaviour for an idempotent request.
 	s.restartMu.Lock()
 	defer s.restartMu.Unlock()
+	var input RestartRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes)).Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+		s.fail(w, http.StatusBadRequest, contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "The restart request body is not valid.", "Send an empty object or {\"interrupt\":true}.", err))
+		return
+	}
 	if s.Restart != nil {
-		response, err := s.Restart(r.Context())
+		response, err := s.Restart(r.Context(), input.Interrupt)
 		if err != nil {
 			s.failWith(w, err)
 			return
@@ -210,7 +215,7 @@ func (s *Server) failWith(w http.ResponseWriter, err error) {
 	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		status := http.StatusInternalServerError
-		if typed.Code == "KB_HOST_ALREADY_RUNNING" {
+		if typed.Code == contracts.CodeHostAlreadyRunning {
 			status = http.StatusConflict
 		}
 		s.fail(w, status, typed)

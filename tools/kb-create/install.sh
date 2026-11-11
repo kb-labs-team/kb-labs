@@ -7,14 +7,33 @@ BINARY="kb-create"
 # Unset, public installs continue to download from GitHub Releases.
 DOWNLOAD_BASE_URL="${KB_CREATE_DOWNLOAD_BASE_URL:-https://github.com/${REPO}/releases/download}"
 DEST="${HOME}/.local/bin/${BINARY}"
-INDEX_DEST="${HOME}/.local/share/${BINARY}/release-index.json"
+INDEX_DEST="${XDG_DATA_HOME:-${HOME}/.local/share}/${BINARY}/release-index.json"
 VERSION="latest"
 CHANNEL="stable"
 RESOLVED_VERSION=""
 START_TS="$(date +%s)"
 
-# Colors are enabled only for interactive terminals and when NO_COLOR is unset.
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+# BEGIN GENERATED COLOR POLICY
+kb_color_enabled() {
+  if [ -n "${NO_COLOR:-}" ]; then return 1; fi
+  if [ "${FORCE_COLOR+x}" = x ] && { [ "$FORCE_COLOR" = false ] || [ "$FORCE_COLOR" = 0 ]; }; then return 1; fi
+  if [ "${FORCE_COLOR+x}" = x ]; then
+    case "$FORCE_COLOR" in
+      ''|true) return 0 ;;
+      false|0) ;;
+      *)
+        case "$FORCE_COLOR" in *[!0123456789]*) ;;
+          *) case "$FORCE_COLOR" in *[123456789]*) return 0 ;; esac ;;
+        esac
+        ;;
+    esac
+  fi
+  case "${TERM:-}" in [Dd][Uu][Mm][Bb]) return 1 ;; esac
+  if [ -t 1 ]; then return 0; fi
+  return 1
+}
+# END GENERATED COLOR POLICY
+if kb_color_enabled; then
   C_RESET="$(printf '\033[0m')"
   C_BOLD="$(printf '\033[1m')"
   C_DIM="$(printf '\033[2m')"
@@ -36,6 +55,25 @@ info() { printf "%s[INFO]%s %s\n" "$C_CYAN" "$C_RESET" "$1"; }
 ok() { printf "%s[ OK ]%s %s\n" "$C_GREEN" "$C_RESET" "$1"; }
 warn() { printf "%s[WARN]%s %s\n" "$C_YELLOW" "$C_RESET" "$1"; }
 err() { printf "%s[ERR ]%s %s\n" "$C_RED" "$C_RESET" "$1" >&2; }
+
+# The source is recorded as provenance; do not persist URL userinfo.
+case "$DOWNLOAD_BASE_URL" in
+  *://*)
+    source_authority=${DOWNLOAD_BASE_URL#*://}
+    source_authority=${source_authority%%/*}
+    case "$source_authority" in *@*) err "The binary source URL must not contain credentials."; exit 1;; esac
+    ;;
+esac
+
+# BEGIN GENERATED UNSUPPORTED PLATFORM
+kb_unsupported_platform() {
+  platform_os="$1"
+  platform_arch="$2"
+  err "$(printf 'KB_INSTALL_UNSUPPORTED_PLATFORM: %s/%s is not a supported platform.' "$platform_os" "$platform_arch")"
+  err "$(printf '%s' 'Run the same command on a supported Linux or macOS system.')"
+  exit 1
+}
+# END GENERATED UNSUPPORTED PLATFORM
 
 usage() {
   cat <<'EOF'
@@ -111,6 +149,7 @@ esac
 
 case "$OS" in
   darwin|linux) ;;
+  mingw*|msys*|cygwin*) kb_unsupported_platform windows "$ARCH" ;;
   *)
     err "Unsupported OS: $OS"
     exit 1
@@ -127,11 +166,10 @@ esac
 
 if [ "$VERSION" = "latest" ]; then
   # `binaries-stable`/`binaries-canary` are tiny mutable GitHub Release assets
-  # maintained by the workflow-engine release delivery path. Using the direct
-  # asset URL avoids GitHub REST API lookup and
-  # cannot accidentally select a platform/npm release.
-  CHANNEL_JSON="$(curl -fsSL "https://github.com/${REPO}/releases/download/binaries-${CHANNEL}/channel.json" 2>/dev/null)" || {
-    err "Unable to resolve the ${CHANNEL} binaries channel from GitHub Releases."
+  # maintained by the workflow-engine release delivery path. Resolve it from
+  # the same origin as the versioned assets.
+  CHANNEL_JSON="$(curl -fsSL "${DOWNLOAD_BASE_URL}/binaries-${CHANNEL}/channel.json" 2>/dev/null)" || {
+    err "Unable to resolve the ${CHANNEL} binaries channel from the configured download base."
     exit 1
   }
   RESOLVED_VERSION="$(printf '%s\n' "$CHANNEL_JSON" | sed -n 's/.*"tag":[[:space:]]*"\([^"]*-binaries\)".*/\1/p' | head -n 1)"
@@ -201,6 +239,7 @@ fi
 chmod +x "$TMP_BIN"
 mkdir -p "$(dirname "$DEST")"
 mv "$TMP_BIN" "$DEST"
+mkdir -p "$(dirname "$INDEX_DEST")"
 
 # The launcher resolves installs from this signed index, never by talking to
 # npm directly. It ships next to the binary on the same immutable per-version
@@ -226,6 +265,8 @@ if curl -fsSL "$INDEX_URL" -o "$TMP_INDEX" 2>/dev/null; then
     fi
     mkdir -p "$(dirname "$INDEX_DEST")"
     mv "$TMP_INDEX" "$INDEX_DEST"
+    (umask 077; printf '%s\n' "$DOWNLOAD_BASE_URL" > "$(dirname "$INDEX_DEST")/binary-source")
+    chmod 600 "$(dirname "$INDEX_DEST")/binary-source"
   else
     rm -f "$TMP_INDEX"
     INDEX_DEST=""

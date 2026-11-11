@@ -5,11 +5,9 @@ import { withUxErrorResponses } from './route-schema.js';
  */
 
 import type { FastifyInstance } from "fastify";
-import type { RestApiConfig } from "@kb-labs/rest-api-core";
 import { platform } from "@kb-labs/core-runtime";
 import type { LogQuery, LogRecord, LogLevel } from "@kb-labs/core-platform";
 import { createSseStream } from "@kb-labs/shared-http";
-import type { EventHub } from "../events/hub";
 
 /** Frontend-shaped log record returned by toFrontendLogRecord */
 interface FrontendLogRecord {
@@ -335,8 +333,6 @@ function generateFallbackSummary(
  */
 export async function registerLogRoutes(
   server: FastifyInstance,
-  config: RestApiConfig,
-  eventHub: EventHub,
 ): Promise<void> {
   /**
    * GET /api/v1/logs

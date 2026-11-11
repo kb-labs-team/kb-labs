@@ -12,13 +12,19 @@ import {
   projectGroup,
   mcpGroup,
   adapterGroup,
+  workspaceGroup,
+  marketplaceGroup,
+  scaffoldGroup,
 } from "../commands/system/groups";
+import { workflowGroup } from "../commands/system/workflow";
 import { hello } from "../commands/system/hello";
 import { createCompletionCommand, autoUpdateCompletion } from "../commands/system/completion";
 import { diag } from "../commands/system/diag";
 import { registerManifests, preflightManifests } from "../registry/register";
 import { setRegisteredDiscovery } from '../registry/discovery-state.js';
-import type { DiagnosticEvent } from '@kb-labs/core-discovery';
+import { setResolvedCatalog } from '../registry/discovery-state.js';
+import { openCatalog } from '@kb-labs/core-registry';
+import type { DiagnosticEvent, IEntityRegistry } from '@kb-labs/plugin-contracts';
 import { getContextCwd } from "@kb-labs/shared-cli-ui";
 import type { ILogger } from "@kb-labs/core-platform";
 import { platform } from "@kb-labs/core-runtime";
@@ -43,17 +49,19 @@ export interface RegisterBuiltinCommandsInput {
    * falls back to `cwd` — this keeps dev-mode behavior unchanged.
    */
   platformRoot?: string;
+  resolvePlatformVersion: () => Promise<string>;
   /**
    * The user's project root (directory containing `.kb/kb.config.{json,jsonc}`).
    * Discovery reads the project-scope `<projectRoot>/.kb/marketplace.lock` from
    * here. When omitted, falls back to `cwd`.
    */
   projectRoot?: string;
+  catalog?: IEntityRegistry;
 }
 
 // eslint-disable-next-line sonarjs/cognitive-complexity
 export async function registerBuiltinCommands(
-  input: RegisterBuiltinCommandsInput = {},
+  input: RegisterBuiltinCommandsInput,
 ) {
   const log = input.logger ?? platform.logger;
 
@@ -66,14 +74,17 @@ export async function registerBuiltinCommands(
   registry.markPartial(true);
   registeredCommands.length = 0;
   setRegisteredDiscovery(undefined);
+  setResolvedCatalog(undefined);
 
   try {
     const cwd = getContextCwd({ cwd: input.cwd });
+    const catalog = input.catalog ?? await openCatalog({
+      platformRoot: input.platformRoot ?? cwd,
+      projectRoot: input.projectRoot ?? cwd,
+    }, { resolvePlatformVersion: input.resolvePlatformVersion });
+    setResolvedCatalog(catalog);
     const { discoverManifestsDetailed } = await import('../registry/discover');
-    const discovery = await discoverManifestsDetailed(cwd, {
-      platformRoot: input.platformRoot,
-      projectRoot: input.projectRoot,
-    });
+    const discovery = await discoverManifestsDetailed(catalog);
     const discovered = discovery.results;
     discoveryDiagnostics = discovery.diagnostics;
     setRegisteredDiscovery(discovery);
@@ -144,6 +155,10 @@ export function registerBuiltinSystemCommands(): void {
   registry.registerGroup(projectGroup);
   registry.registerGroup(mcpGroup);
   registry.registerGroup(adapterGroup);
+  registry.registerGroup(workspaceGroup);
+  registry.registerGroup(marketplaceGroup);
+  registry.registerGroup(scaffoldGroup);
+  registry.registerGroup(workflowGroup);
   // The documented `kb hello` route is also available at the root. Keeping it
   // registered statically lets bootstrap read its declared scope before init.
   registry.register(hello);

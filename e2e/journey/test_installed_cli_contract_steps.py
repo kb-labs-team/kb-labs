@@ -11,6 +11,25 @@ from service_steps import Journey
 
 
 class InstalledCLIContractStepsTest(unittest.TestCase):
+    def test_installed_cli_accepts_rendered_root_command_syntax_as_usage(self):
+        with tempfile.TemporaryDirectory(prefix="journey-cli-contract-") as home:
+            bin_dir = Path(home) / ".local" / "bin"
+            bin_dir.mkdir(parents=True)
+            binaries = [bin_dir / "kb", bin_dir / "kb-create"]
+            for binary in binaries:
+                binary.touch()
+
+            def runner(argv, **_kwargs):
+                binary = Path(argv[0]).name
+                if argv[-1] in {"--help", "help"}:
+                    output = ("KB Labs CLI\nCommands\nkb <command> [subcommand] [flags]\n"
+                              if binary == "kb" else f"Usage: {binary} <command>\n")
+                    return subprocess.CompletedProcess(argv, 0, output, "")
+                hint = catalogued_error_hint("KB_RUNTIME_UNKNOWN_COMMAND", binary=binary)
+                return subprocess.CompletedProcess(argv, 2, "", f"KB_RUNTIME_UNKNOWN_COMMAND\n{hint}\n")
+
+            self.assertIsNone(check_installed_cli_contract({"HOME": home}, runner=runner))
+
     def test_installed_binaries_return_help_and_catalogued_unknown_command_hint(self):
         with tempfile.TemporaryDirectory(prefix="journey-cli-contract-") as home:
             bin_dir = Path(home) / ".local" / "bin"

@@ -74,6 +74,9 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	defer os.Remove(s.State.SupervisorPID())
+	if err := s.prepareHostStart(s.Runner); err != nil {
+		return err
+	}
 	if _, err := s.Runner.Start(ctx); err != nil {
 		return err
 	}
@@ -89,13 +92,46 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	return err
 }
 
-func (s *Supervisor) restart(ctx context.Context) (control.RestartResponse, error) {
+func (s *Supervisor) prepareHostStart(runner host.Runner) error {
+	process, ok := runner.(*host.ProcessRunner)
+	if !ok {
+		return nil
+	}
+	credential, err := host.NewProcessIdentityToken()
+	if err != nil {
+		return err
+	}
+	process.ControlCredential = credential
+	process.ControlAddress = ""
+	return nil
+}
+
+func (s *Supervisor) restart(ctx context.Context, interrupt bool) (control.RestartResponse, error) {
 	previous, ok := s.Runner.(*host.ProcessRunner)
 	if !ok {
 		return control.RestartResponse{}, fmt.Errorf("supervisor restart requires the platform process runner")
 	}
+	if !interrupt {
+		items, queryErr := previous.QueryActiveWork(ctx)
+		if queryErr != nil {
+			return control.RestartResponse{}, queryErr
+		}
+		if len(items) > 0 {
+			interruptCommand := contracts.ShellCommand("kb-create", "restart", "--platform-root", s.PlatformRoot, "--interrupt")
+			failure, err := host.RestartWorkInFlight(items, interruptCommand)
+			if err != nil {
+				return control.RestartResponse{}, err
+			}
+			return control.RestartResponse{}, failure
+		}
+	}
 	outcome, err := host.RestartWithRecovery(ctx, s.PlatformRoot, previous,
-		func(ctx context.Context, runner *host.ProcessRunner) (host.Info, error) { return runner.Start(ctx) })
+		func(ctx context.Context, runner *host.ProcessRunner) (host.Info, error) {
+			if prepareErr := s.prepareHostStart(runner); prepareErr != nil {
+				return host.Info{}, prepareErr
+			}
+			return runner.Start(ctx)
+		})
 	if outcome.Runner != nil {
 		s.Runner = outcome.Runner
 	}
@@ -189,7 +225,7 @@ func Refusal(record Record, requestedRoot string) *diag.Diag {
 	installationID, err := versionroot.InstallationIDForPath(requestedRoot)
 	if err == nil && record.InstallationID == installationID {
 		command := contracts.ShellCommand("kb-create", "status", "--platform-root", requestedRoot)
-		failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.",
+		failure := contracts.NewDiag(contracts.CodeHostAlreadyRunning, "The KB Labs host is already running.",
 			"Use `"+command+"` to inspect it.", nil)
 		failure.Meta = map[string]any{"pid": strconv.Itoa(record.PID), "platformRoot": record.PlatformRoot, "nextCommand": command}
 		return failure

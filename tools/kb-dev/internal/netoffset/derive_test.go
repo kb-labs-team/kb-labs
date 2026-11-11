@@ -55,29 +55,35 @@ func TestResolve_stepsPastOccupiedPort(t *testing.T) {
 	alias := "occupied-alias"
 
 	derived := DeriveOffset(alias)
-	// Occupy the port the derived offset would land on, forcing Resolve to
-	// step to the next candidate. Must match isPortFree's tcp4/127.0.0.1
-	// binding exactly — a generic "tcp"/"" listener can land on an IPv6-only
-	// socket on hosts where dual-stack binding isn't available, which
-	// wouldn't actually collide with isPortFree's tcp4 probe and made this
-	// test flaky in CI.
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Skipf("cannot bind a test listener: %v", err)
+	// Reserve distinct real TCP ports for each candidate. Reusing one
+	// unoccupied adjacent port for all 49 retries made unrelated CI listeners
+	// look like a broken probe for every offset.
+	candidatePorts := make([]int, maxAttempts)
+	var occupied net.Listener
+	for index := range candidatePorts {
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Skipf("cannot bind a test listener: %v", err)
+		}
+		candidatePorts[index] = listener.Addr().(*net.TCPAddr).Port
+		if index == 0 {
+			occupied = listener
+			continue
+		}
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
-	defer ln.Close()
-	occupiedPort := ln.Addr().(*net.TCPAddr).Port
+	defer occupied.Close()
 
 	off, err := Resolve(alias, pidDir, func(offset int) []int {
-		if offset == derived {
-			return []int{occupiedPort}
-		}
-		return []int{occupiedPort + 1} // free at every other offset
+		attempt := (offset - derived) / offsetStep
+		return []int{candidatePorts[attempt]}
 	})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if off == derived {
+	if off != derived+offsetStep {
 		t.Fatalf("Resolve returned the occupied derived offset %d, expected it to step past it", derived)
 	}
 }

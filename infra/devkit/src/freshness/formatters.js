@@ -120,7 +120,7 @@ function getHighImpact(freshnessResults, threshold = 5) {
 /**
  * Print table format
  */
-export function printTable(freshnessResults, graph, metadata, options) {
+export function printTable(freshnessResults, graph, options) {
   const filtered = filterResults(freshnessResults, options);
 
   // Statistics
@@ -225,7 +225,7 @@ export function printTable(freshnessResults, graph, metadata, options) {
 /**
  * Print JSON format (AI-optimized)
  */
-export function printJSON(freshnessResults, graph, metadata, options) {
+export function printJSON(freshnessResults, graph, options) {
   const total = freshnessResults.size;
   const fresh = Array.from(freshnessResults.values()).filter((r) => r.status === 'fresh').length;
   const stale = Array.from(freshnessResults.values()).filter((r) => r.status === 'stale').length;
@@ -289,7 +289,7 @@ export function printJSON(freshnessResults, graph, metadata, options) {
 /**
  * Print Markdown format
  */
-export function printMarkdown(freshnessResults, graph, metadata, options) {
+export function printMarkdown(freshnessResults, graph) {
   const total = freshnessResults.size;
   const fresh = Array.from(freshnessResults.values()).filter((r) => r.status === 'fresh').length;
   const stale = Array.from(freshnessResults.values()).filter((r) => r.status === 'stale').length;
@@ -353,7 +353,7 @@ export function printMarkdown(freshnessResults, graph, metadata, options) {
 /**
  * Print Tree format
  */
-export function printTree(freshnessResults, graph, metadata, options) {
+export function printTree(freshnessResults, graph, options) {
   log('\n📦 Dependency Staleness Tree\n', 'blue');
 
   // If package filter specified, show that package's tree

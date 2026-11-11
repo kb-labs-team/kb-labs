@@ -1,3 +1,4 @@
+export { ActiveWorkRegistry, type ActiveWorkEntry, type ActiveWorkItem, type ActiveWorkKind, type ActiveWorkProvider } from "./active-work.js";
 export {
   runService,
   runHost,

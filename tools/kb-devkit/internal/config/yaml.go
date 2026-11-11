@@ -29,9 +29,10 @@ func (o *yamlOrderedCategories) UnmarshalYAML(value *yaml.Node) error {
 		*o = append(*o, NamedCategory{
 			Name: keyNode.Value,
 			Category: CategoryConfig{
-				Match:    cat.Match,
-				Language: cat.Language,
-				Preset:   cat.Preset,
+				Match:       cat.Match,
+				Language:    cat.Language,
+				Preset:      cat.Preset,
+				ReleaseLane: cat.ReleaseLane,
 			},
 		})
 	}
@@ -40,7 +41,14 @@ func (o *yamlOrderedCategories) UnmarshalYAML(value *yaml.Node) error {
 
 func loadYAML(path string) (*DevkitConfig, error) {
 	visited := make(map[string]bool)
-	return loadYAMLResolved(path, visited)
+	cfg, err := loadYAMLResolved(path, visited)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Checks.TimeoutMS == 0 {
+		cfg.Checks.TimeoutMS = DefaultCheckTimeoutMS
+	}
+	return cfg, nil
 }
 
 // yamlConfig mirrors DevkitConfig for YAML tag parsing.
@@ -104,8 +112,9 @@ func (t *yamlTask) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 type yamlAffected struct {
-	Strategy string `yaml:"strategy"`
-	Command  string `yaml:"command"`
+	Strategy   string   `yaml:"strategy"`
+	Command    string   `yaml:"command"`
+	FullInputs []string `yaml:"fullInputs"`
 }
 
 type yamlWorkspace struct {
@@ -118,9 +127,10 @@ type yamlWorkspace struct {
 }
 
 type yamlCategory struct {
-	Match    []string `yaml:"match"`
-	Language string   `yaml:"language"`
-	Preset   string   `yaml:"preset"`
+	Match       []string `yaml:"match"`
+	Language    string   `yaml:"language"`
+	Preset      string   `yaml:"preset"`
+	ReleaseLane string   `yaml:"releaseLane"`
 }
 
 type yamlPreset struct {
@@ -215,21 +225,25 @@ type yamlSyncTarget struct {
 }
 
 type yamlRun struct {
-	Concurrency int `yaml:"concurrency"`
+	Concurrency  int `yaml:"concurrency"`
+	TaskMemoryMB int `yaml:"task_memory_mb"`
 }
 
 type yamlCustomCheck struct {
-	Name       string   `yaml:"name"`
-	Run        string   `yaml:"run"`
-	Fix        string   `yaml:"fix"`
-	On         []string `yaml:"on"`
-	Language   string   `yaml:"language"`
-	Categories []string `yaml:"categories"`
-	Scope      string   `yaml:"scope"`
+	Name           string   `yaml:"name"`
+	Run            string   `yaml:"run"`
+	Fix            string   `yaml:"fix"`
+	On             []string `yaml:"on"`
+	Language       string   `yaml:"language"`
+	Categories     []string `yaml:"categories"`
+	AnchorPackages []string `yaml:"anchor_packages"`
+	RequiresBuild  []string `yaml:"requires_build"`
+	Scope          string   `yaml:"scope"`
 }
 
 type yamlChecks struct {
-	Packages map[string]yamlCheckPack `yaml:"packages"`
+	TimeoutMS *int                     `yaml:"timeout_ms"`
+	Packages  map[string]yamlCheckPack `yaml:"packages"`
 }
 
 type yamlCheckPack struct {
@@ -327,12 +341,22 @@ func parseYAMLBytes(data []byte) (*DevkitConfig, error) {
 		return nil, err
 	}
 	cfg := mapYAML(raw)
+	if raw.Checks.TimeoutMS != nil && *raw.Checks.TimeoutMS <= 0 {
+		return nil, fmt.Errorf("checks.timeout_ms must be a positive integer, got %d", *raw.Checks.TimeoutMS)
+	}
 	for _, check := range cfg.Custom {
 		if check.Scope != "" && check.Scope != "package" && check.Scope != "workspace" {
 			return nil, fmt.Errorf("custom check %q has unsupported scope %q (expected package or workspace)", check.Name, check.Scope)
 		}
 		if check.Scope == "workspace" && (check.Language != "" || len(check.Categories) > 0) {
 			return nil, fmt.Errorf("custom check %q uses workspace scope and cannot set package language or categories", check.Name)
+		}
+	}
+	for _, category := range cfg.Workspace.Categories {
+		if category.Category.ReleaseLane != "" {
+			if category.Category.ReleaseLane != "internal-tool" {
+				return nil, fmt.Errorf("workspace category %q has unsupported releaseLane %q", category.Name, category.Category.ReleaseLane)
+			}
 		}
 	}
 	return cfg, nil
@@ -351,11 +375,13 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 			Exclude:        raw.Workspace.Exclude,
 		},
 		Run: RunConfig{
-			Concurrency: raw.Run.Concurrency,
+			Concurrency:  raw.Run.Concurrency,
+			TaskMemoryMB: raw.Run.TaskMemoryMB,
 		},
 		Affected: AffectedConfig{
-			Strategy: raw.Affected.Strategy,
-			Command:  raw.Affected.Command,
+			Strategy:   raw.Affected.Strategy,
+			Command:    raw.Affected.Command,
+			FullInputs: raw.Affected.FullInputs,
 		},
 		Fix: FixConfig{
 			DefaultMode: raw.Fix.DefaultMode,
@@ -440,13 +466,15 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 	// Custom checks
 	for _, c := range raw.Custom {
 		cfg.Custom = append(cfg.Custom, CustomCheck{
-			Name:       c.Name,
-			Run:        c.Run,
-			Fix:        c.Fix,
-			On:         c.On,
-			Language:   c.Language,
-			Categories: c.Categories,
-			Scope:      c.Scope,
+			Name:           c.Name,
+			Run:            c.Run,
+			Fix:            c.Fix,
+			On:             c.On,
+			Language:       c.Language,
+			Categories:     c.Categories,
+			AnchorPackages: c.AnchorPackages,
+			RequiresBuild:  c.RequiresBuild,
+			Scope:          c.Scope,
 		})
 	}
 
@@ -455,6 +483,9 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 		for k, v := range raw.Checks.Packages {
 			cfg.Checks.Packages[k] = CheckPackConfig{Enabled: v.Enabled, Config: v.Config}
 		}
+	}
+	if raw.Checks.TimeoutMS != nil {
+		cfg.Checks.TimeoutMS = *raw.Checks.TimeoutMS
 	}
 
 	return cfg

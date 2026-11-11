@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
-export KB_JOURNEY_WORKSPACE_SOURCE="$ROOT"
 export KB_JOURNEY_GIT_REVISION="$(git rev-parse HEAD)"
 export KB_JOURNEY_RUNNER_UID="$(id -u)"
 export KB_JOURNEY_RUNNER_GID="$(id -g)"
@@ -46,35 +45,65 @@ if (( resolve_only )); then
   fi
   exit
 fi
+if (( prepare_only )); then
+  e2e/journey/prepare-candidate.sh
+  exit
+fi
 
-COMPOSE=()
-COMPOSE_AVAILABLE=0
+selection_json=""
+selected_selectors=""
+compose_profiles_json='[]'
+unset COMPOSE_PROFILES
+if [[ -z "$compose_action" && -z "${KB_JOURNEY_ONLY:-}" ]]; then
+  python3 e2e/journey/hermetic_cli.py -- node ./cli/bin/dist/bin.js qa cases validate
+fi
+if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
+  selection_json="$(python3 e2e/journey/select_from_cases.py)"
+  selected_selectors="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["runners"]))' <<< "$selection_json")"
+  compose_profiles_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["composeProfiles"]))' <<< "$selection_json")"
+elif [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
+  selected_selectors="$KB_JOURNEY_ONLY"
+  compose_profiles_json="$(python3 e2e/journey/dispatch_registry.py --lanes "$selected_selectors")"
+elif [[ -z "$compose_action" ]]; then
+  selected_selectors="$(python3 e2e/journey/select_from_cases.py)"
+  compose_profiles_json="$(python3 e2e/journey/dispatch_registry.py --lanes "$selected_selectors")"
+fi
+compose_profiles=""
+if [[ -n "$selected_selectors" ]]; then
+  compose_profiles="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)))' <<< "$compose_profiles_json")"
+fi
+if [[ -n "$compose_profiles" ]]; then export COMPOSE_PROFILES="$compose_profiles"; fi
+if [[ -n "$selection_json" ]]; then
+  export KB_JOURNEY_SELECTED_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))' <<< "$selection_json")"
+  export KB_JOURNEY_PREREQUISITE_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteSteps"]))' <<< "$selection_json")"
+  export KB_JOURNEY_PREREQUISITE_FLOWS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteFlows"]))' <<< "$selection_json")"
+  export KB_JOURNEY_SELECTED_OWNING_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["selectedOwningSteps"], separators=(",",":")))' <<< "$selection_json")"
+  export KB_JOURNEY_SELECTED_CAPABILITIES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<< "$selection_json")"
+else
+  unset KB_JOURNEY_SELECTED_STEPS KB_JOURNEY_PREREQUISITE_STEPS KB_JOURNEY_PREREQUISITE_FLOWS
+  unset KB_JOURNEY_SELECTED_OWNING_STEPS KB_JOURNEY_SELECTED_CAPABILITIES KB_JOURNEY_NEEDED_STATES
+fi
+
 ACTIVE_MONITORS=()
 MONITORED_CONTAINER_IDS=()
-if command docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose)
-  COMPOSE_AVAILABLE=1
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE=(docker-compose)
-  COMPOSE_AVAILABLE=1
-fi
-COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
-if (( COMPOSE_AVAILABLE )); then
-  COMPOSE+=("${COMPOSE_FILES[@]}")
-fi
+source "$ROOT/e2e/compose-owner.sh"
+source "$ROOT/e2e/journey/runner-toolchain.sh"
+trap journey_compose_cleanup EXIT
+journey_compose_init "$ROOT"
+if (( COMPOSE_AVAILABLE )); then COMPOSE=("${JOURNEY_COMPOSE[@]}"); else COMPOSE=(); fi
 source "$ROOT/e2e/journey/candidate-services.sh"
 
 if [[ -n "$compose_action" ]]; then
   if (( ! COMPOSE_AVAILABLE )); then
-    echo "Docker Compose is required for journey stack operations; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
     exit 127
   fi
   if [[ "$compose_action" == "--down" ]]; then
-    "${COMPOSE[@]}" down --volumes --remove-orphans
+    if journey_compose down --remove-orphans; then compose_status=0; else compose_status=$?; fi
   else
-    "${COMPOSE[@]}" config --format json
+    if journey_compose config --format json; then compose_status=0; else compose_status=$?; fi
   fi
-  exit $?
+  journey_compose_cleanup
+  exit "$compose_status"
 fi
 
 cleanup() {
@@ -104,7 +133,7 @@ cleanup() {
     fi
   done
   if (( COMPOSE_AVAILABLE )); then
-    if ! journey_stop_container_services "${COMPOSE[@]}"; then
+    if ! journey_stop_container_services; then
       echo "Journey candidate services cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
       (( status != 0 )) || status=1
     fi
@@ -112,46 +141,20 @@ cleanup() {
       if ! bash e2e/journey/teardown-compose.sh "$status" .journey/reports "$RUN_STARTED_AT" "${COMPOSE[@]}"; then
         status=1
       fi
-    elif ! "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null; then
+    elif ! journey_compose down --remove-orphans >/dev/null; then
       echo "Journey Compose cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
       (( status != 0 )) || status=1
     fi
   fi
+  journey_compose_cleanup
   exit "$status"
 }
 
 mkdir -p .journey/reports
 export KB_JOURNEY_INVOCATIONS="$ROOT/.journey/reports"
 
-if (( prepare_only )); then
-  e2e/journey/prepare-candidate.sh
-  exit
-fi
-
 if (( ! COMPOSE_AVAILABLE )); then
-  echo "Docker Compose is required for journey runs; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
   exit 127
-fi
-
-if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
-  python3 e2e/journey/hermetic_cli.py -- node ./cli/bin/dist/bin.js qa cases validate
-fi
-
-if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
-  selection_json="$(python3 e2e/journey/select_from_cases.py)"
-  export KB_JOURNEY_SELECTED_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))' <<< "$selection_json")"
-  export KB_JOURNEY_PREREQUISITE_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteSteps"]))' <<< "$selection_json")"
-  export KB_JOURNEY_PREREQUISITE_FLOWS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteFlows"]))' <<< "$selection_json")"
-  export KB_JOURNEY_SELECTED_OWNING_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["selectedOwningSteps"], separators=(",",":")))' <<< "$selection_json")"
-  export KB_JOURNEY_SELECTED_CAPABILITIES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<< "$selection_json")"
-  selected_selectors="$(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)["runners"]))' <<< "$selection_json")"
-else
-  unset KB_JOURNEY_SELECTED_STEPS
-  unset KB_JOURNEY_PREREQUISITE_STEPS
-  unset KB_JOURNEY_PREREQUISITE_FLOWS
-  unset KB_JOURNEY_SELECTED_OWNING_STEPS
-  unset KB_JOURNEY_SELECTED_CAPABILITIES
-  unset KB_JOURNEY_NEEDED_STATES
 fi
 
 dispatch_selector() {
@@ -179,7 +182,7 @@ trap cleanup EXIT INT TERM
 RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 if (( ! no_build )); then
-  pnpm install --frozen-lockfile
+  e2e/journey/install-workspace-dependencies.sh
   kb-devkit run build --affected
   e2e/journey/prepare-candidate.sh
 fi
@@ -192,7 +195,7 @@ start_container_monitor() {
 
 start_project_container_monitors() {
   local container_id container_listing
-  container_listing=$("${COMPOSE[@]}" ps -aq --all)
+  container_listing=$(journey_compose ps -aq --all)
   while IFS= read -r container_id; do
     [[ -z "$container_id" ]] && continue
     case " ${MONITORED_CONTAINER_IDS[*]-} " in
@@ -205,8 +208,12 @@ start_project_container_monitors() {
 mkdir -p .journey/reports
 rm -f .journey/reports/journey-summary.md
 find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf {} +
-"${COMPOSE[@]}" build publisher runner idp-stub
-journey_start_container_services "${COMPOSE[@]}"
+journey_toolchain_ensure "$ROOT"
+journey_compose build publisher runner idp-stub
+if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
+  journey_compose build marketplace-state marketplace-registry
+fi
+journey_start_container_services
 start_project_container_monitors
 journey_wait_container_publisher
 
@@ -216,7 +223,7 @@ run_journey() {
   RUN_INDEX=$((RUN_INDEX + 1))
   echo "==> $front_door / $scenario / $variant"
   if ! container_id=$(KB_JOURNEY_RUNNER_SELECTOR="$runner_selector" KB_JOURNEY_SCENARIO="$scenario" KB_JOURNEY_FRONT_DOOR="$front_door" KB_JOURNEY_VARIANT="$variant" \
-    "${COMPOSE[@]}" run -d --name "$container_name" -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
+    journey_compose run -d --name "$container_name" -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
     -e KB_JOURNEY_RUNNER_SELECTOR -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_SELECTED_STEPS \
     -e KB_JOURNEY_PREREQUISITE_STEPS -e KB_JOURNEY_PREREQUISITE_FLOWS \
     -e KB_JOURNEY_SELECTED_OWNING_STEPS -e KB_JOURNEY_SELECTED_CAPABILITIES runner < /dev/null); then
@@ -241,11 +248,9 @@ if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
 elif [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
   run_selector "$KB_JOURNEY_ONLY"
 else
-  selectors_json="$(python3 e2e/journey/select_from_cases.py)"
-  selectors="$(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)))' <<< "$selectors_json")"
-  if [[ -n "$selectors" ]]; then while IFS= read -r selector; do
+  if [[ -n "$selected_selectors" ]]; then while IFS= read -r selector; do
     if ! run_selector "$selector"; then status=1; fi
-  done <<< "$selectors"; fi
+  done <<< "$(printf '%s' "$selected_selectors" | tr ',' '\n')"; fi
 fi
 
 echo "Journey matrix complete (exit $status)"

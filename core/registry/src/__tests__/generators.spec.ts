@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { generateOpenAPISpec, mergeOpenAPISpecs } from '../generators/openapi-spec.js';
+import { generateOpenAPISpec } from '../generators/openapi-spec.js';
+import { mergeOpenAPISpecs } from '@kb-labs/plugin-contracts';
 import { generateStudioRegistry } from '../generators/studio-registry.js';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
-import type { PluginBrief } from '../types.js';
+import type { PluginBrief } from '@kb-labs/plugin-contracts';
 
 function makeManifest(id: string, routes?: number): ManifestV3 {
   return {

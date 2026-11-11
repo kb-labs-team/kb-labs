@@ -1,0 +1,8 @@
+{
+  "name": "@kb-labs/e2e-delivery",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test scripts/*.test.mjs"
+  }
+}

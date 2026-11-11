@@ -27,7 +27,7 @@ func Run(plan contracts.ResolvedInstallPlan, now time.Time) (contracts.Verificat
 func RunWithConfigRoot(plan contracts.ResolvedInstallPlan, now time.Time, configRoot string) (contracts.Verification, error) {
 	if plan.ServiceGraph.Profile == "client" {
 		if plan.Host != nil || len(plan.ServiceGraph.Services) != 0 {
-			return contracts.Verification{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "The client profile must not declare a host or services.", "Use the client service profile from the release index.", nil)
+			return contracts.Verification{}, contracts.HostSpecDiagnostic("The client profile must not declare a host or services.", "Use the client service profile from the release index.", "the client profile declares host services", nil)
 		}
 		if _, err := os.Stat(filepath.Join(configRoot, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
 			return contracts.Verification{}, fmt.Errorf("client profile must not write runtime config")
@@ -39,10 +39,10 @@ func RunWithConfigRoot(plan contracts.ResolvedInstallPlan, now time.Time, config
 		return contracts.Verification{}, fmt.Errorf("read runtime config: %w", err)
 	}
 	if plan.Host == nil {
-		return contracts.Verification{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "The resolved plan declares no host.", "Reinstall the platform with \"kb-create apply\".", nil)
+		return contracts.Verification{}, contracts.HostSpecDiagnostic("The resolved plan declares no host.", "Reinstall the platform with \"kb-create apply\".", "the resolved plan declares no host", nil)
 	}
 	if err := plan.Host.Validate(); err != nil {
-		return contracts.Verification{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "The host specification is invalid: "+err.Error()+".", "Reinstall the platform with \"kb-create apply\".", err)
+		return contracts.Verification{}, contracts.HostSpecDiagnostic("The host specification is invalid: "+err.Error()+".", "Reinstall the platform with \"kb-create apply\".", err.Error(), err)
 	}
 	return contracts.Verification{ConfigSHA256: digest(config), HostHealthURL: plan.Host.HealthURL, ReadinessCheckedAt: now.UTC()}, nil
 }

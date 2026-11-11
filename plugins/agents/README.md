@@ -48,7 +48,7 @@ editing, and post-mortem debugging from a trace file.
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/agent-entry
+pnpm kb marketplace install @kb-labs/agents
 ```
 
 ---
@@ -71,27 +71,27 @@ kb agent run --task="..." --session-id=abc --verbose   # resume session
 ### Trace debugging
 
 ```bash
-kb agent trace stats     --task-id=task-123            # tokens, cost, timing
-kb agent trace filter    --task-id=task-123 --type=llm:call
-kb agent trace iteration --task-id=task-123 --iteration=3
-kb agent trace context   --task-id=task-123            # context window + truncations
-kb agent trace diagnose  --task-id=task-123            # comprehensive diagnostic report
+kb agent trace stats show     --task-id=task-123            # tokens, cost, timing
+kb agent trace list    --task-id=task-123 --type=llm:call
+kb agent trace iteration show --task-id=task-123 --iteration=3
+kb agent trace context show   --task-id=task-123            # context window + truncations
+kb agent trace doctor  --task-id=task-123            # comprehensive diagnostic report
 ```
 
 ### Quality control
 
 ```bash
-kb agent quality report                   # last 24h
-kb agent quality report --days=7
-kb agent quality report --session-id=abc
+kb agent quality report show                   # last 24h
+kb agent quality report show --days=7
+kb agent quality report show --session-id=abc
 ```
 
 ### File change history
 
 ```bash
-kb agent history                             # all recent changes
-kb agent history --session-id=abc
-kb agent history --file=src/index.ts
+kb agent history list                             # all recent changes
+kb agent history list --session-id=abc
+kb agent history list --file=src/index.ts
 kb agent diff     --change-id=change-abc123  # line-by-line diff
 kb agent rollback --change-id=change-abc123  # undo one change
 kb agent rollback --session-id=abc --dry-run # preview session rollback

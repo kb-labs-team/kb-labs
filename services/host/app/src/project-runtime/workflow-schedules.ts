@@ -1,14 +1,14 @@
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import YAML from "yaml";
-import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import type { RuntimeProject } from "./manager.js";
 
 /** Return registered projects with enabled project cron schedules. */
 export async function findScheduledProjects(
-  registry: IProjectRegistry,
+  registry: Pick<IProjectRegistry, "list">,
 ): Promise<RuntimeProject[]> {
-  const projects = await registry.list();
+  const { projects } = await registry.list();
   const scheduled: RuntimeProject[] = [];
   for (const view of projects) {
     const project = view.project;

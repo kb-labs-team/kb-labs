@@ -21,6 +21,8 @@
  */
 
 import type { IContextLogger } from "@kb-labs/core-platform";
+import type { ActiveWorkItem } from "@kb-labs/shared-daemon";
+import { RUNTIME_ACTIVE_WORK_PATH, RUNTIME_TOKEN_HEADER } from "@kb-labs/project-runtime-app/protocol";
 import { runtimeLimitReached, runtimeReloadFailed, runtimeStartFailed } from "./errors.js";
 
 export interface RuntimeProject {
@@ -129,6 +131,14 @@ export interface ProjectRuntimeManagerOptions {
   getPluginSetDigest?: (project: RuntimeProject) => Promise<string>;
   /** Clock, injectable for tests. */
   now?: () => number;
+}
+
+const ACTIVE_WORK_KINDS = ["workflow", "job", "service-job", "long-command"] as const;
+
+function isActiveWorkItem(value: unknown): value is ActiveWorkItem {
+  if (typeof value !== "object" || value === null || !("kind" in value) || !("id" in value) || !("owningService" in value)) {return false;}
+  return typeof value.kind === "string" && (ACTIVE_WORK_KINDS as readonly string[]).includes(value.kind)
+    && typeof value.id === "string" && typeof value.owningService === "string";
 }
 
 const READY_WAIT_SLACK_MS = 5000;
@@ -303,6 +313,25 @@ export class ProjectRuntimeManager {
     }
   }
 
+  async listActiveWork(): Promise<ActiveWorkItem[]> {
+    const active = [...this.entries.values()].filter((entry) => entry.process && entry.state !== "stopping");
+    const grouped = await Promise.all(active.map(async (entry) => {
+      const runtime = entry.process!;
+      const response = await fetch(`http://${runtime.address.host}:${runtime.address.port}${RUNTIME_ACTIVE_WORK_PATH}`, {
+        headers: { [RUNTIME_TOKEN_HEADER]: runtime.token },
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!response.ok) {throw new Error(`Project runtime ${entry.project.id} active-work query returned HTTP ${response.status}.`);}
+      const items: unknown = await response.json();
+      if (!Array.isArray(items)) {throw new Error(`Project runtime ${entry.project.id} returned an invalid active-work response.`);}
+      return items.map((value): ActiveWorkItem => {
+        if (!isActiveWorkItem(value)) {throw new Error(`Project runtime ${entry.project.id} returned an invalid active-work item.`);}
+        return { ...value, owningService: `project:${entry.project.id}/${value.owningService}` };
+      });
+    }));
+    return grouped.flat();
+  }
+
   status(): ManagerSnapshot {
     const runtimes: RuntimeSnapshot[] = [];
     for (const entry of this.entries.values()) {
@@ -450,14 +479,14 @@ export class ProjectRuntimeManager {
         released = true;
         entry.inflight -= 1;
         entry.lastUsed = this.now();
-        if (entry.inflight === 0) entry.drained?.resolve();
+        if (entry.inflight === 0) {entry.drained?.resolve();}
       },
     };
   }
 
   /** One reload promise gates acquisitions while leases on the old runtime drain. */
   private reload(entry: Entry, digest: string): Promise<void> {
-    if (entry.state === "reloading") return entry.reloadTask ?? Promise.resolve();
+    if (entry.state === "reloading") {return entry.reloadTask ?? Promise.resolve();}
     entry.state = "reloading";
     entry.drained = entry.inflight > 0 ? deferred() : undefined;
     entry.reloadTask = this.reloadProcess(entry, digest);
@@ -467,11 +496,11 @@ export class ProjectRuntimeManager {
   private async reloadProcess(entry: Entry, digest: string): Promise<void> {
     const previous = entry.process;
     try {
-      if (entry.drained) await entry.drained.promise;
-      if (entry.state !== "reloading") return;
+      if (entry.drained) {await entry.drained.promise;}
+      if (entry.state !== "reloading") {return;}
       this.clearHealthMonitor(entry);
       await previous?.stop();
-      if (entry.state !== "reloading") return;
+      if (entry.state !== "reloading") {return;}
       entry.process = undefined;
       await this.startOnce(entry);
       if (entry.state === "reloading") {
@@ -480,7 +509,7 @@ export class ProjectRuntimeManager {
         this.markReady(entry);
       }
     } catch (error) {
-      if (entry.state !== "reloading") return;
+      if (entry.state !== "reloading") {return;}
       const cause = error instanceof Error ? error.message : String(error);
       this.clearHealthMonitor(entry);
       await entry.process?.stop().catch(() => undefined);
@@ -491,7 +520,7 @@ export class ProjectRuntimeManager {
         error: cause,
         restarts: entry.restarts,
       });
-      if (this.entries.get(entry.project.id) === entry) this.entries.delete(entry.project.id);
+      if (this.entries.get(entry.project.id) === entry) {this.entries.delete(entry.project.id);}
       throw runtimeReloadFailed(entry.project.id, cause);
     }
   }

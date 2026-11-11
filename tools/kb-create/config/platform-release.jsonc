@@ -1,0 +1,90 @@
+{
+  "platform": {
+    "adapters": {
+      "storage": "@kb-labs/adapters-fs",
+      "cache": "@kb-labs/adapters-state-broker",
+      "eventBus": "@kb-labs/adapters-eventbus-cache",
+      "documentDatabase": "@kb-labs/adapters-sqlite",
+      "kvStore": "@kb-labs/adapters-sqlite/kv",
+      "logger": "@kb-labs/adapters-pino",
+      "logRingBuffer": "@kb-labs/adapters-log-ringbuffer",
+      "logPersistence": "@kb-labs/adapters-log-document",
+      "analytics": "@kb-labs/adapters-analytics-sqlite",
+      "serviceTransport": "@kb-labs/adapters-service-transport-http"
+    },
+    "adapterOptions": {
+      "cache": {
+        "url": "http://127.0.0.1:7777",
+        "namespace": "kb:"
+      },
+      "serviceTransport": {
+        "services": {
+          "gateway": { "url": "http://127.0.0.1:4000" },
+          "rest": { "url": "http://127.0.0.1:5050" },
+          "workflow": { "url": "http://127.0.0.1:7778" },
+          "marketplace": { "url": "http://127.0.0.1:5070" },
+          "mcp-daemon": { "url": "http://127.0.0.1:7779" }
+        }
+      },
+      "documentDatabase": {
+        "filename": "database/kb.sqlite"
+      },
+      "kvStore": {
+        "filename": "database/kb.sqlite"
+      },
+      "analytics": {
+        "dbPath": "analytics/analytics.sqlite"
+      },
+      "logger": {
+        "level": "info",
+        "streaming": {
+          "enabled": true,
+          "bufferSize": 1000,
+          "bufferMaxAge": 3600000
+        }
+      },
+      "logRingBuffer": {
+        "maxSize": 100
+      },
+      "logPersistence": {
+        "collection": "logs",
+        "batchSize": 100,
+        "flushInterval": 5000,
+        "retention": {
+          "maxAgeFatal": 2592000000,
+          "maxAgeError": 1209600000,
+          "maxAgeWarn": 604800000,
+          "maxAgeInfo": 1800000,
+          "maxAgeDebug": 1800000,
+          "cleanupIntervalMs": 300000
+        }
+      }
+    }
+  },
+  "marketplace": {
+    "sources": [
+      { "kind": "npm", "url": "https://registry.npmjs.org" }
+    ]
+  },
+  "profiles": [
+    {
+      "id": "default",
+      "products": {
+        "release": {
+          "flows": {
+            "platform": {
+              "platformRequires": ["llm"],
+              "platformMembers": [
+                "@kb-labs/cli-bin",
+                "@kb-labs/scaffold",
+                "@kb-labs/core-workspace",
+                "@kb-labs/host-agent-app",
+                "@kb-labs/workflow-entry"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -7,14 +7,12 @@
     "page": {
       "healthEyebrow": "Health",
       "buildLead": "Граф зависимостей + топологический порядок + content-addressable кэш по SHA256. Одинаковый контент — 0ms, независимо от числа пакетов.",
-      "impactEyebrow": "Impact",
       "installBtn": "Установить KB Labs",
       "buildEyebrow": "Сборка",
       "ctaEyebrow": "Установить",
       "heroEyebrow": "Monorepo Ops · kb-devkit",
-      "ctaTitle": "Граф. Кэш. Impact. Всё в одном.",
-      "ctaNote": "kb-devkit идёт с платформой. Impact — отдельный плагин.",
-      "impactTitle": "Что сломается. Что тестировать.",
+      "ctaTitle": "Граф. Кэш. Сборка.",
+      "ctaNote": "kb-devkit идёт с платформой.",
       "healthCommands": [
         {
           "cmd": "kb-devkit check",
@@ -60,28 +58,9 @@
         }
       ],
       "healthLead2": "Нужна своя логика? {code} в devkit.yaml — shell-команда, которая получает JSON с контекстом пакета и возвращает {result}. Лицензионные заголовки, barrel exports, naming conventions — всё что угодно.",
-      "impactCommands": [
-        {
-          "cmd": "kb-devkit run build --affected",
-          "note": "Поиск affected-сета через git diff + BFS по графу зависимостей."
-        },
-        {
-          "cmd": "pnpm kb impact analyze",
-          "note": "Показать какие пакеты и тесты затронуты текущими изменениями."
-        },
-        {
-          "cmd": "pnpm kb impact report",
-          "note": "Экспорт структурированного impact-отчёта с путями зависимостей."
-        },
-        {
-          "cmd": "pnpm kb marketplace plugins refresh",
-          "note": "Принудительная инвалидация CLI-кэша после сборки."
-        }
-      ],
       "heroTitle": "150+ пакетов.",
       "heroDescription": "kb-devkit оркестрирует монорепо: топологическая сборка, content-addressable кэш, --affected по git diff, health score по presets. Мы собираем KB Labs им каждый день.",
       "healthLead1": "Статический аудит каждого пакета по presets: ESLint-конфиг, TSConfig, README, engines, exports. Health score 0–100 с грейдом A–F — по категориям сразу видно где деградация.",
-      "impactLead": "Impact плагин строит обратный граф и показывает каскад: direct → dependent → transitive пакеты. Тесты — только те, что реально задеты. Build-план сразу с командой для devkit.",
       "healthTitle": "Health score. Checks. Auto-fix.",
       "tabCached": "full (все в кэше)"
     }

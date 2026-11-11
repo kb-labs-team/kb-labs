@@ -3,9 +3,14 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/kb-labs/clikit/diag"
+	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,5 +152,145 @@ func TestSupervisorRejectsAReusedPIDWithoutStartingOrSignallingIt(t *testing.T) 
 	}
 	if len(runner.calls) != 0 || !host.ProcessAlive(os.Getpid()) {
 		t.Fatalf("stale supervisor record affected its reused PID or started a host: calls=%v", runner.calls)
+	}
+}
+
+func activeWorkSupervisor(t *testing.T, activeWorkJSON string) (*Supervisor, *host.ProcessRunner) {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "fakehost")
+	build := exec.Command("go", "build", "-o", binary, "../internal/fakehost")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fake host: %v\n%s", err, output)
+	}
+	port, err := freeLoopbackPort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := &contracts.HostSpec{Command: binary, Args: []string{"-port", strconv.Itoa(port), "-active-work-json", activeWorkJSON}, HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 3}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: spec, ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway"}}}}
+	if err := receipt.Write(stage, contracts.InstallReceipt{ID: "active-work-test", InstallationID: installationID, Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateInitial(stage, "1.0.0", "active-work-test"); err != nil {
+		t.Fatal(err)
+	}
+	runner, err := host.NewRunner(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervisor := &Supervisor{Runner: runner, State: host.State{Dir: t.TempDir()}, PlatformRoot: root}
+	if err := supervisor.prepareHostStart(runner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = supervisor.Runner.Stop(context.Background()) })
+	return supervisor, runner
+}
+
+func freeLoopbackPort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port, nil
+}
+
+func TestRestartRefusesActiveWorkBeforeStoppingHost(t *testing.T) {
+	supervisor, previous := activeWorkSupervisor(t, `[{"kind":"workflow","id":"run-17","owningService":"workflow"}]`)
+	initial, err := previous.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := initial.PID
+	_, err = supervisor.restart(context.Background(), false)
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != "KB_RESTART_WORK_IN_FLIGHT" {
+		t.Fatalf("restart error = %v, want catalogued active-work refusal", err)
+	}
+	envelope, err := diag.ToEnvelope(failure)
+	if err != nil {
+		t.Fatalf("serialize refusal: %v", err)
+	}
+	items, ok := envelope.Details["items"].([]host.ActiveWorkItem)
+	if !ok || len(items) != 1 || items[0].OwningService != "workflow" {
+		t.Fatalf("active-work details = %#v", envelope.Details["items"])
+	}
+	status, err := previous.Status(context.Background())
+	if err != nil || status.State != host.StateRunning || status.PID != pid {
+		t.Fatalf("host after refusal = %+v, %v; want PID %d still running", status, err, pid)
+	}
+	for _, path := range []string{previous.State.HostPID(), previous.State.HostLog()} {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if strings.Contains(string(data), previous.ControlCredential) {
+			t.Fatalf("control credential was written to %s", path)
+		}
+	}
+}
+
+func TestRestartQueryFailureReturnsHostUnreachableWithoutStopping(t *testing.T) {
+	supervisor, previous := activeWorkSupervisor(t, `[]`)
+	initial, err := previous.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := initial.PID
+	previous.ControlAddress = "http://127.0.0.1:1"
+	_, err = supervisor.restart(context.Background(), false)
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != "KB_HOST_UNREACHABLE" {
+		t.Fatalf("restart error = %v, want catalogued host-unreachable", err)
+	}
+	status, err := previous.Status(context.Background())
+	if err != nil || status.State != host.StateRunning || status.PID != pid {
+		t.Fatalf("host after query failure = %+v, %v; want PID %d still running", status, err, pid)
+	}
+}
+
+func TestRestartInterruptProceedsWithActiveWork(t *testing.T) {
+	supervisor, previous := activeWorkSupervisor(t, `[{"kind":"workflow","id":"run-19","owningService":"workflow"}]`)
+	initial, err := previous.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPID := initial.PID
+	response, err := supervisor.restart(context.Background(), true)
+	if err != nil || !response.OK || response.Host.PID == oldPID {
+		t.Fatalf("interrupt restart = %+v, %v; want a replacement host", response, err)
+	}
+}
+
+func TestActiveWorkQueryRejectsWrongAndMissingCredentials(t *testing.T) {
+	supervisor, runner := activeWorkSupervisor(t, `[]`)
+	original := runner.ControlCredential
+	for _, credential := range []string{"wrong", ""} {
+		runner.ControlCredential = credential
+		_, err := runner.QueryActiveWork(context.Background())
+		var failure *diag.Diag
+		if !errors.As(err, &failure) || failure.Code != "KB_HOST_UNREACHABLE" {
+			t.Fatalf("credential %q query error = %v, want host-unreachable", credential, err)
+		}
+	}
+	runner.ControlCredential = original
+	if _, err := supervisor.Runner.Status(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -11,20 +11,13 @@
 // Discovery manager
 export { DiscoveryManager, extractEntityKinds } from './discovery-manager.js';
 export type { DiscoveryOptions } from './discovery-manager.js';
-export { resolveCliHandlerPath } from './resolve-cli-handler.js';
 export {
-  DISCOVERY_MARKETPLACE_LOCK,
-  DISCOVERY_WORKSPACE_FILE,
-  DISCOVERY_PACKAGE_MANIFEST,
-  DISCOVERY_ROOT_INPUT_PATHS,
-  getDiscoveryInputPaths,
-  createDiscoveryInputFingerprinter,
+  isDiscoverySnapshotStale,
+  createDiscoveryObservationFingerprinter,
 } from './discovery-inputs.js';
-export type {
-  DiscoveryInputStat,
-  DiscoveryInputFileSystem,
-  DiscoveryInputFingerprinter,
-} from './discovery-inputs.js';
+export type { DiscoveryObservationFingerprinter } from './discovery-inputs.js';
+export { captureFilesystemObservations, hashFilesystemObservations, hashDiscoveryFingerprint, filesystemObservationsEqual, readFile, exists, access, stat, listDirectory, replayFilesystemObservationSet, replayFilesystemObservations } from './recording-filesystem.js';
+export type { FilesystemObservation } from './recording-filesystem.js';
 
 // Marketplace lock CRUD
 export {
@@ -34,6 +27,7 @@ export {
   removeFromMarketplaceLock,
   createEmptyLock,
   createMarketplaceEntry,
+  createInstallOwnedRelativePath,
   MarketplaceLockValidationError,
   validateMarketplaceLock,
   enablePlugin,
@@ -60,25 +54,3 @@ export type { WorkspaceCandidate } from './workspace-source.js';
 
 // Diagnostics
 export { DiagnosticCollector } from './diagnostics.js';
-
-// Types
-export type {
-  // Entity model
-  EntityKind,
-  EntitySignature,
-  // Marketplace lock
-  MarketplaceLock,
-  MarketplaceEntry,
-  MarketplaceAdapterEntry,
-  MarketplaceLockEntry,
-  // Discovery result
-  DiscoveredPlugin,
-  DiscoveryResult,
-  DiscoveryFailure,
-  DiscoveryOrigin,
-  DiscoveryScope,
-  // Diagnostics
-  DiagnosticSeverity,
-  DiagnosticEvent,
-  DiagnosticCode,
-} from './types.js';

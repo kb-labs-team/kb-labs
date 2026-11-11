@@ -10,12 +10,12 @@
  *
  * Problem:
  *   `ToolShape.executor` returns `Promise<unknown>`, but agent-tools' `Tool.executor`
- *   expects `Promise<ToolResult>` (from @kb-labs/agent-contracts). This makes
+ *   expects `Promise<ToolResult>` (from @kb-labs/agents/contracts). This makes
  *   `registry.register(createSpawnAgentTool(context))` fail to type-check because
  *   `ToolShape` is not assignable to `Tool`.
  *
  * Root cause:
- *   `ToolResult` lives in `@kb-labs/agent-contracts` (agent-specific repo).
+ *   `ToolResult` lives in `@kb-labs/agents/contracts` (agent-specific repo).
  *   `shared-tool-kit` (kb-labs-shared) cannot import from agent-contracts without
  *   creating a cross-repo dependency, which violates layering.
  *

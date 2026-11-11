@@ -10,7 +10,7 @@ from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping, overload
 from invocations import invocation_context, invocation_link, write_report_json, write_report_text
 from journey_dependencies import Dependency
 from journey_values import MissingJourneyState
@@ -177,16 +177,23 @@ class Journey:
     def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = (),
              details: Callable[[], dict[str, Any]] | None = None, *,
              requires: Iterable[str] = (), provides: Iterable[str] = (), role: str = "step",
-             runners: Iterable[str] = ()) -> StepResult:
+             runners: Iterable[str] = (), plan_after_phase: str | None = None,
+             plan_phase: str | None = None) -> StepResult:
         return self._record_step(name, capability, check, cases, details, requires=requires,
-                                 provides=provides, role=role, runners=runners)
+                                 provides=provides, role=role, runners=runners,
+                                 plan_after_phase=plan_after_phase, plan_phase=plan_phase)
 
     def _record_step(self, name: str, capability: str, check: Callable[[], str | None],
                      cases: Iterable[str] = (), details: Callable[[], dict[str, Any]] | None = None, *,
                      requires: Iterable[str] = (), provides: Iterable[str] = (), role: str = "step",
-                     runners: Iterable[str] = ()) -> StepResult:
+                     runners: Iterable[str] = (), plan_after_phase: str | None = None,
+                     plan_phase: str | None = None) -> StepResult:
         if role not in {"step", "lifecycle"}:
             raise ValueError(f"unsupported journey step role: {role}")
+        if plan_after_phase is not None and plan_after_phase != "all-steps":
+            raise ValueError("plan_after_phase must be 'all-steps'")
+        if plan_phase is not None and (plan_phase != "teardown" or role != "lifecycle"):
+            raise ValueError("plan_phase='teardown' is only valid on a lifecycle journey step")
         case_ids = list(cases)
         required_items = tuple(requires)
         step_id = "case:" + ",".join(sorted(set(case_ids))) if case_ids else f"flow:{name}"
@@ -381,6 +388,17 @@ class Journey:
         self.steps.append(result)
         return result
 
+    def missing_selected_claims(self, journey_results: list[dict[str, Any]]) -> list[str]:
+        """Return resolved claims that no journey result recorded as executed."""
+        executed = {
+            case_id
+            for journey_result in journey_results
+            for step in journey_result.get("steps", [])
+            if step.get("status") in {"PASS", "FAIL", "BLOCKED"}
+            for case_id in step.get("cases", [])
+        }
+        return sorted(self.selected_steps - executed)
+
     def result(self) -> JourneyResult:
         first_step = next((step for step in self.steps if step.status == "FAIL"), None)
         first = _step_dict(first_step) if first_step is not None else None
@@ -396,13 +414,13 @@ class Journey:
                 if step.status == "FAIL" or previous != "FAIL":
                     claims[case_id] = step.status
         case_run = {
-            "schema": "kb.qa-case-run/v1",
+            "schema": "kb.qa-case-run/v2",
             "runId": self.run_id,
             "mode": self.mode,
             "claims": [{"claimId": case_id, "kind": "journey", "status": result} for case_id, result in sorted(claims.items())],
         }
         if self.selection:
-            case_run.update({"partial": True, "selection": self.selection})
+            case_run.update({"selection": self.selection})
         return JourneyResult("kb.service-journey/v1", self.run_id, self.started_at,
                              round(time.monotonic() - self.started, 3), status, first,
                              [_step_dict(step) for step in self.steps], case_run)
@@ -676,12 +694,41 @@ class FlowGraph:
             result.details = {**(result.details or {}), "requires": declared_dependencies}
         return result
 
+    @overload
     def flow(self, name: str, group: str, capability: str, action: Callable[[], object],
              cases: Iterable[str] = (), *, role: str = "step",
              record_empty_success: bool = True, runners: Iterable[str] = (),
-             skip_note: str | None = None) -> str:
+             skip_note: str | None = None, case_action: None = None,
+             plan_after_phase: str | None = None, plan_phase: str | None = None) -> str: ...
+
+    @overload
+    def flow(self, name: str, group: str, capability: str, action: None,
+             cases: Iterable[str] = (), *, role: str = "step",
+             record_empty_success: bool = True, runners: Iterable[str] = (),
+             skip_note: str | None = None,
+             case_action: Callable[[tuple[str, ...]], object],
+             plan_after_phase: str | None = None, plan_phase: str | None = None) -> str: ...
+
+    def flow(self, name: str, group: str, capability: str, action: Callable[[], object] | None,
+             cases: Iterable[str] = (), *, role: str = "step",
+             record_empty_success: bool = True, runners: Iterable[str] = (),
+             skip_note: str | None = None,
+             case_action: Callable[[tuple[str, ...]], object] | None = None,
+             plan_after_phase: str | None = None, plan_phase: str | None = None) -> str:
         """Run an outer flow; return PASS, FAIL, or BLOCKED for dependency wiring."""
         case_ids = list(cases)
+
+        def record_flow_step(check, *, cases=(), role=role):
+            if plan_after_phase == "all-steps":
+                return self.journey.step(name, capability, check, cases=cases, role=role,
+                                         runners=runners, plan_after_phase="all-steps")
+            if plan_phase == "teardown":
+                return self.journey.step(name, capability, check, cases=cases, role=role,
+                                         runners=runners, plan_phase="teardown")
+            return self.journey.step(name, capability, check, cases=cases, role=role, runners=runners)
+
+        if (action is None) == (case_action is None):
+            raise JourneyContractError("provide exactly one outer flow action")
         prerequisite = name in self.journey.prerequisite_flows
         lifecycle = role == "lifecycle"
         selected_owner = (group in self.selected_groups
@@ -708,23 +755,26 @@ class FlowGraph:
 
         start = len(self.journey.steps)
         try:
-            outcome = action()
+            if case_action is not None:
+                outcome = case_action(tuple(case_ids))
+            elif action is not None:
+                outcome = action()
+            else:
+                raise JourneyContractError("outer flow action was not selected")
         except MissingJourneyState as error:
-            self.journey.step(name, capability, lambda: f"BLOCKED: {error}", cases=case_ids,
-                              role="lifecycle" if selected_by_flow_rule else role,
-                              runners=runners)
+            record_flow_step(lambda: f"BLOCKED: {error}", cases=case_ids,
+                             role="lifecycle" if selected_by_flow_rule else role)
             outcome = None
         except Exception as error:
             self._write_traceback(group, name)
-            self.journey.step(name, capability, lambda: str(error) or error.__class__.__name__,
-                              role="lifecycle" if selected_by_flow_rule else role,
-                              runners=runners)
+            record_flow_step(lambda: str(error) or error.__class__.__name__,
+                             role="lifecycle" if selected_by_flow_rule else role)
             outcome = None
         emitted = self.journey.steps[start:]
         if isinstance(outcome, str):
-            self.journey.step(name, capability, lambda: outcome, cases=case_ids, role=role, runners=runners)
+            record_flow_step(lambda: outcome, cases=case_ids, role=role)
         elif not emitted and record_empty_success:
-            self.journey.step(name, capability, lambda: None, cases=case_ids, role=role, runners=runners)
+            record_flow_step(lambda: None, cases=case_ids, role=role)
 
         group_steps = self.journey.steps[start:]
         failed = next((step for step in group_steps if step.status == "FAIL"), None)

@@ -1,5 +1,7 @@
 # ТЗ: Policy Plugin
 
+Status: dropped 2026-10-21 (owner decision)
+
 ## Описание
 
 `Enforces workspace-level development policies per category. Detects which category a repo belongs to, resolves applicable rules, and validates compliance. Blocks pipeline on violations.`
@@ -138,8 +140,8 @@ pnpm kb policy check
         {
           "rule": "sdk-only-deps",
           "severity": "error",
-          "message": "@kb-labs/mind-cli imports @kb-labs/plugin-contracts directly",
-          "package": "@kb-labs/mind-cli",
+          "message": "@kb-labs/mind/cli imports @kb-labs/plugin-contracts directly",
+          "package": "@kb-labs/mind/cli",
           "detail": "Plugins must depend only on @kb-labs/sdk. Move needed types to SDK or use SDK re-exports.",
           "file": "packages/mind-cli/package.json"
         }
@@ -162,7 +164,7 @@ pnpm kb policy check
 
 plugins/kb-labs-mind (category: plugins)
   ❌ sdk-only-deps
-     @kb-labs/mind-cli imports @kb-labs/plugin-contracts directly
+     @kb-labs/mind/cli imports @kb-labs/plugin-contracts directly
      → Plugins must depend only on @kb-labs/sdk
 
   ✅ boundary-check
@@ -221,7 +223,7 @@ pnpm kb policy rules
 1. Прочитать все `package.json` в `<repo>/packages/*/` и `<repo>/apps/*/`
 2. Для каждого `@kb-labs/*` dependency проверить:
    - `@kb-labs/sdk` → ok
-   - Пакет из того же репо (например `@kb-labs/mind-core` в `kb-labs-mind`) → ok
+   - Пакет из того же репо (например `@kb-labs/mind/core` в `kb-labs-mind`) → ok
    - Всё остальное → violation
 3. Проверять и `dependencies`, и `devDependencies` (devDependencies можно ослабить — only `@kb-labs/shared-testing` допустим, решить)
 

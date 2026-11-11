@@ -51,7 +51,7 @@ const PLAN_OUTPUT = `$ kb release run
   │  ·  @kb-labs/core-types              1.4.1  →  1.4.2         │
   │  ·  @kb-labs/core-platform           1.4.1  →  1.4.2         │
   │  ·  @kb-labs/sdk                     1.4.1  →  1.4.2         │
-  │  ·  @kb-labs/release-manager-core   1.4.1  →  1.4.2          │
+  │  ·  @kb-labs/release/core   1.4.1  →  1.4.2          │
   │  ·  ... 8 more packages                                      │
   ╰──────────────────────────────────────────────────────────────╯
 
@@ -70,14 +70,14 @@ Proceed with release? [y/N] y
 // i18n-ignore
 const CHANGELOG_OUTPUT = `## [1.4.2] - 2026-05-24
 
-> **@kb-labs/release-manager-core** 1.4.1 → 1.4.2 (patch)
+> **@kb-labs/release/core** 1.4.1 → 1.4.2 (patch)
 
 ### Fixes
 - Atomic build now correctly handles symlinks inside dist/
 - Checkpoint detection skips stale entries older than 24h
 
 ### Internal
-- Pipeline timing reported per-step in \`kb release report\``;
+- Pipeline timing reported per-step in \`kb release report show\``;
 
 // i18n-ignore
 const RELEASE_CONFIG = `{
@@ -96,7 +96,7 @@ const RELEASE_CONFIG = `{
       },
       "sdk": {
         "packages": {
-          "include": ["@kb-labs/sdk", "@kb-labs/agent-sdk"]
+          "include": ["@kb-labs/sdk", "@kb-labs/agents/sdk"]
         },
         "versioningStrategy": "independent",
         "checks": ["pnpm lint", "pnpm type-check", "pnpm test"]
@@ -407,9 +407,9 @@ export default async function ReleaseAutomationPage({ params }: Props) {
                   <div className="mx-auto mb-8 flex max-w-md items-center justify-between gap-3 rounded-xl border border-line bg-surface/60 px-4 py-3">
                     {/* i18n-ignore: terminal command */}
                     <code className="font-mono text-[0.85rem] text-kb-text">
-                      kb marketplace install @kb-labs/release-entry
+                      kb marketplace install @kb-labs/release
                     </code>
-                    <CopyButton code="kb marketplace install @kb-labs/release-entry" className="shrink-0" />
+                    <CopyButton code="kb marketplace install @kb-labs/release" className="shrink-0" />
                   </div>
                   <div className="flex flex-wrap justify-center gap-3">
                     <Button variant="primary" size="lg" href="https://docs.kblabs.ru/use-cases/scenario-release-notes" target="_blank" rel="noopener noreferrer">

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AdapterUnavailableError, toErrorEnvelope, validateErrorEnvelope } from '@kb-labs/core-platform';
-import { PluginError, defineError } from '../errors/index';
+import { PluginError } from '@kb-labs/plugin-contracts';
+import { defineError } from '../errors/index';
 import { ServiceNotConfiguredError } from '../helpers/platform';
 import { ValidationError } from '../helpers/validation';
 
@@ -37,19 +38,22 @@ describe('core toErrorEnvelope for command-kit errors', () => {
   });
 
   it('rejects structured PluginError details with a catalogued contract violation', () => {
-    const envelope = toErrorEnvelope(
-      new PluginError('weird code!', 'Nope', 400, { field: 'cwd', limits: { max: 3 } }),
-    );
+    const InvalidError = defineError('MIND', {
+      Invalid: { code: 400, message: 'Invalid input', hint: 'Correct the input and retry.' },
+    });
+    const envelope = envelopeFromThrown(() => {
+      new InvalidError.Invalid({ details: { limits: JSON.stringify({ max: 3 }) } });
+    });
     expect(validateErrorEnvelope(envelope)).toEqual([]);
     expect(envelope.code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
     expect(envelope.hint).toContain('error.diagnostics');
   });
 
-  it('uses the catalog when a PluginError carries a catalog code', () => {
-    const envelope = toErrorEnvelope(new PluginError('KB_PLUGIN_NOT_FOUND', 'x', 404, { plugin: 'acme' }));
+  it('uses catalog status and details when a PluginError carries a catalog code', () => {
+    const envelope = toErrorEnvelope(new PluginError('x', 'KB_PLUGIN_NOT_FOUND', { plugin: 'acme' }));
     expect(envelope.area).toBe('plugin');
-    expect(envelope.message).toBe('Plugin acme was not found in the registry.');
-    expect(envelope.cause).toBe('x');
+    expect(envelope.message).toBe('x');
+    expect(envelope.details).toEqual({ plugin: 'acme' });
   });
 
   it('maps ServiceNotConfiguredError to KB_ADAPTER_NOT_CONFIGURED', () => {
@@ -84,3 +88,12 @@ describe('core toErrorEnvelope for command-kit errors', () => {
     expect(toErrorEnvelope(new Error('boom')).code).toBe('KB_RUNTIME_UNEXPECTED');
   });
 });
+
+function envelopeFromThrown(run: () => void) {
+  try {
+    run();
+  } catch (error) {
+    return toErrorEnvelope(error);
+  }
+  throw new Error('Expected product error construction to reject structured details.');
+}

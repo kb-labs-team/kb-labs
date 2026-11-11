@@ -189,9 +189,8 @@ export default {
 // src/rest/handlers/user-handler.ts
 import { RouteIds, EventIds } from '@kb-labs/plugin-template-contracts';
 
-export const handleCreateUser = definePluginHandler({
-  schema: { input: CreateUserSchema, output: UserResponseSchema },
-  async handle(input, ctx) {
+export const handleCreateUser = defineHandler({
+  async execute(ctx, input) {
     ctx.output?.info('Creating user', {
       route: RouteIds.CREATE_USER
     });

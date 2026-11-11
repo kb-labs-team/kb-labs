@@ -47,6 +47,11 @@ type StatusResponse struct {
 	UpdateRequests QueueSummary `json:"updateRequests"`
 }
 
+// RestartRequest controls whether the caller explicitly interrupts active work.
+type RestartRequest struct {
+	Interrupt bool `json:"interrupt"`
+}
+
 // RestartResponse is the body of POST /v1/host/restart.
 type RestartResponse struct {
 	OK       bool            `json:"ok"`

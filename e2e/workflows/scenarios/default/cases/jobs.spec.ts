@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
 
 // Job execution API: /api/v1/jobs
@@ -7,7 +7,7 @@ import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 async function submitJob(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   handler = 'e2e-hello#default',
 ): Promise<string> {
   const res = await request.post(`${WORKFLOW}/api/v1/jobs`, {

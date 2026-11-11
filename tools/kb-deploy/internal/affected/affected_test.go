@@ -14,7 +14,7 @@ func TestMatches(t *testing.T) {
 		want     bool
 	}{
 		{[]string{"sites/web/**"}, []string{"sites/web/apps/web/page.tsx"}, true},
-		{[]string{"sites/web/**"}, []string{"plugins/agents/core/src/index.ts"}, false},
+		{[]string{"sites/web/**"}, []string{"plugins/agents/src/core/index.ts"}, false},
 		{[]string{"sites/web/apps/docs/**"}, []string{"sites/web/apps/web/page.tsx"}, false},
 		{[]string{"sites/web/apps/docs/**"}, []string{"sites/web/apps/docs/content/index.mdx"}, true},
 		// Multiple patterns — any match wins.

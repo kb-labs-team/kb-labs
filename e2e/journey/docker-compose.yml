@@ -33,6 +33,11 @@ services:
       dockerfile: e2e/journey/Dockerfile.runner
       args:
         KB_JOURNEY_GIT_REVISION: ${KB_JOURNEY_GIT_REVISION:-unknown}
+        # e2e/journey/run.sh exports the input-derived toolchain image built
+        # from the Dockerfile.runner `toolchain` stage; this sentinel is only
+        # reachable by bypassing run.sh and names the required entry.
+        KB_JOURNEY_TOOLCHAIN_IMAGE: ${KB_JOURNEY_TOOLCHAIN_IMAGE:-kb-journey-runner-toolchain:requires-e2e-journey-run-sh}
+        KB_JOURNEY_NODE_BASE_IMAGE: ${KB_JOURNEY_NODE_BASE_IMAGE}
     image: ${KB_JOURNEY_RUNNER_IMAGE:-kb-installer-journey:local}
     depends_on:
       origin:
@@ -52,6 +57,8 @@ services:
       KB_JOURNEY_VARIANT: ${KB_JOURNEY_VARIANT:-default}
       KB_JOURNEY_SERVICE_PROFILE: ${KB_JOURNEY_SERVICE_PROFILE:-fast}
       KB_JOURNEY_WORKSPACE_ROOT: /opt/kb-workspace
+      KB_JOURNEY_MARKETPLACE_REGISTRY_URL: ${KB_JOURNEY_MARKETPLACE_REGISTRY_URL:-}
+      KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64: ${KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64:-}
       OIDC_CORP_CLIENT_SECRET: journey-oidc-client-secret
       OIDC_CORP_ISSUER: https://idp-stub:9443
       NODE_EXTRA_CA_CERTS: /e2e-oidc-certs/ca.crt
@@ -63,7 +70,7 @@ services:
       KB_JOURNEY_SUMMARY: /summary/journey-summary.md
     volumes:
       - ../.journey/reports:/summary
-      - ${KB_JOURNEY_WORKSPACE_SOURCE:?run e2e/journey/run.sh to set the workspace source}:/opt/kb-workspace:ro
+      - ${KB_JOURNEY_WORKSPACE_SOURCE:?run journey_compose_init "$$ROOT" first}:/opt/kb-workspace:ro
       - ./oidc-idp/certs:/e2e-oidc-certs:ro
     networks: [journey]
     init: true
@@ -97,8 +104,11 @@ services:
     networks: [journey]
 
   verdaccio:
+    ports:
+      - "127.0.0.1::4873"
     networks: [journey]
 
 networks:
   journey:
     name: ${KB_JOURNEY_NETWORK:-kb-installer-journey}
+    internal: ${KB_JOURNEY_NETWORK_INTERNAL:-false}

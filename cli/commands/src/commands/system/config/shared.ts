@@ -6,7 +6,7 @@
  * the single locked, comment-preserving writer for `set`.
  */
 
-import { DiscoveryManager } from '@kb-labs/core-discovery';
+import { requireResolvedCatalog } from '../../../registry/discovery-state.js';
 
 import {
   ConfigWriteError,
@@ -51,12 +51,12 @@ export async function resolveConfigRoots(
     };
   }
   const { rootDir: projectRoot } = await resolveProjectRoot({ cwd });
-  const projects = await createProjectRegistry().list();
+  const { projects } = await createProjectRegistry().list();
   const project = projects.find(({ project }) => project.path === projectRoot)?.project;
   if (!project) {
     requireProjectContext(undefined, projectRoot);
   }
-  const loaded = await loadPlatformConfig({ moduleUrl, startDir: cwd, loadEnvFile: false });
+  const loaded = await loadPlatformConfig({ moduleUrl, startDir: cwd, loadEnvFile: false, catalog: requireResolvedCatalog() });
   return {
     platformRoot: loaded.platformRoot,
     projectRoot: project.path,
@@ -72,7 +72,7 @@ export async function userConfigFileForScope(roots: ConfigRoots, scope: ConfigSc
   if (scope === 'project') {
     if (!roots.projectId) {
       const projectRoot = roots.projectRoot ?? roots.configRoot;
-      throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Project config requires a registered project.', `Run "kb project add ${projectRoot}" to register it, then retry the config command.`, { path: projectRoot });
+      throwSystemCataloguedFailure({ code: 'KB_PROJECT_UNKNOWN', message: 'Project config requires a registered project.', hint: `Run "kb project add ${projectRoot}" to register it, then retry the config command.`, details: { path: projectRoot } });
     }
     return projectSettingsPath({ projectId: roots.projectId });
   }
@@ -81,17 +81,14 @@ export async function userConfigFileForScope(roots: ConfigRoots, scope: ConfigSc
 
 /** Load an inline JSON Schema declared by the installed plugin for this setting section. */
 export async function pluginSettingsSchemaFor(
-  roots: ConfigRoots,
   configSection: string,
 ): Promise<{ schema: unknown; packageRoot: string } | undefined> {
-  const discovered = await new DiscoveryManager({
-    root: roots.configRoot,
-    platformRoot: roots.platformRoot,
-  }).discover();
+  const catalog = requireResolvedCatalog();
+  const discovered = catalog.discovery();
   const manifest = [...discovered.manifests.values()].find((candidate) => candidate.configSection === configSection);
-  if (!manifest?.settings) return undefined;
+  if (!manifest?.settings) {return undefined;}
   const plugin = discovered.plugins.find(({ id }) => id === manifest.id);
-  if (!plugin) return undefined;
+  if (!plugin) {return undefined;}
   return { schema: manifest.settings.schema, packageRoot: plugin.packageRoot };
 }
 

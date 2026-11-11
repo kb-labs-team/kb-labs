@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createUxFailureResult, createUxSuccessResult, decodeUxSuccessResult, isUxResult, validateUxResult } from './index.js';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('../../../..', import.meta.url)));
-const fixturesRoot = join(repositoryRoot, 'contracts/ux-result/fixtures');
+const fixturesRoot = join(repositoryRoot, 'core/platform/contracts/ux-result/fixtures');
 
 function loadFixtures(kind: 'valid' | 'invalid'): Array<{ name: string; value: unknown }> {
   const directory = join(fixturesRoot, kind);

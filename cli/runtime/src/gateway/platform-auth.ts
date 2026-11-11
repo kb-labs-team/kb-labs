@@ -1,10 +1,10 @@
 import { createErrorEnvelope, ErrorEnvelopeError, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { randomUUID } from 'node:crypto';
-import { withGatewayUrl } from './result.js';
-import { SavedAuthFileError, savedAuthFileErrorEnvelope } from './saved-auth-file.js';
-import { isGatewayConnectionFailure } from './connection-errors.js';
-import type { GatewayRequestTarget } from './api-client.js';
-import { AuthSessionOwner, AuthSessionVerificationError } from './auth-session.js';
+import { withGatewayUrl } from '@kb-labs/sdk/gateway';
+import { SavedAuthFileError, savedAuthFileErrorEnvelope } from '@kb-labs/sdk/gateway';
+import { isGatewayConnectionFailure } from '@kb-labs/sdk/gateway';
+import type { GatewayRequestTarget } from '@kb-labs/sdk/gateway';
+import { AuthSessionOwner, AuthSessionVerificationError } from '@kb-labs/sdk/gateway';
 
 /**
  * Return whether a saved human session or machine credential can authenticate

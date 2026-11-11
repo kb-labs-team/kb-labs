@@ -95,7 +95,7 @@
               "note": "Run only on changed packages."
             },
             {
-              "cmd": "pnpm kb qa trends",
+              "cmd": "pnpm kb qa trends show",
               "note": "Show quality trend per package over last N runs."
             },
             {

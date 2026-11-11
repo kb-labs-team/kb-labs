@@ -1,1 +1,1 @@
-{"zone":"mcp","watch":["services/mcp/**","plugins/agents/mcp/**","e2e/mcp/**"],"suites":["e2e-mcp"]}
+{"zone":"mcp","watch":["services/mcp/**","plugins/agents/src/mcp/**","e2e/mcp/**"],"suites":["e2e-mcp"]}

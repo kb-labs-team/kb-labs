@@ -77,22 +77,30 @@ export function loadDevservices() {
 
 /**
  * Parse `ports:` mappings from docker-compose.backend.yml.
- * Returns a map: composeServiceName -> [hostPort, ...]
+ * Returns a map: composeServiceName -> [containerPort, ...]. The port registry
+ * owns service ports; the host side may be configured independently by deployment.
  */
-export function loadComposePorts() {
+export function parseComposePorts(doc) {
   const map = new Map();
-  if (!existsSync(PATHS.compose)) return map;
-  const doc = parseYaml(readFileSync(PATHS.compose, 'utf8'));
   const services = doc?.services ?? {};
   for (const [name, svc] of Object.entries(services)) {
     const ports = Array.isArray(svc?.ports) ? svc.ports : [];
-    const hostPorts = ports
-      .map((p) => String(p).split(':')[0])
-      .map((p) => Number(p))
-      .filter((n) => Number.isFinite(n));
-    map.set(name, hostPorts);
+    const containerPorts = ports
+      .map((mapping) => {
+        const target = mapping != null && typeof mapping === 'object'
+          ? mapping.target
+          : String(mapping).split(':').at(-1)?.split('/')[0];
+        return Number(target);
+      })
+      .filter((port) => Number.isFinite(port));
+    map.set(name, containerPorts);
   }
   return map;
+}
+
+export function loadComposePorts() {
+  if (!existsSync(PATHS.compose)) return new Map();
+  return parseComposePorts(parseYaml(readFileSync(PATHS.compose, 'utf8')));
 }
 
 /**

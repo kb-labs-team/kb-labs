@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { after } from 'node:test';
-import { deriveCandidateVersion, prepareJourneyUpdatePackages, releasePackageNames } from './journey-update-packages.mjs';
+import { deriveCandidateVersion, prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
+import { prepareReleaseProvenance } from './release-provenance.mjs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
+import { readPlatformReleaseConfig, releaseArtifactPackageNames } from 'kb-create/scripts/platform-release-config.mjs';
+
+const platformMembers = readPlatformReleaseConfig(fileURLToPath(new URL('../../tools/kb-create/config/platform-release.jsonc', import.meta.url))).platformMembers;
 
 const digestToolDirectory = mkdtempSync(join(tmpdir(), 'kb-journey-digest-tool-'));
 const digestTool = join(digestToolDirectory, 'kb-create-release-index');
@@ -21,11 +25,21 @@ function packageFilename(name, version) {
 
 function seedReleasePackages(root, packages, manifest = registryManifest, extraNames = []) {
   mkdirSync(packages, { recursive: true });
-  const packageNames = [...new Set([...releasePackageNames(manifest), ...extraNames])];
+  const packageNames = [...new Set([
+    ...releaseArtifactPackageNames(manifest, platformMembers),
+    '@kb-labs/core-discovery',
+    ...extraNames,
+  ])];
   for (const name of packageNames) {
     const packageRoot = join(root, `${name.replace(/^@/, '').replaceAll('/', '-')}-source`, 'package');
     mkdirSync(join(packageRoot, 'dist'), { recursive: true });
-    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name, version: '3.0.0' }));
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
+      name,
+      version: '3.0.0',
+      ...(name === '@kb-labs/core-runtime'
+        ? { dependencies: { '@kb-labs/core-discovery': 'workspace:*' } }
+        : {}),
+    }));
     writeFileSync(join(packageRoot, 'index.js'), `${name} bytes`);
     writeFileSync(join(packageRoot, 'dist/index.js'), `${name} dist bytes`);
     if (name === '@kb-labs/gateway-app') {
@@ -46,7 +60,7 @@ test('candidate version changes when packed package content changes', () => {
     const changed = join(root, 'changed');
     seedReleasePackages(root, first, registryManifest);
     seedReleasePackages(root, changed, registryManifest);
-    const changedTarball = join(changed, packageFilename('@kb-labs/commit-entry', '3.0.0'));
+    const changedTarball = join(changed, packageFilename('@kb-labs/core-runtime', '3.0.0'));
     const unpack = join(root, 'unpack');
     mkdirSync(unpack);
     execFileSync('tar', ['-xzf', changedTarball, '-C', unpack]);
@@ -55,8 +69,8 @@ test('candidate version changes when packed package content changes', () => {
     writeFileSync(join(unpack, 'package', 'dist/index.js'), distBytes);
     execFileSync('tar', ['-czf', changedTarball, '-C', unpack, 'package']);
 
-    const firstVersion = deriveCandidateVersion('3.0.1', first, registryManifest, digestTool);
-    const changedVersion = deriveCandidateVersion('3.0.1', changed, registryManifest, digestTool);
+    const firstVersion = deriveCandidateVersion('3.0.1', first, registryManifest, digestTool, platformMembers);
+    const changedVersion = deriveCandidateVersion('3.0.1', changed, registryManifest, digestTool, platformMembers);
     assert.match(firstVersion, /^3\.0\.1-cand\.[0-9a-f]{12}$/);
     assert.notEqual(firstVersion, changedVersion);
   } finally {
@@ -71,7 +85,7 @@ test('candidate version is idempotent when unchanged dist bytes are repacked wit
     const repacked = join(root, 'repacked');
     seedReleasePackages(root, first, registryManifest);
     seedReleasePackages(root, repacked, registryManifest);
-    const filename = packageFilename('@kb-labs/commit-entry', '3.0.0');
+    const filename = packageFilename('@kb-labs/core-runtime', '3.0.0');
     const archive = join(repacked, filename);
     const unpack = join(root, 'unpack');
     mkdirSync(unpack);
@@ -80,8 +94,8 @@ test('candidate version is idempotent when unchanged dist bytes are repacked wit
     utimesSync(distFile, new Date('2001-01-01T00:00:00Z'), new Date('2001-01-01T00:00:00Z'));
     execFileSync('tar', ['-czf', archive, '-C', unpack, 'package']);
 
-    assert.equal(deriveCandidateVersion('3.0.1', first, registryManifest, digestTool),
-      deriveCandidateVersion('3.0.1', repacked, registryManifest, digestTool));
+    assert.equal(deriveCandidateVersion('3.0.1', first, registryManifest, digestTool, platformMembers),
+      deriveCandidateVersion('3.0.1', repacked, registryManifest, digestTool, platformMembers));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -94,10 +108,10 @@ test('versions every release-manifest artifact and preserves package code', () =
     const update = join(root, 'update');
     const packageNames = seedReleasePackages(root, packages, registryManifest, ['@kb-labs/not-in-release']);
 
-    prepareJourneyUpdatePackages(packages, update, '3.0.1', { publishDir: packages, digestTool, registryManifest });
+    prepareJourneyUpdatePackages(packages, update, '3.0.1', { publishDir: packages, digestTool, registryManifest, platformMembers });
 
     const manifest = JSON.parse(readFileSync(join(update, 'manifest.json'), 'utf8'));
-    const versionedNames = releasePackageNames(registryManifest);
+    const versionedNames = packageNames.filter(name => name !== '@kb-labs/not-in-release');
     assert.deepEqual(manifest.map(entry => [entry.name, entry.version]).sort((a, b) => a[0].localeCompare(b[0])),
       [...versionedNames.map(name => [name, '3.0.1']), ['@kb-labs/not-in-release', '3.0.0']].sort((a, b) => a[0].localeCompare(b[0])));
     assert.ok(manifest.every(entry => /^[0-9a-f]{64}$/.test(entry.sha256)));
@@ -127,11 +141,97 @@ test('versions every release-manifest artifact and preserves package code', () =
   }
 });
 
+test('sealed candidate provenance covers the complete shipped release manifest closure', () => {
+  const root = mkdtempSync(join(tmpdir(), 'journey-release-provenance-'));
+  try {
+    const packages = join(root, 'packages');
+    const packageNames = seedReleasePackages(root, packages);
+    const manifest = packageNames.map(name => ({
+      name,
+      version: '3.0.0',
+      tarball: packageFilename(name, '3.0.0'),
+    }));
+    writeFileSync(join(packages, 'manifest.json'), JSON.stringify(manifest));
+
+    const provenance = prepareReleaseProvenance(packages, 'test-revision', digestTool);
+    const sealedNames = provenance.map(item => item.package).sort();
+    assert.deepEqual(sealedNames, manifest.map(item => item.name).sort());
+    assert.ok(sealedNames.includes('@kb-labs/cli-bin'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a newly manifested package is sealed and required by installed identity verification', () => {
+  const root = mkdtempSync(join(tmpdir(), 'journey-release-manifest-addition-'));
+  try {
+    const addedPackage = '@kb-labs/release-fixture-addition';
+    const manifestFixture = structuredClone(registryManifest);
+    manifestFixture.core.push({ name: addedPackage });
+    const packages = join(root, 'packages');
+    const packageNames = seedReleasePackages(root, packages, manifestFixture);
+    const releaseManifest = packageNames.map(name => ({
+      name,
+      version: '3.0.0',
+      tarball: packageFilename(name, '3.0.0'),
+    }));
+    writeFileSync(join(packages, 'manifest.json'), JSON.stringify(releaseManifest));
+
+    const provenance = prepareReleaseProvenance(packages, 'test-revision', digestTool);
+    const sealedNames = provenance.map(item => item.package).sort();
+    assert.deepEqual(sealedNames, releaseManifest.map(item => item.name).sort());
+    assert.ok(sealedNames.includes(addedPackage));
+
+    const installedRoot = join(root, 'installed');
+    mkdirSync(join(installedRoot, '.kb/v2'), { recursive: true });
+    writeFileSync(join(installedRoot, '.kb/v2/receipt.json'), JSON.stringify({
+      plan: { artifacts: provenance.map(item => ({
+        package: item.package,
+        version: item.version,
+        provenance: { distSha256: item.distSha256 },
+      })) },
+    }));
+    writeFileSync(join(installedRoot, '.kb/v2/installed-provenance.json'), JSON.stringify({
+      packages: provenance.filter(item => item.package !== addedPackage).map(item => ({
+        name: item.package,
+        version: item.version,
+        integrity: item.integrity,
+        installedPath: `node_modules/${item.package}`,
+        sourceRevision: item.sourceRevision,
+        contentDigest: item.distSha256,
+      })),
+    }));
+
+    const pythonCheck = spawnSync('python3', ['-c', `
+import sys
+sys.path.insert(0, sys.argv[1])
+from installer_case_steps import verify_installed_candidate_provenance
+try:
+    verify_installed_candidate_provenance(sys.argv[2])
+except RuntimeError as error:
+    print(error)
+    raise SystemExit(0)
+raise SystemExit(7)
+`, join(rootPath(), 'e2e/journey'), installedRoot], { encoding: 'utf8' });
+    assert.equal(pythonCheck.status, 0, pythonCheck.stderr || 'installed verifier accepted an omitted manifest package');
+    assert.match(pythonCheck.stdout, /installed package closure differs from the sealed release manifest/);
+    assert.ok(pythonCheck.stdout.includes(addedPackage));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function rootPath() {
+  return resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+}
+
 test('release-index Docker stage copies the package preparation helper', () => {
   const platformDirectory = dirname(fileURLToPath(import.meta.url));
   const dockerfile = readFileSync(join(platformDirectory, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /COPY e2e\/platform\/release-provenance\.mjs \/src\/release-provenance\.mjs/);
   assert.match(dockerfile, /COPY e2e\/platform\/journey-update-packages\.mjs \/src\/journey-update-packages\.mjs/);
-  assert.match(dockerfile, /COPY e2e\/platform\/package-provenance\.mjs \/src\/package-provenance\.mjs/);
+  assert.match(dockerfile, /COPY tools\/kb-create\/scripts\/package-provenance\.mjs \/src\/node_modules\/kb-create\/scripts\/package-provenance\.mjs/);
+  assert.match(dockerfile, /COPY tools\/kb-create\/scripts\/platform-release-config\.mjs \/src\/kb-create\/scripts\/platform-release-config\.mjs/);
 });
 
 test('builds a versioned failing service artifact for restart health recovery', () => {
@@ -146,6 +246,7 @@ test('builds a versioned failing service artifact for restart health recovery', 
       digestTool,
       failingServicePackage: '@kb-labs/gateway-app',
       registryManifest,
+      platformMembers,
     });
 
     const manifest = JSON.parse(readFileSync(join(update, 'manifest.json'), 'utf8'));
@@ -175,6 +276,7 @@ test('seals gateway packages with staged config and doctor failure requirements'
       requiredConfigPackage: '@kb-labs/gateway-app',
       requiredConfig: requirement,
       registryManifest,
+      platformMembers,
     });
     const manifest = JSON.parse(readFileSync(join(update, 'manifest.json'), 'utf8'));
     const gateway = manifest.find(entry => entry.name === '@kb-labs/gateway-app');
@@ -200,6 +302,7 @@ test('refuses a staged requirement when its package is absent from the release m
       requiredConfigPackage: '@kb-labs/not-shipped',
       requiredConfig: { id: 'fixture.required', path: '/fixture/required', required: true },
       registryManifest,
+      platformMembers,
     }), /staged requirement package is absent from the release manifest/);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -207,11 +310,11 @@ test('refuses a staged requirement when its package is absent from the release m
 });
 
 
-test('release package set follows the manifest when a plugin is removed or added', () => {
+test('plugin registry changes do not alter the shipped platform package set', () => {
   const root = mkdtempSync(join(tmpdir(), 'journey-update-manifest-mutation-'));
   try {
     const withoutCommit = structuredClone(registryManifest);
-    withoutCommit.plugins = withoutCommit.plugins.filter(plugin => plugin.pkg !== '@kb-labs/commit-entry');
+    withoutCommit.plugins = withoutCommit.plugins.filter(plugin => plugin.pkg !== '@kb-labs/commit');
     const droppedPackages = join(root, 'dropped-packages');
     const droppedUpdate = join(root, 'dropped-update');
     const withoutNames = seedReleasePackages(root, droppedPackages, withoutCommit);
@@ -219,10 +322,11 @@ test('release package set follows the manifest when a plugin is removed or added
       publishDir: droppedPackages,
       digestTool,
       registryManifest: withoutCommit,
+      platformMembers,
     });
     const droppedNames = JSON.parse(readFileSync(join(droppedUpdate, 'manifest.json'), 'utf8')).map(item => item.name);
-    assert.equal(withoutNames.includes('@kb-labs/commit-entry'), false);
-    assert.equal(droppedNames.includes('@kb-labs/commit-entry'), false);
+    assert.equal(withoutNames.includes('@kb-labs/commit'), false);
+    assert.deepEqual(droppedNames.sort(), withoutNames.sort());
     assert.ok(droppedNames.every(name => withoutNames.includes(name)));
 
     const withNewPlugin = structuredClone(withoutCommit);
@@ -234,11 +338,12 @@ test('release package set follows the manifest when a plugin is removed or added
       publishDir: addedPackages,
       digestTool,
       registryManifest: withNewPlugin,
+      platformMembers,
     });
     const addedEntries = JSON.parse(readFileSync(join(addedUpdate, 'manifest.json'), 'utf8'));
-    assert.equal(withNames.includes('@kb-labs/new-first-party'), true);
-    assert.equal(addedEntries.find(item => item.name === '@kb-labs/new-first-party')?.version, '3.0.2');
-    assert.equal(addedEntries.some(item => item.name === '@kb-labs/commit-entry'), false);
+    assert.equal(withNames.includes('@kb-labs/new-first-party'), false);
+    assert.equal(addedEntries.some(item => item.name === '@kb-labs/new-first-party'), false);
+    assert.deepEqual(addedEntries.map(item => item.name).sort(), withoutNames.sort());
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

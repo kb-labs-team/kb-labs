@@ -50,7 +50,7 @@ import {
   isUxResult,
   isUxResultCandidate,
 } from "@kb-labs/core-platform/ux-result";
-import { createErrorEnvelope, isErrorCode, normalizeHttpFailure, statusForHttpFailure } from "@kb-labs/core-platform";
+import { createErrorEnvelope, isErrorEnvelope, normalizeHttpFailure, statusForHttpFailure } from "@kb-labs/core-platform";
 import type { ExecutionBackend } from "../types.js";
 import { createExecutionId, normalizeHeaders } from "../utils.js";
 
@@ -212,7 +212,7 @@ export async function mountRoutes(
             reply.header("X-Execution-Id", executionId);
 
             const error = toRestErrorEnvelope(result.error, requestId);
-            const statusCode = getStatusCodeForError(error.code);
+            const statusCode = statusForHttpFailure(error, 500);
             return reply.code(statusCode).send(createUxFailureResult(error));
           }
         } catch (error) {
@@ -239,42 +239,6 @@ export async function mountRoutes(
   }
 }
 
-/**
- * Map error code to HTTP status code.
- */
-function getStatusCodeForError(code?: string): number {
-  switch (code) {
-    case "KB_RUNTIME_INPUT_INVALID":
-    case "KB_CONFIG_INVALID":
-    case "VALIDATION_ERROR":
-      return 400;
-    case "KB_PROJECT_PATH_NOT_FOUND":
-    case "KB_PLUGIN_NOT_FOUND":
-      return 404;
-    case "KB_PLUGIN_PERMISSION_DENIED":
-      return 403;
-    case "TIMEOUT":
-      return 504; // Gateway Timeout
-    case "ABORTED":
-      return 499; // Client Closed Request
-    case "PERMISSION_DENIED":
-      return 403; // Forbidden
-    case "HANDLER_NOT_FOUND":
-      return 404; // Not Found
-    case "HANDLER_CONTRACT_ERROR":
-      return 500; // Internal Server Error (contract violation is our bug)
-    case "QUEUE_FULL":
-      return 429; // Too Many Requests (Phase 2)
-    case "ACQUIRE_TIMEOUT":
-    case "WORKER_UNHEALTHY":
-      return 503; // Service Unavailable (Phase 2)
-    case "WORKER_CRASHED":
-      return 500; // Internal Server Error (Phase 2)
-    default:
-      return 500; // Internal Server Error
-  }
-}
-
 function toRestErrorEnvelope(error: unknown, correlationId: string) {
   const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
     ? error.code
@@ -285,11 +249,22 @@ function toRestErrorEnvelope(error: unknown, correlationId: string) {
       hint: "Correct the request fields and retry.",
     });
   }
-  if (code && isErrorCode(code)) {
-    return createErrorEnvelope(code, {
-      correlationId,
-      ...(code === "KB_RUNTIME_INPUT_INVALID" ? { hint: "Correct the request fields and retry." } : {}),
-    });
+  const { candidate, producerError } = executionErrorParts(error);
+  const envelope = isErrorEnvelope(candidate)
+    ? toErrorEnvelope(candidate, { correlationId })
+    : toErrorEnvelope(error, { correlationId });
+  if (typeof producerError === "object" && producerError !== null && "stack" in producerError && typeof producerError.stack === "string") {
+    return { ...envelope, cause: producerError.stack };
   }
-  return toErrorEnvelope(error, { correlationId });
+  return envelope;
+}
+
+function executionErrorParts(error: unknown): { candidate: unknown; producerError: unknown } {
+  if (typeof error !== "object" || error === null || !("error" in error)) {
+    return { candidate: error, producerError: undefined };
+  }
+  return {
+    candidate: 'envelope' in error ? error.envelope : error,
+    producerError: error.error,
+  };
 }

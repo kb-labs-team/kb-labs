@@ -39,7 +39,7 @@ prepare (local or CI, no npm creds) → git tag pushed → CI (tag trigger) → 
 
 Concretely:
 
-- `PipelineOptions.skipPublish` (new, `plugins/release/manager-core/src/pipeline.ts`) — when set, the publish step (8) never calls `publisher.publish()`, produces a synthetic "prepared, not published" result, and skips checkpoint-writing (8b) and post-publish registry verification (8c) since nothing was published. Git commit/tag (step 9) runs exactly as it does for a normal stable release — this is the load-bearing part: the tag now exists **before** any npm interaction, decoupling "did we prepare a release" from "did npm let us publish it."
+- `PipelineOptions.skipPublish` (new, `plugins/release/src/core/pipeline.ts`) — when set, the publish step (8) never calls `publisher.publish()`, produces a synthetic "prepared, not published" result, and skips checkpoint-writing (8b) and post-publish registry verification (8c) since nothing was published. Git commit/tag (step 9) runs exactly as it does for a normal stable release — this is the load-bearing part: the tag now exists **before** any npm interaction, decoupling "did we prepare a release" from "did npm let us publish it."
 - `release:run --skip-publish` CLI flag wires this through and skips the `NPM_TOKEN`/`whoami` pre-flight in `run.ts` (flow-name validation still runs).
 - `release:promote --flow <name>` (new flag) — previously `promote` only accepted `--scope` (a glob), with no way to reproduce a named flow's package selection (e.g. "everything except `@kb-labs/sdk`"). Without this, the tag-triggered CI job would either publish the wrong package set or need to duplicate the flow's `packages.exclude` list by hand. Now it reuses the same `mergeConfigWithFlow()` the `run` command already used.
 - `publish-npm-on-tag.yml` — triggers on `v*` (lockstep/platform tag format) and `@kb-labs/sdk@*` (independent/sdk tag format, matching what `publisher.ts` already produces), resolves the flow from the tag shape, and runs `promote`. `permissions: id-token: write` is declared now, unused, so migrating the publish step to OIDC Trusted Publishing later needs no workflow-trigger rework — only the auth mechanism inside `promote` changes.
@@ -68,16 +68,16 @@ The auth mechanism used by that final `promote` step (classic automation token t
 
 ## Implementation
 
-- `plugins/release/manager-core/src/types.ts` — `PipelineOptions.skipPublish`.
-- `plugins/release/manager-core/src/pipeline.ts` — steps 0b, 1b, 8, 8b, 8c gated on `!skipPublish`; step 9 (git commit/tag) unchanged.
-- `plugins/release/manager-cli/src/cli/commands/run.ts` — `--skip-publish` flag, pre-flight bypass, UI reporting.
-- `plugins/release/manager-cli/src/cli/commands/promote.ts` — `--flow` flag via `mergeConfigWithFlow()`.
-- `plugins/release/manager-cli/src/manifest.ts` — flag/example registration for both commands.
+- `plugins/release/src/core/types.ts` — `PipelineOptions.skipPublish`.
+- `plugins/release/src/core/pipeline.ts` — steps 0b, 1b, 8, 8b, 8c gated on `!skipPublish`; step 9 (git commit/tag) unchanged.
+- `plugins/release/src/cli/cli/commands/run.ts` — `--skip-publish` flag, pre-flight bypass, UI reporting.
+- `plugins/release/src/cli/cli/commands/promote.ts` — `--flow` flag via `mergeConfigWithFlow()`.
+- `plugins/release/src/cli/manifest.ts` — flag/example registration for both commands.
 - `package.json` — `release:platform:prepare`, `release:sdk:prepare` scripts.
 - `.github/workflows/publish-npm-on-tag.yml` — new, tag-triggered.
-- `plugins/release/manager-core/src/__tests__/pipeline.channel.test.ts` — `skipPublish` case (publisher never called, git still commits/tags, no network access attempted).
+- `plugins/release/src/core/__tests__/pipeline.channel.test.ts` — `skipPublish` case (publisher never called, git still commits/tags, no network access attempted).
 
-Not yet done (follow-up, not blocking): `plugins/release/manager-cli/src/rest/handlers/run-handler.ts` (the REST/Studio-UI mirror of `run.ts`) doesn't yet expose `skipPublish` — CLI-only for now. The actual npm auth mechanism inside `promote` for the CI job is still the classic-token-or-OIDC question this ADR deliberately left open; `publish-npm-on-tag.yml` currently reads `secrets.NPM_TOKEN`, which needs a real value (or a rewrite of that one step) before the tag-triggered publish will succeed end-to-end.
+Not yet done (follow-up, not blocking): `plugins/release/src/cli/rest/handlers/run-handler.ts` (the REST/Studio-UI mirror of `run.ts`) doesn't yet expose `skipPublish` — CLI-only for now. The actual npm auth mechanism inside `promote` for the CI job is still the classic-token-or-OIDC question this ADR deliberately left open; `publish-npm-on-tag.yml` currently reads `secrets.NPM_TOKEN`, which needs a real value (or a rewrite of that one step) before the tag-triggered publish will succeed end-to-end.
 
 ## References
 

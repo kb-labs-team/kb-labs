@@ -173,7 +173,7 @@ export class PoolLifecycleManager implements WorkerPoolServingOwner {
         } catch (cleanupError) {
           this.recordStartFailure(cleanupError);
         }
-        await new Promise<void>((resolve) => setTimeout(resolve, this.retryDelayMs));
+        await new Promise<void>((resolve) => { setTimeout(resolve, this.retryDelayMs); });
         this.retryDelayMs = Math.min(this.retryDelayMs * 2, 5_000);
       }
     }
@@ -587,7 +587,7 @@ export class WorkerLifecycleManager {
       } catch (error) {
         this.recordStartFailure(error);
         if (firstAttempt) { resolveFirstAttempt?.(); firstAttempt = false; }
-        await new Promise<void>((resolve) => setTimeout(resolve, this.retryDelayMs));
+        await new Promise<void>((resolve) => { setTimeout(resolve, this.retryDelayMs); });
         this.retryDelayMs = Math.min(this.retryDelayMs * 2, 5_000);
       }
     }

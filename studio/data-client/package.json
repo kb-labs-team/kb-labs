@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/studio-data-client",
-  "description": "KB Labs Studio data client — API SDK with versioned contracts, mocks, and TanStack Query hooks",
+  "description": "KB Labs Studio data client \u2014 API SDK with versioned contracts, mocks, and TanStack Query hooks",
   "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,20 +20,14 @@
     "dev": "tsup --config tsup.config.ts --watch",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
-    "prebuild": "pnpm clean",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kb-labs/agent-contracts": "workspace:*",
-    "@kb-labs/commit-contracts": "workspace:*",
     "@kb-labs/core-contracts": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
-    "@kb-labs/qa-contracts": "workspace:*",
-    "@kb-labs/quality-contracts": "workspace:*",
-    "@kb-labs/release-manager-contracts": "workspace:*",
     "@kb-labs/rest-api-contracts": "workspace:*",
     "@kb-labs/workflow-constants": "workspace:*",
     "@tanstack/react-query": "^5.0.0",

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import typedFailure from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
+import typedFailure from '@kb-labs/core-platform/contracts/ux-result/fixtures/valid/failure.json';
 import { normalizeStudioFailure } from '@kb-labs/studio-federation';
 import { WidgetErrorBoundary } from '../widget-error-boundary.js';
 

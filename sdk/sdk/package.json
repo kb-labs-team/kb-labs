@@ -41,6 +41,10 @@
       "types": "./dist/types/index.d.ts",
       "import": "./dist/types/index.js"
     },
+    "./errors": {
+      "types": "./dist/errors/index.d.ts",
+      "import": "./dist/errors/index.js"
+    },
     "./studio": {
       "types": "./dist/studio/index.d.ts",
       "import": "./dist/studio/index.js"
@@ -60,6 +64,10 @@
     "./platform": {
       "types": "./dist/platform/index.d.ts",
       "import": "./dist/platform/index.js"
+    },
+    "./gateway": {
+      "types": "./dist/gateway/index.d.ts",
+      "import": "./dist/gateway/index.js"
     }
   },
   "kbLabs": {
@@ -81,11 +89,13 @@
     "docs:exports": "node scripts/generate-export-glossary.mjs",
     "lint": "eslint src --ext .ts --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest",
+    "test": "vitest run --config vitest.config.ts --passWithNoTests",
+    "test:packed-consumer": "node scripts/test-packed-consumer.mjs",
+    "test:watch": "vitest --config vitest.config.ts",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/core-config": "workspace:*",
     "@kb-labs/core-contracts": "workspace:*",
     "@kb-labs/core-project-registry": "workspace:*",
@@ -93,14 +103,10 @@
     "@kb-labs/platform-client": "workspace:*",
     "@kb-labs/perm-presets": "workspace:*",
     "@kb-labs/shared-tool-kit": "workspace:*",
-    "zod": "^3.25.76"
-  },
-  "devDependencies": {
-    "@kb-labs/core-platform": "workspace:*",
+    "zod": "^3.25.76",
     "@kb-labs/core-resource-broker": "workspace:*",
     "@kb-labs/core-runtime": "workspace:*",
     "@kb-labs/core-sys": "workspace:*",
-    "@kb-labs/devkit": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/shared-cli-ui": "workspace:*",
     "@kb-labs/shared-command-kit": "workspace:*",
@@ -112,7 +118,10 @@
     "@kb-labs/studio-hooks": "workspace:*",
     "@kb-labs/studio-plugin-tools": "workspace:*",
     "@kb-labs/studio-ui-core": "workspace:*",
-    "@kb-labs/studio-ui-kit": "workspace:*",
+    "@kb-labs/studio-ui-kit": "workspace:*"
+  },
+  "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
     "@types/node": "^24.3.3",
     "@vitest/ui": "^4.1.11",
     "rimraf": "^6.0.1",
@@ -132,38 +141,6 @@
     "testing",
     "v3"
   ],
-  "peerDependencies": {
-    "@kb-labs/core-platform": ">=2.0.0",
-    "@kb-labs/core-resource-broker": ">=2.0.0",
-    "@kb-labs/core-runtime": ">=2.0.0",
-    "@kb-labs/core-sys": ">=2.0.0",
-    "@kb-labs/plugin-contracts": ">=2.0.0",
-    "@kb-labs/shared-cli-ui": ">=2.0.0",
-    "@kb-labs/shared-command-kit": ">=2.0.0",
-    "@kb-labs/shared-testing": ">=2.0.0",
-    "@kb-labs/shared-testing-e2e": ">=2.0.0",
-    "@kb-labs/shared-testing-platform": ">=2.0.0",
-    "@kb-labs/studio-devtools": ">=2.0.0",
-    "@kb-labs/studio-event-bus": ">=2.0.0",
-    "@kb-labs/studio-hooks": ">=2.0.0",
-    "@kb-labs/studio-plugin-tools": ">=2.0.0",
-    "@kb-labs/studio-ui-core": ">=2.0.0",
-    "@kb-labs/studio-ui-kit": ">=2.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@kb-labs/shared-testing": {
-      "optional": true
-    },
-    "@kb-labs/shared-testing-e2e": {
-      "optional": true
-    },
-    "@kb-labs/shared-testing-platform": {
-      "optional": true
-    },
-    "@kb-labs/studio-plugin-tools": {
-      "optional": true
-    }
-  },
   "publishConfig": {
     "access": "public"
   },

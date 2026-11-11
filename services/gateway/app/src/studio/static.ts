@@ -239,12 +239,12 @@ export async function createStudioStatic(
     dir: root,
     async isPublicAsset(method, rawUrl) {
       const pathname = staticRequestPath(method, rawUrl);
-      if (pathname === undefined) return false;
+      if (pathname === undefined) {return false;}
       return Boolean(await resolveFile(pathname));
     },
     async onRequest(request, reply) {
       const pathname = staticRequestPath(request.method, request.url);
-      if (pathname === undefined) return undefined;
+      if (pathname === undefined) {return undefined;}
       if (pathname === "/" || pathname === "/index.html") {
         return sendIndex(request, reply);
       }

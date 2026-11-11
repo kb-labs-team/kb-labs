@@ -25,7 +25,7 @@ describe('reserved-namespaces', () => {
   });
 
   it('tier F: allowed only for @kb-labs/* packages', () => {
-    expect(checkReservedNamespace('commit', '@kb-labs/commit-cli')).toBeNull();
+    expect(checkReservedNamespace('commit', '@kb-labs/commit/cli')).toBeNull();
     expect(checkReservedNamespace('commit', '@acme/commit')?.tier).toBe('F');
     expect(checkReservedNamespace('commit', undefined)?.tier).toBe('F');
     expect(checkReservedNamespace('commit', '@kb-labs-evil/x')?.tier).toBe('F');

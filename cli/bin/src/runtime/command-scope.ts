@@ -7,17 +7,23 @@ export function resolveProjectScope(
   global: GlobalFlags,
   cmdPath: string[],
   flags: Record<string, unknown> = {},
+  hasRegisteredProject = false,
 ): 'platform' | 'required' {
   if (global.version || (global.help && cmdPath.length === 0)) {
     return 'platform';
   }
   if (route.type === 'not-found' || route.type === 'ambiguous') {
-    return 'platform';
+    return route.type === 'not-found' && cmdPath.length > 0 && hasRegisteredProject
+      ? 'required'
+      : 'platform';
   }
   if (route.type === 'system-cmd') {
     const requestedScope = declaredScope(route.cmd.flags, flags);
     if (requestedScope) {return requestedScope === 'platform' ? 'platform' : 'required';}
-    return route.cmd.scope === 'platform' ? 'platform' : 'required';
+    const scope = typeof route.cmd.scope === 'function'
+      ? route.cmd.scope(route.rest, flags)
+      : route.cmd.scope;
+    return scope === 'platform' ? 'platform' : 'required';
   }
   if (route.type === 'command') {
     const requestedScope = declaredScope(route.command.manifest.flags, flags);

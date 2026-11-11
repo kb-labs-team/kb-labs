@@ -10,9 +10,8 @@
     "@kb-labs/e2e-shared": "workspace:*",
     "@kb-labs/rest-api-app": "workspace:*",
     "@kb-labs/gateway-app": "workspace:*",
-    "@kb-labs/commit-entry": "workspace:*",
-    "@kb-labs/review-entry": "workspace:*",
-    "@kb-labs/scaffold-core": "workspace:*",
+    "@kb-labs/commit": "workspace:*",
+    "@kb-labs/review": "workspace:*",
     "@playwright/test": "^1.52.0",
     "typescript": "^5.4.0"
   }

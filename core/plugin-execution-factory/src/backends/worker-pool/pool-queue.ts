@@ -82,7 +82,6 @@ export class PoolQueueManager {
   queueRequest(
     request: ExecutionRequest,
     signal: AbortSignal | undefined,
-    timeoutMs: number,
     startTime: number,
     onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,

@@ -562,7 +562,7 @@ Example output:
    ...
 
 📤 External/Library Packages (9) - Consumed externally:
-   @kb-labs/devlink-core
+   @kb-labs/devlink/core
    ...
 
 ⚠️  Internal Packages Without Dependents (6) - Review needed:

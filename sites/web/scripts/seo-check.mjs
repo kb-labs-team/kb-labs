@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from '../../../scripts/checks/lib/check-result.mjs';
 /**
  * SEO sanity check for kblabs.ru + docs.kblabs.ru
  *
@@ -22,7 +23,7 @@ const CHECK_NAME = 'seo-lint';
 
 // Self-filter: only kb-labs-web (sites/web) has SEO pages to check.
 if (DEVKIT_MODE && (process.env.KB_DEVKIT_PACKAGE_NAME ?? '') !== 'kb-labs-web') {
-  process.stdout.write(JSON.stringify({ issues: [] }));
+  writeCheckResult([]);
   process.exit(0);
 }
 
@@ -162,7 +163,7 @@ if (fs.existsSync(sitemapFile)) {
 // ─── Summary ─────────────────────────────────────────────────────────────────
 
 if (DEVKIT_MODE) {
-  process.stdout.write(JSON.stringify({ issues }));
+  writeCheckResult(issues);
   process.exit(0);
 }
 

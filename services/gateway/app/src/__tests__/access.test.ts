@@ -8,8 +8,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { GatewayConfigSchema } from '@kb-labs/gateway-contracts';
-import { resolveAccess, resolveBootstrapTenantId, DEFAULT_BOOTSTRAP_TENANT } from '../access.js';
+import { assertDeploymentAuth, resolveAccess, resolveBootstrapTenantId, DEFAULT_BOOTSTRAP_TENANT } from '../access.js';
 import { isLoopbackHost } from '../bootstrap.js';
 
 const resolve = (gateway: unknown) => resolveAccess(GatewayConfigSchema.parse(gateway));
@@ -33,6 +38,54 @@ describe('access.mode', () => {
 
   it('rejects an unknown mode instead of guessing', () => {
     expect(() => GatewayConfigSchema.parse({ access: { mode: 'open' } })).toThrow();
+  });
+});
+
+describe('deployment topology auth requirement', () => {
+  it('accepts and secures the shipped release composition', () => {
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
+    const tmp = mkdtempSync(path.join(os.tmpdir(), 'kb-gateway-image-default-'));
+    const configPath = path.join(tmp, 'kb.config.json');
+    try {
+      execFileSync(process.execPath, [
+        path.join(repoRoot, 'tools/release/generate-platform-image-default.mjs'),
+        configPath,
+      ], { cwd: repoRoot });
+      const releaseConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+      const topology = releaseConfig.platform.deployment.topology;
+      const gateway = GatewayConfigSchema.parse(releaseConfig.gateway);
+      expect(topology).toBe('cloud');
+      expect(() => assertDeploymentAuth(topology, gateway)).not.toThrow();
+      expect(() => assertDeploymentAuth(topology, GatewayConfigSchema.parse({
+        ...releaseConfig.gateway,
+        access: { mode: 'local' },
+      }))).toThrow(expect.objectContaining({
+        envelope: expect.objectContaining({ code: 'KB_DEPLOYMENT_AUTH_REQUIRED' }),
+      }));
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('allows local access only for a declared local topology', () => {
+    expect(() => assertDeploymentAuth('local', GatewayConfigSchema.parse({ access: { mode: 'local' } }))).not.toThrow();
+  });
+
+  it.each([
+    ['cloud', { access: { mode: 'local' } }],
+    ['cloud', { access: { mode: 'secured' }, auth: { enabled: false } }],
+    ['k8s', { access: { mode: 'local' } }],
+    ['k8s', { access: { mode: 'secured' }, auth: { enabled: false } }],
+  ] as const)('refuses unsecured %s access with the catalogued deployment error', (topology, config) => {
+    expect(() => assertDeploymentAuth(topology, GatewayConfigSchema.parse(config))).toThrow(
+      expect.objectContaining({
+        envelope: expect.objectContaining({ code: 'KB_DEPLOYMENT_AUTH_REQUIRED' }),
+      }),
+    );
+  });
+
+  it.each(['cloud', 'k8s'] as const)('allows secured %s access', (topology) => {
+    expect(() => assertDeploymentAuth(topology, GatewayConfigSchema.parse({ access: { mode: 'secured' } }))).not.toThrow();
   });
 });
 

@@ -235,7 +235,7 @@ flowchart LR
 | Outcome в `kb-create` | Первая команда / результат | Реальная опора сейчас | Launch-ограничение |
 |---|---|---|---|
 | Подготовить понятные коммиты | `kb commit generate` / dry-run плана коммитов | `@kb-labs/commit` уже есть в installer manifest | Первый запуск не создаёт и не пушит коммиты; apply — осознанный следующий шаг |
-| Подготовить релиз | `kb release plan` с планом версий и проверок | `@kb-labs/release-manager-cli` уже подключён как intent | Не публиковать в first run; `NPM_TOKEN` остаётся необязательным до publish |
+| Подготовить релиз | `kb release plan` с планом версий и проверок | `@kb-labs/release` уже подключён как intent | Не публиковать в first run; `NPM_TOKEN` остаётся необязательным до publish |
 | Создать свою команду | Собственная одна команда, созданная через scaffold; включает узкое безопасное действие для агента | `@kb-labs/scaffold` уже есть в installer manifest | Не открывать ручной picker всех services/plugins до первого результата |
 
 `Review`, `QA` и готовые integration presets не входят в MVP launcher. Они добавляются только когда получат столь же качественную install → first-command цепочку. ClickUp остаётся reference implementation для custom-path, но не auto-installed preset.
@@ -1055,7 +1055,7 @@ Studio не следит за «мыслями» внешнего агента. 
 | P3. Безопасный bootstrap и handoff | Preflight, checkpoint, `continue`; убрать auto-review и auto-commit; outcome-specific output | `cmd/create.go`, `internal/installer`, `internal/scaffold`, `cmd/doctor.go` | P1–P2 | Interrupted install продолжим; launcher ничего не запускает/не коммитит сам |
 | P4. Ready outcomes | Commit и release eligibility + install → first-command E2E | manifest bundles, project detection, plugin E2E | P2–P3 | Каждый подходящий MVP путь даёт один analyze result; неподходящий даёт честный reroute/pending state |
 | P5. Consent and adapter wiring | Free gateway/BYOK/analytics separation, consent receipts, no silent remote adapter | wizard, scaffold config, adapter registry, telemetry | P1–P3 | No gateway network/binding without consent; no key in logs/packet/config JSON |
-| P6. First-plugin scaffold | Contract-driven one-command template, automatic install/build/link/discovery, permission diff | `plugins/scaffold`, templates, marketplace plugin registration | P1–P3 | Пользователь без знания layout получает один working command skeleton |
+| P6. First-plugin scaffold | Contract-driven one-command template, automatic install/build/link/discovery, permission diff | `cli/scaffold`, templates, built-in CLI registration | P1–P3 | Пользователь без знания layout получает один working command skeleton |
 | P7. Agent handoff | Portable packet, native shortcuts where available, allowlist/drift checks | launcher, scaffold, devkit/agent assets | P6 | External agent реализует handler по packet; cannot silently expand permissions |
 | P8. First-run Studio | `studio open` orchestration, deep-link run, result-first view and failure fallback | CLI, `kb-dev`, Studio app/data client | P3–P4, P6 | CLI работает без Studio; open показывает конкретный run без topology setup |
 | P9. Quality and launch proof | Full E2E matrix, privacy assertions, fresh-machine test and dogfood feedback | `tools/kb-create/e2e`, QA scenarios, docs | P1–P8 | Все launch outcomes проходят на чистой машине; failures recover through doctor/continue |

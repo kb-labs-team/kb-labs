@@ -12,7 +12,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 PUBLISHER = ROOT / "e2e" / "publisher" / "publish.sh"
-STORAGE_CHECKER = ROOT / "e2e" / "journey" / "storage_has_packages.sh"
 
 
 class PublisherConflictTest(unittest.TestCase):
@@ -77,6 +76,17 @@ class PublisherConflictTest(unittest.TestCase):
         return "sha512-" + base64.b64encode(hashlib.sha512(path.read_bytes()).digest()).decode()
 
     def publish(self, registry_integrity="", registry_shasum="", conflict=True, packages_dir=None, reject_old_latest=False, auth_failure=False):
+        resolution = subprocess.run(
+            ["bash", str(ROOT / "e2e" / "compose-owner.sh"), "resolve"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(resolution.returncode, 0, resolution.stderr)
+        compose_command = json.loads(resolution.stdout)
+        diagnostic_next = " ".join([
+            *compose_command, "-f", "e2e/docker-compose.yml", "-f",
+            "e2e/journey/docker-compose.yml", "logs", "verdaccio",
+        ])
+        self.publisher_diagnostic_next = diagnostic_next
         env = os.environ.copy()
         env.update(
             {
@@ -89,7 +99,7 @@ class PublisherConflictTest(unittest.TestCase):
                 "PUBLISH_CONFLICT": "1" if conflict else "0",
                 "PUBLISH_REJECT_OLD_LATEST": "1" if reject_old_latest else "0",
                 "PUBLISH_AUTH_FAIL": "1" if auth_failure else "0",
-                "PUBLISHER_DIAGNOSTIC_NEXT": "docker compose -f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml logs verdaccio",
+                "PUBLISHER_DIAGNOSTIC_NEXT": diagnostic_next,
                 "PUBLISH_PARALLELISM": "1",
                 "REGISTRY_INTEGRITY": registry_integrity,
                 "REGISTRY_SHASUM": registry_shasum,
@@ -168,45 +178,8 @@ class PublisherConflictTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("Verdaccio publisher authentication failed for http://registry.invalid; check registry credentials and writable storage.", result.stdout)
-        self.assertIn("Next: docker compose -f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml logs verdaccio", result.stdout)
+        self.assertIn("Next: " + self.publisher_diagnostic_next, result.stdout)
         self.assertFalse(self.publish_log.exists(), "publisher attempted a package PUT before auth preflight")
-
-
-class VerdaccioStorageWarningTest(unittest.TestCase):
-    # case: S-195.3
-    def test_verdaccio_created_files_do_not_count_as_published_packages(self):
-        with tempfile.TemporaryDirectory(prefix="kb-verdaccio-storage-") as temp:
-            storage = Path(temp)
-            (storage / ".verdaccio-db.json").write_text("{}")
-            (storage / "config.yaml").write_text("storage: ./storage\n")
-
-            result = subprocess.run(
-                ["sh", str(STORAGE_CHECKER), str(storage)],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-
-        self.assertEqual(result.returncode, 1, result.stdout)
-
-    # case: S-195.3
-    def test_published_package_metadata_counts_as_non_empty_storage(self):
-        with tempfile.TemporaryDirectory(prefix="kb-verdaccio-storage-") as temp:
-            storage = Path(temp)
-            package_metadata = storage / "@kb-labs%2fsample" / "package.json"
-            package_metadata.parent.mkdir()
-            package_metadata.write_text('{"name":"@kb-labs/sample","versions":{}}')
-
-            result = subprocess.run(
-                ["sh", str(STORAGE_CHECKER), str(storage)],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-
-        self.assertEqual(result.returncode, 0, result.stdout)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ export type DestructiveSeverity = 'low' | 'medium' | 'high' | 'critical';
  *  - critical irreversible, NO recovery (prod data, tenant wipe)
  */
 export interface DestructiveAction {
-  /** Command identity, e.g. "mind drop". */
+  /** Command identity, e.g. "mind index delete". */
   action: string;
   /** What is affected, e.g. 'index "code"'. */
   resource: string;
@@ -41,7 +41,7 @@ export interface DestructiveAction {
   severity: DestructiveSeverity;
   /** Whether the data can be recovered afterwards. */
   reversible: boolean;
-  /** How to recover, if reversible (e.g. "re-run `kb mind index --full`"). */
+  /** How to recover, if reversible (e.g. "re-run `kb mind index update --full`"). */
   recovery?: string;
   /** Quantified scope — how much, of what, how broad. */
   blastRadius?: { count?: number; unit?: string; scope?: string };

@@ -23,6 +23,7 @@ import (
 
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -49,15 +50,20 @@ func main() {
 	indexPath := flag.String("index", "", "sealed candidate release index")
 	packageDirectory := flag.String("packages", "", "candidate package tarball directory")
 	installRoot := flag.String("root", "", "temporary installer root")
+	registryURL := flag.String("registry", "", "required shared package registry URL")
 	flag.Parse()
-	if err := run(*indexPath, *packageDirectory, *installRoot); err != nil {
-		command.Exit(diag.ExitCode(diag.FromError(err)))
+	if err := run(*indexPath, *packageDirectory, *installRoot, *registryURL); err != nil {
+		command.Exit(renderFailure(err, os.Stderr))
 	}
 }
 
-func run(indexPath, packageDirectory, installRoot string) (runErr error) {
-	if indexPath == "" || packageDirectory == "" || installRoot == "" {
-		return errors.New("index, packages, and root are required")
+func renderFailure(err error, stderr io.Writer) diag.ExitStatus {
+	return result.RenderDiag(stderr, stderr, diag.FromError(err), result.ModeHuman)
+}
+
+func run(indexPath, packageDirectory, installRoot, sharedRegistryURL string) (runErr error) {
+	if indexPath == "" || packageDirectory == "" || installRoot == "" || sharedRegistryURL == "" {
+		return errors.New("index, packages, root, and registry are required")
 	}
 	source, err := catalog.LoadFile(indexPath)
 	if err != nil {
@@ -86,13 +92,15 @@ func run(indexPath, packageDirectory, installRoot string) (runErr error) {
 	}()
 	registryURL := "http://" + listener.Addr().String()
 
+	verifiedCatalog, err := catalog.VerifyCatalog(source)
+	if err != nil {
+		return fmt.Errorf("verify candidate release index for package installation: %w", err)
+	}
+
 	layout := versionroot.Layout{Root: installRoot}
 	stage, err := layout.StageInitial()
 	if err != nil {
 		return fmt.Errorf("create installer staging root: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(stage, ".npmrc"), []byte("@kb-labs:registry="+registryURL+"/\n"), 0o600); err != nil {
-		return fmt.Errorf("configure candidate package registry: %w", err)
 	}
 	plugins := make([]contracts.ComponentRequest, 0, len(source.Plugins))
 	for _, plugin := range source.Plugins {
@@ -129,14 +137,27 @@ func run(indexPath, packageDirectory, installRoot string) (runErr error) {
 		if _, ok := registry.packageFor(item.Package, item.Version); !ok {
 			return fmt.Errorf("candidate artifact %s@%s has no matching package tarball", item.Package, item.Version)
 		}
-		item.Tarball = baseURL + "/artifact?package=" + url.QueryEscape(item.Package) + "&version=" + url.QueryEscape(item.Version)
+		artifactURL := candidateArtifactURL(baseURL, *item)
+		item.Tarball = artifactURL
+		item.ResolvedURL = artifactURL
+		item.ResolvedFrom = "candidate-registry"
 	}
-	installer, err := candidatePackageInstaller(layout, stage)
+	installer, err := candidatePackageInstaller(layout, stage, sharedRegistryURL, registryURL, verifiedCatalog)
 	if err != nil {
-		return fmt.Errorf("resolve candidate package-manager paths: %w", err)
+		return contracts.NewDiag(
+			contracts.CodeApplyFailed,
+			"Could not configure the candidate package installer.",
+			"Correct the cause and rerun: "+invocationCommand(),
+			err,
+		)
 	}
 	if err := installer.Install(plan.Artifacts); err != nil {
-		return fmt.Errorf("install candidate artifacts with kb-create's package installer: %w", err)
+		return contracts.NewDiag(
+			contracts.CodeApplyFailed,
+			"Could not install candidate artifacts.",
+			"Correct the cause and rerun: "+invocationCommand(),
+			err,
+		)
 	}
 	if err := receipt.Write(stage, contracts.InstallReceipt{ID: "candidate-runtime-import-check", Plan: plan}); err != nil {
 		return fmt.Errorf("write candidate install receipt: %w", err)
@@ -145,17 +166,32 @@ func run(indexPath, packageDirectory, installRoot string) (runErr error) {
 	return nil
 }
 
-func candidatePackageInstaller(layout versionroot.Layout, stage string) (artifacts.Pnpm, error) {
+func candidateArtifactURL(registryURL string, item contracts.Artifact) string {
+	return registryURL + "/artifact?package=" + url.QueryEscape(item.Package) + "&version=" + url.QueryEscape(item.Version)
+}
+
+func candidatePackageInstaller(layout versionroot.Layout, stage, sharedRegistryURL, candidateRegistryURL string, releaseCatalog catalog.Verified) (artifacts.Pnpm, error) {
 	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
 	if err != nil {
 		return artifacts.Pnpm{}, err
 	}
-	return artifacts.Pnpm{
-		Root:               stage,
-		CacheRoot:          cacheRoot,
-		PackageManagerRoot: layout.PackageManagerStateDir(),
-		Log:                os.Stderr,
-	}, nil
+	return artifacts.NewPnpm(artifacts.PnpmConfig{
+		Root:                  stage,
+		CacheRoot:             cacheRoot,
+		PackageManagerRoot:    layout.PackageManagerStateDir(),
+		Registry:              candidateRegistryURL,
+		DefaultRegistry:       sharedRegistryURL,
+		ReleaseCatalog:        releaseCatalog,
+		Log:                   os.Stderr,
+	})
+}
+
+func invocationCommand() string {
+	quoted := make([]string, len(os.Args))
+	for index, argument := range os.Args {
+		quoted[index] = "'" + strings.ReplaceAll(argument, "'", "'\"'\"'") + "'"
+	}
+	return strings.Join(quoted, " ")
 }
 
 func readCandidatePackages(directory string) (*packageRegistry, error) {

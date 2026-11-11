@@ -60,7 +60,7 @@ services:
     description: Distributed state management
     group: infra
     type: node
-    command: node ./plugins/state/daemon/dist/bin.cjs
+    command: node ./services/state/daemon/dist/bin.cjs
     health_check: http://localhost:7777/health
     port: 7777
     url: http://localhost:7777
@@ -74,7 +74,7 @@ services:
     description: Workflow engine REST API
     group: backend
     type: node
-    command: node ./plugins/workflow/daemon/dist/bin.js
+    command: node ./services/workflow/daemon/dist/bin.js
     health_check: http://localhost:7778/health
     port: 7778
     url: http://localhost:7778
@@ -109,7 +109,7 @@ services:
     description: Unified entity marketplace — install, manage, discover
     group: backend
     type: node
-    command: node ./plugins/marketplace/daemon/dist/bin.js
+    command: node ./services/marketplace/app/dist/bin.js
     health_check: http://localhost:5070/health
     port: 5070
     url: http://localhost:5070
@@ -127,7 +127,7 @@ services:
     description: Registry for kb:handle/name packages — publish, install, share
     group: backend
     type: node
-    command: node ./plugins/marketplace-registry/app/dist/bootstrap.js
+    command: node ./services/marketplace-registry/app/dist/bootstrap.js
     health_check: http://localhost:5071/health
     port: 5071
     url: http://localhost:5071
@@ -223,7 +223,7 @@ services:
     description: Local daemon — connects this machine to Gateway
     group: local
     type: node
-    command: node ./plugins/host-agent/app/dist/index.js
+    command: node ./services/host-agent/app/dist/index.js
     depends_on: [gateway]
 
   runtime-server:

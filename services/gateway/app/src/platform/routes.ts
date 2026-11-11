@@ -55,6 +55,7 @@ const ALLOWED_METHODS: Record<string, Set<string>> = {
 };
 
 const ADMIN_ONLY_ADAPTERS = new Set(['cache', 'storage', 'eventBus', 'documentDatabase', 'kvStore']);
+const ADAPTER_CATALOG_PATH = '/platform/v1/adapters';
 
 function sendPlatformFailure(
   reply: FastifyReply,
@@ -141,6 +142,42 @@ function streamErrorEnvelope(
 // ── Route registration ────────────────────────────────────────────────────
 
 export function registerPlatformRoutes(app: FastifyInstance, logger: ILogger): void {
+  app.get(
+    ADAPTER_CATALOG_PATH,
+    {
+      config: { uxFixture: { validResult: 'error-envelope' } },
+      schema: {
+        tags: ['Platform'],
+        summary: 'List callable platform adapter methods',
+        querystring: { type: 'object', properties: {}, additionalProperties: false },
+        response: { 200: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            data: {
+              type: 'object',
+              properties: {
+                adapters: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+              },
+              required: ['adapters'],
+            },
+          },
+          required: ['ok', 'data'],
+        } },
+      },
+    },
+    async (request, reply) => {
+      if (!request.authContext) {
+        return sendAuthError(reply, 401);
+      }
+
+      const adapters = Object.fromEntries(
+        Object.entries(ALLOWED_METHODS).map(([adapter, methods]) => [adapter, [...methods]]),
+      );
+      return reply.send(createUxSuccessResult({ adapters }));
+    },
+  );
+
   // hide: true — can return SSE (text/event-stream) for streaming adapter calls, incompatible with OpenAPI response schema
   app.post<{ Params: { adapter: string; method: string }; Body: PlatformCallRequest }>(
     '/platform/v1/:adapter/:method',
@@ -173,13 +210,17 @@ export function registerPlatformRoutes(app: FastifyInstance, logger: ILogger): v
       if (!allowedMethods) {
         return sendPlatformFailure(reply, 404, createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND', {
           message: `Unknown adapter: "${adapterName}".`,
+          hint: `Request GET ${ADAPTER_CATALOG_PATH} to see supported adapter methods, then retry.`,
         }));
       }
 
       // 2. Check method is allowed
       if (!allowedMethods.has(methodName)) {
-        return sendAuthError(reply, 403, undefined,
-          `Method "${methodName}" not allowed on adapter "${adapterName}"`, undefined, { durationMs: 0 });
+        return sendPlatformFailure(reply, 403, createErrorEnvelope('KB_AUTH_FORBIDDEN', {
+          details: { permission: 'platform adapter method' },
+          cause: `Method "${methodName}" is not allowed on adapter "${adapterName}".`,
+          hint: `Request GET ${ADAPTER_CATALOG_PATH} to see supported adapter methods, then retry.`,
+        }));
       }
 
       // 3. Resolve adapter instance

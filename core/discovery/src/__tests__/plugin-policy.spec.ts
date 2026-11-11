@@ -8,7 +8,7 @@ describe('readPluginPolicy', () => {
   let root: string | undefined;
 
   afterEach(async () => {
-    if (root) await fs.rm(root, { recursive: true, force: true });
+    if (root) {await fs.rm(root, { recursive: true, force: true });}
     root = undefined;
   });
 

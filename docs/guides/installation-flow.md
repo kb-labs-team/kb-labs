@@ -5,8 +5,8 @@
 sealed release index before changing the installation.
 
 The installer supports Linux and macOS. A Windows request fails during
-planning when the selected release has no Windows binary, and does not mutate
-the installation.
+planning with catalogued `KB_INSTALL_UNSUPPORTED_PLATFORM` before downloading
+an artifact, and does not mutate the installation.
 
 ## Interactive install
 

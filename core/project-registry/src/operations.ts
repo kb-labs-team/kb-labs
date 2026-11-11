@@ -13,7 +13,13 @@
  */
 
 import { resolve } from 'node:path';
-import type { IProjectRegistry, ProjectRecord, ProjectSummary, ProjectView } from '@kb-labs/core-contracts';
+import type {
+  ProjectRecord,
+  ProjectSummary,
+  ProjectView,
+} from '@kb-labs/core-contracts';
+import type { PlatformDiagnostic } from '@kb-labs/core-platform';
+import type { IProjectRegistry } from './interface.js';
 import { canonicalizeProjectPath } from './project-id.js';
 
 /** Flattens a registry view into the summary shown by `kb project` and the host API. */
@@ -32,8 +38,12 @@ export function toProjectSummary(view: ProjectView): ProjectSummary {
   };
 }
 
-export async function listProjects(registry: IProjectRegistry): Promise<ProjectSummary[]> {
-  return (await registry.list()).map(toProjectSummary);
+export async function listProjects(registry: IProjectRegistry): Promise<{
+  projects: ProjectSummary[];
+  diagnostics: PlatformDiagnostic[];
+}> {
+  const result = await registry.list();
+  return { projects: result.projects.map(toProjectSummary), diagnostics: result.diagnostics };
 }
 
 /** Looks a project up by id, name or path. Throws `KB_PROJECT_UNKNOWN` when absent. */

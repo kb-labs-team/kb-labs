@@ -36,3 +36,6 @@ export const RUNTIME_ARGS = {
   listen: "--listen",
   parentPid: "--parent-pid",
 } as const;
+
+/** Authenticated runtime aggregate endpoint used only by the supervising host. */
+export const RUNTIME_ACTIVE_WORK_PATH = "/__runtime/active-work";

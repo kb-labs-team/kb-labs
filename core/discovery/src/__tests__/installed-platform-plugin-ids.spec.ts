@@ -8,7 +8,7 @@ describe('installed platform plugin identities', () => {
   let tempRoot: string | undefined;
 
   afterEach(async () => {
-    if (tempRoot) await fs.rm(tempRoot, { recursive: true, force: true });
+    if (tempRoot) {await fs.rm(tempRoot, { recursive: true, force: true });}
     tempRoot = undefined;
   });
 
@@ -18,15 +18,17 @@ describe('installed platform plugin identities', () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-discovery-installed-plugin-ids-'));
     const platformRoot = path.join(tempRoot, 'platform');
     const projectRoot = path.join(tempRoot, 'project');
+    const sourceRoot = path.join(workspaceRoot, 'plugins/commit');
+    const installedPluginRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'commit');
     await Promise.all([
       fs.mkdir(path.join(platformRoot, '.kb'), { recursive: true }),
       fs.mkdir(projectRoot, { recursive: true }),
+      fs.mkdir(path.dirname(installedPluginRoot), { recursive: true }),
     ]);
+    await fs.cp(sourceRoot, installedPluginRoot, { recursive: true });
 
     const pluginPackages = [
-      { id: '@kb-labs/marketplace', package: '@kb-labs/marketplace-entry', root: path.join(workspaceRoot, 'plugins/marketplace/entry') },
-      { id: '@kb-labs/scaffold', package: '@kb-labs/scaffold', root: path.join(workspaceRoot, 'plugins/scaffold/entry') },
-      { id: '@kb-labs/workflow', package: '@kb-labs/workflow-entry', root: path.join(workspaceRoot, 'plugins/workflow/entry') },
+      { id: '@kb-labs/commit', package: '@kb-labs/commit', root: installedPluginRoot },
     ];
     const plugins = Object.fromEntries(pluginPackages.map(({ id, package: packageName, root }) => [id, {
       version: '2.120.1',

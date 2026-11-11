@@ -1,10 +1,11 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 /**
  * check-ports — validates port allocation across the monorepo (ADR-0024).
  *
- * Devkit external check (TypedCheckOutput v2). Self-filters to the root
- * package so it runs exactly once.
- *   Input:  JSON on stdin or KB_DEVKIT_PACKAGE_NAME env
+ * Devkit external check (TypedCheckOutput v2). Its anchor package is declared
+ * on the custom check in devkit.yaml.
+ *   Input:  workspace files and devkit declarations
  *   Output: { issues: [{ check, severity, message, file, fix? }] }
  *
  * Standalone:  node scripts/checks/check-ports.mjs   (human-readable, exit 1 on error)
@@ -40,26 +41,6 @@ import {
 
 const CHECK_NAME = 'check-ports';
 const DEVKIT_MODE = Boolean(process.env.KB_DEVKIT_MODE);
-// Root-level check: validates workspace-wide config (port-registry, devservices,
-// docker-compose, deploy.yml). devkit runs custom checks per-package, so we
-// self-filter to a single stable workspace member and run exactly once there.
-// @kb-labs/devkit (infra/devkit) is the infra/tooling package — the natural home.
-const ANCHOR_PACKAGE = '@kb-labs/devkit';
-
-// ─── stdin (devkit passes package JSON) ────────────────────────────────────────
-
-function readStdin() {
-  const chunks = [];
-  process.stdin.resume();
-  process.stdin.setEncoding('utf-8');
-  return new Promise((resolve) => {
-    process.stdin.on('data', (c) => chunks.push(c));
-    process.stdin.on('end', () => resolve(chunks.join('')));
-    // Standalone runs have no stdin — don't hang
-    setTimeout(() => resolve(''), 50);
-  });
-}
-
 function rel(p) {
   return relative(ROOT, p);
 }
@@ -216,22 +197,9 @@ function printHuman(issues) {
 }
 
 async function main() {
-  // Devkit self-filter: run only for the root package, emit JSON, exit 0.
   if (DEVKIT_MODE) {
-    const raw = await readStdin();
-    let pkgName = process.env.KB_DEVKIT_PACKAGE_NAME ?? '';
-    try {
-      const input = JSON.parse(raw);
-      pkgName = input?.package?.name ?? pkgName;
-    } catch { /* no JSON on stdin */ }
-
-    if (pkgName !== ANCHOR_PACKAGE) {
-      process.stdout.write(JSON.stringify({ issues: [] }) + '\n');
-      process.exit(0);
-    }
-
     const issues = validate();
-    process.stdout.write(JSON.stringify({ issues }) + '\n');
+    writeCheckResult(issues);
     process.exit(0); // devkit aggregates severity; never hard-fail the runner
   }
 

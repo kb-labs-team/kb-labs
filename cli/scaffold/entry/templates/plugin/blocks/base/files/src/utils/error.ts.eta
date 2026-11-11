@@ -1,0 +1,63 @@
+import type { PluginContextV3 } from '@kb-labs/sdk';
+
+/**
+ * Output a structured error from a command handler.
+ *
+ * In JSON mode  → { ok: false, error: { code, message, hint? } }
+ * In CLI mode   → ctx.ui.error() with formatted hint/cause box
+ *
+ * Usage — wrap every API call in try/catch:
+ *
+ *   try {
+ *     const result = await someApiCall();
+ *     ...
+ *   } catch (err) {
+ *     handleError(ctx, err, input.flags.json);
+ *     return { exitCode: 1, result: null };
+ *   }
+ *
+ * Extend for your plugin's API error class:
+ *
+ *   import { YourApiError } from '@<%= it.pluginId %>/core';
+ *   if (err instanceof YourApiError) {
+ *     const hint = err.status === 401 ? 'Check your API key'
+ *                : err.status === 404 ? 'Resource not found — verify the ID'
+ *                : 'API error';
+ *     if (isJson) {
+ *       ctx.ui?.json?.({ ok: false, error: { code: err.code, message: err.message, status: err.status, hint } });
+ *     } else {
+ *       ctx.ui?.error?.(err.message, { hint, cause: `API ${err.status} (${err.code})` });
+ *     }
+ *     return;
+ *   }
+ */
+export function handleError(ctx: PluginContextV3, err: unknown, isJson?: boolean): void {
+  const message = err instanceof Error ? err.message : String(err);
+
+  if (isJson) {
+    ctx.ui?.json?.({ ok: false, error: { code: 'INTERNAL_ERROR', message } });
+  } else {
+    ctx.ui?.error?.(message);
+  }
+}
+
+/**
+ * Output a validation error (missing positional arg or required flag).
+ * Call BEFORE the try/catch — this is synchronous and never throws.
+ *
+ *   if (!id) {
+ *     validationError(ctx, 'id is required', 'Usage: kb <%= it.name %> cmd <id>', input.flags.json);
+ *     return { exitCode: 1, result: null };
+ *   }
+ */
+export function validationError(
+  ctx: PluginContextV3,
+  message: string,
+  isJson?: boolean,
+): void {
+  if (isJson) {
+    ctx.ui?.json?.({ ok: false, error: { code: 'INVALID_ARGS', message } });
+  } else {
+    ctx.ui?.error?.(message);
+  }
+}

@@ -33,7 +33,7 @@ describe('Worker active cancellation', () => {
     worker = new Worker({ workerScript: fixture });
     await worker.spawn();
     const controller = new AbortController();
-    const exited = new Promise<void>((resolve) => worker!.once('exit', () => resolve()));
+    const exited = new Promise<void>((resolve) => { worker!.once('exit', () => resolve()); });
     const execution = worker.execute(makeRequest(), 5000, undefined, undefined, undefined, undefined, controller.signal);
     controller.abort();
 
@@ -96,7 +96,7 @@ describe('WorkerPoolBackend process-tree health', () => {
       let health = await backend.health();
       const deadline = Date.now() + 2_000;
       while ((health.details?.workers as { treeUnverified?: number }).treeUnverified !== 1 && Date.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 10));
+        await new Promise(resolve => { setTimeout(resolve, 10); });
         health = await backend.health();
       }
       expect(health.healthy).toBe(false);

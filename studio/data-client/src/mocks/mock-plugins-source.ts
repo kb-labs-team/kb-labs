@@ -46,7 +46,7 @@ const mockManifests: PluginsRegistryResponse = {
               ],
             },
             {
-              path: 'mind index',
+              path: 'mind index update',
               describe: 'Build RAG index',
               handler: './dist/commands/rag-index.js',
               flags: [
@@ -66,83 +66,6 @@ const mockManifests: PluginsRegistryResponse = {
               timeoutMs: 30000,
               input: { zod: './schemas/search-input.ts#SearchInputSchema' },
               output: { zod: './schemas/search-output.ts#SearchOutputSchema' },
-            },
-          ],
-        },
-      } as ManifestV3,
-    },
-    {
-      pluginId: '@kb-labs/workflow-plugin',
-      source: {
-        kind: 'workspace',
-        path: '/workspace/kb-labs-workflow/packages/workflow-plugin',
-      },
-      pluginRoot: '/workspace/kb-labs-workflow/packages/workflow-plugin',
-      discoveredAt: new Date(Date.now() - 3600000).toISOString(), // 1 hour ago
-      buildTimestamp: new Date(Date.now() - 5400000).toISOString(), // 1.5 hours ago
-      manifest: {
-        schema: 'kb.plugin/3',
-        id: '@kb-labs/workflow-plugin',
-        version: '1.0.0',
-        display: {
-          name: 'Workflow Engine',
-          description: 'Orchestrate multi-step workflows',
-          author: 'KB Labs',
-          icon: '⚙️',
-          tags: ['workflow', 'automation', 'orchestration'],
-        },
-        permissions: {
-          fs: { mode: 'readwrite', allow: ['.kb/workflows/**'] },
-        },
-        platform: {
-          requires: ['storage', 'cache'],
-        },
-        cli: {
-          commands: [
-            {
-              path: 'workflow run',
-              describe: 'Run a workflow',
-              handler: './dist/commands/run.js',
-              flags: [
-                { name: 'workflow-id', type: 'string', required: true },
-                { name: 'input', type: 'string' },
-              ],
-            },
-          ],
-        },
-        rest: {
-          basePath: '/v1/plugins/workflow',
-          routes: [
-            {
-              method: 'POST',
-              path: '/execute',
-              description: 'Execute workflow',
-              handler: './dist/rest/execute.js',
-              input: { $ref: '#/components/schemas/WorkflowExecuteRequest' },
-              output: { $ref: '#/components/schemas/WorkflowExecuteResponse' },
-            },
-            {
-              method: 'GET',
-              path: '/status/:runId',
-              description: 'Get workflow status',
-              handler: './dist/rest/status.js',
-              output: { $ref: '#/components/schemas/WorkflowStatus' },
-            },
-          ],
-        },
-        jobs: {
-          handlers: [
-            {
-              id: 'cleanup-old-runs',
-              handler: './dist/jobs/cleanup.js',
-              describe: 'Clean up old workflow runs',
-            },
-          ],
-          cron: [
-            {
-              jobId: 'cleanup-old-runs',
-              schedule: '0 2 * * *',
-              enabled: true,
             },
           ],
         },
@@ -183,7 +106,7 @@ export class MockPluginsSource implements PluginsDataSource {
         `1. **mind search** - Query the RAG index\n` +
         `   - Required: --text (query text)\n` +
         `   - Optional: --agent (use agent mode)\n\n` +
-        `2. **mind index** - Build RAG index\n` +
+        `2. **mind index update** - Build RAG index\n` +
         `   - Optional: --scope (default: 'default')\n\n` +
         `Use these commands to perform semantic code search across your codebase.`;
     } else if (question.includes('rest') || question.includes('api') || question.includes('endpoint')) {
@@ -196,7 +119,7 @@ export class MockPluginsSource implements PluginsDataSource {
     } else {
       answer = `This is the Mind RAG Plugin (v0.1.0) - a semantic code search and RAG system.\n\n` +
         `Key features:\n` +
-        `- 2 CLI commands (mind search, mind index)\n` +
+        `- 2 CLI commands (mind search, mind index update)\n` +
         `- 1 REST API endpoint (/search)\n` +
         `- AI-powered semantic search\n` +
         `- Read-only file system access\n` +

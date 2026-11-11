@@ -31,7 +31,7 @@ type ObjectStore interface {
 	PutFile(path string) (sha256hex string, err error)
 
 	// RestoreFile writes the object to destPath, creating parent dirs.
-	RestoreFile(sha256hex, destPath string) error
+	RestoreFile(sha256hex, destPath string, mode os.FileMode) error
 }
 
 // LocalStore is a file-system content-addressable store.
@@ -119,7 +119,7 @@ func (s *LocalStore) PutFile(path string) (string, error) {
 	return s.Put(f)
 }
 
-func (s *LocalStore) RestoreFile(sha256hex, destPath string) error {
+func (s *LocalStore) RestoreFile(sha256hex, destPath string, mode os.FileMode) error {
 	src, err := s.Get(sha256hex)
 	if err != nil {
 		return err
@@ -138,6 +138,11 @@ func (s *LocalStore) RestoreFile(sha256hex, destPath string) error {
 	tmpPath := tmp.Name()
 
 	if _, err := io.Copy(tmp, src); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return err

@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { PluginError as ContractPluginError } from '@kb-labs/plugin-contracts';
 import * as SDK from '../index.js';
 
 describe('SDK Exports Snapshot', () => {
@@ -32,6 +33,16 @@ describe('SDK Exports Snapshot', () => {
     expect(typeof SDK.defineRoute).toBe('function');
     expect(typeof SDK.defineAction).toBe('function');
     expect(typeof SDK.defineWebhook).toBe('function');
+  });
+
+  it('uses the plugin-contracts PluginError class for SDK and defined product errors', () => {
+    expect(SDK.PluginError).toBe(ContractPluginError);
+    const Defined = SDK.defineError('IDENTITY', {
+      Invalid: { code: 400, message: 'Invalid input', hint: 'Correct the input and retry.' },
+    });
+    const error = new Defined.Invalid();
+    expect(error).toBeInstanceOf(SDK.PluginError);
+    expect(error).toBeInstanceOf(ContractPluginError);
   });
 
   describe('Test Context Structure', () => {

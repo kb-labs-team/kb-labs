@@ -1,8 +1,7 @@
 /** Platform-owned project plugin settings (ADR-0052). */
 
 import { promises as fs } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import { resolveKbHome, projectSettingsFilePath, projectOverlaysDirPath } from '@kb-labs/core-platform';
 
 import { ConfigWriteError } from './user-config/write-user-config.js';
 import { parseJsonc, setUserConfigValue } from './user-config/index.js';
@@ -16,13 +15,13 @@ export interface ProjectSettingsStoreOptions {
 }
 
 export function projectSettingsPath(options: ProjectSettingsStoreOptions): string {
-  const home = options.root ?? options.env?.KB_HOME ?? process.env.KB_HOME ?? path.join(os.homedir(), '.kb');
-  return path.join(home, 'state', options.projectId, 'config.jsonc');
+  const home = options.root ?? resolveKbHome(options.env);
+  return projectSettingsFilePath(home, options.projectId);
 }
 
 export function projectOverlaysPath(options: ProjectSettingsStoreOptions): string {
-  const home = options.root ?? options.env?.KB_HOME ?? process.env.KB_HOME ?? path.join(os.homedir(), '.kb');
-  return path.join(home, 'state', options.projectId, 'overlays');
+  const home = options.root ?? resolveKbHome(options.env);
+  return projectOverlaysDirPath(home, options.projectId);
 }
 
 /** Read a project's plugin settings without consulting the project repository. */
@@ -34,7 +33,7 @@ export async function readProjectSettings(
   try {
     text = await fs.readFile(filePath, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {return {};}
     throw error;
   }
   const value = parseJsonc(text);
@@ -103,13 +102,13 @@ export async function writeProjectSetting(
 }
 
 function isSchemaReference(value: unknown): boolean {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value)) {return false;}
   return (Object.keys(value).length === 1 && typeof value.$ref === 'string') ||
     (Object.keys(value).length === 1 && typeof value.zod === 'string');
 }
 
 function mergeSettings(lower: unknown, higher: unknown): unknown {
-  if (!isRecord(lower) || !isRecord(higher)) return higher;
+  if (!isRecord(lower) || !isRecord(higher)) {return higher;}
   const result: Record<string, unknown> = { ...lower };
   for (const [key, value] of Object.entries(higher)) {
     result[key] = Object.prototype.hasOwnProperty.call(lower, key)

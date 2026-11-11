@@ -1,0 +1,26 @@
+schema: kb.plugin/3
+id: "<%= it.pluginId %>"
+version: "0.1.0"
+display:
+  name: "<%= it.name %>"
+  description: "<%= it.vars.description %>"
+cli:
+  groupMeta:
+    - name: "<%= it.name %>"
+      description: "<%= it.vars.description %>"
+  commands:
+    - path: "<%= it.name %> hello"
+      describe: "Say hello from <%= it.name %>"
+      handler: "./commands/hello.js#default"
+      flags:
+        - name: who
+          type: string
+          description: "Who to greet"
+          default: World
+        - name: json
+          type: boolean
+          description: "Emit JSON instead of text"
+      examples:
+        - "kb <%= it.name %> hello"
+        - "kb <%= it.name %> hello --who=Developer"
+        - "kb <%= it.name %> hello --json"

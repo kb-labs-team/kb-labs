@@ -9,7 +9,7 @@ import { GATEWAY, REST } from '../../fixtures/urls.js'
  * don't render. The studio shell shows blank pages with no console error.
  *
  * Architecture:
- *   Browser → GET /plugins/@kb-labs/workflow/widgets/remoteEntry.js
+ *   Browser → GET /plugins/{plugin}/widgets/remoteEntry.js
  *   Gateway → proxies /plugins/* → REST API :5050
  *   REST API → serves dist/widgets/remoteEntry.js from plugin package
  *
@@ -101,39 +101,11 @@ test('MW-02: every remoteEntryUrl resolves to application/javascript (not HTML)'
   expect(failures, `MF widget loading failures:\n${failures.join('\n')}`).toHaveLength(0)
 })
 
-// ── MW-03: workflow widget remoteEntry.js loads as JS ──────────────────────────
+// ── MW-03: built-in workflow page loads in the Studio application ─────────────
 
-test('MW-03: workflow remoteEntry.js — returns JavaScript through gateway', async ({ request }) => {
-  const plugins = await getStudioRegistry(request)
-  const workflowPlugin = plugins.find(
-    p => p.pluginId?.includes('workflow') || p.remoteName?.includes('workflow'),
-  )
-  test.skip(!workflowPlugin, 'workflow plugin not in studio registry — check install')
-
-  const url = resolveUrl((workflowPlugin!.remoteEntryUrl ?? '').split('?')[0], GATEWAY)
-  test.skip(!url || url === GATEWAY, 'workflow remoteEntryUrl missing')
-
-  const res = await request.get(url)
-  expect(res.status()).toBe(200)
-  expect(res.headers()['content-type']).toContain('javascript')
-
-  const body = await res.text()
-  // Must look like JavaScript — not an HTML page
-  expect(body.toLowerCase()).not.toContain('<!doctype html')
-  expect(body.toLowerCase()).not.toContain('<html')
-})
-
-// ── MW-04: gateway proxies /plugins/* correctly (no double-prefix) ────────────
-
-test('MW-04: gateway /plugins/* proxy — no double-prefix redirect', async ({ request }) => {
-  // Regression: proxy rewrote /plugins/foo → /plugins/plugins/foo (double prefix)
-  // Result: 301/302 redirect loop visible in network tab
-  const res = await request.get(`${GATEWAY}/plugins/@kb-labs/workflow/widgets/remoteEntry.js`, {
-    maxRedirects: 0,
-  })
-  // 200 = served correctly; 404 = plugin not built yet; 302/301 = double-prefix bug
-  expect([200, 404]).toContain(res.status())
-  expect([301, 302, 307, 308]).not.toContain(res.status())
+test('MW-03: built-in workflow runs page loads', async ({ page }) => {
+  await page.goto(`${GATEWAY}/p/workflows/runs`)
+  await expect(page.getByRole('heading', { name: 'Workflow Runs', exact: true })).toBeVisible()
 })
 
 // ── MW-05: remoteEntry.js has correct cache-control (short TTL for entry) ─────

@@ -267,7 +267,7 @@ export class TrieRouter {
 
       if (!child) {
         // A command may also act as a namespace for more specific commands,
-        // e.g. `commit` and `commit open`. Prefer the specific command when
+        // e.g. `commit` and `commit plan show`. Prefer the specific command when
         // the next token is registered; only fall back to the shorter command
         // when the token is not a child and should be passed as an argument.
         if (node.command && i > 0) {
@@ -390,8 +390,8 @@ export class TrieRouter {
   listSystemCommandEntries(): Array<{ command: SystemCommand; path: string[] }> {
     const entries: Array<{ command: SystemCommand; path: string[] }> = [];
     const visit = (node: TrieNode, path: string[]): void => {
-      if (node.systemCommand) entries.push({ command: node.systemCommand, path });
-      for (const [segment, child] of node.children) visit(child, [...path, segment]);
+      if (node.systemCommand) {entries.push({ command: node.systemCommand, path });}
+      for (const [segment, child] of node.children) {visit(child, [...path, segment]);}
     };
     visit(this.root, []);
     return entries;

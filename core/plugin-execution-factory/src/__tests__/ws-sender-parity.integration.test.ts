@@ -34,25 +34,25 @@ function createHostOperations(): SocketHostOperations {
     closes: [],
     active: new Set([connectionId, closedConnectionId]),
     send(id, payload) {
-      if (!host.active.has(id)) throw unavailableConnection(id);
+      if (!host.active.has(id)) {throw unavailableConnection(id);}
       host.frames.push({ connectionId: id, payload });
     },
     broadcast(id, payload, excludeSelf = true) {
-      if (!host.active.has(id)) throw unavailableConnection(id);
+      if (!host.active.has(id)) {throw unavailableConnection(id);}
       host.frames.push({ connectionId: 'other', payload });
-      if (!excludeSelf) host.frames.push({ connectionId: id, payload });
+      if (!excludeSelf) {host.frames.push({ connectionId: id, payload });}
     },
     sendTo(id, targets, payload) {
-      if (!host.active.has(id)) throw unavailableConnection(id);
-      for (const target of targets) host.frames.push({ connectionId: target, payload });
+      if (!host.active.has(id)) {throw unavailableConnection(id);}
+      for (const target of targets) {host.frames.push({ connectionId: target, payload });}
     },
     close(id, code = 1000, reason) {
-      if (!host.active.has(id)) throw unavailableConnection(id);
+      if (!host.active.has(id)) {throw unavailableConnection(id);}
       host.active.delete(id);
       host.closes.push({ connectionId: id, code, reason });
     },
     getConnectionId(id) {
-      if (!host.active.has(id)) throw unavailableConnection(id);
+      if (!host.active.has(id)) {throw unavailableConnection(id);}
       return id;
     },
   };
@@ -83,7 +83,7 @@ function makeRequest(event: string, id: string): ExecutionRequest {
 }
 
 describe.each(modes)('%s WS sender host-call parity', (mode) => {
-  // case: S-240.1
+  // case: S-244.11
   it('preserves frames, ordering, and close code/reason at the host', async () => {
     const logger = { info() {}, debug() {}, warn() {}, error() {}, fatal() {}, trace() {}, flush: async () => {}, child() { return this; } } as ILogger;
     const host = createHostOperations();
@@ -122,7 +122,7 @@ describe.each(modes)('%s WS sender host-call parity', (mode) => {
     try {
       const result = await backend.execute(makeRequest(event, id));
       expect(result.ok).toBe(false);
-      if (result.ok) return;
+      if (result.ok) {return;}
       expect(result.error.envelope.code, result.error.error.message).toBe('KB_RUNTIME_WS_CONNECTION_UNAVAILABLE');
       expect(result.error.envelope.hint).toBeTruthy();
     } finally {

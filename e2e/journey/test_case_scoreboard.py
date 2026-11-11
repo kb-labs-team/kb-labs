@@ -3,8 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scoreboard import build_scoreboard, load_cases, release_claims_for_case, render_delta, render_markdown, write_scoreboards
+from scoreboard import RELEASE_GATING_MODES, build_scoreboard, load_cases, release_claims_for_case, render_delta, render_markdown, write_scoreboards
 from service_steps import FlowGraph, Journey
+from invocations import invocation_context, record_invocation
+import jsonl
 
 
 JOURNEY_ROOT = Path(__file__).resolve().parent
@@ -37,6 +39,25 @@ class CaseScoreboardTests(unittest.TestCase):
 
     def write_json(self, name, data):
         (self.reports / name).write_text(json.dumps(data), encoding="utf-8")
+
+    def test_release_gate_is_owned_by_local_mode_and_secured_stays_non_gating(self):
+        self.assertEqual(RELEASE_GATING_MODES, ("local",))
+        self.write_json("installer-case-local-agent-explore-default.json", {
+            "case_run": {"mode": "local", "claims": [
+                {"claimId": "S-001.1", "status": "PASS"},
+                {"claimId": "S-001.2", "status": "PASS"}]}, "steps": []})
+        self.write_json("service-secured.json", {
+            "case_run": {"mode": "secured", "claims": []},
+            "steps": [{"cases": ["S-001.1", "S-001.2"], "status": "FAIL", "message": "secured lane failure"}]})
+
+        combined = build_scoreboard(self.reports, self.catalog, ["local", "secured"])
+        secured = build_scoreboard(self.reports, self.catalog, ["secured"])
+
+        self.assertEqual(combined["releaseGate"], {"modes": ["local"], "gating": True})
+        self.assertEqual(combined["releaseCases"], {"fullyGreen": 1, "total": 1})
+        self.assertEqual(secured["releaseGate"], {"modes": ["local"], "gating": False})
+        self.assertEqual(secured["releaseCases"], {"fullyGreen": 0, "total": 0})
+        self.assertIn("non-gating for Release 1", render_markdown(secured))
 
     def test_scores_case_defined_denominator_and_mode_specific_results(self):
         self.write_json("installer-case-local-agent-explore-default.json", {
@@ -100,6 +121,111 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertEqual(scoreboard["headline"]["claimsReachable"], {"count": 1, "total": 3})
         self.assertIn("Blocking roots", render_markdown(scoreboard))
         self.assertIn("Unclaimed", render_markdown(scoreboard))
+
+    # case: S-261.3
+    def test_j86_fixture_projects_recorded_failure_and_installer_prerequisite(self):
+        fixture = JOURNEY_ROOT / "testdata" / "x104-j86" / "local.json"
+        data = json.loads(fixture.read_text(encoding="utf-8"))
+        recorded_session_failure = next(step["message"] for step in data["steps"]
+                                        if step["stepId"] == "case:S-141.1")
+        journey = Journey("local", "x104-j86-replay")
+        journey.step("create project agent session", "agents", lambda: recorded_session_failure,
+                     cases=["S-141.1"])
+        for name, claim in (("list project agent sessions", "S-141.2"),
+                            ("inspect project agent session", "S-141.3")):
+            journey.step(name, "agents", lambda: self.fail("blocked check was invoked"), cases=[claim],
+                         requires=("step:create project agent session",))
+        data["steps"] = [step for step in data["steps"]
+                         if step["stepId"] not in {"case:S-141.1", "case:S-141.2", "case:S-141.3"}]
+        data["steps"].extend(journey.result().steps)
+        self.write_json("installer-cases-local.json", data)
+
+        real_catalog = Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
+        report = build_scoreboard(self.reports, real_catalog, ["local"])
+        root_step = next(step for step in data["steps"]
+                         if step["stepId"] == "case:PC-001.10,S-181.3")
+        root = next(item for item in report["blockingRoots"]
+                    if item["stepId"] == root_step["stepId"])
+        self.assertEqual(root["failure"], root_step["message"])
+        self.assertIn("case:S-181.6", root["blockedStepIds"])
+        blocked = next(step for step in data["steps"] if step["stepId"] == "case:S-181.6")
+        self.assertEqual(blocked["status"], "BLOCKED")
+        self.assertEqual(blocked["details"]["requires"], [f"step:{root_step['stepId']}"])
+        session_root = next(item for item in report["blockingRoots"]
+                            if item["stepId"] == "case:S-141.1")
+        self.assertEqual(session_root["failure"], recorded_session_failure)
+        self.assertEqual(session_root["blockedStepIds"], ["case:S-141.2", "case:S-141.3"])
+        markdown = render_markdown(report)
+        self.assertIn("`case:S-141.2`", markdown)
+        self.assertIn(recorded_session_failure, markdown)
+
+    # case: S-261.3
+    def test_j86_roots_group_by_captured_structured_error_and_keep_no_envelope_visible(self):
+        journey = Journey("local", "x104-j86-root-groups")
+        journey.step("plugin command with a structured failure", "plugin.run",
+                     lambda: "plugin invocation failed", cases=["S-001.1"])
+        journey.step("second plugin command with the same structured failure", "plugin.run",
+                     lambda: "plugin invocation failed", cases=["S-001.2"])
+        journey.step("assertion after success", "http", lambda: "expected a result", cases=["S-001.3"])
+        steps = journey.result().steps
+        self.write_json("installer-cases-local.json", {
+            "case_run": {"mode": "local", "claims": []},
+            "steps": steps,
+        })
+        envelope = {"code": "KB_PLUGIN_CONTRACT_VIOLATION", "area": "plugin", "stage": "run"}
+        structured_failure_ids = {"case:S-001.1", "case:S-001.2"}
+        for step in steps:
+            if step["stepId"] not in structured_failure_ids:
+                continue
+            response = {"ok": False, "error": {**envelope, "message": "failure", "hint": "inspect"}}
+            with invocation_context(step_id=step["stepId"].removeprefix("case:"), report_root=self.reports):
+                record_invocation(kind="command", argv=["kb", "--json"], cwd=self.root,
+                                  env={}, exit_code=1, stdout=json.dumps(response),
+                                  duration_seconds=0.1)
+        alternate = {"ok": False, "error": {
+            "code": "KB_RUNTIME_UNEXPECTED", "area": "runtime", "stage": "run",
+            "message": "failure", "hint": "inspect",
+        }}
+        with invocation_context(step_id="S-001.1", report_root=self.reports):
+            record_invocation(kind="command", argv=["kb", "--json"], cwd=self.root,
+                              env={}, exit_code=1, stdout=json.dumps(alternate),
+                              duration_seconds=0.1)
+        with invocation_context(step_id="S-001.3", report_root=self.reports):
+            record_invocation(kind="http", argv=["GET"], cwd=self.root,
+                              env={}, exit_code=200, url="http://example.test/success",
+                              stdout=json.dumps({"ok": True, "data": {"value": "available"}}),
+                              duration_seconds=0.1)
+        self.write_json("installer-cases-local.json", {
+            "case_run": {"mode": "local", "claims": []},
+            "steps": steps,
+        })
+
+        report = build_scoreboard(self.reports, self.catalog, ["local"])
+        groups = report["rootGroups"]
+        self.assertEqual(groups[0]["error"], envelope)
+        self.assertEqual(groups[0]["rootStepIds"], ["case:S-001.1", "case:S-001.2"])
+        self.assertEqual(groups[0]["unblockedClaims"], 2)
+        self.assertEqual(groups[1]["error"], {
+            "code": "KB_RUNTIME_UNEXPECTED", "area": "runtime", "stage": "run",
+        })
+        self.assertEqual(groups[1]["unblockedClaims"], 1)
+        no_envelope_group = next(group for group in groups if group["error"] is None)
+        self.assertEqual(no_envelope_group["rootStepIds"], ["case:S-001.3"])
+        markdown = render_markdown(report)
+        self.assertIn("Root groups", markdown)
+        self.assertIn("no envelope", markdown)
+        self.assertIn("`case:S-001.3`", markdown)
+
+    # case: S-261.3
+    def test_unreadable_invocation_record_is_reported_by_line(self):
+        calls = self.reports / "invocations" / "calls.jsonl"
+        calls.parent.mkdir()
+        calls.write_text("not-json\n", encoding="utf-8")
+
+        report = build_scoreboard(self.reports, self.catalog, ["local"])
+
+        self.assertEqual(report["unreadableInvocationRows"], [1])
+        self.assertIn("invocations/calls.jsonl:1", render_markdown(report))
 
     def test_state_precondition_links_failed_state_owner_to_blocked_claim(self):
         self.write_json("service-local.json", {
@@ -170,8 +296,9 @@ class CaseScoreboardTests(unittest.TestCase):
 
     def test_failure_summary_uses_structured_marketplace_error_and_bounds_length(self):
         fixture = JOURNEY_ROOT / "testdata" / "marketplace-install-j81.jsonl"
-        artifact_rows = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines()
-                         if line.startswith("{")]
+        records = jsonl.read_jsonl(fixture)
+        self.assertEqual([row.line_number for row in records if row.error is not None], [])
+        artifact_rows = [row.value for row in records]
         invocation = next(row for row in artifact_rows
                           if row["step_id"] == "prepare update preservation baseline")
         marketplace_payload = json.loads(invocation["stdout"])["error"]
@@ -268,8 +395,7 @@ class CaseScoreboardTests(unittest.TestCase):
     def test_release_claims_follow_the_case_release_flag(self):
         catalog = Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
         self.assertEqual(release_claims_for_case("S-109", catalog), [])
-        self.assertEqual(release_claims_for_case("S-100", catalog),
-                         ["S-100.1", "S-100.2", "S-100.3", "S-100.4", "S-100.5"])
+        self.assertEqual(release_claims_for_case("S-100", catalog), [])
 
     def test_playwright_tags_and_skip_are_claimed(self):
         self.write_json("studio-playwright-secured.json", {"suites": [{"specs": [{
@@ -318,14 +444,13 @@ class CaseScoreboardTests(unittest.TestCase):
             "steps": [],
         })
         self.write_json("service-local.json", {
-            "case_run": {"mode": "local", "partial": True, "selection": ["S-001.1"],
+            "case_run": {"mode": "local", "selection": ["S-001.1"],
                          "claims": [{"claimId": "S-001.1", "status": "PASS"},
                                     {"claimId": "S-001.2", "status": "PASS"}]},
             "steps": [],
         })
         scoreboard = build_scoreboard(self.reports, self.catalog, ["local"])
         case = next(item for item in scoreboard["cases"] if item["id"] == "S-001")
-        self.assertTrue(scoreboard["partial"])
         self.assertEqual(scoreboard["selection"], ["S-001.1"])
         self.assertEqual(case["status"], "Unclaimed")
         self.assertIn("Partial run", render_markdown(scoreboard))
@@ -333,19 +458,18 @@ class CaseScoreboardTests(unittest.TestCase):
     def test_split_partial_journey_records_keep_selection_without_claiming_missing_rows(self):
         selection = ["S-001.1", "S-001.2"]
         self.write_json("installer-case-local-agent-explore-default.json", {
-            "case_run": {"mode": "local", "partial": True, "selection": selection,
+            "case_run": {"mode": "local", "selection": selection,
                          "claims": [{"claimId": "S-001.1", "status": "PASS"}]},
             "steps": [],
         })
         self.write_json("service-local.json", {
-            "case_run": {"mode": "local", "partial": True, "selection": selection,
+            "case_run": {"mode": "local", "selection": selection,
                          "claims": [{"claimId": "S-001.2", "status": "PASS"}]},
             "steps": [],
         })
 
         scoreboard = build_scoreboard(self.reports, self.catalog, ["local"])
         case = next(item for item in scoreboard["cases"] if item["id"] == "S-001")
-        self.assertTrue(scoreboard["partial"])
         self.assertEqual(scoreboard["selection"], selection)
         self.assertEqual(case["status"], "Unclaimed")
         self.assertEqual(case["claimedCount"], 0)
@@ -374,8 +498,8 @@ class CaseScoreboardTests(unittest.TestCase):
         before, after = self.root / "before-partial", self.root / "after-full"
         before.mkdir()
         after.mkdir()
-        for directory, partial in ((before, True), (after, False)):
-            data = {"observedModes": ["local"], "partial": partial, "selection": ["S-001"],
+        for directory, selection in ((before, ["S-001"]), (after, [])):
+            data = {"observedModes": ["local"], "selection": selection,
                     "releaseCases": {"fullyGreen": 0, "total": 1},
                     "activeCases": {"fullyGreen": 0, "total": 2}, "plannedCount": 1,
                     "historicalCount": 1, "cases": []}

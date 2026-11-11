@@ -124,14 +124,10 @@ jobs:
 
       - name: Build publisher image
         if: inputs.gate == false || steps.gate.outputs.run == 'true'
-        run: |
-          docker buildx build \
-            --cache-from type=local,src=/tmp/.buildx-cache-publisher \
-            --cache-to   type=local,dest=/tmp/.buildx-cache-publisher,mode=max \
-            --load \
-            -t kb-e2e-ci-publisher:latest \
-            -f e2e/publisher/Dockerfile \
-            e2e/
+        uses: ./.github/actions/build-publisher
+        with:
+          cache-from: type=local,src=/tmp/.buildx-cache-publisher
+          cache-to: type=local,dest=/tmp/.buildx-cache-publisher,mode=max
 
       - name: Restore Verdaccio storage cache
         if: inputs.gate == false || steps.gate.outputs.run == 'true'

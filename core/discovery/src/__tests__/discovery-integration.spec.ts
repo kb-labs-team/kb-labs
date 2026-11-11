@@ -114,6 +114,59 @@ describe('Discovery Integration: install → discover → available', () => {
     expect(manifest!.cli?.commands).toHaveLength(1);
   });
 
+  // case: S-268.10
+  it('does not load a plugin resolved outside the project through a Marketplace lock path', async () => {
+    const projectRoot = path.join(tmpDir, 'projects', 'app');
+    const outsidePlugin = path.join(tmpDir, 'outside', 'plugin');
+    await fs.mkdir(projectRoot, { recursive: true });
+    await fs.mkdir(outsidePlugin, { recursive: true });
+    await fs.writeFile(path.join(outsidePlugin, 'package.json'), JSON.stringify({ name: '@vendor/outside', version: '1.0.0' }));
+    await fs.writeFile(path.join(outsidePlugin, 'kb.plugin.json'), JSON.stringify({
+      schema: 'kb.plugin/3',
+      id: '@vendor/outside',
+      version: '1.0.0',
+      display: { name: 'Outside plugin', description: 'Must not be loaded from outside the project scope.' },
+    }));
+    const lockRoot = path.join(projectRoot, '.kb');
+    await fs.mkdir(lockRoot, { recursive: true });
+    await fs.writeFile(path.join(lockRoot, 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: {
+        '@vendor/outside': {
+          version: '1.0.0', integrity: computeIntegrity(JSON.stringify({ name: '@vendor/outside', version: '1.0.0' })),
+          package: '@vendor/outside', resolvedPath: path.relative(projectRoot, outsidePlugin), enabled: true,
+          source: 'marketplace', marketplaceSource: 'npm', signatureStatus: 'unsigned',
+        },
+      },
+    }));
+
+    const dm = new DiscoveryManager({ root: projectRoot, scope: 'project', workspace: false });
+    const result = await dm.discover();
+
+    expect(result.plugins.map(plugin => plugin.id)).not.toContain('@vendor/outside');
+    expect(result.manifests.has('@vendor/outside')).toBe(false);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'LOCK_SCHEMA_INVALID' }));
+  });
+
+  // case: S-268.10
+  it('discovers a local link at its recorded absolute path outside the scope root', async () => {
+    const projectRoot = path.join(tmpDir, 'projects', 'app');
+    const linked = await installPlugin({ name: 'developer-plugin', id: '@vendor/developer-plugin', version: '1.0.0' });
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(projectRoot, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: {
+        '@vendor/developer-plugin': { link: linked.dir, enabled: true, source: 'local' },
+      },
+    }));
+
+    const result = await new DiscoveryManager({ root: projectRoot, scope: 'project', workspace: false }).discover();
+
+    expect(result.plugins.map(plugin => plugin.id)).toContain('@vendor/developer-plugin');
+    expect(result.manifests.has('@vendor/developer-plugin')).toBe(true);
+    expect(result.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'LOCK_SCHEMA_INVALID' }));
+  });
+
   // case: S-203.25
   it('fails closed for marketplace plugins when policy config is broken and retains local sources', async () => {
     const marketplace = await installPlugin({ name: 'marketplace', id: '@vendor/marketplace', version: '1.0.0' });
@@ -132,6 +185,7 @@ describe('Discovery Integration: install → discover → available', () => {
     lock.plugins['@vendor/marketplace'] = createMarketplaceEntry({
       version: '1.0.0', integrity: marketplace.integrity, resolvedPath: marketplace.relPath,
       package: '@vendor/marketplace', source: 'marketplace', primaryKind: 'plugin', provides: ['plugin'],
+      marketplaceSource: 'registry', signatureStatus: 'verified',
     });
     lock.plugins['@vendor/linked'] = createMarketplaceEntry({
       version: '1.0.0', integrity: linked.integrity, resolvedPath: linked.relPath,

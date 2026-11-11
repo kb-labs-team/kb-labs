@@ -9,15 +9,14 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { createErrorEnvelope, createValidatedErrorEnvelope, type DetailsFor, type ICache, type IAnalytics, type ILogger } from '@kb-labs/core-platform';
+import { createCatalogErrorEnvelope, type CatalogErrorRequest, type ICache, type IAnalytics, type ILogger } from '@kb-labs/core-platform';
 import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { createUxFailureResult, createUxSuccessResult } from '@kb-labs/core-platform/ux-result';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import { filterTools, type McpTool } from './tool-builder.js';
 import { callTool, type PlatformResolver } from './tool-router.js';
 import { actionForOperation, type Permits } from './authz.js';
 import type { McpObservabilityCollector } from '../observability/collector.js';
-import type { PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
 import type { UIOutput } from '@kb-labs/plugin-contracts';
 
 /** How long a per-identity tool listing stays cached. */
@@ -44,8 +43,8 @@ function errorResult(envelope: ErrorEnvelope): CallToolResult {
   };
 }
 
-export function mcpToolError<C extends PlatformErrorCode>(code: C, details: DetailsFor<C>): CallToolResult {
-  return errorResult(createValidatedErrorEnvelope(code, { details, correlationId: randomUUID() }));
+export function mcpToolError(request: CatalogErrorRequest): CallToolResult {
+  return errorResult(createCatalogErrorEnvelope({ ...request, correlationId: randomUUID() }));
 }
 
 /** Convert an unexpected MCP boundary failure to one safe, correlated result. */
@@ -53,7 +52,7 @@ export function unexpectedMcpResult(error: unknown, logger: ILogger): CallToolRe
   const correlationId = randomUUID();
   const stackError = error instanceof Error ? error : new Error(String(error));
   logger.error('Unexpected MCP request failure', stackError, { correlationId });
-  return errorResult(createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { correlationId }));
+  return errorResult(createCatalogErrorEnvelope({ code: 'KB_RUNTIME_UNEXPECTED', correlationId }));
 }
 
 interface JsonSchema {
@@ -118,7 +117,7 @@ export function validateToolArguments(schema: object, args: Record<string, unkno
 
 export function invalidMcpToolArguments(error: { path: string; expected: string }): CallToolResult {
   const expected = error.expected === 'required' ? 'a required value' : error.expected;
-  return mcpToolError('KB_RUNTIME_MCP_INVALID_ARGUMENTS', { argument: error.path, expected });
+  return mcpToolError({ code: 'KB_RUNTIME_MCP_INVALID_ARGUMENTS', details: { argument: error.path, expected } });
 }
 
 /**
@@ -225,19 +224,19 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
   const t0 = Date.now();
 
   if (!permits) {
-  return mcpToolError('KB_AUTH_REQUIRED', { gatewayUrl: gatewayUrl ?? '<url>' });
+  return mcpToolError({ code: 'KB_AUTH_REQUIRED', details: { gatewayUrl: gatewayUrl ?? '<url>' } });
   }
 
   const tool = visibleTools.find((t) => t.name === name);
   if (!tool) {
-    return mcpToolError('KB_RUNTIME_MCP_UNKNOWN_TOOL', { tool: name });
+    return mcpToolError({ code: 'KB_RUNTIME_MCP_UNKNOWN_TOOL', details: { tool: name } });
   }
 
   // Authoritative gate — independent of the cached visibility list. When the
   // platform supplies a real policy, a tool that became forbidden after it was
   // cached is rejected here with no server code change.
   if (!permits(tool.operationType, tool.pluginId)) {
-    return mcpToolError('KB_AUTH_FORBIDDEN', { permission: actionForOperation(tool.operationType) });
+    return mcpToolError({ code: 'KB_AUTH_FORBIDDEN', details: { permission: actionForOperation(tool.operationType) } });
   }
 
   const validationError = validateToolArguments(tool.inputSchema, args.args);

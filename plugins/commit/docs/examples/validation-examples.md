@@ -16,13 +16,9 @@ const UserSchema = z.object({
 });
 
 // Usage in REST handler
-export const handleCreateUser = definePluginHandler({
-  schema: {
-    input: UserSchema,
-    output: z.object({ userId: z.string() })
-  },
-  async handle(input, ctx) {
-    // Input is already validated!
+export const handleCreateUser = defineHandler({
+  async execute(ctx, input) {
+    // The route schema validates input before handler execution.
     const user = await createUser(input);
     return { userId: user.id };
   }
@@ -250,11 +246,10 @@ export const run = defineCommand({
 ### Catching validation errors
 
 ```typescript
-export const handleCreateUser = definePluginHandler({
-  schema: { input: UserSchema, output: UserResponseSchema },
-  async handle(input, ctx) {
+export const handleCreateUser = defineHandler({
+  async execute(ctx, input) {
     try {
-      // Input is already validated by definePluginHandler
+      // The route schema validates input before handler execution
       const user = await createUser(input);
       return { userId: user.id, createdAt: user.createdAt.toISOString() };
     } catch (error) {

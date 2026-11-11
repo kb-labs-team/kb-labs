@@ -12,7 +12,7 @@ const contract = JSON.parse(readFileSync(new URL('../auth-health-response.schema
     issues: { items: { properties: { severity: { enum: string[] } } } };
   };
 };
-const fixture = JSON.parse(readFileSync(new URL('../../../../../contracts/ux-result/fixtures/valid/gateway-auth-health.json', import.meta.url), 'utf8')) as unknown;
+const fixture = JSON.parse(readFileSync(new URL('../../../../../core/platform/contracts/ux-result/fixtures/valid/gateway-auth-health.json', import.meta.url), 'utf8')) as unknown;
 
 describe('Gateway auth health wire contract', () => {
   it('accepts the shared response fixture and rejects undeclared fields', () => {

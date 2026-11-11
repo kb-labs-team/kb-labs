@@ -1,7 +1,7 @@
 ---
 title: "Architecture"
 description: "Internal components, bootstrap sequence, and request lifecycle."
-updatedAt: "2026-10-01"
+updatedAt: "2026-11-11"
 order: 2
 ---
 
@@ -14,7 +14,7 @@ Source: [plugins/gateway/app/src/](plugins/gateway/app/src/).
 ```
 apps/gateway-app/src/
 ├── bootstrap.ts          ← startup sequence
-├── config.ts             ← loadGatewayConfig() — reads kb.config.json
+├── config.ts             ← loadGatewayConfig() — reads platform config
 ├── server.ts             ← Fastify setup, route registration
 ├── manifest.ts           ← ServiceManifest for kb-dev
 │
@@ -51,7 +51,7 @@ From [`bootstrap.ts`](plugins/gateway/app/src/bootstrap.ts):
 
 1. **Launch service.** `runService({ appId: 'gateway', startDir, platform: { assemblyHook }, setup })` resolves roots, loads layered `.env`, and initializes the platform singleton (logger, cache, storage, optionally a SQL adapter).
 2. **Build a correlated logger** with `serviceId: 'gateway'` bindings.
-3. **Load gateway config** via `loadGatewayConfig(repoRoot)` — this parses the `gateway` section of `kb.config.json` through `GatewayConfigSchema`. Missing config or missing `gateway` key means the gateway starts with default Gateway settings and empty upstreams. The listener port is resolved by `runService` from service transport, `GATEWAY_PORT`, or the service default, with the network offset applied once.
+3. **Load gateway config** via `loadGatewayConfig(platformRoot)` — this reads the platform-owned config through `@kb-labs/core-config`, then validates its `gateway` section with `GatewayConfigSchema`. Missing config or missing `gateway` key means the gateway starts with default Gateway settings and empty upstreams. The listener port is resolved by `runService` from service transport, `GATEWAY_PORT`, or the service default, with the network offset applied once.
 4. **Create the host store.** If `platform.sqlDatabase` is registered, construct a `SqliteHostStore` for persistence. Otherwise log a warning and fall back to cache-only — hosts will be lost on restart.
 5. **Create the `HostRegistry`**, combining `platform.cache` (for fast lookup) with the optional SQL store (for durability).
 6. **Restore persisted hosts** from the store into the cache. If restore fails, log a diagnostic event and abort bootstrap.

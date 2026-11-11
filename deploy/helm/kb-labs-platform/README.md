@@ -27,6 +27,11 @@ helm install my-platform . --set image.tag=<release-version> --set internalSecre
 
 ## Composition
 
+The chart always mounts a chart-owned config overlay that sets
+`platform.deployment.topology: k8s` and secured Gateway access. The runtime
+merges this file over the image's baked cloud composition. Users cannot
+override topology or disable authentication in a k8s render.
+
 Declare adapters/plugins in `values.yaml`'s `config` field, and secrets via
 `secretRefs` (names of Kubernetes Secrets you create yourself — this chart
 never handles secret values directly):
@@ -59,12 +64,8 @@ wires in. Validate a composition before shipping it:
 kb-create validate my-kb.config.json --lock my-marketplace.lock
 ```
 
-**Leave `config`/`marketplaceLock` empty to run every image's baked default
-composition** — this is the "try it" path, no config authoring required. See
-`docs/deployment/container-config-override.md` for what "baked default"
-means and why an unset value here must mean "mount nothing," not "mount an
-empty file" (Kubernetes ConfigMap volumes are unconditional, unlike `docker
-run -v` — see the comment in `templates/configmap.yaml`).
+The baked image composition supplies service and adapter defaults. `config`
+overrides those values; `marketplaceLock` is mounted only when provided.
 
 ## Guardrails enforced at render time
 
@@ -72,8 +73,12 @@ run -v` — see the comment in `templates/configmap.yaml`).
   run in-process; a second replica double-fires every scheduled job. Setting
   it higher fails `helm template`/`helm install`, not a silent bad deploy.
 - **`image.tag` is required.** Unset fails the render with a clear message.
+- **Cloud authentication is mandatory.** A local access mode or
+  `gateway.auth.enabled: false` fails with `KB_DEPLOYMENT_AUTH_REQUIRED`.
+- **`marketplace-registry` is optional** and disabled by default. Enabling it
+  also starts its `state-daemon` readiness dependency.
 - **`marketplace-registry` waits for `state-daemon`** via an initContainer
-  (real runtime dependency — `plugins/marketplace-registry/README.md:44`).
+  (real runtime dependency — `services/marketplace-registry/README.md:46`).
 
 Disable any unit you don't need with `--set services.<name>.enabled=false`
 (e.g. `studio`, `mcp`) — no fork required.

@@ -10,8 +10,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
+import { getCatalogEntry, renderTemplate } from "@kb-labs/core-platform";
 import { startTestHost, type HostFixtureConfig, type RunningHost } from "./harness.js";
 import {
   FAKE_RUNTIME_ENTRY,
@@ -27,7 +28,7 @@ import { createChildProcessLauncher } from "../project-runtime/launcher.js";
 import type { RuntimeLauncher, RuntimeProject } from "../project-runtime/manager.js";
 
 interface ErrorBody {
-  error: { code: string; message: string; hint: string; cause?: string; details?: Record<string, string> };
+  error: { code: string; message: string; hint: string; cause?: string; stack?: string; details?: Record<string, unknown> };
 }
 
 interface HealthBody {
@@ -78,6 +79,30 @@ async function configureInstalledPlatformDataRoot(platformRoot: string, stateDat
     await readFile(join(workspaceRoot, "tools/kb-create/v2/contracts/platform-layout.json")),
   );
   await symlink(relative(join(platformRoot, ".kb"), stateDataRoot), join(platformRoot, ".kb", "data"), "dir");
+}
+
+async function installWorkspaceAdapters(
+  platformRoot: string,
+  workspaceRoot: string,
+  packageNames: readonly string[],
+): Promise<Record<string, unknown>> {
+  const installedPackageRoot = join(platformRoot, "node_modules", "@kb-labs");
+  await mkdir(installedPackageRoot, { recursive: true });
+  for (const packageName of packageNames) {
+    const adapterName = packageName.replace("@kb-labs/adapters-", "");
+    await symlink(
+      join(workspaceRoot, "adapters", adapterName),
+      join(installedPackageRoot, packageName.slice("@kb-labs/".length)),
+      "dir",
+    );
+  }
+  return Object.fromEntries(packageNames.map(packageName => [packageName, {
+    version: "2.120.1",
+    integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    resolvedPath: relative(platformRoot, join(platformRoot, "node_modules", packageName)),
+    source: "platform",
+    enabled: true,
+  }]));
 }
 
 describe("kb-host project routing", () => {
@@ -198,10 +223,12 @@ describe("kb-host project routing", () => {
       logRingBuffer: "@kb-labs/adapters-log-ringbuffer",
       logPersistence: "@kb-labs/adapters-log-document",
       analytics: "@kb-labs/adapters-analytics-sqlite",
+      embeddings: "@kb-labs/adapters-openai/embeddings",
       serviceTransport: "@kb-labs/adapters-service-transport-http",
     };
     await writeFile(join(installedPlatformRoot, ".kb", "kb.config.json"), JSON.stringify({
       platform: {
+        deployment: { topology: "local" },
         adapters: installedAdapters,
         adapterOptions: {
           storage: { baseDir: "storage" },
@@ -213,24 +240,7 @@ describe("kb-host project routing", () => {
       },
     }));
     const packages = [...new Set(Object.values(installedAdapters).map((value) => value.split("/").slice(0, 2).join("/")))];
-    for (const packageName of packages) {
-      const packagePath = join(workspaceRoot, "adapters", packageName.replace("@kb-labs/adapters-", ""));
-      await symlink(
-        packagePath,
-        join(installedPlatformRoot, "node_modules", packageName),
-        "dir",
-      );
-    }
-    const lockedAdapters = Object.fromEntries(packages.map((packageName) => {
-      const packagePath = join(workspaceRoot, "adapters", packageName.replace("@kb-labs/adapters-", ""));
-      return [packageName, {
-        version: "2.120.1",
-        integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-        resolvedPath: relative(installedPlatformRoot, packagePath),
-        source: "platform",
-        enabled: true,
-      }];
-    }));
+    const lockedAdapters = await installWorkspaceAdapters(installedPlatformRoot, workspaceRoot, packages);
     await writeFile(join(installedPlatformRoot, ".kb", "marketplace.lock"), JSON.stringify({
       schema: "kb.marketplace/3",
       plugins: {},
@@ -311,7 +321,7 @@ describe("kb-host project routing", () => {
       expect((await absentBeforeInstall.json() as PluginRouteBody).error?.code).toBe("KB_PLUGIN_NOT_INSTALLED");
 
       const projectLockPath = join(project.root, ".kb", "marketplace.lock");
-      const commitLink = relative(project.root, join(workspaceRoot, "plugins/commit/entry"));
+      const commitLink = relative(project.root, join(workspaceRoot, "plugins/commit"));
       const installedLock = {
         schema: "kb.marketplace/3",
         plugins: {
@@ -357,8 +367,8 @@ describe("kb-host project routing", () => {
       try {
         await subject?.stop();
       } finally {
-        if (previousKbHome === undefined) delete process.env.KB_HOME;
-        else process.env.KB_HOME = previousKbHome;
+        if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+        else {process.env.KB_HOME = previousKbHome;}
       }
     }
   }, 25_000);
@@ -399,10 +409,12 @@ describe("kb-host project routing", () => {
         logRingBuffer: "@kb-labs/adapters-log-ringbuffer",
         logPersistence: "@kb-labs/adapters-log-document",
         analytics: "@kb-labs/adapters-analytics-sqlite",
+        embeddings: "@kb-labs/adapters-openai/embeddings",
         serviceTransport: "@kb-labs/adapters-service-transport-http",
       };
       await writeFile(join(installedPlatformRoot, ".kb", "kb.config.json"), JSON.stringify({
         platform: {
+          deployment: { topology: "local" },
           adapters: installedAdapters,
           adapterOptions: {
             storage: { baseDir: "storage" },
@@ -414,16 +426,7 @@ describe("kb-host project routing", () => {
         },
       }));
       const packages = [...new Set(Object.values(installedAdapters).map((value) => value.split("/").slice(0, 2).join("/")))];
-      const lockedAdapters = Object.fromEntries(packages.map((packageName) => {
-        const packagePath = join(workspaceRoot, "adapters", packageName.replace("@kb-labs/adapters-", ""));
-        return [packageName, {
-          version: "2.120.1",
-          integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-          resolvedPath: relative(installedPlatformRoot, packagePath),
-          source: "platform",
-          enabled: true,
-        }];
-      }));
+      const lockedAdapters = await installWorkspaceAdapters(installedPlatformRoot, workspaceRoot, packages);
       await writeFile(join(installedPlatformRoot, ".kb", "marketplace.lock"), JSON.stringify({
         schema: "kb.marketplace/3", plugins: {}, adapters: lockedAdapters,
       }));
@@ -612,7 +615,7 @@ describe("kb-host project routing", () => {
 
       for (const token of [undefined, "invalid-token"]) {
         const headers: Record<string, string> = { "content-type": "application/json" };
-        if (token !== undefined) headers.authorization = `Bearer ${token}`;
+        if (token !== undefined) {headers.authorization = `Bearer ${token}`;}
         const denied = await running.fetchGateway(`/api/v1/projects/${project.id}/mcp`, {
           method: "POST", headers,
           body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
@@ -628,14 +631,62 @@ describe("kb-host project routing", () => {
         await subject?.stop();
       } finally {
         for (const [key, value] of savedEnv) {
-          if (value === undefined) delete process.env[key];
-          else process.env[key] = value;
+          if (value === undefined) {delete process.env[key];}
+          else {process.env[key] = value;}
         }
       }
     }
   });
 
   // case: S-124.12
+  it("keeps valid projects available when the registry contains an identity mismatch", async () => {
+    const valid = await registered();
+    const corrupt = await registered();
+    const contents = JSON.parse(await readFile(registry.filePath, "utf8")) as {
+      projects: Array<{ id: string; path: string; name: string; status: string }>;
+    };
+    const corruptRecord = contents.projects.find((record) => record.id === corrupt.id);
+    if (!corruptRecord) {
+      throw new Error("corrupt project fixture was not persisted");
+    }
+    corruptRecord.id = "prj_0000000000000000";
+    await writeFile(registry.filePath, JSON.stringify(contents));
+
+    const subject = await host();
+    const projectsResponse = await subject.fetchGateway("/api/v1/projects");
+    expect(projectsResponse.status).toBe(200);
+    const projectsBody = await projectsResponse.json() as { data: Array<{ id: string }> };
+    expect(projectsBody.data.map((project) => project.id)).toContain(valid.id);
+    expect(projectsBody.data.map((project) => project.id)).not.toContain(corruptRecord.id);
+
+    const validReply = await reply(subject, valid.id, "/rest/whoami");
+    expect(validReply.projectId).toBe(valid.id);
+
+    const corruptResponse = await subject.fetchGateway(
+      `/api/v1/projects/${corruptRecord.id}/rest/whoami`,
+    );
+    expect(corruptResponse.status).toBe(500);
+    const corruptBody = await corruptResponse.json() as ErrorBody;
+    expect(corruptBody.error.code).toBe("KB_PROJECT_REGISTRY_CORRUPT");
+    const catalogEntry = getCatalogEntry("KB_PROJECT_REGISTRY_CORRUPT");
+    const errorDetails = corruptBody.error.details ?? {};
+    expect(corruptBody.error.message).toBe(renderTemplate(
+      catalogEntry.message,
+      Object.fromEntries(Object.entries(errorDetails).map(([key, value]) => [key, String(value)])),
+      ["file", "reason"],
+    ));
+    expect(corruptBody.error.hint).toBe(renderTemplate(
+      catalogEntry.hint,
+      Object.fromEntries(Object.entries(errorDetails).map(([key, value]) => [key, String(value)])),
+      ["file"],
+    ));
+    expect(corruptBody.error.cause).toBeUndefined();
+    expect(corruptBody.error.stack).toBeUndefined();
+    expect(JSON.stringify(corruptBody)).not.toContain("Error:");
+    expect(JSON.stringify(corruptBody)).not.toContain(" at ");
+  });
+
+  // case: S-226.2
   it("returns the runtime's typed project identity mismatch without exposing a stack", async () => {
     const project = await registered();
     const launcher: RuntimeLauncher = {
@@ -854,7 +905,16 @@ describe("kb-host project routing", () => {
     expect(isAlive(pid)).toBe(true);
 
     await waitFor(() => !isAlive(pid), "the idle runtime to stop");
+    await waitFor(async () => {
+      const response = await subject.fetchGateway("/health");
+      const health = await readUxSuccessResult<HealthBody>(response);
+      return health.projectRuntimes.runtimes.length === 0;
+    }, "the stopped runtime to leave the health registry");
 
+    await waitFor(async () => {
+      const health = await readUxSuccessResult<HealthBody>(await subject.fetchGateway("/health"));
+      return health.projectRuntimes.runtimes.length === 0;
+    }, "the stopped idle runtime to disappear from health");
     const health = await readUxSuccessResult<HealthBody>(await subject.fetchGateway("/health"));
     expect(health.projectRuntimes.runtimes).toEqual([]);
     // The next request starts it again.

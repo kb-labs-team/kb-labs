@@ -10,11 +10,11 @@ export function selectPermittedEnvironment(
     if (pattern.endsWith('*')) {
       const prefix = pattern.slice(0, -1);
       for (const [key, value] of Object.entries(environment)) {
-        if (key.startsWith(prefix) && value !== undefined) selected[key] = value;
+        if (key.startsWith(prefix) && value !== undefined) {selected[key] = value;}
       }
     } else {
       const value = environment[pattern];
-      if (value !== undefined) selected[pattern] = value;
+      if (value !== undefined) {selected[pattern] = value;}
     }
   }
   return selected;

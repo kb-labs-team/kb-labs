@@ -1,159 +1,39 @@
 # @kb-labs/adapters-sqlite
 
-> Part of [KB Labs](https://github.com/kb-labs-team/kb-labs) ecosystem. Works exclusively within KB Labs platform.
+The SQLite adapter package provides local implementations of
+`IDocumentDatabase`, `IKVStore`, and `IVectorStore` using the bundled
+`better-sqlite3` driver. No external database service is required.
 
-Lightweight embedded SQL database adapter using better-sqlite3 with FTS, JSON, and transaction support.
+## Built-in vector store
 
-## Overview
+Fresh installs select `@kb-labs/adapters-sqlite/vector-store` as the
+`vectorStore` default. It writes to
+`<KB_HOME>/state/<projectId>/vector-store/vectors.sqlite`. The runtime resolves
+the project ID through the project registry, so the file remains available to
+that project after a host restart and stays outside the repository. No adapter
+binding or path configuration is needed.
 
-| Property | Value |
-|----------|-------|
-| **Implements** | `ISQLDatabase` |
-| **Type** | `core` |
-| **Requires** | None |
-| **Category** | Database |
+Search uses brute-force cosine similarity within the selected namespace. Each
+search reads the namespace's records and computes scores in process, so work
+and memory grow linearly with the number and dimension of stored vectors. This
+is intended for small local indexes, not large or latency-sensitive workloads.
+Every stored or searched vector must contain finite, non-zero values, cannot be
+empty, and must have the same dimension as every other vector in its namespace.
+Invalid inputs return the catalogued `KB_RUNTIME_INPUT_INVALID` error for the
+`vector` field before a write or ranking result is produced.
+It has no approximate-nearest-neighbor index or native SQLite extension.
+Choose a dedicated vector database such as Qdrant when an index outgrows those
+limits.
 
-## Features
+The adapter preserves caller IDs, vectors, metadata, and namespaces across
+host restarts. Replacing the adapter does not migrate or delete its SQLite data.
 
-- **Embedded Database** - No external server required
-- **Full-Text Search** - FTS5 for fast text search
-- **JSON Support** - Store and query JSON fields
-- **Prepared Statements** - Optimized query execution
-- **Transaction Support** - ACID-compliant operations
+## Other SQLite stores
 
-## Installation
+The package root provides `IDocumentDatabase`, and
+`@kb-labs/adapters-sqlite/kv` provides `IKVStore`. Both use the
+`filename` option and can share one SQLite file. The vector store has its own
+`vectorFilename` option and database file.
 
-```bash
-pnpm add @kb-labs/adapters-sqlite
-```
-
-## Configuration
-
-Add to your `kb.config.json`:
-
-```json
-{
-  "platform": {
-    "adapters": {
-      "documentDatabase": "@kb-labs/adapters-sqlite"
-    }
-  }
-}
-```
-
-No `filename` option is needed for the default. The runtime stores SQLite
-state under `<KB_HOME>/state/<projectId>/database/`.
-
-### Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `filename` | `string` | - | Database file path (`:memory:` for in-memory) |
-| `readonly` | `boolean` | `false` | Open in readonly mode |
-| `timeout` | `number` | `5000` | Busy timeout in milliseconds |
-
-## Usage
-
-### Via Platform (Recommended)
-
-```typescript
-import { usePlatform } from '@kb-labs/sdk';
-
-const platform = usePlatform();
-
-// Execute query
-const users = platform.db.query<User>('SELECT * FROM users WHERE active = ?', [true]);
-
-// Insert
-platform.db.run('INSERT INTO users (name, email) VALUES (?, ?)', ['John', 'john@example.com']);
-
-// Transaction
-platform.db.transaction(() => {
-  platform.db.run('UPDATE accounts SET balance = balance - 100 WHERE id = ?', [1]);
-  platform.db.run('UPDATE accounts SET balance = balance + 100 WHERE id = ?', [2]);
-});
-```
-
-### Standalone (Testing/Development)
-
-```typescript
-import { createAdapter } from '@kb-labs/adapters-sqlite';
-
-const db = createAdapter({ filename: ':memory:' });
-
-db.run('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
-db.run('INSERT INTO users (name) VALUES (?)', ['John']);
-
-const users = db.query('SELECT * FROM users');
-```
-
-## Adapter Manifest
-
-```typescript
-{
-  id: 'sqlite-database',
-  name: 'SQLite Database',
-  version: '1.0.0',
-  implements: 'ISQLDatabase',
-  capabilities: {
-    transactions: true,
-    search: true,
-    custom: {
-      prepared: true,
-      fts: true,
-      json: true,
-    },
-  },
-}
-```
-
-## FAQ
-
-<details>
-<summary><strong>Q: How do I use in-memory database?</strong></summary>
-
-Set filename to `:memory:`:
-
-```json
-{
-  "adapterOptions": {
-    "db": {
-      "filename": ":memory:"
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary><strong>Q: How do I enable WAL mode for better concurrency?</strong></summary>
-
-Run pragma after initialization:
-
-```typescript
-db.run('PRAGMA journal_mode = WAL');
-```
-</details>
-
-<details>
-<summary><strong>Q: How do I use full-text search?</strong></summary>
-
-Create FTS5 virtual table:
-
-```typescript
-db.run('CREATE VIRTUAL TABLE docs_fts USING fts5(content)');
-db.run("INSERT INTO docs_fts VALUES ('hello world')");
-const results = db.query("SELECT * FROM docs_fts WHERE docs_fts MATCH 'hello'");
-```
-</details>
-
-## Related Adapters
-
-| Adapter | Use Case |
-|---------|----------|
-| `@kb-labs/adapters-log-sqlite` | Log persistence using SQLite |
-| `@kb-labs/adapters-mongodb` | Document database for complex data |
-
-## License
-
-[KB Public License v1.1](../../LICENSE) - KB Labs Team
+All three slots are available as built-in local defaults. Their paths resolve
+beneath the platform data root unless the user supplies an absolute path.

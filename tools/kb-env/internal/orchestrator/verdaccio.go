@@ -9,8 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/kb-labs/clikit/proc/child"
 
 	"github.com/kb-labs/env/internal/env"
 )
@@ -76,8 +77,7 @@ func EnsureVerdaccio(l env.Layout) (string, error) {
 	cmd := exec.Command("pnpm", "dlx", "verdaccio@5", "--config", cfgPath, "--listen", "4873")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // own process group → detached
-	if err := cmd.Start(); err != nil {
+	if err := child.Start(cmd, child.ProcessGroup); err != nil {
 		return "", fmt.Errorf("start verdaccio: %w", err)
 	}
 	_ = os.WriteFile(filepath.Join(vdir, "verdaccio.pid"), []byte(strconv.Itoa(cmd.Process.Pid)), 0o600)
@@ -100,7 +100,7 @@ func StopVerdaccio(l env.Layout) {
 		return
 	}
 	if pid, perr := strconv.Atoi(strings.TrimSpace(string(data))); perr == nil {
-		_ = syscall.Kill(-pid, syscall.SIGTERM) // negative → whole process group
+		_ = child.TerminateTree(pid)
 	}
 	_ = os.Remove(pidFile)
 }

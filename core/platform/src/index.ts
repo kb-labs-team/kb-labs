@@ -26,12 +26,13 @@
 
 export { AdapterUnavailableError, AdapterCredentialsMissingError, AdapterOperationError, AdapterConfigError, AdapterProjectScopeError, getAdapterConfigurationCommand, PlatformConfigError, PlatformLayoutContractError, ServicePortConfigError } from "./errors.js";
 export type { TypedPlatformError } from "./errors.js";
+export { resolveCliHandlerPath } from './resolve-cli-handler.js';
 export { getHostServiceAddress, HostServiceAddressError } from "./host-service-address.js";
 export { PLATFORM_AUDIT_COLLECTION, PlatformAuditStore } from './audit-store.js';
 export type { AuthAuditInput, McpToolCallAuditInput, PlatformAuditEvent } from './audit-store.js';
 export type { HostServiceEnvironment, HostServiceId } from "./host-service-address.js";
-export { GATEWAY_SERVICE_NETWORK, resolveCliGatewayTarget, readInstalledPlatformIdentity, resolveGatewayServiceAddress, resolveServiceListenAddress } from "./service-listen-address.js";
-export type { CliGatewayTarget } from "./service-listen-address.js";
+export { GATEWAY_SERVICE_NETWORK, resolveCliGatewayAddress, resolveCliGatewayTarget, readInstalledPlatformIdentity, resolveGatewayServiceAddress, resolveServiceListenAddress } from "./service-listen-address.js";
+export type { CliGatewayAddress, CliGatewayTarget } from "./service-listen-address.js";
 export type {
   ResolvedServiceListenAddress,
   ServiceNetworkSettings,
@@ -169,6 +170,7 @@ export type {
 } from "./adapters/logger.js";
 export { LOG_CONTEXT_FIELDS } from "./adapters/logger.js";
 
+export { LOG_PERSISTENCE_ERROR_FLUSH_TIMEOUT_MS } from "./adapters/log-persistence.js";
 export type {
   ILogPersistence,
   LogPersistenceConfig,
@@ -392,3 +394,5 @@ export type {
   ServiceTransportStream,
   ServiceTransportHealth,
 } from "./adapters/service-transport.js";
+
+export { resolveKbHome, credentialsFilePath, sessionFilePath, agentConfigPath, agentSocketPath, completionCachePath, projectSettingsFilePath, projectOverlaysDirPath } from './kb-home.js';

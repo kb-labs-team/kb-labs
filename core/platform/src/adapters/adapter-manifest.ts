@@ -455,14 +455,16 @@ export interface AdapterManifest {
       specialValues?: string[];
       properties?: Record<string, unknown>;
       /** Additional doctor metadata for this option; required/secret/env come from this schema field. */
-      doctor?: {
+      doctor?: Array<{
+        /** Default adapter slot that owns this doctor requirement. */
+        slot: string;
         id: string;
         optional?: boolean;
         severity?: 'error' | 'warning';
         services: string[];
         action?: string;
         hint: string;
-      };
+      }>;
     }
   >;
 }

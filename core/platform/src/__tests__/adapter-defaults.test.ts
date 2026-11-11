@@ -64,8 +64,8 @@ describe('ADAPTER_DEFAULTS', () => {
       expect(ADAPTER_DEFAULTS[slot].preferInstalledDefault).toBe(true);
     }
     expect(ADAPTER_DEFAULTS.llm.preferInstalledDefault).not.toBe(true);
-    expect(ADAPTER_DEFAULTS.embeddings.preferInstalledDefault).not.toBe(true);
-    expect(ADAPTER_DEFAULTS.vectorStore.preferInstalledDefault).not.toBe(true);
+    expect(ADAPTER_DEFAULTS.embeddings.preferInstalledDefault).toBe(true);
+    expect(ADAPTER_DEFAULTS.vectorStore.preferInstalledDefault).toBe(true);
   });
 
   it('is a const object — runtime mutation must be impossible (frozen at type level)', () => {

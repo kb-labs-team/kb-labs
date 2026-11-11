@@ -5,7 +5,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { ICronManager } from '@kb-labs/core-platform';
 
 type RedisStatus = {
@@ -205,16 +205,16 @@ export async function registerRoutes(
 
   const basePath = normalizeBasePath(config.basePath);
 
-  await registerHealthRoutes(server, config, repoRoot, registry, readiness);
+  await registerHealthRoutes(server, config, registry, readiness);
 
-  await registerOpenAPIRoutes(server, config, repoRoot, registry);
+  await registerOpenAPIRoutes(server, registry);
 
   registerMetricsRoutes(server, config);
 
   await registerPluginSnapshotRoutes(server, config, registry);
 
   // Workflow SSE streaming (long-lived connections that can't go through plugin execution)
-  // All CRUD operations are handled by the workflow plugin routes (/plugins/workflow/...)
+  // All CRUD operations are handled by the project-scoped workflow service route.
   await registerWorkflowRoutes(server, config);
 
   // Register jobs management endpoints (scheduled jobs)
@@ -245,13 +245,13 @@ export async function registerRoutes(
     platform.logger.info('Historical metrics collector stopped');
   });
 
-  await registerObservabilityRoutes(server, config, repoRoot, historicalCollector, platformServices);
+  await registerObservabilityRoutes(server, config, historicalCollector, platformServices);
 
   await registerAnalyticsRoutes(server, config);
 
   await registerAdaptersRoutes(server, config);
 
-  await registerLogRoutes(server, config, eventHub);
+  await registerLogRoutes(server);
 
   await registerPlatformRoutes(server, config, repoRoot);
 

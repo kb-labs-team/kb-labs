@@ -27,6 +27,13 @@ describe('parseArgs', () => {
     expect(global.json).toBe(true);
   });
 
+  it('reserves the explicit Gateway URL as a global option', () => {
+    const parsed = parseArgs(['project', 'add', '/workspace/project', '--gateway-url', 'http://gateway.example:4321']);
+
+    expect(parsed.global.gatewayUrl).toBe('http://gateway.example:4321');
+    expect(parsed.flagsObj.gatewayUrl).toBeUndefined();
+  });
+
   it('parses --help', () => {
     const { global } = parseArgs(['--help']);
     expect(global.help).toBe(true);
@@ -36,6 +43,21 @@ describe('parseArgs', () => {
     const { global } = parseArgs(['--version']);
     expect(global.version).toBe(true);
   });
+
+  it('parses a value-taking command --version without treating it as the global version request', () => {
+    const { global, flagsObj } = parseArgs(['release', 'artifact', 'publish', '--version', '2.121.0-canary.cec6dacc6']);
+    expect(global.version).toBeUndefined();
+    expect(flagsObj.version).toBe('2.121.0-canary.cec6dacc6');
+  });
+
+  it.each([['--version'], ['--version', ''], ['--version', '--json']])(
+    'keeps a missing command version in command flags for declaration validation: %j',
+    (...args) => {
+      const parsed = parseArgs(['release', 'artifact', 'publish', ...args]);
+      expect(parsed.global.version).toBeUndefined();
+      expect(parsed.flagsObj.version === true || parsed.flagsObj.version === '').toBe(true);
+    },
+  );
 
   it('parses --quiet', () => {
     const { global } = parseArgs(['--quiet']);

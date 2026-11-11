@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import ts from 'typescript';
@@ -9,7 +10,7 @@ const issues = [];
 const root = input.workspaceRoot;
 const packages = input.workspace?.packages;
 if (typeof root !== 'string' || !Array.isArray(packages)) {
-  process.stdout.write(JSON.stringify({ issues: [{ check: checkName, severity: 'error', message: 'workspace-scoped error-code catalog check requires package data on stdin', file: root ?? '.' }] }));
+  writeCheckResult([{ check: checkName, severity: 'error', message: 'workspace-scoped error-code catalog check requires package data on stdin', file: root ?? '.' }]);
   process.exit(0);
 }
 
@@ -190,7 +191,7 @@ for (const finding of unresolvedCodes.values()) {
 if (scannedFiles.size !== sourceSet.size || [...sourceSet].some((filePath) => !scannedFiles.has(path.resolve(filePath)))) {
   issues.push({ check: checkName, severity: 'error', message: 'parsed source set does not match discovered source set', file: root });
 }
-process.stdout.write(JSON.stringify({ issues }));
+writeCheckResult(issues);
 function readStdin() {
   return new Promise((resolve, reject) => {
     let data = '';

@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
@@ -42,7 +41,7 @@ func Connect(state host.State) (*Client, error) {
 	default:
 		return nil, unavailable(fmt.Errorf("launcher process identity for PID %d is missing or stale", file.PID))
 	}
-	return &Client{File: file, HTTP: &http.Client{Timeout: 60 * time.Second}}, nil
+	return &Client{File: file, HTTP: http.DefaultClient}, nil
 }
 
 func unavailable(cause error) *diag.Diag {
@@ -56,9 +55,9 @@ func (c *Client) Status(ctx context.Context) (StatusResponse, error) {
 }
 
 // Restart calls POST /v1/host/restart.
-func (c *Client) Restart(ctx context.Context) (RestartResponse, error) {
+func (c *Client) Restart(ctx context.Context, interrupt bool) (RestartResponse, error) {
 	var out RestartResponse
-	return out, c.do(ctx, http.MethodPost, "/v1/host/restart", nil, &out)
+	return out, c.do(ctx, http.MethodPost, "/v1/host/restart", RestartRequest{Interrupt: interrupt}, &out)
 }
 
 // RequestUpdate calls POST /v1/update-request.

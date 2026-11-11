@@ -70,8 +70,8 @@ func TestStreamWritesEnvelopeEventsAndTerminalRecord(t *testing.T) {
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 3 {
-		t.Fatalf("got %d records, want event, failure, and terminal", len(records))
+	if len(records) != 2 {
+		t.Fatalf("got %d records, want event and terminal failure", len(records))
 	}
 	if records[0]["data"] == nil || records[0]["ok"] == nil {
 		t.Fatalf("event record = %v", records[0])
@@ -90,6 +90,7 @@ func TestStreamWritesEnvelopeEventsAndTerminalRecord(t *testing.T) {
 		t.Fatalf("failure record = %+v", failure)
 	}
 	var terminal struct {
+		OK   bool `json:"ok"`
 		Meta struct {
 			Stream struct {
 				Terminal bool `json:"terminal"`
@@ -97,8 +98,11 @@ func TestStreamWritesEnvelopeEventsAndTerminalRecord(t *testing.T) {
 			} `json:"stream"`
 		} `json:"meta"`
 	}
-	if err := json.Unmarshal(lines[2], &terminal); err != nil {
+	if err := json.Unmarshal(lines[1], &terminal); err != nil {
 		t.Fatal(err)
+	}
+	if terminal.OK {
+		t.Fatalf("failed terminal reports success: %s", lines[1])
 	}
 	if !terminal.Meta.Stream.Terminal || terminal.Meta.Stream.ExitCode != diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "failed")).Code() {
 		t.Fatalf("terminal record = %+v", terminal)
@@ -146,5 +150,47 @@ func TestResultRecordMayBeWrittenOnlyOnce(t *testing.T) {
 	}
 	if err := writer.Result(map[string]string{"operation": "apply"}); err == nil {
 		t.Fatal("second result record succeeded")
+	}
+}
+
+func TestFailureTerminalMetadataMustDescribeNonzeroExit(t *testing.T) {
+	var out bytes.Buffer
+	writer := New(&out)
+	if err := writer.Fail(diag.New("KB_RUNTIME_UNEXPECTED", "failed")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Finish(writer.ExitStatus()); err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n"))
+	var terminal map[string]any
+	if err := json.Unmarshal(lines[0], &terminal); err != nil {
+		t.Fatal(err)
+	}
+	terminal["meta"] = map[string]any{"stream": map[string]any{"terminal": true, "exitCode": 0}}
+	mutated, err := json.Marshal(terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := result.ValidateMachineResult(mutated); err == nil {
+		t.Fatalf("failure terminal with zero exit was accepted: %s", mutated)
+	}
+}
+
+func TestFailedStreamEmitsOneErrorEnvelope(t *testing.T) {
+	var out bytes.Buffer
+	w := New(&out)
+	if err := w.Fail(diag.New("KB_RUNTIME_UNEXPECTED", "failed")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Finish(w.ExitStatus()); err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n"))
+	if len(lines) != 1 {
+		t.Fatalf("expected one terminal error, got %d: %s", len(lines), out.String())
+	}
+	if err := result.ValidateMachineResult(lines[0]); err != nil {
+		t.Fatal(err)
 	}
 }

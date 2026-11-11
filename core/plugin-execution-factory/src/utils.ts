@@ -5,10 +5,10 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { createErrorEnvelope, createValidatedErrorEnvelope, ErrorEnvelopeError, SerializedErrorEnvelopeError, serializeError, toErrorEnvelope, isErrorCode } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, SerializedErrorEnvelopeError, serializeError, toErrorEnvelope, } from '@kb-labs/core-platform';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 import type { ExecutionDiagnostics, ExecutionError, ExecutionRequest } from './types.js';
-import { TimeoutError, AbortError, WorkerCrashedError, isExecutionLayerError } from './errors.js';
+import { TimeoutError, AbortError, WorkerCrashedError, CataloguedExecutionError, isExecutionLayerError } from './errors.js';
 
 /**
  * Create unique execution ID.
@@ -98,28 +98,19 @@ function normalizeErrorEnvelope(error: unknown, correlationId?: string): ErrorEn
       return createErrorEnvelope('KB_PLUGIN_ABORTED', { cause: error.message });
     }
     if (error instanceof TimeoutError) {
-      const details = Object.fromEntries(
-        Object.entries(error.details ?? {}).map(([key, value]) => [key, String(value)]),
-      );
-      return createValidatedErrorEnvelope('KB_RUNTIME_TIMEOUT', {
-        details,
+      return createErrorEnvelope('KB_RUNTIME_TIMEOUT', {
+        details: error.timeoutMs === undefined ? {} : { timeoutMs: String(error.timeoutMs) },
         ...(correlationId ? { correlationId } : {}),
       });
     }
-    if (isErrorCode(error.code)) {
-      const details = Object.fromEntries(
-        Object.entries(error.details ?? {}).map(([key, value]) => [key, String(value)]),
-      );
-      return createValidatedErrorEnvelope(error.code, { details });
-    }
+    if (error instanceof CataloguedExecutionError) {return error.envelope;}
     return createErrorEnvelope('KB_RUNTIME_UNEXPECTED');
   }
   if (error instanceof Error) {
     return toErrorEnvelope(error);
   }
   if (typeof error === 'object' && error !== null) {
-    const envelope = toErrorEnvelope(error);
-    return envelope;
+    return toErrorEnvelope(error);
   }
 
   // Non-error: convert to string
@@ -165,7 +156,11 @@ export function normalizeExecutionFailure(error: unknown, request?: ExecutionReq
         error: serializedError,
       }
     : { ...canonicalEnvelope, error: serializedError };
-  const diagnostics = executionDiagnostics(normalizedError);
+  const baseDiagnostics = executionDiagnostics(normalizedError);
+  const workerId = error instanceof TimeoutError ? error.details?.workerId : undefined;
+  const diagnostics = request && typeof workerId === 'string'
+    ? { ...baseDiagnostics, worker: { workerId, executionId: request.executionId, requestId: request.descriptor.requestId, pluginId: request.descriptor.pluginId, handlerRef: request.handlerRef } }
+    : baseDiagnostics;
   return {
     error: normalizedError,
     ...(diagnostics ? { diagnostics } : {}),

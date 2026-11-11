@@ -71,10 +71,11 @@ func TestCataloguedFailureUsesSharedExitStatusForEveryRegisteredCommand(t *testi
 				}
 				if descriptor.JSONStream {
 					lines := bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte("\n"))
-					if len(lines) != 2 {
-						t.Fatalf("stream records = %d, want error and terminal: %s", len(lines), stdout.String())
+					if len(lines) != 1 {
+						t.Fatalf("stream records = %d, want terminal error: %s", len(lines), stdout.String())
 					}
 					var records []struct {
+						OK    bool `json:"ok"`
 						Error struct {
 							Code string `json:"code"`
 						} `json:"error"`
@@ -87,6 +88,7 @@ func TestCataloguedFailureUsesSharedExitStatusForEveryRegisteredCommand(t *testi
 					}
 					for _, line := range lines {
 						var record struct {
+							OK    bool `json:"ok"`
 							Error struct {
 								Code string `json:"code"`
 							} `json:"error"`
@@ -102,7 +104,7 @@ func TestCataloguedFailureUsesSharedExitStatusForEveryRegisteredCommand(t *testi
 						}
 						records = append(records, record)
 					}
-					if records[0].Error.Code != failure.Code || !records[1].Meta.Stream.Terminal || records[1].Meta.Stream.ExitCode != want.Code() {
+					if records[0].Error.Code != failure.Code || records[0].OK || !records[0].Meta.Stream.Terminal || records[0].Meta.Stream.ExitCode != want.Code() {
 						t.Fatalf("stream records do not preserve %s/status %d: %s", failure.Code, want.Code(), stdout.String())
 					}
 					return

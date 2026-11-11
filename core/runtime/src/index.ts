@@ -33,8 +33,16 @@ export type {
 
 // Loader
 export { initPlatform, resetPlatform } from "./loader.js";
+export { loadCatalogAdapterEntries } from './adapter-module-loader.js';
 export { requireProjectContext } from "./project-context.js";
-export { resolveInstalledAdapterDefaults, resolveDiscoveredAdapterDefaults } from "./default-adapters.js";
+export {
+  adapterPackageName,
+  adapterPackageRoot,
+  configuredAdapterForSlot,
+  projectEffectiveAdapterImplementation,
+  resolveDiscoveredAdapterDefaults,
+} from "./default-adapters.js";
+export type { AdapterConfigValues, ConfiguredAdapterValue } from "./default-adapters.js";
 
 // Canonical platform launch path (all process surfaces).
 export {
@@ -86,11 +94,15 @@ export {
   PlatformSectionSchema,
   PlatformUserConfigSchema,
   ExecutionConfigSchema,
+  DeploymentTopologySchema,
+  DeploymentConfigSchema,
+  resolveDeploymentTopology,
   validatePlatformUserConfig,
 } from "./config-schemas.js";
 export type {
   PlatformUserConfig,
   PlatformConfigIssue,
+  DeploymentTopology,
 } from "./config-schemas.js";
 
 // Adapter discovery (for testing/debugging)
@@ -228,3 +240,4 @@ export type { StartFullCycleRequest } from "./run-orchestrator.js";
 // Use-cases
 export { startFullCycle } from "./use-cases/start-full-cycle.js";
 export { isWorkspaceDevelopmentMode, type PlatformModeSource } from "./platform-mode.js";
+export { resolvePlatformVersion } from './platform-version.js';

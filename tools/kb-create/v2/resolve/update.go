@@ -2,7 +2,6 @@ package resolve
 
 import (
 	"fmt"
-	"github.com/kb-labs/clikit/diag"
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -29,7 +28,9 @@ func ValidateUpdate(active contracts.InstallReceipt, target contracts.ResolvedIn
 	targetVersion := target.ServiceGraph.PlatformVersion
 	comparison, err := semrange.Compare(targetVersion, installedVersion)
 	if err != nil {
-		return UpdateRequired, updateIncompatible("platform", "platform", targetVersion, "", "the selected platform version is invalid")
+		return UpdateRequired, contracts.NewDiag(contracts.CodeOperationFailed,
+			"the selected platform version could not be compared with the installed version",
+			"check the selected release index and rerun `kb-create update`", err)
 	}
 	if comparison < 0 {
 		failure := contracts.NewDiag(contracts.CodeUpdateDowngradeRefused,
@@ -53,13 +54,13 @@ func ValidateUpdate(active contracts.InstallReceipt, target contracts.ResolvedIn
 		kind := artifact.Kind
 		compatibilityRange := artifact.PlatformRange
 		if compatibilityRange != "" {
-			if err := compatible(compatibilityRange, targetVersion, kind, artifact.ID, kind+" "+artifact.ID+" platform"); err != nil {
-				return UpdateRequired, updateIncompatible(kind, artifact.ID, targetVersion, compatibilityRange, err.Error())
+			if err := compatible(compatibilityRange, targetVersion, kind, artifact.ID, kind+" "+artifact.ID+" platform", OperationUpdate); err != nil {
+				return UpdateRequired, err
 			}
 		}
 		if artifact.SDKRange != "" && targetSDK != "" {
-			if err := compatible(artifact.SDKRange, targetSDK, kind, artifact.ID, kind+" "+artifact.ID+" SDK"); err != nil {
-				return UpdateRequired, updateIncompatible(kind, artifact.ID, targetSDK, artifact.SDKRange, err.Error())
+			if err := compatible(artifact.SDKRange, targetSDK, kind, artifact.ID, kind+" "+artifact.ID+" SDK", OperationUpdate); err != nil {
+				return UpdateRequired, err
 			}
 		}
 	}
@@ -79,22 +80,4 @@ func sdkVersion(target contracts.ResolvedInstallPlan, source catalog.Catalog) st
 		return source.Channels[target.Request.SDK.Channel]
 	}
 	return ""
-}
-
-func updateIncompatible(kind, id, version, rangeValue, reason string) *diag.Diag {
-	name := kind
-	if id != "" {
-		name += " " + id
-	}
-	message := fmt.Sprintf("The update is incompatible with installed %s at %s: %s.", name, version, reason)
-	hint := "Review the installed component compatibility before updating."
-	if kind == "plugin" && id != "" {
-		hint = fmt.Sprintf("Update or remove plugin %s first, then rerun `kb-create update`.", id)
-	}
-	if kind == "adapter" && id != "" {
-		hint = fmt.Sprintf("Update or remove adapter %s first, then rerun `kb-create update`.", id)
-	}
-	return compatibilityFailure(contracts.CodeIncompatibleComponents,
-		compatibilityIdentity{kind: kind, id: id, selectedVersion: version, requiredRange: rangeValue},
-		message, hint, nil)
 }

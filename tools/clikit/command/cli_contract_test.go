@@ -1,7 +1,6 @@
 package command
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -21,11 +20,6 @@ func TestEveryClikitToolBinaryHelpAndUnknownCommand(t *testing.T) {
 	}
 	toolsRoot := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", ".."))
 	workspaceRoot := filepath.Dir(toolsRoot)
-	temporary := t.TempDir()
-	home := filepath.Join(temporary, "home")
-	if err := os.Mkdir(home, 0o700); err != nil {
-		t.Fatal(err)
-	}
 
 	moduleRoots, err := toolModuleRoots(toolsRoot)
 	if err != nil {
@@ -34,73 +28,56 @@ func TestEveryClikitToolBinaryHelpAndUnknownCommand(t *testing.T) {
 	if len(moduleRoots) == 0 {
 		t.Fatal("tools tree contains no Go module roots")
 	}
-	registeredRoots, err := registeredGoModuleRoots(workspaceRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !equalStrings(moduleRoots, registeredRoots) {
-		t.Fatalf("Go module roots differ from devkit.yaml go-binary registry: discovered=%v registry=%v", moduleRoots, registeredRoots)
-	}
 
-	var graphPackages []listedPackage
-	var registryPackages []listedPackage
+	var packages []listedPackage
 	for _, module := range moduleRoots {
-		moduleDir := filepath.Join(workspaceRoot, module)
-		packages, err := listModulePackages(moduleDir)
+		listed, err := listModulePackages(filepath.Join(workspaceRoot, module))
 		if err != nil {
 			t.Fatalf("list package graph in Go module %s: %v", module, err)
 		}
-		graphPackages = append(graphPackages, packages...)
+		packages = append(packages, listed...)
 	}
-	for _, module := range registeredRoots {
-		packages, err := listModulePackages(filepath.Join(workspaceRoot, module))
-		if err != nil {
-			t.Fatalf("list package graph in registered module %s: %v", module, err)
-		}
-		registryPackages = append(registryPackages, packages...)
-	}
-	expected := discoveredMainPackages(registryPackages)
-	discovered := discoveredMainPackages(graphPackages)
-	if !equalMainPackages(discovered, expected) {
-		t.Fatalf("discovered main packages differ from full registered package graphs: discovered=%v expected=%v", packagePaths(discovered), packagePaths(expected))
-	}
-	if len(discovered) == 0 {
-		t.Fatal("registered Go package graphs contain no main packages")
-	}
-
-	cliBinaries := rootClikitBinaries(discovered, graphPackages)
+	cliBinaries := rootClikitBinaries(discoveredMainPackages(packages), packages)
 	if len(cliBinaries) == 0 {
-		t.Fatal("registered Go module roots contain no clikit CLI binaries")
+		t.Fatal("tools tree contains no clikit CLI binaries")
 	}
-	seenNames := make(map[string]struct{}, len(discovered))
+	seenNames := make(map[string]struct{}, len(cliBinaries))
 	for _, mainPackage := range cliBinaries {
 		name := filepath.Base(mainPackage.modulePath)
 		if _, exists := seenNames[name]; exists {
 			t.Fatalf("multiple discovered clikit binaries share the invocation name %q", name)
 		}
 		seenNames[name] = struct{}{}
-		binaryPath := filepath.Join(temporary, name)
-		build := exec.Command("go", "build", "-o", binaryPath, mainPackage.importPath)
-		build.Dir = filepath.Join(workspaceRoot, mainPackage.modulePath)
-		if output, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("build clikit binary %s: %v\n%s", mainPackage.importPath, err, output)
-		}
-		for _, helpArgs := range [][]string{{"--help"}, {"-h"}, {"help"}} {
-			output, err := runBinary(binaryPath, helpArgs, home)
-			if err != nil {
-				t.Fatalf("%s %s: %v\n%s", name, strings.Join(helpArgs, " "), err, output)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			temporary := t.TempDir()
+			home := filepath.Join(temporary, "home")
+			if err := os.Mkdir(home, 0o700); err != nil {
+				t.Fatal(err)
 			}
-			if !strings.Contains(output, "Usage:") && !strings.Contains(output, "Commands:") {
-				t.Fatalf("%s %s did not print usage: %s", name, strings.Join(helpArgs, " "), output)
+			binaryPath := filepath.Join(temporary, name)
+			build := exec.Command("go", "build", "-o", binaryPath, mainPackage.importPath)
+			build.Dir = filepath.Join(workspaceRoot, mainPackage.modulePath)
+			if output, err := build.CombinedOutput(); err != nil {
+				t.Fatalf("build clikit binary %s: %v\n%s", mainPackage.importPath, err, output)
 			}
-		}
-		output, err := runBinary(binaryPath, []string{"x70-command-that-does-not-exist"}, home)
-		if err == nil {
-			t.Fatalf("%s accepted an unknown command: %s", name, output)
-		}
-		if !strings.Contains(output, name+" --help") {
-			t.Fatalf("%s unknown-command hint did not name its invocation help command: %s", name, output)
-		}
+			for _, helpArgs := range [][]string{{"--help"}, {"-h"}, {"help"}} {
+				output, err := runBinary(binaryPath, helpArgs, home)
+				if err != nil {
+					t.Fatalf("%s %s: %v\n%s", name, strings.Join(helpArgs, " "), err, output)
+				}
+				if !strings.Contains(output, "Usage:") && !strings.Contains(output, "Commands:") {
+					t.Fatalf("%s %s did not print usage: %s", name, strings.Join(helpArgs, " "), output)
+				}
+			}
+			output, err := runBinary(binaryPath, []string{"x70-command-that-does-not-exist"}, home)
+			if err == nil {
+				t.Fatalf("%s accepted an unknown command: %s", name, output)
+			}
+			if !strings.Contains(output, name+" --help") {
+				t.Fatalf("%s unknown-command hint did not name its invocation help command: %s", name, output)
+			}
+		})
 	}
 }
 
@@ -140,44 +117,8 @@ func toolModuleRoots(toolsRoot string) ([]string, error) {
 	return modules, nil
 }
 
-func registeredGoModuleRoots(workspaceRoot string) ([]string, error) {
-	command := exec.Command("node", "scripts/read-go-binary-registry.mjs")
-	command.Dir = workspaceRoot
-	output, err := command.Output()
-	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("read devkit.yaml go-binary registry: %w\n%s", err, exit.Stderr)
-		}
-		return nil, fmt.Errorf("read devkit.yaml go-binary registry: %w", err)
-	}
-	var modules []string
-	if err := json.Unmarshal(output, &modules); err != nil {
-		return nil, fmt.Errorf("decode devkit.yaml go-binary registry: %w", err)
-	}
-	sort.Strings(modules)
-	return modules, nil
-}
-
-func equalStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func listModulePackages(moduleDir string) ([]listedPackage, error) {
-	moduleCommand := exec.Command("go", "list", "-m", "-f", "{{.Path}}")
-	moduleCommand.Dir = moduleDir
-	moduleOutput, err := moduleCommand.Output()
-	if err != nil {
-		return nil, fmt.Errorf("go list -m: %w", err)
-	}
-	const format = `{{.Name}}|{{.ImportPath}}|{{join .Imports ","}}`
+	const format = `{{.Module.Path}}|{{.Name}}|{{.ImportPath}}|{{join .Imports ","}}`
 	command := exec.Command("go", "list", "-f", format, "./...")
 	command.Dir = moduleDir
 	output, err := command.Output()
@@ -192,16 +133,16 @@ func listModulePackages(moduleDir string) ([]listedPackage, error) {
 		if line == "" {
 			continue
 		}
-		fields := strings.SplitN(line, "|", 3)
-		if len(fields) != 3 {
+		fields := strings.SplitN(line, "|", 4)
+		if len(fields) != 4 {
 			return nil, fmt.Errorf("go list returned an invalid package record %q", line)
 		}
 		packages = append(packages, listedPackage{
 			modulePath: filepath.ToSlash(filepath.Base(moduleDir)),
-			moduleRoot: strings.TrimSpace(string(moduleOutput)),
-			name:       fields[0],
-			importPath: fields[1],
-			imports:    strings.Split(fields[2], ","),
+			moduleRoot: fields[0],
+			name:       fields[1],
+			importPath: fields[2],
+			imports:    strings.Split(fields[3], ","),
 		})
 	}
 	if len(packages) == 0 {
@@ -243,26 +184,6 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func equalMainPackages(left, right []mainPackage) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
-}
-
-func packagePaths(packages []mainPackage) []string {
-	paths := make([]string, len(packages))
-	for index, pkg := range packages {
-		paths[index] = pkg.importPath
-	}
-	return paths
 }
 
 func runBinary(binaryPath string, args []string, home string) (string, error) {

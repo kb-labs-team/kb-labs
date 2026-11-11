@@ -75,7 +75,7 @@ The `report` tool is being blocked by a system-level guard requiring `memory_cor
 |---|---|---|
 | `childOnEvent` fallback для `reportedPlanText` — после удаления план может пропасть | Средняя | Проверить `plan-result-mapper.ts` перед удалением |
 | `planWriterRegistry` с кастомным `responseRequirementsResolver` — поведение может измениться | Средняя | Сверить с `PLAN_RESPONSE_REQUIREMENTS_SELECTOR` (`plan-profile.ts:18–32`) |
-| `buildFallbackPlan` с `status: 'failed'` — перенос может сломать типизацию | Низкая | Сохранить тип `TaskPlan` из `@kb-labs/agent-contracts` |
+| `buildFallbackPlan` с `status: 'failed'` — перенос может сломать типизацию | Низкая | Сохранить тип `TaskPlan` из `@kb-labs/agents/contracts` |
 | `SharedTokenBudget` по замыканию в spawn — после декомпозиции ссылка должна быть явной | Низкая | Передать `sharedBudget` явным аргументом в `createPlanTaskMiddleware` |
 
 ---
@@ -84,19 +84,19 @@ The `report` tool is being blocked by a system-level guard requiring `memory_cor
 
 ```bash
 # TypeScript-проверка без эмиссии
-pnpm --filter @kb-labs/agent-core exec tsc --noEmit
+pnpm --filter @kb-labs/agents/core exec tsc --noEmit
 
 # Сборка пакета (после каждой фазы)
-pnpm --filter @kb-labs/agent-core build
+pnpm --filter @kb-labs/agents/core build
 
 # Юнит-тесты agent-core
-pnpm --filter @kb-labs/agent-core test
+pnpm --filter @kb-labs/agents/core test
 
 # Smoke-тест plan mode
-pnpm --filter @kb-labs/agent-core test -- --grep "plan mode"
+pnpm --filter @kb-labs/agents/core test -- --grep "plan mode"
 
 # Линтер
-pnpm --filter @kb-labs/agent-core lint
+pnpm --filter @kb-labs/agents/core lint
 ```
 
 ---

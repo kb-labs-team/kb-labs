@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
 
 // Approval-step e2e tests.
@@ -6,7 +6,7 @@ import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
 // The workflow pauses at a builtin:approval step and resumes when resolved.
 
 async function startRun(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   workflowId: string,
 ): Promise<string> {
   const res = await request.post(
@@ -21,7 +21,7 @@ async function startRun(
 }
 
 async function pollRunStatus(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   runId: string,
 ): Promise<string | undefined> {
   const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`);
@@ -30,7 +30,7 @@ async function pollRunStatus(
 }
 
 async function listPendingApprovals(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   runId: string,
 ): Promise<Array<{ jobId: string; stepId: string; stepName: string }>> {
   const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}/approvals`);
@@ -40,7 +40,7 @@ async function listPendingApprovals(
 }
 
 async function resolveApproval(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   runId: string,
   jobId: string,
   stepId: string,

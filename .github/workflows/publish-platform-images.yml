@@ -70,6 +70,8 @@ jobs:
           pnpm deploy --filter @kb-labs/workflow-daemon --prod .kb/deploy/workflow-daemon
           pnpm deploy --filter @kb-labs/mcp-app --prod .kb/deploy/mcp-app
           pnpm deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app
+      - name: Generate the release image default config
+        run: node tools/release/generate-platform-image-default.mjs
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -89,21 +91,21 @@ jobs:
       matrix:
         include:
           - image: kb-state-daemon
-            dockerfile: plugins/state/daemon/Dockerfile
+            dockerfile: services/state/daemon/Dockerfile
           - image: kb-gateway
             dockerfile: services/gateway/app/Dockerfile
           - image: kb-marketplace
-            dockerfile: plugins/marketplace/daemon/Dockerfile
+            dockerfile: services/marketplace/app/Dockerfile
           - image: kb-rest-api
             dockerfile: services/rest-api/app/Dockerfile
           - image: kb-studio
             dockerfile: studio/app/Dockerfile
           - image: kb-workflow
-            dockerfile: plugins/workflow/daemon/Dockerfile
+            dockerfile: services/workflow/daemon/Dockerfile
           - image: kb-mcp
             dockerfile: services/mcp/app/Dockerfile
           - image: kb-marketplace-registry
-            dockerfile: plugins/marketplace-registry/app/Dockerfile
+            dockerfile: services/marketplace-registry/app/Dockerfile
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

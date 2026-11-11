@@ -1,12 +1,10 @@
 /**
  * @module @kb-labs/adapters-sqlite/manifest
  *
- * Adapter manifest for the SQLite storage pair.
+ * Adapter manifest for SQLite-backed document, key-value, and vector stores.
  *
- * The package ships both a document database and a KV store on top of a
- * shared `better-sqlite3` handle. The platform registers them as the
- * `documentDatabase` and `kvStore` services respectively — see
- * `createSqliteStores` in `index.ts`.
+ * The package ships document, KV, and vector stores backed by
+ * `better-sqlite3`.
  */
 
 import type { AdapterManifest } from '@kb-labs/sdk/adapters';
@@ -22,11 +20,10 @@ export const manifest: AdapterManifest = {
   author: 'KB Labs Team',
   license: 'KBPL-1.1',
   type: 'core',
-  // Multi-role driver: one package fills both the documentDatabase and the
-  // kvStore platform slots on a shared better-sqlite3 connection.
-  implements: ['IDocumentDatabase', 'IKVStore'],
+  // One package supplies independent SQLite-backed platform stores.
+  implements: ['IDocumentDatabase', 'IKVStore', 'IVectorStore'],
   networkRequired: false,
-  defaultFor: { documentDatabase: [], kvStore: ['kv'] },
+  defaultFor: { documentDatabase: [], kvStore: ['kv'], vectorStore: ['vector-store'] },
   contexts: ['workspace', 'platformData'],
   capabilities: {
     transactions: true,
@@ -43,6 +40,12 @@ export const manifest: AdapterManifest = {
       description: 'Database file path (use :memory: for in-memory database)',
       pathBase: 'platformData',
       defaultPath: { root: 'projectState', segments: ['database', 'kb.sqlite'] },
+      specialValues: [':memory:'],
+    },
+    vectorFilename: {
+      type: 'string',
+      description: 'Vector database path (use :memory: for an in-memory store)',
+      defaultPath: { root: 'projectState', segments: ['vector-store', 'vectors.sqlite'] },
       specialValues: [':memory:'],
     },
     readonly: {

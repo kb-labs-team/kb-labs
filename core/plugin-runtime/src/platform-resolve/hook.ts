@@ -115,6 +115,14 @@ function resolveFrom(
   return { url: pathToFileURL(file).href, shortCircuit: true };
 }
 
+function withMissingSpecifier(error: unknown, specifier: string): unknown {
+  if (typeof error === 'object' && error !== null && 'code' in error &&
+      (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'MODULE_NOT_FOUND')) {
+    Object.assign(error, { specifier });
+  }
+  return error;
+}
+
 /**
  * Installs the process-wide platform resolve hook. Idempotent for the same
  * `platformRoot` (a host and a module started inside it may both call this);
@@ -141,20 +149,17 @@ export function installPlatformResolveHook(options: PlatformResolveHookOptions):
       const pkg = platformPackageOf(specifier);
       const requesterPath = context.parentURL === undefined ? undefined : urlToPath(context.parentURL);
       if (pkg === undefined || requesterPath === undefined || isInside(platformRoot, requesterPath)) {
-        return nextResolve(specifier, context);
+        try {
+          return nextResolve(specifier, context);
+        } catch (error) {
+          throw withMissingSpecifier(error, specifier);
+        }
       }
 
-      // Own copy first: passing a context to `nextResolve` merges it into the hook's
-      // shared context, so resolving from an anchor first would leave the plugin's
-      // own lookup pointing at the anchor.
-      let ownError: unknown;
-      let ownCopy: ReturnType<typeof nextResolve> | undefined;
-      try {
-        ownCopy = nextResolve(specifier, context);
-      } catch (error) {
-        ownError = error;
-      }
-
+      // Resolve from the platform root first. A published store entry can still
+      // contain a stale nested copy, and resolving it first can fail before the
+      // platform's usable copy is considered.
+      const requesterContext = { ...context };
       let hostCopy: ReturnType<typeof nextResolve> | undefined;
       for (const anchor of anchorUrls) {
         try {
@@ -165,9 +170,20 @@ export function installPlatformResolveHook(options: PlatformResolveHookOptions):
         }
       }
 
+      // Resolve the plugin's own copy only for diagnostics/fallback when the
+      // platform does not provide the package. Pass a fresh context because
+      // loader hooks may mutate the context object supplied to `nextResolve`.
+      let ownError: unknown;
+      let ownCopy: ReturnType<typeof nextResolve> | undefined;
+      try {
+        ownCopy = nextResolve(specifier, requesterContext);
+      } catch (error) {
+        ownError = error;
+      }
+
       if (hostCopy === undefined) {
         if (ownCopy === undefined) {
-          throw ownError;
+          throw withMissingSpecifier(ownError, specifier);
         }
         const ownPath = urlToPath(ownCopy.url);
         if (ownPath === undefined || isInside(platformRoot, ownPath)) {

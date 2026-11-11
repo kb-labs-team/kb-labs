@@ -43,7 +43,7 @@ Token needs: `repo` scope (issues, PRs, branches).
 ## Installation
 
 ```bash
-pnpm kb marketplace install @kb-labs/github-entry
+pnpm kb marketplace install @kb-labs/github
 ```
 
 ---

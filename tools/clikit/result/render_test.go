@@ -153,8 +153,8 @@ func TestRenderDiag_HumanDoesNotPrintMachineCause(t *testing.T) {
 // case: S-203.1, S-203.2
 func TestMachineResultMatchesSharedContractFixtures(t *testing.T) {
 	for _, fixture := range []string{
-		"../../../contracts/ux-result/fixtures/valid/success.json",
-		"../../../contracts/ux-result/fixtures/valid/failure.json",
+		"../../../core/platform/contracts/ux-result/fixtures/valid/success.json",
+		"../../../core/platform/contracts/ux-result/fixtures/valid/failure.json",
 	} {
 		if err := ValidateFixture(fixture); err != nil {
 			t.Errorf("shared fixture %s: %v", fixture, err)

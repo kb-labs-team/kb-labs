@@ -3,12 +3,13 @@
   "version": "1.0.0",
   "description": "Installed journey plugin that emits analytics and exercises configured LLM providers",
   "type": "module",
-  "main": "./manifest.js",
+  "main": "./dist/manifest.js",
   "exports": {
-    ".": "./manifest.js"
+    ".": "./dist/manifest.js"
   },
-  "files": ["manifest.js", "dist/commands/*.js", "dist/manifest.json"],
-  "kb": { "manifest": "./manifest.js", "requiredOutputs": ["./dist/manifest.json", "./dist/commands/*.js"] },
+  "files": ["dist/manifest.js", "dist/manifest.json", "dist/commands/*.js"],
+  "kb": { "manifest": "./dist/manifest.js", "requiredOutputs": ["./dist/manifest.json", "./dist/commands/*.js"] },
   "peerDependencies": { "@kb-labs/sdk": "^2.120.1" },
+  "scripts": { "build": "node ./build.mjs" },
   "license": "UNLICENSED"
 }

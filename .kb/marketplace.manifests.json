@@ -445,7 +445,7 @@
       "cachedAt": "2026-05-16T11:54:11.953Z",
       "integrity": "sha256-7eHE5Xe4/t/tXqI81FTraH6944z+LrJ5RT6bqCDQSQg="
     },
-    "@kb-labs/quality-entry": {
+    "@kb-labs/quality": {
       "manifestType": "plugin",
       "manifest": {
         "schema": "kb.plugin/3",

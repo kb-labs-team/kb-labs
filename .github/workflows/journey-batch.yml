@@ -26,32 +26,33 @@ on:
       - 'pnpm-workspace.yaml'
 
 concurrency:
-  group: journey-batch-${{ github.ref }}
+  group: journey-batch
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  journey:
-    name: Installed journey batch
+  producer:
+    name: Shared build and candidate
     runs-on: ubuntu-latest
-    # Local Mac whole-batch runs took 49, 70, and 74 minutes; 180 minutes gives
-    # the longest run 106 minutes of margin (2.43x observed time). Local sizing
-    # measured 6.96 GB of images + 1.787 GB build cache + 1.85 GB volumes +
-    # 1.9 GB workspace/build (12.50 GB total); against about 14 GB free on
-    # ubuntu-latest this leaves about 1.50 GB, so runner disk cleanup is not
-    # needed for the measured batch footprint.
-    timeout-minutes: 180
+    outputs:
+      selection: ${{ steps.selection.outputs.selection }}
+    timeout-minutes: 60
     env:
       GOTOOLCHAIN: local
       JOURNEY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      BATCH_OUTPUT: .journey/batch/${{ github.run_id }}
+      BATCH_PRODUCER_OUTPUT: .journey/batch/${{ github.run_id }}/producer
+      BATCH_BASELINE: ${{ inputs.baseline || github.event.repository.default_branch }}
+      KB_DEVKIT_BASE_REF: ${{ github.event.pull_request.base.sha || format('origin/{0}', github.event.repository.default_branch) }}
     steps:
       - id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+      - id: selection
+        name: Resolve the case selection for this trigger
+        run: node scripts/ci/journey-batch-selection.mjs resolve "$GITHUB_EVENT_NAME" "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
       - id: pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with:
@@ -64,49 +65,156 @@ jobs:
       - id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          # The module's toolchain directive is go1.25.13; use the workspace CI Go release.
           go-version: '1.26.8'
           cache-dependency-path: tools/kb-devkit/go.sum
       - id: dependencies
         name: Install workspace dependencies
-        run: |
-          corepack pnpm install --frozen-lockfile
+        run: corepack pnpm install --frozen-lockfile
+      - uses: ./.github/actions/install-goreleaser
       - id: batch
-        name: Run shared journey batch
-        env:
-          BATCH_BASELINE: ${{ inputs.baseline || env.JOURNEY_DEFAULT_BRANCH }}
-          KB_DEVKIT_BASE_REF: ${{ github.event.pull_request.base.sha || format('origin/{0}', env.JOURNEY_DEFAULT_BRANCH) }}
-        run: e2e/journey/batch.sh "$BATCH_OUTPUT" "$BATCH_BASELINE"
-      - name: Add batch summary
-        if: always()
-        env:
-          FAILED_STEP: ${{ steps.checkout.outcome == 'failure' && 'Checkout' || steps.pnpm.outcome == 'failure' && 'Set up pnpm' || steps.node.outcome == 'failure' && 'Set up Node' || steps.go.outcome == 'failure' && 'Set up Go' || steps.dependencies.outcome == 'failure' && 'Install workspace dependencies' || steps.batch.outcome == 'failure' && 'Run shared journey batch' || 'unknown step' }}
-          BATCH_SHARED_OUTPUT: ${{ steps.batch.outputs.artifact_shared }}
-        run: |
-          summary_file="$BATCH_SHARED_OUTPUT/summary.md"
-          if [ -n "$BATCH_SHARED_OUTPUT" ] && [ -f "$summary_file" ]; then
-            cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf 'batch did not start: %s\n' "$FAILED_STEP" >> "$GITHUB_STEP_SUMMARY"
-          fi
+        name: Produce shared build and candidate
+        run: node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always() && steps.batch.outputs.artifact_shared != ''
+        if: always()
         with:
-          name: journey-shared
-          path: ${{ steps.batch.outputs.artifact_shared }}
+          name: journey-build-candidate
+          path: ${{ env.BATCH_PRODUCER_OUTPUT }}
           if-no-files-found: warn
           retention-days: 90
+
+  local:
+    name: Installed local journey
+    runs-on: ubuntu-latest
+    needs: producer
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+    env:
+      GOTOOLCHAIN: local
+      BATCH_PRODUCER_INPUT: .journey/batch-input/producer
+      BATCH_OUTPUT: .journey/batch/${{ github.run_id }}/local
+      BATCH_SELECTION: ${{ needs.producer.outputs.selection }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-devkit/go.sum
+      - name: Install workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: journey-build-candidate
+          path: ${{ env.BATCH_PRODUCER_INPUT }}
+      - name: Run local journey stage
+        run: node scripts/ci/journey-batch-selection.mjs run "$BATCH_SELECTION" -- e2e/journey/batch.sh mode local "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always() && steps.batch.outputs.artifact_shared != ''
+        if: always()
         with:
           name: journey-local
-          path: ${{ steps.batch.outputs.artifact_local }}
+          path: ${{ env.BATCH_OUTPUT }}
           if-no-files-found: warn
           retention-days: 90
+
+  secured:
+    name: Installed secured journey
+    runs-on: ubuntu-latest
+    needs: producer
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+    env:
+      GOTOOLCHAIN: local
+      BATCH_PRODUCER_INPUT: .journey/batch-input/producer
+      BATCH_OUTPUT: .journey/batch/${{ github.run_id }}/secured
+      BATCH_SELECTION: ${{ needs.producer.outputs.selection }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-devkit/go.sum
+      - name: Install workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: journey-build-candidate
+          path: ${{ env.BATCH_PRODUCER_INPUT }}
+      - name: Run secured journey stage
+        run: node scripts/ci/journey-batch-selection.mjs run "$BATCH_SELECTION" -- e2e/journey/batch.sh mode secured "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always() && steps.batch.outputs.artifact_shared != ''
+        if: always()
         with:
           name: journey-secured
-          path: ${{ steps.batch.outputs.artifact_secured }}
+          path: ${{ env.BATCH_OUTPUT }}
+          if-no-files-found: warn
+          retention-days: 90
+
+  summary:
+    name: Assemble journey artifacts and summary
+    runs-on: ubuntu-latest
+    needs: [producer, local, secured]
+    if: always()
+    timeout-minutes: 10
+    env:
+      BATCH_OUTPUT: .journey/batch/${{ github.run_id }}/summary
+      BATCH_PRODUCER_INPUT: .journey/batch-input/producer
+      BATCH_LOCAL_INPUT: .journey/batch-input/local
+      BATCH_SECURED_INPUT: .journey/batch-input/secured
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        id: producer-artifact
+        continue-on-error: true
+        with:
+          name: journey-build-candidate
+          path: ${{ env.BATCH_PRODUCER_INPUT }}
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        id: local-artifact
+        continue-on-error: true
+        with:
+          name: journey-local
+          path: ${{ env.BATCH_LOCAL_INPUT }}
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        id: secured-artifact
+        continue-on-error: true
+        with:
+          name: journey-secured
+          path: ${{ env.BATCH_SECURED_INPUT }}
+      - name: Assemble shared artifact and stage durations
+        id: summarize
+        run: e2e/journey/batch.sh summarize "$BATCH_OUTPUT" "$BATCH_PRODUCER_INPUT" "$BATCH_LOCAL_INPUT" "$BATCH_SECURED_INPUT"
+      - name: Add batch summary
+        if: always()
+        run: |
+          summary_file="$BATCH_OUTPUT/shared/summary.md"
+          if [ -f "$summary_file" ]; then
+            cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'batch summary could not be assembled from downloaded artifacts\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: journey-shared
+          path: ${{ env.BATCH_OUTPUT }}
           if-no-files-found: warn
           retention-days: 90

@@ -12,7 +12,7 @@
  * - Reset and re-initialization
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -21,8 +21,11 @@ import { tmpdir } from 'node:os';
 import { createDegradedAdapterProxy, fillAdapterFallbacksAndRecord, initPlatform, resetPlatform } from '../loader.js';
 import { platform } from '../container.js';
 import { getAdapterStatusFor, resetAdapterStatus } from '../adapter-status.js';
-import { AdapterUnavailableError, type IEnvironmentProvider } from '@kb-labs/core-platform';
+import { AdapterUnavailableError, toErrorEnvelope, type IEnvironmentProvider } from '@kb-labs/core-platform';
 import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
+import { writeTestPlatformReceipt } from './platform-version-fixture.js';
+
+vi.mock('../platform-version.js', () => ({ resolvePlatformVersion: async () => 'test' }));
 
 describe('Platform Loader', () => {
   beforeEach(() => {
@@ -85,6 +88,7 @@ describe('Platform Loader', () => {
         await mkdir(adapterRoot, { recursive: true });
         await mkdir(telegramRoot, { recursive: true });
         await mkdir(isolatedHome, { recursive: true });
+        writeTestPlatformReceipt(workspaceRoot);
         await writeFile(path.join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n');
         await writeFile(path.join(adapterRoot, 'package.json'), await readFile(path.join(repoRoot, 'adapters/notifier-router/package.json')));
         await symlink(path.join(repoRoot, 'adapters/notifier-router/dist'), path.join(adapterRoot, 'dist'));
@@ -116,7 +120,7 @@ describe('Platform Loader', () => {
                 routing: [{ match: { severity: ['info'] }, channels: ['ops'] }],
               },
             },
-          }, ${JSON.stringify(workspaceRoot)}, undefined, undefined, { workspaceDevelopment: true });
+          }, ${JSON.stringify(workspaceRoot)}, undefined, undefined, { workspaceDevelopment: true, workspaceRoot: ${JSON.stringify(workspaceRoot)} });
           await platform.notifier.notify({ severity: 'info', title: 'loader test', body: 'bound' });
           console.log('C01_RESULT ' + JSON.stringify({ real: platform.isReal('notifier'), telegramRequests, brokerRegistrations, brokerReadyAtRegistration }));
           process.exit(0);
@@ -159,6 +163,43 @@ describe('Platform Loader', () => {
       };
       expect(() => adapter.upsert()).toThrow(error);
       expect(() => adapter.anyProperty).toThrow(error);
+    });
+
+    // case: S-286.2
+    it('starts a development workspace with its manifest-declared vector default', async () => {
+      const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
+      const root = await mkdtemp(path.join(tmpdir(), 'kb-workspace-vector-'));
+      const adapter = path.join(root, 'adapters', 'sqlite');
+      vi.stubEnv('KB_HOME', path.join(root, 'home'));
+      try {
+        await mkdir(adapter, { recursive: true });
+        await mkdir(path.join(root, '.kb', 'data'), { recursive: true });
+        await writeFile(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n');
+        await writeFile(path.join(adapter, 'package.json'), await readFile(path.join(repo, 'adapters/sqlite/package.json')));
+        await symlink(path.join(repo, 'adapters/sqlite/dist'), path.join(adapter, 'dist'));
+        await symlink(path.join(repo, 'tools'), path.join(root, 'tools'));
+        resetAdapterStatus();
+        await initPlatform({}, root, undefined, undefined, { workspaceDevelopment: true, workspaceRoot: root });
+        expect(platform.isInitialized).toBe(true);
+        expect(getAdapterStatusFor('vectorStore')).toMatchObject({ mode: 'real', implementation: '@kb-labs/adapters-sqlite/vector-store' });
+      } finally {
+        await platform.shutdown();
+        vi.unstubAllEnvs();
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('reports a missing required local default as a typed startup error', () => {
+      platform.reset();
+      resetAdapterStatus();
+      let failure: unknown;
+      try { fillAdapterFallbacksAndRecord(platform, {}, true); } catch (error) { failure = error; }
+      const envelope = toErrorEnvelope(failure);
+      expect(envelope.code).toBe('KB_HOST_ADAPTER_UNAVAILABLE');
+      expect(failure).toBeInstanceOf(AdapterUnavailableError);
+      if (!(failure instanceof AdapterUnavailableError)) throw new Error('Expected an adapter failure');
+      expect(envelope.message).toBe(failure.userMessage);
+      expect(envelope.hint).toBe(failure.action?.command);
     });
 
     it('reports the composed local log reader as real when its backends are loaded', () => {

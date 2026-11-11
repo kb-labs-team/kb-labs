@@ -46,13 +46,13 @@ func DecodeResultWithContext(content []byte, out any, context RemoteFailureConte
 	}
 	if !envelope.OK {
 		var failure struct {
-			Code          string            `json:"code"`
-			Area          string            `json:"area"`
-			Stage         string            `json:"stage"`
-			Severity      string            `json:"severity"`
-			Retryable     bool              `json:"retryable"`
-			CorrelationID string            `json:"correlationId"`
-			Details       map[string]string `json:"details"`
+			Code          string         `json:"code"`
+			Area          string         `json:"area"`
+			Stage         string         `json:"stage"`
+			Severity      string         `json:"severity"`
+			Retryable     bool           `json:"retryable"`
+			CorrelationID string         `json:"correlationId"`
+			Details       map[string]any `json:"details"`
 		}
 		if err := json.Unmarshal(envelope.Error, &failure); err != nil {
 			return nil, fmt.Errorf("invalid UX failure envelope: %w", err)
@@ -71,7 +71,16 @@ func DecodeResultWithContext(content []byte, out any, context RemoteFailureConte
 		if !ok || failure.Area != entry.Area || failure.Stage != entry.Stage || failure.Severity != entry.Severity || failure.Retryable != entry.Retryable {
 			return gatewayProtocolFailure(meta, failure.Code), nil
 		}
-		local, err := diag.FromCatalog(entry.Code, failure.Details, diag.WithMeta(meta))
+		templateValues := make(map[string]string, len(failure.Details))
+		structuredDetails := make(map[string]any)
+		for key, value := range failure.Details {
+			if text, ok := value.(string); ok {
+				templateValues[key] = text
+			} else {
+				structuredDetails[key] = value
+			}
+		}
+		local, err := diag.FromCatalog(entry.Code, templateValues, diag.WithMeta(structuredDetails), diag.WithMeta(meta))
 		if err != nil {
 			var violation *diag.Diag
 			if errors.As(err, &violation) {
@@ -137,8 +146,28 @@ func ValidateMachineResult(content []byte) error {
 		}
 		return nil
 	}
-	if len(envelope) != 2 || envelope["error"] == nil {
-		return fmt.Errorf("failure must contain only ok and error")
+	if len(envelope) < 2 || len(envelope) > 3 || envelope["error"] == nil {
+		return fmt.Errorf("failure must contain ok, error, and optional meta")
+	}
+	for key := range envelope {
+		if key != "ok" && key != "error" && key != "meta" {
+			return fmt.Errorf("failure contains unknown property %s", key)
+		}
+	}
+	if raw, exists := envelope["meta"]; exists {
+		var meta map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &meta); err != nil || len(meta) != 1 || meta["stream"] == nil {
+			return fmt.Errorf("failure meta must contain a stream terminal")
+		}
+		var stream map[string]json.RawMessage
+		if err := json.Unmarshal(meta["stream"], &stream); err != nil || len(stream) != 2 || stream["terminal"] == nil || stream["exitCode"] == nil {
+			return fmt.Errorf("failure stream must contain terminal and exitCode")
+		}
+		var terminal bool
+		var exitCode int
+		if json.Unmarshal(stream["terminal"], &terminal) != nil || !terminal || json.Unmarshal(stream["exitCode"], &exitCode) != nil || exitCode < 1 {
+			return fmt.Errorf("failure stream must be terminal with a nonzero exit code")
+		}
 	}
 	var failure map[string]json.RawMessage
 	if err := json.Unmarshal(envelope["error"], &failure); err != nil {
@@ -196,9 +225,9 @@ func ValidateMachineResult(content []byte) error {
 		}
 	}
 	if raw, exists := failure["details"]; exists {
-		var details map[string]string
+		var details map[string]any
 		if err := json.Unmarshal(raw, &details); err != nil || details == nil {
-			return fmt.Errorf("failure error details must be an object of strings")
+			return fmt.Errorf("failure error details must be an object")
 		}
 	}
 	return nil

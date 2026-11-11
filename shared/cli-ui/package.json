@@ -41,6 +41,7 @@
   },
   "dependencies": {
     "glob": "^11.0.0",
+    "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*"
   },
   "devDependencies": {

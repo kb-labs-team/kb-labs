@@ -17,6 +17,7 @@ import {
   type ValueProvenance,
 } from '@kb-labs/core-config';
 import { generateExamples } from '../../../utils/generate-examples';
+import { requireResolvedCatalog } from '../../../registry/discovery-state.js';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { manifestSettingsLayers, resolveConfigRoots } from './shared';
 
@@ -259,13 +260,13 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
       const cwd = getContextCwd(ctx);
       const roots = await resolveConfigRoots(cwd);
       if (!roots.projectId) {
-        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Effective config requires a registered project.', `Run "kb project add ${roots.configRoot}" and retry "kb config show".`, { path: roots.configRoot });
+        throwSystemCataloguedFailure({ code: 'KB_PROJECT_UNKNOWN', message: 'Effective config requires a registered project.', hint: `Run "kb project add ${roots.configRoot}" and retry "kb config show".`, details: { path: roots.configRoot } });
       }
-      const result = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: cwd, loadEnvFile: false, projectId: roots.projectId });
+      const result = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: cwd, loadEnvFile: false, projectId: roots.projectId, catalog: requireResolvedCatalog() });
       const rows = buildRows(result);
 
       // Platform provenance remains available from the platform config layer.
-      const effective = await loadEffectiveConfig(roots.configRoot, {
+      const effective = await loadEffectiveConfig({
         platformRoot: result.platformRoot,
         projectId: roots.projectId,
         pluginDefaults: manifestSettingsLayers(result),

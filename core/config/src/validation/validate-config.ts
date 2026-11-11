@@ -1,5 +1,6 @@
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
+import { MarketplaceConfigSchema } from '../types/marketplace.js';
 
 export type ValidationResult = { ok: boolean; errors: import('ajv').ErrorObject[] | null };
 
@@ -7,6 +8,7 @@ const ajv = new Ajv({ allErrors: true, strict: false });
 addFormats(ajv);
 
 const schemaMap: Record<string, Record<string, unknown>> = {};
+schemaMap.marketplace = MarketplaceConfigSchema;
 
 /**
  * Temporary schema registry hook – upcoming implementation will register schemas here.

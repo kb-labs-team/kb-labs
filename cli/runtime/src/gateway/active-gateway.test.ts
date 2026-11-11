@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { toErrorEnvelope } from '@kb-labs/core-platform';
 
 const mocks = vi.hoisted(() => ({
@@ -11,14 +10,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@kb-labs/core-runtime', () => ({ loadPlatformConfig: mocks.loadPlatformConfig }));
-vi.mock('./session.js', () => ({
+vi.mock('@kb-labs/sdk/gateway', () => ({
   SessionManager: class {
     async load() { return mocks.session; }
     isExpired() { return false; }
     getFilePath() { return '/tmp/session.json'; }
   },
 }));
-vi.mock('./credentials.js', () => ({
+vi.mock('@kb-labs/sdk/gateway', () => ({
   CredentialsManager: class { async load() { return null; } },
 }));
 
@@ -75,46 +74,45 @@ describe('resolveActiveGateway', () => {
     });
   });
 
-  it('uses the saved client session URL when there is no local installation receipt', async () => {
+  it('uses the configured service address when there is no local installation receipt', async () => {
     mocks.session = { gatewayUrl: 'https://team-gateway.example.test' };
 
     await expect(resolveActiveGateway({
       cwd: root,
       env: { GATEWAY_PORT: '4300', KB_NET_OFFSET: '100' },
-    })).resolves.toMatchObject({ gatewayUrl: 'https://team-gateway.example.test' });
+    })).resolves.toMatchObject({ gatewayUrl: 'http://127.0.0.1:4300' });
   });
 
-  it('uses workspace network variables when no receipt or client session exists', async () => {
+  it('uses the configured listener port when no receipt exists', async () => {
     await expect(resolveActiveGateway({ cwd: root, env: { GATEWAY_PORT: '4300', KB_NET_OFFSET: '20' } }))
-      .resolves.toMatchObject({ gatewayUrl: 'http://127.0.0.1:4320', platformRoot: root });
+      .resolves.toMatchObject({ gatewayUrl: 'http://127.0.0.1:4300', platformRoot: root });
   });
-});
 
-describe('CLI Gateway resolution rail', () => {
-  it('keeps Gateway address resolution and default-address policy in this helper', async () => {
-    const cliRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
-    const helperPath = path.join(cliRoot, 'cli/runtime/src/gateway/active-gateway.ts');
-    const sourceFiles: string[] = [];
-    const visit = async (directory: string): Promise<void> => {
-      for (const entry of await readdir(directory, { withFileTypes: true })) {
-        const fullPath = path.join(directory, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name !== 'dist' && entry.name !== 'node_modules' && entry.name !== '__tests__') { await visit(fullPath); }
-        } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
-          sourceFiles.push(fullPath);
-        }
-      }
-    };
-    await visit(path.join(cliRoot, 'cli'));
-    const violations: string[] = [];
-    for (const sourcePath of sourceFiles) {
-      if (sourcePath === helperPath) { continue; }
-      const source = await (await import('node:fs/promises')).readFile(sourcePath, 'utf8');
-      if (/(?:resolveCliGatewayTarget|resolveGatewayServiceAddress)\s*\(/.test(source)
-        || /(?:127\.0\.0\.1|localhost):4000/.test(source)) {
-        violations.push(path.relative(cliRoot, sourcePath));
-      }
-    }
-    expect(violations).toEqual([]);
+  it('uses an explicit command gateway URL before the installed receipt', async () => {
+    await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+    await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+      installationId: 'installed-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+    }));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, data: { installationId: 'installed-b' } }), { status: 200 })));
+
+    await expect(resolveActiveGateway({
+      cwd: root,
+      env: {},
+      explicitGatewayUrl: 'http://127.0.0.1:4399',
+    })).resolves.toMatchObject({ gatewayUrl: 'http://127.0.0.1:4399' });
+  });
+
+  it('does not derive CLI addresses from KB_NET_OFFSET', async () => {
+    await expect(resolveActiveGateway({
+      cwd: root,
+      env: { GATEWAY_PORT: '4300', KB_NET_OFFSET: '20' },
+    })).resolves.toMatchObject({ gatewayUrl: 'http://127.0.0.1:4300' });
+  });
+
+  it('does not treat an ambient Gateway URL as the command address', async () => {
+    await expect(resolveActiveGateway({
+      cwd: root,
+      env: { KB_GATEWAY_URL: 'http://127.0.0.1:4399', GATEWAY_PORT: '4300' },
+    })).resolves.toMatchObject({ gatewayUrl: 'http://127.0.0.1:4300' });
   });
 });

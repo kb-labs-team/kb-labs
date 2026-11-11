@@ -13,7 +13,9 @@
  *   logs a warning and does not throw or write a broken file.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { CredentialsManager } from '../../../../../sdk/sdk/src/gateway/credentials.js';
+import { SessionManager } from '../../../../../sdk/sdk/src/gateway/session.js';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -155,4 +157,24 @@ describe('handle already registered, file missing', () => {
     expect(warnings.length).toBeGreaterThan(0);
     await expect(fs.access(credentialsPath)).rejects.toThrow();
   });
+});
+
+// case: S-285.19
+it('shares bootstrap credentials and session under KB_HOME without touching HOME', async () => {
+  const home = path.join(tmpDir, 'home');
+  const kbHome = path.join(tmpDir, 'kb-home');
+  await fs.mkdir(home);
+  vi.stubEnv('HOME', home);
+  vi.stubEnv('KB_HOME', kbHome);
+  try {
+    await ensureBootstrapCliCredentials({ enabled: true, authService, gatewayUrl: 'http://127.0.0.1:4000', logger });
+    const credentials = await new CredentialsManager().load();
+    expect(credentials?.gatewayUrl).toBe('http://127.0.0.1:4000');
+    const session = new SessionManager();
+    await session.save({ gatewayUrl: 'http://127.0.0.1:4000', accessToken: 'access', refreshToken: 'refresh', expiresAt: Date.now() + 10000 });
+    expect(await session.load()).not.toBeNull();
+    await expect(fs.access(path.join(kbHome, 'credentials.json'))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(kbHome, 'session.json'))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(home, '.kb'))).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally { vi.unstubAllEnvs(); }
 });

@@ -124,7 +124,7 @@ export default defineConfig({
   target: 'es2022',
   sourcemap: true,
   clean: true,
-  dts: true,
+  dts: { resolve: false },
   treeshake: true,
   minify: false,
   outDir: 'dist',

@@ -12,7 +12,7 @@ import * as net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import type { ExecutionEvent } from '@kb-labs/core-contracts';
 import { createErrorEnvelope, ErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
-import type { IGatewayClient, GatewayExecuteRequest } from './types.js';
+import type { IGatewayClient, GatewayExecuteRequest } from '@kb-labs/sdk/gateway';
 
 function hostAgentUnavailable(socketPath: string): ErrorEnvelopeError {
   return new ErrorEnvelopeError(createErrorEnvelope('KB_HOST_UNREACHABLE', {

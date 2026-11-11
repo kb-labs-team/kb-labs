@@ -12,7 +12,7 @@ import (
 	clikitresult "github.com/kb-labs/clikit/result"
 )
 
-const machineResultDir = "../../../../contracts/ux-result"
+const machineResultDir = "../../../../core/platform/contracts/ux-result"
 
 type machineResult struct {
 	OK    *bool           `json:"ok"`

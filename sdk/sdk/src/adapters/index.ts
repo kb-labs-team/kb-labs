@@ -76,6 +76,7 @@ export type {
   StatsQuery,
   EventsResponse,
   EventsStats,
+  AnalyticsPersistence,
   BufferStatus,
   DlqStatus,
   DailyStats,

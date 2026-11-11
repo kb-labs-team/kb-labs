@@ -1,0 +1,60 @@
+{
+  "name": "@kb-labs/workflow-entry",
+  "description": "CLI commands for KB Labs Workflow Daemon - interact with workflow daemon via HTTP API.",
+  "version": "2.120.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "build:cli": "tsup --config tsup.config.ts",
+    "clean": "rimraf dist",
+    "dev": "tsup --config tsup.config.ts --watch",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run --passWithNoTests",
+    "test:cli": "vitest run --config vitest.cli.config.ts --passWithNoTests",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kb-labs/workflow-contracts": "workspace:*",
+    "@kb-labs/workflow-runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
+    "@kb-labs/shared-testing-e2e": "workspace:*",
+    "@types/node": "^24.3.3",
+    "rimraf": "^6.0.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.11",
+    "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/core-contracts": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
+    "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/sdk": "workspace:*"
+  },
+  "engines": {
+    "node": "24.x",
+    "pnpm": ">=9.0.0"
+  },
+  "peerDependencies": {
+    "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/core-contracts": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
+    "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/sdk": "workspace:*"
+  },
+  "sideEffects": false
+}

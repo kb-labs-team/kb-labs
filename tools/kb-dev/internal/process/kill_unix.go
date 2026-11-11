@@ -9,12 +9,14 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/kb-labs/clikit/proc/child"
 )
 
 // killGroup sends SIGTERM to the entire process group identified by pgid,
 // waits up to gracePeriod, then sends SIGKILL if still alive.
 func killGroup(pgid int, _ int, gracePeriod time.Duration) error {
-	if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+	if err := child.TerminateTree(pgid); err != nil {
 		if err == syscall.ESRCH {
 			return nil
 		}
@@ -30,7 +32,7 @@ func killGroup(pgid int, _ int, gracePeriod time.Duration) error {
 	}
 
 	if groupAlive(pgid) {
-		if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+		if err := child.KillTree(pgid); err != nil {
 			return fmt.Errorf("SIGKILL to pgid %d: %w", pgid, err)
 		}
 		time.Sleep(pollInterval)

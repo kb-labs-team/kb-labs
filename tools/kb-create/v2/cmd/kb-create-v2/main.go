@@ -19,6 +19,7 @@ import (
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/preflight"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/scenario"
@@ -103,7 +104,10 @@ func Execute() diag.ExitStatus {
 }
 
 type directRequest struct {
+	Registry                                                                                                                       string
+	BinarySource                                                                                                                   string
 	PlatformRoot, ProjectRoot, PlatformVersion, PlatformChannel, SDKVersion, ServiceProfile, GatewayURL, Plugins, Adapters, Policy string
+	MarketplaceRegistryURL, MarketplaceSigningKeyEnv, MarketplaceTokenEnv, MarketplaceNpmURL                                       string
 	Providers                                                                                                                      []string
 	Offline                                                                                                                        bool
 }
@@ -115,6 +119,7 @@ type commandDependencies struct {
 	InstallInput     io.Reader
 	InstallOutput    io.Writer
 	ProjectRegistrar func(string, string) (projectRegistrationResult, error)
+	Marketplace      marketplace.InstallClient
 	Command          *cobra.Command
 	Executable       string
 }
@@ -131,13 +136,6 @@ func productionCommandDependencies(command *cobra.Command) commandDependencies {
 			return registerInstalledProject(platformRoot, projectRoot, nil)
 		},
 	}
-}
-
-func updateCompatibilityDiag(failure *diag.Diag) *diag.Diag {
-	if failure.Code == contracts.CodeIncompatibleComponents {
-		failure.Code = contracts.CodeUpdateIncompatible
-	}
-	return failure
 }
 
 func recordedGatewayURL(active contracts.InstallReceipt) string {
@@ -295,7 +293,7 @@ func compileScenario(id, answers string, resume bool, base contracts.InstallRequ
 }
 
 func (value directRequest) normalize() (contracts.InstallRequest, error) {
-	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: value.PlatformRoot, ProjectRoot: value.ProjectRoot, Platform: contracts.VersionSelector{Version: value.PlatformVersion, Channel: contracts.Channel(value.PlatformChannel)}, SDK: contracts.VersionSelector{Version: value.SDKVersion}, ServiceProfile: value.ServiceProfile, GatewayURL: value.GatewayURL, Policy: contracts.CompatibilityPolicy(value.Policy), Source: contracts.SourceRegistry}
+	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: value.PlatformRoot, ProjectRoot: value.ProjectRoot, Platform: contracts.VersionSelector{Version: value.PlatformVersion, Channel: contracts.Channel(value.PlatformChannel)}, SDK: contracts.VersionSelector{Version: value.SDKVersion}, ServiceProfile: value.ServiceProfile, GatewayURL: value.GatewayURL, Policy: contracts.CompatibilityPolicy(value.Policy), Source: contracts.SourceRegistry, MarketplaceSources: value.marketplaceSources()}
 	if value.Offline {
 		request.Source = contracts.SourceOffline
 	}
@@ -313,6 +311,13 @@ func (value directRequest) normalize() (contracts.InstallRequest, error) {
 		return contracts.InstallRequest{}, err
 	}
 	return request.Normalize()
+}
+
+func (value directRequest) marketplaceSources() *contracts.MarketplaceSources {
+	if value.MarketplaceRegistryURL == "" && value.MarketplaceSigningKeyEnv == "" && value.MarketplaceTokenEnv == "" && value.MarketplaceNpmURL == "" {
+		return nil
+	}
+	return &contracts.MarketplaceSources{RegistryURL: value.MarketplaceRegistryURL, SigningPublicKeyEnv: value.MarketplaceSigningKeyEnv, RegistryTokenEnv: value.MarketplaceTokenEnv, NpmURL: value.MarketplaceNpmURL}
 }
 
 func configuredFirstAdmin(request contracts.InstallRequest) (string, bool) {

@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 import service_runner
 from service_runner import (FlowGraph, Journey, prepare_service_api_session,
-                            restore_secured_cli_login, service_api_token)
+                            install_project_commit_plugin, restore_secured_cli_login,
+                            service_api_token)
 
 
 class SecuredCliLoginTests(unittest.TestCase):
@@ -50,6 +51,28 @@ class SecuredCliLoginTests(unittest.TestCase):
                  "KB_JOURNEY_ADMIN_PASSWORD": "bad"},
                 runner=runner,
             )
+
+
+class ProjectPluginSettingsFixtureTests(unittest.TestCase):
+    def test_installs_commit_into_project_before_reading_manifest_defaults(self):
+        calls = []
+        result = SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        def runner(command, **kwargs):
+            calls.append((command, kwargs))
+            return result
+
+        env = {"HOME": "/isolated-home", "KB_HOME": "/isolated-home/.kb"}
+        actual = install_project_commit_plugin("/tmp/project-a", "/isolated-home/.local/bin/kb", env,
+                                                runner=runner)
+
+        self.assertIs(actual, result)
+        self.assertEqual(calls, [(
+            ["/isolated-home/.local/bin/kb", "marketplace", "install", "@kb-labs/commit",
+             "--scope", "project", "--json"],
+            {"cwd": str(Path("/tmp/project-a").resolve()), "env": env, "capture_output": True,
+             "text": True, "timeout": 300},
+        )])
 
 
 class AdapterDefaultsProbeTests(unittest.TestCase):

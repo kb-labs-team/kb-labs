@@ -71,7 +71,7 @@ def _verify_greet(*, cwd: Path, env: dict[str, str], runner) -> None:
         raise RuntimeError("workflow defs list did not report greet as active")
 
 
-def _ensure_only_plugin(package: str, *, cwd: Path, env: dict[str, str], runner) -> None:
+def _ensure_only_plugins(packages: tuple[str, ...], *, cwd: Path, env: dict[str, str], runner) -> None:
     list_command = kb_command([ "marketplace", "plugins", "list", "--json"])
     listed = _cli(list_command, cwd=cwd, env=env, runner=runner)
     try:
@@ -84,7 +84,7 @@ def _ensure_only_plugin(package: str, *, cwd: Path, env: dict[str, str], runner)
         raise RuntimeError("marketplace plugins list returned no valid project entries")
     for entry in entries:
         installed_id = entry["id"]
-        if installed_id == package:
+        if installed_id in packages:
             continue
         uninstall = kb_command([ "marketplace", "uninstall", installed_id, "--json"])
         removed = _cli(uninstall, cwd=cwd, env=env, runner=runner)
@@ -105,15 +105,15 @@ def _ensure_only_plugin(package: str, *, cwd: Path, env: dict[str, str], runner)
     except ValueError as error:
         raise RuntimeError(f"marketplace plugins list returned an invalid UX result after attachment setup: {error}") from error
     final_entries = final_payload.get("entries") if isinstance(final_payload, dict) else None
-    if (verified.returncode != 0 or not isinstance(final_entries, list)
-            or [item.get("id") for item in final_entries if isinstance(item, dict)] != [package]):
-        raise RuntimeError(f"project plugin attachments do not contain only {package}")
+    installed_ids = [item.get("id") for item in final_entries if isinstance(item, dict)] if isinstance(final_entries, list) else None
+    if verified.returncode != 0 or installed_ids is None or set(installed_ids) != set(packages):
+        raise RuntimeError(f"project plugin attachments do not match {packages!r}")
 
 
 def prepare_studio_fixtures(service_env: dict[str, str], *, project_b_id: str,
                             project_a: Path, project_b: Path,
                             runner=run_command) -> dict[str, str]:
-    """Install project plugins and a real active greet workflow via the installed CLI."""
+    """Prepare one project plugin and a real active greet workflow via the installed CLI."""
     if not project_b_id:
         raise RuntimeError("fixtures-installed state must contain a project B id for Studio project fixtures")
     if not project_a.is_dir() or not project_b.is_dir() or project_a.resolve() == project_b.resolve():
@@ -121,10 +121,9 @@ def prepare_studio_fixtures(service_env: dict[str, str], *, project_b_id: str,
 
     env = dict(os.environ)
     env.update(service_env)
-    _install("@kb-labs/workflow-entry", cwd=project_a, env=env, runner=runner)
-    _install("@kb-labs/commit-entry", cwd=project_b, env=env, runner=runner)
-    _ensure_only_plugin("@kb-labs/workflow-entry", cwd=project_a, env=env, runner=runner)
-    _ensure_only_plugin("@kb-labs/commit-entry", cwd=project_b, env=env, runner=runner)
+    _install("@kb-labs/commit", cwd=project_b, env=env, runner=runner)
+    _ensure_only_plugins((), cwd=project_a, env=env, runner=runner)
+    _ensure_only_plugins(("@kb-labs/commit",), cwd=project_b, env=env, runner=runner)
     workflow_dir = project_a / ".kb" / "workflows"
     workflow_dir.mkdir(parents=True, exist_ok=True)
     (workflow_dir / "greet.yml").write_text(GREET_WORKFLOW, encoding="utf-8")

@@ -3,8 +3,9 @@ import { noopUI } from '@kb-labs/plugin-contracts';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
-import { createErrorEnvelope, createProductErrorEnvelope, createValidatedErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, createProductErrorEnvelope } from '@kb-labs/core-platform';
 import { executeCommandV3 } from './execute-command.js';
+import { useLoader } from '@kb-labs/shared-cli-ui';
 
 describe('executeCommandV3 environment', () => {
   // case: S-010.7
@@ -39,6 +40,48 @@ describe('executeCommandV3 environment', () => {
 });
 
 describe('executeCommandV3 plugin command result output', () => {
+  // case: S-203.1
+  it('returns the normalized result and forwards backend logs by declared stream', async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+      stdout.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write);
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+      stderr.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+    const json = vi.fn();
+    const execute = vi.fn(async (_request: ExecutionRequest, options?: { onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string }) => void }) => {
+      const loader = useLoader('Analyzing with native tools...', { spinner: false, total: 2, current: 1, jsonMode: true });
+      loader.start();
+      loader.update({ current: 1 });
+      loader.stop();
+      options?.onLog?.({ level: 'info', message: 'worker stdout', stream: 'stdout', lineNo: 1, timestamp: new Date().toISOString() });
+      options?.onLog?.({ level: 'error', message: 'worker stderr', stream: 'stderr', lineNo: 2, timestamp: new Date().toISOString() });
+      return { ok: true as const, data: { complete: true }, executionTimeMs: 1 };
+    });
+    const platformContainer = { executionBackend: { execute, executionMode: 'in-process' } } as unknown as PlatformContainer;
+
+    try {
+      const exitCode = await executeCommandV3({
+        binaryName: 'kb', pluginId: '@kb-labs/test-plugin', pluginVersion: '1.0.0',
+        commandPath: 'test run', handlerPath: 'dist/commands/test.js', argv: [], flags: { json: true },
+        ui: { ...noopUI, json }, platform: {} as unknown as PlatformServices, platformContainer,
+      });
+      expect(exitCode).toBe(0);
+      expect(json).toHaveBeenCalledOnce();
+      expect(json).toHaveBeenCalledWith(expect.objectContaining({ ok: true, data: { complete: true } }));
+      expect(stdout.join('')).toContain('worker stdout');
+      expect(stderr.join('')).toContain('worker stderr');
+      expect(stderr.join('')).not.toContain('Analyzing with native tools...');
+    } finally {
+      stdoutWrite.mockRestore();
+      stderrWrite.mockRestore();
+    }
+  });
+
   it('frames the already-normalized backend envelope without logging or reclassifying it', async () => {
     const json = vi.fn();
     const error = createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
@@ -75,7 +118,7 @@ describe('executeCommandV3 plugin command result output', () => {
   it('frames a factory-normalized returned typed failure once in JSON mode', async () => {
     const json = vi.fn();
     const error = vi.fn();
-    const envelope = createValidatedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+    const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
       templateValues: { binary: 'kb' },
       correlationId: 'returned-failure-correlation',
       message: 'The operation failed.',
@@ -241,7 +284,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const productError = createProductErrorEnvelope({
       code: 'COMMIT_PLAN_INVALID',
       message: 'The commit plan is invalid.',
-      hint: 'Run `kb commit generate` and inspect the proposed plan.',
+      hint: 'Run `kb commit plan create` and inspect the proposed plan.',
       details: { reason: 'empty' },
       retryable: false,
     });
@@ -250,7 +293,7 @@ describe('executeCommandV3 plugin command result output', () => {
 
     await executeCommandV3({
       binaryName: 'kb',
-      pluginId: '@kb-labs/commit', pluginVersion: '1.0.0', commandPath: 'commit open',
+      pluginId: '@kb-labs/commit', pluginVersion: '1.0.0', commandPath: 'commit plan show',
       handlerPath: 'dist/commands/open.js', argv: [], flags: { json: true },
       ui: { ...noopUI, json }, platform: {} as unknown as PlatformServices, platformContainer,
     });

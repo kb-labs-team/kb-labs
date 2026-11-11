@@ -22,7 +22,7 @@ Bench-gated: every row marked **Y** must ship with a before/after benchmark delt
 ### Validation finding — grep-vs-mind head-to-head (2026-06-03)
 
 `e2e/mind` `headtohead` scenario (`M-BENCH-05`), 27-query golden over the
-`plugins/mind/core/src` corpus, hit@5 of Mind `/search` vs a literal grep
+`plugins/mind/src/core` corpus, hit@5 of Mind `/search` vs a literal grep
 baseline on the same files; then a comment-stripped ("undocumented") copy:
 
 | corpus | mind hit@5 | grep hit@5 | delta (mind−grep) | semWin |
@@ -52,7 +52,7 @@ corpus — the opposite held.** Two honest takeaways:
 ### Validation finding — grep-vs-mind on a real proprietary repo (2026-06-03, post-fix)
 
 Head-to-head on **a private ~140-file C# domain module** (NDA — indexed in place
-via `mind index --root`, nothing copied into this repo), 14 hand-built queries:
+via `mind index update --root`, nothing copied into this repo), 14 hand-built queries:
 6 keyword-style (query reuses the file's naming) + 8 semantic (concept described
 without the identifier word). hit@5, Mind `/search` vs a literal grep baseline.
 

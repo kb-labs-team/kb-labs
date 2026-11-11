@@ -66,10 +66,10 @@ CLI (локально) → Gateway → Host Agent (где угодно) → вы
 | Dispatcher (маршрутизация по namespaceId) | ✅ | `hosts/dispatcher.ts` |
 | POST /api/v1/execute (ndjson streaming) | ✅ | `execute/routes.ts` |
 | Execution registry + cancellation | ✅ | `execute/execution-registry.ts` |
-| Host Agent daemon | ✅ | `plugins/host-agent/app` |
+| Host Agent daemon | ✅ | `services/host-agent/app` |
 | Host Agent IPC сервер | ✅ | `host-agent-core/src/ipc` |
 | Host Agent → Gateway tunnel | ✅ | `gateway-client.ts` → `executeTunnel()` |
-| FilesystemHandler | ✅ | `plugins/host-agent/fs` |
+| FilesystemHandler | ✅ | `services/host-agent/fs` |
 | ExecutionHandler в Host Agent | ✅ | `host-agent-app/src/handlers/execution-handler.ts` |
 | CLI transport resolver | ✅ | `cli/runtime/src/gateway/transport-resolver.ts` |
 | Hosts registry фильтрация по namespaceId | ✅ | `HostRegistry.list(namespaceId)` |

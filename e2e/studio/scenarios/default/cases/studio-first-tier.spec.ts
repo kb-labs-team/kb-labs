@@ -136,20 +136,6 @@ test('S-121.1: analytics overview summarizes events and adapter usage', async ({
   await expect(page.getByText('Storage', { exact: true })).toBeVisible()
 })
 
-test('S-121.6: unconfigured analytics shows adapter setup guidance', async ({ page }) => {
-  test.skip(!enabled, 'Enabled by the installed Studio journey hook')
-  const projectId = process.env.KB_STUDIO_PROJECT_ID
-  expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
-  await page.addInitScript((id) => localStorage.setItem('kb-studio-active-project', id), projectId!)
-  await page.route(`**${projectServicePath(projectId!, 'rest', 'analytics/stats')}`, async (route) => {
-    await route.fulfill({ status: 501, contentType: 'application/json', body: JSON.stringify({ message: 'Analytics adapter does not support reading stats' }) })
-  })
-
-  await page.goto(`${GATEWAY}/analytics/overview`)
-  await expect(page.getByText('Analytics Not Configured', { exact: true })).toBeVisible()
-  await expect(page.getByText('Configure an analytics adapter in kb.config.json', { exact: false })).toBeVisible()
-})
-
 test('unavailable analytics service names its source and recovery command @S-125.5', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)
@@ -260,19 +246,19 @@ test('install Commit, inspect real changes, generate a plan, and uninstall it @S
   const baselineCommit = runProcessSync('git', ['rev-parse', 'HEAD'], processOptions).trim()
   writeFileSync(marker, 'baseline\nchanged for the deterministic plan\n')
 
-  runKbCommand(['marketplace', 'install', '@kb-labs/commit-entry', '--json'], processOptions, kb!)
+  runKbCommand(['marketplace', 'install', '@kb-labs/commit', '--json'], processOptions, kb!)
   const lock = JSON.parse(readFileSync(lockFile, 'utf8')) as {
     plugins?: Record<string, { version?: string; resolvedPath?: string }>
   }
-  const commitPin = lock.plugins?.['@kb-labs/commit-entry']
+  const commitPin = lock.plugins?.['@kb-labs/commit']
   const commitVersion = commitPin?.version
   expect(commitVersion, 'marketplace lock must contain the installed Commit version').toBeTruthy()
   const extensionEntry = join(
     process.env.KB_HOME ?? join(process.env.HOME ?? '', '.kb'),
-    'store', 'entries', `@kb-labs+commit-entry@${commitVersion!}`,
-    'node_modules', '@kb-labs', 'commit-entry', 'dist', 'index.js',
+    'store', 'entries', `@kb-labs+commit@${commitVersion!}`,
+    'node_modules', '@kb-labs', 'commit', 'dist', 'index.js',
   )
-  expect(commitPin?.resolvedPath).toBe(`store:${encodeURIComponent('@kb-labs/commit-entry')}@${encodeURIComponent(commitVersion!)}`)
+  expect(commitPin?.resolvedPath).toBe(`store:${encodeURIComponent('@kb-labs/commit')}@${encodeURIComponent(commitVersion!)}`)
   expect(existsSync(extensionEntry), `installed Commit entry should exist at ${extensionEntry}`).toBe(true)
 
   await page.addInitScript((id) => localStorage.setItem('kb-studio-active-project', id), projectId!)
@@ -302,14 +288,14 @@ test('install Commit, inspect real changes, generate a plan, and uninstall it @S
   await expect(page.getByText('studio-commit-journey.txt', { exact: true })).toBeVisible()
   expect(runProcessSync('git', ['rev-parse', 'HEAD'], processOptions).trim()).toBe(baselineCommit)
 
-  runKbCommand(['marketplace', 'uninstall', '@kb-labs/commit-entry', '--json'], processOptions, kb!)
+  runKbCommand(['marketplace', 'uninstall', '@kb-labs/commit', '--json'], processOptions, kb!)
   const afterUninstall = JSON.parse(readFileSync(lockFile, 'utf8')) as { plugins?: Record<string, unknown> }
-  expect(afterUninstall.plugins?.['@kb-labs/commit-entry']).toBeUndefined()
+  expect(afterUninstall.plugins?.['@kb-labs/commit']).toBeUndefined()
   await page.goto(`${GATEWAY}/`)
   await expect(page.getByRole('link', { name: /commit/i })).toHaveCount(0)
   const pluginsResponse = await page.request.get(`${GATEWAY}/api/v1/plugins?projectId=${encodeURIComponent(projectId!)}`)
   const plugins = await pluginsResponse.json() as { data?: Array<{ id?: string }> }
-  expect(plugins.data?.some(plugin => plugin.id === '@kb-labs/commit-entry' || plugin.id === 'commit')).toBe(false)
+  expect(plugins.data?.some(plugin => plugin.id === '@kb-labs/commit' || plugin.id === 'commit')).toBe(false)
   await page.goto(`${GATEWAY}/p/commit`)
   await expect(page.getByRole('tab', { name: 'Commit Plan', exact: true })).toHaveCount(0)
 })

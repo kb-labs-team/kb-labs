@@ -4,13 +4,13 @@ import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 const gatewayApiFetch = vi.hoisted(() => vi.fn());
 const resolveActiveGateway = vi.hoisted(() => vi.fn());
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({
+vi.mock('@kb-labs/sdk/gateway', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@kb-labs/sdk/gateway')>()),
   gatewayApiFetch,
+}));
+vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@kb-labs/cli-runtime/gateway')>()),
   resolveActiveGateway,
-  readGatewaySuccessData: async (response: Response) => (await response.json() as { data: unknown }).data,
-  GatewayApiError: class GatewayApiError extends Error {
-    constructor(readonly envelope: Record<string, unknown>) { super(String(envelope.message)); }
-  },
 }));
 
 import { authTokens } from '../commands/system/auth/auth-tokens.js';

@@ -91,7 +91,7 @@ pnpm --filter @kb-labs/my-plugin-cli install
 pnpm --filter @kb-labs/my-plugin-cli run build:studio
 ```
 
-**Reference plugins:** `@kb-labs/commit-cli`, `@kb-labs/agent-cli` — both pin `react@^18.3.1` in devDependencies.
+**Reference plugins:** `@kb-labs/commit/cli`, `@kb-labs/agents/cli` — both pin `react@^18.3.1` in devDependencies.
 
 ---
 

@@ -46,22 +46,22 @@ kb devlink plan --json
 
 ```bash
 # Basic freeze (merge with existing)
-kb devlink freeze
+kb devlink lock create
 
 # Replace entire lock
-kb devlink freeze --replace
+kb devlink lock create --replace
 
 # Use exact versions
-kb devlink freeze --pin=exact
+kb devlink lock create --pin=exact
 
 # Use caret versions (default)
-kb devlink freeze --pin=caret
+kb devlink lock create --pin=caret
 
 # Remove stale entries
-kb devlink freeze --prune
+kb devlink lock create --prune
 
 # Preview without writing
-kb devlink freeze --dry-run
+kb devlink lock create --dry-run
 ```
 
 **What happens:**
@@ -144,13 +144,13 @@ kb devlink apply-lock --dry-run
 
 ```bash
 # Preview undo
-kb devlink undo --dry-run
+kb devlink rollback --dry-run
 
 # Undo last operation
-kb devlink undo
+kb devlink rollback
 
 # Undo specific backup (future)
-kb devlink undo --backup 2025-10-19T14-39-33.311Z
+kb devlink rollback --backup 2025-10-19T14-39-33.311Z
 ```
 
 **What gets restored:**
@@ -202,7 +202,7 @@ kb devlink status --ci
 🧭 Context
   Mode:           local via plan
   Last operation: freeze  •  5m ago
-  Undo available: yes    →  kb devlink undo
+  Undo available: yes    →  kb devlink rollback
   Backup:         2025-10-19T14-39-33Z
 
 🔒 Lock
@@ -220,7 +220,7 @@ kb devlink status --ci
 
 💡 Next actions
   • Sync manifests to lock: kb devlink apply-lock --yes  [safe]
-  • Revert last operation: kb devlink undo  [safe]
+  • Revert last operation: kb devlink rollback  [safe]
 ```
 
 ## backups - Manage Backups
@@ -229,31 +229,31 @@ kb devlink status --ci
 
 ```bash
 # List all backups
-kb devlink backups
+kb devlink backup list
 
 # Filter by type
-kb devlink backups --type freeze
+kb devlink backup list --type freeze
 
 # Limit output
-kb devlink backups --limit 10
+kb devlink backup list --limit 10
 
 # JSON output
-kb devlink backups --json
+kb devlink backup list --json
 
 # Protect backup (won't auto-delete)
-kb devlink backups --protect 2025-10-19T14-39-33.311Z
+kb devlink backup list --protect 2025-10-19T14-39-33.311Z
 
 # Unprotect backup
-kb devlink backups --unprotect 2025-10-19T14-39-33.311Z
+kb devlink backup list --unprotect 2025-10-19T14-39-33.311Z
 
 # Preview cleanup
-kb devlink backups --prune --dry-run
+kb devlink backup list --prune --dry-run
 
 # Cleanup old backups
-kb devlink backups --prune
+kb devlink backup list --prune
 
 # Custom retention
-kb devlink backups --prune --keep 10 --keep-days 7 --min-age 2h
+kb devlink backup list --prune --keep 10 --keep-days 7 --min-age 2h
 ```
 
 **Output:**
@@ -263,8 +263,8 @@ kb devlink backups --prune --keep 10 --keep-days 7 --min-age 2h
   2025-10-19T14-39-33.311Z  •  5m ago  •  freeze  •  331 deps ✓ lock
   2025-10-19T14-37-35.449Z  •  2m ago  •  apply   •  24 manifests
 
-💡 Use: kb devlink undo --backup <timestamp>
-💡 Cleanup: kb devlink backups --prune
+💡 Use: kb devlink rollback --backup <timestamp>
+💡 Cleanup: kb devlink backup list --prune
 ```
 
 **Protected backups:**
@@ -283,7 +283,7 @@ kb devlink backups --prune --keep 10 --keep-days 7 --min-age 2h
 kb devlink status
 
 # 2. Create snapshot
-kb devlink freeze --pin=caret
+kb devlink lock create --pin=caret
 
 # 3. Switch to local links
 kb devlink apply --mode=local
@@ -299,7 +299,7 @@ kb devlink status --short
 
 ```bash
 # Simply undo the apply
-kb devlink undo
+kb devlink rollback
 
 # Or apply with workspace mode
 kb devlink apply --mode=workspace
@@ -319,23 +319,23 @@ kb devlink apply-lock --yes
 pnpm install
 
 # Option 2: Update lock to match manifests
-kb devlink freeze --replace
+kb devlink lock create --replace
 ```
 
 ### Scenario 4: Protect Pre-Release Snapshot
 
 ```bash
 # 1. Freeze before release
-kb devlink freeze --replace --pin=exact
+kb devlink lock create --replace --pin=exact
 
 # 2. Get latest backup timestamp
-BACKUP=$(kb devlink backups --limit 1 --json | grep -o '"timestamp":"[^"]*"' | head -1 | cut -d'"' -f4)
+BACKUP=$(kb devlink backup list --limit 1 --json | grep -o '"timestamp":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 # 3. Protect it
-kb devlink backups --protect $BACKUP
+kb devlink backup list --protect $BACKUP
 
 # 4. Verify
-kb devlink backups --limit 1
+kb devlink backup list --limit 1
 # Shows: ... ✓ lock 🔒
 ```
 
@@ -343,7 +343,7 @@ kb devlink backups --limit 1
 
 ```bash
 # Check what would be removed
-kb devlink backups --prune --dry-run
+kb devlink backup list --prune --dry-run
 
 # Shows:
 # Would remove: 15
@@ -351,7 +351,7 @@ kb devlink backups --prune --dry-run
 # Protected: 1
 
 # Actually cleanup
-kb devlink backups --prune
+kb devlink backup list --prune
 ```
 
 ## Key Differences
@@ -389,10 +389,10 @@ kb devlink status
 
 Preview changes before committing:
 ```bash
-kb devlink freeze --dry-run
+kb devlink lock create --dry-run
 kb devlink apply --dry-run
-kb devlink undo --dry-run
-kb devlink backups --prune --dry-run
+kb devlink rollback --dry-run
+kb devlink backup list --prune --dry-run
 ```
 
 ### 3. Leverage Short Format for Scripts
@@ -415,18 +415,18 @@ fi
 kb devlink status | grep -A 5 "Context"
 
 # List backups
-kb devlink backups --limit 5
+kb devlink backup list --limit 5
 
 # Cleanup periodically
-kb devlink backups --prune
+kb devlink backup list --prune
 ```
 
 ### 5. Protect Release Snapshots
 
 ```bash
 # Tag and protect release backups
-kb devlink freeze --pin=exact
-kb devlink backups --protect <latest-timestamp>
+kb devlink lock create --pin=exact
+kb devlink backup list --protect <latest-timestamp>
 ```
 
 ## Error Codes

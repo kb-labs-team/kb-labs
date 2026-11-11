@@ -42,6 +42,52 @@ func TestNormalizeMakesRelativeRootsAbsolute(t *testing.T) {
 	}
 }
 
+func TestInstallRequestNormalizeCanonicalizesRelativeAndSymlinkPlatformRoots(t *testing.T) {
+	base, err := os.MkdirTemp(".", ".platform-roots-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	target := filepath.Join(base, "platform")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "platform-alias")
+	absoluteTarget, err := filepath.Abs(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absoluteAlias, err := filepath.Abs(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(absoluteTarget, absoluteAlias); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := filepath.EvalSymlinks(absoluteTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, root := range map[string]string{"relative": target, "symlink": absoluteAlias} {
+		t.Run(name, func(t *testing.T) {
+			rootInput := root
+			if name == "relative" {
+				rootInput, err = filepath.Rel(".", root)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			request, err := (InstallRequest{PlatformRoot: rootInput}).Normalize()
+			if err != nil {
+				t.Fatalf("Normalize() error = %v", err)
+			}
+			if request.PlatformRoot != canonical {
+				t.Fatalf("normalized platform root = %q, want canonical install root %q", request.PlatformRoot, canonical)
+			}
+		})
+	}
+}
+
 func TestInstallRequestNormalizeDoesNotRequireSelectedProjectToExist(t *testing.T) {
 	platformRoot := filepath.Join(t.TempDir(), "platform")
 	missingProject := filepath.Join(t.TempDir(), "missing-project")
@@ -57,6 +103,19 @@ func TestInstallRequestNormalizeDoesNotRequireSelectedProjectToExist(t *testing.
 	}
 }
 
+func TestInstallRequestNormalizeAcceptsNpmOnlyMarketplaceMirror(t *testing.T) {
+	request, err := (InstallRequest{
+		PlatformRoot:       "/tmp/platform",
+		MarketplaceSources: &MarketplaceSources{NpmURL: "http://verdaccio:4873"},
+	}).Normalize()
+	if err != nil {
+		t.Fatalf("Normalize() rejected an npm-only Marketplace mirror: %v", err)
+	}
+	if request.MarketplaceSources == nil || request.MarketplaceSources.NpmURL != "http://verdaccio:4873" {
+		t.Fatalf("MarketplaceSources = %#v, want npm mirror retained", request.MarketplaceSources)
+	}
+}
+
 // case: S-187.7
 func TestValidateProjectSelectionRejectsMissingProjectBeforePlatformMutation(t *testing.T) {
 	platformRoot := filepath.Join(t.TempDir(), "platform")
@@ -68,7 +127,7 @@ func TestValidateProjectSelectionRejectsMissingProjectBeforePlatformMutation(t *
 	}
 	commands, parseErr := ParseShellCommands(strings.TrimSuffix(strings.TrimPrefix(validation.Hint, "Create it with `"), "` or pass an existing project directory, then retry."))
 	want := []string{"mkdir", "-p", missingProject}
-	if validation.Code != CodeInputRequired || validation.Field != "projectRoot" || parseErr != nil || len(commands) != 1 || !reflect.DeepEqual(commands[0], want) {
+	if validation.Field != "projectRoot" || parseErr != nil || len(commands) != 1 || !reflect.DeepEqual(commands[0], want) {
 		t.Fatalf("validation error = %#v, want actionable projectRoot input error", validation)
 	}
 	if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {

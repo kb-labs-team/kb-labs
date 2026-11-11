@@ -50,7 +50,7 @@ func TestDelivery_EndToEnd(t *testing.T) {
 	// 2. Bring up the stack (verdaccio + two target containers).
 	stackDown(t, deliveryDir) // idempotent safety for prior runs
 	t.Cleanup(func() { stackDown(t, deliveryDir) })
-	runCmd(t, deliveryDir, composeBin, "up", "-d", "--build")
+	runCmd(t, deliveryDir, composeBin[0], append(composeBin[1:], "up", "-d", "--build")...)
 
 	waitTCP(t, "127.0.0.1:4873", 60*time.Second)
 	waitTCP(t, fmt.Sprintf("127.0.0.1:%d", target1Port), 60*time.Second)
@@ -209,7 +209,7 @@ rollout:
 `
 }
 
-func requireDocker(t *testing.T) string {
+func requireDocker(t *testing.T) []string {
 	t.Helper()
 	composeBin := deliveryCompose(t)
 	out, err := exec.Command("docker", "info").CombinedOutput()
@@ -219,13 +219,14 @@ func requireDocker(t *testing.T) string {
 	return composeBin
 }
 
-func deliveryCompose(t *testing.T) string {
+func deliveryCompose(t *testing.T) []string {
 	t.Helper()
-	composeBin := os.Getenv("KB_DELIVERY_COMPOSE_BIN")
-	if composeBin == "" {
-		t.Fatal("required tool docker-compose was not resolved; run e2e/delivery/scripts/run.sh so it can resolve docker-compose from PATH")
+	composeCommand := os.Getenv("KB_DELIVERY_COMPOSE_COMMAND")
+	var command []string
+	if composeCommand == "" || json.Unmarshal([]byte(composeCommand), &command) != nil || len(command) == 0 {
+		t.Fatal("Docker Compose was not resolved; run e2e/delivery/scripts/run.sh so the shared Compose owner can select it")
 	}
-	return composeBin
+	return command
 }
 
 func findRepoRoot(t *testing.T) string {
@@ -270,7 +271,8 @@ func stackDown(t *testing.T, dir string) {
 		t.Log("KEEP_STACK set — leaving docker-compose stack running for debugging")
 		return
 	}
-	cmd := exec.Command(deliveryCompose(t), "down", "-v", "--remove-orphans")
+	compose := deliveryCompose(t)
+	cmd := exec.Command(compose[0], append(compose[1:], "down", "-v", "--remove-orphans")...)
 	cmd.Dir = dir
 	_ = cmd.Run()
 }
@@ -280,7 +282,8 @@ func stackDown(t *testing.T, dir string) {
 func dumpContainerLogs(t *testing.T, dir string) {
 	t.Helper()
 	for _, svc := range []string{"target-1", "target-2", "verdaccio"} {
-		cmd := exec.Command(deliveryCompose(t), "logs", "--no-color", "--tail=100", svc)
+		compose := deliveryCompose(t)
+		cmd := exec.Command(compose[0], append(compose[1:], "logs", "--no-color", "--tail=100", svc)...)
 		cmd.Dir = dir
 		out, _ := cmd.CombinedOutput()
 		t.Logf("=== docker-compose logs %s ===\n%s", svc, out)

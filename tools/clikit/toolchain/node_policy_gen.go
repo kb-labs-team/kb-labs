@@ -2,4 +2,8 @@
 
 package toolchain
 
-const SupportedNodeMajor = 24
+const (
+	SupportedNodeMajor = 24
+	SupportedPnpmMajor = 11
+	SupportedPnpm = "11.4.0"
+)

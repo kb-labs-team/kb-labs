@@ -9,15 +9,18 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/resolve"
+	"github.com/kb-labs/create/v2/scenario"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/telemetry"
 	"github.com/kb-labs/create/v2/transport"
@@ -35,6 +38,7 @@ type planInput struct {
 	Resume        bool
 	Executable    string
 	KnownGateways []gateway.Root
+	Arguments     []string
 }
 
 type resolvedPlan struct {
@@ -43,18 +47,24 @@ type resolvedPlan struct {
 	State   host.State
 }
 
+func savedReleaseIndex(home string) string {
+	return filepath.Join(gateway.DataDir(home), "release-index.json")
+}
+
 type planResult struct {
 	Plan          contracts.ResolvedInstallPlan `json:"plan"`
 	UpdateSummary *contracts.UpdateSummary      `json:"updateSummary,omitempty"`
 }
 
 type planCommandInput struct {
-	Index, RequestFile, ScenarioID, Answers, Registry, Executable string
-	Direct                                                        directRequest
-	Resume                                                        bool
-	KnownGateways                                                 []gateway.Root
-	TelemetryEndpoint                                             string
-	TelemetryConsent                                              bool
+	Index, RequestFile, ScenarioID, Answers, Executable string
+	RetryCommand                                        string
+	Direct                                              directRequest
+	Resume                                              bool
+	KnownGateways                                       []gateway.Root
+	TelemetryEndpoint                                   string
+	TelemetryConsent                                    bool
+	Arguments                                           []string
 }
 
 func executePlan(_ context.Context, request planCommandInput) (planResult, *diag.Diag) {
@@ -65,21 +75,10 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 		telemetry.Send(request.TelemetryEndpoint, request.TelemetryConsent, telemetry.New("plan", outcome, errorCode,
 			string(plan.Request.Platform.Channel), string(plan.Request.Source), len(plan.Artifacts), time.Since(started)))
 	}()
-	if request.Registry != "" {
-		registry, err := url.Parse(request.Registry)
-		if err != nil || registry.Host == "" || (registry.Scheme != "http" && registry.Scheme != "https") {
-			cause := err
-			if cause == nil {
-				cause = fmt.Errorf("registry URL must use HTTP or HTTPS and include a host")
-			}
-			return planResult{}, failure(contracts.CodeInputRequired,
-				"--registry must be an absolute HTTP or HTTPS URL",
-				"pass a registry such as `https://registry.npmjs.org`, then rerun `kb-create plan`", cause)
-		}
-	}
+
 	resolved, failure := resolvePlan(planInput{Index: request.Index, RequestFile: request.RequestFile, Direct: request.Direct,
 		Operation: "plan", ScenarioID: request.ScenarioID, Answers: request.Answers, Resume: request.Resume,
-		Executable: request.Executable, KnownGateways: request.KnownGateways})
+		Executable: request.Executable, KnownGateways: request.KnownGateways, Arguments: request.Arguments})
 	if failure != nil {
 		return planResult{}, failure
 	}
@@ -109,6 +108,11 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 			failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "the installed receipt could not be read for update comparison", "restore a named V2 snapshot, then rerun `kb-create plan`", readErr)
 			return planResult{}, failure
 		}
+		plan, failure = planUpdateWithMarketplaceLock(activeRoot, plan, resolved.Catalog, request.RetryCommand)
+		if failure != nil {
+			return planResult{}, failure
+		}
+		resolved.Plan = plan
 		summary, summaryErr := resolve.SummarizeUpdate(active, plan, resolved.Catalog)
 		if summaryErr != nil {
 			failure := contracts.NewDiag(contracts.CodeOperationFailed, "the installed platform could not be compared with the resolved plan", "verify the active receipt and sealed release index, then rerun `kb-create plan`", summaryErr)
@@ -130,10 +134,6 @@ func receiptArtifactIdentityFailure(err error, index, platformRoot string) *diag
 }
 
 func knownGatewayRoots(executable string) []gateway.Root {
-	state, err := host.StateHome()
-	if err != nil {
-		return nil
-	}
 	known := map[string]gateway.Root{}
 	remember := func(candidate string) {
 		if candidate == "" {
@@ -155,9 +155,18 @@ func knownGatewayRoots(executable string) []gateway.Root {
 	}
 	if owner, ok := shim.Owner(executable); ok {
 		remember(owner)
+		if state, err := host.StateHome(owner); err == nil {
+			if active, ok := host.ActiveHost(state); ok {
+				remember(active.PlatformRoot)
+			}
+		}
 	}
-	if active, ok := host.ActiveHost(state); ok {
-		remember(active.PlatformRoot)
+	if os.Getenv(host.KBHomeEnv) != "" {
+		if state, err := host.StateHome(""); err == nil {
+			if active, ok := host.ActiveHost(state); ok {
+				remember(active.PlatformRoot)
+			}
+		}
 	}
 	result := make([]gateway.Root, 0, len(known))
 	for _, root := range known {
@@ -178,12 +187,69 @@ func activePlatformRoot(installRoot string) (string, error) {
 // used by plan, apply, update, and install. The caller owns operation-specific
 // validation and mutation after resolution.
 func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
-	if input.Index == "" || (input.RequestFile == "" && input.Request == nil && input.Direct.PlatformRoot == "") {
+	if input.Index == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return resolvedPlan{}, failure(contracts.CodeInputRequired, "the home directory could not be determined", "set HOME or pass --index", err)
+		}
+		input.Index = savedReleaseIndex(home)
+	}
+	if input.RequestFile == "" && input.Request == nil && input.Direct.PlatformRoot == "" {
 		return resolvedPlan{}, failure(contracts.CodeInputRequired, "--index and either --input or --platform-root are required", "pass immutable release index plus V2 request JSON or direct CI flags", nil)
 	}
 	source, err := catalog.LoadFile(input.Index)
 	if err != nil {
 		return resolvedPlan{}, indexFailure(err, "supply a valid immutable V2 release index")
+	}
+	registryRoot := input.Direct.PlatformRoot
+	var requestData []byte
+	if input.Request != nil {
+		registryRoot = input.Request.PlatformRoot
+	} else if input.RequestFile != "" {
+		var readErr error
+		requestData, readErr = readRequest(input.RequestFile)
+		if readErr != nil {
+			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a readable V2 request JSON file", readErr)
+		}
+		decoded, decodeErr := transport.DecodeRequest(requestData)
+		if decodeErr != nil {
+			var validation *contracts.RequestValidationError
+			if errors.As(decodeErr, &validation) {
+				diagnostic := validation.Diagnostic()
+				setRequestRetryHint(diagnostic, input, validation.Field)
+				return resolvedPlan{}, diagnostic
+			}
+			return resolvedPlan{}, failure(contracts.CodeIncompatibleComponents, "request could not be read", "supply a readable V2 request JSON file", decodeErr)
+		}
+		registryRoot = decoded.PlatformRoot
+	}
+	registrySource := input.Direct.Registry
+	if registrySource == "" {
+		registrySource = os.Getenv("npm_config_registry")
+	}
+	if registrySource == "" && registryRoot != "" {
+		activeRoot, activeErr := activePlatformRoot(registryRoot)
+		if activeErr == nil {
+			active, readErr := receipt.Read(activeRoot)
+			if readErr != nil {
+				return resolvedPlan{}, failure(contracts.CodeReceiptUnavailable, "recorded registry could not be read", "Inspect the install receipt and rerun the command.", readErr)
+			}
+			registrySource = active.Plan.Registry
+		} else if !errors.Is(activeErr, versionroot.ErrPlatformNotInstalled) {
+			return resolvedPlan{}, unsupportedPlatformLayout(registryRoot, activeErr)
+		}
+	}
+	registrySource, registryErr := artifacts.NormalizeSourceURL(registrySource)
+	if registryErr != nil {
+		return resolvedPlan{}, failure(contracts.CodeInputRequired, "registry source is invalid", "Pass --registry or set npm_config_registry, then rerun the command.", registryErr)
+	}
+	binarySource, sourceErr := selectBinarySource(input.Direct.BinarySource)
+	if sourceErr != nil {
+		return resolvedPlan{}, failure(contracts.CodeInputRequired, "binary source is invalid", "Pass an HTTP(S) base URL without credentials using --binary-source or set "+artifacts.BinarySourceEnv+", then rerun the command.", sourceErr)
+	}
+	planOptions := resolve.Options{LauncherVersion: buildVersion, ProjectRootSelection: input.Operation != "update", BinarySource: binarySource, Registry: registrySource}
+	if input.Operation == "update" {
+		planOptions.Operation = resolve.OperationUpdate
 	}
 	var response transport.PlanResponse
 	if input.Request != nil {
@@ -191,13 +257,23 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		if marshalErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeInputRequired, "install request could not be encoded", "correct direct CI flags or provide --input", marshalErr)
 		}
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion, ProjectRootSelection: input.Operation != "update"})
+		response = transport.PlanWith(data, source, planOptions)
 	} else if input.RequestFile != "" {
-		data, readErr := readRequest(input.RequestFile)
-		if readErr != nil {
-			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a readable V2 request JSON file", readErr)
+		data := requestData
+		if input.Operation == "update" {
+			var request contracts.InstallRequest
+			if err := json.Unmarshal(data, &request); err != nil {
+				return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a readable V2 request JSON file", err)
+			}
+			if sources := input.Direct.marketplaceSources(); sources != nil {
+				request.MarketplaceSources = sources
+				data, err = json.Marshal(request)
+				if err != nil {
+					return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be encoded", "correct the update request JSON, then retry", err)
+				}
+			}
 		}
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion, ProjectRootSelection: input.Operation != "update"})
+		response = transport.PlanWith(data, source, planOptions)
 	} else {
 		request, requestErr := input.Direct.normalize()
 		if requestErr != nil {
@@ -211,7 +287,9 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 				setRequestRetryHint(diagnostic, input, validation.Field)
 				return resolvedPlan{}, diagnostic
 			}
-			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "direct request is invalid", "correct direct CI flags or provide --input", requestErr)
+			diagnostic = failure("KB_INSTALL_INPUT_REQUIRED", "direct request is invalid", "correct direct CI flags or provide --input", requestErr)
+			setRequestRetryHint(diagnostic, input, "request")
+			return resolvedPlan{}, diagnostic
 		}
 		if input.Operation != "update" && request.ProjectRoot != "" {
 			request.ProjectRoot, requestErr = contracts.ValidateProjectSelection(request.ProjectRoot)
@@ -231,6 +309,13 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 			}
 		}
 		if input.ScenarioID != "" {
+			ids, idsErr := scenario.IDs()
+			if idsErr != nil {
+				return resolvedPlan{}, failure("KB_INSTALL_SCENARIO_INVALID", "scenario catalog could not be read", "reinstall kb-create", idsErr)
+			}
+			if !slices.Contains(ids, input.ScenarioID) {
+				return resolvedPlan{}, failure("KB_INSTALL_SCENARIO_INVALID", "unknown scenario", "Pass --scenario with one of: "+strings.Join(ids, ", "), nil)
+			}
 			request, requestErr = compileScenario(input.ScenarioID, input.Answers, input.Resume, request)
 			if requestErr != nil {
 				var staging *versionroot.OwnershipStagingArtifactError
@@ -244,7 +329,11 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		if marshalErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeInputRequired, "direct request is invalid", "correct direct CI flags or provide --input", marshalErr)
 		}
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
+		directOptions := resolve.Options{LauncherVersion: buildVersion, BinarySource: binarySource, Registry: registrySource}
+		if input.Operation == "update" {
+			directOptions.Operation = resolve.OperationUpdate
+		}
+		response = transport.PlanWith(data, source, directOptions)
 	}
 	if !response.OK {
 		if response.Error != nil {
@@ -254,7 +343,7 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		}
 		return resolvedPlan{}, response.Error
 	}
-	state, err := host.StateHome()
+	state, err := host.StateHome(response.Plan.Request.PlatformRoot)
 	if err != nil {
 		return resolvedPlan{}, asDiag(err)
 	}
@@ -265,7 +354,7 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		if layoutErr != nil && !errors.Is(layoutErr, versionroot.ErrPlatformNotInstalled) {
 			return resolvedPlan{}, unsupportedPlatformLayout(root, layoutErr)
 		}
-		registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
+		registry := gateway.Registry{}
 		known := make([]gateway.Root, 0, len(input.KnownGateways))
 		for _, candidate := range input.KnownGateways {
 			if candidate.PlatformRoot == "" || gateway.SameInstallation(candidate.PlatformRoot, root) {
@@ -299,9 +388,9 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		}
 		defaultURL, originErr := gateway.OriginFromHealthURL(response.Plan.Host.HealthURL)
 		if originErr != nil {
-			return resolvedPlan{}, failure(contracts.CodeHostSpecInvalid, "the release Gateway address is invalid", "select a release with a valid loopback Gateway health URL", originErr)
+			return resolvedPlan{}, contracts.HostSpecDiagnostic("the release Gateway address is invalid", "select a release with a valid loopback Gateway health URL", originErr.Error(), originErr)
 		}
-		selectedURL, allocErr := registry.AllocateWithKnown(root, defaultURL, requestedURL, known)
+		selectedURL, allocErr := registry.AllocateWithKnown(root, defaultURL, requestedURL, known, response.Plan.ServiceGraph)
 		if allocErr != nil {
 			return resolvedPlan{}, asDiag(allocErr)
 		}
@@ -310,9 +399,12 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 			return resolvedPlan{}, asDiag(claimErr)
 		}
 		if claimed {
+			if running := host.GatewayResourceConflict(selectedURL, input.Operation, claimant.PlatformRoot); running != nil {
+				return resolvedPlan{}, running
+			}
 			diagnostic, diagnosticErr := gatewayAddressClaimConflict(selectedURL, claimant.PlatformRoot, input.Operation)
 			if diagnosticErr != nil {
-				return resolvedPlan{}, failure(contracts.CodeHostSpecInvalid, "the selected Gateway address is invalid", "choose a valid loopback Gateway URL, then rerun `kb-create "+input.Operation+"`", diagnosticErr)
+				return resolvedPlan{}, contracts.HostSpecDiagnostic("the selected Gateway address is invalid", "choose a valid loopback Gateway URL, then rerun `kb-create "+input.Operation+"`", diagnosticErr.Error(), diagnosticErr)
 			}
 			return resolvedPlan{}, diagnostic
 		}
@@ -323,7 +415,7 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 			if marshalErr != nil {
 				return resolvedPlan{}, failure(contracts.CodeInputRequired, "the install request could not be encoded", "rerun `kb-create plan` with the same request", marshalErr)
 			}
-			response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
+			response = transport.PlanWith(data, source, planOptions)
 			if !response.OK {
 				if response.Error != nil {
 					if field, ok := response.Error.Meta["field"].(string); ok {
@@ -351,58 +443,170 @@ func gatewayAddressClaimConflict(gatewayURL, platformRoot, operation string) (*d
 }
 
 func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {
-	operation := input.Operation
-	args := []string{"kb-create", operation}
-	appendFlag := func(name, value string) {
-		if value != "" {
-			args = append(args, "--"+name, value)
-		}
-	}
-	appendFlag("index", input.Index)
-	if input.RequestFile != "" {
-		appendFlag("input", input.RequestFile)
-	} else {
-		appendFlag("platform-root", input.Direct.PlatformRoot)
-		appendFlag("project-root", input.Direct.ProjectRoot)
-		appendFlag("platform-version", input.Direct.PlatformVersion)
-		appendFlag("platform-channel", input.Direct.PlatformChannel)
-		// Gateway URLs can contain credentials; scenario answer JSON can contain secrets.
-		appendFlag("sdk-version", input.Direct.SDKVersion)
-		appendFlag("service-profile", input.Direct.ServiceProfile)
-		appendFlag("plugins", input.Direct.Plugins)
-		appendFlag("adapters", input.Direct.Adapters)
-		for _, provider := range input.Direct.Providers {
-			appendFlag("provider", provider)
-		}
-		appendFlag("policy", input.Direct.Policy)
-		if input.Direct.Offline {
-			args = append(args, "--offline")
-		}
-		appendFlag("scenario", input.ScenarioID)
-	}
-	args = append(args, "--json")
-	command := contracts.ShellCommand(args...)
-	var retry string
-	if input.RequestFile != "" {
-		retry = fmt.Sprintf("Correct %s in request file %s, then retry: %s", field, contracts.ShellQuote(input.RequestFile), command)
-	} else {
-		retry = fmt.Sprintf("Correct %s using the corresponding request flag, then retry: %s", field, command)
-		if input.ScenarioID != "" {
-			// Scenario answers can contain secret values, so keep them out of diagnostics.
-			retry += " Reuse the scenario answers from your original command if needed."
-		}
-	}
-	catalogEntry, catalogued := diag.LookupCatalog(diagnostic.Code)
-	if diagnostic.Hint == "" || (catalogued && diagnostic.Hint == catalogEntry.Hint) {
-		diagnostic.Hint = retry
-	} else {
-		diagnostic.Hint += " " + retry
-	}
 	if diagnostic.Meta == nil {
-		diagnostic.Meta = map[string]any{}
+		diagnostic.Meta = make(map[string]any)
 	}
 	diagnostic.Meta["field"] = field
+	if len(input.Arguments) == 0 {
+		return
+	}
+	command, variables := retryArguments(input.Arguments)
+	diagnostic.Hint += " Retry: " + command
+	if len(variables) > 0 {
+		diagnostic.Hint += " Set " + strings.Join(variables, ", ") + " before retrying. Use URL-encoded passwords and JSON-escaped string contents for scenario secrets."
+	}
 }
+
+func retryArguments(args []string) (string, []string) {
+	parts := []string{contracts.ShellQuote("kb-create")}
+	var variables []string
+	for i, arg := range args {
+		name, value, hasEquals := strings.Cut(arg, "=")
+		if (i > 0 && args[i-1] == "--scenario-answers") || (hasEquals && name == "--scenario-answers") {
+			prefix := ""
+			if hasEquals && name == "--scenario-answers" {
+				prefix = contracts.ShellQuote(name + "=")
+			} else {
+				value = arg
+			}
+			redacted, required := retryScenarioAnswers(value)
+			parts = append(parts, prefix+redacted)
+			variables = append(variables, required...)
+			continue
+		}
+		urlValue, optionPrefix := arg, ""
+		flagName := ""
+		if hasEquals && strings.HasPrefix(name, "--") {
+			urlValue, optionPrefix = value, name+"="
+			flagName = strings.TrimPrefix(name, "--")
+		} else if i > 0 {
+			flagName = strings.TrimPrefix(args[i-1], "--")
+		}
+		parsed, err := url.Parse(urlValue)
+		if definition, exists := flagCatalog[flagName]; exists && definition.URL && (err != nil || parsed.Host == "") {
+			start := strings.Index(urlValue, "://")
+			if start >= 0 {
+				start += 3
+			} else {
+				start = 0
+			}
+			authority := urlValue[start:]
+			if end := strings.IndexAny(authority, "/?#"); end >= 0 {
+				authority = authority[:end]
+			}
+			at := strings.LastIndexByte(authority, '@')
+			if at >= 0 {
+				colon := strings.IndexByte(authority[:at], ':')
+				if colon >= 0 {
+					variable := fmt.Sprintf("%s_%d", diag.KB_URL_PASSWORD, len(variables)+1)
+					parts = append(parts, contracts.ShellQuote(optionPrefix+urlValue[:start+colon+1])+retryVariable(variable)+contracts.ShellQuote(urlValue[start+at:]))
+					variables = append(variables, variable)
+					continue
+				}
+			}
+		}
+		if err == nil && parsed.User != nil && parsed.Scheme != "" && parsed.Host != "" {
+			_, hasPassword := parsed.User.Password()
+			if !hasPassword {
+				parts = append(parts, contracts.ShellQuote(arg))
+				continue
+			}
+			start := strings.Index(urlValue, "://") + 3
+			end := strings.Index(urlValue[start:], "@"+parsed.Host)
+			if start < 3 || end < 0 {
+				variable := fmt.Sprintf("%s_%d", diag.KB_URL_PASSWORD, len(variables)+1)
+				parts = append(parts, contracts.ShellQuote(optionPrefix)+retryVariable(variable))
+				variables = append(variables, variable)
+				continue
+			}
+			colon := strings.IndexByte(urlValue[start:start+end], ':')
+			if colon < 0 {
+				variable := fmt.Sprintf("%s_%d", diag.KB_URL_PASSWORD, len(variables)+1)
+				parts = append(parts, contracts.ShellQuote(optionPrefix)+retryVariable(variable))
+				variables = append(variables, variable)
+				continue
+			}
+			variable := fmt.Sprintf("%s_%d", diag.KB_URL_PASSWORD, len(variables)+1)
+			parts = append(parts, contracts.ShellQuote(optionPrefix+urlValue[:start+colon+1])+retryVariable(variable)+contracts.ShellQuote(urlValue[start+end:]))
+			variables = append(variables, variable)
+			continue
+		}
+		parts = append(parts, contracts.ShellQuote(arg))
+	}
+	return strings.Join(parts, " "), variables
+}
+
+func retryScenarioAnswers(value string) (string, []string) {
+	var answers map[string]json.RawMessage
+	if json.Unmarshal([]byte(value), &answers) != nil || answers == nil {
+		return retryVariable(diag.KB_SCENARIO_ANSWERS), []string{diag.KB_SCENARIO_ANSWERS}
+	}
+	ids, err := scenario.IDs()
+	if err != nil {
+		return retryVariable(diag.KB_SCENARIO_ANSWERS), []string{diag.KB_SCENARIO_ANSWERS}
+	}
+	fields := map[string]bool{}
+	for _, id := range ids {
+		definition, err := scenario.Load(id)
+		if err != nil {
+			return retryVariable(diag.KB_SCENARIO_ANSWERS), []string{diag.KB_SCENARIO_ANSWERS}
+		}
+		for _, field := range definition.Fields {
+			fields[field.ID] = fields[field.ID] || field.Secret
+		}
+		for _, page := range definition.Pages {
+			for _, section := range page.Sections {
+				for _, field := range section.Fields {
+					fields[field.ID] = fields[field.ID] || field.Secret
+				}
+			}
+		}
+	}
+	decoder := json.NewDecoder(strings.NewReader(value))
+	if _, err := decoder.Token(); err != nil {
+		return retryVariable(diag.KB_SCENARIO_ANSWERS), []string{diag.KB_SCENARIO_ANSWERS}
+	}
+	var parts []string
+	var variables []string
+	last := 0
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return retryVariable(diag.KB_SCENARIO_ANSWERS), []string{diag.KB_SCENARIO_ANSWERS}
+		}
+		key, ok := token.(string)
+		if !ok {
+			return retryVariable(diag.KB_SCENARIO_ANSWERS), []string{diag.KB_SCENARIO_ANSWERS}
+		}
+		start := int(decoder.InputOffset())
+		for start < len(value) && (value[start] == ':' || value[start] == ' ' || value[start] == '\n' || value[start] == '\r' || value[start] == '\t') {
+			start++
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return retryVariable(diag.KB_SCENARIO_ANSWERS), []string{diag.KB_SCENARIO_ANSWERS}
+		}
+		end := int(decoder.InputOffset())
+		secret, known := fields[key]
+		if secret || !known {
+			var stringValue string
+			if json.Unmarshal(raw, &stringValue) != nil {
+				return retryVariable(diag.KB_SCENARIO_ANSWERS), []string{diag.KB_SCENARIO_ANSWERS}
+			}
+			variable := fmt.Sprintf("%s_%d", diag.KB_SCENARIO_SECRET, len(variables)+1)
+			parts = append(parts, contracts.ShellQuote(value[last:start]+`"`)+retryVariable(variable)+contracts.ShellQuote(`"`))
+			variables = append(variables, variable)
+			last = end
+		}
+	}
+	if len(variables) == 0 {
+		return contracts.ShellQuote(value), nil
+	}
+	parts = append(parts, contracts.ShellQuote(value[last:]))
+	return strings.Join(parts, ""), variables
+}
+
+func retryVariable(name string) string { return `"$` + name + `"` }
 
 func readRequest(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
@@ -418,4 +622,24 @@ func indexFailure(err error, hint string) *diag.Diag {
 		return typed
 	}
 	return contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index could not be loaded.", hint, err)
+}
+
+// selectBinarySource resolves command input once before building the immutable plan.
+func selectBinarySource(flag string) (string, error) {
+	source := flag
+	if source == "" {
+		source = os.Getenv(artifacts.BinarySourceEnv)
+	}
+	if source == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		data, err := os.ReadFile(filepath.Join(filepath.Dir(savedReleaseIndex(home)), "binary-source"))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		source = strings.TrimSpace(string(data))
+	}
+	return artifacts.NormalizeSourceURL(source)
 }

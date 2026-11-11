@@ -1,11 +1,13 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 import { withWs, expectWsMessage, expectWsClose } from '@kb-labs/shared-testing-e2e';
 import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
 import { getAccessToken } from '@kb-labs/e2e-shared/auth.js';
+import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
 
 const GATEWAY_WS = GATEWAY.replace(/^http/, 'ws');
+const projectId = process.env.KB_PROJECT_ID;
 
-async function startRun(request: Parameters<Parameters<typeof test>[1]>[0]['request']): Promise<string> {
+async function startRun(request: APIRequestContext): Promise<string> {
   const catalogRes = await request.get(`${WORKFLOW}/api/v1/workflows`);
   const catalog = await catalogRes.json();
   const workflows: Array<{ id?: string; name?: string }> =
@@ -22,17 +24,18 @@ async function startRun(request: Parameters<Parameters<typeof test>[1]>[0]['requ
 }
 
 function logsWsUrl(jobId: string): string {
-  return `${GATEWAY_WS}/api/v1/ws/plugins/workflow/logs/${jobId}`;
+  return `${GATEWAY_WS}${projectWorkflowRoute(projectId!, `ws/logs/${encodeURIComponent(jobId)}`)}`;
 }
 
 // WS upgrade requests go through the gateway like any other route since the
 // GHSA-75rf-rhxh-2p52 fix — a valid token is required here too.
-async function authHeaders(request: Parameters<Parameters<typeof test>[1]>[0]['request']) {
+async function authHeaders(request: APIRequestContext) {
   const token = await getAccessToken(request);
   return { headers: { Authorization: `Bearer ${token}` } };
 }
 
 test('WS-L01: subscribe → receive log stream', async ({ request }) => {
+  expect(projectId, 'KB_PROJECT_ID must identify the registered workflow project').toBeTruthy();
   const runId = await startRun(request);
 
   await withWs(logsWsUrl(runId), async (ws) => {
@@ -51,6 +54,7 @@ test('WS-L01: subscribe → receive log stream', async ({ request }) => {
 });
 
 test('WS-L02: level filter — warn level excludes debug/info messages', async ({ request }) => {
+  expect(projectId, 'KB_PROJECT_ID must identify the registered workflow project').toBeTruthy();
   const runId = await startRun(request);
 
   await withWs(logsWsUrl(runId), async (ws) => {
@@ -68,6 +72,7 @@ test('WS-L02: level filter — warn level excludes debug/info messages', async (
 });
 
 test('WS-L03: unknown runId — server sends a classified error, does not hang', async ({ request }) => {
+  expect(projectId, 'KB_PROJECT_ID must identify the registered workflow project').toBeTruthy();
   await withWs(logsWsUrl('nonexistent-job-xyz'), async (ws) => {
     ws.send({ type: 'subscribe', jobId: 'nonexistent-job-xyz' });
 
@@ -84,6 +89,7 @@ test('WS-L03: unknown runId — server sends a classified error, does not hang',
 });
 
 test('WS-L04: unsubscribe stops the log stream', async ({ request }) => {
+  expect(projectId, 'KB_PROJECT_ID must identify the registered workflow project').toBeTruthy();
   const runId = await startRun(request);
 
   await withWs(logsWsUrl(runId), async (ws) => {
@@ -102,6 +108,7 @@ test('WS-L04: unsubscribe stops the log stream', async ({ request }) => {
 });
 
 test('WS-L05: client disconnect does not leak — server handles cleanup', async ({ request }) => {
+  expect(projectId, 'KB_PROJECT_ID must identify the registered workflow project').toBeTruthy();
   const runId = await startRun(request);
 
   // Connect, subscribe, then immediately close

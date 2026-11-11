@@ -18,7 +18,7 @@
  */
 
 import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { gatewayApiFetch, readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch, readGatewaySuccessData } from '@kb-labs/sdk/gateway';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { ErrorEnvelopeError } from '@kb-labs/core-platform';
 

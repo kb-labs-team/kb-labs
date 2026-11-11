@@ -146,7 +146,8 @@ def studio_playwright_output_directory(report: Path) -> Path:
 
 
 def run_studio_browser_step(command: list[str], env: dict[str, str], report: Path,
-                            mode: str, shell_passed: bool, timeout: int = 180) -> tuple[bool, float, str]:
+                            mode: str, shell_passed: bool, timeout: int = 180, *,
+                            cases: list[str] | None = None) -> tuple[bool, float, str]:
     if not shell_passed:
         message = "Playwright was not run because the Studio shell check failed"
         _record_step(report, mode, "BLOCKED", 0.0, message)
@@ -227,7 +228,7 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
     record_invocation(kind="command", argv=command, cwd=Path.cwd(), env=env,
                       exit_code=return_code, stdout="\n".join(output_lines),
                       duration_seconds=elapsed, error=invocation_error)
-    evidence = invocation_link("S-106.1,S-106.2,S-106.3,S-106.4,S-106.5,S-106.6,S-107.1,S-107.2,S-107.3")
+    evidence = invocation_link(",".join(cases or []))
     if not passed and evidence:
         message += f"; invocation evidence: {evidence}"
 

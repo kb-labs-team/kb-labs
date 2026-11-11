@@ -230,9 +230,9 @@ fi
 stage "${STAGE_NAMES[2]}" node ./cli/bin/dist/bin.js qa cases validate || exit 1
 # The release plugin (Commit) suites always run: a change elsewhere must not
 # leave the only release-contour plugin untested (they were red unnoticed).
-RELEASE_PLUGIN_PACKAGES='@kb-labs/commit-entry,@kb-labs/commit-core'
+RELEASE_PLUGIN_PACKAGES='@kb-labs/commit,@kb-labs/commit/core'
 stage "${STAGE_NAMES[3]}" bash -c 'env KB_DEVKIT_BASE_REF=local/main...HEAD "$1" run lint type-check test --affected && "$1" run test --packages "$2"' _ "$DEVKIT_BIN" "$RELEASE_PLUGIN_PACKAGES" || exit 1
-TEMP_HOME="$(mktemp -d)"
+TEMP_HOME="$(mktemp -d "${TMPDIR:-/tmp}/kb-create-local-gate.XXXXXX")"
 go_index=0
 while IFS= read -r package; do stage "${STAGE_NAMES[$((GO_STAGE_START + go_index))]}" bash -c 'cd tools/kb-create && env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET HOME="$1" go test "$2"' _ "$TEMP_HOME" "$package" || exit 1; go_index=$((go_index + 1)); done <<< "$go_packages"
 fi

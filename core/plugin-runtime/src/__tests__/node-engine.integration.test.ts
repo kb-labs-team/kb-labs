@@ -10,7 +10,7 @@ import { nodeVersionSupported, readNodeEnginePolicy } from '../platform-resolve/
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const runtimeManifest = join(packageRoot, 'package.json');
 const runtimeEntry = join(packageRoot, 'dist/index.js');
-const requiredMajor = String(readNodeEnginePolicy(runtimeManifest).requiredMajor);
+const requiredMajor = readNodeEnginePolicy(runtimeManifest).requiredMajor;
 const olderNode = findOlderNode();
 
 describe('built runtime Node.js engine boundary', () => {
@@ -52,11 +52,11 @@ describe('built runtime Node.js engine boundary', () => {
     const catalog = getCatalogEntry('KB_NODE_VERSION_UNSUPPORTED');
     expect(catalog).toBeDefined();
     const expected = createErrorEnvelope('KB_NODE_VERSION_UNSUPPORTED', {
-      details: { requiredMajor, actualVersion },
+      details: { requiredMajor: String(requiredMajor), actualVersion },
     });
     expect(response.envelope).toMatchObject({
       code: 'KB_NODE_VERSION_UNSUPPORTED',
-      details: { requiredMajor, actualVersion },
+      details: { requiredMajor: String(requiredMajor), actualVersion },
       message: expected.message,
       hint: expected.hint,
     });
@@ -81,11 +81,11 @@ function findOlderNode(): string | undefined {
 
   for (const candidate of candidates) {
     if (!existsSync(candidate)) {
-      if (explicit) throw new Error(`KB_TEST_OLD_NODE does not exist: ${candidate}`);
+      if (explicit) {throw new Error(`KB_TEST_OLD_NODE does not exist: ${candidate}`);}
       throw new Error(`NVM Node executable does not exist: ${candidate}`);
     }
     const version = execFileSync(candidate, ['--version'], { encoding: 'utf8', timeout: 5000 }).trim();
-    if (!nodeVersionSupported(requiredMajor, version)) return candidate;
+    if (!nodeVersionSupported(requiredMajor, version)) {return candidate;}
     if (explicit) {
       throw new Error(`KB_TEST_OLD_NODE ${candidate} reports ${version}, which satisfies Node.js ${requiredMajor}.x; choose an older Node binary.`);
     }

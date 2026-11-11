@@ -315,10 +315,10 @@ rm -r kb-labs-agents/packages/agent-core/src/context
 rm kb-labs-agents/packages/agent-core/src/tools/context-retrieve.ts
 
 # 3. Rebuild
-pnpm --filter @kb-labs/agent-core run build
+pnpm --filter @kb-labs/agents/core run build
 
 # 4. Verify rollback
-pnpm --filter @kb-labs/agent-core test
+pnpm --filter @kb-labs/agents/core test
 ```
 
 ### Future Enhancements

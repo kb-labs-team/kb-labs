@@ -1,7 +1,7 @@
 ---
 title: "Services"
 description: "The platform services: what runs, what ports they bind, how they compose."
-updatedAt: "2026-10-02"
+updatedAt: "2026-10-21"
 ---
 
 KB Labs is not a monolith. It's a small collection of focused services that talk to each other over HTTP (and one WebSocket tunnel for the host agent). Each service is independently deployable, has its own manifest, and can be started via [`kb-dev`](https://github.com/kb-labs-team/kb-labs/tree/main/tools/kb-dev).
@@ -46,28 +46,26 @@ KB Labs is not a monolith. It's a small collection of focused services that talk
 |---|---|---|---|
 | [**Gateway**](/gateway) | 4000 | `services/gateway` | Central HTTP router, aggregates upstreams, auth termination, WebSocket dispatch |
 | [**REST API**](/services/rest-api) | 5050 | `services/rest-api` | Fastify service hosting plugin REST routes, platform endpoints, OpenAPI |
-| [**Workflow Daemon**](/services/workflow-daemon) | 7778 | `plugins/workflow/daemon` | Workflow engine, job broker, cron scheduler, approvals API |
-| [**Marketplace**](/services/marketplace) | 5070 | `plugins/marketplace` | Install, uninstall, discover entities; manages `.kb/marketplace.lock` |
+| [**Workflow Daemon**](/services/workflow-daemon) | 7778 | `services/workflow/daemon` | Workflow engine, job broker, cron scheduler, approvals API |
+| [**Marketplace**](/services/marketplace) | 5070 | `services/marketplace` | Install, uninstall, discover entities; manages `.kb/marketplace.lock` |
 | **Project MCP** | Project runtime | `services/mcp` | Exposes the registered project's plugin commands through its host-scoped Streamable HTTP endpoint |
 | **State Daemon** | Host-assigned loopback port | `core/state-broker` | State Broker HTTP server for distributed rate limiting and quotas |
 
-The Workflow Daemon's command surface is supplied by the companion package
-`@kb-labs/workflow-entry`. When `kb-create` installs a Platform release, it
-installs that companion at the same resolved Platform version as the daemon;
-it is not independently tracked as `latest`.
+The `kb workflow` command group is built into the platform CLI alongside the
+Workflow Daemon; it is available without installing a workflow plugin.
 
 ### User-invoked
 
 | Service | Entry | What it does |
 |---|---|---|
 | [**CLI**](/services/cli) | `cli` | The `kb` command — loads plugins, dispatches commands, renders output |
-| [**Studio**](/services/studio) | `studio/app` | React SPA, hosts plugin pages via Module Federation |
+| [**Studio**](/services/studio) | `studio/app` | React SPA, hosts built-in routes and plugin pages |
 
 ### End-user daemons
 
 | Service | Entry | What it does |
 |---|---|---|
-| [**Host Agent**](/services/host-agent) | `plugins/host-agent` | Runs on developer laptops, tunnels local filesystem and git to cloud workflows |
+| [**Host Agent**](/services/host-agent) | `services/host-agent` | Runs on developer laptops, tunnels local filesystem and git to cloud workflows |
 
 ## Shared patterns
 

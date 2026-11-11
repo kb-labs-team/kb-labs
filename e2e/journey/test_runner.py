@@ -14,9 +14,77 @@ from contextlib import ExitStack, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+import jsonl
 from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
+from installer_case_steps import commit_marketplace_install_record
+import runner
+from runner import REGISTRY, marketplace_install_flags
+
+
+class WorkflowHostStateBoundaryTests(unittest.TestCase):
+    # case: S-262.9
+    def test_host_state_is_reprobed_after_a_workflow_failure(self):
+        journey = Journey("local", "workflow-boundary-test")
+        graph = FlowGraph(journey, {"studio": ("host-running",)})
+        graph.invalidate_state("host-running", group="workflow", step="restart",
+                               evidence="workflow restart failed")
+
+        def fail_workflow():
+            raise RuntimeError("workflow assertion failed")
+
+        with patch.object(runner, "host_running_probe", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "workflow assertion failed"):
+                runner.run_workflow_with_host_boundary(
+                    graph, env={}, launcher="kb-create", action=fail_workflow)
+
+        self.assertIs(graph.states["host-running"]["passed"], True)
+        later_group_ran = []
+        outcome = graph.flow("unrelated group", "studio", "studio",
+                             lambda: later_group_ran.append(True))
+        self.assertEqual(outcome, "PASS")
+        self.assertEqual(later_group_ran, [True])
+
+    # case: S-262.9
+    def test_unhealthy_host_reprobe_keeps_dependent_flow_blocked(self):
+        journey = Journey("local", "workflow-boundary-unhealthy-test")
+        graph = FlowGraph(journey, {"studio": ("host-running",)})
+        graph.invalidate_state("host-running", group="workflow", step="restart",
+                               evidence="workflow restart failed")
+
+        def fail_workflow():
+            raise RuntimeError("workflow assertion failed")
+
+        with patch.object(runner, "host_running_probe", return_value="gateway is unhealthy") as probe:
+            with self.assertRaisesRegex(RuntimeError, "workflow assertion failed"):
+                runner.run_workflow_with_host_boundary(
+                    graph, env={}, launcher="kb-create", action=fail_workflow)
+        probe.assert_called_once()
+
+        self.assertIs(graph.states["host-running"]["passed"], False)
+        later_group_ran = []
+        outcome = graph.flow("dependent studio group", "studio", "studio",
+                             lambda: later_group_ran.append(True))
+        self.assertEqual(outcome, "BLOCKED")
+        self.assertEqual(later_group_ran, [])
+        self.assertIn("gateway is unhealthy", graph.state_failure("host-running"))
+
+
+class MarketplaceInstallFlagTests(unittest.TestCase):
+    def test_default_lane_passes_npm_mirror_without_registry_credentials(self):
+        env = {"HOME": "/tmp/kb-journey-test-home"}
+
+        self.assertEqual(marketplace_install_flags(env), ["--marketplace-npm-url", REGISTRY])
+
+    def test_clean_install_requires_the_marketplace_commit_receipt(self):
+        self.assertIsNotNone(commit_marketplace_install_record({"marketplaceInstalls": [
+            {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+        ]}))
+        self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": []}))
+        self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": [
+            {"spec": "@kb-labs/commit", "id": "@kb-labs/other", "primaryKind": "plugin"},
+        ]}))
 
 
 def state_environment_reader_violations(sources: dict[str, str]) -> list[str]:
@@ -133,6 +201,24 @@ def build_wizard_pty_fixture(binary: Path) -> None:
 
 
 class RunnerInstallFailureTests(unittest.TestCase):
+    def test_installer_command_forwards_input_to_the_shared_command_runner(self):
+        runner = importlib.import_module("runner")
+        received = {}
+
+        def capture(args, *, env, timeout, input_text):
+            received.update(args=args, env=env, timeout=timeout, input_text=input_text)
+            return "result", 0.1
+
+        with patch.object(runner, "run", capture):
+            result = runner.installer_command(
+                ["kb-create", "install"], env={"PATH": "/bin"}, secret="journey-admin-secret",
+                input="installer response\n",
+            )
+
+        self.assertEqual(result, "result")
+        self.assertEqual(received["input_text"], "installer response\n")
+        self.assertEqual(received["timeout"], 1200)
+
     def test_confirmation_hint_preserves_invocation_arguments_and_adds_yes(self):
         runner = importlib.import_module("runner")
         invocation = ["/tmp/bin/kb-create", "uninstall", "--platform-root", "/tmp/a b",
@@ -391,7 +477,7 @@ thread.join()
         runner = importlib.import_module("runner")
         setup = runner.runner_scenario("commit", secured=True)
         self.assertEqual(setup["installer"], "custom")
-        self.assertEqual(setup["marketplace_packages"], ("@kb-labs/commit-entry",))
+        self.assertEqual(setup["marketplace_packages"], ("@kb-labs/commit",))
         self.assertEqual(setup["command_help_paths"], (("commit", "commit", "--help"),))
 
     def test_local_commit_scenario_uses_commit_installer_scenario(self):
@@ -573,15 +659,18 @@ thread.join()
         runtime_manifest = platform_current / "node_modules" / "@kb-labs" / "plugin-runtime" / "package.json"
         runtime_manifest.parent.mkdir(parents=True)
         shutil.copyfile(Path(__file__).resolve().parents[2] / "core/plugin-runtime/package.json", runtime_manifest)
-        receipt = platform_current / ".kb" / "v2" / "receipt.json"
-        receipt.parent.mkdir(parents=True)
-        receipt.write_text(json.dumps({"id": "receipt-main",
-                                       "plan": {"request": {},
-                                                "serviceGraph": {"platformVersion": "2.120.1"},
-                                                "artifacts": [{"id": "fixture-package", "kind": "plugin",
-                                                               "package": "@kb-labs/fixture-package",
-                                                               "version": "1.0.0"}]}}),
-                           encoding="utf-8")
+        receipt_path = platform_current / ".kb" / "v2" / "receipt.json"
+        receipt_path.parent.mkdir(parents=True)
+        install_receipt = {
+            "id": "receipt-main",
+            "plan": {"request": {"scenarioId": "commit"},
+                     "serviceGraph": {"platformVersion": "2.120.1"},
+                     "artifacts": [{"id": "fixture-package", "kind": "plugin",
+                                    "package": "@kb-labs/fixture-package", "version": "1.0.0"}]},
+            "marketplaceInstalls": [{"id": "@kb-labs/commit", "spec": "@kb-labs/commit@1.0.0",
+                                     "version": "1.0.0", "source": "registry"}],
+        }
+        receipt_path.write_text(json.dumps(install_receipt), encoding="utf-8")
         selection = selection if selection is not None else "PC-001.2,PC-002.3,PC-002.8"
         if selected_owners is None:
             selected_owners = {
@@ -691,15 +780,14 @@ thread.join()
                 output_path.write_text(json.dumps(payload), encoding="utf-8")
                 output = "service runner passed"
             elif "install" in argv and "--json" in argv:
-                result_record = {"ok": True, "data": {"receipt": {"id": "receipt-main", "plan": {
-                    "serviceGraph": {"platformVersion": "2.120.1"}, "artifacts": [{"id": "fixture"}],
-                }}, "firstAdmin": {"email": "journey-admin@example.test",
+                result_record = {"ok": True, "data": {"receipt": install_receipt,
+                    "firstAdmin": {"email": "journey-admin@example.test",
                     "password": "JourneyPassw0rd!", "state": "disclosed"}},
                     "meta": {"stream": {"result": True}}}
                 terminal = {"ok": True, "data": None, "meta": {"stream": {
                     "terminal": True, "exitCode": 0,
                 }}}
-                output = json.dumps(result_record) + "\n" + json.dumps(terminal)
+                output = jsonl.encode_jsonl_records((result_record, terminal))
             else:
                 output = json.dumps({"ok": True, "data": {}})
             return subprocess.CompletedProcess(command, returncode, output, ""), 0.0
@@ -841,6 +929,7 @@ thread.join()
         self.assertTrue(service["states"]["fixtures-installed"]["value"]["projectBRoot"])
 
     def test_main_runs_selected_update_journey_owner_and_fails_when_it_registers_no_row(self):
+        runner = importlib.import_module("runner")
         owner_name = "helper-owned selected claim"
         claim = "S-100.1"
         selected_owners = {owner_name: [claim]}
@@ -852,20 +941,24 @@ thread.join()
             return journey
 
         with tempfile.TemporaryDirectory(prefix="journey-main-selected-update-") as temporary:
-            code, output, _service, outer, _observed = self._run_selected_main(
-                Path(temporary), "local", selection=claim, selector="agent:commit",
-                scenario="commit", selected_owners=selected_owners,
-                extra_update_group=update_group, update_runner=update_with_owner)
+            with patch("runner.project_b_fixture_from_state",
+                       return_value=runner.ProjectBRootValid(project_id="prj_b", root=Path(temporary))):
+                code, output, _service, outer, _observed = self._run_selected_main(
+                    Path(temporary), "local", selection=claim, selector="agent:commit",
+                    scenario="commit", selected_owners=selected_owners,
+                    extra_update_group=update_group, update_runner=update_with_owner)
         self.assertEqual(code, 0, output)
         self.assertIn(owner_name, [step["name"] for step in outer["steps"]])
         self.assertNotIn(f"SKIPPED {owner_name}: not selected", output)
 
         with tempfile.TemporaryDirectory(prefix="journey-main-missing-update-row-") as temporary:
-            code, output, _service, outer, _observed = self._run_selected_main(
-                Path(temporary), "local", selection=claim, selector="agent:commit",
-                scenario="commit", selected_owners=selected_owners,
-                extra_update_group=update_group,
-                update_runner=lambda **_kwargs: Journey("local", "unregistrable-update-journey"))
+            with patch("runner.project_b_fixture_from_state",
+                       return_value=runner.ProjectBRootValid(project_id="prj_b", root=Path(temporary))):
+                code, output, _service, outer, _observed = self._run_selected_main(
+                    Path(temporary), "local", selection=claim, selector="agent:commit",
+                    scenario="commit", selected_owners=selected_owners,
+                    extra_update_group=update_group,
+                    update_runner=lambda **_kwargs: Journey("local", "unregistrable-update-journey"))
         self.assertEqual(code, 1, output)
         self.assertIn("selected step never ran", output)
         self.assertIn(owner_name, output)
@@ -890,12 +983,12 @@ thread.join()
                       outer["case_run"]["claims"])
         self.assertTrue(service["states"]["fixtures-installed"]["value"]["projectBRoot"])
         self.assertEqual(len(variant_args), 1)
-        self.assertEqual(variant_args[0]["project_b"],
-                         Path(service["states"]["fixtures-installed"]["value"]["projectBRoot"]))
+        self.assertEqual(variant_args[0]["project_b"].resolve(),
+                         Path(service["states"]["fixtures-installed"]["value"]["projectBRoot"]).resolve())
         self.assertEqual(observed["fixture_calls"], isolated_groups)
-        self.assertEqual(observed["host_cycle"], ["stop", "start", "stop", "start"])
+        self.assertEqual(observed["host_cycle"], ["stop", "start", "stop", "start", "stop"])
         self.assertEqual(observed["events"], [
-            "host:stop", "host:start", "host:stop", *isolated_groups, "host:start",
+            "host:stop", "host:start", "host:stop", *isolated_groups, "host:start", "host:stop",
         ])
 
     def test_failed_update_keeps_candidate_version_known_and_runs_independent_cleanup(self):
@@ -1022,8 +1115,8 @@ thread.join()
 
         with tempfile.TemporaryDirectory(prefix="journey-main-selected-update-") as temporary:
             with patch("runner.project_b_fixture_from_state",
-                       return_value={"projectBId": "prj_b",
-                                     "projectBRoot": str(Path(temporary) / "project-b")}):
+                       return_value=runner.ProjectBRootValid(
+                           project_id="prj_b", root=Path(temporary))):
                 code, output, _service, outer, _observed = self._run_selected_main(
                     Path(temporary), "secured", selection="S-100.1",
                     selector="service-secured:explore", selected_owners=owning,
@@ -1080,8 +1173,8 @@ thread.join()
 
         with tempfile.TemporaryDirectory(prefix="journey-main-full-secured-update-") as temporary:
             with patch("runner.project_b_fixture_from_state",
-                       return_value={"projectBId": "prj_b",
-                                     "projectBRoot": str(Path(temporary) / "project-b")}):
+                       return_value=runner.ProjectBRootValid(
+                           project_id="prj_b", root=Path(temporary))):
                 code, output, _service, _outer, _observed = self._run_selected_main(
                     Path(temporary), "secured", selection="", selector="service-secured:explore",
                     update_runner=full_update, update_variant_runner=full_variants,
@@ -1358,8 +1451,8 @@ thread.join()
                 second.step("second claim", "test", lambda: None, cases=["S-042.2"])
                 second.step("third claim", "test", lambda: None, cases=["S-042.3"])
             results = [journey.result().__dict__ for journey in Journey.run_instances()]
-            with patch.object(runner, "FIRST_FAILURE", ""):
-                self.assertEqual(runner.check_selected_claim_completion(results, selected), [])
+            with patch.object(runner, "CASE_JOURNEY", first), patch.object(runner, "FIRST_FAILURE", ""):
+                self.assertEqual(runner.check_selected_claim_completion(results), [])
                 self.assertEqual(runner.FIRST_FAILURE, "")
         finally:
             Journey.reset_run_registry()
@@ -1369,16 +1462,47 @@ thread.join()
             with patch("tempfile.mkdtemp", return_value=temporary):
                 runner = importlib.import_module("runner")
 
-        with patch.object(runner, "FIRST_FAILURE", ""):
+        with patch.dict(os.environ, {
+                "KB_JOURNEY_CASES": "S-042.1,S-042.2,S-042.3",
+                "KB_JOURNEY_SELECTED_STEPS": "S-042.1,S-042.2,S-042.3",
+        }, clear=False):
+            journey = Journey("local", "missing-claim-completion")
+        with patch.object(runner, "CASE_JOURNEY", journey), patch.object(runner, "FIRST_FAILURE", ""):
             runner.check_selected_claim_completion(
-                [{"steps": [{"status": "PASS", "cases": ["S-042.1"]}]}],
-                "S-042.1,S-042.2,S-042.3",
-            )
+                [{"steps": [{"status": "PASS", "cases": ["S-042.1"]}]}])
             self.assertEqual(
                 runner.FIRST_FAILURE,
                 "selected claim steps did not execute: S-042.2, S-042.3; "
                 "the selected runner did not call their registered step functions",
             )
+
+    def test_split_mode_resolver_claims_are_the_runner_completion_selection(self):
+        from select_from_cases import coverage_results, selection_from_coverage
+
+        requested = "S-045.4,S-045.5"
+        coverage = coverage_results()
+        Journey.reset_run_registry()
+        try:
+            for mode in ("local", "secured"):
+                resolved = selection_from_coverage(
+                    coverage, requested, mode=mode, requested_runners="")
+                self.assertEqual(len(resolved["steps"]), 1)
+                env = {
+                    "KB_JOURNEY_CASES": requested,
+                    "KB_JOURNEY_SELECTED_STEPS": ",".join(resolved["steps"]),
+                }
+                with patch.dict(os.environ, env, clear=False):
+                    journey = Journey(mode, f"split-mode-completion-{mode}")
+                    journey.step("selected claim", "journey.test", lambda: None,
+                                 cases=resolved["steps"])
+                with patch.object(runner, "CASE_JOURNEY", journey), \
+                        patch.object(runner, "FIRST_FAILURE", ""):
+                    self.assertEqual(
+                        runner.check_selected_claim_completion([journey.result().__dict__]), [])
+                self.assertEqual(journey.selection, requested.split(","))
+                self.assertEqual(journey.selected_steps, set(resolved["steps"]))
+        finally:
+            Journey.reset_run_registry()
 
     def test_real_failure_remains_first_when_selection_claims_never_execute(self):
         with tempfile.TemporaryDirectory(prefix="journey-runner-import-") as temporary:
@@ -1389,8 +1513,9 @@ thread.join()
             journey = Journey("local", "aborted-run")
             journey.step("install", "platform.install", lambda: "install command failed", cases=["S-042.1"])
             result = journey.result()
-        with patch.object(runner, "FIRST_FAILURE", "install command failed: exit 1"):
-            missing = runner.check_selected_claim_completion([result.__dict__], "S-042.1,S-042.2")
+        with patch.object(runner, "CASE_JOURNEY", journey), \
+                patch.object(runner, "FIRST_FAILURE", "install command failed: exit 1"):
+            missing = runner.check_selected_claim_completion([result.__dict__])
             self.assertEqual(missing, ["S-042.2"])
             self.assertEqual(runner.FIRST_FAILURE, "install command failed: exit 1")
         self.assertEqual(result.case_run["claims"], [

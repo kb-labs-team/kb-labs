@@ -78,10 +78,10 @@ kb marketplace install @you/my-plugin
 kb marketplace share --with user123
 kb marketplace share --link`;
 
-// Real snippet from plugins/clickup/entry/src/commands/task-create.ts
+// Real snippet from plugins/clickup/src/commands/task-create.ts
 const HANDLER_CODE = `\
 import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { requireApiKey, createTask } from '@kb-labs/clickup-core';
+import { requireApiKey, createTask } from '@kb-labs/clickup/core';
 
 export default defineCommand({
   id: 'clickup:task.create',
@@ -176,11 +176,11 @@ export default async function PluginsPage({ params }: Props) {
                   <div>
                     <span className="text-emerald-400/80">$ </span>
                     {/* i18n-ignore: terminal command */}
-                    <span className="text-white/90">kb marketplace install @kb-labs/review-entry</span>
+                    <span className="text-white/90">kb marketplace install @kb-labs/review</span>
                   </div>
                   <div className="space-y-0.5 text-white/50">
                     {/* i18n-ignore: terminal output */}
-                    <div>  Resolving @kb-labs/review-entry@2.94.0</div>
+                    <div>  Resolving @kb-labs/review@2.94.0</div>
                     {/* i18n-ignore: terminal output */}
                     <div>  Installing via pnpm ...</div>
                   </div>
@@ -327,7 +327,16 @@ export default async function PluginsPage({ params }: Props) {
 
               {/* Right: lifecycle diagram */}
               <AnimateOnScroll animation="slide-up" delay={100}>
-                <PluginLifecycleDiagram className="w-full" />
+                <PluginLifecycleDiagram
+                  className="w-full"
+                  subtitles={{
+                    manifest: t('lifecycleDiagram.manifest'),
+                    install: t('lifecycleDiagram.install'),
+                    discover: t('lifecycleDiagram.discover'),
+                    register: t('lifecycleDiagram.register'),
+                    execute: t('lifecycleDiagram.execute'),
+                  }}
+                />
               </AnimateOnScroll>
 
             </div>

@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 from dispatch_registry import RUNNERS, runners_for_source
 from hermetic_cli import run_hermetic_cli
-from select_from_cases import (read_coverage_result, selection_from_coverage,
+from select_from_cases import (coverage_results, read_coverage_result, selection_from_coverage,
                                _case_declarations,
                                _step_declaration, _source_step_declarations,
                                _imported_journey_sources, selectors_from_coverage,
@@ -305,7 +305,7 @@ def _registered_command_registry(root: Path) -> tuple[set[str], set[str]]:
     """Derive command leaves and groups from shipped command declarations."""
     leaves: set[str] = set()
     groups: set[str] = set()
-    for manifest in root.glob("plugins/**/entry/src/manifest.ts"):
+    for manifest in root.glob("plugins/*/src/manifest.ts"):
         text = manifest.read_text(encoding="utf-8")
         group_meta = set(re.findall(r"groupMeta\s*:\s*\[([^\]]*)\]", text, re.S))
         group_paths = {path for block in group_meta
@@ -711,7 +711,7 @@ class DispatchRegistryTests(unittest.TestCase):
             sources = {
                 "aliased-spread.ts": (
                     "import { runKbCommand as run } from './kb-command'\n"
-                    "run([...prefix, 'commit', 'open'])\n"
+                    "run([...prefix, 'commit', 'plan', 'show'])\n"
                 ),
                 "template-path.ts": (
                     "import { runKbCommand } from './kb-command'\n"
@@ -732,12 +732,12 @@ class DispatchRegistryTests(unittest.TestCase):
                 "stored-value.ts": (
                     "import { runKbCommand } from './kb-command'\n"
                     "const f = runKbCommand\n"
-                    "f(['commit', 'open'])\n"
+                    "f(['commit', 'plan', 'show'])\n"
                 ),
                 "bridge.ts": "export { runKbCommand as forwarded } from './kb-command'\n",
                 "re-export-use.ts": (
                     "import { forwarded } from './bridge'\n"
-                    "forwarded(['commit', 'open'])\n"
+                    "forwarded(['commit', 'plan', 'show'])\n"
                 ),
                 "namespace.ts": (
                     "import * as k from './kb-command'\n"
@@ -777,15 +777,15 @@ class DispatchRegistryTests(unittest.TestCase):
             )
             source.write_text(
                 "import { runKbCommand } from './kb-command'\n"
-                "runKbCommand(['commit', 'open', '--help'])\n"
-                "runKbCommand(['marketplace', 'install', '@kb-labs/commit-entry', '--json'])\n",
+                "runKbCommand(['commit', 'plan', 'show', '--help'])\n"
+                "runKbCommand(['marketplace', 'install', '@kb-labs/commit', '--json'])\n",
                 encoding="utf-8",
             )
             paths, violations = _studio_command_path_sites(fixture)
             self.assertEqual(violations, [])
             self.assertEqual(paths, {
-                "commit open --help": ["e2e/studio/scenario.ts:2 (TypeScript owner call)"],
-                "marketplace install @kb-labs/commit-entry": [
+                "commit plan show --help": ["e2e/studio/scenario.ts:2 (TypeScript owner call)"],
+                "marketplace install @kb-labs/commit": [
                     "e2e/studio/scenario.ts:3 (TypeScript owner call)"
                 ],
             })
@@ -1054,6 +1054,24 @@ class DispatchRegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "module-global-state lint detected"):
                 lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
 
+    def test_module_global_state_lint_follows_case_action_callback(self):
+        with tempfile.TemporaryDirectory(prefix="journey-case-action-state-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'shared = {}\n'
+                'def produce(case_ids):\n'
+                '    shared["project"] = "registered"\n'
+                'def check(case_ids):\n'
+                '    return shared.get("project")\n'
+                'journey.flow("project setup", "test", "test", None, '
+                'cases=["S-001.1"], case_action=produce)\n'
+                'journey.flow("project consumer", "test", "test", None, '
+                'cases=["S-001.1"], case_action=check)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "module-global-state lint detected"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
+
     def test_environment_lint_detects_literal_kb_journey_read_outside_accessor(self):
         with tempfile.TemporaryDirectory(prefix="journey-env-state-rail-") as directory:
             root = Path(directory)
@@ -1109,6 +1127,52 @@ class DispatchRegistryTests(unittest.TestCase):
             "full journey plan drifted; run python3 e2e/journey/select_from_cases.py "
             "--write-plan-baseline, then review the ordered plan diff before updating the golden",
         )
+
+    def test_installed_host_stop_plan_barrier_follows_steps_before_lifecycle(self):
+        root = Path(__file__).resolve().parents[2]
+        plans = full_runner_plans(root)
+        for selector, plan in plans.items():
+            runner = RUNNERS[selector]
+            sources = set().union(*(_imported_journey_sources({source}, root)
+                                    for source in runner.journey_sources))
+            declarations = [declaration for declaration in _source_step_declarations(sources, root).values()
+                            if declaration.get("name") is not None
+                            and (not declaration.get("runners") or selector in declaration["runners"])]
+            barrier = next(declaration for declaration in declarations
+                           if declaration.get("plan_after_phase") == "all-steps")
+            teardown = next(declaration for declaration in declarations
+                            if declaration.get("plan_phase") == "teardown")
+            self.assertEqual(plan[-2:], [barrier["name"], teardown["name"]], selector)
+
+    def test_full_runner_plan_rejects_missing_or_duplicate_ordering_markers(self):
+        root = Path(__file__).resolve().parents[2]
+        invalid_counts = (
+            (0, 1),
+            (1, 0),
+            (0, 0),
+            (2, 1),
+            (1, 2),
+        )
+        for barrier_count, teardown_count in invalid_counts:
+            with self.subTest(barriers=barrier_count, teardowns=teardown_count):
+                declarations = {"step": {"name": "regular journey step"}}
+                for index in range(barrier_count):
+                    declarations[f"barrier-{index}"] = {
+                        "name": f"barrier {index}", "plan_after_phase": "all-steps",
+                    }
+                for index in range(teardown_count):
+                    declarations[f"teardown-{index}"] = {
+                        "name": f"teardown {index}", "plan_phase": "teardown", "role": "lifecycle",
+                    }
+                with patch("select_from_cases.RUNNERS", {
+                        "fixture-plan": SimpleNamespace(journey_sources=("fixture.py",))}), \
+                        patch("select_from_cases._imported_journey_sources",
+                              side_effect=lambda sources, _root: frozenset(sources)), \
+                        patch("select_from_cases._source_step_declarations", return_value=declarations):
+                    with self.assertRaisesRegex(
+                            ValueError,
+                            rf"fixture-plan:.*barrier.*{barrier_count}.*teardown.*{teardown_count}"):
+                        full_runner_plans(root)
 
     def test_service_readiness_claim_uses_registered_project_state(self):
         resolved = selection_from_coverage(self._coverage(), "PC-002.3")
@@ -1225,17 +1289,8 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertIn("step:apply a secret through an environment reference", refusal["requires"])
 
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
-        results = []
         root = Path(__file__).resolve().parents[2]
-        node = shutil.which("node")
-        self.assertIsNotNone(node, "A Node.js executable is required to run the workspace CLI")
-        for mode in ("local", "secured"):
-            command = [node, str(root / "cli/bin/dist/bin.js"), "qa", "coverage", "show", "--level", "all",
-                       "--mode", mode, "--json"]
-            result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120,
-                                      workspace_root=root)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            results.append(read_coverage_result(result))
+        results = coverage_results(root)
 
         registered: dict[str, dict[str, set[tuple[str, int]]]] = {}
         root = Path(__file__).resolve().parents[2]
@@ -1661,18 +1716,7 @@ class DispatchRegistryTests(unittest.TestCase):
                     validate_dependency_declarations({"fixture_steps.py"}, root)
 
     def _coverage(self):
-        root = Path(__file__).resolve().parents[2]
-        node = shutil.which("node")
-        self.assertIsNotNone(node)
-        results = []
-        for mode in ("local", "secured"):
-            command = [node, str(root / "cli/bin/dist/bin.js"), "qa", "coverage", "show", "--level", "all",
-                       "--mode", mode, "--json"]
-            result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120,
-                                      workspace_root=root)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            results.append(read_coverage_result(result))
-        return results
+        return coverage_results(Path(__file__).resolve().parents[2])
 
 
 if __name__ == "__main__":

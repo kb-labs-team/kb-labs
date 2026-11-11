@@ -3,6 +3,8 @@
  * Analytics abstraction for tracking events and user identification.
  */
 
+import type { ErrorEnvelope } from '../error-envelope/types.js';
+
 /**
  * Query parameters for fetching analytics events
  */
@@ -64,7 +66,13 @@ export interface EventsStats {
     from: string;
     to: string;
   };
+  persistence: AnalyticsPersistence;
 }
+
+/** Persistence facts reported by the analytics source that produced its stats. */
+export type AnalyticsPersistence =
+  | { kind: 'durable' }
+  | { kind: 'ephemeral'; notice: Pick<ErrorEnvelope, 'message' | 'hint'> };
 
 /**
  * Daily aggregated statistics for time-series visualization

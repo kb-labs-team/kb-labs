@@ -38,17 +38,26 @@ func mergeConfigs(base, child *DevkitConfig) *DevkitConfig {
 	if child.Run.Concurrency != 0 {
 		out.Run.Concurrency = child.Run.Concurrency
 	}
+	if child.Run.TaskMemoryMB != 0 {
+		out.Run.TaskMemoryMB = child.Run.TaskMemoryMB
+	}
 	if child.Affected.Strategy != "" {
 		out.Affected.Strategy = child.Affected.Strategy
 	}
 	if child.Affected.Command != "" {
 		out.Affected.Command = child.Affected.Command
 	}
+	if len(child.Affected.FullInputs) > 0 {
+		out.Affected.FullInputs = append(out.Affected.FullInputs, child.Affected.FullInputs...)
+	}
 	if child.Fix.DefaultMode != "" {
 		out.Fix.DefaultMode = child.Fix.DefaultMode
 	}
 	if child.Reporting.Verbose {
 		out.Reporting.Verbose = true
+	}
+	if child.Checks.TimeoutMS > 0 {
+		out.Checks.TimeoutMS = child.Checks.TimeoutMS
 	}
 
 	if len(child.Presets) > 0 {

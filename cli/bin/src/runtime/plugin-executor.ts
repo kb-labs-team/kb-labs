@@ -19,29 +19,28 @@ import {
   noopUI,
 } from "@kb-labs/plugin-contracts";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
-import { setJsonMode } from "@kb-labs/shared-cli-ui";
-import { resolveActiveGateway } from "@kb-labs/cli-runtime/gateway";
 import { randomUUID } from "node:crypto";
+import { setJsonMode } from "@kb-labs/shared-cli-ui";
 import {
   AdapterUnavailableError,
   createContextLogger,
 } from "@kb-labs/core-platform";
-import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
-import { resolveCliHandlerPath } from "@kb-labs/cli-commands";
+import { resolveCliHandlerPath } from "@kb-labs/core-platform";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
 import { cliBinaryName } from './cli-binary.js';
 import { createCLIUIFacade } from "./ui-facade";
+import { missingCliResultWriter, type CliResultWriter } from './result-serializer.js';
 
 export interface PluginExecutionOptions {
   context: SystemContext;
-  netOffset?: number;
-  platformRoot?: string;
+  env: NodeJS.ProcessEnv;
   commandId: string;
   argv: string[];
   flags: Record<string, unknown>;
   manifestCmd?: RegisteredCommand;
   platform: PlatformContainer;
+  resultWriter?: CliResultWriter;
 }
 
 /**
@@ -53,7 +52,8 @@ export interface PluginExecutionOptions {
 export async function executePlugin(
   options: PluginExecutionOptions,
 ): Promise<number | undefined> {
-  const { context, commandId, argv, flags, manifestCmd, platform } = options;
+  const { context, env, commandId, argv, flags, manifestCmd, platform } = options;
+  const resultWriter = options.resultWriter ?? missingCliResultWriter;
 
   // No manifest command info - can't execute
   if (!manifestCmd) {
@@ -94,19 +94,13 @@ export async function executePlugin(
   );
 
   // Gateway-aware plugins declare the address in their environment
-  // permissions. Resolve it from the same transport and module defaults used
-  // by the daemon to bind the gateway listener.
+  // permissions. The CLI bootstrap resolves the installed platform address
+  // once for built-ins and plugins alike.
   const gatewayUrl = permissionAllowsEnvironmentVariable(
     permissions.env?.read,
     "KB_GATEWAY_URL",
   )
-    ? (await resolveActiveGateway({
-        cwd: context.cwd,
-        env: process.env,
-        platformRoot: options.platformRoot,
-        configuredNetOffset: options.netOffset,
-        transport: platform.getAdapter<IServiceTransport>("serviceTransport"),
-      })).gatewayUrl
+    ? env.KB_GATEWAY_URL
     : undefined;
 
   try {
@@ -121,6 +115,7 @@ export async function executePlugin(
     // PresenterDelegate exposes debug/spinner/table — the runtime impl has all).
     let ui = createCLIUIFacade(
       context.presenter as unknown as Parameters<typeof createCLIUIFacade>[0],
+      resultWriter,
     );
     if (jsonMode) {
       setJsonMode(true);
@@ -182,6 +177,7 @@ export async function executePlugin(
     if (renderUnavailableAdapterError(
       error,
       context.presenter as unknown as Parameters<typeof createCLIUIFacade>[0],
+      resultWriter,
     )) {
       return 1;
     }
@@ -199,11 +195,12 @@ function permissionAllowsEnvironmentVariable(
 export function renderUnavailableAdapterError(
   error: unknown,
   presenter?: Parameters<typeof createCLIUIFacade>[0],
+  resultWriter: CliResultWriter = missingCliResultWriter,
 ): boolean {
   if (!(error instanceof AdapterUnavailableError) || error.reason !== "not-configured") {
     return false;
   }
-  createCLIUIFacade(presenter).error(error);
+  createCLIUIFacade(presenter, resultWriter).error(error);
   return true;
 }
 
@@ -262,9 +259,13 @@ function createPlatformServices(
 export function createSystemCommandContext(
   context: SystemContext,
   platform: PlatformContainer,
+  env: NodeJS.ProcessEnv,
+  resolvePlatformVersion: () => Promise<string>,
+  resultWriter: CliResultWriter = missingCliResultWriter,
 ): PluginContextV3 & { executionBackend?: PlatformContainer['executionBackend'] } {
   const ui = createCLIUIFacade(
     context.presenter as unknown as Parameters<typeof createCLIUIFacade>[0],
+    resultWriter,
   );
   const requestId = `cli-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const traceId = `trace-${randomUUID()}`;
@@ -300,11 +301,11 @@ export function createSystemCommandContext(
     platform: scopedPlatformServices,
     ...(platform.hasExecutionBackend ? { executionBackend: platform.executionBackend } : {}),
     runtime: {
-      // Stub: system commands do not use sandboxed runtime. Real runtime is
-      // only wired for plugin handlers executed via executeCommandV3.
+      // The built-in command path shares the invocation environment carrier
+      // with plugin handlers, without mutating the CLI process environment.
       fs: {} as unknown as FSShim,
       fetch: fetch,
-      env: (key: string) => process.env[key],
+      env: (key: string) => env[key],
     },
     api: {} as unknown as PluginAPI,
     hostContext: {
@@ -312,8 +313,7 @@ export function createSystemCommandContext(
       binaryName: cliBinaryName,
       argv: process.argv.slice(2),
       flags: {},
-      // CLI_VERSION is injected from package.json in bin.ts at startup.
-      cliVersion: process.env.CLI_VERSION ?? "0.0.0",
+      resolvePlatformVersion,
     },
     pluginVersion: "1.0.0",
     trace: {

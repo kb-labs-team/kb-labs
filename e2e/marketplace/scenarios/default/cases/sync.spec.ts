@@ -8,7 +8,7 @@ import { MARKETPLACE } from '@kb-labs/e2e-shared/urls.js'
 test('MS-01: POST /workspace/sync — returns structured response', async ({ request }) => {
   const res = await request.post(`${MARKETPLACE}/api/v1/marketplace/workspace/sync`, {
     data: {
-      include: ['plugins/*/entry'],
+      include: ['plugins/*'],
       autoEnable: false,
     },
   })
@@ -32,7 +32,7 @@ test('MS-01: POST /workspace/sync — returns structured response', async ({ req
 test('MS-02: POST /workspace/sync — idempotent (second call ≤ first)', async ({ request }) => {
   const payload = {
     data: {
-      include: ['plugins/*/entry'],
+      include: ['plugins/*'],
       autoEnable: false,
     },
   }
@@ -66,7 +66,7 @@ test('MS-02: POST /workspace/sync — idempotent (second call ≤ first)', async
 test('MS-03: sync with autoEnable=true — packages appear in listing', async ({ request }) => {
   const sync = await request.post(`${MARKETPLACE}/api/v1/marketplace/workspace/sync`, {
     data: {
-      include: ['plugins/*/entry'],
+      include: ['plugins/*'],
       autoEnable: true,
     },
   })

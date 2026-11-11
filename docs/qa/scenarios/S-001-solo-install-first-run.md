@@ -5,7 +5,7 @@ persona: solo-developer
 area: platform-core
 priority: P0
 status: historical
-release: true
+release: false
 modes: [local, secured]
 surfaces: [cli]
 superseded_by: PC-001

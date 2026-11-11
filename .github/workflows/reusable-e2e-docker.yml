@@ -83,7 +83,7 @@ jobs:
       # ── Build toolchain ──────────────────────────────────────────────────
 
       - name: Set up Go
-        if: inputs.prebuilt-artifact == '' && inputs.prebuilt-files-artifact == ''
+        if: inputs.prebuilt-artifact == ''
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           # kb-devkit builds every Go module in the workspace (including
@@ -186,11 +186,18 @@ jobs:
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         timeout-minutes: 5
 
+      - name: Install GoReleaser for candidate binaries
+        if: inputs.prebuilt-artifact == ''
+        uses: ./.github/actions/install-goreleaser
+      - name: Prepare platform candidate binaries
+        if: inputs.prebuilt-artifact == ''
+        run: bash e2e/platform/prepare-container-binaries.sh
+
       - name: Build platform image
         if: inputs.prebuilt-artifact == ''
         run: |
           if [ "${{ inputs.fast-build }}" = "true" ]; then
-            docker build -t kb-e2e-ci-platform:latest -f e2e/platform/Dockerfile .
+            docker build --build-arg "SOURCE_REVISION=$GITHUB_SHA" -t kb-e2e-ci-platform:latest -f e2e/platform/Dockerfile .
           else
             cache_args=()
             if [ "${{ inputs.cache-mode }}" = "read-write" ]; then
@@ -200,26 +207,16 @@ jobs:
               "${cache_args[@]}" \
               --load \
               -t kb-e2e-ci-platform:latest \
-              -f e2e/platform/Dockerfile .
+              --build-arg "SOURCE_REVISION=$GITHUB_SHA" -f e2e/platform/Dockerfile .
           fi
 
       - name: Build publisher image
         if: inputs.prebuilt-artifact == ''
-        run: |
-          if [ "${{ inputs.fast-build }}" = "true" ]; then
-            docker build -t kb-e2e-ci-publisher:latest -f e2e/publisher/Dockerfile e2e/
-          else
-            cache_args=()
-            if [ "${{ inputs.cache-mode }}" = "read-write" ]; then
-              cache_args=(--cache-from "type=gha,scope=e2e-publisher" --cache-to "type=gha,mode=max,scope=e2e-publisher")
-            fi
-            docker buildx build \
-              "${cache_args[@]}" \
-              --load \
-              -t kb-e2e-ci-publisher:latest \
-              -f e2e/publisher/Dockerfile \
-              e2e/
-          fi
+        uses: ./.github/actions/build-publisher
+        with:
+          engine: ${{ inputs.fast-build && 'docker' || 'buildx' }}
+          cache-from: ${{ !inputs.fast-build && inputs.cache-mode == 'read-write' && 'type=gha,scope=e2e-publisher' || '' }}
+          cache-to: ${{ !inputs.fast-build && inputs.cache-mode == 'read-write' && 'type=gha,mode=max,scope=e2e-publisher' || '' }}
 
       # Verdaccio is reconstructed from this run's exact package tarballs.
 

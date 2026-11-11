@@ -338,15 +338,15 @@ describe('Command Namespace Routing', () => {
   it('prefers a multi-word command over a bare command namespace', () => {
     const reg = makeRegistry();
     const defaultCommand = makePlugin('commit', '');
-    const openCommand = makePlugin('open', 'commit');
+    const planShowCommand = makePlugin('show', 'commit', 'plan');
     reg.registerManifest(defaultCommand);
-    reg.registerManifest(openCommand);
+    reg.registerManifest(planShowCommand);
 
-    const result = reg.resolve(['commit', 'open']);
+    const result = reg.resolve(['commit', 'plan', 'show']);
 
     expect(result.type).toBe('command');
     if (result.type === 'command') {
-      expect(result.command).toBe(openCommand);
+      expect(result.command).toBe(planShowCommand);
       expect(result.rest).toEqual([]);
     }
   });

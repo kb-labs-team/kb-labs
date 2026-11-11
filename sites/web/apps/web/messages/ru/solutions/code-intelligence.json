@@ -21,7 +21,7 @@
         },
         {
           "label": "Триггер переиндексации",
-          "value": "Рабочая среда разработчика: kb-dev start или pnpm kb mind reindex"
+          "value": "Рабочая среда разработчика: kb-dev start или pnpm kb mind index create"
         },
         {
           "label": "Режим поиска",
@@ -69,11 +69,11 @@
           "note": "Агентный режим: JSON с источниками и confidence."
         },
         {
-          "cmd": "pnpm kb mind reindex",
+          "cmd": "pnpm kb mind index create",
           "note": "Полная переиндексация кодовой базы в vector store."
         },
         {
-          "cmd": "pnpm kb mind reindex --affected",
+          "cmd": "pnpm kb mind index create --affected",
           "note": "Переиндексация только файлов изменённых с последнего запуска."
         },
         {

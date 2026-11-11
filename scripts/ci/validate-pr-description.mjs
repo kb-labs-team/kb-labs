@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from '../checks/lib/check-result.mjs';
 /**
  * Validate a PR title and body against the structure in
  * .github/PULL_REQUEST_TEMPLATE.md. Reads the pull_request event payload
@@ -89,12 +90,14 @@ function main() {
   const eventPath = process.env.GITHUB_EVENT_PATH;
   if (!eventPath) {
     console.error('GITHUB_EVENT_PATH is not set — run this inside a pull_request workflow.');
+    writeCheckResult([{ check: 'pr-description', severity: 'error', message: 'GITHUB_EVENT_PATH is not set.' }]);
     process.exit(2);
   }
   const event = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
   const pr = event.pull_request;
   if (!pr) {
     console.error('Event payload has no pull_request — nothing to validate.');
+    writeCheckResult([]);
     process.exit(2);
   }
 
@@ -102,6 +105,7 @@ function main() {
 
   if (errors.length === 0) {
     console.log('PR title and description follow the required structure.');
+    writeCheckResult([]);
     process.exit(0);
   }
 
@@ -114,6 +118,7 @@ function main() {
   ].join('\n');
 
   console.error(report);
+  writeCheckResult(errors.map((message) => ({ check: 'pr-description', severity: 'error', message, file: '.github/PULL_REQUEST_TEMPLATE.md' })));
   // GITHUB_STEP_SUMMARY is a separate file per step — write to a plain
   // workspace file too so a later step in the same job (e.g. the PR-comment
   // step) can read this report back.

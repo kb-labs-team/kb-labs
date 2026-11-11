@@ -3,22 +3,37 @@ package ui
 import (
 	"io"
 	"os"
-	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // ColorEnabled reports whether ANSI color should be used when writing to w.
-// Honors NO_COLOR and TERM=dumb, and requires w to be a character device
-// (a real terminal). Non-*os.File writers (buffers, pipes) get no color, which
-// keeps golden tests deterministic.
+// The generated decision follows the ordered policy declared in
+// core/plugin-contracts/src/color-policy.mjs. NO_COLOR conventions are at
+// https://no-color.org/; FORCE_COLOR conventions follow
+// https://github.com/chalk/supports-color.
 func ColorEnabled(w io.Writer) bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
+	forceColor, forceColorSet := os.LookupEnv("FORCE_COLOR")
+	return resolveColorSupport(isTerminalWriter(w), os.Getenv("NO_COLOR"), forceColor, forceColorSet, os.Getenv("TERM"))
+}
+
+// StdoutColorEnabled reports the color policy for the CLI's standard output.
+func StdoutColorEnabled() bool {
+	return ColorEnabled(os.Stdout)
+}
+
+// ConfigureLipglossColor applies the shared decision to Lipgloss's renderer,
+// whose automatic environment detection otherwise overrides FORCE_COLOR.
+func ConfigureLipglossColor(enabled bool) {
+	if enabled {
+		lipgloss.SetColorProfile(termenv.ANSI)
+		return
 	}
-	if strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		return false
-	}
+	lipgloss.SetColorProfile(termenv.Ascii)
+}
+
+func isTerminalWriter(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok {
 		return false

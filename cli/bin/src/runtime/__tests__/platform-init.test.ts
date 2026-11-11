@@ -50,9 +50,9 @@ describe('Platform Initialization (Real)', () => {
   afterEach(async () => {
     // Cleanup
     await rm(testDir, { recursive: true, force: true });
-    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
-    if (previousKbHome === undefined) delete process.env.KB_HOME; else process.env.KB_HOME = previousKbHome;
-    if (previousPlatformRoot === undefined) delete process.env.KB_PLATFORM_ROOT; else process.env.KB_PLATFORM_ROOT = previousPlatformRoot;
+    if (previousHome === undefined) {delete process.env.HOME;} else {process.env.HOME = previousHome;}
+    if (previousKbHome === undefined) {delete process.env.KB_HOME;} else {process.env.KB_HOME = previousKbHome;}
+    if (previousPlatformRoot === undefined) {delete process.env.KB_PLATFORM_ROOT;} else {process.env.KB_PLATFORM_ROOT = previousPlatformRoot;}
   });
 
   describe('Config Discovery', () => {
@@ -182,8 +182,8 @@ describe('Platform Initialization (Real)', () => {
         expect(result.platformRoot).toBe(resolve(unregistered));
         expect(result.rawConfig).toBeDefined();
       } finally {
-        if (originalPlatformRoot === undefined) delete process.env.KB_PLATFORM_ROOT;
-        else process.env.KB_PLATFORM_ROOT = originalPlatformRoot;
+        if (originalPlatformRoot === undefined) {delete process.env.KB_PLATFORM_ROOT;}
+        else {process.env.KB_PLATFORM_ROOT = originalPlatformRoot;}
       }
     });
 

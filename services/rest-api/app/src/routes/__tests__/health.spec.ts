@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
-import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/core-registry';
+import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/plugin-contracts';
 import {
   checkCanonicalObservabilityMetrics,
   validateServiceObservabilityDescribe,
@@ -115,7 +115,7 @@ describe('registerHealthRoutes', () => {
     const cliApi = {
       getSystemHealth: vi.fn().mockResolvedValue(baseSnapshot),
       snapshot: vi.fn(() => ({
-        schema: 'kb.registry/1' as const,
+        schema: 'kb.registry/2' as const,
         rev: 1,
         generatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -128,7 +128,7 @@ describe('registerHealthRoutes', () => {
       })),
     } as unknown as IEntityRegistry;
 
-    await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
+    await registerHealthRoutes(app, BASE_CONFIG, cliApi, readiness);
 
     const response = await app.inject({ method: 'GET', url: '/health' });
     expect(response.statusCode).toBe(200);
@@ -181,7 +181,7 @@ describe('registerHealthRoutes', () => {
     const cliApi = {
       getSystemHealth: vi.fn().mockResolvedValue(baseSnapshot),
       snapshot: vi.fn(() => ({
-        schema: 'kb.registry/1' as const,
+        schema: 'kb.registry/2' as const,
         rev: snapshotRev,
         generatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -194,7 +194,7 @@ describe('registerHealthRoutes', () => {
       })),
     } as unknown as IEntityRegistry;
 
-    await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
+    await registerHealthRoutes(app, BASE_CONFIG, cliApi, readiness);
 
     const notReady = await app.inject({ method: 'GET', url: '/ready' });
     expect(notReady.statusCode).toBe(503);
@@ -288,7 +288,7 @@ describe('registerHealthRoutes', () => {
     const cliApi = {
       getSystemHealth: vi.fn().mockResolvedValue(baseSnapshot),
       snapshot: vi.fn(() => ({
-        schema: 'kb.registry/1' as const,
+        schema: 'kb.registry/2' as const,
         rev: 2,
         generatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -310,7 +310,7 @@ describe('registerHealthRoutes', () => {
       })),
     } as unknown as IEntityRegistry;
 
-    await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
+    await registerHealthRoutes(app, BASE_CONFIG, cliApi, readiness);
 
     const response = await app.inject({ method: 'GET', url: '/ready' });
     expect(response.statusCode).toBe(503);
@@ -359,7 +359,7 @@ describe('registerHealthRoutes', () => {
     const cliApi = {
       getSystemHealth: vi.fn().mockResolvedValue(baseSnapshot),
       snapshot: vi.fn(() => ({
-        schema: 'kb.registry/1' as const,
+        schema: 'kb.registry/2' as const,
         rev: 7,
         generatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -372,7 +372,7 @@ describe('registerHealthRoutes', () => {
       })),
     } as unknown as IEntityRegistry;
 
-    await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
+    await registerHealthRoutes(app, BASE_CONFIG, cliApi, readiness);
 
     const describe = await app.inject({ method: 'GET', url: '/api/v1/observability/describe' });
     expect(describe.statusCode).toBe(200);

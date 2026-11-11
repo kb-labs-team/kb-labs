@@ -5,7 +5,7 @@ persona: solo-developer
 area: plugin-execution
 priority: P1
 status: planned
-release: false
+release: true
 modes: [local, secured]
 surfaces: [cli, api, agent]
 ---
@@ -26,7 +26,6 @@ contract.
 
 | # | Action | Expected |
 |---|---|---|
-| S-240.1 | Set `platform.execution.mode` in turn to `in-process`, `subprocess`, `worker-pool`, and `container`; restart after each change; run the same successful fixture request through CLI, REST, REST WebSocket, workflow, Gateway webhook, and MCP | All six planes return the same fixture result for each configured mode. A plane-local backend choice that changes the result fails this claim. |
 | S-240.2 | Run `kb config get platform.execution.mode --json` and `kb health --json`, then open Studio's health view after each restart; inspect each plane's execution record and the `execution` component in the shared `kb.health/1` snapshot | Config output shows the selected setting. Every plane's record, the execution health component, and Studio show the same concrete resolved mode, never `auto`. If configured as `auto`, they show the concrete mode selected at startup. |
 | S-240.3 | For every plane and mode, invoke the fixture's typed failure with the same request ID | Every plane returns the same catalogued error code and request ID. |
 | S-240.4 | For every plane and mode, inspect the structured log from the successful fixture request | Each log has the same plugin ID and command path. |
@@ -42,7 +41,7 @@ contract.
 `core/runtime/src/loader.ts` creates the shared backend. Plane wiring is in
 `cli/runtime/src/v3/execute-command.ts`,
 `services/rest-api/app/src/routes/plugins.ts`,
-`plugins/workflow/daemon/src/worker.ts`,
+`services/workflow/daemon/src/worker.ts`,
 `services/gateway/app/src/webhook/router.ts`, and
 `services/mcp/app/src/mcp/tool-router.ts`. The REST WebSocket path is also in
 `services/rest-api/app/src/routes/plugins.ts`.

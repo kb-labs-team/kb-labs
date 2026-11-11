@@ -16,11 +16,13 @@ import (
 
 	"github.com/kb-labs/clikit/diag"
 	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/diagnostics"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/logs"
+	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/preflight"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/resolve"
@@ -35,7 +37,7 @@ import (
 type applyCommandInput struct {
 	Plan                       planInput
 	Resolved                   *resolvedPlan
-	Registry                   string
+	Arguments                  []string
 	SecretEnv                  string
 	PendingSecrets             map[string]secrets.PendingSecret
 	Executable                 string
@@ -116,7 +118,6 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	if failure := resolve.ValidateSecretInputIDs(planned.Artifacts, secretIDs); failure != nil {
 		return applyCommandResult{}, asDiag(failure)
 	}
-	launcherState := resolved.State
 	root := planned.Request.PlatformRoot
 	installRoot := root
 	layout, layoutErr := versionroot.ForPlatformPath(root)
@@ -197,13 +198,14 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		if marshalErr != nil {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "the install request could not be encoded", "rerun `kb-create apply` with the same request", marshalErr)
 		}
-		response := transport.PlanWith(encoded, resolved.Catalog, resolve.Options{LauncherVersion: buildVersion})
+		response := transport.PlanWith(encoded, resolved.Catalog, resolve.Options{LauncherVersion: buildVersion, BinarySource: planned.BinarySource, Registry: planned.Registry})
 		if !response.OK {
 			return applyCommandResult{}, response.Error
 		}
 		planned = *response.Plan
 	}
-	if running := refuseApplyBesideRunningHost(planned, installRoot); running != nil {
+	reusedHost, running := reusableApplyHost(planned, installRoot)
+	if running != nil {
 		return applyCommandResult{}, running
 	}
 	if err := preflight.CheckInstallResources(operationRoot); err != nil {
@@ -273,7 +275,25 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	applyCtx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	offline := planned.Request.Source == contracts.SourceOffline
-	artifactExecutor, err := newArtifactExecutor(layout, operationRoot, input.Registry, offline, transcript, deps.ArtifactRunner)
+	verifiedRelease, err := catalog.DecodeVerified(planned.ReleaseCatalog)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "the release index could not be verified", "rerun the installation with a valid release index", err)
+	}
+	previousReceipt, previousErr := receipt.Read(installRoot)
+	var previousRelease *catalog.Verified
+	marketplaceRoot := ""
+	if previousErr == nil {
+		verifiedPrevious, verifyErr := catalog.DecodeVerified(previousReceipt.Plan.ReleaseCatalog)
+		if verifyErr != nil {
+			return applyCommandResult{}, indexFailure(verifyErr, contracts.ShellCommand("kb-create", "install", "--platform-root", installRoot))
+		}
+		previousRelease = &verifiedPrevious
+		marketplaceRoot = installRoot
+	} else if !os.IsNotExist(previousErr) {
+		return applyCommandResult{}, asDiag(previousErr)
+	}
+	artifactExecutor, err := newArtifactExecutor(layout, operationRoot, planned.Registry, offline, transcript, deps.ArtifactRunner,
+		verifiedRelease, previousRelease, marketplaceRoot)
 	if err != nil {
 		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 			"the shared artifact cache path could not be resolved",
@@ -299,7 +319,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 	}
 	if runtimeDeps.Host == nil && planned.Host != nil {
-		if !initialInstall {
+		if !initialInstall && reusedHost == nil {
 			runtimeDeps.Host = prober
 		}
 	}
@@ -312,7 +332,29 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	}
 	applied, applyErr := runtime.Apply(applyCtx, planned, runtimeDeps)
 	if applyErr != nil {
-		return applyCommandResult{}, applyDossier(root, correlationID, transcript.Path(), planned, redactions, applyErr)
+		diagnostic := applyDossier(root, correlationID, transcript.Path(), planned, redactions, applyErr)
+		arguments := input.Arguments
+		if len(arguments) == 0 {
+			arguments = input.Plan.Arguments
+		}
+		if len(arguments) > 0 {
+			invocation, variables := retryArguments(arguments)
+			diagnostic.Hint += " Retry: " + invocation
+			for _, variable := range variables {
+				diagnostic.Hint += " Set " + variable + " before retrying."
+			}
+		}
+		return applyCommandResult{}, diagnostic
+	}
+	if reusedHost != nil {
+		applied.ID = reusedHost.ID
+		applied.CreatedAt = reusedHost.CreatedAt
+		applied.InstallationID = reusedHost.InstallationID
+		if err := receipt.Write(operationRoot, applied); err != nil {
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeReceiptUnavailable,
+				"the running host identity could not be preserved in the active receipt.",
+				"run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` and repair the active receipt before retrying.", err)
+		}
 	}
 	var firstAdmin *firstAdminCredential
 	if initialInstall {
@@ -326,14 +368,14 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			return applyCommandResult{}, unsupportedPlatformLayout(root, activeErr)
 		}
 		store = secrets.Store{PlatformRoot: activeRoot}
-		applied.Plan.Request.PlatformRoot = platformRoot
+		applied.Plan.Request.PlatformRoot = installRoot
 		if err := receipt.Write(platformRoot, applied); err != nil {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the activated installation receipt could not be finalized", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` and resolve the reported layout issue", err)
 		}
 		if planned.Host != nil {
 			starter := postInstallStarter
 			if starter == nil {
-				starter = installedHostStarter{root: installRoot}
+				starter = installedHostStarter{root: installRoot, executable: input.Executable}
 			}
 			if securedAdmin && !bootstrapCompleted {
 				starter = bootstrapOutcomeHost{starter: starter, store: store}
@@ -348,11 +390,23 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 				startErr = errors.Join(startErr, runtimeDeps.Progress.Emit(runtime.ProgressEvent{Phase: "Start host"}))
 			}
 			if startErr != nil {
-				return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installed host did not become healthy", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` to inspect the installation, then rerun `"+contracts.ShellCommand("kb-create", "start", "--platform-root", root)+"`", startErr)
+				return applyCommandResult{}, installHostFailure(root, startErr)
 			}
 		}
 	} else {
 		applied.Plan.Request.PlatformRoot = platformRoot
+	}
+	if specs := applied.Plan.Request.MarketplaceInstallSpecs; len(specs) > 0 {
+		installer := deps.Marketplace
+		if installer == nil {
+			installer = marketplace.GatewayInstallClient{}
+		}
+		if marketplaceFailure := installMarketplaceScenarioPlugins(applyCtx, platformRoot, &applied, installer); marketplaceFailure != nil {
+			return applyCommandResult{}, marketplaceFailure
+		}
+	}
+	if failure := validateAppliedContainer(root, layout); failure != nil {
+		return applyCommandResult{}, failure
 	}
 	if planned.Host != nil {
 		roots := make([]gateway.Root, 0, 2)
@@ -368,10 +422,10 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 		origin, originErr := gateway.OriginFromHealthURL(applied.Verification.HostHealthURL)
 		if originErr != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the applied Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", root)+"` after checking the receipt", originErr)
+			return applyCommandResult{}, contracts.HostSpecDiagnostic("the applied Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", root)+"` after checking the receipt", originErr.Error(), originErr)
 		}
 		roots = append(roots, gateway.Root{PlatformRoot: platformRoot, URL: origin})
-		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}).RegisterMany(roots); err != nil {
+		if err := (gateway.Registry{OperationRoot: root}).Writer(gateway.Apply).RegisterMany(roots); err != nil {
 			return applyCommandResult{}, asDiag(err)
 		}
 	}
@@ -423,6 +477,45 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		disclosureStoreRoot: store.PlatformRoot}, nil
 }
 
+func installHostFailure(root string, cause error) *diag.Diag {
+	var diagnostic *diag.Diag
+	if errors.As(cause, &diagnostic) {
+		return diagnostic
+	}
+	return contracts.NewDiag(contracts.CodeApplyFailed, "the installed host did not become healthy", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` to inspect the installation, then rerun `"+contracts.ShellCommand("kb-create", "start", "--platform-root", root)+"`", cause)
+}
+
+func installMarketplaceScenarioPlugins(ctx context.Context, platformRoot string, applied *contracts.InstallReceipt, installer marketplace.InstallClient) *diag.Diag {
+	specs := applied.Plan.Request.MarketplaceInstallSpecs
+	if len(specs) == 0 {
+		return nil
+	}
+	if applied.Verification.HostHealthURL == "" {
+		return contracts.NewDiag(contracts.CodeScenarioInvalid,
+			"the scenario requests Marketplace plugins but the selected platform has no recorded host Gateway",
+			"select a platform release with the Marketplace service, then rerun `kb-create install`", nil)
+	}
+	origin, err := gateway.OriginFromHealthURL(applied.Verification.HostHealthURL)
+	if err != nil {
+		return contracts.HostSpecDiagnostic("the applied Gateway address could not be used for Marketplace installation", "run `kb-create doctor --json` to inspect the installed host", err.Error(), err)
+	}
+	installs, err := installer.Install(ctx, origin, specs)
+	if err != nil {
+		var failure *marketplace.InstallFailure
+		if errors.As(err, &failure) {
+			return contracts.MarketplaceInstallDiagnostic(failure.Spec, failure.Source, failure)
+		}
+		return contracts.MarketplaceInstallDiagnostic(strings.Join(specs, ", "), "Marketplace response", err)
+	}
+	applied.MarketplaceInstalls = installs
+	if err := receipt.Write(platformRoot, *applied); err != nil {
+		return contracts.NewDiag(contracts.CodeReceiptUnavailable,
+			"Marketplace installed the scenario plugins, but their source and version could not be recorded in the receipt.",
+			"run `kb-create doctor --json` to inspect the installed receipt", err)
+	}
+	return nil
+}
+
 func storePendingSecrets(store secrets.Store, pending map[string]secrets.PendingSecret) error {
 	ids := make([]string, 0, len(pending))
 	for id := range pending {
@@ -440,6 +533,16 @@ func storePendingSecrets(store secrets.Store, pending map[string]secrets.Pending
 		if err := store.Put(id, input.Value); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateAppliedContainer(root string, layout versionroot.Layout) *diag.Diag {
+	if err := layout.ValidateStructure(); err != nil {
+		next := contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)
+		failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The applied installation has an invalid container layout.", "Inspect the installation with `"+next+"` before retrying.", err)
+		failure.Meta = map[string]any{"platformRoot": root, "nextCommand": next}
+		return failure
 	}
 	return nil
 }
@@ -483,7 +586,8 @@ func optionalShim(executable string, result shim.EnsureResult) *shim.EnsureResul
 }
 
 type installedHostStarter struct {
-	root string
+	root       string
+	executable string
 }
 
 func (starter installedHostStarter) Start(ctx context.Context, spec contracts.HostSpec) (func() error, error) {
@@ -502,12 +606,13 @@ func (starter installedHostStarter) Start(ctx context.Context, spec contracts.Ho
 	if err != nil {
 		return nil, err
 	}
-	if _, err := runner.Start(ctx); err != nil {
-		return nil, err
+	command := hostCommand{PlatformRoot: starter.root, Executable: starter.executable, Version: buildVersion}
+	if _, failure := command.start(ctx, runner, runner.State); failure != nil {
+		return nil, failure
 	}
 	return func() error {
-		_, err := runner.Stop(context.Background())
-		return err
+		_, failure := command.stop(context.Background(), runner, runner.State)
+		return failure
 	}, nil
 }
 

@@ -5,7 +5,7 @@
  * The grep baseline MUST score over the SAME set the engine indexes, otherwise
  * the head-to-head compares Mind-over-one-corpus against grep-over-another and
  * the delta is meaningless. So this mirrors the engine's discovery policy
- * (plugins/mind/core/src/ingest/discover.ts): keep any text file, exclude the
+ * (plugins/mind/src/core/ingest/discover.ts): keep any text file, exclude the
  * same binary/asset/data/lock families via denylist + a NUL-byte binary sniff —
  * NOT a hand-picked extension allowlist (which silently dropped .cs/.vue/.json).
  */

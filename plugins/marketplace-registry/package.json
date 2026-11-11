@@ -1,0 +1,54 @@
+{
+  "name": "@kb-labs/marketplace-registry",
+  "description": "CLI commands for publishing and managing plugins in KB Labs Registry",
+  "version": "2.120.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./plugin-manifest": {
+      "import": "./dist/manifest.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "clean": "rimraf dist",
+    "dev": "tsup --watch",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "test": "vitest run --passWithNoTests -c ../vitest.config.ts",
+    "test:cli": "vitest run --config vitest.cli.config.ts",
+    "type-check": "tsc --noEmit",
+    "build:cli": "tsup --config tsup.config.ts"
+  },
+  "dependencies": {
+    "execa": "^9.5.3"
+  },
+  "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
+    "@types/node": "^24.3.3",
+    "tsup": "^8.5.0",
+    "typescript": "^5",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": "24.x",
+    "pnpm": ">=9.0.0"
+  },
+  "kb": {
+    "manifest": "./dist/manifest.js"
+  },
+  "sideEffects": false,
+  "peerDependencies": {
+    "@kb-labs/sdk": "workspace:*"
+  }
+}

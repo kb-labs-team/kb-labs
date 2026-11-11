@@ -30,13 +30,13 @@ import { AVAILABLE_ICONS, KBPageLayout, KBStatusBar, type NavigationItem, Status
 
 // Module routes
 import { dashboardRoutes, dashboardNavigation } from './modules/dashboard/routes';
-// Workflow routes removed — now served via Module Federation from @kb-labs/workflow-cli studio plugin
 import { projectsRoutes, projectsNavigation } from './modules/projects/routes';
 import { pluginsRoutes, pluginsNavigation } from './modules/plugins/routes';
 import { projectPluginsRoutes, projectPluginsNavigation } from './modules/project-plugins/routes';
 import { analyticsRoutes, analyticsNavigation } from './modules/analytics/routes';
 import { observabilityRoutes, observabilityNavigation } from './modules/observability/routes';
 import { settingsRoutes, settingsNavigation } from './modules/settings/routes';
+import { workflowRoutes, workflowNavigation } from './modules/workflow/routes';
 // authRoutes removed — the old fake role-select login was replaced by the real LoginPage above.
 
 type PluginNavRoute = {
@@ -76,6 +76,7 @@ const systemNavigation: NavigationItem[] = [
   pluginsNavigation,
   analyticsNavigation,
   observabilityNavigation,
+  workflowNavigation,
 ];
 
 function LayoutContent() {
@@ -276,6 +277,7 @@ export const router = createBrowserRouter([
       ...analyticsRoutes,
       ...observabilityRoutes,
       ...settingsRoutes,
+      ...workflowRoutes,
       // Account pages
       {
         path: '/account/sessions',

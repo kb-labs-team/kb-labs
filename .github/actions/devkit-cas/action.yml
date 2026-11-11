@@ -7,17 +7,29 @@ inputs:
     required: false
     default: read-write
 
+outputs:
+  cache-hit:
+    description: Whether the exact immutable cache key was restored.
+    value: ${{ steps.restore.outputs.cache-hit }}
+
 runs:
   using: composite
   steps:
+    - name: Identify cache toolchain partition
+      if: inputs.mode == 'read-write'
+      id: toolchain
+      shell: bash
+      run: |
+        partition=$(printf '%s\n%s\n' "$(node --version)" "$(go version)" | shasum -a 256 | cut -c 1-16)
+        printf 'partition=%s\n' "$partition" >> "$GITHUB_OUTPUT"
     - name: Restore kb-devkit CAS
       if: inputs.mode == 'read-write'
+      id: restore
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: .kb/devkit/
-        # Source changes are addressed inside kb-devkit. This outer key only
-        # partitions incompatible workspace configuration; the per-SHA suffix
-        # lets a changed run save its accumulated CAS without overwriting one.
-        key: devkit-cas-${{ runner.os }}-${{ hashFiles('package.json', 'pnpm-lock.yaml', 'devkit.yaml', '**/tsconfig*.json', '**/tsup.config.*', '**/vite.config.*', '**/rspack*.config.*') }}-${{ github.sha }}
+        # Task fingerprints own source validity. This outer cache only transports
+        # objects between runs sharing a runner platform and Node/Go toolchain.
+        key: devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ github.sha }}
         restore-keys: |
-          devkit-cas-${{ runner.os }}-${{ hashFiles('package.json', 'pnpm-lock.yaml', 'devkit.yaml', '**/tsconfig*.json', '**/tsup.config.*', '**/vite.config.*', '**/rspack*.config.*') }}-
+          devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-

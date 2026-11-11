@@ -17,6 +17,8 @@
  */
 
 import type { GatewayConfig } from '@kb-labs/gateway-contracts';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
+import type { DeploymentTopology } from '@kb-labs/core-runtime';
 
 export interface ResolvedAccess {
   authEnabled: boolean;
@@ -38,6 +40,12 @@ export const resolveAccess = (
     bindHost: config.host ?? (local ? LOCAL_BIND_HOST : DEPLOYED_BIND_HOST),
   };
 };
+
+export function assertDeploymentAuth(topology: DeploymentTopology, config: GatewayConfig): void {
+  if (topology !== 'local' && !resolveAccess(config).authEnabled) {
+    throw new ErrorEnvelopeError(createErrorEnvelope('KB_DEPLOYMENT_AUTH_REQUIRED'));
+  }
+}
 
 /**
  * Tenant that owns the bootstrap admin: config, then GATEWAY_BOOTSTRAP_TENANT_ID,

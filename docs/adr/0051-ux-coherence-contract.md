@@ -35,7 +35,7 @@ Failures contain the existing `ErrorEnvelope` from
 `core/platform/src/error-envelope`; do not introduce parallel Go launcher
 errors, `ERR_*` codes, or plugin-specific error contracts. Every surface maps
 its errors into the platform `KB_*` catalog. The shared JSON Schema and valid
-and invalid examples live in `contracts/ux-result/` and are read by TS and Go
+and invalid examples live in `core/platform/contracts/ux-result/` and are read by TS and Go
 contract tests.
 
 For HTTP, the envelope is the response body and the status code keeps its
@@ -118,5 +118,5 @@ contract outcome must fail coverage.
 
 - [S-203 — Consistent actionable outcomes across KB Labs](../qa/scenarios/S-203-ux-coherence-contract.md)
 - [ADR-0049 — Unified Error Envelope and Error Catalog](./0049-unified-error-envelope-and-catalog.md)
-- `contracts/ux-result/`
+- `core/platform/contracts/ux-result/`
 

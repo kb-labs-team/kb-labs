@@ -21,12 +21,12 @@ describe('createExecutionBackend mode detection', () => {
       expect(backend.executionMode).toBe('in-process');
     } finally {
       await backend.shutdown();
-      if (oldExecutorEndpoint === undefined) delete process.env.EXECUTOR_SERVICE_ENDPOINT;
-      else process.env.EXECUTOR_SERVICE_ENDPOINT = oldExecutorEndpoint;
-      if (oldExecutionMode === undefined) delete process.env.EXECUTION_MODE;
-      else process.env.EXECUTION_MODE = oldExecutionMode;
-      if (oldKubernetesHost === undefined) delete process.env.KUBERNETES_SERVICE_HOST;
-      else process.env.KUBERNETES_SERVICE_HOST = oldKubernetesHost;
+      if (oldExecutorEndpoint === undefined) {delete process.env.EXECUTOR_SERVICE_ENDPOINT;}
+      else {process.env.EXECUTOR_SERVICE_ENDPOINT = oldExecutorEndpoint;}
+      if (oldExecutionMode === undefined) {delete process.env.EXECUTION_MODE;}
+      else {process.env.EXECUTION_MODE = oldExecutionMode;}
+      if (oldKubernetesHost === undefined) {delete process.env.KUBERNETES_SERVICE_HOST;}
+      else {process.env.KUBERNETES_SERVICE_HOST = oldKubernetesHost;}
     }
   });
 });

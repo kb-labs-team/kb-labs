@@ -26,7 +26,7 @@ import type {
  * Error thrown when required platform service is not configured.
  */
 export class ServiceNotConfiguredError extends Error {
-  readonly code: 'KB_ADAPTER_NOT_CONFIGURED' = 'KB_ADAPTER_NOT_CONFIGURED';
+  readonly code = 'KB_ADAPTER_NOT_CONFIGURED' as const;
   readonly details: DetailsFor<'KB_ADAPTER_NOT_CONFIGURED'>;
 
   constructor(

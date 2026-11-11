@@ -2,7 +2,8 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { AdapterConfigError, type PlatformDataContext } from '@kb-labs/core-platform';
 import { deriveProjectId } from './project-id.js';
-import { projectStateDir, resolveKbHome } from './registry.js';
+import { projectStateDir } from './registry.js';
+import { resolveKbHome } from '@kb-labs/core-platform';
 
 /** Where machine-level state lives: `$KB_HOME` (or `~/.kb`) unless `root` is given. */
 export interface ProjectStateOptions {
@@ -77,7 +78,7 @@ export function resolvePlatformDataPath(
       `Run kb config set --scope platform ${optionPath} '<path-inside-platform-data>' with a path inside ${context.dataRoot}.`,
     );
   }
-  if (specialValues.includes(value) || isAbsolute(value)) return value;
+  if (specialValues.includes(value) || isAbsolute(value)) {return value;}
 
   const normalizedInput = value.replaceAll('\\', sep);
   const normalizedRelative = normalize(normalizedInput);

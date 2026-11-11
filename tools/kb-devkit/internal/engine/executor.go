@@ -2,8 +2,10 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/devkit/internal/cache"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
@@ -25,8 +29,15 @@ type Executor struct {
 	wsRoot             string
 	logRoot            string
 	liveOutput         bool // stream stdout/stderr while running
+	onHeartbeat        func(packageName, taskName string, elapsed time.Duration)
+	gate               *admission // memory admission around the real process launch; nil admits everything
 	runtimeFingerprint string
+	globalInputDigest  string
+	ownedInputDigests  map[string]string
+	dependencyDigests  map[string]string
 }
+
+const taskHeartbeatInterval = 30 * time.Second
 
 // NewExecutor creates an Executor backed by the given cache stores.
 func NewExecutor(objects cache.ObjectStore, manifests *cache.ManifestStore, states *cache.StateStore, wsRoot, cacheRoot string, liveOutput bool) *Executor {
@@ -42,7 +53,7 @@ func NewExecutor(objects cache.ObjectStore, manifests *cache.ManifestStore, stat
 }
 
 // Run executes (pkg, task) with full cache semantics:
-//  1. Compute input hash (local inputs + dep outputs via "^" patterns)
+//  1. Compute input hash (owned tracked files, global inputs, dependencies and "^" outputs)
 //  2. Cache hit? → restore outputs + return cached result
 //  3. Run command
 //  4. Store outputs + write manifest
@@ -54,13 +65,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	start := time.Now()
 
 	// 1. Compute input hash.
-	inputs := append([]string(nil), def.Inputs...)
-	if !containsInput(inputs, "package.json") {
-		// Package metadata controls exports, scripts and dependency resolution,
-		// all of which can change dist without touching src/.
-		inputs = append(inputs, "package.json")
-	}
-	inputHash, err := cache.HashInputsWithFingerprint(pkg.Dir, depDirs, inputs, e.taskFingerprint(def))
+	inputHash, err := hashTaskInputs(pkg, def, depDirs, e.runtimeFingerprint, e.globalInputDigest, e.ownedInputDigests[pkg.Name], e.dependencyDigests[pkg.Name])
 	if err != nil {
 		failure := fmt.Sprintf("hash inputs: %v", err)
 		logPath, logErr := e.writeTaskLog(pkg.Name, def.Name, "", "", failure)
@@ -100,8 +105,16 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 		}
 	}
 
-	// 3. Run command.
-	stdout, stderr, exitCode, runErr := e.runCommand(def.Command, pkg.Dir)
+	// 3. Run command. Memory is reserved only here, after the cache lookup:
+	// a cache hit never holds a reservation.
+	var slot int
+	if e.gate != nil {
+		slot = e.gate.acquire()
+	}
+	stdout, stderr, exitCode, runErr := e.runCommand(def.Command, pkg.Dir, pkg.Name, def.Name, taskHeartbeatInterval)
+	if e.gate != nil {
+		e.gate.release(slot)
+	}
 	elapsed := time.Since(start)
 
 	result := TaskResult{
@@ -116,6 +129,10 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	}
 	if runErr != nil {
 		result.Error = runErr.Error()
+		var diagnostic *diag.Diag
+		if errors.As(runErr, &diagnostic) {
+			result.Diagnostic = diagnostic
+		}
 	} else if !result.OK {
 		result.Error = fmt.Sprintf("command exited with code %d", exitCode)
 	}
@@ -200,9 +217,13 @@ func (e *Executor) writeTaskLog(pkgName, taskName, stdout, stderr, runError stri
 }
 
 func (e *Executor) taskFingerprint(def TaskDef) string {
+	return taskFingerprint(def, e.runtimeFingerprint)
+}
+
+func taskFingerprint(def TaskDef, runtimeFingerprint string) string {
 	parts := append([]string{
 		cache.FormatVersion,
-		e.runtimeFingerprint,
+		runtimeFingerprint,
 		def.Name,
 		def.Command,
 		strings.Join(def.Inputs, "\x00"),
@@ -213,24 +234,25 @@ func (e *Executor) taskFingerprint(def TaskDef) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func containsInput(inputs []string, wanted string) bool {
-	for _, input := range inputs {
-		if input == wanted {
-			return true
+func hashTaskInputs(pkg workspace.Package, def TaskDef, depDirs []string, runtimeFingerprint, globalInputDigest, ownedInputDigest, dependencyDigest string) (string, error) {
+	dependencyOutputs := make([]string, 0, len(def.Inputs))
+	for _, input := range def.Inputs {
+		if strings.HasPrefix(input, "^") {
+			dependencyOutputs = append(dependencyOutputs, input)
 		}
 	}
-	return false
+	return cache.HashInputsWithOwnership(pkg.Dir, depDirs, dependencyOutputs, taskFingerprint(def, runtimeFingerprint), globalInputDigest, ownedInputDigest, dependencyDigest)
 }
 
 // runCommand executes a shell command in dir, returning stdout, stderr, exit code.
 // If e.liveOutput is true, output is also streamed to os.Stdout/os.Stderr in real time.
-func (e *Executor) runCommand(command, dir string) (stdout, stderr string, exitCode int, err error) {
+func (e *Executor) runCommand(command, dir, packageName, taskName string, heartbeatInterval time.Duration) (stdout, stderr string, exitCode int, err error) {
 	parts := splitCommand(command)
 	if len(parts) == 0 {
 		return "", "", 1, fmt.Errorf("empty command")
 	}
 
-	bin := resolveBin(parts[0], e.wsRoot)
+	bin := resolveBin(parts[0], e.wsRoot, dir)
 
 	var outBuf, errBuf bytes.Buffer
 
@@ -240,24 +262,51 @@ func (e *Executor) runCommand(command, dir string) (stdout, stderr string, exitC
 		errW = io.MultiWriter(&errBuf, os.Stderr)
 	}
 
-	cmd := exec.Command(bin, parts[1:]...)
-	cmd.Dir = dir
-	cmd.Stdout = outW
-	cmd.Stderr = errW
-	cmd.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"NODE_PATH="+filepath.Join(e.wsRoot, "node_modules"),
 	)
-
-	runErr := cmd.Run()
-	exitCode = 0
-	if cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
+	started := time.Now()
+	type commandResult struct {
+		result toolchain.Result
+		err    error
 	}
-	if runErr != nil && exitCode == 0 {
-		exitCode = 1
+	wait := make(chan commandResult, 1)
+	go func() {
+		result, err := toolchain.Run(context.Background(), toolchain.Invocation{
+			Tool: parts[0], Executable: bin, Args: parts[1:], Dir: dir, Env: env,
+			Operation: toolchain.OperationWorkspaceTask, Stdout: outW, Stderr: errW,
+		})
+		wait <- commandResult{result: result, err: err}
+	}()
+	var completed commandResult
+	if e.onHeartbeat == nil || heartbeatInterval <= 0 {
+		completed = <-wait
+	} else {
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case completed = <-wait:
+				goto finished
+			case <-ticker.C:
+				select {
+				case completed = <-wait:
+					goto finished
+				default:
+					e.onHeartbeat(packageName, taskName, time.Since(started))
+				}
+			}
+		}
 	}
 
-	return outBuf.String(), errBuf.String(), exitCode, nil
+finished:
+	if completed.err != nil {
+		var commandFailure *toolchain.CommandError
+		if errors.As(completed.err, &commandFailure) {
+			return outBuf.String(), errBuf.String(), completed.result.ExitCode, nil
+		}
+	}
+	return outBuf.String(), errBuf.String(), completed.result.ExitCode, completed.err
 }
 
 // storeOutputs walks output glob patterns, stores each file in ObjectStore,
@@ -271,11 +320,16 @@ func (e *Executor) storeOutputs(pkgDir string, patterns []string) ([]cache.Outpu
 	var refs []cache.OutputRef
 	for _, rel := range fileList {
 		absPath := filepath.Join(pkgDir, rel)
+		info, err := os.Stat(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("stat %s: %w", rel, err)
+		}
 		sha, err := e.objects.PutFile(absPath)
 		if err != nil {
 			return nil, fmt.Errorf("store %s: %w", rel, err)
 		}
-		refs = append(refs, cache.OutputRef{Path: rel, Object: sha})
+		mode := uint32(info.Mode().Perm())
+		refs = append(refs, cache.OutputRef{Path: rel, Object: sha, Mode: &mode})
 	}
 	return refs, nil
 }
@@ -283,8 +337,11 @@ func (e *Executor) storeOutputs(pkgDir string, patterns []string) ([]cache.Outpu
 // restoreOutputs copies cached output files back to their locations in pkgDir.
 func (e *Executor) restoreOutputs(m *cache.Manifest, pkgDir string) error {
 	for _, ref := range m.Outputs {
+		if ref.Mode == nil {
+			return fmt.Errorf("restore %s: cached output has no file mode", ref.Path)
+		}
 		dest := filepath.Join(pkgDir, ref.Path)
-		if err := e.objects.RestoreFile(ref.Object, dest); err != nil {
+		if err := e.objects.RestoreFile(ref.Object, dest, os.FileMode(*ref.Mode)); err != nil {
 			return fmt.Errorf("restore %s: %w", ref.Path, err)
 		}
 	}
@@ -350,11 +407,18 @@ func matchGlobParts(patParts, pathParts []string) bool {
 }
 
 // resolveBin finds binary in workspace node_modules/.bin or PATH.
-func resolveBin(name, wsRoot string) string {
+func resolveBin(name, wsRoot, packageDir string) string {
 	// Handle compound commands like "eslint src/" — name is just "eslint".
-	candidate := filepath.Join(wsRoot, "node_modules", ".bin", name)
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate
+	if filepath.IsAbs(name) {
+		return name
+	}
+	for _, candidate := range []string{
+		filepath.Join(packageDir, "node_modules", ".bin", name),
+		filepath.Join(wsRoot, "node_modules", ".bin", name),
+	} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
 	}
 	if p, err := exec.LookPath(name); err == nil {
 		return p

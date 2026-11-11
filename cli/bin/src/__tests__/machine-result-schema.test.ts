@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 
-const contractDir = fileURLToPath(new URL('../../../../contracts/ux-result', import.meta.url));
+const contractDir = fileURLToPath(new URL('../../../../core/platform/contracts/ux-result', import.meta.url));
 const schemaDir = join(contractDir, 'fixtures');
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 const errorSchema = JSON.parse(readFileSync(

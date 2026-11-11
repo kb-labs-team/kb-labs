@@ -6,9 +6,12 @@
  * headers that prove to the runtime that the request comes from the host.
  */
 
-import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { createErrorEnvelope, type IContextLogger } from "@kb-labs/core-platform";
-import { isProjectRegistryError } from "@kb-labs/core-project-registry";
+import type { IProjectRegistry } from "@kb-labs/core-project-registry";
+import {
+  isProjectRegistryError,
+  projectErrorEnvelope,
+} from "@kb-labs/core-project-registry";
 import {
   ProjectRoutingError,
   type ProjectRouting,
@@ -23,7 +26,7 @@ import { ProjectRuntimeError } from "./errors.js";
 import type { ProjectRuntimeManager } from "./manager.js";
 
 export interface ProjectRoutingOptions {
-  registry: Pick<IProjectRegistry, "list">;
+  registry: Pick<IProjectRegistry, "get" | "list">;
   manager: ProjectRuntimeManager;
   logger: IContextLogger;
 }
@@ -48,17 +51,30 @@ export function createProjectRouting(
       // which must not be addressable through a URL.
       let views;
       try {
-        views = await registry.list();
+        views = (await registry.list()).projects;
       } catch (error) {
         if (isProjectRegistryError(error)) {
-          logger.error("Project registry unavailable", error, {
-            code: error.code,
-          });
+          logger.error("Project registry unavailable", undefined, { code: error.code });
+          throw new ProjectRoutingError(projectErrorEnvelope(error));
         }
         throw error;
       }
       const view = views.find((candidate) => candidate.project.id === projectId);
       if (!view) {
+        try {
+          await registry.get(projectId);
+        } catch (error) {
+          if (isProjectRegistryError(error)) {
+            if (error.code !== "KB_PROJECT_UNKNOWN") {
+              logger.error("Project registry contains an invalid project record", undefined, {
+                code: error.code,
+              });
+              throw new ProjectRoutingError(projectErrorEnvelope(error));
+            }
+          } else {
+            throw error;
+          }
+        }
         throw unknownProject(projectId, "no such project id in the registry");
       }
       if (view.project.status !== "active") {

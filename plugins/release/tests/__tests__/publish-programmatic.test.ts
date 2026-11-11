@@ -1,0 +1,349 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, readdirSync, rmSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+
+const capturedNpmrc: string[] = [];
+const capturedArgs: string[][] = [];
+const capturedShell: Array<boolean | undefined> = [];
+const capturedEnv: NodeJS.ProcessEnv[] = [];
+// Tests can override these to simulate a failing `npm publish` — reset in beforeEach.
+let mockCloseCode = 0;
+let mockStderr = '';
+
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  spawn: vi.fn((_command: string, args: string[], options: { cwd: string; shell?: boolean; env?: NodeJS.ProcessEnv }) => {
+    const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+
+    capturedArgs.push(args);
+    capturedShell.push(options.shell);
+    capturedEnv.push(options.env ?? {});
+
+    // Capture the temp .npmrc content synchronously, before it's restored/removed.
+    const npmrcPath = join(options.cwd, '.npmrc');
+    try {
+      capturedNpmrc.push(readFileSync(npmrcPath, 'utf-8'));
+    } catch {
+      capturedNpmrc.push('');
+    }
+
+    const closeCode = mockCloseCode;
+    const stderr = mockStderr;
+    queueMicrotask(() => {
+      if (stderr) { child.stderr.emit('data', Buffer.from(stderr)); }
+      child.emit('close', closeCode);
+    });
+    return child;
+  }),
+}));
+
+import { publishPackagesProgrammatic } from '../../src/shared/publish-programmatic';
+
+function makePackageDir(): string {
+  const dir = join(tmpdir(), `publish-programmatic-test-${randomBytes(4).toString('hex')}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@kb-labs/fixture', version: '1.0.0' }));
+  return dir;
+}
+
+describe('publishPackagesProgrammatic — .npmrc registry auth', () => {
+  let pkgDir: string;
+
+  beforeEach(() => {
+    pkgDir = makePackageDir();
+    capturedNpmrc.length = 0;
+    capturedArgs.length = 0;
+    capturedShell.length = 0;
+    capturedEnv.length = 0;
+  });
+
+  afterEach(() => {
+    rmSync(pkgDir, { recursive: true, force: true });
+  });
+
+  it('defers auth resolution to npm when the credential is in its protected user config', async () => {
+    const userConfig = join(pkgDir, 'user.npmrc');
+    writeFileSync(userConfig, '//127.0.0.1:4879/:_authToken=verdaccio-user-config-token\n');
+    const previousUserConfig = process.env.NPM_CONFIG_USERCONFIG;
+    const previousNpmToken = process.env.NPM_TOKEN;
+    const previousNodeToken = process.env.NODE_AUTH_TOKEN;
+    process.env.NPM_CONFIG_USERCONFIG = userConfig;
+    delete process.env.NPM_TOKEN;
+    delete process.env.NODE_AUTH_TOKEN;
+
+    let result: Awaited<ReturnType<typeof publishPackagesProgrammatic>>;
+    try {
+      result = await publishPackagesProgrammatic({
+        packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+        registry: 'http://127.0.0.1:4879',
+      });
+    } finally {
+      if (previousUserConfig === undefined) delete process.env.NPM_CONFIG_USERCONFIG;
+      else process.env.NPM_CONFIG_USERCONFIG = previousUserConfig;
+      if (previousNpmToken === undefined) delete process.env.NPM_TOKEN;
+      else process.env.NPM_TOKEN = previousNpmToken;
+      if (previousNodeToken === undefined) delete process.env.NODE_AUTH_TOKEN;
+      else process.env.NODE_AUTH_TOKEN = previousNodeToken;
+    }
+    expect(result.results[0]?.success).toBe(true);
+    expect(capturedArgs).toHaveLength(1);
+    expect(capturedEnv[0]?.NPM_CONFIG_USERCONFIG).toBe(userConfig);
+    expect(capturedEnv[0]?.NODE_AUTH_TOKEN).toBeUndefined();
+  });
+
+  it('returns npm authentication failure when neither user config nor environment supplies a credential', async () => {
+    const previousUserConfig = process.env.NPM_CONFIG_USERCONFIG;
+    const previousNpmToken = process.env.NPM_TOKEN;
+    const previousNodeToken = process.env.NODE_AUTH_TOKEN;
+    delete process.env.NPM_CONFIG_USERCONFIG;
+    delete process.env.NPM_TOKEN;
+    delete process.env.NODE_AUTH_TOKEN;
+    mockCloseCode = 1;
+    mockStderr = 'npm error code E401\nnpm error 401 Unauthorized';
+
+    let result: Awaited<ReturnType<typeof publishPackagesProgrammatic>>;
+    try {
+      result = await publishPackagesProgrammatic({
+        packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+        registry: 'http://127.0.0.1:4879',
+      });
+    } finally {
+      if (previousUserConfig !== undefined) process.env.NPM_CONFIG_USERCONFIG = previousUserConfig;
+      if (previousNpmToken !== undefined) process.env.NPM_TOKEN = previousNpmToken;
+      if (previousNodeToken !== undefined) process.env.NODE_AUTH_TOKEN = previousNodeToken;
+      mockCloseCode = 0;
+      mockStderr = '';
+    }
+
+    expect(result.results[0]).toMatchObject({ success: false, errorCode: 'E401' });
+    expect(capturedArgs).toHaveLength(1);
+  });
+
+  it('scopes the child credential to the target registry', async () => {
+    await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      registry: 'http://localhost:4873',
+      token: 'verdaccio-token',
+    });
+
+    expect(capturedNpmrc).toHaveLength(1);
+    expect(capturedEnv[0]?.['npm_config_//localhost:4873/:_authToken']).toBe('verdaccio-token');
+    expect(capturedNpmrc[0]).toBe('');
+  });
+
+  it('scopes staging auth when the package .npmrc contains a token for another registry', async () => {
+    // Regression: a leftover package .npmrc from a real npmjs publish carries
+    // `//registry.npmjs.org/:_authToken=...`. Treating any _authToken as
+    // "already authenticated" skipped the line for the staging registry and
+    // npm failed with ENEEDAUTH for exactly those packages.
+    writeFileSync(join(pkgDir, '.npmrc'), '//registry.npmjs.org/:_authToken=real-npm-token\n');
+
+    await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      registry: 'http://localhost:4973',
+      token: 'verdaccio-local',
+    });
+
+    expect(capturedNpmrc).toHaveLength(1);
+    expect(capturedNpmrc[0]).toContain('//registry.npmjs.org/:_authToken=real-npm-token');
+    expect(capturedEnv[0]?.['npm_config_//localhost:4973/:_authToken']).toBe('verdaccio-local');
+    // The pre-existing file remains untouched.
+    expect(readFileSync(join(pkgDir, '.npmrc'), 'utf-8')).toBe('//registry.npmjs.org/:_authToken=real-npm-token\n');
+  });
+
+  it('leaves an existing project auth line untouched', async () => {
+    writeFileSync(join(pkgDir, '.npmrc'), '//localhost:4973/:_authToken=user-chosen\n');
+
+    await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      registry: 'http://localhost:4973',
+      token: 'verdaccio-local',
+    });
+
+    expect(capturedEnv[0]?.['npm_config_//localhost:4973/:_authToken']).toBe('verdaccio-local');
+    expect(readFileSync(join(pkgDir, '.npmrc'), 'utf-8')).toBe('//localhost:4973/:_authToken=user-chosen\n');
+  });
+
+  it('keeps dry runs offline and removes explicit credentials', async () => {
+    vi.stubEnv('npm_config_//localhost:4873/:_authToken', 'inherited-secret');
+    await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      registry: 'http://localhost:4873', token: 'dry-run-secret', dryRun: true,
+    });
+    expect(capturedArgs[0]).toContain('--offline');
+    expect(capturedEnv[0]?.NODE_AUTH_TOKEN).toBeUndefined();
+    expect(capturedEnv[0]?.['npm_config_//localhost:4873/:_authToken']).toBeUndefined();
+    expect(capturedEnv[0]?.HOME).not.toBe(process.env.HOME);
+    expect(capturedNpmrc[0]).not.toContain('dry-run-secret');
+    vi.unstubAllEnvs();
+  });
+
+  it('defaults to registry.npmjs.org when no registry is passed', async () => {
+    await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      token: 'npm-token',
+    });
+
+    expect(capturedNpmrc).toHaveLength(1);
+    expect(capturedEnv[0]?.['npm_config_//registry.npmjs.org/:_authToken']).toBe('npm-token');
+  });
+});
+
+describe('publishPackagesProgrammatic — tarballPath (release artifact publish)', () => {
+  let pkgDir: string;
+
+  beforeEach(() => {
+    pkgDir = makePackageDir();
+    capturedNpmrc.length = 0;
+    capturedArgs.length = 0;
+    capturedShell.length = 0;
+    capturedEnv.length = 0;
+  });
+
+  afterEach(() => {
+    rmSync(pkgDir, { recursive: true, force: true });
+  });
+
+  it('publishes the tarball path directly instead of packing the directory fresh', async () => {
+    const tarballPath = join(pkgDir, 'kb-labs-fixture-1.0.0.tgz');
+    await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir, tarballPath }],
+      packageManager: 'npm',
+      token: 'npm-token',
+    });
+
+    expect(capturedArgs).toHaveLength(1);
+    expect(capturedArgs[0]).toEqual(['publish', '--no-update-notifier', tarballPath, '--ignore-scripts']);
+    expect(capturedShell).toEqual([false]);
+  });
+
+  it('passes metacharacter tarball paths as one argv value and keeps the token out of output and files', async () => {
+    const sentinel = 'x241-secret-sentinel-value';
+    const sentinelFile = join(pkgDir, 'x241-shell-was-run');
+    const maliciousTarball = `${join(pkgDir, 'safe.tgz')};touch ${sentinelFile}`;
+    const result = await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir, tarballPath: maliciousTarball }],
+      packageManager: 'npm',
+      token: sentinel,
+    });
+
+    expect(capturedShell).toEqual([false]);
+    expect(capturedArgs[0]).toEqual(['publish', '--no-update-notifier', maliciousTarball, '--ignore-scripts']);
+    expect(result.results[0]?.success).toBe(true);
+    expect(JSON.stringify(result)).not.toContain(sentinel);
+    expect(capturedNpmrc.join('\n')).not.toContain(sentinel);
+    expect(readdirSync(pkgDir).some(name => name.includes('x241-shell-was-run'))).toBe(false);
+    for (const name of readdirSync(pkgDir)) {
+      const file = join(pkgDir, name);
+      if (statSync(file).isFile()) expect(readFileSync(file, 'utf8')).not.toContain(sentinel);
+    }
+  });
+
+  it('omits --no-git-checks for a tarball publish even under pnpm — there is no working tree to check', async () => {
+    const tarballPath = join(pkgDir, 'kb-labs-fixture-1.0.0.tgz');
+    await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir, tarballPath }],
+      packageManager: 'pnpm',
+      token: 'npm-token',
+    });
+
+    expect(capturedArgs[0]).not.toContain('--no-git-checks');
+  });
+
+  it('without tarballPath, still packs+publishes from the directory as before', async () => {
+    await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      packageManager: 'pnpm',
+      token: 'npm-token',
+    });
+
+    expect(capturedArgs[0]).toEqual(['publish', '--no-update-notifier', '--no-git-checks']);
+  });
+});
+
+describe('publishPackagesProgrammatic — permanent-failure diagnostics', () => {
+  let pkgDir: string;
+
+  beforeEach(() => {
+    pkgDir = makePackageDir();
+    capturedNpmrc.length = 0;
+    capturedArgs.length = 0;
+    mockCloseCode = 0;
+    mockStderr = '';
+  });
+
+  afterEach(() => {
+    rmSync(pkgDir, { recursive: true, force: true });
+    mockCloseCode = 0;
+    mockStderr = '';
+  });
+
+  it('extracts npm\'s own error code and attaches an actionable hint for a 403 (real-world case: npm-side package restriction, not a token problem)', async () => {
+    mockCloseCode = 1;
+    mockStderr = [
+      'npm notice Publishing to https://registry.npmjs.org/ with tag latest and default access',
+      'npm error code E403',
+      'npm error 403 403 Forbidden - PUT https://registry.npmjs.org/@kb-labs%2fadapters-fs',
+      'npm error 403 In most cases, you or one of your dependencies are requesting',
+      'npm error 403 a package version that is forbidden by your security policy, or',
+      'npm error 403 on a server you do not have access to.',
+    ].join('\n');
+
+    const result = await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      token: 'npm-token',
+    });
+
+    expect(result.results).toHaveLength(1);
+    const [entry] = result.results;
+    expect(entry!.success).toBe(false);
+    expect(entry!.errorCode).toBe('E403');
+    expect(entry!.errorHint).toMatch(/npm-side restriction/);
+  });
+
+  it('leaves errorCode/errorHint undefined for an unrecognized failure message', async () => {
+    mockCloseCode = 1;
+    mockStderr = 'some completely unrelated tool crash, no npm error code here';
+
+    const result = await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      token: 'npm-token',
+    });
+
+    const [entry] = result.results;
+    expect(entry!.success).toBe(false);
+    expect(entry!.errorCode).toBeUndefined();
+    expect(entry!.errorHint).toBeUndefined();
+  });
+
+  it('treats a Verdaccio E409 conflict as already-published, not a permanent failure — a retry against the same commit must not fail Stage forever', async () => {
+    // Verdaccio (the local staging registry release:stage-plan publishes
+    // planned versions to) reports a version conflict with different
+    // wording than npmjs.org's "cannot publish over the previously
+    // published version" — real repro: re-running release-prepare's Stage
+    // step at the same commit, against a registry it already staged to.
+    mockCloseCode = 1;
+    mockStderr = [
+      'npm notice Publishing to http://localhost:4873/ with tag latest and public access',
+      'npm error code E409',
+      'npm error 409 Conflict - PUT http://localhost:4873/@kb-labs%2fadapters-analytics-duckdb - this package is already present',
+    ].join('\n');
+
+    const result = await publishPackagesProgrammatic({
+      packages: [{ name: '@kb-labs/fixture', version: '1.0.0', path: pkgDir }],
+      registry: 'http://localhost:4873',
+      token: 'verdaccio-local',
+    });
+
+    const [entry] = result.results;
+    expect(entry!.success).toBe(true);
+    expect(entry!.alreadyPublished).toBe(true);
+    expect(result.alreadyPublished).toEqual(['@kb-labs/fixture@1.0.0']);
+    expect(result.failed).toEqual([]);
+  });
+});

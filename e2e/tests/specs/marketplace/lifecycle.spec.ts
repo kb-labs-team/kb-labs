@@ -5,14 +5,14 @@ import { MARKETPLACE } from '../../fixtures/urls.js'
 // All mutating operations use the body-based API (not URL-encoded package IDs)
 // because plugin IDs contain `@` and `/` that break URL-path routing.
 
-// @kb-labs/commit-entry is the commit plugin — published to Verdaccio from the
+// @kb-labs/commit is the commit plugin — published to Verdaccio from the
 // monorepo build and NOT part of the default kb-create bootstrap, so it is safe
 // to install / disable / enable / uninstall in tests.
-const TEST_SPEC = '@kb-labs/commit-entry'
+const TEST_SPEC = '@kb-labs/commit'
 
 // Helper: find exact match for TEST_SPEC in marketplace listing.
 // Using exact ID match to avoid false positives from pre-installed packages
-// that happen to share a substring (e.g. '@kb-labs/commit' != '@kb-labs/commit-entry').
+// that happen to share a substring (e.g. '@kb-labs/commit' != '@kb-labs/commit').
 type PkgEntry = { name?: string; id?: string; spec?: string; enabled?: boolean }
 const findExact = (packages: PkgEntry[]) =>
   packages.find(p => p.id === TEST_SPEC || p.spec === TEST_SPEC || p.name === TEST_SPEC)

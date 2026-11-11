@@ -13,9 +13,9 @@ import type {
   IGatewayClient,
   GatewayClientConfig,
   GatewayExecuteRequest,
-} from './types.js';
-import { AuthSessionOwner } from './auth-session.js';
-import { authRequiredForGateway } from './auth-origin.js';
+} from '@kb-labs/sdk/gateway';
+import { AuthSessionOwner } from '@kb-labs/sdk/gateway';
+import { authRequiredForGateway } from '@kb-labs/sdk/gateway';
 
 export class HttpSseGatewayTransport implements IGatewayClient {
   private readonly config: GatewayClientConfig;

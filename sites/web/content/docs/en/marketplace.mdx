@@ -10,7 +10,7 @@ slug: marketplace
 From a KB Labs project, install a plugin at an exact version:
 
 ```bash
-kb marketplace install @kb-labs/commit-entry@1.2.3
+kb marketplace install @kb-labs/commit@1.2.3
 ```
 
 The project records an exact version, tarball integrity, source kind, and enabled state in schema v3 of `.kb/marketplace.lock`. The package lives in the machine's shared extension store; the lock contains no machine path or install timestamp. The install does not change your `package.json`, package-manager lockfile, or `node_modules`. Commit the marketplace lock with your project. If a v2 lock is reported, run `kb marketplace sync` to regenerate it.
@@ -25,7 +25,7 @@ cd .kb/plugins/my-plugin
 pnpm install
 pnpm -w build
 cd ../../..
-kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry
+kb marketplace plugins add --link .kb/plugins/my-plugin
 kb my-plugin hello
 ```
 

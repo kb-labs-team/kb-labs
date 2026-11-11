@@ -22,7 +22,7 @@ export type ProjectShowResult = CommandResult & {
 
 export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
   name: 'show',
-  scope: 'platform',
+  scope: (argv) => argv.length === 0 ? 'project' : 'platform',
   jsonTest: { safeArgs: ["__fixture_project_id__"] },
   description: 'Show one registered project',
   longDescription:

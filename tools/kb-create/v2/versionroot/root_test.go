@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -377,6 +379,132 @@ func TestHandoffCrashBoundariesKeepCompleteActiveAndRecoveryRoots(t *testing.T) 
 	}
 }
 
+func TestUpdateActivationFailuresAfterLinkSwitchRestorePriorVersionAndMetadata(t *testing.T) {
+	points := CrashPoints()
+	start := -1
+	for index, point := range points {
+		if point == HandoffBeforeActiveRootSync {
+			start = index
+			break
+		}
+	}
+	if start < 0 || start >= len(points) {
+		t.Fatalf("post-switch activation handoffs are missing from CrashPoints(): %v", points)
+	}
+	points = points[start:]
+	for _, point := range points {
+		t.Run(string(point), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "platform")
+			layout, v1 := initialLayout(t, root, "1.0.0")
+			if err := layout.RecordHealthy(); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(v1, "transaction-marker"), []byte("version-one"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			treeBefore := snapshotVersionrootTree(t, v1)
+			if err := layout.writeUpdateMetadata(UpdateMetadata{SnapshotID: "prior-snapshot", LogPath: "prior.log"}); err != nil {
+				t.Fatal(err)
+			}
+			metadataBefore, err := os.ReadFile(layout.updateMetadataPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			stage := stageVersion(t, layout, "2.0.0")
+			target := filepath.Join(layout.VersionsDir(), versionKey("2.0.0", "plan-2"))
+			injected := errors.New("injected post-switch activation failure")
+			_, err = layout.activate(stage, "2.0.0", "plan-2", "", &UpdateMetadata{SnapshotID: "new-snapshot"}, func(current HandoffPoint) error {
+				if current == point {
+					return injected
+				}
+				return nil
+			})
+			if !errors.Is(err, injected) {
+				t.Fatalf("activation error = %v, want injected failure", err)
+			}
+			active, err := layout.Active()
+			if err != nil || active != v1 {
+				t.Fatalf("active version = %q, %v; want %q", active, err, v1)
+			}
+			installed, err := receipt.Read(active)
+			if err != nil || installed.ID != "receipt-1.0.0" {
+				t.Fatalf("restored receipt = %#v, %v", installed, err)
+			}
+			marker, err := os.ReadFile(filepath.Join(v1, "transaction-marker"))
+			if err != nil || string(marker) != "version-one" {
+				t.Fatalf("prior version tree marker = %q, %v", marker, err)
+			}
+			if treeAfter := snapshotVersionrootTree(t, v1); !equalVersionrootSnapshots(treeAfter, treeBefore) {
+				t.Fatalf("prior version tree changed during failed activation: before=%v after=%v", treeBefore, treeAfter)
+			}
+			metadataAfter, err := os.ReadFile(layout.updateMetadataPath())
+			if err != nil || !bytes.Equal(metadataAfter, metadataBefore) {
+				t.Fatalf("recovery metadata changed: before=%q after=%q error=%v", metadataBefore, metadataAfter, err)
+			}
+			if _, err := os.Lstat(target); !os.IsNotExist(err) {
+				t.Fatalf("failed activation left finalized target %q: %v", target, err)
+			}
+		})
+	}
+}
+
+func TestCrashPointsEnumeratesEveryProducedHandoff(t *testing.T) {
+	layout, err := New(filepath.Join(t.TempDir(), "platform"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observed []HandoffPoint
+	record := func(point HandoffPoint) error {
+		observed = append(observed, point)
+		return nil
+	}
+	stage, err := layout.stageInitial(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, stage, "1.0.0", "enumeration-initial")
+	if _, err := layout.activateInitial(stage, "1.0.0", "enumeration-initial", record); err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.RecordHealthy(); err != nil {
+		t.Fatal(err)
+	}
+	stage, err = layout.stage(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, stage, "2.0.0", "enumeration-update")
+	if _, err := layout.activate(stage, "2.0.0", "enumeration-update", "", &UpdateMetadata{SnapshotID: "enumeration"}, record); err != nil {
+		t.Fatal(err)
+	}
+	if points := CrashPoints(); !reflect.DeepEqual(points, observed) {
+		t.Fatalf("CrashPoints() = %v, observed handoff producers = %v", points, observed)
+	}
+}
+
+func TestUpdateActiveLinkSwitchIOFailureRestoresPriorVersion(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	layout, v1 := initialLayout(t, root, "1.0.0")
+	stage := stageVersion(t, layout, "2.0.0")
+	_, err := layout.activate(stage, "2.0.0", "plan-2", "", nil, func(point HandoffPoint) error {
+		if point == HandoffLinkPrepared {
+			return os.Remove(filepath.Join(layout.InstallerStateDir(), "current-next"))
+		}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "switch active version") {
+		t.Fatalf("activation error = %v, want actual active-link rename failure", err)
+	}
+	active, err := layout.Active()
+	if err != nil || active != v1 {
+		t.Fatalf("active version = %q, %v; want %q after actual link switch I/O failure", active, err, v1)
+	}
+	installed, err := receipt.Read(active)
+	if err != nil || installed.ID != "receipt-1.0.0" {
+		t.Fatalf("restored receipt = %#v, %v", installed, err)
+	}
+}
+
 // case: S-223.1
 func TestInitialHandoffLeavesOnlyCompleteInstallTreesAtEachBoundary(t *testing.T) {
 	points := []HandoffPoint{HandoffInitialMetadataWritten, HandoffInitialTargetFinalized, HandoffInitialLinkPrepared, HandoffInitialLinkSwitched}
@@ -610,6 +738,49 @@ func TestInitialTargetRefusesSymlinkedAndWrongTypedOwnedEntries(t *testing.T) {
 }
 
 func TestPackageManagerStateAllowsPnpmProjectSymlinks(t *testing.T) {
+	t.Run("stale package manager registration inside install root is accepted", func(t *testing.T) {
+		layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
+		link := filepath.Join(layout.PackageManagerStateDir(), "xdg-data", "pnpm", "store", "v11", "projects", "stale")
+		if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(layout.Root, "versions", ".stage-renamed"), link); err != nil {
+			t.Fatal(err)
+		}
+		if err := layout.ValidateStructure(); err != nil {
+			t.Fatalf("stale registration rejected: %v", err)
+		}
+	})
+	t.Run("dangling package manager link outside install root is rejected", func(t *testing.T) {
+		layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
+		link := filepath.Join(layout.PackageManagerStateDir(), "escaping")
+		if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), link); err != nil {
+			t.Fatal(err)
+		}
+		if err := layout.ValidateStructure(); err == nil {
+			t.Fatal("escaping dangling link accepted")
+		}
+	})
+	t.Run("extension store target inside install root is accepted", func(t *testing.T) {
+		layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
+		target := filepath.Join(layout.Root, "state", "home", "store", "entries", "fixture")
+		link := filepath.Join(layout.Root, "state", "home", "store", "cas", "v11", "projects", "fixture")
+		if err := os.MkdirAll(target, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if err := layout.ValidateStructure(); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("project target inside install root is accepted", func(t *testing.T) {
 		layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
 		target := filepath.Join(layout.PackageManagerStateDir(), "projects", "fixture")
@@ -645,6 +816,62 @@ func TestPackageManagerStateAllowsPnpmProjectSymlinks(t *testing.T) {
 			t.Fatalf("ValidateStructure error = %v, want named package-manager symlink escape diagnostic", err)
 		}
 	})
+}
+
+func TestDarwinVarAliasResolvesInsideCanonicalInstallRoot(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	const aliasRoot = "/var/folders"
+	layout, err := New(aliasRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(aliasRoot)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("read %s: %v", aliasRoot, err)
+	}
+	target, err := filepath.EvalSymlinks(filepath.Join(aliasRoot, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inside, err := contracts.PathWithin(layout.Root, target)
+	if err != nil || !inside {
+		t.Fatalf("target %s is not inside canonical root %s: %v", target, layout.Root, err)
+	}
+	links := t.TempDir()
+	link := filepath.Join(links, "project")
+	if err := os.Symlink(filepath.Join(aliasRoot, entries[0].Name()), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateContainerSymlinks(links, layout.Root, []string{links}); err != nil {
+		t.Fatalf("validator rejected /var alias inside %s: %v", layout.Root, err)
+	}
+}
+
+func TestRealExtensionStorePassesContainerValidator(t *testing.T) {
+	layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
+	workspace, err := filepath.Abs("../../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(filepath.Join(workspace, "node_modules/.bin/vitest"), "run", "tools/kb-create/v2/versionroot/testdata/store-seam.test.ts")
+	cmd.Dir = workspace
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, contracts.KBHomeEnv+"=") && !strings.HasPrefix(value, "HOME=") {
+			cmd.Env = append(cmd.Env, value)
+		}
+	}
+	cmd.Env = append(cmd.Env, contracts.KBHomeEnv+"="+contracts.KBHomeDirectory(layout.Root), "HOME="+t.TempDir())
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("real store install: %v\n%s", err, output)
+	}
+	if err := layout.ValidateStructure(); err != nil {
+		t.Fatalf("real store rejected: %v", err)
+	}
+	if err := layout.ValidateStructure(); err != nil {
+		t.Fatalf("repeat validation: %v", err)
+	}
 }
 
 func TestInitialTargetRefusesVersionLinksThatEscapeTheContainer(t *testing.T) {
@@ -1230,7 +1457,7 @@ func TestPreActivationUpdateHandoffsLeaveSharedStateAndRunningVersionUntouched(t
 				stage, err = layout.Stage()
 				if err == nil {
 					writeReceipt(t, stage, "2.0.0", "receipt-2.0.0")
-					_, err = layout.activate(stage, "2.0.0", "plan-2.0.0", active, nil, func(current HandoffPoint) error {
+					_, err = layout.activate(stage, "2.0.0", "plan-2.0.0", active, &UpdateMetadata{SnapshotID: "crash-test"}, func(current HandoffPoint) error {
 						if current == point {
 							return interrupt
 						}
@@ -1365,7 +1592,7 @@ func interruptAtPoint(t *testing.T, point HandoffPoint) Layout {
 		t.Fatal(err)
 	}
 	writeReceipt(t, stage, "2.0.0", "receipt-update")
-	_, err = layout.activate(stage, "2.0.0", "update-plan", "", nil, func(current HandoffPoint) error {
+	_, err = layout.activate(stage, "2.0.0", "update-plan", "", &UpdateMetadata{SnapshotID: "crash-test"}, func(current HandoffPoint) error {
 		if current == point {
 			return crash
 		}
@@ -1533,7 +1760,8 @@ func TestInstallRootContainerKeepsLifecycleWritesInsideTheChosenDirectory(t *tes
 	}
 	current := filepath.Join(root, "current")
 	link, err := os.Readlink(current)
-	if err != nil || filepath.IsAbs(link) || !strings.HasPrefix(filepath.Clean(filepath.Join(root, link)), filepath.Join(root, "versions")+string(filepath.Separator)) {
+	inside, containmentErr := contracts.PathWithin(filepath.Join(root, "versions"), filepath.Join(root, link))
+	if err != nil || containmentErr != nil || filepath.IsAbs(link) || !inside || filepath.Clean(filepath.Join(root, link)) == filepath.Join(root, "versions") {
 		t.Fatalf("current link = %q, %v; want relative link into install-root versions", link, err)
 	}
 	entries, err := os.ReadDir(parent)
@@ -1600,8 +1828,11 @@ func assertOnlyInstallRoot(t *testing.T, parent string) {
 func TestUnsupportedOperatingSystemIsCataloguedBeforeStaging(t *testing.T) {
 	err := supportedOS("windows")
 	var diagnostic *diag.Diag
-	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeInstallLayoutUnsupported {
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeUnsupportedPlatform {
 		t.Fatalf("unsupported operating-system error = %#v", err)
+	}
+	if diagnostic.Message != "windows/"+runtime.GOARCH+" is not a supported platform." || !strings.Contains(diagnostic.Hint, "Linux or macOS") {
+		t.Fatalf("unsupported operating-system message or hint = %q / %q", diagnostic.Message, diagnostic.Hint)
 	}
 }
 

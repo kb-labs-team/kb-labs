@@ -16,6 +16,7 @@ export type GlobalFlags = {
   logLevel?: "debug" | "info" | "warn" | "error";
   profile?: string;
   profilesDir?: string;
+  gatewayUrl?: string;
   noColor?: boolean;
   verbose?: boolean; // Deprecated: use --debug instead
   debug?: boolean | "verbose" | "inspect" | "profile";
@@ -95,7 +96,12 @@ export function parseArgs(argv: string[]): {
           global.help = true;
           break;
         case "--version":
-          global.version = true;
+          if (cmdPath.length > 0) {
+            const value = args[0];
+            flagsObj.version = value !== undefined && !value.startsWith("-") ? args.shift() : true;
+          } else {
+            global.version = true;
+          }
           break;
         case "--no-color":
           global.noColor = true;
@@ -153,6 +159,14 @@ export function parseArgs(argv: string[]): {
         case "--profiles-dir":
           global.profilesDir = String(args.shift());
           break;
+        case "--gateway-url": {
+          const value = args.shift();
+          if (!value || value.startsWith("-")) {
+            throw new CliError(CLI_ERROR_CODES.E_INVALID_FLAGS, "--gateway-url requires an HTTP URL value.");
+          }
+          global.gatewayUrl = value;
+          break;
+        }
         default: {
           // generic key/value or boolean
           // Support both --flag=value and --flag value syntax
@@ -171,6 +185,8 @@ export function parseArgs(argv: string[]): {
               ) {
                 global.debug = value as "verbose" | "inspect" | "profile";
                 global.logLevel = "debug";
+              } else if (key === "gateway-url") {
+                global.gatewayUrl = value;
               } else {
                 flagsObj[key] = value;
               }
@@ -194,6 +210,11 @@ export function parseArgs(argv: string[]): {
     }
   }
   const rest = args;
+
+  if (cmdPath.length > 0 && global.version) {
+    flagsObj.version = true;
+    delete global.version;
+  }
 
   // Fallback to KB_PROFILE env var if --profile not provided
   // Priority: --profile flag > KB_PROFILE env var > default

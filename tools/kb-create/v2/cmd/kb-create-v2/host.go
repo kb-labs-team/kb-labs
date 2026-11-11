@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kb-labs/clikit/proc/child"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
@@ -33,6 +34,7 @@ type hostCommand struct {
 	identityReader        func(int) (string, error)
 	testSupervisorHealthy func(context.Context, host.State) bool
 	testBackstopGrace     time.Duration
+	Interrupt             bool
 }
 
 type hostCommandResult map[string]any
@@ -112,7 +114,7 @@ func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, sta
 	}
 	if status.State != host.StateStopped {
 		command := contracts.ShellCommand("kb-create", "status", "--platform-root", c.PlatformRoot)
-		failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
+		failure := contracts.NewDiag(contracts.CodeHostAlreadyRunning, "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
 		failure.Meta = map[string]any{"nextCommand": command}
 		return nil, failure
 	}
@@ -121,7 +123,7 @@ func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, sta
 	}
 	if pid, alive := supervisor.LivePID(state, process.InstallRoot); alive {
 		command := contracts.ShellCommand("kb-create", "status", "--platform-root", c.PlatformRoot)
-		e := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
+		e := contracts.NewDiag(contracts.CodeHostAlreadyRunning, "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
 		e.Meta = map[string]any{"supervisorPid": fmt.Sprint(pid), "nextCommand": command}
 		return nil, e
 	}
@@ -173,8 +175,7 @@ func (c hostCommand) spawnSupervisorUntil(ctx context.Context, process *host.Pro
 	}
 	cmd.Env = host.ProcessEnvironmentWithStartupDeadline(host.ProcessEnvironmentWithIdentity(os.Environ(), identityToken), startupDeadline)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
-	host.ConfigureDetached(cmd)
-	if err := cmd.Start(); err != nil {
+	if err := child.Start(cmd, child.Detached); err != nil {
 		return host.Info{}, host.StartFailure(state, err, map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
 	}
 	exited := make(chan struct{})
@@ -425,23 +426,16 @@ func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, st
 		}
 		return nil, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, c.PlatformRoot, host.GatewayURLForState(state))
 	}
-	// A live supervisor owns the host: restart through its channel so its view
-	// of the child stays consistent.
-	if client, err := control.Connect(state); err == nil {
-		response, restartErr := client.Restart(ctx)
-		if restartErr != nil {
-			return nil, asDiag(restartErr)
-		}
-		return hostCommandResult(map[string]any{"ok": true, "operation": "restart", "stopped": response.Stopped, "host": response.Host}), nil
+	// The supervisor owns the host control credential and must approve the stop.
+	client, connectErr := control.Connect(state)
+	if connectErr != nil {
+		return nil, asDiag(host.HostUnreachable(runner.Spec.HealthURL, connectErr))
 	}
-	outcome, restartErr := host.RestartWithRecovery(ctx, c.PlatformRoot, runner,
-		func(ctx context.Context, current *host.ProcessRunner) (host.Info, error) {
-			return c.spawnSupervisor(ctx, current, current.State)
-		})
+	response, restartErr := client.Restart(ctx, c.Interrupt)
 	if restartErr != nil {
 		return nil, asDiag(restartErr)
 	}
-	return hostCommandResult(map[string]any{"ok": true, "operation": "restart", "stopped": outcome.Stopped, "host": outcome.Info}), nil
+	return hostCommandResult(map[string]any{"ok": true, "operation": "restart", "stopped": response.Stopped, "host": response.Host}), nil
 }
 
 // lifecycleHost is the supervised host as the swap operations see it. Both

@@ -8,6 +8,7 @@ export type {
   EventsQuery,
   EventsResponse,
   EventsStats,
+  AnalyticsPersistence,
   BufferStatus,
   DlqStatus,
 } from '@kb-labs/core-platform/adapters';

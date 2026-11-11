@@ -1,3 +1,4 @@
+import { completionCachePath } from '@kb-labs/core-platform';
 /**
  * kb completion bash|zsh|fish  — print shell completion script
  * kb completion install         — bake static completions into shell profile (instant Tab)
@@ -16,7 +17,7 @@ type RemoveResult = { shell: string; profilePath: string; removed: boolean; stat
 
 const MARKER        = '# kb completion';
 const ALIAS_MARKER  = '# kb alias';
-const STATIC_FILE   = path.join(os.homedir(), '.config', 'kb', 'completion.zsh');
+const STATIC_FILE   = completionCachePath();
 
 // ─── Dynamic scripts (fallback) ───────────────────────────────────────────────
 
@@ -56,11 +57,7 @@ function dynamicScript(shell: string): string | null {
 }
 
 function unsupportedShell(shell: string): never {
-  throwSystemCataloguedFailure(
-    'KB_RUNTIME_INPUT_INVALID',
-    `Unsupported shell: ${shell}. Supported: bash, zsh, fish`,
-    'Run `kb completion bash`, `kb completion zsh`, or `kb completion fish`.',
-  );
+  throwSystemCataloguedFailure({ code: 'KB_RUNTIME_INPUT_INVALID', message: `Unsupported shell: ${shell}. Supported: bash, zsh, fish`, hint: 'Run `kb completion bash`, `kb completion zsh`, or `kb completion fish`.' });
 }
 
 // ─── Static zsh script generator ─────────────────────────────────────────────
@@ -153,7 +150,7 @@ async function readFileIfPresent(filePath: string): Promise<string | undefined> 
   try {
     return await fs.readFile(filePath, 'utf8');
   } catch (error) {
-    if (isMissingFile(error)) return undefined;
+    if (isMissingFile(error)) {return undefined;}
     throw error;
   }
 }
@@ -164,7 +161,7 @@ async function removeInstallation(shell: string): Promise<RemoveResult> {
   const updated = existing
     .replaceAll(`\n${profileLine(shell)}\n`, '')
     .replaceAll(`\n${aliasLine(shell)}\n`, '');
-  if (updated !== existing) await fs.writeFile(rcPath, updated, 'utf8');
+  if (updated !== existing) {await fs.writeFile(rcPath, updated, 'utf8');}
 
   let staticFileRemoved = false;
   if (shell === 'zsh' && await readFileIfPresent(STATIC_FILE) !== undefined) {
@@ -269,7 +266,7 @@ export function createCompletionCommand(registry: TrieBackedRegistry) {
 
       if (arg === 'remove') {
         const shell = argv[1] ?? detectShell();
-        if (!dynamicScript(shell)) unsupportedShell(shell);
+        if (!dynamicScript(shell)) {unsupportedShell(shell);}
         return removeInstallation(shell);
       }
 

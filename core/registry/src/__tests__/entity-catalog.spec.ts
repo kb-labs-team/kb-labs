@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { EntityCatalog } from '../catalog/entity-catalog.js';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
-import type { DiscoveredPlugin } from '@kb-labs/core-discovery';
+import type { DiscoveredPlugin } from '@kb-labs/plugin-contracts';
 
 function makePlugin(id: string, version = '1.0.0'): DiscoveredPlugin {
   return {

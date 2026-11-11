@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeCheckResult } from './lib/check-result.mjs';
 /**
  * check-cli-naming — validates CLI manifest naming conventions
  *
@@ -157,7 +158,7 @@ async function main() {
     }
   }
 
-  process.stdout.write(JSON.stringify({ issues }) + '\n');
+  writeCheckResult(issues);
   const hasErrors = issues.some(i => i.severity === 'error');
   process.exit(hasErrors ? 1 : 0);
 }

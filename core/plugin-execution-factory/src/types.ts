@@ -45,7 +45,7 @@ import type {
   ResolvedExecutionMode,
   ExecutionStats as CoreExecutionStats,
 } from '@kb-labs/core-contracts';
-import type { NormalizedExecutionFailure, NormalizedExecutionResult } from './normalized-result.js';
+import type { NormalizedExecutionResult } from './normalized-result.js';
 
 // Re-export runtime types for convenience (consumers use these, not custom types)
 export type { PluginContextDescriptor, HostContext, HostType, PermissionSpec };
@@ -275,7 +275,7 @@ export type OnLogCallback = (entry: LogEntry) => void;
  * Execute options.
  *
  * Two log callbacks are provided to implement stream separation.
- * See: plugins/workflow/docs/adr/0019-log-stream-separation.md
+ * See: services/workflow/docs/adr/0019-log-stream-separation.md
  */
 export interface ExecuteOptions {
   signal?: AbortSignal;

@@ -3,9 +3,10 @@ import { connect } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { createContextLogger } from "@kb-labs/core-platform";
 import { NoOpLogger } from "@kb-labs/core-platform/noop";
-import { reserveLoopbackPorts } from "@kb-labs/shared-daemon";
+import { reserveLoopbackPorts, type ActiveWorkItem } from "@kb-labs/shared-daemon";
 import { createRuntimeGuard, tokenMatches, type RuntimeGuard } from "../guard.js";
 import {
+  RUNTIME_ACTIVE_WORK_PATH,
   RUNTIME_HEALTH_PATH,
   RUNTIME_PROJECT_HEADER,
   RUNTIME_TOKEN_HEADER,
@@ -61,7 +62,7 @@ describe("runtime guard", () => {
     });
   }
 
-  async function start(withModule: boolean): Promise<{ base: string; seen: Seen[] }> {
+  async function start(withModule: boolean, listActiveWork: () => Promise<readonly ActiveWorkItem[]> = async () => []): Promise<{ base: string; seen: Seen[] }> {
     const [guardPort, restPort, downPort] = await reserveLoopbackPorts(3);
     const seen: Seen[] = [];
     if (withModule) {
@@ -76,6 +77,7 @@ describe("runtime guard", () => {
         // Nothing listens here.
         workflow: { host: HOST, port: downPort! },
       },
+      listActiveWork,
       logger: createContextLogger(new NoOpLogger(), {
         applicationId: "guard-test",
         serviceId: "guard-test",
@@ -95,6 +97,7 @@ describe("runtime guard", () => {
     for (const headers of [{}, { [RUNTIME_TOKEN_HEADER]: "wrong" }, { [RUNTIME_TOKEN_HEADER]: `${TOKEN}x` }]) {
       expect((await fetch(`${base}/rest/x`, { headers })).status).toBe(403);
       expect((await fetch(`${base}${RUNTIME_HEALTH_PATH}`, { headers })).status).toBe(403);
+      expect((await fetch(`${base}${RUNTIME_ACTIVE_WORK_PATH}`, { headers })).status).toBe(403);
     }
     expect(seen).toEqual([]);
   });
@@ -140,6 +143,13 @@ describe("runtime guard", () => {
 
     expect((await fetch(`${base}/nope/x`, { headers: authed })).status).toBe(404);
     expect((await fetch(`${base}/workflow/x`, { headers: authed })).status).toBe(502);
+  });
+
+  it("serves registered active work through the authenticated runtime endpoint", async () => {
+    const { base } = await start(true, async () => [{ kind: "workflow", id: "run-17", owningService: "workflow" }]);
+    const response = await fetch(`${base}${RUNTIME_ACTIVE_WORK_PATH}`, { headers: authed });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([{ kind: "workflow", id: "run-17", owningService: "workflow" }]);
   });
 
   it("reports identity and per-module reachability on the health path", async () => {

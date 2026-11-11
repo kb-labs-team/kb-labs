@@ -12,4 +12,5 @@ export * from './host-resolver.js';
 export * from './subprocess-runner.js';
 export * from './validate.js';
 export * from './catalog.js';
+export { catalogEnvironmentVariables } from './error-codes.generated.js';
 export * from './from-error.js';

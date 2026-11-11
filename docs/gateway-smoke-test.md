@@ -58,6 +58,15 @@ POST /platform/v1/<adapter>/<method>
 Body: { "args": [...positional args...] }
 ```
 
+To discover the methods exposed by the Gateway, request the authenticated
+catalog. Its `data.adapters` object is derived from the same allowlist enforced
+by platform adapter calls:
+
+```bash
+curl -s $BASE/platform/v1/adapters \
+  -H "Authorization: Bearer $TOKEN" | jq '.data.adapters'
+```
+
 ### LLM
 
 ```bash

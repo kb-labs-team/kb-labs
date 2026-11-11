@@ -335,7 +335,7 @@ return { exitCode: 0, result };
 - [Английский гайд](../docs/V3-MIGRATION-GUIDE.EN.md)
 - [Русский гайд](../docs/V3-MIGRATION-GUIDE.md)
 - [V3 архитектура](../docs/V3-ADAPTER-ARCHITECTURE.md)
-- [Пример: hello.ts](./packages/plugin-template-core/src/cli/commands/hello.ts)
+- [Пример: hello.ts](./src/cli/commands/hello.ts)
 
 ---
 

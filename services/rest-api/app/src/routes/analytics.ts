@@ -6,6 +6,7 @@ import { withUxErrorResponses } from './route-schema.js';
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
+import { createErrorEnvelope, getCatalogEntry } from '@kb-labs/core-platform';
 import { normalizeBasePath, resolvePaths } from './path-helpers';
 import { platform } from '@kb-labs/core-runtime';
 import { restDomainOperationMetrics } from '../middleware/metrics.js';
@@ -45,7 +46,7 @@ const uxSuccess = (data: object) => ({ type: 'object', properties: { ok: { const
  * Register analytics routes
  *
  * These are system-level analytics endpoints that expose events and statistics
- * from the platform's analytics adapter (if configured).
+ * from the platform's analytics adapter.
  *
  * Returns 501 Not Implemented if analytics adapter doesn't support read methods.
  */
@@ -152,20 +153,17 @@ export async function registerAnalyticsRoutes(
   // Get aggregated statistics
   const statsPaths = resolvePaths(basePath, '/analytics/stats');
   for (const path of statsPaths) {
-    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { totalEvents: { type: 'integer' }, byType: { type: 'object', additionalProperties: { type: 'integer' } }, bySource: { type: 'object', additionalProperties: { type: 'integer' } }, byActor: { type: 'object', additionalProperties: { type: 'integer' } }, timeRange: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'], additionalProperties: false } }, required: ['totalEvents', 'byType', 'bySource', 'byActor', 'timeRange'], additionalProperties: false }) }) } }, async (_request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { totalEvents: { type: 'integer' }, byType: { type: 'object', additionalProperties: { type: 'integer' } }, bySource: { type: 'object', additionalProperties: { type: 'integer' } }, byActor: { type: 'object', additionalProperties: { type: 'integer' } }, timeRange: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'], additionalProperties: false }, persistence: { oneOf: [{ type: 'object', properties: { kind: { const: 'durable' } }, required: ['kind'], additionalProperties: false }, { type: 'object', properties: { kind: { const: 'ephemeral' }, notice: { type: 'object', properties: { message: { type: 'string' }, hint: { type: 'string' } }, required: ['message', 'hint'], additionalProperties: false } }, required: ['kind', 'notice'], additionalProperties: false }] } }, required: ['totalEvents', 'byType', 'bySource', 'byActor', 'timeRange', 'persistence'], additionalProperties: false }) }) } }, async (_request, reply) => {
       try {
         const analytics = platform.analytics;
 
         const getStats = analytics.getStats;
         if (!getStats) {
           fastify.log.debug('Analytics adapter does not implement getStats()');
-          return reply.code(501).send({
-            ok: false,
-            error: {
-              code: 'ANALYTICS_NOT_IMPLEMENTED',
-              message: 'Analytics adapter does not support reading stats',
-            },
-          });
+          const errorCode = 'KB_ANALYTICS_STATS_UNSUPPORTED';
+          const error = createErrorEnvelope(errorCode);
+          reply.statusCode = getCatalogEntry(errorCode).httpStatus;
+          return reply.send({ ok: false, error });
         }
 
         fastify.log.debug('Fetching analytics stats');

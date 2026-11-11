@@ -1,3 +1,5 @@
+import { resolveColorSupport } from '@kb-labs/plugin-contracts/color-policy';
+
 /**
  * Minimalist color utilities for CLI output
  * Uses strategic color application - only for status, not decoration
@@ -6,10 +8,16 @@
 const CSI = '\x1b[';
 const RESET = '\x1b[0m';
 
+// Every exported color helper follows the shared host/CLI terminal policy.
+export const supportsColor = (() => {
+  if (typeof process === 'undefined') {return false;}
+  return resolveColorSupport(process.stdout?.isTTY, process.env.NO_COLOR, process.env.FORCE_COLOR, process.env.TERM);
+})();
+
 const createColor =
   (...codes: Array<number | string>) =>
   (text: string): string =>
-    `${CSI}${codes.join(';')}m${text}${RESET}`;
+    supportsColor ? `${CSI}${codes.join(';')}m${text}${RESET}` : text;
 
 const accentBlue = '38;5;39';
 const accentViolet = '38;5;99';
@@ -76,34 +84,7 @@ export const symbols = {
   diamond: colors.primary(symbolCharacters.diamond),
 };
 
-// Check if colors are supported
-const isTruthyEnv = (value: string | undefined): boolean => {
-  if (!value) {return false;}
-  const normalized = value.trim().toLowerCase();
-  return normalized !== '' && normalized !== '0' && normalized !== 'false' && normalized !== 'off';
-};
-
-export const supportsColor = (() => {
-  if (typeof process === 'undefined') {return false;}
-
-  const forceColor = process.env.FORCE_COLOR;
-  if (isTruthyEnv(process.env.NO_COLOR)) {
-    return false;
-  }
-  if (isTruthyEnv(forceColor)) {
-    return true;
-  }
-
-  if (!process.stdout) {return false;}
-
-  if (process.stdout.isTTY === false) {
-    return false;
-  }
-
-  return true;
-})();
-
-// Color functions that respect NO_COLOR
+// Compatibility-safe wrappers remain for callers that opt into safe output.
 const passthrough =
   (fn: (text: string) => string) =>
   (text: string): string =>

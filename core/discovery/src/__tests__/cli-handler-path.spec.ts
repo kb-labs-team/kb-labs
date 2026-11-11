@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { resolveCliHandlerPath } from '../resolve-cli-handler.js';
+import { resolveCliHandlerPath } from '@kb-labs/core-platform';
 
 describe('resolveCliHandlerPath', () => {
   // case: S-203.21

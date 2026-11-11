@@ -4,8 +4,7 @@
  */
 
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
-import type { EntityKind, DiscoveredPlugin } from '@kb-labs/core-discovery';
-import type { EntityEntry, EntityRef, EntityFilter } from '../types.js';
+import type { EntityKind, DiscoveredPlugin, EntityEntry, EntityRef, EntityFilter } from '@kb-labs/plugin-contracts';
 import { extractEntities, type EntityExtractor } from './extractors.js';
 
 /**

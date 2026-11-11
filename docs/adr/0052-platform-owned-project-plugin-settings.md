@@ -86,9 +86,8 @@ files. They are based on the remaining `.kb` dependents inventory in
 2. **Project identity, discovery, and plugin scope:**
    `core/workspace/`, `core/project-registry/src/registry.ts`,
    `cli/commands/src/commands/system/project/show.ts`,
-   `plugins/impact/core/src/core/workspace.ts`,
-   `plugins/marketplace/core/src/scope.ts`,
-   `plugins/marketplace/entry/src/scope.ts`, `core/discovery/`,
+   `services/marketplace/core/src/scope.ts`,
+   `cli/commands/src/commands/system/marketplace/scope.ts`, `core/discovery/`,
    `core/runtime/src/platform-sync.ts`,
    `core/runtime/src/discover-adapters.ts`,
    `cli/commands/src/commands/system/platform/sync.ts`. Resolve project roots
@@ -96,9 +95,9 @@ files. They are based on the remaining `.kb` dependents inventory in
    symlink in the platform extension store remains platform-local; it is not a
    consumer repository file.
 3. **Marketplace and plugin-install state:**
-   `plugins/marketplace/core/src/manifest-cache.ts`,
-   `plugins/marketplace/entry/src/commands/sync.ts`,
-   `plugins/scaffold/core/src/doctor/scan.ts`,
+   `services/marketplace/core/src/manifest-cache.ts`,
+   `cli/commands/src/commands/system/marketplace/commands/sync.ts`,
+   `cli/scaffold/core/src/doctor/scan.ts`,
    `cli/commands/src/registry/plugins-state.ts`,
    `core/registry/src/snapshot/`, and `core/registry/src/state/`.
    Move project lock and plugin state into platform state keyed by project ID.
@@ -108,29 +107,29 @@ files. They are based on the remaining `.kb` dependents inventory in
    `core/plugin-runtime/src/runtime/fs-shim.ts`,
    `adapters/analytics-sqlite/scripts/migrate-from-jsonl.mjs`,
    `adapters/analytics-duckdb/scripts/migrate-from-jsonl.mjs`,
-   `plugins/devlink/core/src/backup/`, and `plugins/devlink/core/src/state/`.
+   `plugins/devlink/src/core/backup/`, and `plugins/devlink/src/core/state/`.
    Use the platform project state directory for runtime defaults and retain
    explicit user-selected repository output paths.
 5. **Workflow and agent state:**
-   `plugins/workflow/entry/src/commands/`,
-   `plugins/workflow/runtime/src/`, `plugins/workflow/engine/src/`,
-   `plugins/workflow/daemon/src/`, `plugins/agents/core/src/`,
-   `plugins/agents/tools/src/`, `plugins/agents/entry/src/cli/commands/diff.ts`,
+   `services/workflow/entry/src/commands/`,
+   `services/workflow/runtime/src/`, `services/workflow/engine/src/`,
+   `services/workflow/daemon/src/`, `plugins/agents/src/core/`,
+   `plugins/agents/tools/src/`, `plugins/agents/src/cli/commands/diff.ts`,
    and `plugins/agents/store/src/`. Move definitions, caches, sessions and
    plugin state to project-scoped platform storage; leave Git-tracked workflow
    inputs only where the workflow product contract requires repository files.
 6. **Plugin-owned data and workspace permissions:**
-   `plugins/review/core/`, `plugins/review/llm/`,
-   `plugins/release/manager-core/`, `plugins/release/manager-cli/`,
-   `plugins/qa/entry/`, `plugins/policy/core/`,
-   `plugins/scaffold/core/src/engine.ts`,
-   `plugins/quality/entry/src/cli/commands/snapshot.ts`,
-   `plugins/commit/contracts/src/env.ts`,
-   `plugins/commit/entry/src/lifecycle/setup.ts`,
-   `plugins/qa/contracts/src/constants.ts`,
-   `plugins/quality/contracts/src/constants.ts`,
-   `plugins/host-agent/fs/`, `plugins/mind/entry/src/manifest.ts`, and
-   `plugins/steward/entry/src/manifest.ts`. Give each plugin project-scoped
+   `plugins/review/src/core/`, `plugins/review/src/llm/`,
+   `plugins/release/src/core/`, `plugins/release/src/cli/`,
+   `plugins/agents/src/`,
+   `cli/scaffold/core/src/engine.ts`,
+   `plugins/agents/src/cli/commands/snapshot.ts`,
+   `plugins/commit/src/contracts/env.ts`,
+   `plugins/agents/src/lifecycle/setup.ts`,
+   `plugins/qa/src/contracts/constants.ts`,
+   `plugins/quality/src/contracts/constants.ts`,
+   `services/host-agent/fs/`, `plugins/agents/src/manifest.ts`, and
+   `plugins/agents/src/manifest.ts`. Give each plugin project-scoped
    state through platform services; revise repository filesystem permissions
    to match each plugin's remaining user-file behavior.
 7. **Developer and deployment tools:**
@@ -145,7 +144,7 @@ files. They are based on the remaining `.kb` dependents inventory in
    `studio/app/src/modules/projects/`,
    `studio/app/src/modules/project-plugins/`,
    `studio/app/src/modules/settings/`, and
-   `plugins/commit/entry/src/studio/`. Add schema-rendered plugin settings for
+   `plugins/agents/src/studio/`. Add schema-rendered plugin settings for
    the selected project and route saves through the same platform config
    service as the CLI.
 

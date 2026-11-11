@@ -5,29 +5,24 @@
  */
 
 import * as path from 'node:path';
-import * as fs from 'node:fs/promises';
+import { fs } from './recording-filesystem.js';
 import { CliCommandDeclSchema, resolvePluginBasePath, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import { createExtensionStore } from '@kb-labs/core-extension-store';
 import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import type {
-  DiscoveryResult,
-  DiscoveredPlugin,
-  DiscoveryFailure,
-  DiscoveryOrigin,
-  DiscoveryScope,
-  DiagnosticEvent,
-  MarketplaceEntry,
-  EntityKind,
-} from './types.js';
+  DiscoveryResult, DiscoveryFailure, DiscoveredPlugin, DiscoveryOrigin, DiscoveryScope, DiagnosticEvent, EntityKind,
+  MarketplaceEntry, MarketplaceLock,
+} from '@kb-labs/plugin-contracts';
 import { DiagnosticCollector } from './diagnostics.js';
-import { resolveCliHandlerPath } from './resolve-cli-handler.js';
+import { resolveCliHandlerPath } from '@kb-labs/core-platform';
 import { describeHandlerAccessFailure } from './handler-access.js';
-import { readMarketplaceLock } from './marketplace-lock.js';
+import { isPortableRelativePath, isUserOwnedLinkPath, readMarketplaceLock } from './marketplace-lock.js';
 import { resolveMarketplaceLockScope, type MarketplaceLockRoots } from './marketplace-lock-scope.js';
 import { loadManifestFile } from './manifest-loader.js';
 import { computePackageIntegrity } from './integrity.js';
 import { findWorkspaceCandidates } from './workspace-source.js';
-import { readPluginPolicy, checkPluginPolicy, isFirstPartyPluginSource, type PluginPolicy, type PluginPolicyResult } from './plugin-policy.js';
+import { readPluginPolicy, checkPluginPolicy, isFirstPartyPluginSource, type PluginPolicyResult } from './plugin-policy.js';
+import { captureFilesystemObservations, hashDiscoveryFingerprint } from './recording-filesystem.js';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -45,8 +40,6 @@ export interface DiscoveryOptions {
   platformRoot?: string;
   /** Scope assigned when discovering one root without a separate platform root. Defaults to platform. */
   scope?: 'platform' | 'project';
-  /** Timeout for each manifest import in milliseconds (default: 5000) */
-  importTimeoutMs?: number;
   /** Whether to verify integrity hashes (default: true) */
   verifyIntegrity?: boolean;
   /**
@@ -57,8 +50,6 @@ export interface DiscoveryOptions {
   workspace?: boolean;
   /** Machine-local extension store used to resolve project version pins. */
   extensionStore?: IExtensionStore;
-  /** Observe root input reads; used to verify discovery and fingerprint inputs stay aligned. */
-  onInputRead?: (filePath: string) => void;
 }
 
 /** Shadowing priority within one scope: workspace > linked > node_modules. */
@@ -111,7 +102,7 @@ async function hasFile(filePath: string): Promise<boolean> {
     await fs.access(filePath);
     return true;
   } catch (error) {
-    if (isMissingFile(error)) return false;
+    if (isMissingFile(error)) {return false;}
     throw error;
   }
 }
@@ -129,8 +120,7 @@ async function hasFile(filePath: string): Promise<boolean> {
  *   2. pnpm workspace packages under each scope root (`workspace` origin),
  *      the monorepo development source.
  *
- * Every candidate is loaded the same way (static `dist/manifest.json` when
- * built, compiled module otherwise), validated, integrity-checked when locked,
+ * Every candidate is loaded from static manifest JSON, validated, integrity-checked when locked,
  * and then shadowed by plugin id: project scope beats platform scope, and inside
  * one scope workspace > linked > node_modules.
  *
@@ -140,11 +130,12 @@ async function hasFile(filePath: string): Promise<boolean> {
 export class DiscoveryManager {
   private readonly scopes: ScopeRoot[];
   private readonly lockRoots: MarketplaceLockRoots;
-  private readonly importTimeoutMs: number;
   private readonly verifyIntegrity: boolean;
   private readonly workspace: boolean;
   private readonly extensionStore: IExtensionStore;
-  private readonly onInputRead?: (filePath: string) => void;
+  readonly requestIdentity: string;
+  private marketplaceLocks = new Map<string, MarketplaceLock>();
+  private marketplaceLocksLoaded = false;
   /** plugins.allow/block/linked per scope root, read at the start of discover() */
   private policies = new Map<string, PluginPolicyResult>();
 
@@ -158,11 +149,14 @@ export class DiscoveryManager {
     this.scopes = opts.platformRoot && opts.platformRoot !== root
       ? [{ scope: 'platform', root: opts.platformRoot }, { scope: 'project', root }]
       : [{ scope: opts.scope ?? 'platform', root }];
-    this.importTimeoutMs = opts.importTimeoutMs ?? 5_000;
     this.verifyIntegrity = opts.verifyIntegrity ?? true;
     this.workspace = opts.workspace ?? true;
     this.extensionStore = opts.extensionStore ?? createExtensionStore();
-    this.onInputRead = opts.onInputRead;
+    this.requestIdentity = JSON.stringify({
+      roots: this.scopes.map(({ scope, root: scopeRoot }) => ({ scope, root: path.resolve(scopeRoot) })),
+      workspace: this.workspace,
+      verifyIntegrity: this.verifyIntegrity,
+    });
   }
 
   /**
@@ -174,11 +168,23 @@ export class DiscoveryManager {
    *   4. Return aggregated result with diagnostics
    */
   async discover(): Promise<DiscoveryResult> {
+    const captured = await captureFilesystemObservations(() => this.performDiscovery());
+    return {
+      ...captured.result,
+      observations: captured.observations,
+      requestIdentity: this.requestIdentity,
+      fingerprint: hashDiscoveryFingerprint(this.requestIdentity, captured.observations),
+    };
+  }
+
+  private async performDiscovery(): Promise<DiscoveryResult> {
+    this.marketplaceLocks.clear();
+    this.marketplaceLocksLoaded = false;
     const diag = new DiagnosticCollector();
-    const policyResults = await Promise.all(this.scopes.map(async ({ scope, root }) => [scope, root, await readPluginPolicy(root, this.onInputRead)] as const));
+    const policyResults = await Promise.all(this.scopes.map(async ({ scope, root }) => [scope, root, await readPluginPolicy(root)] as const));
     this.policies = new Map(policyResults.map(([, root, result]) => [root, result]));
     for (const [scope, , result] of policyResults) {
-      if (result.kind !== 'invalid') continue;
+      if (result.kind !== 'invalid') {continue;}
       for (const issue of result.diagnostics) {
         diag.error(issue.code, issue.message, {
           filePath: issue.path ?? result.configPath,
@@ -204,7 +210,23 @@ export class DiscoveryManager {
       plugins.push(plugin);
       manifests.set(id, manifest);
     }
-    return { plugins, manifests, failures, diagnostics: diag.getEvents() };
+    return {
+      plugins,
+      manifests,
+      failures,
+      diagnostics: diag.getEvents(),
+      observations: [],
+      requestIdentity: this.requestIdentity,
+      fingerprint: '',
+    };
+  }
+
+  /** The exact lock objects read for the latest resolved view, keyed by scope root. */
+  async getMarketplaceLocks(): Promise<ReadonlyMap<string, MarketplaceLock>> {
+    if (!this.marketplaceLocksLoaded) {
+      await this.loadMarketplaceLocks(new DiagnosticCollector());
+    }
+    return this.marketplaceLocks;
   }
 
   /** Resolve an unmounted REST namespace to the package that declares it in the extension store. */
@@ -230,14 +252,24 @@ export class DiscoveryManager {
   // -------------------------------------------------------------------------
 
   private async collectCandidates(diag: DiagnosticCollector): Promise<Candidate[]> {
+    await this.loadMarketplaceLocks(diag);
     // Lock entries. Project scope is read last so it overwrites a platform entry
     // with the same lock key (project overrides platform).
     const locked = new Map<string, Candidate>();
     for (const { scope, root } of this.scopes) {
-      const lockScope = await resolveMarketplaceLockScope(this.lockRoots, root);
-      const lock = await readMarketplaceLock(root, diag, lockScope, this.onInputRead);
+      const lock = this.marketplaceLocks.get(root);
       if (!lock) {continue;}
       for (const [id, entry] of Object.entries(lock.plugins)) {
+        const invalidOwnedPath = entry.source === 'local'
+          ? !isUserOwnedLinkPath(entry.link)
+          : entry.resolvedPath !== undefined && !isPortableRelativePath(entry.resolvedPath, root);
+        if (invalidOwnedPath) {
+          diag.error('LOCK_SCHEMA_INVALID', `Marketplace lock entry "${id}" has an invalid path.`, {
+            pluginId: id,
+            remediation: 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock in schema v3.',
+          });
+          continue;
+        }
         let packageRoot: string | undefined;
         if (entry.source === 'local' && entry.link) {
           packageRoot = path.resolve(root, entry.link);
@@ -276,7 +308,7 @@ export class DiscoveryManager {
 
     if (this.workspace) {
       for (const { scope, root } of this.scopes) {
-        for (const found of await findWorkspaceCandidates(root, this.onInputRead)) {
+        for (const found of await findWorkspaceCandidates(root)) {
           candidates.push({
             id: found.packageName,
             scope,
@@ -289,6 +321,16 @@ export class DiscoveryManager {
       }
     }
     return candidates;
+  }
+
+  private async loadMarketplaceLocks(diag: DiagnosticCollector): Promise<void> {
+    if (this.marketplaceLocksLoaded) {return;}
+    for (const { root } of this.scopes) {
+      const lockScope = await resolveMarketplaceLockScope(this.lockRoots, root);
+      const lock = await readMarketplaceLock(root, diag, lockScope);
+      if (lock) {this.marketplaceLocks.set(root, lock);}
+    }
+    this.marketplaceLocksLoaded = true;
   }
 
   // -------------------------------------------------------------------------
@@ -387,7 +429,7 @@ export class DiscoveryManager {
     }
 
     // Load manifest
-    const loaded = await loadManifestFile(packageRoot, diag, this.importTimeoutMs);
+    const loaded = await loadManifestFile(packageRoot, diag);
     if (loaded.kind === 'failed') {
       const events = diag.getEvents();
       if (events.some(e => e.code === 'MANIFEST_NOT_PLUGIN')) {
@@ -614,6 +656,7 @@ export class DiscoveryManager {
       return true;
     }
   }
+
 }
 
 // ---------------------------------------------------------------------------

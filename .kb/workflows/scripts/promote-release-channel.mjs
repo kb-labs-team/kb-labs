@@ -5,9 +5,10 @@
 // release installable by moving npm dist-tags and the binary channel pointer.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { platformFlowPolicies } from '../../../plugins/release/src/core/platform-flow-policy.mjs';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -25,13 +26,20 @@ const candidateId = required('--candidate-id');
 const flow = required('--flow');
 const version = required('--version');
 const channel = required('--channel');
+const commit = required('--commit');
+const expectedDigest = required('--expected-digest');
 const repository = value('--repository') ?? process.env.GITHUB_REPOSITORY;
-const registry = value('--registry') ?? 'https://registry.npmjs.org';
 if (!repository) throw new Error('--repository or GITHUB_REPOSITORY is required');
 if (!['canary', 'stable'].includes(channel)) throw new Error(`unsupported channel: ${channel}`);
 const npmTag = channel === 'stable' ? 'latest' : 'canary';
 const token = process.env.NPM_TOKEN ?? process.env.NODE_AUTH_TOKEN;
 if (!token) throw new Error('NPM_TOKEN or NODE_AUTH_TOKEN is required to promote a release channel');
+const flowPolicy = platformFlowPolicies[flow];
+if (!flowPolicy) throw new Error(`release flow ${flow} has no candidate delivery policy`);
+const deliveryTargetName = flowPolicy.channelDeliveryTargets[channel];
+const deliveryTarget = flowPolicy.deliveryTargets[deliveryTargetName];
+if (!deliveryTarget) throw new Error(`release flow ${flow} has no declared delivery target for ${channel}`);
+const registry = deliveryTarget.registry;
 
 const root = mkdtempSync(join(tmpdir(), 'kb-release-promotion-'));
 const bundle = join(root, 'bundle');
@@ -44,8 +52,16 @@ const sleepSync = ms => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),
 
 try {
   run('gh', ['run', 'download', candidateRunId, '--repo', repository, '--name', `release-candidate-${candidateId}`, '--dir', bundle]);
-  verifyBundle(bundle, { candidateId, flow, version });
-  const artifacts = JSON.parse(readFileSync(join(bundle, 'npm', 'manifest.json'), 'utf8'));
+  run('pnpm', ['--filter', '@kb-labs/release', 'build:cli']);
+  const { verifyCandidateBundle } = await import('../../../plugins/release/dist/shared/candidate-bundle.js');
+  const verified = verifyCandidateBundle(bundle, {
+    expectedDigest,
+    candidateId,
+    commit,
+    flow,
+    version,
+  }, { targetKind: deliveryTarget.kind, promotionChannel: channel });
+  const artifacts = verified.artifacts;
   if (!Array.isArray(artifacts) || artifacts.length === 0) throw new Error('candidate bundle has no staged npm artifacts');
   writeFileSync(npmrc, `//${new URL(registry).host}/:_authToken=${token}\nregistry=${registry}\n`);
   const npmEnv = { ...process.env, NPM_CONFIG_USERCONFIG: npmrc };
@@ -116,42 +132,11 @@ try {
 
   if (flow === 'platform') promoteBinaryChannel(bundle, { repository, channel, candidateId, version });
   console.log(`::kb-output::${JSON.stringify({ candidateId, flow, version, channel, npmTag, promoted: true })}`);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
 } finally {
   rmSync(root, { recursive: true, force: true });
-}
-
-function verifyBundle(bundleDir, expected) {
-  const provenance = JSON.parse(readFileSync(join(bundleDir, 'provenance.json'), 'utf8'));
-  for (const [key, value] of Object.entries(expected)) {
-    if (provenance[key] !== value) throw new Error(`candidate ${key} mismatch: ${provenance[key]} != ${value}`);
-  }
-  for (const line of readFileSync(join(bundleDir, 'bundle.sha256'), 'utf8').trim().split(/\r?\n/).filter(Boolean)) {
-    const match = line.match(/^([a-f0-9]{64})  (.+)$/);
-    if (!match) throw new Error(`invalid bundle checksum line: ${line}`);
-    const file = join(bundleDir, match[2]);
-    const actual = createHash('sha256').update(readFileSync(file)).digest('hex');
-    if (actual !== match[1]) throw new Error(`bundle checksum mismatch: ${match[2]}`);
-  }
-  const modePath = join(bundleDir, 'bundle.modes');
-  if (!statSync(modePath).isFile()) throw new Error('candidate bundle has no executable-mode manifest');
-  for (const line of readFileSync(modePath, 'utf8').trim().split(/\r?\n/).filter(Boolean)) {
-    const match = line.match(/^([0-7]{3,4})  (.+)$/);
-    if (!match) throw new Error(`invalid bundle mode line: ${line}`);
-    // Only the executable bit is load-bearing here (a binary losing +x would
-    // actually break something); the read/write bits are not, and gh run
-    // download does not reliably preserve them across platforms — confirmed
-    // live: bundle.modes recorded "600" for release-index.json (captured by
-    // `find -printf '%m'` on the Linux candidate-build runner), but the same
-    // artifact downloaded here via `gh run download` on macOS came back as
-    // "644". Content integrity is already covered by the sha256 checksum
-    // loop above; comparing the full octal mode on top of that just fails
-    // this promote step on ordinary cross-platform permission differences.
-    const actualMode = statSync(join(bundleDir, match[2])).mode & 0o777;
-    const expectedMode = parseInt(match[1], 8);
-    const actualExecutable = (actualMode & 0o111) !== 0;
-    const expectedExecutable = (expectedMode & 0o111) !== 0;
-    if (actualExecutable !== expectedExecutable) throw new Error(`bundle executable-bit mismatch: ${match[2]}`);
-  }
 }
 
 function distTags(packageName, env) {

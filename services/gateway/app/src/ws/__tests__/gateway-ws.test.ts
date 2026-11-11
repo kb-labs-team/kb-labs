@@ -19,7 +19,7 @@ const REST: SocketWsUpstream = {
 
 describe('pickSocketWsUpstream', () => {
   it('matches a path under the prefix', () => {
-    expect(pickSocketWsUpstream('/api/v1/ws/plugins/workflow/progress/job-1', [REST])).toBe(REST);
+    expect(pickSocketWsUpstream('/api/v1/ws/progress/job-1', [REST])).toBe(REST);
   });
 
   it('matches the prefix exactly', () => {
@@ -42,8 +42,8 @@ describe('pickSocketWsUpstream', () => {
 
 describe('buildUpstreamWsUrl', () => {
   it('builds ws+unix://<socket>:<path> preserving the path under prefix', () => {
-    const url = buildUpstreamWsUrl(REST, '/api/v1/ws/plugins/workflow/progress/job-1', '');
-    expect(url).toBe('ws+unix:///tmp/kb-abc12345/rest-api.sock:/api/v1/ws/plugins/workflow/progress/job-1');
+    const url = buildUpstreamWsUrl(REST, '/api/v1/ws/progress/job-1', '');
+    expect(url).toBe('ws+unix:///tmp/kb-abc12345/rest-api.sock:/api/v1/ws/progress/job-1');
   });
 
   it('rewrites the prefix when rewritePrefix differs', () => {

@@ -152,14 +152,14 @@ describe('normalizeError handler boundary', () => {
   it('retains a typed plugin product error with its hint and flat details', () => {
     const error = Object.assign(new Error('The plan is invalid.'), {
       code: 'COMMIT_PLAN_INVALID',
-      hint: 'Run `kb commit generate` and inspect the proposed plan.',
+      hint: 'Run `kb commit plan create` and inspect the proposed plan.',
       details: { reason: 'empty' },
     });
     const normalized = normalizeError(error);
     expect(normalized).toMatchObject({
       code: 'COMMIT_PLAN_INVALID',
       message: 'The plan is invalid.',
-      hint: 'Run `kb commit generate` and inspect the proposed plan.',
+      hint: 'Run `kb commit plan create` and inspect the proposed plan.',
       details: { reason: 'empty' },
     });
   });

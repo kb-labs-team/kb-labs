@@ -1,0 +1,72 @@
+{
+  "name": "@kb-labs/devlink",
+  "description": "CLI commands and manifest for DevLink plugin.",
+  "version": "2.120.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./plugin-manifest": {
+      "types": "./dist/manifest.d.ts",
+      "import": "./dist/manifest.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts/index.d.ts",
+      "import": "./dist/contracts/index.js"
+    },
+    "./contracts/schema": {
+      "types": "./dist/contracts/schema.d.ts",
+      "import": "./dist/contracts/schema.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "clean": "rimraf dist",
+    "dev": "tsup --config tsup.config.ts --watch",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run --passWithNoTests",
+    "test:cli": "vitest run --config vitest.cli.config.ts",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit",
+    "build:cli": "tsup --config tsup.config.ts"
+  },
+  "dependencies": {
+    "js-yaml": "^4.3.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.3.3",
+    "eslint": "^9",
+    "rimraf": "^6.0.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": "24.x",
+    "pnpm": ">=9.0.0"
+  },
+  "kb": {
+    "manifest": "./dist/manifest.js"
+  },
+  "sideEffects": false,
+  "peerDependencies": {
+    "@kb-labs/sdk": "workspace:*"
+  }
+}

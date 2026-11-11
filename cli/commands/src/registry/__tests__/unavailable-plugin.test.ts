@@ -8,8 +8,15 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { openCatalog as openCatalogWithVersion } from '@kb-labs/core-registry';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
-import type { DiscoveredPlugin } from '@kb-labs/core-discovery';
+import type { DiscoveredPlugin } from '@kb-labs/plugin-contracts';
+
+const openCatalog = (
+  scope: Parameters<typeof openCatalogWithVersion>[0],
+  options: Omit<Parameters<typeof openCatalogWithVersion>[1], 'resolvePlatformVersion'> = {},
+) => openCatalogWithVersion(scope, { ...options, resolvePlatformVersion: async () => 'test' });
 
 describe('failed enabled plugins', () => {
   // case: S-203.21
@@ -26,7 +33,7 @@ describe('failed enabled plugins', () => {
       });
       await writeMarketplaceLock(tmpDir, lock);
 
-      const discovery = await discoverManifestsDetailed(tmpDir, { platformRoot: tmpDir, projectRoot: tmpDir });
+      const discovery = await discoverManifestsDetailed(await openCatalog({ platformRoot: tmpDir, projectRoot: tmpDir }));
       const registry = createRegistry();
       await registerManifests(discovery.results, registry);
 
@@ -52,7 +59,7 @@ describe('failed enabled plugins', () => {
       });
       await writeMarketplaceLock(tmpDir, lock);
 
-      const discovery = await discoverManifestsDetailed(tmpDir, { platformRoot: tmpDir, projectRoot: tmpDir });
+      const discovery = await discoverManifestsDetailed(await openCatalog({ platformRoot: tmpDir, projectRoot: tmpDir }));
       expect(discovery.diagnostics).toEqual(expect.arrayContaining([
         expect.objectContaining({ code: 'COMMAND_HANDLER_MISSING', context: expect.objectContaining({ pluginId: '@kb-labs/e2e-analytics-emitter' }) }),
       ]));
@@ -76,12 +83,16 @@ describe('failed enabled plugins', () => {
       const fixture = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../e2e/journey/fixtures/analytics-emitter');
       const pluginDir = path.join(tmpDir, 'analytics-emitter');
       await copyAnalyticsFixture(fixture, pluginDir);
-      const manifestPath = path.join(pluginDir, 'manifest.js');
-      const source = await fs.readFile(manifestPath, 'utf8');
-      await fs.writeFile(manifestPath, source.replace(
-        "flags: [{ name: 'marker', type: 'string', description: 'Unique event marker', required: true }]",
-        "flags: { marker: { type: 'string', description: 'Unique event marker', required: true } }",
-      ));
+      const manifestModule = path.join(pluginDir, 'dist', 'manifest.js');
+      const source = await fs.readFile(manifestModule, 'utf8');
+      const validFlags = "flags: [{ name: 'marker', type: 'string', description: 'Unique event marker', required: true }]";
+      const invalidFlags = "flags: { marker: { type: 'string', description: 'Unique event marker', required: true } }";
+      await fs.writeFile(manifestModule, source.replace(validFlags, invalidFlags));
+      execFileSync(process.execPath, [
+        path.resolve(fixture, '../../../../infra/devkit/tsup/emit-manifest-json.mjs'),
+        '--module', manifestModule,
+        '--output', path.join(pluginDir, 'dist', 'manifest.json'),
+      ]);
       const lock = createEmptyLock();
       lock.plugins['@kb-labs/e2e-analytics-emitter'] = createMarketplaceEntry({
         version: '1.0.0', integrity: 'sha256-test', source: 'local', resolvedPath: './analytics-emitter',
@@ -89,7 +100,7 @@ describe('failed enabled plugins', () => {
       });
       await writeMarketplaceLock(tmpDir, lock);
 
-      const discovery = await discoverManifestsDetailed(tmpDir, { platformRoot: tmpDir, projectRoot: tmpDir });
+      const discovery = await discoverManifestsDetailed(await openCatalog({ platformRoot: tmpDir, projectRoot: tmpDir }));
       expect(discovery.diagnostics).toEqual(expect.arrayContaining([
         expect.objectContaining({ code: 'COMMAND_SCHEMA_INVALID', context: expect.objectContaining({ pluginId: '@kb-labs/e2e-analytics-emitter' }) }),
       ]));
@@ -111,13 +122,16 @@ describe('failed enabled plugins', () => {
       plugins: [],
       manifests: new Map(),
       diagnostics: [],
+      observations: [],
+      requestIdentity: 'test-request',
+      fingerprint: '',
       failures: [{
         id: '@kb-labs/release',
-        packageName: '@kb-labs/release-manager-cli',
-        packageRoot: '/workspace/plugins/release/manager-cli',
+        packageName: '@kb-labs/release',
+        packageRoot: '/workspace/plugins/release/src/cli',
         scope: 'platform',
         origin: 'linked',
-        manifestPath: '/workspace/plugins/release/manager-cli/dist/manifest.js',
+        manifestPath: '/workspace/plugins/release/src/cli/dist/manifest.js',
         reason: 'manifest',
         message: 'No manifest found; run `pnpm build`.',
         diagnosticCode: 'PLUGIN_ID_MISMATCH',
@@ -174,6 +188,9 @@ describe('failed enabled plugins', () => {
       manifests: new Map([[plugin.id, manifest]]),
       failures: [],
       diagnostics: [diagnostic],
+      observations: [],
+      requestIdentity: 'test-request',
+      fingerprint: '',
     });
     const registry = createRegistry();
     await registerManifests([discoveryResult!], registry);
@@ -189,5 +206,6 @@ describe('failed enabled plugins', () => {
 });
 
 async function copyAnalyticsFixture(fixture: string, pluginDir: string): Promise<void> {
+  execFileSync(process.execPath, [path.join(fixture, 'build.mjs')], { cwd: fixture });
   await fs.cp(fixture, pluginDir, { recursive: true });
 }

@@ -7,7 +7,7 @@ order: 5
 
 The workflow daemon is the long-running process that executes workflows, schedules recurring work, and exposes HTTP endpoints for runs, jobs, cron schedules, and approvals. It hosts the workflow engine — the actual orchestrator that turns a `WorkflowSpec` into `WorkflowRun` / `JobRun` / `StepRun` records and drives them to completion.
 
-Source lives in [plugins/workflow/daemon/](plugins/workflow/daemon/). The engine itself is in a sibling package, `@kb-labs/workflow-engine`.
+Source lives in [services/workflow/daemon/](services/workflow/daemon/). The engine itself is in a sibling package, `@kb-labs/workflow-engine`.
 
 ## Service manifest
 
@@ -32,7 +32,7 @@ Source lives in [plugins/workflow/daemon/](plugins/workflow/daemon/). The engine
 
 No `dependsOn` — the daemon is self-contained from `kb-dev`'s perspective. It pulls adapters (workspace, environment, state broker) from the platform config on its own.
 
-Source: [packages/workflow-daemon/src/manifest.ts](plugins/workflow/daemon/src/manifest.ts).
+Source: [packages/workflow-daemon/src/manifest.ts](services/workflow/daemon/src/manifest.ts).
 
 ## Architecture
 
@@ -66,7 +66,7 @@ The daemon has five main components glued together in `bootstrap.ts`:
 
 ## Bootstrap sequence
 
-From [`bootstrap.ts`](plugins/workflow/daemon/src/bootstrap.ts):
+From [`bootstrap.ts`](services/workflow/daemon/src/bootstrap.ts):
 
 1. `runService()` resolves roots, loads layered `.env`, and initializes the platform singleton (adapters, logger, cache, storage).
 3. Check for workspace and environment adapters; log warnings if they're missing.
@@ -81,7 +81,7 @@ The bootstrap checks that the workspace adapter is configured and writes a warni
 
 ## HTTP API surface
 
-Routes are registered in [`server.ts`](plugins/workflow/daemon/src/server.ts). Five sub-APIs, plus health and OpenAPI:
+Routes are registered in [`server.ts`](services/workflow/daemon/src/server.ts). Five sub-APIs, plus health and OpenAPI:
 
 | Mount | File | Covers |
 |---|---|---|
@@ -168,7 +168,7 @@ kb-dev start workflow
 Or directly:
 
 ```bash
-cd plugins/workflow/daemon
+cd services/workflow/daemon
 node ./dist/index.js
 ```
 

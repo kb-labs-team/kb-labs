@@ -24,10 +24,10 @@ test('MKT-02: marketplace diagnostics — lock file OK, no errors', async ({ req
 })
 
 test('MKT-03: install a test package and verify it appears in listing', async ({ request }) => {
-  // Use @kb-labs/qa-entry (distinct from lifecycle.spec.ts which uses @kb-labs/commit-entry)
+  // Use @kb-labs/qa (distinct from lifecycle.spec.ts which uses @kb-labs/commit)
   // to avoid parallel test interference — both spec files run concurrently with 2 workers
   // and share the same marketplace lock file.
-  const SPEC = '@kb-labs/qa-entry'
+  const SPEC = '@kb-labs/qa'
   const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
     data: { specs: [SPEC] },
     timeout: 60_000,  // pnpm install can take 30-60s on first run
@@ -48,7 +48,7 @@ test('MKT-03: install a test package and verify it appears in listing', async ({
     const body = await list.json()
     const packages: { name?: string; id?: string; spec?: string }[] = body.entries ?? body.packages ?? []
     found = packages.some(p =>
-      p.name?.includes('qa') || p.id?.includes('qa') || p.spec?.includes('qa-entry')
+      p.name?.includes('qa') || p.id?.includes('qa') || p.spec?.includes('qa')
     )
   }
   expect(found).toBe(true)

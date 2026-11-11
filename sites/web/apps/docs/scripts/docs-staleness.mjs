@@ -2,7 +2,7 @@
 /**
  * docs-staleness.mjs — find doc pages affected by changed code files
  *
- * Input:  CHANGED_FILES env var — newline-separated paths relative to repo root
+ * Input:  stdin — newline-separated paths relative to repo root
  * Output: JSON to stdout:
  *   {
  *     affected: [
@@ -10,18 +10,18 @@
  *     ]
  *   }
  *
- * Standalone: CHANGED_FILES="plugins/workflow/core/executor.ts" node docs-staleness.mjs
+ * Standalone: printf '%s\n' "services/workflow/core/executor.ts" | node docs-staleness.mjs
  */
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { sourceFileForCommand, sourceFileForNodePolicy } from './docs-source-sync.mjs';
+import { commandSources, sourceFragmentSources } from '../lib/doc-source-map.mjs';
 
 const cwd = process.cwd();
 const sitemapPath = join(cwd, 'sitemap.config.json');
 
 function ownerMatches(ownerGlob, filePath) {
-  // Patterns are like "plugins/workflow/**" or "core/platform/**"
+  // Patterns are like "services/workflow/**" or "core/platform/**"
   // Strip trailing /** and check prefix match
   const base = ownerGlob.replace(/\/\*\*$/, '').replace(/\*\*$/, '');
   return filePath === base || filePath.startsWith(base + '/');
@@ -82,11 +82,11 @@ function collectSourceReferences(pages) {
 
       const directive = /<CommandExamples\s+command="([^"]+)"(?:\s+match="([^"]+)")?\s*\/>/g;
       for (const match of content.matchAll(directive)) {
-        const sourceFile = sourceFileForCommand(match[1]);
+        const sourceFile = commandSources[match[1]]?.source;
         if (sourceFile) refs.push({ page, sourceFile, command: match[1] });
       }
       if (content.includes('<NodePolicy />')) {
-        refs.push({ page, sourceFile: sourceFileForNodePolicy(), command: 'NodePolicy' });
+        refs.push({ page, sourceFile: sourceFragmentSources.nodePolicy, command: 'NodePolicy' });
       }
     }
   }
@@ -96,7 +96,7 @@ function collectSourceReferences(pages) {
 }
 
 function main() {
-  const changedFilesRaw = process.env.CHANGED_FILES ?? '';
+  const changedFilesRaw = readFileSync(0, 'utf8');
   const changedFiles = changedFilesRaw
     .split('\n')
     .map(f => f.trim())
@@ -117,7 +117,7 @@ function main() {
   const sourceRefs = collectSourceReferences(pages);
 
   // For each changed file, find the most-specific owner match per doc page.
-  // "Most specific" = longest owner prefix (e.g. plugins/workflow/core/** beats plugins/workflow/**).
+  // "Most specific" = longest owner prefix (e.g. services/workflow/core/** beats services/workflow/**).
   // This prevents broad patterns from flooding unrelated pages.
   const affectedMap = new Map(); // slug → entry
 

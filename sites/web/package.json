@@ -4,11 +4,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "pnpm --filter @kb-labs/web-site build && pnpm --filter @kb-labs/docs-site build",
+    "build:all": "pnpm --filter @kb-labs/web-site build && pnpm --filter @kb-labs/docs-site build",
     "clean": "rimraf node_modules apps/*/node_modules apps/*/.next",
-    "dev": "pnpm --filter @kb-labs/web-site dev & pnpm --filter @kb-labs/docs-site dev",
-    "lint": "pnpm --filter @kb-labs/web-site lint && pnpm --filter @kb-labs/docs-site lint",
-    "typecheck": "pnpm --filter @kb-labs/web-site typecheck && pnpm --filter @kb-labs/docs-site typecheck"
+    "dev:all": "pnpm --filter @kb-labs/web-site dev & pnpm --filter @kb-labs/docs-site dev",
+    "lint:all": "pnpm --filter @kb-labs/web-site lint && pnpm --filter @kb-labs/docs-site lint",
+    "typecheck:all": "pnpm --filter @kb-labs/web-site typecheck && pnpm --filter @kb-labs/docs-site typecheck"
   },
   "devDependencies": {
     "@kb-labs/sdk": "workspace:*",

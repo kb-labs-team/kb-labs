@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { invokePackageProvenanceOwner } from './package-provenance.mjs';
+import { invokePackageProvenanceOwner } from 'kb-create/scripts/package-provenance.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const digestToolDirectory = mkdtempSync(join(tmpdir(), 'kb-provenance-digest-tool-'));

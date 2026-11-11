@@ -83,7 +83,7 @@ describe('WorkerPoolBackend startup retry', () => {
 
     const deadline = Date.now() + 2_000;
     while (Date.now() < deadline && !(await backend.health()).healthy) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      await new Promise<void>((resolve) => { setTimeout(resolve, 10); });
     }
     expect(poolState.attempts).toBe(3);
     expect((await backend.health()).healthy).toBe(true);
@@ -122,8 +122,7 @@ describe('WorkerPoolBackend startup retry', () => {
         await Promise.resolve();
         activeInitCalls--;
         if (initCalls < 3) {
-          const error = Object.assign(new Error('private transport startup details'), { code: 'EINIT' });
-          throw error;
+          throw Object.assign(new Error('private transport startup details'), { code: 'EINIT' });
         }
         resolveRecovered?.();
       },
@@ -176,7 +175,7 @@ describe('WorkerPoolBackend startup retry', () => {
     await recovered;
     const deadline = Date.now() + 2_000;
     while (Date.now() < deadline && !(await backend.health()).healthy) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => { setImmediate(resolve); });
     }
     expect(initCalls).toBe(3);
     expect(maxActiveInitCalls).toBe(1);

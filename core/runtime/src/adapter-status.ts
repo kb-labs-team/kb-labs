@@ -18,6 +18,7 @@
  */
 
 import type { AdapterSlot } from '@kb-labs/core-platform';
+import { configuredAdapterForSlot, projectEffectiveAdapterImplementation, type AdapterConfigValues } from './default-adapters.js';
 
 /**
  * Whether the slot is backed by a real configured adapter, an honest
@@ -43,7 +44,7 @@ export interface AdapterSlotStatus {
    */
   implementation: string;
   /**
-   * What the user wrote in `kb.config.json` (`adapters[slot]`), if anything.
+   * What the user wrote in the platform config key mapped to this slot, if anything.
    * Useful for diagnostics: "configured but fell back" should never happen
    * by policy, but recording the configured value makes audits cheap.
    */
@@ -62,7 +63,7 @@ export interface AdapterSlotStatus {
  * Mutable view of the registry — only the loader should call `record()`.
  */
 export interface AdapterStatusRegistry {
-  record(status: AdapterSlotStatus): void;
+  record(status: AdapterSlotStatus, adapters: AdapterConfigValues): void;
   get(slot: AdapterSlot): AdapterSlotStatus | undefined;
   list(): AdapterSlotStatus[];
   clear(): void;
@@ -91,8 +92,20 @@ function getStore(): Map<AdapterSlot, AdapterSlotStatus> {
 export function getAdapterStatusRegistry(): AdapterStatusRegistry {
   const store = getStore();
   return {
-    record(status: AdapterSlotStatus): void {
-      store.set(status.slot, status);
+    record(status: AdapterSlotStatus, adapters: AdapterConfigValues): void {
+      const configuredPackage = configuredAdapterForSlot(status.slot, adapters)?.value;
+      const configuredPath = typeof configuredPackage === 'string'
+        ? configuredPackage
+        : Array.isArray(configuredPackage) ? configuredPackage[0] : undefined;
+      store.set(status.slot, {
+        ...status,
+        implementation: projectEffectiveAdapterImplementation(
+          status.slot,
+          adapters,
+          status.implementation,
+        ) ?? status.implementation,
+        ...(configuredPath !== undefined ? { configuredPackage: configuredPath } : {}),
+      });
     },
     get(slot: AdapterSlot): AdapterSlotStatus | undefined {
       return store.get(slot);

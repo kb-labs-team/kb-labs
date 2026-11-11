@@ -35,7 +35,7 @@ Introduce source modes and version policies:
 
 ### Freeze / Unfreeze
 
-- `devlink freeze` — serializes currently used versions (even if local) into lock snapshot, switches mode to npm for all
+- `devlink lock create` — serializes currently used versions (even if local) into lock snapshot, switches mode to npm for all
 - `devlink unfreeze` — returns previous modes, can link locals again
 
 ## Scope
@@ -67,7 +67,7 @@ Introduce source modes and version policies:
 ## CLI
 
 - `devlink plan --mode auto|local|npm --pin exact|range --upgrade minor|patch|none --json`
-- `devlink freeze` / `devlink unfreeze`
+- `devlink lock create` / `devlink unfreeze`
 
 ## Consequences
 

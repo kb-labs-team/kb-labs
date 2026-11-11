@@ -13,7 +13,7 @@ groups:
 services:
   # Not in devservices.yaml's own service list — prod's Redis is externally
   # managed. Locally, state-daemon's cache and workflow's distributed lock
-  # (plugins/workflow/engine/src/lock.ts) both dial it directly, so it has
+  # (services/workflow/engine/src/lock.ts) both dial it directly, so it has
   # to be up even though nothing in the prod list depends on it explicitly.
   redis:
     name: Redis Cache
@@ -67,7 +67,7 @@ services:
     description: Distributed state management
     group: infra
     type: node
-    command: node ./plugins/state/daemon/dist/bin.cjs
+    command: node ./services/state/daemon/dist/bin.cjs
     health_check: http://localhost:7777/health
     port: 7777
     url: http://localhost:7777
@@ -81,7 +81,7 @@ services:
     description: Workflow engine REST API
     group: backend
     type: node
-    command: node ./plugins/workflow/daemon/dist/bin.js
+    command: node ./services/workflow/daemon/dist/bin.js
     health_check: http://localhost:7778/health
     port: 7778
     url: http://localhost:7778
@@ -105,7 +105,7 @@ services:
     description: Unified entity marketplace — install, manage, discover
     group: backend
     type: node
-    command: node ./plugins/marketplace/daemon/dist/bin.js
+    command: node ./services/marketplace/app/dist/bin.js
     health_check: http://localhost:5070/health
     port: 5070
     url: http://localhost:5070

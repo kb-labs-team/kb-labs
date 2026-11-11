@@ -17,7 +17,7 @@ this created several problems:
 - **Edit-on-GitHub 404** — index pages (resolved from `dir/index.mdx`) generated
   edit links pointing to `dir.mdx` which doesn't exist
 - **No ownership** — no mapping between code paths and doc pages; anyone could
-  change `plugins/workflow/core/executor.ts` without knowing which docs to update
+  change `services/workflow/core/executor.ts` without knowing which docs to update
 
 At 90+ pages and growing, manual discipline doesn't scale. A constraint-based system
 is needed.
@@ -115,7 +115,7 @@ on GitHub for section root pages.
 
 - Every new doc page must be registered in `sitemap.config.json` — extra step
 - `owners` globs need to be kept in sync with codebase refactors
-  (e.g. renaming `plugins/workflow/` would silently break staleness detection)
+  (e.g. renaming `services/workflow/` would silently break staleness detection)
 - Inline PR threads require manual resolution — can feel noisy on large refactors
   that touch many code paths
 
