@@ -151,3 +151,45 @@ presets:
 		t.Fatalf("preset = %+v", preset)
 	}
 }
+
+// Seam: the repository's real devkit.yaml, read by the loader `kb-devkit run`
+// uses, must carry run.task_memory_mb; a dropped field silently disables
+// memory admission.
+func TestRepositoryDevkitYamlCarriesTaskMemory(t *testing.T) {
+	cfg, err := LoadFile(filepath.Join("..", "..", "..", "..", "devkit.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if cfg.Run.TaskMemoryMB != 2419 {
+		t.Fatalf("Run.TaskMemoryMB = %d, want 2419", cfg.Run.TaskMemoryMB)
+	}
+}
+
+func TestChildTaskMemoryOverridesExtendedConfig(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "base.yaml")
+	if err := os.WriteFile(base, []byte("schemaVersion: 2\nrun:\n  task_memory_mb: 100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(root, "devkit.yaml")
+	if err := os.WriteFile(child, []byte("schemaVersion: 2\nextends: [./base.yaml]\nrun:\n  task_memory_mb: 200\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(child)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if cfg.Run.TaskMemoryMB != 200 {
+		t.Fatalf("child override: got %d, want 200", cfg.Run.TaskMemoryMB)
+	}
+	if err := os.WriteFile(child, []byte("schemaVersion: 2\nextends: [./base.yaml]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = LoadFile(child)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if cfg.Run.TaskMemoryMB != 100 {
+		t.Fatalf("inherited: got %d, want 100", cfg.Run.TaskMemoryMB)
+	}
+}

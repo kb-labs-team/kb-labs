@@ -463,3 +463,54 @@ func writeRunFixture(t *testing.T, path, content string) {
 		root = parent
 	}
 }
+
+// Seam: devkit.yaml (producer) -> loader -> `run` (consumer). The declared
+// run.task_memory_mb must reach admission, and its absence must be announced.
+func TestBuiltBinaryRunReportsMemoryAdmission(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate command test source")
+	}
+	binary := filepath.Join(t.TempDir(), "kb-devkit")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Dir(filepath.Dir(source))
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build kb-devkit: %v\n%s", err, output)
+	}
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	runFixture := func(runSection string) (string, string) {
+		root := t.TempDir()
+		writeRunFixture(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*"]}`)
+		writeRunFixture(t, filepath.Join(root, "packages", "a", "package.json"), `{"name":"@fixture/a"}`)
+		writeRunFixture(t, filepath.Join(root, "devkit.yaml"), "workspace:\n  categories:\n    libs:\n      match: [\"packages/a\"]\n      preset: node-lib\n"+runSection+
+			"tasks:\n  build:\n    - categories: [libs]\n      command: 'echo ok'\n")
+		command := exec.Command(binary, "run", "build", "--no-cache")
+		command.Dir = root
+		command.Env = append(os.Environ(), "HOME="+home, "NO_COLOR=1", "TERM=dumb")
+		var stdout, stderr strings.Builder
+		command.Stdout = &stdout
+		command.Stderr = &stderr
+		if err := command.Run(); err != nil {
+			t.Fatalf("run: %v\n%s", err, stderr.String())
+		}
+		return stdout.String(), stderr.String()
+	}
+
+	declaredOut, declared := runFixture("run:\n  task_memory_mb: 1234\n")
+	if !strings.Contains(declared, "devkit resource sample") || !strings.Contains(declared, `"taskMemoryMb":1234`) {
+		t.Fatalf("expected a resource sample with taskMemoryMb 1234, stderr:\n%s", declared)
+	}
+	if strings.Contains(declaredOut, "memory admission: off") {
+		t.Fatalf("admission reported off although declared:\n%s", declared)
+	}
+
+	undeclared, _ := runFixture("")
+	first := strings.SplitN(undeclared, "\n", 2)[0]
+	if first != "memory admission: off (run.task_memory_mb not set)" {
+		t.Fatalf("first line = %q", first)
+	}
+}

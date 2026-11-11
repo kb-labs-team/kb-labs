@@ -89,6 +89,7 @@ Examples:
 			}
 		}
 
+		diagnostics := clikitcommand.FromCommand(cmd).ErrorWriter()
 		opts := engine.RunOptions{
 			Tasks:       args,
 			Packages:    pkgs,
@@ -104,19 +105,24 @@ Examples:
 			OnSample: func(sample engine.AdmissionSample) {
 				line, marshalErr := json.Marshal(sample)
 				if marshalErr != nil {
-					fmt.Fprintf(os.Stderr, "devkit resource sample failed: %v\n", marshalErr)
+					fmt.Fprintf(diagnostics, "devkit resource sample failed: %v\n", marshalErr)
 					return
 				}
-				fmt.Fprintf(os.Stderr, "devkit resource sample: %s\n", line)
+				fmt.Fprintf(diagnostics, "devkit resource sample: %s\n", line)
 			},
 		}
 
 		o := newOutput()
 
 		if !jsonMode {
+			// Admission is never silently off: say so before anything runs.
+			// JSON mode keeps its output contract and stays unannotated.
+			progressWriter := clikitcommand.FromCommand(cmd).ProgressWriter()
+			if cfg.Run.TaskMemoryMB <= 0 {
+				fmt.Fprintln(progressWriter, "memory admission: off (run.task_memory_mb not set)")
+			}
 			clikitcommand.Println()
 			var outputMu sync.Mutex
-			progressWriter := clikitcommand.FromCommand(cmd).ProgressWriter()
 			if !stdoutIsTerminal() {
 				opts.OnHeartbeat = func(packageName, taskName string, elapsed time.Duration) {
 					outputMu.Lock()

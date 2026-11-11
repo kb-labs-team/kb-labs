@@ -38,6 +38,9 @@ func mergeConfigs(base, child *DevkitConfig) *DevkitConfig {
 	if child.Run.Concurrency != 0 {
 		out.Run.Concurrency = child.Run.Concurrency
 	}
+	if child.Run.TaskMemoryMB != 0 {
+		out.Run.TaskMemoryMB = child.Run.TaskMemoryMB
+	}
 	if child.Affected.Strategy != "" {
 		out.Affected.Strategy = child.Affected.Strategy
 	}

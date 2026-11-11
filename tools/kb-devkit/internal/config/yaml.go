@@ -225,7 +225,8 @@ type yamlSyncTarget struct {
 }
 
 type yamlRun struct {
-	Concurrency int `yaml:"concurrency"`
+	Concurrency  int `yaml:"concurrency"`
+	TaskMemoryMB int `yaml:"task_memory_mb"`
 }
 
 type yamlCustomCheck struct {
@@ -374,7 +375,8 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 			Exclude:        raw.Workspace.Exclude,
 		},
 		Run: RunConfig{
-			Concurrency: raw.Run.Concurrency,
+			Concurrency:  raw.Run.Concurrency,
+			TaskMemoryMB: raw.Run.TaskMemoryMB,
 		},
 		Affected: AffectedConfig{
 			Strategy:   raw.Affected.Strategy,
