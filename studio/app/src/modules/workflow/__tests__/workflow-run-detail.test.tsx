@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it } from 'vitest';
-import { RunInputs } from '../pages/WorkflowRunDetail.js';
+import { ExternalWaitDetails, RunInputs } from '../pages/WorkflowRunDetail.js';
 
 function textContent(node: React.ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') {return String(node)}
@@ -14,5 +14,21 @@ describe('WorkflowRunDetail submitted inputs', () => {
   it('renders submitted input names and values', () => {
     const element = RunInputs({ inputs: { name: 'Ada' } });
     expect(textContent(element)).toContain('name: Ada');
+  });
+});
+
+describe('WorkflowRunDetail external wait', () => {
+  // case: S-290.2
+  it('renders the reason, dependency, and until time from the workflow contract', () => {
+    const element = ExternalWaitDetails({ wait: {
+      reason: 'upstream deploy',
+      dependency: 'release/api',
+      until: '2026-11-10T12:30:00.000Z',
+    } });
+    const text = textContent(element);
+
+    expect(text).toContain('upstream deploy');
+    expect(text).toContain('release/api');
+    expect(text).toContain('2026-11-10T12:30:00.000Z');
   });
 });

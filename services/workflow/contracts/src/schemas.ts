@@ -36,6 +36,8 @@ export const TenantIdSchema = z
 export const RetryModeSchema = z.enum(['exp', 'lin'])
 export const RetryFailureKindSchema = z.enum([
   'command',
+  'exit',
+  'stalled',
   'network',
   'timeout',
   'rate_limit',
@@ -48,6 +50,7 @@ export const RetryPolicySchema = z.object({
   backoff: RetryModeSchema.default('exp'),
   initialIntervalMs: z.number().int().positive().default(1000),
   maxIntervalMs: z.number().int().positive().optional(),
+  maxWaitMs: z.number().int().positive().max(86_400_000).optional(),
   on: z.array(RetryFailureKindSchema).min(1).optional(),
 })
 
@@ -119,6 +122,7 @@ export const StepSpecSchema = z
     env: z.record(z.string(), z.string()).optional(),
     secrets: z.array(z.string().min(1)).optional(),
     timeoutMs: TimeoutSchema.optional(),
+    idleTimeoutMs: TimeoutSchema.optional(),
     retry: z.union([z.literal(false), RetryPolicySchema]).optional(),
     continueOnError: z.boolean().optional(),
     // Presentation layer
@@ -255,6 +259,12 @@ export const StepRunErrorSchema = z.object({
   details: z.record(z.string(), z.unknown()).optional(),
 })
 
+export const ExternalWaitSchema = z.object({
+  until: z.string().datetime(),
+  reason: z.string(),
+  dependency: z.string().optional(),
+})
+
 export const StepRunSchema = z.object({
   id: z.string().min(1),
   runId: z.string().min(1),
@@ -262,6 +272,7 @@ export const StepRunSchema = z.object({
   name: z.string().min(1),
   index: z.number().int().nonnegative(),
   status: StepStateSchema,
+  wait: ExternalWaitSchema.optional(),
   eventSequence: z.number().int().nonnegative().default(0),
   queuedAt: z.string().datetime(),
   startedAt: z.string().datetime().optional(),
@@ -293,6 +304,7 @@ export const JobRunSchema = z.object({
   tenantId: TenantIdSchema, // ← Inherited from run for isolation
   jobName: z.string().min(1),
   status: JobStateSchema,
+  wait: ExternalWaitSchema.optional(),
   eventSequence: z.number().int().nonnegative().default(0),
   runsOn: z.enum(['local', 'sandbox']),
   queuedAt: z.string().datetime(),

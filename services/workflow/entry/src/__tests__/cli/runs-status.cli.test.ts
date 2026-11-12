@@ -41,6 +41,34 @@ beforeEach(() => {
 });
 
 describe('workflow:runs-status', () => {
+  // case: S-290.2
+  it('renders an external wait reason, dependency, and due time', async () => {
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRun: async () => ({
+          ...sampleRun,
+          status: 'running',
+          jobs: [{
+            ...sampleRun.jobs![0]!,
+            status: 'waiting',
+            steps: [{
+              ...sampleRun.jobs![0]!.steps![0]!,
+              status: 'waiting',
+              wait: { reason: 'upstream deploy', dependency: 'release/api', until: '2026-11-10T12:30:00.000Z' },
+            }],
+          }],
+        }),
+      });
+    });
+
+    const { ui, captured } = createCapturedUI();
+    await runsStatusCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: {}, argv: ['r-001'] }));
+
+    expect(JSON.stringify(captured.success)).toContain('upstream deploy');
+    expect(JSON.stringify(captured.success)).toContain('release/api');
+    expect(JSON.stringify(captured.success)).toContain('2026-11-10T12:30:00.000Z');
+  });
+
   it('RST-01: positional runId renders status summary', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({

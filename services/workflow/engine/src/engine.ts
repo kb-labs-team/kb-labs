@@ -436,7 +436,7 @@ export class WorkflowEngine {
     jobId: string,
     error: Error & { code?: string; hint?: string; details?: Record<string, unknown> },
     failure?: ClassifiedFailure,
-    policyOverride?: false | { max: number; backoff?: 'exp' | 'lin'; initialIntervalMs?: number; maxIntervalMs?: number; on?: string[] }
+    policyOverride?: false | { max: number; backoff?: 'exp' | 'lin'; initialIntervalMs?: number; maxIntervalMs?: number; maxWaitMs?: number; on?: string[] }
   ): Promise<WorkflowOperationResult> {
     const ancillaryFailures: WorkflowAncillaryFailure[] = []
     const run = await this.stateStore.getRun(runId)
@@ -482,6 +482,47 @@ export class WorkflowEngine {
       : retryConfig
       ? decideRetry({ failure: classified, attempt: job.attempt || 0, policy: retryConfig })
       : decideRetry({ failure: classified, attempt: job.attempt || 0 })
+
+    // External delays are durable state, not process-local timers.
+    if (retryDecision.retry && classified.retryAfterMs !== undefined) {
+      const ceiling = (policyOverride !== false ? policyOverride?.maxWaitMs : undefined) ?? 86_400_000
+      if (retryDecision.delayMs > ceiling) {
+        const message = `External wait exceeds ${ceiling}ms ceiling`
+        const code = 'WORKFLOW_WAIT_CEILING_EXCEEDED'
+        const failure = classifyFailure({ kind: 'timeout', retryable: false, message, code })
+        await this.stateStore.updateJob(runId, jobId, (draft) => {
+          draft.error = { message, code, details: { kind: 'timeout', retryAfterMs: classified.retryAfterMs, maxWaitMs: ceiling, failure } }
+          const step = [...draft.steps].reverse().find((candidate) => candidate.status === 'failed')
+          if (step) { step.error = { message, code, details: { failure } } }
+        })
+        await this.checkRunCompletion(runId, jobId, ancillaryFailures)
+        return { ancillaryFailures }
+      }
+      const wait = { until: new Date(Date.now() + retryDecision.delayMs).toISOString(), reason: classified.message, dependency: classified.dependency }
+      const parkedRun = await this.stateStore.updateRun(runId, (draft) => {
+        if (isTerminal(draft.status, 'run')) { return }
+        const current = draft.jobs.find((candidate) => candidate.id === jobId)
+        if (!current || current.status !== 'failed') { return }
+        assertTransition('job', current.status, 'waiting')
+        current.status = 'waiting'
+        current.eventSequence = draft.eventSequence
+        current.wait = wait
+        const failed = [...current.steps].reverse().find((step) => step.status === 'failed')
+        if (failed) {
+          assertTransition('step', failed.status, 'waiting')
+          failed.status = 'waiting'
+          failed.eventSequence = draft.eventSequence
+          failed.wait = wait
+        }
+      })
+      const parkedStep = parkedRun?.jobs.find((candidate) => candidate.id === jobId && candidate.status === 'waiting')?.steps.find((step) => step.status === 'waiting')
+      if (parkedStep) {
+        await this.runAncillaryOperation(runId, jobId, 'event.publish.step.waiting', () => this.publishEvent({
+          type: EVENT_NAMES.step.waiting, runId, jobId, stepId: parkedStep.id, payload: { status: 'waiting', ...wait },
+        }, parkedStep.eventSequence), ancillaryFailures)
+      }
+      return { ancillaryFailures }
+    }
 
     // Check if should retry
     if (retryDecision.retry) {
@@ -590,6 +631,7 @@ export class WorkflowEngine {
   async markJobStarted(runId: string, jobId: string): Promise<void> {
     await this.stateStore.transitionJob(runId, jobId, 'running', (draft) => {
       draft.startedAt = new Date().toISOString()
+      draft.wait = undefined
     })
 
     // Promote run status to 'running' when first job starts. Deliberately
@@ -824,6 +866,7 @@ export class WorkflowEngine {
   async markStepStarted(runId: string, jobId: string, stepId: string): Promise<void> {
     const step = await this.stateStore.transitionStep(runId, jobId, stepId, 'running', (draft) => {
       draft.startedAt = new Date().toISOString()
+      draft.wait = undefined
     })
 
     this.logger.debug('Step started', { runId, jobId, stepId })
@@ -872,6 +915,7 @@ export class WorkflowEngine {
     stepId: string,
     error: Error & { code?: string; hint?: string; details?: Record<string, unknown> },
     outputs?: Record<string, unknown>,
+    failure?: ClassifiedFailure,
   ): Promise<void> {
     const step = await this.stateStore.transitionStep(runId, jobId, stepId, 'failed', (draft) => {
       draft.finishedAt = new Date().toISOString()
@@ -879,7 +923,7 @@ export class WorkflowEngine {
         message: error.message,
         code: error.code,
         hint: error.hint,
-        details: error.details,
+        details: failure ? { ...error.details, failure } : error.details,
         stack: error.stack,
       }
       if (outputs) {draft.outputs = outputs}
@@ -1180,7 +1224,23 @@ export class WorkflowEngine {
         // a step is still waiting_approval), just one level up. Only the
         // genuinely abandoned jobs get failed; the run itself is only
         // finalized if nothing is left that could still bring it home.
-        const hasParkedJob = run.jobs.some((job) => job.status === 'waiting_approval' || job.status === 'waiting_child')
+        if (run.jobs.some((job) => job.status === 'queued' && job.wait)) {
+          const refreshed = await this.stateStore.updateRun(runId, (draft) => {
+            for (const job of draft.jobs) {
+              if (job.status !== 'queued' || !job.wait) { continue }
+              assertTransition('job', job.status, 'waiting')
+              job.status = 'waiting'
+              const step = job.steps.find((candidate) => candidate.status === 'queued' && candidate.wait)
+              if (step) {
+                assertTransition('step', step.status, 'waiting')
+                step.status = 'waiting'
+              }
+            }
+          })
+          if (!refreshed) { return }
+          run.jobs = refreshed.jobs
+        }
+        const hasParkedJob = run.jobs.some((job) => job.status === 'waiting_approval' || job.status === 'waiting_child' || job.status === 'waiting')
         const abandonedJobIds = run.jobs
           .filter((job) => job.status === 'running' || job.status === 'queued')
           .map((job) => job.id)
@@ -1376,7 +1436,37 @@ export class WorkflowEngine {
   }
 
   async nextJob(): Promise<JobQueueEntry | null> {
-    return this.scheduler.dequeueJob()
+    const queued = await this.scheduler.dequeueJob()
+    if (queued) { return queued }
+    const ids = await this.stateStore.getAllRunIds()
+    for (const runId of ids) {
+      const candidateRun = await this.stateStore.getRun(runId)
+      if (!candidateRun || isTerminal(candidateRun.status, 'run') || !candidateRun.jobs.some((job) => job.status === 'waiting' && job.wait && Date.parse(job.wait.until) <= Date.now())) { continue }
+      let entry: JobQueueEntry | null = null
+      await this.stateStore.updateRun(runId, (run) => {
+        if (isTerminal(run.status, 'run')) { return }
+        const job = run.jobs.find((candidate) => candidate.status === 'waiting' && candidate.wait && Date.parse(candidate.wait.until) <= Date.now())
+        if (!job) { return }
+        assertTransition('job', job.status, 'queued')
+        job.status = 'queued'
+        job.eventSequence = run.eventSequence
+        job.startedAt = undefined
+        job.finishedAt = undefined
+        job.error = undefined
+        for (const step of job.steps) {
+          if (step.status !== 'waiting') { continue }
+          assertTransition('step', step.status, 'queued')
+          step.status = 'queued'
+          step.eventSequence = run.eventSequence
+          step.startedAt = undefined
+          step.finishedAt = undefined
+          step.error = undefined
+        }
+        entry = { id: `${runId}:${job.id}:wait`, runId, jobId: job.id, jobName: job.jobName, priority: job.priority ?? 'normal', enqueuedAt: new Date().toISOString(), availableAt: Date.now() }
+      })
+      if (entry) { return entry }
+    }
+    return null
   }
 
   async rescheduleJob(entry: JobQueueEntry, delayMs: number): Promise<void> {

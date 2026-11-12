@@ -30,6 +30,7 @@
     "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/rest-api-contracts": "workspace:*",
     "@kb-labs/workflow-constants": "workspace:*",
+    "@kb-labs/workflow-contracts": "workspace:*",
     "@tanstack/react-query": "^5.0.0",
     "axios": "^1.20.0",
     "ulid": "^2.3.0",

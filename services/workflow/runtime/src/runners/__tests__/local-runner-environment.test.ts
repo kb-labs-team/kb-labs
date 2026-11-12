@@ -51,3 +51,14 @@ describe('LocalRunner environment projection', () => {
     expect(JSON.stringify(records)).not.toContain(sentinel)
   })
 })
+
+describe('LocalRunner typed failures', () => {
+  it('reports exit code and stderr as an exit failure', async () => {
+    const context = createStepContext({ runId: 'run', jobId: 'job', stepId: 'step', env: {}, secrets: {}, logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } })
+    const result = await new LocalRunner().execute({ spec: { name: 'fail', uses: 'builtin:shell', with: { command: "printf 'local failure\\n' >&2; exit 23" } }, context })
+    expect(result.status).toBe('failed')
+    if (result.status !== 'failed') { throw new Error('expected failure') }
+    expect(result.failure).toMatchObject({ kind: 'exit', exitCode: 23 })
+    expect(result.error.message).toContain('local failure')
+  })
+})

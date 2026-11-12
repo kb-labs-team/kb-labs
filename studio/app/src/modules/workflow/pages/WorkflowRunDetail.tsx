@@ -13,7 +13,7 @@ import {
   UIButton, UITypographyText, UISkeletonText, UITitle, UIAlert, UIList, UIListItem, UIAccordion, UITabs, UIJsonViewer } from '@kb-labs/studio-ui-kit';
 import type { UIAccordionItem, UITabItem } from '@kb-labs/studio-ui-kit';
 import { useData } from '@kb-labs/studio-hooks';
-import type { WorkflowRun, JobRun, StepRun } from '@kb-labs/workflow-contracts'
+import { ExternalWaitSchema, type WorkflowRun, type JobRun, type StepRun } from '@kb-labs/workflow-contracts'
 import type { WorkflowLogEvent } from '@kb-labs/workflow-contracts/rest-api'
 import { projectWorkflowEndpoint } from '@kb-labs/workflow-contracts/routes'
 import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker'
@@ -45,6 +45,17 @@ export function RunInputs({ inputs }: { inputs?: Record<string, unknown> }) {
   )
 }
 
+export function ExternalWaitDetails({ wait }: { wait: StepRun['wait'] }) {
+  if (!wait) {return null}
+  return (
+    <dl aria-label="External wait" style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 12px', margin: '4px 12px 8px' }}>
+      <dt>Reason</dt><dd style={{ margin: 0 }}>{wait.reason}</dd>
+      {wait.dependency && <><dt>Dependency</dt><dd style={{ margin: 0 }}>{wait.dependency}</dd></>}
+      <dt>Until</dt><dd style={{ margin: 0 }}>{wait.until}</dd>
+    </dl>
+  )
+}
+
 // --- GitHub Actions style execution log ---
 
 const STATUS_ICON: Record<string, string> = {
@@ -55,6 +66,7 @@ const STATUS_ICON: Record<string, string> = {
   'cancelled': '\u2298',
   'skipped': '\u2014',
   'waiting_approval': '\u23F8',
+  'waiting': '\u23F3',
   // Jobs (not just steps) can now carry these too \u2014 parked while a step
   // waits on a human decision or a nested workflow.
   'waiting_child': '\u23F8',
@@ -69,6 +81,7 @@ const STATUS_COLOR: Record<string, string> = {
   'cancelled': '#8b949e',
   'skipped': '#8b949e',
   'waiting_approval': '#d29922',
+  'waiting': '#d29922',
   'waiting_child': '#d29922',
   'interrupted': '#d29922',
 }
@@ -80,6 +93,7 @@ function eventTypeToStatus(type: string): string {
   if (type.endsWith('.cancelled')) {return 'cancelled'}
   if (type.endsWith('.skipped')) {return 'skipped'}
   if (type.endsWith('.waitingApproval')) {return 'waiting_approval'}
+  if (type.endsWith('.waiting')) {return 'waiting'}
   if (type.endsWith('.queued')) {return 'queued'}
   return 'running'
 }
@@ -158,6 +172,7 @@ interface StepLogGroup {
   events: WorkflowLogEvent[]
   outputs?: Record<string, unknown>
   error?: Record<string, unknown> | null
+  wait?: StepRun['wait']
   spec?: { name: string; uses?: string; with?: Record<string, unknown> }
   startedAt?: string
   finishedAt?: string
@@ -188,6 +203,7 @@ function buildLogGroups(events: WorkflowLogEvent[], run: WorkflowRun): JobLogGro
       events: [],
       outputs: s.outputs ?? undefined,
       error: s.error,
+      wait: s.wait,
       spec: s.spec,
       startedAt: s.startedAt,
       finishedAt: s.finishedAt,
@@ -317,6 +333,7 @@ function StepPanel({ step, onApprove }: { step: StepLogGroup; onApprove?: () => 
           $ {step.command}
         </div>
       )}
+      <ExternalWaitDetails wait={step.wait} />
       {lines.length > 0 ? (
         <pre ref={logRef} style={{
           margin: 0,
@@ -521,6 +538,7 @@ function RunDetailSkeleton() {
 
 function applyStateEvent(run: WorkflowRun, ev: WorkflowLogEvent): WorkflowRun {
   const { type, jobId, stepId, payload } = ev
+  const wait = type === 'step.waiting' ? ExternalWaitSchema.parse(payload) : undefined
   if (type === 'run.started') {return { ...run, status: 'running', startedAt: (payload?.startedAt as string) ?? run.startedAt }}
   if (type === 'run.finished') {return { ...run, status: 'success' }}
   if (type === 'run.failed') {return { ...run, status: 'failed' }}
@@ -536,6 +554,7 @@ function applyStateEvent(run: WorkflowRun, ev: WorkflowLogEvent): WorkflowRun {
       startedAt: type === 'step.started' ? ((payload?.startedAt as string) ?? s.startedAt) : s.startedAt,
       durationMs: (payload?.durationMs as number) ?? s.durationMs,
       error: (payload?.error as StepRun['error'] | undefined) ?? s.error,
+      wait: wait ?? s.wait,
     })
     return { ...j, steps }
   })

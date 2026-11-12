@@ -6022,6 +6022,9 @@ importers:
       '@kb-labs/workflow-constants':
         specifier: workspace:*
         version: link:../../services/workflow/constants
+      '@kb-labs/workflow-contracts':
+        specifier: workspace:*
+        version: link:../../services/workflow/contracts
       '@tanstack/react-query':
         specifier: ^5.0.0
         version: 5.97.0(react@19.2.5)

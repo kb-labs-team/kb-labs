@@ -1,3 +1,4 @@
+import { WORKFLOW_ACTIVITY_META_KEY } from '@kb-labs/workflow-contracts'
 /**
  * @module @kb-labs/workflow-runtime/runners/sandbox-runner
  *
@@ -172,7 +173,34 @@ export class SandboxRunner implements Runner {
       uses: spec.uses,
     }).catch(() => {})
 
-    const result = await this.backend.execute(executionRequest, { signal, onLog: context.onLog, onLoggerLog: context.onLoggerLog })
+    const idleController = new AbortController()
+    let idleExpired = false
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    const resetIdle = () => {
+      if (idleTimer) { clearTimeout(idleTimer) }
+      if (spec.idleTimeoutMs !== undefined) {
+        idleTimer = setTimeout(() => { idleExpired = true; idleController.abort() }, spec.idleTimeoutMs)
+      }
+    }
+    const onAbort = () => idleController.abort(signal?.reason)
+    signal?.addEventListener('abort', onAbort, { once: true })
+    if (signal?.aborted) { onAbort() }
+    resetIdle()
+    let result: Awaited<ReturnType<ExecutionBackend['execute']>>
+    try {
+      result = await this.backend.execute(executionRequest, {
+        signal: idleController.signal,
+        onLog: (entry) => { resetIdle(); if (entry.meta?.[WORKFLOW_ACTIVITY_META_KEY] !== true) { context.onLog?.(entry) } },
+        onLoggerLog: (entry) => { resetIdle(); context.onLoggerLog?.(entry) },
+      })
+    } finally {
+      if (idleTimer) { clearTimeout(idleTimer) }
+      signal?.removeEventListener('abort', onAbort)
+    }
+    if (idleExpired && !signal?.aborted) {
+      const message = `Step stalled after ${spec.idleTimeoutMs}ms without activity`
+      return { status: 'failed', error: { message }, failure: classifyFailure({ kind: 'stalled', message, retryable: true }, { source: 'execution' }) }
+    }
     const duration = Date.now() - startTime
 
     // Log result and track analytics
@@ -229,6 +257,7 @@ export class SandboxRunner implements Runner {
     return {
       status: 'failed',
       error: { message, code: 'INVALID_STEP' },
+      failure: classifyFailure({ kind: 'validation', message, code: 'INVALID_STEP' }),
     }
   }
 
@@ -255,6 +284,7 @@ export class SandboxRunner implements Runner {
         error: {
           status: 'failed',
           error: { message, code: 'COMMAND_RESOLUTION_FAILED' },
+          failure: classifyFailure({ kind: 'configuration', message, code: 'COMMAND_RESOLUTION_FAILED' }),
         },
       }
     }
@@ -335,7 +365,9 @@ export class SandboxRunner implements Runner {
   ): StepExecutionResult {
     if (result.ok) {
       // Include stdout/stderr in completion log if present
-      const data = result.data as Record<string, unknown> | null | undefined;
+      const payload = result.data as Record<string, unknown> | null | undefined;
+      const data = payload?.workflowStepResult && typeof payload.workflowStepResult === 'object'
+        ? payload.workflowStepResult as Record<string, unknown> : payload;
 
       // DEBUG: Log what we received
       context.logger.debug('mapExecutionResult received data', {
@@ -402,7 +434,7 @@ export class SandboxRunner implements Runner {
 
       return {
         status: 'success',
-        outputs: toWorkflowOutputs(result.data),
+        outputs: toWorkflowOutputs(data),
       }
     }
 

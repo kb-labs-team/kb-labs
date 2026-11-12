@@ -975,7 +975,7 @@ export async function createWorkflowWorker(
             );
 
             // Mark step as failed (sets finishedAt timestamp + error)
-            await engine.markStepFailed(run.id, job.id, step.id, error, result.outputs);
+            await engine.markStepFailed(run.id, job.id, step.id, error, result.outputs, result.failure);
             failedStepFailure = result.failure;
             failedStepRetry = step.spec.retry;
 

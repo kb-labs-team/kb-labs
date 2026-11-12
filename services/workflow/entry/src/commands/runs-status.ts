@@ -14,6 +14,7 @@ const STEP_ICON: Record<string, string> = {
   cancelled: '⊘',
   waiting_approval: '…',
   waiting_child: '…',
+  waiting: '…',
   interrupted: '‖',
   skipped: '⊙',
 };
@@ -85,6 +86,11 @@ export default defineCommand<unknown, CLIInput<RunsStatusFlags>, unknown>({
                 const stepIcon = STEP_ICON[step.status] ?? '?';
                 const dur = step.durationMs !== undefined ? ` (${formatDuration(step.durationMs)})` : '';
                 jobItems.push(`  ${stepIcon} ${step.name ?? step.id}: ${step.status}${dur}`);
+                if (step.wait) {
+                  jobItems.push(`    Waiting: ${step.wait.reason}`);
+                  if (step.wait.dependency) { jobItems.push(`    Dependency: ${step.wait.dependency}`); }
+                  jobItems.push(`    Until: ${step.wait.until}`);
+                }
               }
             }
 
