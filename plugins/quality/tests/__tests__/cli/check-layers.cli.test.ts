@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   useConfig: vi.fn(),
 }));
 
-vi.mock('@kb-labs/quality/core', () => ({
+vi.mock('../../../src/core/index.js', () => ({
   analyzeLayering: mocks.analyzeLayering,
 }));
 
