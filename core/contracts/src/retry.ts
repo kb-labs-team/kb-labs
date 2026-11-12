@@ -20,6 +20,8 @@ export type FailureSource = 'execution' | 'command' | 'transport' | 'workflow';
 /** Canonical failure taxonomy shared by execution, CLI and workflow hosts. */
 export type FailureKind =
   | 'command'
+  | 'exit'
+  | 'stalled'
   | 'network'
   | 'timeout'
   | 'rate_limit'
@@ -44,6 +46,9 @@ export interface FailureInfo {
   source?: FailureSource;
   details?: Record<string, unknown>;
   retryAfterMs?: number;
+  retryable?: boolean;
+  dependency?: string;
+  exitCode?: number;
 }
 
 /** Classifier output used by all retry policies. */

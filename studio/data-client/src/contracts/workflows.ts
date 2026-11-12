@@ -1,4 +1,5 @@
 import type { JobState, RunState, StepState } from '@kb-labs/workflow-constants';
+import type { ExternalWait } from '@kb-labs/workflow-contracts';
 
 // Source of truth for these literals is `@kb-labs/workflow-constants` — do not
 // hand-roll this union again. Run/job/step status enums differ (e.g. jobs and
@@ -20,6 +21,7 @@ export interface StepRun {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
   error?: Record<string, unknown> | null;
+  wait?: ExternalWait;
   spec?: { name: string; uses?: string; with?: Record<string, unknown> };
 }
 

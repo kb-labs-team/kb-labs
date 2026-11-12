@@ -64,7 +64,7 @@ export interface StepExecutionSuccess {
 }
 
 export interface StepExecutionFailure {
-  status: Extract<StepState, 'failed' | 'cancelled'>
+  status: Extract<StepState, 'failed'>
   error: {
     message: string
     code?: string
@@ -75,10 +75,16 @@ export interface StepExecutionFailure {
   /** Output captured before a command failed, retained for run detail and logs. */
   outputs?: Record<string, unknown>
   /** Normalized failure used by workflow retry policy. */
-  failure?: ClassifiedFailure
+  failure: ClassifiedFailure
 }
 
-export type StepExecutionResult = StepExecutionSuccess | StepExecutionFailure
+export interface StepExecutionCancelled {
+  status: Extract<StepState, 'cancelled'>
+  error: { message: string; code?: string; hint?: string; stack?: string; details?: Record<string, unknown> }
+}
+
+
+export type StepExecutionResult = StepExecutionSuccess | StepExecutionFailure | StepExecutionCancelled
 
 export interface Runner {
   execute(request: StepExecutionRequest): Promise<StepExecutionResult>

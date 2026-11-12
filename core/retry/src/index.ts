@@ -56,6 +56,9 @@ function makeFailure(
     retrySafety,
     phase: context.phase,
     retryAfterMs,
+    retryable: typeof record?.retryable === 'boolean' ? record.retryable : undefined,
+    dependency: typeof record?.dependency === 'string' ? record.dependency : undefined,
+    exitCode: typeof record?.exitCode === 'number' ? record.exitCode : undefined,
     details: asRecord(record?.details),
   };
 }
@@ -64,14 +67,17 @@ function makeFailure(
 export function classifyFailure(input: unknown, context: FailureClassificationContext = {}): ClassifiedFailure {
   const record = asRecord(input);
   const source = context.source ?? (record?.source as FailureSource | undefined) ?? 'execution';
+  if (record?.retryAfterMs !== undefined && (typeof record.retryAfterMs !== 'number' || !Number.isFinite(record.retryAfterMs) || record.retryAfterMs < 0)) {
+    return makeFailure({ message: 'Invalid retry-after delay', retryable: false }, 'validation', source, context, 'INVALID_RETRY_AFTER');
+  }
   const explicitKind = record?.kind as FailureKind | undefined;
   const explicitCode = getCode(record);
   const status = getStatus(record);
   const code = explicitCode?.toUpperCase();
 
-  if (explicitKind && ['command', 'network', 'timeout', 'rate_limit', 'server', 'validation', 'configuration', 'authentication', 'authorization', 'not_found', 'cancelled', 'infrastructure', 'unknown'].includes(explicitKind)) {
+  if (explicitKind && ['command', 'exit', 'stalled', 'network', 'timeout', 'rate_limit', 'server', 'validation', 'configuration', 'authentication', 'authorization', 'not_found', 'cancelled', 'infrastructure', 'unknown'].includes(explicitKind)) {
     const transient = ['network', 'timeout', 'rate_limit', 'server'].includes(explicitKind);
-    const safe = explicitKind === 'network' && (code === 'ECONNREFUSED' || code === 'NETWORK_UNAVAILABLE');
+    const safe = record?.retryable === true || (explicitKind === 'network' && (code === 'ECONNREFUSED' || code === 'NETWORK_UNAVAILABLE'));
     return makeFailure(input, explicitKind, source, context, code, transient, safe ? 'safe' : transient ? 'requires_idempotency' : 'never');
   }
 
@@ -124,6 +130,7 @@ export function decideRetry(input: {
 }): RetryDecision {
   const policy = { ...DEFAULT_TRANSIENT_RETRY_POLICY, ...input.policy };
   const { failure, attempt } = input;
+  if (failure.retryable === false) {return { retry: false, reason: 'policy_denied', delayMs: 0 };}
   if (attempt + 1 >= policy.maxAttempts) {return { retry: false, reason: 'attempts_exhausted', delayMs: 0 };}
   if (policy.neverRetryOn?.includes(failure.kind) || !policy.retryOn.includes(failure.kind)) {
     return { retry: false, reason: 'policy_denied', delayMs: 0 };
@@ -135,7 +142,7 @@ export function decideRetry(input: {
   const capped = Math.min(base, policy.maxDelayMs);
   const jitter = policy.jitter ? capped * policy.jitter * Math.random() : 0;
   const delayMs = policy.respectRetryAfter && failure.retryAfterMs !== undefined
-    ? Math.min(failure.retryAfterMs, policy.maxDelayMs)
+    ? failure.retryAfterMs
     : Math.floor(capped + jitter);
   return { retry: true, reason: 'retryable', delayMs };
 }

@@ -1,4 +1,5 @@
 import { execaCommand } from 'execa'
+import { classifyFailure } from '@kb-labs/core-retry'
 import type { StepSpec } from '@kb-labs/workflow-contracts'
 import type {
   Runner,
@@ -33,6 +34,7 @@ export class LocalRunner implements Runner {
       })
       return {
         status: 'failed',
+        failure: classifyFailure({ kind: 'validation', message: `Local runner cannot execute step with uses="${spec.uses}"`, code: 'UNSUPPORTED_STEP' }),
         error: {
           message: `Local runner cannot execute step with uses="${spec.uses}"`,
           code: 'UNSUPPORTED_STEP',
@@ -46,6 +48,7 @@ export class LocalRunner implements Runner {
       })
       return {
         status: 'failed',
+        failure: classifyFailure({ kind: 'validation', message: 'Local runner requires a command', code: 'INVALID_STEP' }),
         error: {
           message:
             'Local runner requires "with.command" (or with.run/with.script) to be specified',
@@ -115,6 +118,7 @@ export class LocalRunner implements Runner {
 
       return {
         status: 'failed',
+        failure: classifyFailure({ kind: exitCode === undefined ? 'infrastructure' : 'exit', exitCode, message, code: 'STEP_EXECUTION_FAILED', retryable: false }),
         error: {
           message,
           code: 'STEP_EXECUTION_FAILED',

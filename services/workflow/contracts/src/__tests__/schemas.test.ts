@@ -157,3 +157,18 @@ describe('WorkflowSpecSchema — run: in jobs', () => {
     expect(steps?.[1]).toMatchObject({ uses: 'builtin:shell', with: { command: 'pnpm build' } })
   })
 })
+
+describe('idle timeout', () => {
+  it('retains a positive idle timeout and rejects invalid values', () => {
+    expect(StepSpecSchema.parse({ name: 's', run: 'true', idleTimeoutMs: 100 }).idleTimeoutMs).toBe(100)
+    expect(StepSpecSchema.safeParse({ name: 's', run: 'true', idleTimeoutMs: 0 }).success).toBe(false)
+  })
+})
+
+describe('waiting on a dependency', () => {
+  it('exposes waiting and the persisted reason through job step responses', async () => {
+    const { JobStepInfoSchema } = await import('../rest-api')
+    const wait = { until: '2030-01-01T00:00:00.000Z', reason: 'busy', dependency: 'registry' }
+    expect(JobStepInfoSchema.parse({ name: 'step', status: 'waiting', wait })).toMatchObject({ status: 'waiting', wait })
+  })
+})
