@@ -51,7 +51,9 @@ describe("request-completion log policy (x279)", () => {
         s.get("/boom", async (_req, reply) => reply.code(500).send({ error: "boom" }));
         s.get("/missing", async (_req, reply) => reply.code(404).send({ error: "nf" }));
         s.get("/slow", { config: { kbRequestKind: "polling" } }, async () => {
-          await new Promise((resolve) => setTimeout(resolve, SLOW_REQUEST_THRESHOLD_MS + 100));
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, SLOW_REQUEST_THRESHOLD_MS + 100);
+          });
           return { ok: true };
         });
       },
