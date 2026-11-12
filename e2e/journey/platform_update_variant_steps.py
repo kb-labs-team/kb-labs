@@ -26,7 +26,7 @@ from invocations import (
     start_background_command,
 )
 from service_steps import Journey, StructuredJourneyError
-from journey_resources import active_platform_root, shared_runtime_file_fingerprints, snapshot_state_tree
+from journey_resources import active_platform_root, host_log_tails, shared_runtime_file_fingerprints, snapshot_state_tree
 from service_port_assertions import service_ports
 
 
@@ -511,9 +511,7 @@ def run_platform_update_variant_steps(
         try:
             verify_clients_after_update()
         except Exception as error:
-            host_log = platform_root / layout_value('hostStateDirectory') / 'host.log'
-            tail = host_log.read_text(errors='replace')[-16000:] if host_log.is_file() else 'host.log unavailable'
-            raise RuntimeError(f"{error}; host log tail: {redact_text(tail)}") from error
+            raise RuntimeError(f"{error}; host log tails: {redact_text(host_log_tails(platform_root))}") from error
 
     def verify_clients_after_update() -> None:
         with urlopen("http://127.0.0.1:3000/", timeout=20) as response:

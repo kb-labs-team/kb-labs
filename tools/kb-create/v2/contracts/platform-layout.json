@@ -13,6 +13,7 @@
   },
   "installerStateDirectory": "installer",
   "hostStateDirectory": "installer/host",
+  "hostLogFiles": { "residue": "host.log", "structured": "host.jsonl" },
   "platformDataRoot": { "platformPath": ".kb/data", "statePath": "state/data" },
   "ownershipRecord": "ownership.json",
   "ownershipRecordStagingPrefix": ".ownership.json.pending-",

@@ -39,6 +39,8 @@ def _layout_path_values() -> dict[str, str]:
         "sharedStateDirectory": contract["sharedStateDirectory"],
         "installerStateDirectory": contract["installerStateDirectory"],
         "hostStateDirectory": contract["hostStateDirectory"],
+        "hostLogFiles.residue": contract["hostLogFiles"]["residue"],
+        "hostLogFiles.structured": contract["hostLogFiles"]["structured"],
         "ownershipRecord": contract["ownershipRecord"],
         "ownershipRecordStagingPrefix": contract["ownershipRecordStagingPrefix"],
         "platformDataRoot.platformPath": contract["platformDataRoot"]["platformPath"],
