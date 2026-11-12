@@ -4,7 +4,6 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 
-import { findRepoRoot } from '@kb-labs/core-sys'
 import {
   createProjectRegistry,
   findProjectContainingPath,
@@ -133,7 +132,7 @@ export async function resolveProjectRoot(
   const { cwd, env = process.env, startDir = process.cwd() } = options
   const current = path.resolve(cwd ?? startDir)
   const project = await findRegisteredProject(current, env, defaultGitExec)
-  if (!project) {requireProjectContext(undefined, current)}
+  if (!project) requireProjectContext(undefined, current)
   return project
 }
 
@@ -195,119 +194,48 @@ function isInsidePnpmStore(candidate: string): boolean {
   return candidate.includes(`${sep}.pnpm${sep}`)
 }
 
-/**
- * Walk up from `startDir` looking for either a platform marker
- * (`node_modules/@kb-labs/*`) or a pnpm workspace marker
- * (`pnpm-workspace.yaml`). Returns the first match.
- *
- * Exported so CLI/diagnostics code can identify the platform root without
- * paying for the full composite `resolvePlatformRoot` fallback chain.
- */
-export async function findPlatformMarkerRoot(
-  startDir: string,
-  fs: WorkspaceFs = defaultFs,
-): Promise<string | undefined> {
-  let current = path.resolve(startDir)
-
-  while (true) {
-
-    if (await hasPlatformMarker(current, fs)) {
-      return current
-    }
-
-
-    if (await fs.exists(path.join(current, 'pnpm-workspace.yaml'))) {
-      return current
-    }
-
-    const parent = path.dirname(current)
-    if (parent === current) {
-      return undefined
-    }
-    current = parent
-  }
-}
-
-/**
- * Given a `file://` URL (typically `import.meta.url` from a CLI entry or
- * service bootstrap), walk up through its directory ancestors to locate the
- * platform installation root.
- *
- * Two signals are collected on the way up:
- *
- * 1. **First platform-package marker hit** — a directory whose `node_modules`
- *    contains `@kb-labs/cli-bin` (or another known platform marker). In
- *    installed mode this is the platform installation directory.
- *
- * 2. **Top-most `pnpm-workspace.yaml`** — we keep walking past inner workspace
- *    markers and record the *outermost* one. This is important in the
- *    KB Labs "workspace of workspaces" dev layout, where individual sub-repos
- *    (`platform/kb-labs-cli`, `plugins/kb-labs-*`, etc.) each have their own
- *    `pnpm-workspace.yaml` while the true monorepo root lives at the very top.
- *
- * Precedence after walking: the outermost `pnpm-workspace.yaml` wins if one
- * exists (dev mode); otherwise we return the first marker hit (installed
- * mode). This way a naive walk-up can never stop prematurely at a nested
- * workspace or at a package with its own hoisting symlink.
- */
+/** Resolve an installed platform from the launcher's module location. */
 async function resolvePlatformRootFromModuleUrl(
   moduleUrl: string,
   fs: WorkspaceFs,
 ): Promise<string | undefined> {
-  let modulePath: string
-  try {
-    modulePath = fileURLToPath(moduleUrl)
-  } catch {
-    return undefined
-  }
+  const modulePath = fileURLToPath(moduleUrl)
 
   let current = path.dirname(modulePath)
-  let firstMarkerHit: string | undefined
-  let topMostWorkspace: string | undefined
+
+  // A checkout explicitly declares the binary paths it owns. This declaration
+  // is consulted only for the launching module, never for the caller's cwd.
+  while (true) {
+    let declaration: string | undefined
+    try {
+      declaration = await fsp.readFile(path.join(current, '.kb-platform-launch.json'), 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {throw error}
+    }
+    if (declaration !== undefined) {
+      const parsed: unknown = JSON.parse(declaration)
+      if (parsed && typeof parsed === 'object' && 'launchers' in parsed && Array.isArray(parsed.launchers)
+        && parsed.launchers.some((launcher: unknown) => typeof launcher === 'string' && path.resolve(current, launcher) === modulePath)) {
+        return current
+      }
+    }
+    const parent = path.dirname(current)
+    if (parent === current) {break}
+    current = parent
+  }
+
+  current = path.dirname(modulePath)
 
   while (true) {
 
-    if (!firstMarkerHit && (await hasPlatformMarker(current, fs))) {
-      firstMarkerHit = current
-    }
-
-    // Keep overwriting: we want the *outermost* (highest-up) workspace root,
-    // not the innermost. This handles the KB Labs nested-workspaces layout.
-
-    if (await fs.exists(path.join(current, 'pnpm-workspace.yaml'))) {
-      topMostWorkspace = current
-    }
-
+    if (await hasPlatformMarker(current, fs)) {return current}
     const parent = path.dirname(current)
-    if (parent === current) {
-      // Reached filesystem root. Prefer top-most workspace (dev mode);
-      // otherwise return first marker hit (installed mode).
-      return topMostWorkspace ?? firstMarkerHit
-    }
+    if (parent === current) {return undefined}
     current = parent
   }
 }
 
-/**
- * Resolve the platform root — the directory that contains the installed
- * KB Labs platform code (i.e. the parent of `node_modules/@kb-labs/*`).
- *
- * Priority order:
- *
- * 1. Explicit `cwd` option (e.g. CLI flag).
- * 2. Environment variable `KB_PLATFORM_ROOT` (typically set by the installer
- *    wrapper script in installed mode).
- * 3. Walk up from `moduleUrl` (e.g. `import.meta.url` of the CLI `bin.ts`),
- *    looking for a directory whose `node_modules` contains a known platform
- *    package. This is the most reliable signal in installed mode because it
- *    does not depend on `process.cwd()`.
- * 4. Walk up from `startDir` looking for either a platform marker or
- *    `pnpm-workspace.yaml` (the latter covers monorepo dev mode).
- * 5. Repository root discovered via `findRepoRoot`.
- * 6. Fallback to `startDir` / `process.cwd()`.
- *
- * In monorepo dev mode steps 4 or 5 will typically match the workspace root.
- */
+/** Resolve the root declared by the launcher or owned by its installed module. */
 export async function resolvePlatformRoot(
   options: ResolvePlatformRootOptions = {},
 ): Promise<PlatformRootResolution> {
@@ -316,7 +244,6 @@ export async function resolvePlatformRoot(
     moduleUrl,
     env = process.env,
     fs = defaultFs,
-    startDir = process.cwd(),
   } = options
 
   if (cwd) {
@@ -344,33 +271,7 @@ export async function resolvePlatformRoot(
     }
   }
 
-  const fromMarker = await findPlatformMarkerRoot(startDir, fs)
-  if (fromMarker) {
-    return {
-      rootDir: fromMarker,
-      source: 'marker',
-    }
-  }
-
-  try {
-    const repoRoot = await findRepoRoot(startDir)
-    const resolvedRepo = path.resolve(repoRoot)
-    const fsRoot = path.parse(resolvedRepo).root
-
-    if (resolvedRepo !== fsRoot) {
-      return {
-        rootDir: resolvedRepo,
-        source: 'repo',
-      }
-    }
-  } catch {
-    // swallow and fall through to fallback
-  }
-
-  return {
-    rootDir: path.resolve(startDir),
-    source: 'fallback',
-  }
+  throw new Error('Platform root is not declared by the launcher and cannot be resolved from its module')
 }
 
 // ──────────────────────────────────────────────────────────────────────────

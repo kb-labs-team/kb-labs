@@ -2,7 +2,8 @@ import { createHmac } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fileURLToPath } from 'node:url';
 import type { ICache, ILogger, IServiceTransport } from '@kb-labs/core-platform';
 import type * as CoreRuntimeModule from '@kb-labs/core-runtime';
 import type { ManifestV3, PluginContextV3 } from '@kb-labs/plugin-contracts';
@@ -44,6 +45,7 @@ const event = 'alert';
 const namespaceId = 'local';
 const secret = 'history-test-secret';
 const body = JSON.stringify({ message: 'safe test payload' });
+const platformRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../');
 const manifest: ManifestV3 = {
   schema: 'kb.plugin/3',
   id: pluginId,
@@ -111,7 +113,20 @@ async function makeApp() {
   return { app, documents, cache };
 }
 
+const previousPlatformRoot = process.env.KB_PLATFORM_ROOT;
+
+beforeEach(() => {
+  // Command handlers are invoked directly below, so model the root that the
+  // real CLI bootstrap has already resolved from its launcher declaration.
+  process.env.KB_PLATFORM_ROOT = platformRoot;
+});
+
 afterEach(() => {
+  if (previousPlatformRoot === undefined) {
+    delete process.env.KB_PLATFORM_ROOT;
+  } else {
+    process.env.KB_PLATFORM_ROOT = previousPlatformRoot;
+  }
   vi.clearAllMocks();
   delete mockAdapters.documentDatabase;
 });

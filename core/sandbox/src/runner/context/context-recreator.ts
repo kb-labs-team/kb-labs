@@ -57,7 +57,7 @@ export async function recreateContext(
       cwd,
       undefined,
       serializedCtx.platformRoot,
-      { workspaceDevelopment: serializedCtx.workspaceDevelopment },
+      { workspaceDevelopment: serializedCtx.workspaceDevelopment, workspaceRoot: serializedCtx.platformRoot },
     );
 
     if (debugMode) {

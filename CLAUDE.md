@@ -20,7 +20,7 @@ node ./cli/bin/dist/bin.js <command> --json
 
 ## Configuration and services
 
-- Development configuration lives in `.kb/kb.config.json`; production-runtime selection is controlled by `platform.dir`. Change modes only when the task calls for it.
+- Development configuration lives in `.kb/kb.config.json`; the launcher determines the platform root.
 - `kb-dev start`, `restart`, and `ensure` require both `--config <path>` and `--net-offset <N>` in this repository.
 - The normal runtime configs are `.kb/devservices.yaml` and `.kb/devservices.dev.yaml`, but they are machine-local and can be absent in a fresh checkout. Inspect the available config or complete platform setup before starting services. Do not edit ports to work around a collision; choose an appropriate network offset instead.
 

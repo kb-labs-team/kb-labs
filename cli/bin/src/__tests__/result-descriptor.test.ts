@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,10 @@ import { validateManifest, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import { createErrorEnvelope, createProductErrorEnvelope } from '@kb-labs/core-platform';
 import { SessionManager } from '@kb-labs/sdk/gateway';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
+import { createContextLogger } from '@kb-labs/core-platform';
+import { NoOpLogger } from '@kb-labs/core-platform/noop';
+import { createServer as createMarketplaceServer } from '../../../../services/marketplace/api/src/server.js';
+import { MarketplaceService } from '../../../../services/marketplace/core/dist/index.js';
 
 const cliPath = path.resolve(process.cwd(), 'dist/bin.js');
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
@@ -23,8 +27,10 @@ interface CliFixture {
   env: NodeJS.ProcessEnv;
   server: Server;
   marketplaceStatus: number;
+  marketplaceApi?: Awaited<ReturnType<typeof createMarketplaceServer>>;
   gatewayEvents: unknown[];
   gatewayRequest?: Record<string, unknown>;
+  marketplaceRequest?: Record<string, unknown>;
   releaseHold?: () => void;
 }
 
@@ -33,11 +39,45 @@ describe('CLI result descriptor boundary', () => {
 
   afterEach(async () => {
     fixture?.releaseHold?.();
+    await fixture?.marketplaceApi?.close();
     if (fixture?.server.listening) {
       await new Promise<void>((resolve, reject) => { fixture!.server.close((error) => error ? reject(error) : resolve()); });
     }
     if (fixture) {await rm(fixture.root, { recursive: true, force: true });}
     fixture = undefined;
+  });
+
+  // case: S-287.3
+  it('passes each uninstall id separately through the built CLI', async () => {
+    fixture = await createCliFixture('local');
+    const result = await runCli(fixture, ['marketplace', 'uninstall', 'a', 'b', 'c', '--scope', 'project', '--json']);
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(fixture.marketplaceRequest).toMatchObject({ packageIds: ['a', 'b', 'c'] });
+  });
+
+  it.each([
+    ['doctor', ['marketplace', 'plugins', 'doctor', '--scope', 'project']],
+    ['uninstall', ['marketplace', 'uninstall', 'absent-id', '--scope', 'project']],
+    ['update', ['marketplace', 'update', 'absent-id', '--scope', 'project']],
+    ['list', ['marketplace', 'plugins', 'list', '--scope', 'project']],
+  ])('surfaces a rejected project lock through the real %s command path', async (_name, args) => {
+    fixture = await createCliFixture('local');
+    await copyFile(path.join(workspaceRoot, '.kb/marketplace.lock'), path.join(fixture.projectRoot, '.kb/marketplace.lock'));
+    const logger = createContextLogger(new NoOpLogger(), {
+      applicationId: 'test', serviceId: 'marketplace', instanceId: 'test', layer: 'service',
+    });
+    fixture.marketplaceApi = await createMarketplaceServer({
+      service: new MarketplaceService({ platformRoot: fixture.platformRoot, projectRoot: fixture.projectRoot, logger, sources: [] }),
+      logger,
+    });
+    const result = await runCli(fixture, args);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('KB_MARKETPLACE_LOCK_INVALID');
+    expect(result.stderr).toContain(path.join(fixture.projectRoot, '.kb/marketplace.lock'));
+    const expected = createErrorEnvelope('KB_MARKETPLACE_LOCK_INVALID', { details: { path: 'unused', reason: 'unused', scope: 'project' } });
+    expect(result.stderr).toContain(expected.hint);
+    expect(result.stderr).not.toContain('KB_PLUGIN_NOT_INSTALLED');
+    expect(result.stderr).not.toContain('KB_CLI_RESULT_UNAVAILABLE');
   });
 
   // case: S-203.1
@@ -78,6 +118,32 @@ describe('CLI result descriptor boundary', () => {
       expect(result.stderr).toContain(text);
     }
     expect(result.stderr).not.toContain('fixture loader progress');
+  });
+
+  // case: S-287.4
+  it('renders one error when a command reports a human failure', async () => {
+    fixture = await createCliFixture('secured');
+    const result = await runCli(fixture, ['marketplace', 'plugins', 'list']);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('KB_AUTH_REQUIRED');
+    expect(result.stderr).not.toContain('KB_CLI_RESULT_UNAVAILABLE');
+  });
+
+  // case: S-287.4
+  it('renders one error for a marketplace service failure', async () => {
+    fixture = await createCliFixture('local');
+    fixture.marketplaceStatus = 422;
+    const result = await runCli(fixture, ['marketplace', 'plugins', 'list', '--scope', 'project']);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('KB_RUNTIME_UNEXPECTED');
+    expect(result.stderr).not.toContain('KB_CLI_RESULT_UNAVAILABLE');
+  });
+
+  it('reports an unavailable result for a silent nonzero child exit under --json', async () => {
+    fixture = await createCliFixture('local', 'in-process');
+    const result = await runCli(fixture, ['stdout', 'fixture', 'silent-exit', '--json']);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout, `stderr=${result.stderr}`).toContain('KB_CLI_RESULT_UNAVAILABLE');
   });
 
   // case: S-284.8
@@ -302,11 +368,24 @@ async function createCliFixture(
       response.end();
       return;
     }
+    if (request.url?.startsWith('/api/v1/marketplace/') && state.marketplaceApi) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const result = await state.marketplaceApi.inject({ method: request.method as 'GET' | 'POST', url: request.url, headers: { 'content-type': 'application/json' }, ...(chunks.length ? { payload: Buffer.concat(chunks).toString('utf8') } : {}) });
+      response.writeHead(result.statusCode, { 'content-type': 'application/json' });
+      response.end(result.body);
+      return;
+    }
     if (request.url?.startsWith('/api/v1/marketplace/packages')) {
+      if (request.method === 'POST') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        state.marketplaceRequest = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+      }
       if (state.marketplaceStatus !== 200) {
         sendJson(response, state.marketplaceStatus, {
           ok: false,
-          error: { code: 'KB_RUNTIME_UNEXPECTED', message: 'Fixture marketplace failure', hint: 'Retry the command.' },
+          error: createErrorEnvelope('KB_RUNTIME_UNEXPECTED'),
         });
         return;
       }
@@ -387,6 +466,11 @@ async function createOutputFixturePlugin(projectRoot: string): Promise<void> {
       operationType: 'execute',
       flags: [{ name: 'json', type: 'boolean', description: 'Machine result output', default: false }],
     }, {
+      path: 'stdout fixture silent-exit',
+      describe: 'Exit without rendering or returning a result',
+      handler: './silent-exit-handler.js',
+      operationType: 'execute',
+    }, {
       path: 'stdout fixture large',
       describe: 'Return a result larger than any pipe buffer',
       handler: './large-handler.js',
@@ -416,6 +500,7 @@ async function createOutputFixturePlugin(projectRoot: string): Promise<void> {
     writeFile(path.join(pluginRoot, 'dist', 'descriptor-handler.js'), descriptorFixtureHandlerSource),
     writeFile(path.join(pluginRoot, 'dist', 'large-handler.js'), largeFixtureHandlerSource),
     writeFile(path.join(pluginRoot, 'dist', 'terminate-handler.js'), terminateFixtureHandlerSource),
+    writeFile(path.join(pluginRoot, 'dist', 'silent-exit-handler.js'), 'export default { async execute() { process.exit(7); } };'),
     symlink(path.join(workspaceRoot, 'sdk', 'sdk'), path.join(pluginRoot, 'node_modules', '@kb-labs', 'sdk'), 'dir'),
   ]);
 }

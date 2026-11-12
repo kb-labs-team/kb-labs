@@ -69,6 +69,36 @@ describe('loadPlatformConfig', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
+  // case: S-287.6
+  it('keeps the launcher platform root when platform configuration points elsewhere', async () => {
+    const platformRoot = path.join(tmpDir, 'declared-platform')
+    const otherRoot = path.join(tmpDir, 'other-platform')
+    const projectRoot = path.join(tmpDir, 'root-owner-project')
+    makePlatformDir(otherRoot)
+    makePlatformDir(platformRoot, { platform: { dir: otherRoot } })
+    makeProjectDir(projectRoot)
+    const result = await loadConfig({ startDir: projectRoot, env: { KB_PLATFORM_ROOT: platformRoot }, loadEnvFile: false })
+    expect(result.platformRoot).toBe(realpathSync(platformRoot))
+  })
+
+  // case: S-287.5
+  it('discovers development adapters only from the platform with distinct roots', async () => {
+    const platformRoot = path.join(tmpDir, 'adapter-owner-platform')
+    const projectRoot = path.join(tmpDir, 'adapter-owner-project')
+    makePlatformDir(platformRoot, { platform: { mode: 'development' } })
+    makeProjectDir(projectRoot)
+    const adapterRoot = path.join(projectRoot, 'adapters', 'project-only')
+    mkdirSync(adapterRoot, { recursive: true })
+    writeFileSync(path.join(projectRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n')
+    writeFileSync(path.join(adapterRoot, 'package.json'), JSON.stringify({
+      name: '@example/project-only', version: '1.0.0',
+      kb: { adapter: { manifest: './dist/manifest.js' } },
+    }))
+
+    const result = await loadConfig({ startDir: projectRoot, env: { KB_PLATFORM_ROOT: platformRoot }, loadEnvFile: false })
+    expect(result.catalog.adapters().has('@example/project-only')).toBe(false)
+  })
+
   // case: S-048.1
   it('ignores repository configuration, including project adapter bindings', async () => {
     const platformRoot = path.join(tmpDir, 'p1-platform')
@@ -490,7 +520,7 @@ describe('loadPlatformConfig', () => {
     execFileSync('git', ['commit', '-m', 'fixture'], { cwd: registeredRoot })
     execFileSync('git', ['worktree', 'add', '--detach', worktreeRoot, 'main'], { cwd: registeredRoot })
     makePlatformDir(worktreeRoot)
-    const env = { KB_HOME: platformHome }
+    const env = { KB_HOME: platformHome, KB_PLATFORM_ROOT: realpathSync(worktreeRoot) }
     const registered = await createProjectRegistry({ env }).add(realpathSync(registeredRoot))
 
     const loaded = await loadPlatformConfig({

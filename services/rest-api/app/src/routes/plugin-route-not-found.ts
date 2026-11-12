@@ -67,7 +67,7 @@ export function registerPluginRouteNotFoundHandler(
       });
     }
     const error = createErrorEnvelope("KB_PLUGIN_NOT_INSTALLED", {
-      ...(packageId ? { details: { package: packageId } } : {}),
+      details: { ...(packageId ? { package: packageId } : {}), scope: 'project', scopeDescription: 'this project' },
       correlationId: String(request.id),
       hint: packageId
         ? `Run \`kb marketplace install ${packageId}\` in this project.`

@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, copyFile, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createContextLogger } from '@kb-labs/core-platform';
+import { addToMarketplaceLock, computePackageIntegrity, createInstallOwnedRelativePath } from '@kb-labs/core-discovery';
 import { loadPlatformConfig } from '../config-loader.js';
 import { writeTestPlatformReceipt } from './platform-version-fixture.js';
 
@@ -26,16 +27,15 @@ describe('loadPlatformConfig process secret registration', () => {
     writeTestPlatformReceipt(platformRoot);
     await mkdir(config, { recursive: true });
     await mkdir(projectRoot, { recursive: true });
-    await writeFile(path.join(config, 'marketplace.lock'), JSON.stringify({
-      schema: 'kb.marketplace/3',
-      plugins: {},
-      adapters: {
-        openai: {
-          source: 'platform', version: '2.120.1', integrity: 'sha256-fixture',
-          resolvedPath: path.relative(platformRoot, adapterRoot), enabled: true,
-        },
-      },
-    }));
+    const installedAdapter = path.join(platformRoot, 'adapters', 'openai');
+    await mkdir(installedAdapter, { recursive: true });
+    await copyFile(path.join(adapterRoot, 'package.json'), path.join(installedAdapter, 'package.json'));
+    await symlink(path.join(adapterRoot, 'dist'), path.join(installedAdapter, 'dist'));
+    await addToMarketplaceLock(platformRoot, 'openai', {
+      primaryKind: 'adapter', source: 'platform', version: '2.120.1', package: '@kb-labs/adapters-openai',
+      integrity: await computePackageIntegrity(installedAdapter),
+      resolvedPath: createInstallOwnedRelativePath('adapters/openai'), enabled: true,
+    });
     const secret = 'x46-config-secret-fixture';
     await writeFile(path.join(config, 'kb.config.json'), JSON.stringify({
       platform: {

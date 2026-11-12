@@ -53,6 +53,7 @@ function printHuman(issues) {
 
 async function main() {
   const roots = await resolveRoots({
+    cwd: WORKSPACE_ROOT,
     moduleUrl: import.meta.url,
     startDir: WORKSPACE_ROOT,
     env: process.env,
