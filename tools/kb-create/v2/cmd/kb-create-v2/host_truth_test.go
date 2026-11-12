@@ -145,10 +145,10 @@ func containsText(haystack any, needle any) bool {
 	return part != "" && strings.Contains(text, part)
 }
 
-// case: S-296.5
 // Between a child's death and the supervisor recording it, status must not
 // present the previous death as the cause. The supervisor is frozen so the
 // window is held open deterministically.
+// case: S-296.5
 func TestStatusDoesNotShowAnEarlierDeathAsTheCurrentCause(t *testing.T) {
 	inst := newInstallation(t)
 	if _, code, raw := inst.run("start", "--json"); code != 0 {

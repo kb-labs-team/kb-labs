@@ -50,3 +50,30 @@ test('every devkit test job uploads its task logs when it fails', () => {
     assert.match(upload.with.name, new RegExp(id));
   }
 });
+
+// x300: the case validator is one devkit custom_check. PR CI reaches it through
+// the full `kb-devkit check` and the journey candidate build runs the same named
+// check, so a misplaced `// case:` claim fails on the PR, not after the merge.
+const CASE_CHECK = 'qa-case-claims';
+const journey = load(readFileSync(join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
+const allRuns = (workflow) => Object.values(workflow.jobs).flatMap(runs);
+
+test('qa case validator is declared once as a devkit check', () => {
+  const declared = devkit.custom_checks.filter((c) => c.name === CASE_CHECK);
+  assert.equal(declared.length, 1);
+  assert.match(declared[0].run, /qa cases validate/);
+  assert.deepEqual(declared[0].on, ['check']);
+});
+
+test('CI (PR) runs the case validator through the unfiltered devkit check', () => {
+  const job = ciPr.jobs['devkit-checks'];
+  const check = runs(job).find((step) => /kb-devkit check\s*$/.test(step.run.trim()));
+  assert.ok(check, 'devkit-checks runs the full kb-devkit check, which includes the declared check');
+  assert.ok(!/--only/.test(check.run), 'no --only filter may drop the case validator');
+});
+
+test('the journey candidate build reuses the devkit check instead of its own command', () => {
+  const steps = allRuns(journey);
+  assert.ok(steps.some((s) => new RegExp(`kb-devkit check --only ${CASE_CHECK}\\b`).test(s.run)));
+  assert.ok(!steps.some((s) => /qa cases validate/.test(s.run)), 'no hand-written second copy');
+});

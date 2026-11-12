@@ -858,6 +858,14 @@ custom_checks:
     on: [check]
     scope: workspace
 
+  # One definition of the QA case validator. CI (PR) reaches it through the full
+  # `kb-devkit check`; the journey candidate build runs it by name.
+  - name: qa-case-claims
+    run: node ./cli/bin/dist/bin.js qa cases validate 1>&2
+    on: [check]
+    scope: workspace
+    requires_build: ["@kb-labs/cli-bin"]
+
   - name: new-tests
     run: node scripts/checks/new-tests.mjs
     on: [check]
