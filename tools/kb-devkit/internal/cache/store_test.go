@@ -300,3 +300,31 @@ func mustWriteFile(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// RestoreFile applies the recorded mode itself; it must not depend on the
+// process umask or on the staging file's default 0600.
+// case: S-179.53
+func TestRestoreFileKeepsRecordedExecutableMode(t *testing.T) {
+	store, err := NewLocalStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "run.sh")
+	if err := os.WriteFile(src, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := store.PutFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []os.FileMode{0o755, 0o644, 0o700} {
+		dest := filepath.Join(t.TempDir(), "bin", "run.sh")
+		if err := store.RestoreFile(sha, dest, mode); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(dest)
+		if err != nil || info.Mode().Perm() != mode {
+			t.Fatalf("restored mode = %v (%v), want %v", info, err, mode)
+		}
+	}
+}

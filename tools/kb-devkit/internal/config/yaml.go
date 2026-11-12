@@ -80,6 +80,7 @@ type yamlTaskVariant struct {
 	Outputs    []string `yaml:"outputs"`
 	Deps       []string `yaml:"deps"`
 	Cache      *bool    `yaml:"cache"`
+	Env        []string `yaml:"env"`
 }
 
 // yamlTask accepts both a single object and a list of variants:
@@ -459,6 +460,7 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 					Outputs:    v.Outputs,
 					Deps:       v.Deps,
 					Cache:      v.Cache,
+					Env:        v.Env,
 				}
 			}
 			cfg.Tasks[k] = tc

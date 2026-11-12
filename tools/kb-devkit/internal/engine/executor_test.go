@@ -59,7 +59,7 @@ func TestExecutorStoresAndRestoresOutputsThroughCache(t *testing.T) {
 		t.Fatalf("remove out.txt: %v", err)
 	}
 	m := &cache.Manifest{Outputs: refs}
-	if err := exec.restoreOutputs(m, pkgDir); err != nil {
+	if err := exec.restoreOutputs(m, pkgDir, nil); err != nil {
 		t.Fatalf("restoreOutputs error: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(pkgDir, "out.txt"))

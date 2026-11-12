@@ -48,6 +48,10 @@ type TaskVariant struct {
 	Outputs    []string `yaml:"outputs"` // glob patterns; empty = cache exit code only
 	Deps       []string `yaml:"deps"`    // "^build" = deps' task first; "build" = self's task first
 	Cache      *bool    `yaml:"cache"`   // nil = true; false = always run (e.g. deploy)
+	// Env names the environment variables the task may read. Their values are
+	// part of the task key and the command runs with exactly these plus the
+	// toolchain's own (see engine.alwaysPassedEnv); empty = none.
+	Env []string `yaml:"env"`
 }
 
 // TaskConfig is a list of variants for a named task.

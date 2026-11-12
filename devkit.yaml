@@ -179,9 +179,15 @@ workspace:
       preset: go-binary
       releaseLane: internal-tool
 
-    go-binary:
+    # A Go module that builds no executable: its build task declares no outputs.
+    go-library:
       match:
         - "tools/clikit"
+      language: go
+      preset: go-binary
+
+    go-binary:
+      match:
         - "tools/kb-dev"
         - "tools/kb-devkit"
         - "tools/kb-create"
@@ -542,6 +548,11 @@ run:
 # ──────────────────────────────────────────────────────────────────────────────
 # TASKS — execution engine (kb-devkit run <task>)
 # content-addressable cache: hash(inputs) → skip if unchanged
+#
+# `env:` is a task's environment allow-list. The values of the listed variables
+# are hashed into the task key, and the command runs with exactly those plus the
+# toolchain's own (PATH, HOME, TMPDIR/TMP/TEMP; see engine/env.go). Default:
+# none. A task that reads any other host variable must list it here.
 # ──────────────────────────────────────────────────────────────────────────────
 
 tasks:
@@ -559,6 +570,7 @@ tasks:
   build:
     - categories: [studio-ui-kit]
       command: tsup
+      env: [NODE_ENV]
       inputs:
         - "src/**"
         - "scripts/generate-component-docs.ts"
@@ -577,6 +589,7 @@ tasks:
 
     - categories: [plugin-entry]
       command: pnpm run build
+      env: [NODE_ENV]
       inputs:
         - "src/**"
         - "tsup.config.ts"
@@ -592,6 +605,7 @@ tasks:
 
     - categories: [fixture, fixture-adapter]
       command: node ../../../scripts/build-pack-extra.mjs
+      env: [NODE_ENV]
       inputs:
         - "manifest.js"
         - "src/**"
@@ -602,6 +616,7 @@ tasks:
 
     - categories: [ts-lib, ts-app, adapter, core-runtime]
       command: tsup
+      env: [NODE_ENV]
       inputs:
         - "src/**"
         - "tsup.config.ts"
@@ -615,6 +630,7 @@ tasks:
 
     - categories: [spa]
       command: pnpm run build
+      env: [NODE_ENV]
       inputs:
         - "src/**"
         - "public/**"
@@ -630,8 +646,21 @@ tasks:
       deps:
         - "^build"
 
+    - categories: [go-library]
+      command: make build
+      env: [NODE_ENV]
+      inputs:
+        - "**/*.go"
+        - "go.mod"
+        - "go.sum"
+        - "Makefile"
+      # No deps: a Go build compiles Go sources only. Node packages a tool lists
+      # in package.json are prerequisites of its tests (the test task below), not
+      # of its build, so a Go-only job schedules no node task.
+
     - categories: [go-binary, internal-tool]
       command: make build
+      env: [NODE_ENV]
       inputs:
         - "**/*.go"
         - "go.mod"
@@ -645,11 +674,10 @@ tasks:
         - "kb-deploy"
         - "kb-monitor"
         - "kb-runner"
-      deps:
-        - "^build"
 
     - categories: [site-pkg, site-config]
       command: pnpm run build
+      env: [NODE_ENV]
       inputs:
         - "src/**"
         - "tsconfig*.json"
@@ -661,6 +689,7 @@ tasks:
 
     - categories: [site-app]
       command: pnpm run build
+      env: [NODE_ENV]
       inputs:
         - "src/**"
         - "tsconfig*.json"
@@ -680,7 +709,7 @@ tasks:
         - ".eslintrc*"
       outputs: []
 
-    - categories: [go-binary, internal-tool]
+    - categories: [go-binary, go-library, internal-tool]
       command: go vet ./...
       inputs:
         - "**/*.go"
@@ -730,6 +759,7 @@ tasks:
   test:
     - categories: [e2e-node-tests, e2e-platform]
       command: pnpm run test
+      env: [CI, NODE_ENV]
       inputs:
         - "**/*.test.mjs"
         - "package.json"
@@ -737,6 +767,7 @@ tasks:
 
     - categories: [fixture-adapter]
       command: pnpm run test
+      env: [CI, NODE_ENV]
       inputs:
         - "*.test.js"
         - "package.json"
@@ -744,6 +775,7 @@ tasks:
 
     - categories: [ts-lib, ts-app]
       command: vitest run --passWithNoTests
+      env: [CI, NODE_ENV]
       inputs:
         - "src/**"
         - "test/**"
@@ -756,8 +788,9 @@ tasks:
       deps:
         - "build"
 
-    - categories: [go-binary, internal-tool]
+    - categories: [go-binary, go-library, internal-tool]
       command: make test
+      env: [CI, NODE_ENV]
       inputs:
         - "**/*.go"
         - "go.mod"
@@ -772,6 +805,7 @@ tasks:
   test:coverage:
     - categories: [ts-lib, ts-app]
       command: npx vitest run --passWithNoTests --coverage
+      env: [CI, NODE_ENV]
       inputs:
         - "src/**"
         - "test/**"
@@ -783,8 +817,9 @@ tasks:
       deps:
         - "build"
 
-    - categories: [go-binary, internal-tool]
+    - categories: [go-binary, go-library, internal-tool]
       command: go test -short -coverprofile=coverage.out -covermode=atomic ./...
+      env: [CI, NODE_ENV]
       inputs:
         - "**/*.go"
         - "go.mod"
@@ -803,6 +838,7 @@ tasks:
   test:cli:
     - categories: [plugin-entry]
       command: pnpm run --if-present test:cli
+      env: [CI, NODE_ENV]
       inputs:
         - "src/__tests__/cli/**"
         - "src/commands/**"
@@ -818,6 +854,7 @@ tasks:
     # whichever suites' workspace deps changed.
     - categories: [e2e-suite, e2e-platform, plugin-e2e-suite]
       command: pnpm run e2e
+      env: [CI, NODE_ENV]
       inputs:
         - "specs/**"
         - "scenarios/**"
@@ -832,8 +869,9 @@ tasks:
       # though no test process actually executed — disabled, same as test:cli.
       cache: false
 
-    - categories: [go-binary]
+    - categories: [go-binary, go-library]
       command: make e2e
+      env: [CI, NODE_ENV]
       inputs:
         - "**/*.go"
         - "go.mod"
@@ -1106,7 +1144,7 @@ custom_checks:
   - name: tool-binaries-fresh
     run: node scripts/checks/check-tool-binaries.mjs
     on: [check]
-    categories: [go-binary, internal-tool]
+    categories: [go-binary, go-library, internal-tool]
 
   # .kb/marketplace.lock hygiene — catches drift (a package dir was deleted
   # or moved but its lock entry wasn't) and corruption (malformed id/path

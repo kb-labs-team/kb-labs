@@ -174,7 +174,10 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		pkgs = ws.Packages
 	}
 	if containsTask(opts.Tasks, "build") {
-		expanded, err := expandBuildDependencyClosure(pkgs, ws.Packages)
+		expanded, err := expandBuildDependencyClosure(pkgs, ws.Packages, func(pkg workspace.Package) bool {
+			def := ResolvePackageTaskDef(ws, cfg, "build", pkg)
+			return def != nil && containsTask(def.Deps, "^build")
+		})
 		if err != nil {
 			return RunResult{}, err
 		}
@@ -459,7 +462,10 @@ func containsTask(tasks []string, wanted string) bool {
 // to build the selected packages on a clean runner. Affected detection starts
 // from changed packages and walks downstream; build ordering also needs the
 // reverse direction so every dependency has its dist artifacts first.
-func expandBuildDependencyClosure(selected, all []workspace.Package) ([]workspace.Package, error) {
+// A package's dependencies are followed only when follows reports that its
+// build task declares `^build`: a build that declares no prerequisite needs no
+// dependency built, whatever its manifest lists for other tasks.
+func expandBuildDependencyClosure(selected, all []workspace.Package, follows func(workspace.Package) bool) ([]workspace.Package, error) {
 	byName := make(map[string]workspace.Package, len(all))
 	for _, pkg := range all {
 		byName[pkg.Name] = pkg
@@ -477,6 +483,9 @@ func expandBuildDependencyClosure(selected, all []workspace.Package) ([]workspac
 	for len(queue) > 0 {
 		pkg := queue[0]
 		queue = queue[1:]
+		if !follows(pkg) {
+			continue
+		}
 		depNames, err := WorkspaceDeps(pkg.Dir, byName)
 		if err != nil {
 			return nil, err

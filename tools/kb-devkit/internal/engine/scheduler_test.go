@@ -37,7 +37,7 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 	if err != nil {
 		t.Fatalf("discover workspace packages: %v", err)
 	}
-	pkgs, err := expandBuildDependencyClosure(ws.Packages, ws.Packages)
+	pkgs, err := expandBuildDependencyClosure(ws.Packages, ws.Packages, followsEveryDependency)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestExpandBuildDependencyClosureAddsUpstreamPackages(t *testing.T) {
 		{Name: "@kb/core", Dir: coreDir},
 		{Name: "@kb/app", Dir: appDir},
 	}
-	closure, err := expandBuildDependencyClosure(all[1:], all)
+	closure, err := expandBuildDependencyClosure(all[1:], all, followsEveryDependency)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,3 +420,7 @@ func TestBuildDAGSelfDepDoesNotCreateCycle(t *testing.T) {
 		t.Fatal("no DAG root found — cycle detected (in-degree > 0 for all nodes)")
 	}
 }
+
+// followsEveryDependency walks every workspace edge, as a build whose variant
+// declares `^build` does.
+func followsEveryDependency(workspace.Package) bool { return true }

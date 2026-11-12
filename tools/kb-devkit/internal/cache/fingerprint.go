@@ -14,7 +14,7 @@ import (
 // are collected or restored changes: that is what makes entries written by an
 // older devkit unselectable. engine's input-hash golden test fails until the
 // bump is made.
-const FormatVersion = "kb-devkit-cas-v2"
+const FormatVersion = "kb-devkit-cas-v3"
 
 // RuntimeFingerprint describes what can change generated output when the
 // workspace inputs are identical: the cache format and the toolchains that
