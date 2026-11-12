@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -89,9 +90,11 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 		// Only successful runs are replayed. A failure can come from state the
 		// input hash does not see (a dependency rebuilt mid-run, a flaky
 		// process), and replaying it reports a stale red result.
-		if m, ok := e.manifests.Get(pkg.Name, def.Name, inputHash); ok && m.ExitCode == 0 {
-			// Restore output files.
-			if err := e.restoreOutputs(m, pkg.Dir); err == nil {
+		// A manifest with no outputs for a task that declares outputs restores
+		// nothing, so it is not a hit.
+		if m, ok := e.manifests.Get(pkg.Name, def.Name, inputHash); ok && m.ExitCode == 0 && (len(def.Outputs) == 0 || len(m.Outputs) > 0) {
+			// Restore output files, leaving exactly the manifest's files.
+			if err := e.restoreOutputs(m, pkg.Dir, def.Outputs); err == nil {
 				return TaskResult{
 					Package: pkg.Name,
 					Task:    def.Name,
@@ -111,7 +114,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	if e.gate != nil {
 		slot = e.gate.acquire()
 	}
-	stdout, stderr, exitCode, runErr := e.runCommand(def.Command, pkg.Dir, pkg.Name, def.Name, taskHeartbeatInterval)
+	stdout, stderr, exitCode, runErr := e.runCommand(def.Command, pkg.Dir, pkg.Name, def.Name, taskEnvironment(def).run, taskHeartbeatInterval)
 	if e.gate != nil {
 		e.gate.release(slot)
 	}
@@ -149,7 +152,9 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	}
 
 	// 4. Cache successful results only. Failed tasks depend on execution state
-	//     outside the input hash and must be retried on the next run.
+	//     outside the input hash and must be retried on the next run. A task
+	//     whose outputs cannot be stored fails: a manifest without them would
+	//     be replayed later as a hit that restores nothing.
 	if def.Cache && result.OK {
 		m := &cache.Manifest{
 			InputHash: inputHash,
@@ -163,14 +168,26 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 			m.Stderr = stderr
 		}
 
+		var cacheErr error
 		if len(def.Outputs) > 0 {
-			refs, storeErr := e.storeOutputs(pkg.Dir, def.Outputs)
-			if storeErr == nil {
-				m.Outputs = refs
+			m.Outputs, cacheErr = e.storeOutputs(pkg.Dir, def.Outputs)
+		}
+		if cacheErr == nil {
+			if err := e.manifests.Put(pkg.Name, def.Name, m); err != nil {
+				cacheErr = fmt.Errorf("write cache manifest: %w", err)
 			}
 		}
-
-		_ = e.manifests.Put(pkg.Name, def.Name, m)
+		if cacheErr != nil {
+			result.OK = false
+			result.Error = fmt.Sprintf("cache task outputs: %v", cacheErr)
+			logPath, logErr := e.writeTaskLog(pkg.Name, def.Name, stdout, stderr, result.Error)
+			result.LogPath = logPath
+			if logErr != nil {
+				result.LogError = logErr.Error()
+				result.LogDirectory = e.logRoot
+				result.Error = fmt.Sprintf("%s; write task log: %v", result.Error, logErr)
+			}
+		}
 	}
 
 	// 5. Persist execution state — always, regardless of cache:false.
@@ -229,6 +246,7 @@ func taskFingerprint(def TaskDef, runtimeFingerprint string) string {
 		strings.Join(def.Inputs, "\x00"),
 		strings.Join(def.Outputs, "\x00"),
 		strings.Join(def.Deps, "\x00"),
+		strings.Join(taskEnvironment(def).hashed, "\x00"),
 	}, strconv.FormatBool(def.Cache))
 	digest := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(digest[:])
@@ -246,7 +264,7 @@ func hashTaskInputs(pkg workspace.Package, def TaskDef, depDirs []string, runtim
 
 // runCommand executes a shell command in dir, returning stdout, stderr, exit code.
 // If e.liveOutput is true, output is also streamed to os.Stdout/os.Stderr in real time.
-func (e *Executor) runCommand(command, dir, packageName, taskName string, heartbeatInterval time.Duration) (stdout, stderr string, exitCode int, err error) {
+func (e *Executor) runCommand(command, dir, packageName, taskName string, taskEnv []string, heartbeatInterval time.Duration) (stdout, stderr string, exitCode int, err error) {
 	parts := splitCommand(command)
 	if len(parts) == 0 {
 		return "", "", 1, fmt.Errorf("empty command")
@@ -262,7 +280,9 @@ func (e *Executor) runCommand(command, dir, packageName, taskName string, heartb
 		errW = io.MultiWriter(&errBuf, os.Stderr)
 	}
 
-	env := append(os.Environ(),
+	// Exactly the task's declared environment plus the toolchain's (env.go);
+	// the rest of the host environment is deliberately not inherited.
+	env := append(append([]string(nil), taskEnv...),
 		"NODE_PATH="+filepath.Join(e.wsRoot, "node_modules"),
 	)
 	started := time.Now()
@@ -316,6 +336,10 @@ func (e *Executor) storeOutputs(pkgDir string, patterns []string) ([]cache.Outpu
 	if err != nil {
 		return nil, err
 	}
+	if len(fileList) == 0 {
+		return nil, fmt.Errorf("declared outputs %s matched no file in %s", strings.Join(patterns, ", "), pkgDir)
+	}
+	sort.Strings(fileList)
 
 	var refs []cache.OutputRef
 	for _, rel := range fileList {
@@ -334,8 +358,12 @@ func (e *Executor) storeOutputs(pkgDir string, patterns []string) ([]cache.Outpu
 	return refs, nil
 }
 
-// restoreOutputs copies cached output files back to their locations in pkgDir.
-func (e *Executor) restoreOutputs(m *cache.Manifest, pkgDir string) error {
+// restoreOutputs copies cached output files back to their locations in pkgDir
+// and then removes every file the declared output patterns still match that the
+// manifest does not own, so the outputs are exactly the cached build's and not
+// an overlay on an older one.
+func (e *Executor) restoreOutputs(m *cache.Manifest, pkgDir string, patterns []string) error {
+	owned := make(map[string]bool, len(m.Outputs))
 	for _, ref := range m.Outputs {
 		if ref.Mode == nil {
 			return fmt.Errorf("restore %s: cached output has no file mode", ref.Path)
@@ -343,6 +371,22 @@ func (e *Executor) restoreOutputs(m *cache.Manifest, pkgDir string) error {
 		dest := filepath.Join(pkgDir, ref.Path)
 		if err := e.objects.RestoreFile(ref.Object, dest, os.FileMode(*ref.Mode)); err != nil {
 			return fmt.Errorf("restore %s: %w", ref.Path, err)
+		}
+		owned[filepath.ToSlash(ref.Path)] = true
+	}
+	if len(patterns) == 0 {
+		return nil
+	}
+	present, err := expandOutputFiles(pkgDir, patterns)
+	if err != nil {
+		return fmt.Errorf("list outputs to prune: %w", err)
+	}
+	for _, rel := range present {
+		if owned[filepath.ToSlash(rel)] {
+			continue
+		}
+		if err := os.Remove(filepath.Join(pkgDir, rel)); err != nil {
+			return fmt.Errorf("remove stale output %s: %w", rel, err)
 		}
 	}
 	return nil

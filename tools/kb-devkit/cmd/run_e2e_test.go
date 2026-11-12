@@ -29,10 +29,10 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 		"tasks:\n" +
 		"  build:\n" +
 		"    - categories: [core]\n" +
-		"      command: 'sh -c \"echo run >> ../runs.log; test -f ../dependency.ready\"'\n" +
+		"      command: 'sh -c \"echo run >> ../runs.log; test -f ../dependency.ready && mkdir -p dist && echo core > dist/core.txt\"'\n" +
 		"      outputs: [\"dist/**\"]\n" +
 		"    - categories: [libraries]\n" +
-		"      command: 'mkdir -p dist && echo built > dist/output.txt'\n" +
+		"      command: 'sh -c \"mkdir -p dist && echo built > dist/output.txt\"'\n" +
 		"      deps: [\"^build\"]\n" +
 		"      inputs: [\"^dist/**\"]\n" +
 		"      outputs: [\"dist/**\"]\n"

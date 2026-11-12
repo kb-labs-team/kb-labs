@@ -22,6 +22,10 @@ type TaskDef struct {
 	//       "build"  = run 'build' for this package first
 	Deps  []string
 	Cache bool // default true; false = always run (e.g. deploy)
+	// Env is the allow-list of environment variables the task reads: hashed
+	// into the task key, and the only host variables its command receives
+	// besides alwaysPassedEnv.
+	Env []string
 }
 
 // TaskResult is the outcome of running one (package, task) pair.
@@ -63,6 +67,7 @@ func ResolveTaskDef(cfg *config.DevkitConfig, taskName, pkgCategory string) *Tas
 		Outputs: v.Outputs,
 		Deps:    v.Deps,
 		Cache:   cacheVal,
+		Env:     v.Env,
 	}
 }
 

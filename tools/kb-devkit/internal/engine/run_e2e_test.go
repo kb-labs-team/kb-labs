@@ -21,6 +21,7 @@ import (
 	"github.com/kb-labs/devkit/internal/workspace"
 )
 
+// case: S-179.50
 func TestRunCacheValidityFollowsWorkspaceOwnership(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceRoot(t, root, []string{"packages/*"})
@@ -624,7 +625,7 @@ func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
 	})
 	cfg.Tasks = map[string]config.TaskConfig{
 		"build": {{
-			Command: `sh -c "test -f ../dependency.ready"`,
+			Command: `sh -c "test -f ../dependency.ready && mkdir -p dist && printf out > dist/a.js"`,
 			Outputs: []string{"dist/**"},
 		}},
 	}
@@ -1217,7 +1218,7 @@ func TestExecutorEmitsHeartbeatBeforeSlowSubprocessCompletes(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _, _, _ = exec.runCommand(`sh -c "sleep 1"`, root, "@fixture/slow", "build", 100*time.Millisecond)
+		_, _, _, _ = exec.runCommand(`sh -c "sleep 1"`, root, "@fixture/slow", "build", taskEnvironment(TaskDef{}).run, 100*time.Millisecond)
 	}()
 	select {
 	case line := <-heartbeat:

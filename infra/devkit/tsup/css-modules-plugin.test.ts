@@ -43,6 +43,7 @@ const competingNamespaceLessCssLoader: esbuild.Plugin = {
 
 async function bundle(dir: string, extraPlugins: esbuild.Plugin[] = []) {
   const result = await esbuild.build({
+    absWorkingDir: dir,
     entryPoints: [path.join(dir, 'entry.js')],
     bundle: true,
     write: false,
@@ -154,5 +155,44 @@ describe('cssModulesPlugin', () => {
 
     const extract = (js: string) => js.match(/"foo":\s*"(foo_[\w-]+)"/)?.[1];
     expect(extract(first.js)).toBe(extract(second.js));
+  });
+
+  // Build outputs feed downstream task keys and a shared store, so they must
+  // not embed the checkout path.
+  // case: S-179.55
+  it('emits no checkout path, so the same sources build identically in two directories', async () => {
+    const build = async () => {
+      const dir = makeFixtureDir();
+      writeFileSync(path.join(dir, 'entry.js'), `
+        import styles from './x.module.css';
+        export const cls = styles.foo;
+      `);
+      writeFileSync(path.join(dir, 'x.module.css'), `.foo { color: red; }`);
+      const result = await esbuild.build({
+        absWorkingDir: dir,
+        entryPoints: ['entry.js'],
+        bundle: true,
+        write: false,
+        sourcemap: true,
+        outdir: 'out',
+        format: 'esm',
+        plugins: [cssModulesPlugin()],
+      });
+      const files = Object.fromEntries(
+        result.outputFiles.map((f) => [path.relative(path.join(dir, 'out'), f.path), f.text]),
+      );
+      return { dir, files };
+    };
+
+    const first = await build();
+    const second = await build();
+
+    expect(Object.keys(first.files).sort()).toContain('entry.css.map');
+    for (const { dir, files } of [first, second]) {
+      for (const [name, text] of Object.entries(files)) {
+        expect(text, `${name} embeds the checkout path`).not.toContain(dir);
+      }
+    }
+    expect(first.files).toEqual(second.files);
   });
 });
