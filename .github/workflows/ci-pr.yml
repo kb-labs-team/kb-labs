@@ -34,7 +34,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - run: pnpm install --frozen-lockfile
       - name: Check Single Version Policy (versions + format)
         run: pnpm deps:lint
@@ -151,7 +151,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
-          cache-dependency-path: tools/kb-create/go.sum
+          cache: false
       - name: Enforce autonomous V2 boundary
         run: |
           if go list -deps ${{ matrix.packages }} | grep -q '^github.com/kb-labs/create/internal/'; then
@@ -169,9 +169,17 @@ jobs:
     permissions:
       contents: read
 
-  # ── 2. Build TS packages in the complete PR diff closure ───────────────────
+  # ── 2. Build the whole workspace once ──────────────────────────────────────
+  # This is the only workspace build of the run. Pull requests restore the store
+  # master wrote (read-only, ./.github/actions/devkit-cas) so only the changed
+  # closure builds; the finished store is shipped to every later job, which
+  # consumes it through ./.github/actions/devkit-store-consume instead of
+  # rebuilding. Why the store and not a dist tarball: the consumer's
+  # `kb-devkit run build` restoring every task is the self-test that this
+  # wiring works, and the store restores verified outputs, not whatever a tar
+  # happened to contain.
   build:
-    name: Build TS (affected)
+    name: Build TS (workspace, once)
     runs-on: ubuntu-latest
     needs: [preflight, build-tools]
     permissions:
@@ -185,7 +193,14 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
+      # Go packages are part of the workspace build (a cold task compiles them).
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - name: Restore the devkit store written by master
+        uses: ./.github/actions/devkit-cas
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -197,19 +212,45 @@ jobs:
           cp tools-bin/kb-dev    tools/kb-dev/kb-dev
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Build (affected dependency closure)
-        # GitHub runners start with an empty .kb/devkit state. Without
-        # --diff-only every package is classified as "dirty", defeating the
-        # affected graph and rebuilding the full workspace on every PR.
-        run: ./tools/kb-devkit/kb-devkit run build --affected --diff-only
-      - name: Pack dist artifacts
-        run: find . -path "*/dist" -not -path "*/node_modules/*" -type d | tar cf dist-artifacts.tar -T -
+      - name: Build workspace
+        env:
+          # Studio Module Federation DTS workers are a development convenience
+          # and can hang indefinitely when several rspack builds overlap. Every
+          # consumer needs built JS, not those background DTS workers. The same
+          # value is declared in the master writer and in the consumers because
+          # task keys do not hash the environment.
+          NODE_ENV: production
+        run: |
+          set -o pipefail
+          ./tools/kb-devkit/kb-devkit run build 2>&1 | tee build.log
+      - name: Record what a warm store still executes
+        # A second pass over the finished store: whatever executes again is
+        # uncacheable by declaration (`cache: false`), and consumers must match
+        # exactly that. A second pass that restores nothing fails here.
+        env:
+          NODE_ENV: production
+        run: |
+          set -o pipefail
+          mkdir -p .ci
+          ./tools/kb-devkit/kb-devkit run build 2>&1 | tee build-warm.log
+          node scripts/ci/devkit-build-gate.mjs record build-warm.log --out .ci/devkit-build-baseline.json
+      - name: Pack the devkit store for the jobs below
+        run: tar --exclude=.kb/devkit/logs -cf devkit-store.tar .kb/devkit .ci/devkit-build-baseline.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: dist
-          path: dist-artifacts.tar
+          name: devkit-store
+          path: devkit-store.tar
           retention-days: 1
           compression-level: 3
+      - name: Upload devkit task logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: devkit-logs-build
+          path: .kb/devkit/logs/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
   # ── 3. Lint / Type-check — affected packages only ──────────────────────────
   checks:
@@ -231,10 +272,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
+          cache: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -244,11 +286,8 @@ jobs:
           chmod +x tools-bin/*
           cp tools-bin/kb-devkit tools/kb-devkit/kb-devkit
           cp tools-bin/kb-dev    tools/kb-dev/kb-dev
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: dist
-      - run: tar xf dist-artifacts.tar
       - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/devkit-store-consume
       - name: Run ${{ matrix.task }} on affected packages
         run: ./tools/kb-devkit/kb-devkit run ${{ matrix.task }} --affected --diff-only
 
@@ -270,10 +309,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
+          cache: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -284,26 +324,9 @@ jobs:
           cp tools-bin/kb-devkit tools/kb-devkit/kb-devkit
           cp tools-bin/kb-dev tools/kb-dev/kb-dev
       - run: pnpm install --frozen-lockfile
-      # `test` resolves workspace packages through their built exports. The
-      # build artifact above contains only affected packages, which is enough
-      # for fast checks but not for this deliberately full unit-test gate. Keep
-      # the dependency-order build cacheable so the gate is reproducible
-      # without turning every PR into an unbounded cold rebuild.
-      - name: Build complete workspace for unit resolution
-        env:
-          # Studio Module Federation DTS workers are a development convenience
-          # and can hang indefinitely when several rspack builds overlap. Unit
-          # resolution needs built JS, not those background DTS workers.
-          NODE_ENV: production
-        run: ./tools/kb-devkit/kb-devkit run build
-      - name: Archive workspace outputs for repository checks
-        run: find . -path '*/node_modules/*' -prune -o -path '*/.kb/*' -prune -o -type d -name dist -print | tar cf full-dist-artifacts.tar -T -
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: full-dist-for-devkit-checks
-          path: full-dist-artifacts.tar
-          retention-days: 1
-          compression-level: 3
+      # `test` resolves workspace packages through their built exports: they come
+      # from the build job's store, never from a second workspace build.
+      - uses: ./.github/actions/devkit-store-consume
       - name: Run all unit tests
         run: ./tools/kb-devkit/kb-devkit run test --lane shipped --no-cache
       - name: Run all CLI handler tests
@@ -338,6 +361,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
+          cache: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -362,7 +386,7 @@ jobs:
   devkit-checks:
     name: Devkit checks
     runs-on: ubuntu-latest
-    needs: [build-tools, build, e2e-test-plan, full-unit-tests]
+    needs: [build-tools, build, e2e-test-plan]
     permissions:
       contents: read
     steps:
@@ -376,7 +400,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -385,11 +409,8 @@ jobs:
         run: |
           chmod +x tools-bin/kb-devkit
           cp tools-bin/kb-devkit tools/kb-devkit/kb-devkit
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: full-dist-for-devkit-checks
-      - run: tar xf full-dist-artifacts.tar
       - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/devkit-store-consume
       - name: Lint workflow definitions
         run: pnpm kb workflow lint --path .kb/workflows --strict
       - name: Devkit workspace checks (structure, dependencies, boundaries)
@@ -454,11 +475,12 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
+          cache: false
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -493,18 +515,12 @@ jobs:
       # All steps below are gated — skip the expensive Verdaccio setup when
       # neither kb-create nor kb-dev sources changed.
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        if: steps.gate-result.outputs.run == 'true'
-        with:
-          name: dist
-
-      - name: Extract dist artifacts
-        if: steps.gate-result.outputs.run == 'true'
-        run: tar xf dist-artifacts.tar
-
       - name: Install dependencies
         if: steps.gate-result.outputs.run == 'true'
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/devkit-store-consume
+        if: steps.gate-result.outputs.run == 'true'
 
       # ── Pack packages for Verdaccio ──────────────────────────────────────
 
@@ -525,7 +541,6 @@ jobs:
         uses: ./.github/actions/build-publisher
         with:
           cache-from: type=gha,scope=e2e-publisher
-          cache-to: type=gha,mode=max,scope=e2e-publisher
 
       - name: Prepare Verdaccio storage permissions
         if: steps.gate-result.outputs.run == 'true'

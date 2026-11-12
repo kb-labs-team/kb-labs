@@ -1,0 +1,39 @@
+name: Restore pnpm store
+description: >-
+  Restore the pnpm content-addressed store written by CI (master). Read-only:
+  pnpm re-verifies every package against the lockfile integrity, so an older
+  master store is always safe to seed from. Saving is
+  ./.github/actions/pnpm-store-save, used by the master push workflow only.
+  Run after pnpm/action-setup, before `pnpm install`.
+
+outputs:
+  cache-hit:
+    description: Whether the exact lockfile key was restored.
+    value: ${{ steps.restore.outputs.cache-hit }}
+  key:
+    description: The key the master workflow saves this lockfile's store under.
+    value: ${{ steps.key.outputs.key }}
+  path:
+    description: The pnpm store directory.
+    value: ${{ steps.key.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Derive the store key
+      id: key
+      shell: bash
+      env:
+        LOCK_HASH: ${{ hashFiles('pnpm-lock.yaml') }}
+      run: |
+        printf 'path=%s\n' "$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        printf 'prefix=pnpm-store-master-%s-%s-\n' "$RUNNER_OS" "$RUNNER_ARCH" >> "$GITHUB_OUTPUT"
+        printf 'key=pnpm-store-master-%s-%s-%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "$LOCK_HASH" >> "$GITHUB_OUTPUT"
+    - name: Restore pnpm store (read-only)
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ steps.key.outputs.path }}
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: |
+          ${{ steps.key.outputs.prefix }}

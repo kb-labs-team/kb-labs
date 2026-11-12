@@ -8,9 +8,9 @@ on:
         type: string
         required: true
       cache-mode:
-        description: 'read-write for fast PR lanes; off for authoritative main, nightly, and release lanes'
+        description: 'restore reads the master-written caches (never writes); off for authoritative main, nightly, and release lanes'
         type: string
-        default: read-write
+        default: restore
 
 permissions:
   contents: read
@@ -39,10 +39,7 @@ jobs:
           # kb-create — go-version-file only pins to one module's directive
           # and silently under-provisions the toolchain for the rest.
           go-version: '1.26.8'
-          cache-dependency-path: |
-            tools/kb-create/go.sum
-            tools/kb-dev/go.sum
-          cache: ${{ inputs.cache-mode == 'read-write' }}
+          cache: false
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
@@ -51,7 +48,8 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24'
-          cache: ${{ inputs.cache-mode == 'read-write' && 'pnpm' || '' }}
+      - uses: ./.github/actions/pnpm-store
+        if: inputs.cache-mode != 'off'
 
       - name: Build Go tools (kb-devkit, kb-dev)
         run: |
@@ -106,8 +104,8 @@ jobs:
       - name: Build platform image
         run: |
           cache_args=()
-          if [ "${{ inputs.cache-mode }}" = "read-write" ]; then
-            cache_args=(--cache-from "type=gha,scope=e2e-platform" --cache-to "type=gha,mode=max,scope=e2e-platform")
+          if [ "${{ inputs.cache-mode }}" = "restore" ]; then
+            cache_args=(--cache-from "type=gha,scope=e2e-platform")
           fi
           docker buildx build \
             "${cache_args[@]}" \
@@ -116,8 +114,7 @@ jobs:
       - name: Build publisher image
         uses: ./.github/actions/build-publisher
         with:
-          cache-from: ${{ inputs.cache-mode == 'read-write' && 'type=gha,scope=e2e-publisher' || '' }}
-          cache-to: ${{ inputs.cache-mode == 'read-write' && 'type=gha,mode=max,scope=e2e-publisher' || '' }}
+          cache-from: ${{ inputs.cache-mode == 'restore' && 'type=gha,scope=e2e-publisher' || '' }}
 
       - name: Prepare Verdaccio storage permissions
         run: |

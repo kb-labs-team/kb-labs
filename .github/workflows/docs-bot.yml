@@ -42,7 +42,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24'
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
 
       - name: Install docs workspace dependencies
         run: pnpm install --frozen-lockfile --filter @kb-labs/docs-site
