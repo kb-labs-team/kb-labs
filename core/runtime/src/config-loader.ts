@@ -36,7 +36,6 @@
  */
 
 import path from "node:path";
-import os from "node:os";
 import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 
@@ -92,14 +91,6 @@ function collectDeclaredSecretValues(
     }
   }
   return output;
-}
-
-function expandPlatformDir(raw: string, projectRoot: string): string {
-  let value = raw.trim();
-  if (value.startsWith("~")) {
-    value = path.join(os.homedir(), value.slice(1));
-  }
-  return path.resolve(projectRoot, value);
 }
 
 const CONFIG_RELATIVE_PATHS = [
@@ -201,8 +192,6 @@ interface LoadPlatformConfigResultBase {
     fields?: Record<string, "platform" | "project" | "both">;
     /** Top-level fields where the project layer was rejected as platform-only. */
     ignoredProjectFields?: string[];
-    /** Set when project config pointed to a different platformRoot via `platform.dir`. */
-    platformDirOverride?: string;
     /**
      * Absolute paths of overlay files applied on top of the merged config, in
      * the order they were merged (lexicographic by file name). Empty/omitted
@@ -311,7 +300,7 @@ function toPlatformSection(
   // where the top-level `platform` is a bare string pointing at the platform
   // directory instead of the structured `{ dir, adapters, ... }` object used
   // by the dev-mode monorepo. Treat the string as `{ dir: "…" }` so the
-  // loader can still honour `platform.dir` without mis-parsing the section.
+  // loader can parse the platform section consistently.
   const rawPlatform = data.platform;
   const normalizedPlatform: PlatformConfig | undefined =
     typeof rawPlatform === "string"
@@ -488,7 +477,7 @@ export async function loadPlatformConfig(
     }
   }
 
-  let roots = await resolveRoots({
+  const roots = await resolveRoots({
     moduleUrl,
     startDir,
     env,
@@ -530,31 +519,7 @@ export async function loadPlatformConfig(
     projectConfigSource = projectConfigPath;
   }
 
-  // Honor `platform.dir` only from platform-owned config.
-  let platformDirOverride: string | undefined;
-  // platform.dir may be at projectPlatformConfig.platform.dir (string-shorthand case, where
-  // readConfigFile wraps it as { platform: { dir } }), OR at the top level as
-  // projectPlatformConfig.dir (structured-object case, where the whole data.platform section
-  // is spread into platformSection, leaving dir at the root).
-  const declaredPlatformDir =
-    projectPlatformConfig?.platform?.dir ??
-    ((projectPlatformConfig as Record<string, unknown> | undefined)?.["dir"] as
-      | string
-      | undefined);
-  if (declaredPlatformDir) {
-    const resolved = expandPlatformDir(declaredPlatformDir, roots.platformRoot);
-    if (path.resolve(resolved) !== path.resolve(roots.platformRoot)) {
-      platformDirOverride = resolved;
-      roots = {
-        ...roots,
-        platformRoot: resolved,
-        sameLocation:
-          roots.projectRoot !== undefined && path.resolve(resolved) === path.resolve(roots.projectRoot),
-      };
-    }
-  }
-
-  // Locate the platform config file AFTER honoring platform.dir.
+  // The launcher owns the platform root; config cannot replace it.
   const platformConfigPath = findConfigAtRoot(roots.platformRoot);
   let platformDefaults: PlatformConfig | undefined;
   let platformDefaultsSource: string | undefined;
@@ -693,7 +658,7 @@ export async function loadPlatformConfig(
     } : {}),
     ...(workspaceDevelopment ? { workspaceAdapters: {
       development: true,
-      workspaceRoot: configRoot,
+      workspaceRoot: roots.platformRoot,
       configuredPackages: [],
       discoverAll: true,
     } } : {}),
@@ -801,7 +766,6 @@ export async function loadPlatformConfig(
         mergeResult.ignoredProjectFields.length > 0
           ? mergeResult.ignoredProjectFields
           : undefined,
-      platformDirOverride,
       overlays: appliedOverlays.length > 0 ? appliedOverlays : undefined,
       overlayDiagnostics:
         overlayResult.diagnostics.length > 0

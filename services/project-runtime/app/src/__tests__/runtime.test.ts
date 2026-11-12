@@ -8,8 +8,9 @@
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { resetPlatformRuntime } from "@kb-labs/core-runtime";
 import {
   canonicalizeProjectPath,
@@ -30,6 +31,28 @@ import {
 } from "../protocol.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
+let launcherModuleUrl: string;
+let launcherFixtureRoot: string;
+
+beforeAll(async () => {
+  launcherFixtureRoot = await mkdtemp(join(tmpdir(), "kb-runtime-launcher-"));
+  const launcherPath = join(launcherFixtureRoot, "bin.js");
+  await mkdir(join(launcherFixtureRoot, ".kb"), { recursive: true });
+  await writeFile(launcherPath, "");
+  await writeFile(
+    join(launcherFixtureRoot, ".kb", "kb.config.json"),
+    JSON.stringify({ platform: { deployment: { topology: "local" }, adapters: {} } }),
+  );
+  await writeFile(
+    join(launcherFixtureRoot, ".kb-platform-launch.json"),
+    JSON.stringify({ launchers: [relative(launcherFixtureRoot, launcherPath)] }),
+  );
+  launcherModuleUrl = pathToFileURL(launcherPath).href;
+});
+
+afterAll(async () => {
+  await rm(launcherFixtureRoot, { recursive: true, force: true });
+});
 
 describe("project MCP service tools", () => {
   it("projects tools from enabled shipped service manifests and removes them when workflow is disabled", () => {
@@ -285,6 +308,7 @@ async function startRuntime(options: {
         listen: { host: "127.0.0.1", port: guardPort! },
         token: TOKEN,
         modules: options.modules ?? [echoModule("rest"), echoModule("workflow")],
+        moduleUrl: launcherModuleUrl,
       }),
     );
   } catch (error) {

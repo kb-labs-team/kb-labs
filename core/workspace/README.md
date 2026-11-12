@@ -44,13 +44,10 @@ Finds the directory that contains the installed KB Labs platform (parent of `nod
 Priority chain:
 
 1. Explicit `cwd` option.
-2. `KB_PLATFORM_ROOT` env var (set by the installer wrapper in installed mode).
-3. Walk up from `moduleUrl` (`import.meta.url` of the caller). This walks all the way up and:
-   - Prefers the **top-most** `pnpm-workspace.yaml` if one exists (handles KB Labs "workspace of workspaces" dev layout).
-   - Falls back to the first directory whose `node_modules` contains a known platform marker (`@kb-labs/cli-bin`, `@kb-labs/core-runtime`) — this is the normal installed-mode path.
-4. Walk up from `startDir` looking for the same markers or `pnpm-workspace.yaml`.
-5. Repository root via `findRepoRoot`.
-6. Fallback to `startDir`.
+2. `KB_PLATFORM_ROOT` propagated by a parent that already resolved its platform.
+3. The launcher module URL: the checkout launcher declaration identifies dev binaries; an installed module resolves its owning platform.
+
+The caller's working directory and project configuration do not select the platform. If no launcher supplies a root and its module cannot be resolved, resolution fails.
 
 #### `resolveProjectRoot(options)`
 
@@ -75,7 +72,7 @@ project, `projectRoot` still identifies that project; otherwise it is absent.
 Platform configuration and adapters continue to use `platformRoot`:
 
 ```typescript
-const roots = await resolveRoots({ startDir: process.cwd(), projectScope: 'platform' })
+const roots = await resolveRoots({ moduleUrl: import.meta.url, startDir: process.cwd(), projectScope: 'platform' })
 ```
 
 This mode does not require project registration. It looks up project identity

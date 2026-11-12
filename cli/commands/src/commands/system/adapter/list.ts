@@ -65,7 +65,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
         .map((modulePath) => ({ packageName: modulePath.split('/').slice(0, 2).join('/'), slot })),
     );
     const workspaceOptions = isWorkspaceDevelopmentMode(loaded)
-      ? { development: true as const, workspaceRoot: loaded.projectRoot ?? getContextCwd(ctx), configuredPackages }
+      ? { development: true as const, workspaceRoot: loaded.platformRoot, configuredPackages }
       : { development: false as const, configuredPackages };
     const discovered = await loadCatalogAdapterEntries(loaded.catalog.adapters(), workspaceOptions);
     const resolvedDefaults = resolveDiscoveredAdapterDefaults({

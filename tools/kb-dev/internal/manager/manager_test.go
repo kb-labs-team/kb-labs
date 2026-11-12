@@ -298,9 +298,12 @@ func TestSpawnEnv_EmptyServiceEnv(t *testing.T) {
 	if result["KB_PROJECT_ROOT"] != "/workspace" {
 		t.Errorf("KB_PROJECT_ROOT = %q, want /workspace", result["KB_PROJECT_ROOT"])
 	}
-	// KB_PROJECT_ROOT + KB_SOCKET_HASH, no socket path since Socket is empty.
-	if len(result) != 2 {
-		t.Errorf("len = %d, want 2 (KB_PROJECT_ROOT + KB_SOCKET_HASH)", len(result))
+	// The launcher declares both platform and project roots.
+	if result["KB_PLATFORM_ROOT"] != "/workspace" {
+		t.Errorf("KB_PLATFORM_ROOT = %q, want /workspace", result["KB_PLATFORM_ROOT"])
+	}
+	if len(result) != 3 {
+		t.Errorf("len = %d, want 3", len(result))
 	}
 }
 

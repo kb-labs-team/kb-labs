@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
 import { createProjectRegistry } from '@kb-labs/core-project-registry'
@@ -13,6 +13,20 @@ import {
   resolveRoots,
   resolveWorkspaceRoot,
 } from '../root-resolver'
+
+function createDeclaredLauncherCheckout(): { checkout: string; moduleUrl: string } {
+  const checkout = mkdtempSync(path.join(os.tmpdir(), 'kb-launcher-checkout-'))
+  const launcherPath = path.join(checkout, 'cli/bin/dist/bin.js')
+  mkdirSync(path.dirname(launcherPath), { recursive: true })
+  // Model pnpm's workspace symlink: without the explicit ownership declaration,
+  // the resolver would stop at cli/bin and mistake it for the platform root.
+  mkdirSync(path.join(checkout, 'cli/bin/node_modules/@kb-labs/cli-bin'), { recursive: true })
+  writeFileSync(
+    path.join(checkout, '.kb-platform-launch.json'),
+    JSON.stringify({ launchers: ['cli/bin/dist/bin.js'] }),
+  )
+  return { checkout, moduleUrl: pathToFileURL(launcherPath).href }
+}
 
 describe('resolveProjectRoot', () => {
   let tmpDir: string
@@ -249,6 +263,17 @@ describe('resolvePlatformRoot', () => {
     })
   })
 
+  // case: S-287.1
+  it('resolves the development binary from its checkout declaration', async () => {
+    const { checkout, moduleUrl } = createDeclaredLauncherCheckout()
+    try {
+      const result = await resolvePlatformRoot({ moduleUrl, env: {} })
+      expect(result).toEqual({ rootDir: checkout, source: 'module' })
+    } finally {
+      rmSync(checkout, { recursive: true, force: true })
+    }
+  })
+
   it('resolves platform root via moduleUrl when node_modules/@kb-labs/cli-bin is present', async () => {
     // Simulate installed layout:
     //   <platformRoot>/node_modules/@kb-labs/cli-bin/dist/bin.js
@@ -274,7 +299,7 @@ describe('resolvePlatformRoot', () => {
     expect(result.source).toBe('module')
   })
 
-  it('walks up from startDir to find node_modules/@kb-labs/cli-bin', async () => {
+  it('does not infer platform ownership: walks up from startDir to find node_modules/@kb-labs/cli-bin', async () => {
     const platformRoot = path.join(tmpDir, 'marker-platform')
     const nested = path.join(platformRoot, 'some', 'deep', 'dir')
     mkdirSync(nested, { recursive: true })
@@ -283,31 +308,25 @@ describe('resolvePlatformRoot', () => {
       { recursive: true },
     )
 
-    const result = await resolvePlatformRoot({
+    await expect(resolvePlatformRoot({
       startDir: nested,
       env: {},
-    })
-
-    expect(result.rootDir).toEqual(path.resolve(platformRoot))
-    expect(result.source).toBe('marker')
+    })).rejects.toThrow()
   })
 
-  it('walks up from startDir to find pnpm-workspace.yaml (dev mode)', async () => {
+  it('does not infer platform ownership: walks up from startDir to find pnpm-workspace.yaml (dev mode)', async () => {
     const workspaceRoot = path.join(tmpDir, 'dev-workspace')
     const nested = path.join(workspaceRoot, 'packages', 'foo')
     mkdirSync(nested, { recursive: true })
     writeFileSync(path.join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n')
 
-    const result = await resolvePlatformRoot({
+    await expect(resolvePlatformRoot({
       startDir: nested,
       env: {},
-    })
-
-    expect(result.rootDir).toEqual(path.resolve(workspaceRoot))
-    expect(result.source).toBe('marker')
+    })).rejects.toThrow()
   })
 
-  it('prefers pnpm-workspace.yaml above a nested package marker (dev-mode correction)', async () => {
+  it('uses launcher declaration above nested module markers', async () => {
     // Simulates a pnpm monorepo where an individual package has its own
     // node_modules/@kb-labs/cli-bin symlink (via hoisting). We want the
     // workspace root, not the first package that happens to have the marker.
@@ -338,15 +357,15 @@ describe('resolvePlatformRoot', () => {
     const result = await resolvePlatformRoot({
       moduleUrl: pathToFileURL(fakeBin).href,
       startDir: tmpDir,
-      env: {},
+      env: { KB_PLATFORM_ROOT: workspaceRoot },
     })
 
     // Must return the workspace root, not the nested package.
     expect(result.rootDir).toEqual(path.resolve(workspaceRoot))
-    expect(result.source).toBe('module')
+    expect(result.source).toBe('env')
   })
 
-  it('prefers top-most pnpm-workspace.yaml in nested-workspace layouts', async () => {
+  it('does not infer platform ownership: prefers top-most pnpm-workspace.yaml in nested-workspace layouts', async () => {
     // KB Labs "workspace of workspaces" pattern: each sub-repo has its own
     // pnpm-workspace.yaml, but the outermost one is the true monorepo root.
     const topLevelWorkspace = path.join(tmpDir, 'kb-nested-root')
@@ -368,14 +387,11 @@ describe('resolvePlatformRoot', () => {
       'packages:\n  - packages/*\n',
     )
 
-    const result = await resolvePlatformRoot({
+    await expect(resolvePlatformRoot({
       moduleUrl: pathToFileURL(fakeBin).href,
       startDir: tmpDir,
       env: {},
-    })
-
-    expect(result.rootDir).toEqual(path.resolve(topLevelWorkspace))
-    expect(result.source).toBe('module')
+    })).rejects.toThrow()
   })
 
   it('ignores platform markers inside a pnpm virtual store', async () => {
@@ -433,19 +449,16 @@ describe('resolvePlatformRoot', () => {
     expect(result.source).toBe('module')
   })
 
-  it('falls back to repo root when no markers match', async () => {
+  it('does not infer platform ownership: falls back to repo root when no markers match', async () => {
     const repoRoot = path.join(tmpDir, 'platform-repo-fallback')
     const nested = path.join(repoRoot, 'deep')
     mkdirSync(nested, { recursive: true })
     writeFileSync(path.join(repoRoot, 'package.json'), '{"name":"x"}')
 
-    const result = await resolvePlatformRoot({
+    await expect(resolvePlatformRoot({
       startDir: nested,
       env: {},
-    })
-
-    expect(result.rootDir).toEqual(path.resolve(repoRoot))
-    expect(result.source).toBe('repo')
+    })).rejects.toThrow()
   })
 })
 
@@ -528,13 +541,13 @@ describe('resolveRoots', () => {
     await createProjectRegistry({ root: home }).add(workspaceRoot)
     const result = await resolveRoots({
       startDir: nested,
-      env: { KB_HOME: home },
+      env: { KB_HOME: home, KB_PLATFORM_ROOT: workspaceRoot },
     })
 
     expect(result.platformRoot).toEqual(path.resolve(workspaceRoot))
     expect(result.projectRoot).toEqual(realpathSync(workspaceRoot))
     expect(result.sameLocation).toBe(true)
-    expect(result.sources.platform).toBe('marker')
+    expect(result.sources.platform).toBe('env')
     expect(result.sources.project).toBe('registry')
   })
 
@@ -591,5 +604,45 @@ describe('resolveRoots', () => {
     expect(result.sameLocation).toBe(false)
     expect(result.sources.platform).toBe('env')
     expect(result.sources.project).toBe('registry')
+  })
+})
+
+describe('platform launcher ownership', () => {
+  // case: S-287.6
+  it('resolves the development checkout from its repository launcher declaration', async () => {
+    const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../')
+    const launcherPath = path.join(checkout, 'cli/bin/dist/bin.js')
+    const result = await resolvePlatformRoot({ moduleUrl: pathToFileURL(launcherPath).href, env: {} })
+
+    expect(result).toEqual({ rootDir: checkout, source: 'module' })
+  })
+
+  // case: S-287.7
+  it('surfaces the typed conversion error for a malformed launcher module URL', async () => {
+    await expect(resolvePlatformRoot({ moduleUrl: 'not a URL', env: {} }))
+      .rejects.toMatchObject({ code: 'ERR_INVALID_URL', name: 'TypeError' })
+  })
+
+  // case: S-287.6
+  it('uses the pnpm kb binary declaration without a launcher env override', async () => {
+    const { checkout, moduleUrl } = createDeclaredLauncherCheckout()
+    try {
+      const result = await resolvePlatformRoot({ moduleUrl, env: {} })
+      expect(result).toEqual({ rootDir: checkout, source: 'module' })
+    } finally {
+      rmSync(checkout, { recursive: true, force: true })
+    }
+  })
+
+  it('does not infer the platform from a project workspace when no launcher declares it', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'kb-platform-owner-'))
+    try {
+      const project = path.join(root, 'project')
+      mkdirSync(project)
+      writeFileSync(path.join(project, 'pnpm-workspace.yaml'), 'packages: []\n')
+      await expect(resolvePlatformRoot({ startDir: project, env: {} })).rejects.toThrow()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

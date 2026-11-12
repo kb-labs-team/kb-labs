@@ -2034,6 +2034,17 @@
       "httpStatus": 500
     },
     {
+      "code": "KB_MARKETPLACE_LOCK_INVALID",
+      "httpStatus": 422,
+      "area": "plugin",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "Marketplace lock {path} is invalid: {reason}",
+      "hint": "Repair the file and run `kb marketplace sync --scope {scope}`."
+    },
+    {
       "code": "KB_PLUGIN_NAMESPACE_TAKEN",
       "area": "plugin",
       "stage": "extend",
@@ -2063,10 +2074,12 @@
       "severity": "error",
       "retryable": false,
       "processExitClass": "operation-failure",
-      "message": "Plugin is not installed in this project.",
-      "hint": "Run `kb marketplace plugins list` to discover available plugins.",
+      "message": "Plugin is not installed in {scopeDescription}.",
+      "hint": "Run `kb marketplace plugins list --scope {scope}` to discover installed plugins.",
+      "templateParameters": ["scopeDescription", "scope"],
+      "requiredTemplateParameters": ["scopeDescription", "scope"],
       "structuredDetailFields": [
-        "package"
+        "package", "scope"
       ]
     },
     {

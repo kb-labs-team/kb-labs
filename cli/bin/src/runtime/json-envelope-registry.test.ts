@@ -29,8 +29,8 @@ const mocks = vi.hoisted(() => {
     warn(message: string) {
       process.stderr.write(`[warn] ${message}\n`);
     },
-    error(message: string) {
-      process.stderr.write(`[error] ${message}\n`);
+    error(message: string, ...details: unknown[]) {
+      process.stderr.write(`[error] ${message} ${JSON.stringify(details)}\n`);
     },
     fatal(message: string) {
       process.stderr.write(`[fatal] ${message}\n`);
@@ -412,7 +412,7 @@ describe("JSON envelope coverage for the live CLI registry", () => {
           }
           expect(
             valid.exitCode,
-            `${command.segments.join(" ")}: ${JSON.stringify(valid.result)}`,
+            `${command.segments.join(" ")}: ${JSON.stringify(valid.result)}\n${valid.stderrRecords.join('')}`,
           ).toBe(0);
           expect(valid.result).toMatchObject({
             ok: true,

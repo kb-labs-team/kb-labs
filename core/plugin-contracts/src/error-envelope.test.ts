@@ -31,11 +31,19 @@ describe('core toErrorEnvelope for plugin errors', () => {
   ];
 
   it('derives REST status from the shared error catalog', () => {
-    const error = new PluginError('Package is missing.', 'KB_PLUGIN_NOT_INSTALLED', { package: '@kb-labs/missing' });
+    const error = new PluginError('Package is missing.', 'KB_PLUGIN_NOT_INSTALLED', {
+      package: '@kb-labs/missing',
+      scope: 'project',
+      scopeDescription: 'this project',
+    });
     expect(error.statusCode).toBe(404);
     expect(toErrorEnvelope(error)).toMatchObject({
       code: 'KB_PLUGIN_NOT_INSTALLED',
-      details: { package: '@kb-labs/missing' },
+      details: {
+        package: '@kb-labs/missing',
+        scope: 'project',
+        scopeDescription: 'this project',
+      },
     });
   });
 

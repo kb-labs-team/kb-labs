@@ -91,6 +91,18 @@ describe("CLI adapter construction", () => {
     expect(result.projectRoot).toBe(projectRoot);
   });
 
+  // case: S-287.5
+  it("uses the platform workspace for development adapters in a separate project", async () => {
+    const config = await projectConfig("/workspace/app");
+    config.rawPlatformConfig = { platform: { mode: 'development' } };
+    mocks.initPlatform.mockResolvedValue(mocks.platform);
+    await initializePlatform(config);
+    expect(mocks.initPlatform).toHaveBeenCalledWith(
+      config.platformConfig, config.projectRoot, expect.any(Function), config.platformRoot,
+      expect.objectContaining({ workspaceDevelopment: true, workspaceRoot: config.platformRoot }),
+    );
+  });
+
   it("does not construct adapters for global help or version", async () => {
     const config = await projectConfig("/installed/platform");
 

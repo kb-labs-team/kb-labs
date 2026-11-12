@@ -17,7 +17,7 @@ describe('sandbox worker platform initialization', () => {
       pluginRoot: '/plugin',
       platformConfig: { adapters: {} },
       platformRoot: '/installed/platform',
-      workspaceDevelopment: false,
+      workspaceDevelopment: true,
     };
 
     await recreateContext({
@@ -30,7 +30,7 @@ describe('sandbox worker platform initialization', () => {
       context.workdir,
       undefined,
       context.platformRoot,
-      { workspaceDevelopment: false },
+      { workspaceDevelopment: true, workspaceRoot: context.platformRoot },
     );
   });
 

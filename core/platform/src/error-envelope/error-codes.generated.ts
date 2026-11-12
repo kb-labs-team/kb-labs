@@ -132,6 +132,7 @@ export type CatalogErrorCode =
   | "KB_MARKETPLACE_IDENTITY_RESERVED"
   | "KB_MARKETPLACE_INSTALL_FAILED"
   | "KB_MARKETPLACE_INTEGRITY_MISMATCH"
+  | "KB_MARKETPLACE_LOCK_INVALID"
   | "KB_MARKETPLACE_PACKAGE_INVALID"
   | "KB_MARKETPLACE_PACKAGE_TOO_FRESH"
   | "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING"
@@ -420,6 +421,7 @@ export interface CatalogTemplateParameters {
   "KB_MARKETPLACE_IDENTITY_RESERVED": { "package": string; "scope": string };
   "KB_MARKETPLACE_INSTALL_FAILED": { "package": string; "scope": string; "sourceName": string };
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": { "package": string; "scope": string };
+  "KB_MARKETPLACE_LOCK_INVALID": { "path": string; "reason": string; "scope": string };
   "KB_MARKETPLACE_PACKAGE_INVALID": Record<never, never>;
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": { "package": string; "scope": string };
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": Record<never, never>;
@@ -442,7 +444,7 @@ export interface CatalogTemplateParameters {
   "KB_PLUGIN_NAMESPACE_RESERVED": { "namespace": string };
   "KB_PLUGIN_NAMESPACE_TAKEN": { "namespace": string; "owner": string };
   "KB_PLUGIN_NOT_FOUND": { "plugin": string };
-  "KB_PLUGIN_NOT_INSTALLED": Record<never, never>;
+  "KB_PLUGIN_NOT_INSTALLED": { "scope": string; "scopeDescription": string };
   "KB_PLUGIN_PERMISSION_DENIED": { "permission": string; "plugin": string };
   "KB_PLUGIN_PLATFORM_DUPLICATE": { "package": string; "plugin": string };
   "KB_PLUGIN_SDK_INCOMPATIBLE": { "installed": string; "plugin": string; "required": string };
@@ -708,6 +710,7 @@ export interface CatalogProducerInputFor {
   "KB_MARKETPLACE_IDENTITY_RESERVED": CatalogProducerCommon & ({ details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_MARKETPLACE_INSTALL_FAILED": CatalogProducerCommon & ({ details: { "package": string; "scope": string; "source"?: string }; templateValues?: { "sourceName"?: string }; message?: never; hint?: never } | { details: { "package": string; "scope"?: string; "source"?: string }; templateValues?: { "sourceName"?: string }; message?: never; hint: string } | { details: { "package": string; "scope": string; "source"?: string }; templateValues?: { "sourceName"?: string }; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string; "source"?: string }; templateValues?: { "sourceName"?: string }; message: string; hint: string });
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": CatalogProducerCommon & ({ details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
+  "KB_MARKETPLACE_LOCK_INVALID": CatalogProducerCommon & ({ details: { "path": string; "reason": string; "scope": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "path": string; "reason": string; "scope"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "path"?: string; "reason"?: string; "scope": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "path"?: string; "reason"?: string; "scope"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_MARKETPLACE_PACKAGE_INVALID": CatalogProducerCommon & ({ details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": CatalogProducerCommon & ({ details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": CatalogProducerCommon & ({ details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint: string });
@@ -730,7 +733,7 @@ export interface CatalogProducerInputFor {
   "KB_PLUGIN_NAMESPACE_RESERVED": CatalogProducerCommon & ({ details: { "namespace": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "namespace": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "namespace": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "namespace"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_PLUGIN_NAMESPACE_TAKEN": CatalogProducerCommon & ({ details: { "namespace": string; "owner": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "namespace": string; "owner": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "namespace"?: string; "owner"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "namespace"?: string; "owner"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_PLUGIN_NOT_FOUND": CatalogProducerCommon & ({ details: { "plugin": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "plugin": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "plugin": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "plugin"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
-  "KB_PLUGIN_NOT_INSTALLED": CatalogProducerCommon & ({ details?: { "package"?: string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: { "package"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "package"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "package"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
+  "KB_PLUGIN_NOT_INSTALLED": CatalogProducerCommon & ({ details: { "scope": string; "scopeDescription": string; "package"?: string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "scope"?: string; "scopeDescription": string; "package"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "scope": string; "scopeDescription"?: string; "package"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "scope"?: string; "scopeDescription"?: string; "package"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_PLUGIN_PERMISSION_DENIED": CatalogProducerCommon & ({ details: { "permission": string; "plugin": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "permission": string; "plugin": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "permission"?: string; "plugin"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "permission"?: string; "plugin"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_PLUGIN_PLATFORM_DUPLICATE": CatalogProducerCommon & ({ details: { "package": string; "plugin": string; "ownCopy"?: string; "requester"?: string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "package": string; "plugin": string; "ownCopy"?: string; "requester"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "package"?: string; "plugin"?: string; "ownCopy"?: string; "requester"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "package"?: string; "plugin"?: string; "ownCopy"?: string; "requester"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_PLUGIN_SDK_INCOMPATIBLE": CatalogProducerCommon & ({ details: { "installed": string; "plugin": string; "required": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "installed": string; "plugin": string; "required": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "installed"?: string; "plugin"?: string; "required"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "installed"?: string; "plugin"?: string; "required"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
@@ -998,6 +1001,7 @@ export interface CatalogDetailsFor {
   "KB_MARKETPLACE_IDENTITY_RESERVED": { "package": string; "scope": string };
   "KB_MARKETPLACE_INSTALL_FAILED": { "package": string; "scope": string; "source"?: string };
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": { "package": string; "scope": string };
+  "KB_MARKETPLACE_LOCK_INVALID": { "path": string; "reason": string; "scope": string };
   "KB_MARKETPLACE_PACKAGE_INVALID": Record<string, never>;
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": { "package": string; "scope": string };
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": Record<string, never>;
@@ -1020,7 +1024,7 @@ export interface CatalogDetailsFor {
   "KB_PLUGIN_NAMESPACE_RESERVED": { "namespace": string };
   "KB_PLUGIN_NAMESPACE_TAKEN": { "namespace": string; "owner": string };
   "KB_PLUGIN_NOT_FOUND": { "plugin": string };
-  "KB_PLUGIN_NOT_INSTALLED": { "package"?: string };
+  "KB_PLUGIN_NOT_INSTALLED": { "scope": string; "scopeDescription": string; "package"?: string };
   "KB_PLUGIN_PERMISSION_DENIED": { "permission": string; "plugin": string };
   "KB_PLUGIN_PLATFORM_DUPLICATE": { "package": string; "plugin": string; "ownCopy"?: string; "requester"?: string };
   "KB_PLUGIN_SDK_INCOMPATIBLE": { "installed": string; "plugin": string; "required": string };
@@ -1313,6 +1317,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_MARKETPLACE_IDENTITY_RESERVED": ["package","scope"],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope"],
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": ["package","scope"],
+  "KB_MARKETPLACE_LOCK_INVALID": ["path","reason","scope"],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": ["package","scope"],
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
@@ -1335,7 +1340,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
   "KB_PLUGIN_NAMESPACE_TAKEN": ["namespace","owner"],
   "KB_PLUGIN_NOT_FOUND": ["plugin"],
-  "KB_PLUGIN_NOT_INSTALLED": [],
+  "KB_PLUGIN_NOT_INSTALLED": ["scope","scopeDescription"],
   "KB_PLUGIN_PERMISSION_DENIED": ["permission","plugin"],
   "KB_PLUGIN_PLATFORM_DUPLICATE": ["package","plugin"],
   "KB_PLUGIN_SDK_INCOMPATIBLE": ["installed","plugin","required"],
@@ -1601,6 +1606,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_MARKETPLACE_IDENTITY_RESERVED": [],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package"],
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": [],
+  "KB_MARKETPLACE_LOCK_INVALID": ["path","reason"],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": [],
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
@@ -1623,7 +1629,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
   "KB_PLUGIN_NAMESPACE_TAKEN": ["namespace","owner"],
   "KB_PLUGIN_NOT_FOUND": ["plugin"],
-  "KB_PLUGIN_NOT_INSTALLED": [],
+  "KB_PLUGIN_NOT_INSTALLED": ["scopeDescription"],
   "KB_PLUGIN_PERMISSION_DENIED": ["permission","plugin"],
   "KB_PLUGIN_PLATFORM_DUPLICATE": ["package","plugin"],
   "KB_PLUGIN_SDK_INCOMPATIBLE": ["installed","plugin","required"],
@@ -1889,6 +1895,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_MARKETPLACE_IDENTITY_RESERVED": ["package","scope"],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope"],
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": ["package","scope"],
+  "KB_MARKETPLACE_LOCK_INVALID": ["scope"],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": ["package","scope"],
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
@@ -1911,7 +1918,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
   "KB_PLUGIN_NAMESPACE_TAKEN": [],
   "KB_PLUGIN_NOT_FOUND": ["plugin"],
-  "KB_PLUGIN_NOT_INSTALLED": [],
+  "KB_PLUGIN_NOT_INSTALLED": ["scope"],
   "KB_PLUGIN_PERMISSION_DENIED": [],
   "KB_PLUGIN_PLATFORM_DUPLICATE": [],
   "KB_PLUGIN_SDK_INCOMPATIBLE": [],
@@ -2177,6 +2184,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_MARKETPLACE_IDENTITY_RESERVED": ["package","scope"],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope","sourceName"],
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": ["package","scope"],
+  "KB_MARKETPLACE_LOCK_INVALID": ["path","reason","scope"],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": ["package","scope"],
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
@@ -2199,7 +2207,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
   "KB_PLUGIN_NAMESPACE_TAKEN": ["namespace","owner"],
   "KB_PLUGIN_NOT_FOUND": ["plugin"],
-  "KB_PLUGIN_NOT_INSTALLED": [],
+  "KB_PLUGIN_NOT_INSTALLED": ["scope","scopeDescription"],
   "KB_PLUGIN_PERMISSION_DENIED": ["permission","plugin"],
   "KB_PLUGIN_PLATFORM_DUPLICATE": ["package","plugin"],
   "KB_PLUGIN_SDK_INCOMPATIBLE": ["installed","plugin","required"],
@@ -2465,6 +2473,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_MARKETPLACE_IDENTITY_RESERVED": [],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package","sourceName"],
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": [],
+  "KB_MARKETPLACE_LOCK_INVALID": ["path","reason"],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": [],
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
@@ -2487,7 +2496,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
   "KB_PLUGIN_NAMESPACE_TAKEN": ["namespace","owner"],
   "KB_PLUGIN_NOT_FOUND": ["plugin"],
-  "KB_PLUGIN_NOT_INSTALLED": [],
+  "KB_PLUGIN_NOT_INSTALLED": ["scopeDescription"],
   "KB_PLUGIN_PERMISSION_DENIED": ["permission","plugin"],
   "KB_PLUGIN_PLATFORM_DUPLICATE": ["package","plugin"],
   "KB_PLUGIN_SDK_INCOMPATIBLE": ["installed","plugin","required"],
@@ -2753,6 +2762,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_MARKETPLACE_IDENTITY_RESERVED": ["package","scope"],
   "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope"],
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": ["package","scope"],
+  "KB_MARKETPLACE_LOCK_INVALID": ["scope"],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": ["package","scope"],
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
@@ -2775,7 +2785,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
   "KB_PLUGIN_NAMESPACE_TAKEN": [],
   "KB_PLUGIN_NOT_FOUND": ["plugin"],
-  "KB_PLUGIN_NOT_INSTALLED": [],
+  "KB_PLUGIN_NOT_INSTALLED": ["scope"],
   "KB_PLUGIN_PERMISSION_DENIED": [],
   "KB_PLUGIN_PLATFORM_DUPLICATE": [],
   "KB_PLUGIN_SDK_INCOMPATIBLE": [],
@@ -3041,6 +3051,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_MARKETPLACE_IDENTITY_RESERVED": [],
   "KB_MARKETPLACE_INSTALL_FAILED": ["source"],
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": ["package","scope"],
+  "KB_MARKETPLACE_LOCK_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": [],
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
@@ -3063,7 +3074,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_PLUGIN_NAMESPACE_RESERVED": [],
   "KB_PLUGIN_NAMESPACE_TAKEN": [],
   "KB_PLUGIN_NOT_FOUND": [],
-  "KB_PLUGIN_NOT_INSTALLED": ["package"],
+  "KB_PLUGIN_NOT_INSTALLED": ["package","scope"],
   "KB_PLUGIN_PERMISSION_DENIED": [],
   "KB_PLUGIN_PLATFORM_DUPLICATE": ["ownCopy","requester"],
   "KB_PLUGIN_SDK_INCOMPATIBLE": [],
@@ -3329,6 +3340,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_MARKETPLACE_IDENTITY_RESERVED": Record<never, never>;
   "KB_MARKETPLACE_INSTALL_FAILED": { "package": string };
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": Record<never, never>;
+  "KB_MARKETPLACE_LOCK_INVALID": { "path": string; "reason": string };
   "KB_MARKETPLACE_PACKAGE_INVALID": Record<never, never>;
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": Record<never, never>;
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": Record<never, never>;
@@ -3351,7 +3363,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_PLUGIN_NAMESPACE_RESERVED": { "namespace": string };
   "KB_PLUGIN_NAMESPACE_TAKEN": { "namespace": string; "owner": string };
   "KB_PLUGIN_NOT_FOUND": { "plugin": string };
-  "KB_PLUGIN_NOT_INSTALLED": Record<never, never>;
+  "KB_PLUGIN_NOT_INSTALLED": { "scopeDescription": string };
   "KB_PLUGIN_PERMISSION_DENIED": { "permission": string; "plugin": string };
   "KB_PLUGIN_PLATFORM_DUPLICATE": { "package": string; "plugin": string };
   "KB_PLUGIN_SDK_INCOMPATIBLE": { "installed": string; "plugin": string; "required": string };
@@ -3617,6 +3629,7 @@ export interface CatalogHintTemplateParameters {
   "KB_MARKETPLACE_IDENTITY_RESERVED": { "package": string; "scope": string };
   "KB_MARKETPLACE_INSTALL_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": { "package": string; "scope": string };
+  "KB_MARKETPLACE_LOCK_INVALID": { "scope": string };
   "KB_MARKETPLACE_PACKAGE_INVALID": Record<never, never>;
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": { "package": string; "scope": string };
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": Record<never, never>;
@@ -3639,7 +3652,7 @@ export interface CatalogHintTemplateParameters {
   "KB_PLUGIN_NAMESPACE_RESERVED": { "namespace": string };
   "KB_PLUGIN_NAMESPACE_TAKEN": Record<never, never>;
   "KB_PLUGIN_NOT_FOUND": { "plugin": string };
-  "KB_PLUGIN_NOT_INSTALLED": Record<never, never>;
+  "KB_PLUGIN_NOT_INSTALLED": { "scope": string };
   "KB_PLUGIN_PERMISSION_DENIED": Record<never, never>;
   "KB_PLUGIN_PLATFORM_DUPLICATE": Record<never, never>;
   "KB_PLUGIN_SDK_INCOMPATIBLE": Record<never, never>;
@@ -3905,6 +3918,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_MARKETPLACE_IDENTITY_RESERVED": Record<never, never>;
   "KB_MARKETPLACE_INSTALL_FAILED": { "sourceName"?: string };
   "KB_MARKETPLACE_INTEGRITY_MISMATCH": Record<never, never>;
+  "KB_MARKETPLACE_LOCK_INVALID": Record<never, never>;
   "KB_MARKETPLACE_PACKAGE_INVALID": Record<never, never>;
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": Record<never, never>;
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": Record<never, never>;
