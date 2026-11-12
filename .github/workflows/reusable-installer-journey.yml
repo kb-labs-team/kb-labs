@@ -43,7 +43,7 @@ jobs:
       - name: Verify packed SDK consumer contract
         run: pnpm --filter @kb-labs/sdk test:packed-consumer
       - name: Validate QA cases and test claims
-        run: pnpm kb qa cases validate
+        run: ./tools/kb-devkit/kb-devkit check --only qa-case-claims
       - name: Restore packed package cache
         id: tgz-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
