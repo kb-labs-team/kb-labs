@@ -24,6 +24,20 @@ type procStat struct {
 
 func processStateIsLive(state byte) bool { return state != 'Z' && state != 'X' }
 
+// unavailableID is what the kernel prints for the process group and session of
+// a task whose signal handler is already gone (fs/proc/array.c do_task_stat
+// initializes both to -1 and only fills them under lock_task_sighand).
+const unavailableID = -1
+
+// exiting reports a task that is being torn down: still in the process table
+// and not yet a zombie, but with no signal handler left to describe it.
+func (stat procStat) exiting() bool {
+	return stat.ProcessGroupID == unavailableID && stat.SessionID == unavailableID
+}
+
+// live reports whether the row describes a process that still runs.
+func (stat procStat) live() bool { return processStateIsLive(stat.State) && !stat.exiting() }
+
 // parseProcStat parses Linux /proc/<pid>/stat. Comm is parenthesized but may
 // itself contain parentheses, so fields begin after the final closing one.
 func parseProcStat(data string) (procStat, error) {
@@ -46,16 +60,19 @@ func parseProcStat(data string) (procStat, error) {
 		return procStat{}, fmt.Errorf("parse proc stat parent pid: %w", err)
 	}
 	processGroupID, err := strconv.Atoi(fields[2])
-	if err != nil || processGroupID < 0 {
+	if err != nil || processGroupID < unavailableID {
 		return procStat{}, errors.New("parse proc stat process group: invalid value")
 	}
 	sessionID, err := strconv.Atoi(fields[3])
-	if err != nil || sessionID < 0 {
+	if err != nil || sessionID < unavailableID {
 		return procStat{}, errors.New("parse proc stat session: invalid value")
 	}
 	startTicks, err := strconv.ParseInt(fields[19], 10, 64)
 	if err != nil || startTicks < 0 {
 		return procStat{}, errors.New("parse proc stat start ticks: invalid value")
+	}
+	if (processGroupID == unavailableID) != (sessionID == unavailableID) {
+		return procStat{}, errors.New("parse proc stat process group and session: only one is unavailable")
 	}
 	userTicks, uErr := strconv.ParseInt(fields[11], 10, 64)
 	systemTicks, sErr := strconv.ParseInt(fields[12], 10, 64)

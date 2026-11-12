@@ -19,15 +19,17 @@ import {
 } from "./testkit.js";
 
 /** The real child-process launcher, counting how often it is asked to launch. */
-function countingLauncher(): RuntimeLauncher & { launches: number } {
+function countingLauncher(): RuntimeLauncher & { launches: number; previousExitCauses: Array<string | undefined> } {
   const inner = createChildProcessLauncher({
     entry: FAKE_RUNTIME_ENTRY,
     stopTimeoutMs: 1500,
   });
   const counted = {
     launches: 0,
-    launch(project: RuntimeProject) {
+    previousExitCauses: [] as Array<string | undefined>,
+    launch(project: RuntimeProject, previousExitCause?: string) {
       counted.launches += 1;
+      counted.previousExitCauses.push(previousExitCause);
       return inner.launch(project);
     },
     probe: inner.probe,
@@ -332,11 +334,13 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     }
   });
 
-  it("restarts a crashed runtime with backoff and serves the next request", async () => {
+  // case: S-297.4
+  it("hands the supervisor exit cause to the restarted runtime", async () => {
     const a = await project();
+    const launcher = countingLauncher();
     const subject = manager({
       restart: { baseDelayMs: 20, maxDelayMs: 100 },
-    });
+    }, launcher);
     const lease = await subject.acquire(a);
     const firstPid = pidOf(subject, a.id);
     lease.release();
@@ -353,6 +357,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     ).json()) as FakeRuntimeReply;
     expect(reply.projectRoot).toBe(a.root);
     expect(reply.pid).not.toBe(firstPid);
+    expect(launcher.previousExitCauses[1]).toContain("signal");
     expect(subject.status().runtimes[0]).toMatchObject({
       state: "ready",
       restarts: 1,

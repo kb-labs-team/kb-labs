@@ -58,10 +58,11 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 		return nil, asDiag(err)
 	}
 	state := runner.State
-	status, err := runner.Status(ctx)
+	truth, err := supervisor.Observe(ctx, runner, state)
 	if err != nil {
 		return nil, asDiag(err)
 	}
+	status := truth.Status
 	if status.State == host.StateStopped {
 		if failure := host.RegisteredPortConflict(platformRoot, "status"); failure != nil {
 			return nil, failure
@@ -101,6 +102,10 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 		}
 	}
 	next := "kb-create start"
+	payload["hostState"] = string(truth.Kind)
+	if truth.Kind == supervisor.KindHostExited {
+		payload["hostExit"] = truth.Exit
+	}
 	if status.State == host.StateRunning && status.Healthy {
 		if status.StudioURL != "" {
 			next = "Open Studio: " + status.StudioURL
@@ -111,6 +116,10 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	if inv.Executable != "" && installed && !shim.Correct(inv.Executable, platformRoot) {
 		next = "kb-create install"
 	}
+	if truth.Kind == supervisor.KindHostExited {
+		// A dead host under a live supervisor outranks every other follow-up.
+		next = contracts.ShellCommand("kb-create", "start", "--platform-root", root)
+	}
 	payload["next"] = next
 	if inv.Executable != "" {
 		payload["kbShimCorrect"] = shim.Correct(inv.Executable, platformRoot)
@@ -119,8 +128,8 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	if installed {
 		payload["installation"] = map[string]any{"receiptId": active.ID, "platformVersion": active.Plan.ServiceGraph.PlatformVersion, "platformChannel": active.Plan.PlatformChannel}
 	}
-	if pid, ok := supervisor.LivePID(state, platformRoot); ok {
-		info := map[string]any{"pid": pid}
+	if truth.Supervisor != nil {
+		info := map[string]any{"pid": truth.Supervisor.PID}
 		if client, connectErr := control.Connect(state); connectErr == nil {
 			info["address"], info["version"] = client.File.Address, client.File.Version
 		}

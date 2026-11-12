@@ -3,6 +3,8 @@ package cmd
 import (
 	"strings"
 	"testing"
+
+	"github.com/kb-labs/devkit/internal/workspace"
 )
 
 // TestFailureTailShowsAssertionAtEnd is the regression test for the devkit
@@ -66,5 +68,61 @@ func TestFailureTailEmpty(t *testing.T) {
 	lines, hidden := failureTail("", "", 50)
 	if len(lines) != 0 || hidden != 0 {
 		t.Errorf("got %d lines, hidden=%d; want 0,0", len(lines), hidden)
+	}
+}
+
+// A hosted CI job has no runner disk to inspect afterwards, so a failed task
+// must print its whole log there. CI=true is the standard hosted-CI marker.
+func TestFailLineLimitIsUnlimitedInCI(t *testing.T) {
+	t.Setenv("KB_DEVKIT_FAIL_LINES", "")
+	t.Setenv("CI", "true")
+	if got := failLineLimit(); got != 0 {
+		t.Errorf("failLineLimit() in CI = %d, want 0 (unlimited)", got)
+	}
+}
+
+func TestFailLineLimitDefaultsToTailOutsideCI(t *testing.T) {
+	t.Setenv("KB_DEVKIT_FAIL_LINES", "")
+	t.Setenv("CI", "")
+	if got := failLineLimit(); got != 50 {
+		t.Errorf("failLineLimit() outside CI = %d, want 50", got)
+	}
+}
+
+func TestFailLineLimitExplicitValueBeatsCI(t *testing.T) {
+	t.Setenv("CI", "true")
+	t.Setenv("KB_DEVKIT_FAIL_LINES", "7")
+	if got := failLineLimit(); got != 7 {
+		t.Errorf("failLineLimit() = %d, want the explicit 7", got)
+	}
+}
+
+// The two lanes partition the workspace: nothing is in both, nothing is
+// dropped, and membership comes from the package's declared release lane.
+func TestSelectReleaseLanePartitionsWorkspace(t *testing.T) {
+	pkgs := []workspace.Package{
+		{Name: "tool", ReleaseLane: "internal-tool"},
+		{Name: "shipped-go"},
+		{Name: "shipped-ts"},
+	}
+	internal, err := selectReleaseLane(pkgs, "internal-tool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shipped, err := selectReleaseLane(pkgs, "shipped")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(internal) != 1 || internal[0].Name != "tool" {
+		t.Errorf("internal-tool lane = %v, want [tool]", internal)
+	}
+	if len(shipped) != 2 || shipped[0].Name != "shipped-go" || shipped[1].Name != "shipped-ts" {
+		t.Errorf("shipped lane = %v, want [shipped-go shipped-ts]", shipped)
+	}
+	if _, err := selectReleaseLane(pkgs, "bogus"); err == nil {
+		t.Error("unknown lane must be rejected")
+	}
+	if all, err := selectReleaseLane(pkgs, ""); err != nil || len(all) != 3 {
+		t.Errorf("empty lane = %v, %v; want all 3 packages", all, err)
 	}
 }

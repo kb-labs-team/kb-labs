@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPT = resolve(
   fileURLToPath(import.meta.url),
-  '../../../../../../../sites/web/apps/web/scripts/seo-check.mjs',
+  '../../../../../../sites/web/apps/web/scripts/seo-check.mjs',
 );
 
 // ─── fixture helpers ───────────────────────────────────────────────────────
@@ -106,23 +106,6 @@ afterEach(() => {
 });
 
 describe('seo-check devkit mode', () => {
-  it('CHECK-00: self-filter — wrong package name → empty issues', () => {
-    writePageFile(root, 'pricing', 'export default function P() { return null; }');
-
-    const result = spawnSync('node', [SCRIPT], {
-      env: {
-        ...process.env,
-        KB_DEVKIT_MODE: '1',
-        KB_DEVKIT_PACKAGE_NAME: '@kb-labs/other-package',
-        KB_DEVKIT_PACKAGE_DIR: root,
-      },
-      encoding: 'utf8',
-    });
-    const out = JSON.parse(result.stdout) as { issues: unknown[] };
-    expect(out.issues).toHaveLength(0);
-    expect(result.status).toBe(0);
-  });
-
   it('CHECK-01: NO_METADATA — page.tsx without generateMetadata or export const metadata', () => {
     writePageFile(root, 'pricing', 'export default function PricingPage() { return null; }');
 

@@ -19,6 +19,7 @@ type platformLayout struct {
 	PackageManagerStateDirectories map[string]packageManagerDirectory `json:"packageManagerStateDirectories"`
 	InstallerStateDirectory        string                             `json:"installerStateDirectory"`
 	HostStateDirectory             string                             `json:"hostStateDirectory"`
+	HostLogFiles                   hostLogFiles                       `json:"hostLogFiles"`
 	PlatformDataRoot               PlatformDataRoot                   `json:"platformDataRoot"`
 	OwnershipRecord                string                             `json:"ownershipRecord"`
 	OwnershipRecordStagingPrefix   string                             `json:"ownershipRecordStagingPrefix"`
@@ -58,6 +59,11 @@ type VersionStatePath struct {
 	Path              string `json:"path"`
 	Kind              string `json:"kind"`
 	PreserveUserState bool   `json:"preserveUserState,omitempty"`
+}
+
+type hostLogFiles struct {
+	Residue    string `json:"residue"`
+	Structured string `json:"structured"`
 }
 
 type PlatformDataRoot struct {
@@ -322,4 +328,16 @@ func VersionStatePaths() []string {
 		paths = append(paths, path.Path)
 	}
 	return paths
+}
+
+// HostLogFileNames returns the file names, inside the host state directory, of
+// the host's raw fd 1/2 residue log and its structured log base (the platform
+// logger adapter owns the structured file's rotation).
+func HostLogFileNames() (residue, structured string) {
+	var layout platformLayout
+	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil ||
+		layout.HostLogFiles.Residue == "" || layout.HostLogFiles.Structured == "" {
+		panic("invalid embedded platform layout host-log file names")
+	}
+	return layout.HostLogFiles.Residue, layout.HostLogFiles.Structured
 }

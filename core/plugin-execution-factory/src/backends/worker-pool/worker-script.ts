@@ -21,6 +21,7 @@ import type {
   ShutdownMessage,
   UIPromptMessage,
   UIPromptResultMessage,
+  ProcessStartedAckMessage,
 } from './types.js';
 import { SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { ExecutionError } from '@kb-labs/core-platform';
@@ -37,6 +38,7 @@ const workerId = process.env.KB_WORKER_ID ?? 'unknown';
 
 // Pending IPC prompt resolvers keyed by promptId
 const pendingPrompts = new Map<string, (result: UIPromptResultMessage) => void>();
+const pendingProcessStarted = new Map<string, (failure?: string) => void>();
 let promptCounter = 0;
 
 /**
@@ -229,6 +231,16 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
     // Routes by event name — 'log.line' (ui/shell) vs 'logger.line' (ctx.logger.*).
     // See: services/workflow/docs/adr/0019-log-stream-separation.md
     const eventEmitter = async (name: string, payload?: unknown) => {
+      if (name === 'process.started' && payload && typeof payload === 'object') {
+        await new Promise<void>((resolve, reject) => {
+          pendingProcessStarted.set(requestId, (failure) => {
+            if (failure) { reject(new Error(failure)); }
+            else { resolve(); }
+          });
+          process.send!({ type: 'processStarted', requestId, identity: payload });
+        });
+        return;
+      }
       const isLogLine = name === 'log.line' || name.endsWith(':log.line');
       const isLoggerLine = name === 'logger.line' || name.endsWith(':logger.line');
       if ((isLogLine || isLoggerLine) && payload && typeof payload === 'object') {
@@ -368,6 +380,15 @@ function onMessage(message: WorkerMessage): void {
       if (resolve) {
         pendingPrompts.delete(result.promptId);
         resolve(result);
+      }
+      break;
+    }
+    case 'processStartedAck': {
+      const ack = message as ProcessStartedAckMessage;
+      const resolve = pendingProcessStarted.get(ack.requestId);
+      if (resolve) {
+        pendingProcessStarted.delete(ack.requestId);
+        resolve(ack.failure);
       }
       break;
     }

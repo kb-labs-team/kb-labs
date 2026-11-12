@@ -927,6 +927,11 @@ export async function createWorkflowWorker(
               // The redacting step logger is the plugin logger base, with runId/jobId/stepId context.
               // See: services/workflow/docs/adr/0019-log-stream-separation.md
               loggerOverride: safeStepLogger,
+              onProcessStarted: async (identity) => {
+                await engine.getStateStore().updateStep(run.id, job.id, step.id, (draft) => {
+                  draft.processIdentity = identity;
+                });
+              },
               // ui/shell log entries: persist to SQLite with workflow context + publish for SSE.
               // See: services/workflow/docs/adr/0019-log-stream-separation.md
               onLog: (entry) => {

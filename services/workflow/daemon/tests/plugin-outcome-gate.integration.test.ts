@@ -18,11 +18,7 @@ describe('project workflow routes real plugin outcomes', () => {
     roots = [];
   });
 
-  // case: S-295.3
-  it.each([
-    ['partial', 'branch_a', 'branch_b'],
-    ['success', 'branch_b', 'branch_a'],
-  ] as const)('routes plugin status %s to %s and skips %s', async (status, selectedBranch, skippedBranch) => {
+  async function routesPluginOutcome(status: 'partial' | 'success', selectedBranch: 'branch_a' | 'branch_b', skippedBranch: 'branch_a' | 'branch_b'): Promise<void> {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'workflow-plugin-outcome-'));
     roots.push(workspaceRoot);
     const pluginRoot = join(workspaceRoot, 'plugins', 'outcome-router');
@@ -158,5 +154,11 @@ describe('project workflow routes real plugin outcomes', () => {
       await executionBackend.shutdown();
       await registry.dispose();
     }
-  });
+  }
+
+  // case: S-295.3
+  it('routes plugin status partial to branch_a and skips branch_b', () => routesPluginOutcome('partial', 'branch_a', 'branch_b'));
+
+  // case: S-295.3
+  it('routes plugin status success to branch_b and skips branch_a', () => routesPluginOutcome('success', 'branch_b', 'branch_a'));
 });
