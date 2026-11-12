@@ -1,0 +1,26 @@
+name: Save pnpm store
+description: >-
+  Save the pnpm store under the key derived by ./.github/actions/pnpm-store.
+  Used only by the master push workflow, after `pnpm install`; a pull request
+  must never reach this action (ci-cache-writers.test.mjs).
+
+inputs:
+  key:
+    description: The `key` output of ./.github/actions/pnpm-store.
+    required: true
+  path:
+    description: The `path` output of ./.github/actions/pnpm-store.
+    required: true
+  cache-hit:
+    description: The `cache-hit` output of ./.github/actions/pnpm-store; an exact hit is never rewritten.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Save pnpm store
+      if: inputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ inputs.key }}

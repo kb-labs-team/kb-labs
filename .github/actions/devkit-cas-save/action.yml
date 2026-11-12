@@ -1,0 +1,22 @@
+name: Save kb-devkit CAS
+description: >-
+  Save the kb-devkit build store under the key derived by
+  ./.github/actions/devkit-cas. Used only by the master push workflow; a pull
+  request must never reach this action (ci-cache-writers.test.mjs).
+
+inputs:
+  key:
+    description: The `key` output of ./.github/actions/devkit-cas.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Drop task logs from the shared store
+      shell: bash
+      run: rm -rf .kb/devkit/logs
+    - name: Save kb-devkit CAS
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: .kb/devkit/
+        key: ${{ inputs.key }}
