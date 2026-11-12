@@ -446,7 +446,11 @@ func TestRunE2ECachedOutputsPreserveFileModes(t *testing.T) {
 			t.Errorf("restored %s mode = %04o, want %04o", name, got, want)
 		}
 	}
-	if err := filepath.WalkDir(filepath.Join(cacheRoot, "tasks"), func(path string, entry os.DirEntry, err error) error {
+	storeRoot, err := cache.SharedRoot(root)
+	if err != nil {
+		t.Fatalf("resolve shared store: %v", err)
+	}
+	if err := filepath.WalkDir(filepath.Join(storeRoot, "tasks"), func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return err
 		}

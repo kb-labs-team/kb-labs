@@ -104,6 +104,16 @@ type CategoryConfig struct {
 	Language    string   `yaml:"language"`
 	Preset      string   `yaml:"preset"`
 	ReleaseLane string   `yaml:"releaseLane"`
+	// DefaultBuild false marks the category as a product app (a site, for
+	// example): a plain `run` leaves its build task out unless the package is
+	// targeted with --packages or selected by --affected. Nil means
+	// true.
+	DefaultBuild *bool `yaml:"defaultBuild"`
+}
+
+// BuiltByDefault reports whether a plain run builds packages of this category.
+func (c CategoryConfig) BuiltByDefault() bool {
+	return c.DefaultBuild == nil || *c.DefaultBuild
 }
 
 // PresetConfig resolves the preset for this category from the given config.

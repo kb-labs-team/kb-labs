@@ -151,7 +151,7 @@ jobs:
         run: |
           make build -C tools/kb-devkit
           e2e/journey/install-workspace-dependencies.sh
-          ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/qa
+          ./tools/kb-devkit/kb-devkit run build --packages "$(node tools/kb-create/scripts/release-flow-roots.mjs platform),@kb-labs/qa"
       - name: Enforce local and secured release case coverage
         run: |
           run_files=$(find .journey/reports -type f -name 'service-*.json' -print | sort | paste -sd, -)

@@ -113,7 +113,7 @@ jobs:
         # Delivery only invokes the CLI and release plugin. Building the full
         # workspace here needlessly serializes hundreds of unrelated packages
         # and can exhaust the runner before immutable artifacts are delivered.
-        run: ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/release --no-cache
+        run: ./tools/kb-devkit/kb-devkit run build --packages "$(node tools/kb-create/scripts/release-flow-roots.mjs platform),@kb-labs/release" --no-cache
 
       - name: Resolve declared channel delivery target
         id: delivery-target
