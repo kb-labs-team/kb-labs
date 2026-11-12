@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, access, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import { canonicalizeProjectPath, createProjectRegistry } from "@kb-labs/core-project-registry";
 import { createJsonPresenter } from "@kb-labs/cli-runtime";
 import type { LoadPlatformConfigResult } from "@kb-labs/core-runtime";
 
@@ -52,7 +52,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
   });
 
   async function isolateEnvironment(): Promise<string> {
-    isolatedHome = await mkdtemp(path.join(os.tmpdir(), "kb-cli-init-order-"));
+    isolatedHome = await canonicalizeProjectPath(await mkdtemp(path.join(os.tmpdir(), "kb-cli-init-order-")));
     process.env.HOME = isolatedHome;
     process.env.KB_HOME = path.join(isolatedHome, ".kb");
     delete process.env.KB_PLATFORM_ROOT;
@@ -86,6 +86,24 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
   function mockInitialization(): void {
     mocks.initializePlatform.mockImplementation(async (config) => ({ ...config, platform }));
   }
+
+  // case: S-287.1
+  it("does not let a project dotenv choose the platform root", async () => {
+    const home = await isolateEnvironment();
+    const project = path.join(home, "project");
+    await mkdir(project, { recursive: true });
+    await writeFile(path.join(project, ".env"), `KB_PLATFORM_ROOT=${project}\n`);
+    const config = await mockConfig(project);
+    let observed: string | undefined;
+    mocks.loadPlatformConfiguration.mockImplementation(async () => {
+      observed = process.env.KB_PLATFORM_ROOT;
+      return config;
+    });
+    mockInitialization();
+    await executeCli(["config", "get", "--scope", "platform", "--help"], { cwd: project, registerBuiltinCommands: () => {} });
+    expect(observed).toBeUndefined();
+    expect(process.env.KB_PLATFORM_ROOT).toBe(config.platformRoot);
+  });
 
   it("loads project config after the gate, then initializes adapters once with the project root", async () => {
     const home = await isolateEnvironment();

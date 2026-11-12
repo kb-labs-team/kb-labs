@@ -268,7 +268,7 @@ async function launch(
         assemblyHook,
         hostServiceEnvironment,
         workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
-        workspaceRoot: projectRoot,
+        workspaceRoot: platformRoot,
         catalog: loadResult.catalog,
       },
     );
@@ -289,7 +289,7 @@ async function launch(
         assemblyHook,
         hostServiceEnvironment,
         workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
-        workspaceRoot: projectRoot,
+        workspaceRoot: platformRoot,
         catalog: loadResult.catalog,
       },
     );

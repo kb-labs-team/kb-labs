@@ -7,7 +7,10 @@ import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactiv
 import { defineSystemCommand } from '@kb-labs/shared-command-kit';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { handleExecutionError } from './execution-error.js';
-import { platform } from '@kb-labs/core-runtime';
+import { initPlatform, platform, resetAdapterStatus } from '@kb-labs/core-runtime';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AdapterUnavailableError } from '@kb-labs/core-platform';
 
 describe('handleExecutionError', () => {
@@ -95,14 +98,15 @@ describe('handleExecutionError', () => {
     }).hint}`);
   });
 
-  it('renders the startup adapter failure and its recovery command', () => {
-    const message = 'Platform startup aborted: no configured or manifest-discovered local default for "llm".';
-    const recoveryCommand = 'kb-create doctor --platform-root "/tmp/platform"';
-    const failure = new AdapterUnavailableError('llm', 'load-failed', message, undefined, {
-      userMessage: message,
-      hint: recoveryCommand,
-      action: { id: 'diagnose-adapter-load', label: 'Diagnose the platform', command: recoveryCommand },
-    });
+  it('renders the startup adapter failure and its recovery command', async () => {
+    platform.reset();
+    resetAdapterStatus();
+    const root = await mkdtemp(join(tmpdir(), 'kb-startup-error-'));
+    let failure: unknown;
+    try { await initPlatform({}, root, undefined, root); } catch (error) { failure = error; }
+    finally { await rm(root, { recursive: true, force: true }); }
+    expect(failure).toBeInstanceOf(AdapterUnavailableError);
+    if (!(failure instanceof AdapterUnavailableError)) throw new Error('Expected an adapter failure');
     const json = vi.fn();
     const presenter = { isJSON: true, json, error: vi.fn() } as unknown as Presenter;
     expect(handleExecutionError(failure, presenter)).toBe(1);

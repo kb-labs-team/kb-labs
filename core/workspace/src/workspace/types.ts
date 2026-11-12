@@ -79,9 +79,6 @@ export type PlatformRootSource =
   | 'explicit'
   | 'env'
   | 'module'
-  | 'marker'
-  | 'repo'
-  | 'fallback'
 
 export interface PlatformRootResolution {
   rootDir: string
@@ -102,7 +99,7 @@ export interface ResolvePlatformRootOptions {
    */
   moduleUrl?: string
   /**
-   * Starting directory for marker-based discovery. Defaults to process.cwd().
+   * Starting directory for project resolution; never selects the platform root.
    */
   startDir?: string
   /**

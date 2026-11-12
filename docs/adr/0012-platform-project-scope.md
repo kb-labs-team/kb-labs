@@ -92,13 +92,8 @@ returns provenance:
 ```
 
 `loadPlatformConfig` uses this and exposes `sources.fields`,
-`sources.ignoredProjectFields`, and `sources.platformDirOverride` on its
-result.
-
-**`platform.dir` re-resolve:** when the project config sets
-`platform.dir`, the loader re-resolves `platformRoot` and re-reads the
-platform config from that location. Self-reference (project pointing at
-itself) is ignored.
+`sources.ignoredProjectFields` on its result. The launcher determines the
+platform root; `platform.dir` does not change it in the runtime loader.
 
 ### 3. Marketplace — two locks, explicit scope
 
