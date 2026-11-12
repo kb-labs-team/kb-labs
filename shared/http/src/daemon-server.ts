@@ -11,6 +11,7 @@ import type {
   ServiceObservabilityHealth,
 } from "@kb-labs/core-contracts";
 import { createHttpLogger } from "./log-context.js";
+import { logRequestCompleted } from "./request-completion-log.js";
 import { registerOpenAPI, type OpenAPIOptions } from "./register-openapi.js";
 import type { ServiceReadyResponse } from "./service-observability.js";
 
@@ -100,14 +101,14 @@ export async function createDaemonServer(
   server.addHook(
     "onResponse",
     async (request: FastifyRequest, reply: FastifyReply) => {
-      request.kbLogger?.info("HTTP request completed", {
-        "http.status_code": reply.statusCode,
-      });
+      logRequestCompleted(request, reply);
     },
   );
 
   if (!opts.skipStandardRoutes) {
-    const standardRouteOptions = () => ({ config: { ...opts.standardRouteConfig } });
+    const standardRouteOptions = () => ({
+      config: { ...opts.standardRouteConfig, kbRequestKind: "probe" as const },
+    });
     server.get("/health", standardRouteOptions(), async () =>
       opts.healthResponse
         ? opts.healthResponse()

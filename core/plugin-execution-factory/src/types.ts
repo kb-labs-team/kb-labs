@@ -46,6 +46,7 @@ import type {
   ExecutionStats as CoreExecutionStats,
 } from '@kb-labs/core-contracts';
 import type { NormalizedExecutionResult } from './normalized-result.js';
+import type { ProcessIdentity } from '@kb-labs/plugin-contracts';
 
 // Re-export runtime types for convenience (consumers use these, not custom types)
 export type { PluginContextDescriptor, HostContext, HostType, PermissionSpec };
@@ -279,6 +280,7 @@ export type OnLogCallback = (entry: LogEntry) => void;
  */
 export interface ExecuteOptions {
   signal?: AbortSignal;
+  onProcessStarted?: (identity: ProcessIdentity) => Promise<void>;
   pluginInvoker?: PluginInvokerFn;
   /** Context-specific instruction shown when this execution cannot answer a UI prompt. */
   uiPromptHint?: string;

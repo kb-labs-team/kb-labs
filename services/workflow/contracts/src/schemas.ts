@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isProcessIdentity, type ProcessIdentity } from '@kb-labs/plugin-contracts'
 import {
   RUN_STATES,
   JOB_STATES,
@@ -272,6 +273,7 @@ export const StepRunSchema = z.object({
   continueOnError: z.boolean().optional(),
   error: StepRunErrorSchema.optional(),
   outputs: z.record(z.string(), z.unknown()).optional(),
+  processIdentity: z.custom<ProcessIdentity>(isProcessIdentity).optional(),
   skipReason: z.string().optional(),
   spec: StepSpecSchema,
   /**

@@ -80,6 +80,8 @@ export interface ProjectRuntimeOptions
   modules?: readonly ProjectRuntimeModule[];
   /** Entrypoint import.meta.url for installed-mode platform discovery. */
   moduleUrl?: string;
+  /** Cause reported by the host supervisor for the previous process. */
+  previousExitCause?: string;
 }
 
 function loopbackUrl(port: number): string {
@@ -254,6 +256,7 @@ export async function createProjectRuntimeConfig(
     projectId: options.projectId,
     startDir: options.projectRoot,
     moduleUrl: options.moduleUrl,
+    previousExitCause: options.previousExitCause,
     platform: { assemblyHook },
     modules: [...serviceModules, guard],
   };

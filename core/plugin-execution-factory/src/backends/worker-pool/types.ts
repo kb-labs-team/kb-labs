@@ -15,7 +15,7 @@ import type {
 import type { WorkerFailureDiagnostic } from '../../errors.js';
 import type { ExecutionError } from '@kb-labs/core-platform';
 import type { RawMiddlewareDecl } from '@kb-labs/plugin-runtime';
-import type { PlatformServices, UIFacade } from '@kb-labs/plugin-contracts';
+import type { PlatformServices, ProcessIdentity, UIFacade } from '@kb-labs/plugin-contracts';
 import type { ProcessTableSource } from './process-tree.js';
 
 export interface WorkerPoolBackendOptions extends WorkerPoolOptions {
@@ -155,7 +155,9 @@ export type WorkerMessageType =
   | 'ready'           // Worker -> Pool: worker is ready
   | 'middlewares'     // Pool -> Worker: adapter middleware declarations (sent once after ready)
   | 'uiPrompt'        // Worker -> Pool: request interactive prompt from host TTY
-  | 'uiPromptResult'; // Pool -> Worker: result of interactive prompt
+  | 'uiPromptResult'  // Pool -> Worker: result of interactive prompt
+  | 'processStarted'  // Worker -> Pool: governed child process identity
+  | 'processStartedAck'; // Pool -> Worker: identity persistence completed
 
 /**
  * Base IPC message.
@@ -292,6 +294,18 @@ export type UIPromptResultMessage = BaseWorkerMessage & ({
   failure: ExecutionError;
 });
 
+export interface ProcessStartedMessage extends BaseWorkerMessage {
+  type: 'processStarted';
+  requestId: string;
+  identity: ProcessIdentity;
+}
+
+export interface ProcessStartedAckMessage extends BaseWorkerMessage {
+  type: 'processStartedAck';
+  requestId: string;
+  failure?: string;
+}
+
 /**
  * Adapter middleware declarations (Pool -> Worker).
  * Sent once after worker signals ready; worker resolves and caches LoadedMiddleware[].
@@ -316,7 +330,9 @@ export type WorkerMessage =
   | ReadyMessage
   | MiddlewaresInitMessage
   | UIPromptMessage
-  | UIPromptResultMessage;
+  | UIPromptResultMessage
+  | ProcessStartedMessage
+  | ProcessStartedAckMessage;
 
 // ============================================================================
 // Queue Types
@@ -352,6 +368,8 @@ export interface QueuedRequest {
 
   /** UI prompt callback — passed through to worker.execute() */
   onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>;
+  /** Persist the identity of a governed process started by this request. */
+  onProcessStarted?: (identity: ProcessIdentity) => Promise<void>;
   /** Context-specific hint used when no UI prompt responder is available. */
   uiPromptHint?: string;
 }

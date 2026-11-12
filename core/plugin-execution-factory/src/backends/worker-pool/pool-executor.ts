@@ -84,11 +84,12 @@ export class PoolExecutor {
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     uiPromptHint?: string,
     signal?: AbortSignal,
+    onProcessStarted?: (identity: import('@kb-labs/plugin-contracts').ProcessIdentity) => Promise<void>,
   ): Promise<ExecutionResult> {
     this.onTotalRequests();
 
     try {
-      const result = await worker.execute(request, timeoutMs, onLog, onUIPrompt, onLoggerLog, uiPromptHint, signal);
+      const result = await worker.execute(request, timeoutMs, onLog, onUIPrompt, onLoggerLog, uiPromptHint, signal, onProcessStarted);
 
       if (result.ok) {
         this.onSuccessCount();

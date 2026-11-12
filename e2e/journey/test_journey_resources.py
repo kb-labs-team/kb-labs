@@ -2,8 +2,37 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from journey_resources import (active_platform_root, current_link_path,
-                               parse_shell_commands, version_roots_path)
+from installed_fixture import installed_path, layout_value
+from journey_resources import (active_platform_root, current_link_path, host_log_tails,
+                               host_structured_log_problem, parse_shell_commands, version_roots_path)
+
+
+class HostLogSeamTest(unittest.TestCase):
+    def host_state(self, root: Path) -> Path:
+        state = installed_path(root, "hostStateDirectory")
+        state.mkdir(parents=True)
+        return state
+
+    def test_started_host_must_have_written_its_structured_log(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = self.host_state(root)
+            self.assertIn("wrote no structured log", host_structured_log_problem(root))
+            structured = state / layout_value("hostLogFiles.structured")
+            structured.write_text("not a record\n")
+            self.assertIn("no log record", host_structured_log_problem(root))
+            structured.write_text('{"level":30,"time":1,"msg":"host started"}\n')
+            self.assertIsNone(host_structured_log_problem(root))
+
+    def test_failure_diagnostics_carry_the_tail_of_both_host_logs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = self.host_state(root)
+            (state / layout_value("hostLogFiles.residue")).write_text("residue-cause\n")
+            (state / layout_value("hostLogFiles.structured")).write_text('{"level":50,"msg":"structured-cause"}\n')
+            tails = host_log_tails(root)
+            self.assertIn("residue-cause", tails)
+            self.assertIn("structured-cause", tails)
 
 
 class ActivePlatformRootTest(unittest.TestCase):
