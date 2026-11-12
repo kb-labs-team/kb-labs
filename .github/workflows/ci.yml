@@ -98,7 +98,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
-          cache-dependency-path: tools/kb-create/go.sum
+          cache: false
       - name: Enforce autonomous V2 boundary
         run: |
           if go list -deps ${{ matrix.packages }} | grep -q '^github.com/kb-labs/create/internal/'; then
@@ -130,7 +130,17 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
+        id: pnpm-store
+      # This job is the only writer of the shared CI caches (devkit store, pnpm
+      # store). It builds cold on purpose, so a saved store holds exactly this
+      # commit's outputs and never grows with history; pull requests restore it
+      # read-only (ci-cache-writers.test.mjs).
+      - name: Derive the devkit store key
+        id: devkit-cas
+        uses: ./.github/actions/devkit-cas
+        with:
+          mode: 'off'
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -142,12 +152,24 @@ jobs:
           cp tools-bin/kb-dev    tools/kb-dev/kb-dev
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Save pnpm store
+        uses: ./.github/actions/pnpm-store-save
+        with:
+          key: ${{ steps.pnpm-store.outputs.key }}
+          path: ${{ steps.pnpm-store.outputs.path }}
+          cache-hit: ${{ steps.pnpm-store.outputs.cache-hit }}
       - name: Build (devkit, topological, no cache)
         env:
           # Full CI needs production JS artifacts. Development-only Module
           # Federation DTS workers can deadlock when rspack builds overlap.
           NODE_ENV: production
-        run: ./tools/kb-devkit/kb-devkit run build --no-cache
+        run: |
+          set -o pipefail
+          ./tools/kb-devkit/kb-devkit run build --no-cache 2>&1 | tee build.log
+      - name: Save devkit store
+        uses: ./.github/actions/devkit-cas-save
+        with:
+          key: ${{ steps.devkit-cas.outputs.key }}
       - name: Pack dist artifacts
         run: find . -path "*/dist" -not -path "*/node_modules/*" -type d | tar cf dist-artifacts.tar -T -
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -187,7 +209,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - run: pnpm install --frozen-lockfile
       - name: Check Single Version Policy (versions + format)
         run: pnpm deps:lint
@@ -210,10 +232,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
+          cache: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -245,7 +268,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -276,10 +299,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
+          cache: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -340,11 +364,12 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
+          cache: false
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:

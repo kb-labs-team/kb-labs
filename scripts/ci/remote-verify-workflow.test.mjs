@@ -104,21 +104,21 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
   const nodeSetup = steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
   const goSetup = steps.find((step) => step.uses?.startsWith('actions/setup-go@'));
   const cas = readYaml('.github/actions/devkit-cas/action.yml');
-  const cache = cas.runs.steps.find((step) => step.uses?.startsWith('actions/cache@'));
+  const cache = cas.runs.steps.find((step) => step.uses?.startsWith('actions/cache/restore@'));
   const profile = JSON.parse(readFileSync(path.join(root, 'scripts/ci/verification-profile.json'), 'utf8'));
 
   assert.equal(nodeSetup.with.cache, 'pnpm');
   assert.equal(goSetup.with['cache-dependency-path'], 'tools/kb-create/go.sum');
   assert.equal(cache.with.path, '.kb/devkit/');
-  assert.match(cache.with.key, /\$\{\{ github\.sha \}\}/);
-  const toolchain = cas.runs.steps.find((step) => step.name === 'Identify cache toolchain partition');
-  assert.equal(toolchain.id, 'toolchain');
-  assert.match(toolchain.run, /node --version/);
-  assert.match(toolchain.run, /go version/);
-  assert.match(cache.with.key, /runner\.arch/);
-  assert.match(cache.with.key, /steps\.toolchain\.outputs\.partition/);
-  assert.doesNotMatch(cache.with.key, /hashFiles\(/);
-  assert.equal(cache.with['restore-keys'].trim(), 'devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-');
+  // x296: the shared store is master-written; this action only restores. The key
+  // and its prefix are derived once (step `key`), and the sha-suffixed key is the
+  // one the master workflow saves under.
+  assert.ok(cas.runs.steps.every((step) => !step.uses?.startsWith('actions/cache@') && !step.uses?.startsWith('actions/cache/save@')));
+  assert.equal(cache.with.key, '${{ steps.key.outputs.key }}');
+  assert.equal(cache.with['restore-keys'].trim(), '${{ steps.key.outputs.prefix }}');
+  const keyStep = cas.runs.steps.find((step) => step.id === 'key');
+  assert.match(keyStep.run, /devkit-cas-master-\$\{RUNNER_OS\}-\$\{KEY_HASH\}-/);
+  assert.match(keyStep.run, /\$GITHUB_SHA/);
   assert.equal(cas.outputs['cache-hit'].value, '${{ steps.restore.outputs.cache-hit }}');
   assert.ok(profile.buildDependentTestStages.candidate.includes('journey-unit-suite'));
   assert.ok(!profile.buildDependentTestStages.stream.includes('journey-unit-suite'));

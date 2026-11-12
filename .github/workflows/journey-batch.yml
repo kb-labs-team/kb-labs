@@ -61,12 +61,12 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version-file: package.json
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
-          cache-dependency-path: tools/kb-devkit/go.sum
+          cache: false
       - id: dependencies
         name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
@@ -104,11 +104,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version-file: package.json
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
-          cache-dependency-path: tools/kb-devkit/go.sum
+          cache: false
       - name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
@@ -147,11 +147,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version-file: package.json
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
-          cache-dependency-path: tools/kb-devkit/go.sum
+          cache: false
       - name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16

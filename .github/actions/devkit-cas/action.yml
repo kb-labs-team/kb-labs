@@ -1,35 +1,45 @@
 name: Restore kb-devkit CAS
-description: Restore the addressable kb-devkit build cache for fast CI lanes.
+description: >-
+  Restore the kb-devkit build store written by CI (master). This action never
+  saves: only the master push workflow writes the shared store, through
+  ./.github/actions/devkit-cas-save, using the key this action derives.
 
 inputs:
   mode:
-    description: 'read-write restores and saves the CAS; off always builds cold'
+    description: 'restore reads the newest master store; off restores nothing (the master writer uses it to derive the key and build cold)'
     required: false
-    default: read-write
+    default: restore
 
 outputs:
   cache-hit:
-    description: Whether the exact immutable cache key was restored.
+    description: Whether the exact key (this commit) was restored. Pull requests never match it.
     value: ${{ steps.restore.outputs.cache-hit }}
+  key:
+    description: The exact key the master workflow saves this commit's store under.
+    value: ${{ steps.key.outputs.key }}
 
 runs:
   using: composite
   steps:
-    - name: Identify cache toolchain partition
-      if: inputs.mode == 'read-write'
-      id: toolchain
+    - name: Derive the store key
+      id: key
       shell: bash
+      env:
+        # Task fingerprints own source validity. This outer key only decides
+        # which master store is allowed to seed a run: a lockfile, task-graph
+        # or devkit change starts cold. The devkit binary is built per job and
+        # is not part of the key (it would differ on every run).
+        KEY_HASH: ${{ hashFiles('pnpm-lock.yaml', 'devkit.yaml', 'tools/kb-devkit/**', '!tools/kb-devkit/kb-devkit') }}
       run: |
-        partition=$(printf '%s\n%s\n' "$(node --version)" "$(go version)" | shasum -a 256 | cut -c 1-16)
-        printf 'partition=%s\n' "$partition" >> "$GITHUB_OUTPUT"
-    - name: Restore kb-devkit CAS
-      if: inputs.mode == 'read-write'
+        prefix="devkit-cas-master-${RUNNER_OS}-${KEY_HASH}-"
+        printf 'prefix=%s\n' "$prefix" >> "$GITHUB_OUTPUT"
+        printf 'key=%s%s\n' "$prefix" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+    - name: Restore kb-devkit CAS (read-only)
+      if: inputs.mode == 'restore'
       id: restore
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: .kb/devkit/
-        # Task fingerprints own source validity. This outer cache only transports
-        # objects between runs sharing a runner platform and Node/Go toolchain.
-        key: devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ github.sha }}
+        key: ${{ steps.key.outputs.key }}
         restore-keys: |
-          devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-
+          ${{ steps.key.outputs.prefix }}

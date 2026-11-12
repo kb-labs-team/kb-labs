@@ -22,7 +22,7 @@ jobs:
       artifact-name: e2e-platform-prebuilt-${{ github.run_id }}
       # PR callers opt into the fast, addressable CAS. Main, scheduled, and
       # release-triggered runs are authoritative cold builds.
-      cache-mode: ${{ github.event_name == 'workflow_call' && 'read-write' || 'off' }}
+      cache-mode: ${{ github.event_name == 'workflow_call' && 'restore' || 'off' }}
     permissions:
       contents: read
 
@@ -42,7 +42,7 @@ jobs:
       playwright-dir: e2e/plugins
       compose-project: kb-e2e-ci-${{ matrix.suite }}
       prebuilt-artifact: e2e-platform-prebuilt-${{ github.run_id }}
-      cache-mode: ${{ github.event_name == 'workflow_call' && 'read-write' || 'off' }}
+      cache-mode: ${{ github.event_name == 'workflow_call' && 'restore' || 'off' }}
     permissions:
       contents: read
 
@@ -57,7 +57,7 @@ jobs:
       health-steps: 120
       compose-project: kb-e2e-ci-mcp
       prebuilt-artifact: e2e-platform-prebuilt-${{ github.run_id }}
-      cache-mode: ${{ github.event_name == 'workflow_call' && 'read-write' || 'off' }}
+      cache-mode: ${{ github.event_name == 'workflow_call' && 'restore' || 'off' }}
     permissions:
       contents: read
 
@@ -78,7 +78,7 @@ jobs:
       studio: true
       studio-https: false
       idp: false
-      cache-mode: ${{ github.event_name == 'workflow_call' && 'read-write' || 'off' }}
+      cache-mode: ${{ github.event_name == 'workflow_call' && 'restore' || 'off' }}
       prebuilt-artifact: e2e-platform-prebuilt-${{ github.run_id }}
       health-steps: 120
     permissions:
@@ -99,7 +99,7 @@ jobs:
       studio-https: true
       idp: true
       hosts-entry: "127.0.0.1 kb-cloud.kblabs.ru"
-      cache-mode: ${{ github.event_name == 'workflow_call' && 'read-write' || 'off' }}
+      cache-mode: ${{ github.event_name == 'workflow_call' && 'restore' || 'off' }}
       prebuilt-artifact: e2e-platform-prebuilt-${{ github.run_id }}
       health-steps: 120
     permissions:
@@ -131,7 +131,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24'
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: e2e-platform-prebuilt-${{ github.run_id }}

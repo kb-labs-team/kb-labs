@@ -1,0 +1,34 @@
+name: Consume the devkit store of this run
+description: >-
+  Every job after `build` in a CI (PR) run consumes the build instead of
+  repeating it: download the store the build job shipped, then run
+  `kb-devkit run build`, which restores every cacheable task. The gate fails
+  the job when any cacheable task rebuilt or the restore is slow, which is the
+  self-test that the wiring (store artifact, key, task set) is intact. Needs
+  kb-devkit installed and dependencies installed, like any devkit run.
+
+inputs:
+  max-seconds:
+    description: A restore slower than this fails the job.
+    required: false
+    default: '60'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: devkit-store
+    - name: Unpack the devkit store
+      shell: bash
+      run: tar xf devkit-store.tar
+    - name: Build (restore from the devkit store, must be all cache hits)
+      shell: bash
+      env:
+        # Declared once here and in the build job; the task keys do not hash env.
+        NODE_ENV: production
+        MAX_SECONDS: ${{ inputs.max-seconds }}
+      run: |
+        set -o pipefail
+        ./tools/kb-devkit/kb-devkit run build 2>&1 | tee build-consume.log
+        node scripts/ci/devkit-build-gate.mjs consume build-consume.log --baseline .ci/devkit-build-baseline.json --max-seconds "$MAX_SECONDS"
