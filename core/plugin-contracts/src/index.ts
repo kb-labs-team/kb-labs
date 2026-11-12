@@ -336,3 +336,5 @@ export type {
 
 export * from './catalog.js';
 export { mergeOpenAPISpecs } from './openapi-merge.js';
+export { captureProcessIdentity, isProcessIdentityAlive, isProcessIdentity, sameProcessIdentity } from './process-identity.js';
+export type { ProcessIdentity } from './process-identity.js';

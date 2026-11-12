@@ -10,7 +10,7 @@
  */
 
 import { execaCommand } from 'execa';
-import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { captureProcessIdentity, type PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 /**
  * Commands that are always blocked (dangerous)
@@ -355,6 +355,26 @@ async function shellHandler(
       reject: false, // We handle exit codes ourselves
       detached: true,
     });
+
+    if (ctx.onProcessStarted) {
+      const pid = proc.pid;
+      if (pid === undefined) {
+        throw new Error('Shell process started without an OS process id');
+      }
+      const identity = await captureProcessIdentity(pid);
+      try {
+        await ctx.onProcessStarted(identity);
+      } catch (error) {
+        try {
+          process.kill(process.platform === 'darwin' || process.platform === 'linux' ? -pid : pid, 'SIGKILL');
+        } catch (killError) {
+          if (!(killError instanceof Error) || !('code' in killError) || killError.code !== 'ESRCH') {
+            throw killError;
+          }
+        }
+        throw error;
+      }
+    }
 
     // Stream stdout/stderr line-by-line in real-time.
     // We consume the streams ourselves via 'data' events for live log streaming.

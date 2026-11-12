@@ -18,6 +18,7 @@ import {
 } from '@kb-labs/workflow-constants'
 import type { ICache, IStorage, IEventBus, ILogger, IAnalytics, ISnapshotManager, Unsubscribe } from '@kb-labs/core-platform'
 import type { ClassifiedFailure, RetryPolicyConfig } from '@kb-labs/core-contracts'
+import { isProcessIdentityAlive } from '@kb-labs/plugin-contracts'
 import { classifyFailure, decideRetry } from '@kb-labs/core-retry'
 import { StateStore } from './state-store'
 import { ConcurrencyManager, type AcquireOptions } from './concurrency-manager'
@@ -1190,15 +1191,21 @@ export class WorkflowEngine {
         }
 
         if (hasParkedJob) {
-          await this.failAbandonedJobs(runId, abandonedJobIds, now)
-          count++
-          await this.checkRunCompletion(runId, abandonedJobIds[0]!)
+          await this.terminateOwnedProcesses(run, abandonedJobIds)
+          const failedJobIds = await this.failAbandonedJobs(runId, abandonedJobIds, now)
+          if (failedJobIds.length > 0) {
+            count++
+            await this.checkRunCompletion(runId, failedJobIds[0]!)
+          }
           return
         }
 
-        await this.failAbandonedJobs(runId, abandonedJobIds, now)
-        count++
-        await this.checkRunCompletion(runId, abandonedJobIds[0]!)
+        await this.terminateOwnedProcesses(run, abandonedJobIds)
+        const failedJobIds = await this.failAbandonedJobs(runId, abandonedJobIds, now)
+        if (failedJobIds.length > 0) {
+          count++
+          await this.checkRunCompletion(runId, failedJobIds[0]!)
+        }
       }),
     )
 
@@ -1207,26 +1214,81 @@ export class WorkflowEngine {
     }
   }
 
-  private async failAbandonedJobs(runId: string, jobIds: string[], finishedAt: string): Promise<void> {
-    const run = await this.stateStore.getRun(runId)
-    if (!run) { return }
+  /**
+   * Fail the abandoned jobs from the state read under the run lock. Terminating
+   * processes happens before this call, so a job may have finished in between;
+   * the decision (still non-terminal?) and the transition are one step on the
+   * state read here, never on the earlier unlocked read. Returns the ids of the
+   * jobs this call actually failed.
+   */
+  private async failAbandonedJobs(runId: string, jobIds: string[], finishedAt: string): Promise<string[]> {
+    const failed: string[] = []
+    const message = 'Daemon restarted — run was abandoned'
+    await this.stateStore.updateRun(runId, (run) => {
+      for (const jobId of jobIds) {
+        const job = run.jobs.find((candidate) => candidate.id === jobId)
+        if (!job) { continue }
+        if (job.status !== 'running' && job.status !== 'queued') {
+          this.logger.debug('Restart reconciliation kept a job that is no longer abandoned', {
+            runId, jobId, jobStatus: job.status,
+          })
+          continue
+        }
+        for (const step of job.steps) {
+          if (step.status !== 'running') { continue }
+          assertTransition('step', step.status, 'failed')
+          step.status = 'failed'
+          step.error = {
+            message,
+            details: { terminationReason: 'daemon-restart', processIdentity: step.processIdentity },
+          }
+          step.finishedAt = finishedAt
+          step.eventSequence = run.eventSequence
+        }
+        assertTransition('job', job.status, 'failed')
+        job.status = 'failed'
+        job.error = {
+          message,
+          details: {
+            terminationReason: 'daemon-restart',
+            processIdentities: job.steps.flatMap((step) => step.processIdentity ? [step.processIdentity] : []),
+          },
+        }
+        job.finishedAt = finishedAt
+        job.eventSequence = run.eventSequence
+        failed.push(jobId)
+      }
+    })
+    return failed
+  }
 
+  private async terminateOwnedProcesses(run: WorkflowRun, jobIds: string[]): Promise<void> {
     for (const jobId of jobIds) {
       const job = run.jobs.find((candidate) => candidate.id === jobId)
       if (!job) { continue }
-      const message = 'Daemon restarted — run was abandoned'
       for (const step of job.steps) {
-        if (step.status === 'running') {
-          await this.stateStore.transitionStep(runId, jobId, step.id, 'failed', (draft) => {
-            draft.error = { message }
-            draft.finishedAt = finishedAt
-          })
+        const identity = step.processIdentity
+        if (step.status !== 'running' || !identity || !(await isProcessIdentityAlive(identity))) { continue }
+        const processTarget = process.platform === 'darwin' || process.platform === 'linux' ? -identity.pid : identity.pid
+        this.signalProcess(processTarget, 'SIGTERM')
+        await new Promise<void>((resolve) => { setTimeout(resolve, 250) })
+        if (await isProcessIdentityAlive(identity)) {
+          this.signalProcess(processTarget, 'SIGKILL')
+          await new Promise<void>((resolve) => { setTimeout(resolve, 100) })
+        }
+        if (await isProcessIdentityAlive(identity)) {
+          throw new Error(`Workflow daemon could not terminate process ${identity.pid} during restart reconciliation`)
         }
       }
-      await this.stateStore.transitionJob(runId, jobId, 'failed', (draft) => {
-        draft.error = { message }
-        draft.finishedAt = finishedAt
-      })
+    }
+  }
+
+  private signalProcess(pid: number, signal: NodeJS.Signals): void {
+    try {
+      process.kill(pid, signal)
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ESRCH') { return }
+      throw error
     }
   }
 

@@ -278,6 +278,7 @@ export class PoolLifecycleManager implements WorkerPoolServingOwner {
         signal: options?.signal,
         onLog: options?.onLog,
         onLoggerLog: options?.onLoggerLog,
+        onProcessStarted: options?.onProcessStarted,
         onUIPrompt,
         uiPromptHint: options?.uiPromptHint,
       });
