@@ -33,8 +33,13 @@ test('product invariants document passes the structural and path check', async (
   assert.deepEqual(productInvariantIssues(validDocument, repositoryRoot), []);
 });
 
+test('accepts the newly allocated INV-13 invariant id', () => {
+  assert.deepEqual(productInvariantIssues(validDocument, repositoryRoot), []);
+});
+
 test('rejects a missing invariant id', async () => {
   await expectRejected(validDocument.replace(section(validDocument, 'INV-03'), ''), /missing.*INV-03/i);
+  await expectRejected(validDocument.replace(section(validDocument, 'INV-13'), ''), /missing.*INV-13/i);
 });
 
 test('rejects a duplicate invariant id', async () => {
@@ -42,7 +47,7 @@ test('rejects a duplicate invariant id', async () => {
 });
 
 test('rejects an extra invariant id', async () => {
-  await expectRejected(`${validDocument}\n${section(validDocument, 'INV-01').replace('INV-01', 'INV-13')}`, /unexpected.*INV-13/i);
+  await expectRejected(`${validDocument}\n${section(validDocument, 'INV-01').replace('INV-01', 'INV-14')}`, /unexpected.*INV-14/i);
 });
 
 test('rejects an unknown status', async () => {

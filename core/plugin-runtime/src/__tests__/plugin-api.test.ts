@@ -395,7 +395,8 @@ describe('Plugin API', () => {
   });
 
   describe('shell API', () => {
-    it('should block shell when permission not granted', async () => {
+    // case: S-295.2
+    it('denies undeclared shell commands with the typed permission code', async () => {
       const permissions: PermissionSpec = {
         // No shell permission
       };
@@ -406,11 +407,12 @@ describe('Plugin API', () => {
         permissions,
         cache: mockCache,
         cleanupStack,
+        processExecutor,
       });
 
-      await expect(
-        api.shell.exec('echo', ['hello'])
-      ).rejects.toThrow(PermissionError);
+      const execute = vi.spyOn(processExecutor, 'execute');
+      await expect(api.shell.exec('echo', ['hello'])).rejects.toMatchObject({ code: 'KB_PLUGIN_PERMISSION_DENIED' });
+      expect(execute).not.toHaveBeenCalled();
     });
 
     it('should allow whitelisted commands', async () => {
@@ -560,7 +562,8 @@ describe('Plugin API', () => {
       ).rejects.toThrow(PermissionError);
     });
 
-    it('should block invoke when permission not granted', async () => {
+    // case: S-295.1
+    it('denies undeclared invoke calls with the typed permission code', async () => {
       const mockInvoker = vi.fn().mockResolvedValue({ result: 'success' });
 
       const permissions: PermissionSpec = {
@@ -576,9 +579,7 @@ describe('Plugin API', () => {
         pluginInvoker: mockInvoker,
       });
 
-      await expect(
-        api.invoke.call('@kb-labs/other-plugin', { input: 'data' })
-      ).rejects.toThrow(PermissionError);
+      await expect(api.invoke.call('@kb-labs/other-plugin', { input: 'data' })).rejects.toMatchObject({ code: 'KB_PLUGIN_PERMISSION_DENIED' });
 
       // Invoker should not be called
       expect(mockInvoker).not.toHaveBeenCalled();
