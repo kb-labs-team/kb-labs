@@ -22,6 +22,9 @@ async function main(): Promise<void> {
       listen: args.listen,
       token: args.token,
       moduleUrl: import.meta.url,
+      onReady: (address) => {
+        process.send?.({ type: "kb-project-runtime-ready", address });
+      },
     }),
   );
 

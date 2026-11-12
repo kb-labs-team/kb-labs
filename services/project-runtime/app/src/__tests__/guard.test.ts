@@ -3,7 +3,7 @@ import { connect } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { createContextLogger } from "@kb-labs/core-platform";
 import { NoOpLogger } from "@kb-labs/core-platform/noop";
-import { reserveLoopbackPorts, type ActiveWorkItem } from "@kb-labs/shared-daemon";
+import type { ActiveWorkItem } from "@kb-labs/shared-daemon";
 import { createRuntimeGuard, tokenMatches, type RuntimeGuard } from "../guard.js";
 import {
   RUNTIME_ACTIVE_WORK_PATH,
@@ -15,6 +15,21 @@ import {
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
 const HOST = "127.0.0.1";
+
+async function ephemeralPort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>((resolve, reject) => {
+    probe.once("error", reject);
+    probe.listen(0, HOST, resolve);
+  });
+  const address = probe.address();
+  if (!address || typeof address === "string") {
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    throw new Error("Test port probe did not return a TCP address");
+  }
+  await new Promise<void>((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+  return address.port;
+}
 
 interface Seen {
   method?: string;
@@ -63,7 +78,7 @@ describe("runtime guard", () => {
   }
 
   async function start(withModule: boolean, listActiveWork: () => Promise<readonly ActiveWorkItem[]> = async () => []): Promise<{ base: string; seen: Seen[] }> {
-    const [guardPort, restPort, downPort] = await reserveLoopbackPorts(3);
+    const [guardPort, restPort, downPort] = await Promise.all([ephemeralPort(), ephemeralPort(), ephemeralPort()]);
     const seen: Seen[] = [];
     if (withModule) {
       await moduleServer(restPort!, seen);

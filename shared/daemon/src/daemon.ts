@@ -28,6 +28,8 @@ export interface ServiceContext {
   projectRoot?: string;
   projectId?: string;
   activeWork: ActiveWorkRegistry;
+  /** Publishes the address the service actually bound, for in-process routing. */
+  publishListenAddress(address: { host: string; port: number }): Promise<void>;
 }
 
 type ServiceSetup = (
@@ -111,6 +113,11 @@ export interface HostConfig {
   platform: PlatformLaunchOptions;
   /** Started in array order, torn down in reverse order. */
   modules: readonly HostModule[];
+  /** Receives the address a module reports after binding its server. */
+  publishListenAddress?: (
+    module: HostModule,
+    address: { host: string; port: number },
+  ) => Promise<void>;
 }
 
 function resolveNetwork(
@@ -222,6 +229,9 @@ export async function runHost(config: HostConfig): Promise<void> {
         platformRoot: runtime.roots.platformRoot,
         projectId: config.projectId,
         activeWork,
+        publishListenAddress: async (address) => {
+          await config.publishListenAddress?.(module, address);
+        },
       });
       started.push({ id: module.id, teardown });
     } catch (error) {

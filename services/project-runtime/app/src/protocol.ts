@@ -39,3 +39,9 @@ export const RUNTIME_ARGS = {
 
 /** Authenticated runtime aggregate endpoint used only by the supervising host. */
 export const RUNTIME_ACTIVE_WORK_PATH = "/__runtime/active-work";
+
+/** Child-process IPC message announcing the guard's actual bound address. */
+export interface RuntimeReadyMessage {
+  type: "kb-project-runtime-ready";
+  address: { host: string; port: number };
+}

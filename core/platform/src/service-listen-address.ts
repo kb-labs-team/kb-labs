@@ -21,6 +21,7 @@ export interface ServiceNetworkSettings {
   serviceId: string;
   portEnvVar?: string;
   portEnvValue?: string;
+  /** Use port zero to let the service bind an ephemeral port and publish it. */
   defaultPort?: number;
   hostEnvValue?: string;
   defaultHost?: string;
@@ -218,6 +219,9 @@ function resolveConfiguredPort(settings: ServiceNetworkSettings, netOffset: numb
     throw new Error(
       `Service transport has no listen address for "${settings.serviceId}" and no port was configured.`,
     );
+  }
+  if (configuredPort === undefined && port === 0) {
+    return 0;
   }
   const resolvedPort = port + netOffset;
   if (!Number.isSafeInteger(resolvedPort) || resolvedPort < 1 || resolvedPort > 65535) {

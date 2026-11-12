@@ -82,7 +82,7 @@ export function parseListen(value: string): RuntimeListenAddress {
     );
   }
   const port = Number(match[2]);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new RuntimeArgsError(`${RUNTIME_ARGS.listen}: invalid port ${port}`);
   }
   const host = match[1]!;

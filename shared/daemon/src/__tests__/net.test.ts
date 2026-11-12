@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { reserveLoopbackPorts } from "../net.js";
+import { LOOPBACK_HOST } from "../net.js";
 
-describe("reserveLoopbackPorts", () => {
-  it("returns distinct free ports", async () => {
-    const ports = await reserveLoopbackPorts(4);
-    expect(new Set(ports).size).toBe(4);
-    for (const port of ports) {
-      expect(port).toBeGreaterThan(1023);
-    }
+describe("loopback module bind host", () => {
+  it("uses IPv4 loopback", () => {
+    expect(LOOPBACK_HOST).toBe("127.0.0.1");
   });
 });

@@ -12,6 +12,7 @@
  */
 
 import { createRequire } from "node:module";
+import type { HttpServiceTransport } from "@kb-labs/adapters-service-transport-http";
 import { loadEffectiveConfig, validatePlatformAdapterOptions } from "@kb-labs/core-config";
 import {
   GATEWAY_SERVICE_NETWORK,
@@ -39,7 +40,6 @@ import {
 } from "@kb-labs/plugin-runtime";
 import {
   defineHostModule,
-  reserveLoopbackPorts,
   runHost,
   type HostConfig,
   type HostModule,
@@ -117,18 +117,16 @@ function isSelected(settings: HostSettings, id: HostModuleId): boolean {
   return settings.modules.includes(id);
 }
 
-/**
- * An internal module must bind the loopback port the host's transport gave it.
- * A host-internal module must have a transport-owned listen address; refuse
- * to bind it when that address is absent.
- */
-function assertInternalAddress(ctx: ServiceContext, serviceId: string): void {
-  const address = ctx.platform
-    .getAdapter<IServiceTransport>("serviceTransport")
-    ?.listenAddress?.(serviceId);
-  if (!address || !("port" in address) || address.port !== ctx.port) {
+/** An internal module must publish the loopback address it actually bound. */
+function assertInternalAddress(
+  ctx: ServiceContext,
+  serviceId: string,
+  generated: HttpServiceTransport,
+): void {
+  const address = generated.listenAddress(serviceId);
+  if (!address || !("port" in address) || address.port === 0) {
     throw new Error(
-      `The host service transport has no TCP address for "${serviceId}"; refusing to bind a well-known port.`,
+      `The host service transport has no TCP address for "${serviceId}"; has not published its bound address.`,
     );
   }
   if (!isLoopbackHost(ctx.host)) {
@@ -144,10 +142,8 @@ function assertInternalAddress(ctx: ServiceContext, serviceId: string): void {
  * is disabled by `host.modules`. Used to reach the marketplace module
  * directly, without a second gateway hop.
  */
-function internalBaseUrl(ctx: ServiceContext, serviceId: string): string | undefined {
-  const address = ctx.platform
-    .getAdapter<IServiceTransport>("serviceTransport")
-    ?.listenAddress?.(serviceId);
+function internalBaseUrl(generated: HttpServiceTransport, serviceId: string): string | undefined {
+  const address = generated.listenAddress(serviceId);
   if (!address || !("port" in address)) {
     return undefined;
   }
@@ -222,21 +218,15 @@ function defaultRuntimeEntry(): string {
 
 /**
  * Builds the `runHost` configuration. Async because the internal loopback
- * ports are reserved before the platform is launched (the transport must exist
- * when adapters are assembled, so that every module resolves its address from
- * it). Each call returns an independent host: nothing here is module-global.
+ * module addresses are published after each module binds port 0. Each call
+ * returns an independent host: nothing here is module-global.
  */
 export async function createHostConfig(
   options: HostOptions = {},
 ): Promise<HostConfig> {
-  const ports = await reserveLoopbackPorts(INTERNAL_MODULES.length);
-  const statePort = ports[INTERNAL_MODULES.findIndex((module) => module.serviceId === "state-daemon")]!;
-  const stateDaemonUrl = `http://${INTERNAL_BIND_HOST}:${statePort}`;
-  const generated = createGeneratedTransport(
-    Object.fromEntries(
-      INTERNAL_MODULES.map((spec, index) => [spec.serviceId, ports[index]!]),
-    ),
-  );
+  let stateDaemonUrl: string | undefined;
+  const hostServiceEnvironment = { KB_STATE_DAEMON_URL: undefined as string | undefined };
+  const generated = createGeneratedTransport({});
 
   const baseHook = makeAssemblyHook();
   const assemblyHook: PlatformAssemblyHook = (platform, broker, config) => {
@@ -340,6 +330,7 @@ export async function createHostConfig(
       serviceId: spec.serviceId,
       // Internal modules never bind beyond loopback; no host env override.
       defaultHost: INTERNAL_BIND_HOST,
+      defaultPort: 0,
       setup: async (ctx) => {
         const { settings, platformDataRoot } = await prepare(ctx);
         try {
@@ -350,8 +341,9 @@ export async function createHostConfig(
               });
               return skipped();
             }
-            assertInternalAddress(ctx, spec.serviceId);
-            return spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) }, platformDataRoot);
+            const teardown = await spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) }, platformDataRoot);
+            assertInternalAddress(ctx, spec.serviceId, generated);
+            return teardown;
           })();
           return releaseHookBeforeTeardown(teardown);
         } catch (error) {
@@ -385,7 +377,7 @@ export async function createHostConfig(
           env: {
             KB_PLATFORM_ROOT: ctx.platformRoot,
             KB_MCP_AUTH_MODE: settings.auth === "off" ? "local" : "secured",
-            KB_STATE_DAEMON_URL: stateDaemonUrl,
+            KB_STATE_DAEMON_URL: stateDaemonUrl!,
             KB_GATEWAY_URL: gatewayAddress,
           },
           ...(overrides.stopTimeoutMs !== undefined
@@ -451,7 +443,7 @@ export async function createHostConfig(
       // internal loopback address so `/api/v1/plugins` never opens a second
       // writer of `.kb/marketplace.lock`.
       const marketplaceBaseUrl = isSelected(settings, "marketplace")
-        ? internalBaseUrl(ctx, "marketplace")
+        ? internalBaseUrl(generated, "marketplace")
         : undefined;
       const pluginsRoutes = marketplaceBaseUrl
         ? [createPluginsRoutes({ registry, marketplace: new MarketplaceClient(marketplaceBaseUrl) })]
@@ -506,11 +498,19 @@ export async function createHostConfig(
     moduleUrl: options.moduleUrl,
     platform: {
       assemblyHook,
-      hostServiceEnvironment: { KB_STATE_DAEMON_URL: stateDaemonUrl },
+      hostServiceEnvironment,
     },
     // Gateway last: it starts once its upstreams are listening and, torn down
     // in reverse order, stops accepting traffic first.
     modules: [...internal, gateway],
+    publishListenAddress: async (module, address) => {
+      const serviceId = module.serviceId ?? module.id;
+      await generated.publishListenAddress(serviceId, address);
+      if (serviceId === "state-daemon") {
+        stateDaemonUrl = `http://${address.host}:${address.port}`;
+        hostServiceEnvironment.KB_STATE_DAEMON_URL = stateDaemonUrl;
+      }
+    },
   };
 }
 

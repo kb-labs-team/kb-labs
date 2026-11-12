@@ -50,7 +50,7 @@ export interface RuntimeGuardOptions {
 }
 
 export interface RuntimeGuard {
-  listen(address: { host: string; port: number }): Promise<void>;
+  listen(address: { host: string; port: number }): Promise<{ host: string; port: number }>;
   close(): Promise<void>;
 }
 
@@ -228,11 +228,16 @@ export function createRuntimeGuard(options: RuntimeGuardOptions): RuntimeGuard {
 
   return {
     listen: (address) =>
-      new Promise((resolve, reject) => {
+      new Promise<{ host: string; port: number }>((resolve, reject) => {
         server.once("error", reject);
         server.listen(address.port, address.host, () => {
           server.off("error", reject);
-          resolve();
+          const boundAddress = server.address();
+          if (!boundAddress || typeof boundAddress === "string") {
+            reject(new Error("The project runtime guard did not bind a TCP address."));
+            return;
+          }
+          resolve({ host: boundAddress.address, port: boundAddress.port });
         });
       }),
     close: () =>
