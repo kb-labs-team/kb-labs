@@ -1,0 +1,2 @@
+2026-11-11T21:41:31.7000000Z   [  1/2  ] ● @kb-labs/a                                    [test]        success    -        2s
+2026-11-11T21:41:31.8000000Z 2 scheduled  2 passed  0 cached  0 failed  0 blocked  0 not affected  — 3s
