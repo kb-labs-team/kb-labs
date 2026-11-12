@@ -30,6 +30,30 @@ func TestParseProcStatUsesFinalCommDelimiter(t *testing.T) {
 	}
 }
 
+// The kernel prints -1 for the process group and session of a task that is
+// exiting (its signal handler is gone); a fork/exec/exit storm hits this on
+// Linux. Such a task is not live and must not fail the whole table snapshot.
+func TestParseProcStatAcceptsExitingTaskWithUnavailableGroupAndSession(t *testing.T) {
+	data := "42 (storm) S 0 -1 -1 0 -1 4194560 1 2 3 4 5 6 7 8 20 0 1 0 987654 4096 42\n"
+	got, err := parseProcStat(data)
+	if err != nil {
+		t.Fatalf("exiting task stat must parse: %v", err)
+	}
+	if got.live() {
+		t.Fatalf("exiting task reported live: %+v", got)
+	}
+	live := "42 (storm) S 1 8 8 0 -1 4194560 1 2 3 4 5 6 7 8 20 0 1 0 987654 4096 42\n"
+	if row, err := parseProcStat(live); err != nil || !row.live() {
+		t.Fatalf("ordinary task: live=%t err=%v", row.live(), err)
+	}
+	if _, err := parseProcStat("42 (x) S 1 -1 8 0 -1 4194560 1 2 3 4 5 6 7 8 20 0 1 0 987654 4096 42\n"); err == nil {
+		t.Fatal("a row with only one of group/session unavailable must stay rejected")
+	}
+	if _, err := parseProcStat("42 (x) S 1 -2 8 0 -1 4194560 1 2 3 4 5 6 7 8 20 0 1 0 987654 4096 42\n"); err == nil {
+		t.Fatal("process group below -1 must stay rejected")
+	}
+}
+
 func TestParseProcBootTimeAndStartTicks(t *testing.T) {
 	boot, err := parseProcBootTime("cpu 1 2 3 4\nbtime 1700000000\nprocesses 9\n")
 	if err != nil {

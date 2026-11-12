@@ -272,22 +272,58 @@ func TestWaitRunCostIsIndependentOfFinishedHistory(t *testing.T) {
 		info, err := waitRun(ctx, state, "waited", waitByTag, 0)
 		result <- waitResult{info: info, err: err}
 	}()
-	window := 3 * time.Second
-	time.Sleep(500 * time.Millisecond)
-	before, err := processCPUSeconds()
-	if err != nil {
-		t.Fatal(err)
+	// A poll that rescanned finished history would fail on the poisoned files
+	// below, so cost independent of history is observed as the waiter
+	// surviving several polls, not as CPU time on a shared runner. Each probe
+	// is a legacy terminal record in the live set; the waiter's prune retires
+	// it, so its disappearance proves a prune ran. The second probe is created
+	// after the first was retired, so only a poll (never the initial consult)
+	// can retire it.
+	retiredByWaiter := func(name string) {
+		t.Helper()
+		code := 0
+		probe := record{
+			RunID: name, Tag: "probe", Status: StatusCompleted, QueueOrder: 20000,
+			StateDir: state, Command: []string{"/bin/true"}, ExitCode: &code,
+		}
+		data, err := json.Marshal(probe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		livePath := filepath.Join(state, "runs", name+".json")
+		if err := os.WriteFile(livePath, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(testdeadline.Budget(t))
+		for {
+			if _, err := os.Stat(livePath); os.IsNotExist(err) {
+				return
+			}
+			select {
+			case outcome := <-result:
+				t.Fatalf("tag wait returned while its run was still queued: %+v", outcome)
+			default:
+			}
+			if time.Now().After(deadline) {
+				cancel()
+				t.Fatalf("waiter did not prune probe %s before the test deadline", name)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
-	time.Sleep(window)
-	after, err := processCPUSeconds()
-	if err != nil {
-		t.Fatal(err)
+	retiredByWaiter("probe-initial")
+	retiredByWaiter("probe-poll-0")
+	finished, err := filepath.Glob(filepath.Join(finishedRecordsDir(state), "finished-*.json"))
+	if err != nil || len(finished) != 4000 {
+		t.Fatalf("finished history = %d files, err=%v; want 4000", len(finished), err)
 	}
-	t.Logf("wait waiter used %.3fs CPU over %s with finished history present", after-before, window)
-	if cpu := after - before; cpu > 0.25 {
-		cancel()
-		<-result
-		t.Fatalf("tag wait consumed %.2fs CPU over %s with finished history present; want at most 0.25s", cpu, window)
+	for _, path := range finished {
+		if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for poll := 1; poll <= 4; poll++ {
+		retiredByWaiter(fmt.Sprintf("probe-poll-%d", poll))
 	}
 	if err := updateRecord(state, "waited", func(rec *record) error {
 		code := 7
