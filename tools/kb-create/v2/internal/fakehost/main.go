@@ -39,7 +39,14 @@ func run() diag.ExitStatus {
 	dumpEnv := flag.String("dump-env", "", "write the process environment to this file at start")
 	stderrLine := flag.String("stderr-line", "", "write one line to stderr before listening")
 	activeWorkJSON := flag.String("active-work-json", "[]", "test response for the authenticated active-work endpoint")
+	logError := flag.String("log-error", "", "append an info record and an error record with this message to KB_LOG_FILE, as the platform logger would, before starting")
 	flag.Parse()
+	if *logError != "" {
+		if err := writeStructuredRecords(os.Getenv("KB_LOG_FILE"), *logError); err != nil {
+			fmt.Fprintln(os.Stderr, "fakehost:", err)
+			return childExitStatus(70)
+		}
+	}
 	if *startupError {
 		if token := os.Getenv("API_TOKEN"); token != "" {
 			fmt.Fprintln(os.Stderr, "API_TOKEN="+token)
@@ -107,6 +114,11 @@ func run() diag.ExitStatus {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"ok":true,"data":{"upstreams":{},"adapters":{}}}`)
+	})
+	mux.HandleFunc("/emit", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(os.Stdout, "fakehost: stdout line")
+		fmt.Fprintln(os.Stderr, "fakehost: console.error line")
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/health/adapters", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -181,4 +193,31 @@ func childExitStatus(code int) diag.ExitStatus {
 		return diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "The fake host could not simulate a child process exit.", diag.WithCauseAndReason(fmt.Sprint(err)), diag.WithHint("Check the system shell used by the fake host test.")))
 	}
 	return diag.ChildProcessStatus(child)
+}
+
+// writeStructuredRecords appends one info and one error record in the
+// platform logger's JSON line shape (numeric level, epoch-millisecond time).
+func writeStructuredRecords(path, errorMessage string) error {
+	if path == "" {
+		return errors.New("the launcher passed the host no log file path")
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	now := time.Now().UnixMilli()
+	for _, record := range []map[string]any{
+		{"level": 30, "time": now, "msg": "fakehost: starting"},
+		{"level": 50, "time": now, "msg": errorMessage},
+	} {
+		line, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		if _, err := file.Write(append(line, '\n')); err != nil {
+			return err
+		}
+	}
+	return nil
 }

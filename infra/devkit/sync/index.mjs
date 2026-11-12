@@ -98,6 +98,11 @@ function buildEffectiveMap(projectCfg) {
 const log = (...a) => console.log('[devkit-sync]', ...a);
 const warn = (...a) => console.warn('[devkit-sync]', ...a);
 
+function relativeTsconfigPath(from, to) {
+  const path = relative(from, to);
+  return path.startsWith('.') ? path : `./${path}`;
+}
+
 async function exists(p) { try { await access(p); return true; } catch { return false; } }
 async function ensureDirForFile(p) { await mkdir(dirname(p), { recursive: true }); }
 
@@ -503,7 +508,7 @@ async function generateTsconfigBuild(root, { dryRun, verbose }) {
       for (let i = 0; i < 10; i++) {
         const candidate = join(current, 'tsconfig.base.json');
         if (await exists(candidate)) {
-          basePath = relative(pkgDir, candidate);
+          basePath = relativeTsconfigPath(pkgDir, candidate);
           found = true;
           break;
         }
@@ -525,7 +530,7 @@ async function generateTsconfigBuild(root, { dryRun, verbose }) {
       for (let i = 0; i < 10; i++) {
         const candidate = join(current, 'tsconfig.base.json');
         if (await exists(candidate)) {
-          basePath = relative(pkgDir, candidate);
+          basePath = relativeTsconfigPath(pkgDir, candidate);
           break;
         }
         const parent = dirname(current);

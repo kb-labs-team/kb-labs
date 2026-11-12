@@ -15,14 +15,25 @@ export function releaseArtifactPackageNames(manifest, platformMembers) {
 }
 
 export function readPlatformReleaseConfig(path) {
-  const source = readFileSync(path, 'utf8');
-  const json = path.endsWith('.jsonc') ? stripJsonComments(source) : source;
-  const config = JSON.parse(json);
-  const flow = config.profiles?.find(profile => profile.id === 'default')?.products?.release?.flows?.platform;
+  return readReleaseFlowConfig(path, 'platform');
+}
+
+/** Release flows declared by the default profile of a kb config file. */
+export function declaredReleaseFlows(path) {
+  return Object.keys(readReleaseFlows(readConfigFile(path)));
+}
+
+export function readReleaseFlowConfig(path, flowName) {
+  const config = readConfigFile(path);
+  const flows = readReleaseFlows(config);
+  const flow = flows[flowName];
+  if (!flow) {
+    throw new Error(`release flow "${flowName}" is not declared in ${path}; declared flows: ${Object.keys(flows).join(', ') || '(none)'}`);
+  }
   const adapters = config.platform?.adapters;
   const marketplaceSources = config.marketplace?.sources;
-  if (!Array.isArray(flow?.platformMembers) || flow.platformMembers.length === 0) {
-    throw new Error('release.flows.platform.platformMembers must be a non-empty array');
+  if (!Array.isArray(flow.platformMembers) || flow.platformMembers.length === 0) {
+    throw new Error(`release.flows.${flowName}.platformMembers must be a non-empty array`);
   }
   if (!adapters || typeof adapters !== 'object' || Array.isArray(adapters)) {
     throw new Error('platform.adapters is required for a platform release index');
@@ -32,7 +43,7 @@ export function readPlatformReleaseConfig(path) {
   }
   const additionalRequirements = flow.platformRequires ?? [];
   if (!Array.isArray(additionalRequirements) || additionalRequirements.some(slot => typeof slot !== 'string' || slot.length === 0)) {
-    throw new Error('release.flows.platform.platformRequires must be an array of adapter capability names');
+    throw new Error(`release.flows.${flowName}.platformRequires must be an array of adapter capability names`);
   }
   return {
     platformMembers: flow.platformMembers,
@@ -44,6 +55,34 @@ export function readPlatformReleaseConfig(path) {
     adapterOptions: config.platform.adapterOptions ?? {},
     marketplaceSources,
   };
+}
+
+function readConfigFile(path) {
+  const source = readFileSync(path, 'utf8');
+  return JSON.parse(path.endsWith('.jsonc') ? stripJsonComments(source) : source);
+}
+
+function readReleaseFlows(config) {
+  return config.profiles?.find(profile => profile.id === 'default')?.products?.release?.flows ?? {};
+}
+
+/**
+ * The packages a release flow ships directly: the registry manifest's core
+ * packages, services and adapters, the flow's declared platform members, the
+ * configured adapters, the host, the SDK and the platform package. A build
+ * closure of these roots is what the flow's artifacts need.
+ */
+export function releaseFlowRootPackages(config, registryManifest, platformPackage = DEFAULT_PLATFORM_PACKAGE) {
+  const known = new Map(releaseArtifactPackageNames(registryManifest, config.platformMembers).map(name => [name, true]));
+  return [...new Set([
+    platformPackage,
+    ...platformPackageRoots({
+      servicePackages: (registryManifest.services ?? []).map(service => service.pkg),
+      platformMembers: config.platformMembers,
+      adapterPackages: configuredAdapterPackages(config.adapters, known),
+    }),
+    ...releaseArtifactPackageNames(registryManifest, config.platformMembers),
+  ])];
 }
 
 export function configuredAdapterPackages(adapters, packages) {

@@ -50,7 +50,7 @@ describe('AdapterStrategy', () => {
 
   it('returns null for a package without adapter metadata and throws a typed error for a failed manifest', async () => {
     platformRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-marketplace-adapter-strategy-'));
-    const strategy = new AdapterStrategy(logger(), platformRoot);
+    const strategy = new AdapterStrategy(logger(), platformRoot, async () => null);
     const plainRoot = path.join(platformRoot, 'plain');
     await fs.mkdir(plainRoot);
     await fs.writeFile(path.join(plainRoot, 'package.json'), JSON.stringify({ name: 'plain' }));
@@ -89,7 +89,7 @@ describe('AdapterStrategy', () => {
       async getEntry() {return null;},
     };
     const log = logger();
-    const strategy = new AdapterStrategy(log, platformRoot);
+    const strategy = new AdapterStrategy(log, platformRoot, async () => null);
 
     await strategy.afterInstall('requiring', requiringRoot, service, { scope: 'platform' });
 

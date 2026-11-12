@@ -22,6 +22,7 @@ async function main(): Promise<void> {
       listen: args.listen,
       token: args.token,
       moduleUrl: import.meta.url,
+      previousExitCause: process.env.KB_RUNTIME_PREVIOUS_EXIT_CAUSE,
     }),
   );
 

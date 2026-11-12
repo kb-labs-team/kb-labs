@@ -1,9 +1,30 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createErrorEnvelope } from '@kb-labs/sdk/errors';
+import { manifest, VIBEPROXY_MODEL_CONFIG_KEY } from './manifest.js';
 import { VibeProxyLLM } from './llm.js';
 
 describe('VibeProxy provider errors', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('requires a configured model and reports the catalogued platform config error', () => {
+    expect(manifest.id).toBe('@kb-labs/adapters-vibeproxy');
+    expect(manifest.configSchema?.model).not.toHaveProperty('default');
+    expect(manifest.configSchema?.model).toMatchObject({ required: true });
+
+    try {
+      new VibeProxyLLM({ baseURL: 'http://127.0.0.1:8317' });
+      throw new Error('expected missing model to fail');
+    } catch (error) {
+    expect(error).toMatchObject(createErrorEnvelope('KB_ADAPTER_CONFIG_REQUIRED', {
+        details: {
+          path: `platform.adapterOptions.llm.${VIBEPROXY_MODEL_CONFIG_KEY}`,
+          nextCommand: ['kb', 'config', 'set', '--scope', 'platform', `platform.adapterOptions.llm.${VIBEPROXY_MODEL_CONFIG_KEY}`, '<model>'].join(' '),
+        },
+        cause: 'Required adapter option is missing.',
+      }));
+    }
   });
 
   // case: S-189.5
@@ -12,7 +33,7 @@ describe('VibeProxy provider errors', () => {
       type: 'error',
       error: { type: 'authentication_error', message: 'The mock provider rejected the journey API key.' },
     }), { status: 401 })));
-    const adapter = new VibeProxyLLM({ baseURL: 'http://provider.test', apiKey: 'fixture-key' });
+    const adapter = new VibeProxyLLM({ baseURL: 'http://provider.test', apiKey: 'fixture-key', model: 'fixture-model' });
 
     await expect(adapter.complete('journey-provider-401')).rejects.toMatchObject({ status: 401 });
   });
@@ -29,7 +50,7 @@ describe('VibeProxy provider errors', () => {
       status: 200,
       headers: { 'content-type': 'text/event-stream' },
     })));
-    const adapter = new VibeProxyLLM({ baseURL: 'http://provider.test', apiKey: 'fixture-key' });
+    const adapter = new VibeProxyLLM({ baseURL: 'http://provider.test', apiKey: 'fixture-key', model: 'fixture-model' });
     const stream = adapter.stream('journey-provider-stream-error')[Symbol.asyncIterator]();
 
     await expect(stream.next()).resolves.toEqual({ value: 'partial', done: false });

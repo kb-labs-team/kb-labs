@@ -275,6 +275,38 @@ describe('CLI result descriptor boundary', () => {
   });
 
   // case: S-203.1
+  it('delivers a result larger than the pipe buffer whole through a slow non-blocking stdout pipe', async () => {
+    fixture = await createCliFixture('local');
+    const result = await runCliThroughSlowPipe(fixture, ['stdout', 'fixture', 'large', '--json']);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.length).toBeGreaterThan(LARGE_RESULT_BYTES);
+    const parsed = JSON.parse(result.stdout) as { ok: boolean; data: { payload: string } };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.data.payload.length).toBe(LARGE_RESULT_BYTES);
+    expect(result.stdout).toBe(`${JSON.stringify(parsed)}\n`);
+    expect(result.stderr).toContain('fixture large console noise');
+    expect(result.stderr).toContain('fixture large direct noise');
+  });
+
+  // case: S-203.1
+  it('keeps a discovery error diagnostic on stderr so stdout stays one JSON document', async () => {
+    fixture = await createCliFixture('local');
+    const brokenRoot = path.join(fixture.projectRoot, 'plugins', 'broken-fixture');
+    await mkdir(brokenRoot, { recursive: true });
+    await writeFile(path.join(brokenRoot, 'package.json'), JSON.stringify({
+      name: '@x281/broken-fixture', version: '1.0.0', type: 'module', kb: { manifest: 'manifest.json' },
+    }));
+    await writeFile(path.join(brokenRoot, 'manifest.json'), '{ "schema": "kb.plugin/3", "id": ');
+
+    const result = await runCli(fixture, ['stdout', 'fixture', 'run', '--json']);
+
+    expect(result.stderr).toMatch(/\[discover\] error /);
+    expectOneJsonEnvelope(result.stdout, { ok: true, data: { complete: true } });
+    expect(result.stdout).not.toContain('[discover]');
+  });
+
+  // case: S-203.1
   it('does not pass the CLI result descriptor to an isolated plugin handler', async () => {
     fixture = await createCliFixture('local', 'subprocess');
     const result = await runCli(fixture, ['stdout', 'fixture', 'descriptor', '--json'], {}, true);
@@ -439,6 +471,12 @@ async function createOutputFixturePlugin(projectRoot: string): Promise<void> {
       handler: './silent-exit-handler.js',
       operationType: 'execute',
     }, {
+      path: 'stdout fixture large',
+      describe: 'Return a result larger than any pipe buffer',
+      handler: './large-handler.js',
+      operationType: 'execute',
+      flags: [{ name: 'json', type: 'boolean', description: 'Machine result output', default: false }],
+    }, {
       path: 'stdout fixture terminate',
       describe: 'Terminate the CLI command child before it returns a result',
       handler: './terminate-handler.js',
@@ -460,6 +498,7 @@ async function createOutputFixturePlugin(projectRoot: string): Promise<void> {
     writeFile(path.join(pluginRoot, 'dist', 'handler.js'), fixtureHandlerSource),
     writeFile(path.join(pluginRoot, 'dist', 'json-handler.js'), jsonFixtureHandlerSource),
     writeFile(path.join(pluginRoot, 'dist', 'descriptor-handler.js'), descriptorFixtureHandlerSource),
+    writeFile(path.join(pluginRoot, 'dist', 'large-handler.js'), largeFixtureHandlerSource),
     writeFile(path.join(pluginRoot, 'dist', 'terminate-handler.js'), terminateFixtureHandlerSource),
     writeFile(path.join(pluginRoot, 'dist', 'silent-exit-handler.js'), 'export default { async execute() { process.exit(7); } };'),
     symlink(path.join(workspaceRoot, 'sdk', 'sdk'), path.join(pluginRoot, 'node_modules', '@kb-labs', 'sdk'), 'dir'),
@@ -513,6 +552,18 @@ export default {
       resultDescriptorUnavailable = true;
     }
     return { resultDescriptorUnavailable };
+  },
+};
+`;
+
+const LARGE_RESULT_BYTES = 2 * 1024 * 1024;
+
+const largeFixtureHandlerSource = `
+export default {
+  async execute() {
+    console.log('fixture large console noise');
+    process.stdout.write('fixture large direct noise\\n');
+    return { payload: 'x'.repeat(${LARGE_RESULT_BYTES}) };
   },
 };
 `;
@@ -631,6 +682,52 @@ function runCliWithPty(
     child.once('close', (status) => {
       clearTimeout(timer);
       resolve({ status: timedOut ? null : status, stdout });
+    });
+  });
+}
+
+/**
+ * Runs the launcher behind a holder process whose stdout is a pipe it has initialised through
+ * `process.stdout`, which makes the shared descriptor non-blocking exactly as a Node parent does.
+ * The launcher inherits that descriptor, and this side drains it slowly, so a result larger than
+ * the pipe buffer meets EAGAIN on the launcher's stdout.
+ */
+function runCliThroughSlowPipe(
+  fixture: CliFixture,
+  args: string[],
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const holder = `
+    const { spawn } = require('node:child_process');
+    process.stdout;
+    const child = spawn(process.execPath, process.argv.slice(1), { stdio: ['ignore', 'inherit', 'inherit'] });
+    child.once('close', (status) => process.exit(status ?? 1));
+  `;
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['-e', holder, cliPath, '--gateway-url', fixture.gatewayUrl, ...args], {
+      cwd: fixture.projectRoot,
+      env: fixture.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const chunks: Buffer[] = [];
+    let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, 60_000);
+    child.stderr!.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+    child.stdout!.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+      child.stdout!.pause();
+      setTimeout(() => child.stdout!.resume(), 2);
+    });
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('close', (status) => {
+      clearTimeout(timer);
+      resolve({ status: timedOut ? null : status, stdout: Buffer.concat(chunks).toString('utf8'), stderr });
     });
   });
 }

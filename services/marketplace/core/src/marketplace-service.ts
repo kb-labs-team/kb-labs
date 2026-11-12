@@ -79,6 +79,8 @@ export interface MarketplaceServiceOptions {
   extensionStore?: IExtensionStore;
   /** Platform logger used by lifecycle strategies. */
   logger: ILogger;
+  /** Resolve whether a marketplace adapter package currently owns a platform slot. */
+  resolveSelectedAdapterSlot: (packageId: string) => Promise<string | null>;
   /** Additional strategies beyond built-in plugin/adapter */
   strategies?: EntityKindStrategy[];
 }
@@ -185,7 +187,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
     // Built-in strategies
     this.registerStrategy(new PluginStrategy());
-    this.registerStrategy(new AdapterStrategy(this.logger, opts.platformRoot));
+    this.registerStrategy(new AdapterStrategy(this.logger, opts.platformRoot, opts.resolveSelectedAdapterSlot));
 
     // User-supplied strategies
     if (opts.strategies) {

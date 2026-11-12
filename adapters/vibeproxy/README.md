@@ -40,7 +40,7 @@ Add to your `kb.config.json`:
       "llm": {
         "baseURL": "http://localhost:8317",
         "apiKey": "any-string",
-        "model": "claude-sonnet-4-20250514",
+        "model": "your-model-id",
         "timeout": 120000
       }
     }
@@ -54,7 +54,7 @@ Add to your `kb.config.json`:
 |--------|------|---------|-------------|
 | `baseURL` | `string` | `"http://localhost:8317"` | VibeProxy server URL |
 | `apiKey` | `string` | `"any-string"` | API key (any string works for local) |
-| `model` | `string` | `"claude-sonnet-4-20250514"` | Model to use |
+| `model` | `string` | Required; no default | Model identifier to use. Set it in platform config before startup. |
 | `timeout` | `number` | `120000` | Request timeout in ms |
 
 ## Usage
@@ -91,7 +91,7 @@ import { createAdapter } from '@kb-labs/adapters-vibeproxy';
 
 const llm = createAdapter({
   baseURL: 'http://localhost:8317',
-  model: 'claude-sonnet-4-20250514'
+  model: 'your-model-id'
 });
 
 const response = await llm.chat([

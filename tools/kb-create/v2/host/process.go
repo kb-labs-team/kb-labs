@@ -187,7 +187,8 @@ type ProcessRunner struct {
 	pid             int
 	exited          chan struct{}
 	waitErr         error
-	stderr          *tailBuffer
+	residueStart    int64
+	structuredStart int64
 	secrets         []string
 	processIdentity string
 	startupDeadline time.Time
@@ -277,6 +278,9 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		owner := listenerOwner(port)
 		return Info{}, portConflictError(port, address, "", owner, r.Operation, r.PlatformRoot, nil)
 	}
+	if err := boundResidueLog(r.State.HostLog(), HostResidueLogBytes); err != nil {
+		return Info{}, hostError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+r.State.Dir+".", "Fix the directory permissions or free disk space.", err, map[string]string{"path": r.State.Dir})
+	}
 	logFile, err := os.OpenFile(r.State.HostLog(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return Info{}, hostError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+r.State.Dir+".", "Fix the directory permissions or free disk space.", err, map[string]string{"path": r.State.Dir})
@@ -305,8 +309,15 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	if r.ControlCredential != "" {
 		cmd.Env = append(cmd.Env, contracts.HostControlCredentialEnv+"="+r.ControlCredential)
 	}
-	r.stderr = &tailBuffer{limit: startupStderrLimit}
-	cmd.Stdout, cmd.Stderr = logFile, io.MultiWriter(logFile, r.stderr)
+	cmd.Env = append(cmd.Env, contracts.HostLogFileEnv+"="+r.State.HostStructuredLog())
+	r.structuredStart = 0
+	if info, statErr := os.Stat(r.State.HostStructuredLog()); statErr == nil {
+		r.structuredStart = info.Size()
+	}
+	if info, statErr := logFile.Stat(); statErr == nil {
+		r.residueStart = info.Size()
+	}
+	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := child.Start(cmd, child.ProcessGroup); err != nil {
 		_ = logFile.Close()
 		return Info{}, r.startFailed(err, nil)
@@ -513,7 +524,7 @@ func (r *ProcessRunner) environment() ([]string, error) {
 
 // StartFailure is the single diagnostic builder for failed launcher host starts.
 func StartFailure(state State, cause error, evidence map[string]string) *diag.Diag {
-	details := map[string]string{"log": state.HostLog(), "launcherLog": state.LauncherLog()}
+	details := map[string]string{"log": state.HostLog(), "structuredLog": state.HostStructuredLog(), "launcherLog": state.LauncherLog()}
 	evidenceFields := make([]string, 0, len(evidence))
 	for key := range evidence {
 		evidenceFields = append(evidenceFields, key)
@@ -561,7 +572,7 @@ func StartFailure(state State, cause error, evidence map[string]string) *diag.Di
 	if nextCommand == "" {
 		nextCommand = "kb-create start"
 	}
-	hint := fmt.Sprintf("Read the launcher log at %q and host log at %q, correct the reported startup failure, then run `%s`.", state.LauncherLog(), state.HostLog(), nextCommand)
+	hint := fmt.Sprintf("Read the launcher log at %q, the host log at %q and the host structured log at %q, correct the reported startup failure, then run `%s`.", state.LauncherLog(), state.HostLog(), state.HostStructuredLog(), nextCommand)
 	failure := hostError("KB_HOST_START_FAILED", "The host process failed while starting.", hint, cause, details)
 	failure.Reason = reason
 	failure.Cause = reason
@@ -577,6 +588,9 @@ func (r *ProcessRunner) startFailed(cause error, evidence map[string]string) *di
 	}
 	if tail := r.stderrTail(); tail != "" {
 		evidence["stderrTail"] = redactHostOutput(tail, r.secrets)
+	}
+	if tail := r.structuredLogTail(); tail != "" {
+		evidence["structuredLogTail"] = tail
 	}
 	if r.Operation == "apply" {
 		evidence["nextCommand"] = "kb-create apply"
@@ -816,10 +830,11 @@ func startupEnvelope(stderr string) *hostStartupEnvelope {
 }
 
 func (r *ProcessRunner) stderrTail() string {
-	if r.stderr == nil {
-		return ""
-	}
-	return redactHostOutput(r.stderr.String(), r.secrets)
+	return redactHostOutput(residueTail(r.State.HostLog(), r.residueStart).String(), r.secrets)
+}
+
+func (r *ProcessRunner) structuredLogTail() string {
+	return redactHostOutput(structuredTail(r.State.HostStructuredLog(), r.structuredStart).String(), r.secrets)
 }
 
 // StartupStderrTail reads a bounded, redacted tail from a startup log file.
@@ -1378,6 +1393,25 @@ func (r *ProcessRunner) Status(ctx context.Context) (Status, error) {
 		status.State = StateRunning
 	}
 	return status, nil
+}
+
+// Exited is closed when the process this runner started exits; nil when
+// nothing was started here.
+func (r *ProcessRunner) Exited() <-chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.exited
+}
+
+// ExitCause describes how the started process ended. It is meaningful only
+// after Exited is closed.
+func (r *ProcessRunner) ExitCause() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.waitErr == nil {
+		return "exit code 0"
+	}
+	return processExit(r.waitErr)
 }
 
 // Wait blocks until the process this runner started exits. It is meant for

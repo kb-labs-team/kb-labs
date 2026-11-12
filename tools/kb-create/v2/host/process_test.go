@@ -121,7 +121,7 @@ func TestStartFailureEnvelopePreservesReadinessEvidence(t *testing.T) {
 		"expectedPid": "20", "pid": "21", "command": "kb-host", "failureKind": "readinessFailed",
 		"supervisorLog": "/tmp/supervisor.log", "supervisorStderrTail": "supervisor failed",
 		"supervisorExit": "exit status 3", "controlRecord": "/tmp/control.json",
-		"nextCommand": "kb-create status",
+		"nextCommand": "kb-create status", "structuredLogTail": "2026-11-11T00:00:00Z ERROR host failed",
 	})
 	encoded, err := json.Marshal(original)
 	if err != nil {

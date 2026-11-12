@@ -752,7 +752,7 @@ def run_plugin_author_flow(
         shutil.rmtree(plugin_root, ignore_errors=True)
         return
 
-    built = record("build generated plugin", cases=["S-003.2"], check=_build)
+    built = record("build generated plugin", cases=["S-003.2", "S-003.9"], check=_build)
     if not built:
         for name in ("add plugin to project", "invoke generated plugin",
                      "rebuild edited plugin", "remove plugin registration"):

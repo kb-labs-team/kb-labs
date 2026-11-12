@@ -23,6 +23,9 @@ import pino, { type Logger as PinoLoggerInstance } from "pino";
 import type { ILogger, ILogBuffer, LogRecord } from "@kb-labs/sdk/adapters";
 import { generateLogId } from "@kb-labs/sdk/adapters";
 import { LogRingBuffer } from "./log-ring-buffer";
+import { BoundedFileSink } from "./bounded-file-sink";
+
+export { BoundedFileSink, LOG_FILE_BUDGET } from "./bounded-file-sink";
 
 // Re-export manifest
 export { manifest } from "./manifest.js";
@@ -81,24 +84,34 @@ export class PinoLoggerAdapter implements ILogger {
       );
     }
 
-    const transport = config.pretty
-      ? {
-          target: "pino-pretty",
-          options: {
-            colorize: true,
-            translateTime: "SYS:standard",
-            ignore: "pid,hostname",
-          },
-        }
-      : undefined;
+    // The launcher (or kb-dev) names the process log file; the adapter alone
+    // bounds and rotates it. The file holds structured JSON, so it replaces
+    // the pretty transport.
+    const logFile = process.env.KB_LOG_FILE;
+    const transport =
+      config.pretty && !logFile
+        ? {
+            target: "pino-pretty",
+            options: {
+              colorize: true,
+              translateTime: "SYS:standard",
+              ignore: "pid,hostname",
+            },
+          }
+        : undefined;
 
     // Merge options, but transport from config.options takes precedence
-    const finalTransport = config.options?.transport ?? transport;
+    const finalTransport = logFile
+      ? undefined
+      : (config.options?.transport ?? transport);
 
     // Always use single pino instance (no multistream). The CLI sets the
     // stream explicitly so diagnostics cannot contaminate command stdout.
-    const destination =
-      process.env.KB_LOG_STREAM === "stderr" ? process.stderr : undefined;
+    const destination = logFile
+      ? new BoundedFileSink({ path: logFile })
+      : process.env.KB_LOG_STREAM === "stderr"
+        ? process.stderr
+        : undefined;
     const pinoOptions = {
       level: resolvedLevel,
       ...config.options,

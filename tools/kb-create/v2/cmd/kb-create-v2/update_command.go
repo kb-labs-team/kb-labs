@@ -25,6 +25,7 @@ import (
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/telemetry"
 	"github.com/kb-labs/create/v2/transport"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -290,11 +291,12 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 		return updateCommandResult{}, asDiag(err)
 	}
 	checkCtx, cancelCheck := context.WithTimeout(context.Background(), 5*time.Second)
-	priorHost, err := runner.Status(checkCtx)
+	priorTruth, err := supervisor.Observe(checkCtx, runner, runner.State)
 	cancelCheck()
 	if err != nil {
 		return updateCommandResult{}, asDiag(err)
 	}
+	priorHost := priorTruth.Status
 	started := time.Now()
 	outcome, errorCode := "failure", "KB_INSTALL_OPERATION_FAILED"
 	defer func() {
@@ -419,11 +421,12 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 		runningRoot = priorHost.TreeRoot
 	}
 	statusCtx, cancelStatus := context.WithTimeout(context.Background(), 5*time.Second)
-	running, err := runner.Status(statusCtx)
+	runningTruth, err := supervisor.Observe(statusCtx, runner, runner.State)
 	cancelStatus()
 	if err != nil {
 		return updateCommandResult{}, asDiag(err)
 	}
+	running := runningTruth.Status
 	activate := func() error {
 		_, activateErr := layout.ActivateUpdate(stage, updated.Plan.ServiceGraph.PlatformVersion, updated.Plan.PlanHash, runningRoot,
 			versionroot.UpdateMetadata{SnapshotID: snapshot.ID, LogPath: logRelative})

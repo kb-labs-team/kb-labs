@@ -106,6 +106,8 @@ export interface HostConfig {
   projectScope: "required" | "platform";
   /** Registry identity required when projectScope is `required`. */
   projectId?: string;
+  /** Cause recorded by the supervisor for the previous process, when known. */
+  previousExitCause?: string;
   /** Entrypoint import.meta.url for installed-mode platform discovery. */
   moduleUrl?: string;
   platform: PlatformLaunchOptions;
@@ -195,6 +197,14 @@ export async function runHost(config: HostConfig): Promise<void> {
   });
 
   const logger = runtime.logger.forComponent("service-bootstrap");
+  logger.event("info", {
+    event: "service.host_started",
+    message: "Service host started",
+    fields: {
+      previousExitCause: config.previousExitCause ?? null,
+      pid: process.pid,
+    },
+  });
   const netOffset = Number(process.env.KB_NET_OFFSET) || 0;
   const multi = config.modules.length > 1;
   const started: StartedModule[] = [];

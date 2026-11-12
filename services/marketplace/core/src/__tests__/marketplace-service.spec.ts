@@ -17,7 +17,7 @@ import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extensio
 import { IntegrityMismatchError } from '@kb-labs/core-extension-store';
 import { readMarketplaceLock, DiagnosticCollector, createMarketplaceEntry } from '@kb-labs/core-discovery';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { MarketplaceService, mergeScopedEntries, type MarketplaceServiceOptions } from '../marketplace-service.js';
 
 // ---------------------------------------------------------------------------
@@ -28,10 +28,11 @@ const marketplaceServiceTestKeys = crypto.generateKeyPairSync('ed25519');
 const marketplaceServiceTestPublicKey = marketplaceServiceTestKeys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
 const marketplaceServiceTestWorkspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
 
-type TestServiceOptions = Omit<MarketplaceServiceOptions, 'logger' | 'sources'> & {
+type TestServiceOptions = Omit<MarketplaceServiceOptions, 'logger' | 'sources' | 'resolveSelectedAdapterSlot'> & {
   sources?: MarketplaceSource[];
   source?: PackageSource;
   registrySource?: PackageSource;
+  resolveSelectedAdapterSlot?: MarketplaceServiceOptions['resolveSelectedAdapterSlot'];
 };
 
 function asMarketplaceSource(source: PackageSource, kind: MarketplaceSource['kind']): MarketplaceSource {
@@ -61,7 +62,7 @@ function makeMarketplaceService(options: TestServiceOptions): MarketplaceService
     ...(options.registrySource ? [asMarketplaceSource(options.registrySource, 'registry')] : []),
     ...(options.source ? [asMarketplaceSource(options.source, 'npm')] : []),
   ];
-  return new MarketplaceService({ platformRoot: options.platformRoot, projectRoot: options.projectRoot, extensionStore: options.extensionStore, strategies: options.strategies, sources, logger: new NoOpLogger() });
+  return new MarketplaceService({ platformRoot: options.platformRoot, projectRoot: options.projectRoot, extensionStore: options.extensionStore, strategies: options.strategies, sources, logger: new NoOpLogger(), resolveSelectedAdapterSlot: options.resolveSelectedAdapterSlot ?? (async () => null) });
 }
 
 function computeIntegrity(content: string): string {
@@ -93,7 +94,7 @@ async function createPluginDir(
   return { dir, integrity: computeIntegrity(pkgJson) };
 }
 
-async function createAdapterDir(tmpDir: string, name: string, id: string): Promise<string> {
+async function createAdapterDir(tmpDir: string, name: string, id: string, manifestId: string = id): Promise<string> {
   const dir = path.join(tmpDir, 'packages', name);
   await fs.mkdir(path.join(dir, 'dist'), { recursive: true });
   await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({
@@ -102,7 +103,7 @@ async function createAdapterDir(tmpDir: string, name: string, id: string): Promi
     kb: { adapter: { manifest: './dist/adapter-manifest.js' } },
   }));
   await fs.writeFile(path.join(dir, 'dist', 'adapter-manifest.js'), `export const manifest = ${JSON.stringify({
-    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id, name: id, version: '1.0.0', type: 'core', implements: 'ITestAdapter', networkRequired: false,
+    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: manifestId, name: id, version: '1.0.0', type: 'core', implements: 'ITestAdapter', networkRequired: false,
   })};`);
   return dir;
 }
@@ -589,6 +590,60 @@ describe('MarketplaceService', () => {
       expect(result.installed[0]?.primaryKind).toBe('adapter');
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
       expect(lock?.adapters?.[packageId]?.resolvedPath).toBe('./packages/platform-adapter');
+    });
+
+    it('rejects an adapter package whose manifest identity differs from its package name', async () => {
+      const packageId = '@kb-labs/adapter-identity-mismatch';
+      const packageRoot = await createAdapterDir(tmpDir, 'adapter-identity-mismatch', packageId, '@kb-labs/other-adapter');
+      const source: PackageSource = {
+        async resolve() {
+          return { id: packageId, version: '1.0.0', integrity: 'sha256-mismatch', source: 'marketplace', primaryKind: 'adapter' };
+        },
+        async install() {
+          return { id: packageId, version: '1.0.0', packageRoot, integrity: 'sha256-mismatch' };
+        },
+        async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      const { InvalidEntityError } = await import('../marketplace-service.js');
+
+      await expect(service.install({ scope: 'platform' }, [packageId])).rejects.toBeInstanceOf(InvalidEntityError);
+      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
+      expect(lock?.adapters?.[packageId]).toBeUndefined();
+    });
+
+    // case: S-293.4
+    it('refuses to uninstall an adapter selected for a platform slot', async () => {
+      const packageId = '@kb-labs/selected-adapter';
+      const packageRoot = await createAdapterDir(tmpDir, 'selected-adapter', packageId);
+      const source: PackageSource = {
+        async resolve() {
+          return { id: packageId, version: '1.0.0', integrity: 'sha256-selected', source: 'marketplace', primaryKind: 'adapter' };
+        },
+        async install() {
+          return { id: packageId, version: '1.0.0', packageRoot, integrity: 'sha256-selected' };
+        },
+        remove: vi.fn(async () => undefined),
+        async commitInstall() {},
+        async rollbackInstall() {},
+      };
+      const service = makeMarketplaceService({
+        platformRoot: tmpDir,
+        source,
+        resolveSelectedAdapterSlot: async (id) => id === packageId ? 'llm' : null,
+      });
+      await service.install({ scope: 'platform' }, [packageId]);
+
+      await expect(service.uninstall({ scope: 'platform' }, [packageId])).rejects.toMatchObject({
+        envelope: createErrorEnvelope('KB_MARKETPLACE_ADAPTER_SELECTED', {
+          details: { package: packageId, slot: 'llm' },
+        }),
+      });
+      expect(source.remove).not.toHaveBeenCalled();
+      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
+      expect(lock?.adapters?.[packageId]).toBeDefined();
     });
 
     it('installs multiple plugins in one call', async () => {

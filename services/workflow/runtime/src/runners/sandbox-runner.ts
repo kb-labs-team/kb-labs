@@ -172,7 +172,12 @@ export class SandboxRunner implements Runner {
       uses: spec.uses,
     }).catch(() => {})
 
-    const result = await this.backend.execute(executionRequest, { signal, onLog: context.onLog, onLoggerLog: context.onLoggerLog })
+    const result = await this.backend.execute(executionRequest, {
+      signal,
+      onLog: context.onLog,
+      onLoggerLog: context.onLoggerLog,
+      onProcessStarted: context.onProcessStarted,
+    })
     const duration = Date.now() - startTime
 
     // Log result and track analytics

@@ -125,8 +125,8 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
       onTrackQueueWaitTime: (waitTimeMs) =>
         this.statsTracker.trackQueueWaitTime(waitTimeMs),
       onGetAvailableWorker: () => this.executor.getAvailableWorker(),
-      onExecuteOnWorker: (worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog, uiPromptHint, signal) =>
-        this.executor.executeOnWorker(worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog, uiPromptHint, signal),
+      onExecuteOnWorker: (worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog, uiPromptHint, signal, onProcessStarted) =>
+        this.executor.executeOnWorker(worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog, uiPromptHint, signal, onProcessStarted),
       onAcquireTimeout: () => {
         this.statsTracker.stats.acquireTimeouts++;
       },
@@ -177,6 +177,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
       onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
       onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
       onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>;
+      onProcessStarted?: (identity: import('@kb-labs/plugin-contracts').ProcessIdentity) => Promise<void>;
       uiPromptHint?: string;
     }
   ): Promise<ExecutionResult> {
@@ -234,6 +235,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
           options?.onLoggerLog,
           options?.uiPromptHint,
           options?.signal,
+          options?.onProcessStarted,
         );
       }
 
@@ -281,6 +283,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
         options?.onLoggerLog,
         options?.onUIPrompt,
         options?.uiPromptHint,
+        options?.onProcessStarted,
       );
     } finally {
       this.statsTracker.decrementPluginConcurrency(pluginId);
