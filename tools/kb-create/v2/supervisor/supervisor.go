@@ -7,9 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
@@ -24,7 +27,24 @@ type Supervisor struct {
 	State        host.State
 	PlatformRoot string
 	Version      string
+	// Log receives supervisor diagnostics; nil means os.Stderr, which the
+	// launcher redirects to the supervisor log.
+	Log io.Writer
+
+	// mu guards Runner and exit; a control restart holds it for the whole swap
+	// so the exit watcher never mistakes an intended stop for a death.
+	mu      sync.Mutex
+	exit    ExitRecord
+	changed chan struct{}
 }
+
+// A host child that dies unexpectedly is restarted at most MaxRestarts times
+// within RestartWindow; after that the supervisor stays up and reports it.
+const (
+	MaxRestarts   = 3
+	RestartWindow = 10 * time.Minute
+	restartDelay  = time.Second
+)
 
 // Run starts the host, publishes the control channel and blocks until ctx is
 // cancelled; it then stops the host gracefully and removes its state files.
@@ -77,19 +97,124 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if err := s.prepareHostStart(s.Runner); err != nil {
 		return err
 	}
-	if _, err := s.Runner.Start(ctx); err != nil {
+	// A record left by a crashed supervisor describes a child that is not ours.
+	_ = os.Remove(s.State.HostExit())
+	defer os.Remove(s.State.HostExit())
+	started, err := s.Runner.Start(ctx)
+	if err != nil {
 		return err
 	}
+	s.changed = make(chan struct{}, 1)
+	s.mu.Lock()
+	s.recordStart(started.PID)
+	s.mu.Unlock()
 	server := &control.Server{Runner: s.Runner, State: s.State, Version: s.Version, Restart: s.restart}
 	if err := server.Start(); err != nil {
 		_, _ = s.Runner.Stop(context.Background())
 		return contracts.NewDiag("KB_HOST_CONTROL_UNAVAILABLE", "The launcher control channel is unavailable.", "Start the launcher or the desktop shell.", err)
 	}
-	<-ctx.Done()
+	s.watch(ctx)
 	// Close the channel first so no restart races the shutdown stop.
 	_ = server.Close()
 	_, err = s.Runner.Stop(context.Background())
 	return err
+}
+
+// watch restarts the host child when it exits unexpectedly, within the restart
+// budget, and records why. It returns when ctx is cancelled.
+func (s *Supervisor) watch(ctx context.Context) {
+	for {
+		s.mu.Lock()
+		runner, exhausted := s.Runner, s.exit.Exhausted
+		s.mu.Unlock()
+		var exited <-chan struct{}
+		if process, ok := runner.(*host.ProcessRunner); ok && !exhausted {
+			exited = process.Exited()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.changed:
+		case <-exited:
+			s.recover(ctx, runner.(*host.ProcessRunner))
+		}
+	}
+}
+
+// recover handles one unexpected death of runner's child: record the cause,
+// then restart until it holds or the budget is spent.
+func (s *Supervisor) recover(ctx context.Context, dead *host.ProcessRunner) {
+	cause := dead.ExitCause()
+	for {
+		s.mu.Lock()
+		if s.Runner != host.Runner(dead) {
+			s.mu.Unlock()
+			return
+		}
+		now := time.Now().UTC()
+		kept, spent := spendRestart(s.exit.Restarts, now)
+		s.exit = ExitRecord{ChildPID: s.exit.ChildPID, Died: true, At: now, Cause: cause, Restarts: kept, Exhausted: spent}
+		s.writeExit()
+		exhausted := s.exit.Exhausted
+		s.mu.Unlock()
+		if exhausted {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(restartDelay):
+		}
+		s.mu.Lock()
+		if s.Runner != host.Runner(dead) {
+			s.mu.Unlock()
+			return
+		}
+		_, _ = dead.Status(ctx) // drops the dead child's pid record
+		var startErr error
+		var started host.Info
+		s.retireExit()
+		if startErr = s.prepareHostStart(dead); startErr == nil {
+			started, startErr = dead.Start(ctx)
+		}
+		if startErr == nil {
+			s.recordStart(started.PID)
+		}
+		s.mu.Unlock()
+		if startErr == nil {
+			return
+		}
+		cause = "restart failed: " + startErr.Error()
+	}
+}
+
+// retireExit withdraws the previous death record before a new host child is
+// started: from then on a dead child can only be the new one, whose death the
+// supervisor has not recorded yet. The caller holds s.mu.
+func (s *Supervisor) retireExit() {
+	s.exit = ExitRecord{Restarts: s.exit.Restarts}
+	s.writeExit()
+}
+
+// recordStart publishes that a new host child is running, which retires the
+// previous death record. The caller holds s.mu.
+func (s *Supervisor) recordStart(pid int) {
+	s.exit = ExitRecord{ChildPID: pid, Restarts: s.exit.Restarts}
+	s.writeExit()
+}
+
+// writeExit persists s.exit; the record is advisory, so a failure is reported
+// to the supervisor log and the supervisor keeps running. The caller holds s.mu.
+func (s *Supervisor) writeExit() {
+	err := writeExit(s.State, s.exit)
+	if err == nil {
+		return
+	}
+	var out io.Writer = os.Stderr
+	if s.Log != nil {
+		out = s.Log
+	}
+	fmt.Fprintf(out, "kb-create supervisor: cannot write host exit record %s: %v\n", s.State.HostExit(), err)
 }
 
 func (s *Supervisor) prepareHostStart(runner host.Runner) error {
@@ -107,11 +232,13 @@ func (s *Supervisor) prepareHostStart(runner host.Runner) error {
 }
 
 func (s *Supervisor) restart(ctx context.Context, interrupt bool) (control.RestartResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	previous, ok := s.Runner.(*host.ProcessRunner)
 	if !ok {
 		return control.RestartResponse{}, fmt.Errorf("supervisor restart requires the platform process runner")
 	}
-	if !interrupt {
+	if !interrupt && !childExited(previous) {
 		items, queryErr := previous.QueryActiveWork(ctx)
 		if queryErr != nil {
 			return control.RestartResponse{}, queryErr
@@ -125,6 +252,10 @@ func (s *Supervisor) restart(ctx context.Context, interrupt bool) (control.Resta
 			return control.RestartResponse{}, failure
 		}
 	}
+	savedExit, retired := s.exit, childExited(previous)
+	if retired {
+		s.retireExit()
+	}
 	outcome, err := host.RestartWithRecovery(ctx, s.PlatformRoot, previous,
 		func(ctx context.Context, runner *host.ProcessRunner) (host.Info, error) {
 			if prepareErr := s.prepareHostStart(runner); prepareErr != nil {
@@ -134,11 +265,36 @@ func (s *Supervisor) restart(ctx context.Context, interrupt bool) (control.Resta
 		})
 	if outcome.Runner != nil {
 		s.Runner = outcome.Runner
+		s.exit.Restarts = nil
+		s.recordStart(outcome.Info.PID)
+		select {
+		case s.changed <- struct{}{}:
+		default:
+		}
+	}
+	if retired && outcome.Runner == nil {
+		s.exit = savedExit
+		s.writeExit()
 	}
 	if err != nil {
 		return control.RestartResponse{}, err
 	}
 	return control.RestartResponse{OK: true, Protocol: control.ProtocolVersion, Stopped: outcome.Stopped, Host: outcome.Info}, nil
+}
+
+// childExited reports whether the host child this runner started is gone, so
+// a restart has no work in flight to protect.
+func childExited(runner *host.ProcessRunner) bool {
+	exited := runner.Exited()
+	if exited == nil {
+		return false
+	}
+	select {
+	case <-exited:
+		return true
+	default:
+		return false
+	}
 }
 
 // livePID returns the pid of a running supervisor for this installation state.

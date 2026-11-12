@@ -173,3 +173,17 @@ in `Owner`.
 **Owner:** [scripts/checks/check-product-invariants.test.mjs](../../scripts/checks/check-product-invariants.test.mjs)
 
 **Status:** debt
+
+## INV-13 — Workflow orchestrates; plugins own their domain
+
+**Rule:** A plugin owns its domain completely, including any internal orchestration. Workflow owns the course of the overall work and the policy between plugins. A plugin returns a typed final outcome (success, partial, cancelled, or typed failure); the project workflow plan deterministically decides what runs next, including retries, waits, and approvals. Workflow engine, runtime, contracts, and builtins stay generic and do not name plugins, vendors, or case details. Plugins do not steer the overall flow; cross-plugin composition belongs in project workflow YAML. Narrow sidecar calls through `ctx.invoke`, `ctx.workflows`, and `shell.exec` are allowed only through manifest-declared permissions, default off and visible. Plugin-specific internal domain logic must not be moved into workflow YAML.
+
+**Why:** Plugins and workflow can evolve independently: plugins retain their domain logic while workflow provides reusable orchestration and explicit, reviewable composition policy.
+
+**Enforcement:** `plugin-boundaries` mechanically checks plugin-to-platform dependencies/imports and platform-to-plugin dependencies/imports; [check-plugin-boundaries.mjs](../../scripts/checks/check-plugin-boundaries.mjs), [devkit.yaml](../../devkit.yaml#L1102). The product-invariants check recognizes IDs through INV-13; [check-product-invariants.mjs](../../scripts/checks/check-product-invariants.mjs#L8) and its regression test [check-product-invariants.test.mjs](../../scripts/checks/check-product-invariants.test.mjs#L37). Permissions are declared on the plugin manifest via [manifest.ts](../../core/plugin-contracts/src/manifest.ts#L699). `invoke.allow` and `shell.allow` default to empty, and `platform.workflows` defaults to `false`; the defaults are owned by [permissions.ts](../../core/plugin-contracts/src/permissions.ts#L359). Runtime denies undeclared invoke and shell use in [invoke.ts](../../core/plugin-runtime/src/api/invoke.ts#L78) and [shell.ts](../../core/plugin-runtime/src/api/shell.ts#L30). [plugin-api.test.ts](../../core/plugin-runtime/src/__tests__/plugin-api.test.ts#L566) asserts the invoke permission code and that the target is not called; [plugin-api.test.ts](../../core/plugin-runtime/src/__tests__/plugin-api.test.ts#L399) asserts the shell permission code and that no process is executed. [workflows-api.test.ts](../../core/plugin-runtime/src/__tests__/workflows-api.test.ts#L390) verifies omitted workflow permission is denied. [plugin-outcome-gate.integration.test.ts](../../services/workflow/daemon/tests/plugin-outcome-gate.integration.test.ts#L24) runs real workflow-engine runs through the daemon worker and plugin execution backend: a plugin handler returns a typed `status` of `partial` or `success`, and the workflow's `builtin:gate` routes to only the corresponding branch.
+
+**Gap:** No structural check was found that rejects plugin IDs or case-specific references in workflow engine, runtime, contracts, or steps code. That separation remains review-enforced under definition-of-done item 10. S-295.4 (rejecting an engine reference to a plugin ID) is excluded because no mechanical rail currently exists.
+
+**Owner:** [services/workflow](../../services/workflow), [core/plugin-contracts](../../core/plugin-contracts), and [core/plugin-runtime](../../core/plugin-runtime)
+
+**Status:** partial

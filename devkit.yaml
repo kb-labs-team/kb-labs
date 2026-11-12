@@ -135,25 +135,42 @@ workspace:
       language: typescript
       preset: node-lib
 
+    # Product apps (marketing site, docs): not part of the platform, so a plain
+    # `kb-devkit run build` leaves their build out (defaultBuild: false) and says
+    # so. Build them with --packages, or let --affected select them.
+    #
     # Next.js / Nuxt site apps
     site:
       match:
         - "sites/*"
       language: typescript
       preset: site
+      defaultBuild: false
 
     site-config:
       match:
         - "sites/*/packages/config"
       language: typescript
       preset: site-pkg
+      defaultBuild: false
+
+    # `next build` writes .next with absolute workspace paths embedded
+    # (required-server-files.json and compiled chunks), so its output cannot be
+    # restored into another checkout. Apps therefore get their own build variant
+    # that always executes; the libraries below keep exit-code caching.
+    site-app:
+      match:
+        - "sites/*/apps/*"
+      language: typescript
+      preset: site-pkg
+      defaultBuild: false
 
     site-pkg:
       match:
-        - "sites/*/apps/*"
         - "sites/*/packages/*"
       language: typescript
       preset: site-pkg
+      defaultBuild: false
 
     internal-tool:
       match:
@@ -642,6 +659,17 @@ tasks:
       deps:
         - "^build"
 
+    - categories: [site-app]
+      command: pnpm run build
+      inputs:
+        - "src/**"
+        - "tsconfig*.json"
+        - "package.json"
+        - "^dist/**"
+      cache: false
+      deps:
+        - "^build"
+
   lint:
     - categories: [ts-lib, ts-app]
       command: eslint src/
@@ -659,7 +687,7 @@ tasks:
         - "go.mod"
       outputs: []
 
-    - categories: [site-pkg]
+    - categories: [site-pkg, site-app]
       command: eslint --no-error-on-unmatched-pattern src/
       inputs:
         - "src/**"
@@ -677,7 +705,7 @@ tasks:
       deps:
         - "^build"   # needs deps' dist/**/*.d.ts
 
-    - categories: [site-pkg]
+    - categories: [site-pkg, site-app]
       command: tsc --noEmit -p tsconfig.json
       inputs:
         - "src/**"

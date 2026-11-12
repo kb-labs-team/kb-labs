@@ -81,6 +81,8 @@ export interface ProjectRuntimeOptions
   moduleUrl?: string;
   /** Sends the guard's bound address after every module has published its address. */
   onReady?: (address: { host: string; port: number }) => Promise<void> | void;
+  /** Cause reported by the host supervisor for the previous process. */
+  previousExitCause?: string;
 }
 
 /**
@@ -244,6 +246,7 @@ export async function createProjectRuntimeConfig(
     projectId: options.projectId,
     startDir: options.projectRoot,
     moduleUrl: options.moduleUrl,
+    previousExitCause: options.previousExitCause,
     platform: { assemblyHook },
     modules: [...serviceModules, guard],
     publishListenAddress: async (module, address) => {

@@ -25,6 +25,7 @@ async function main(): Promise<void> {
       onReady: (address) => {
         process.send?.({ type: "kb-project-runtime-ready", address });
       },
+      previousExitCause: process.env.KB_RUNTIME_PREVIOUS_EXIT_CAUSE,
     }),
   );
 

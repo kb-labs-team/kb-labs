@@ -29,10 +29,11 @@ func (o *yamlOrderedCategories) UnmarshalYAML(value *yaml.Node) error {
 		*o = append(*o, NamedCategory{
 			Name: keyNode.Value,
 			Category: CategoryConfig{
-				Match:       cat.Match,
-				Language:    cat.Language,
-				Preset:      cat.Preset,
-				ReleaseLane: cat.ReleaseLane,
+				Match:        cat.Match,
+				Language:     cat.Language,
+				Preset:       cat.Preset,
+				ReleaseLane:  cat.ReleaseLane,
+				DefaultBuild: cat.DefaultBuild,
 			},
 		})
 	}
@@ -127,10 +128,11 @@ type yamlWorkspace struct {
 }
 
 type yamlCategory struct {
-	Match       []string `yaml:"match"`
-	Language    string   `yaml:"language"`
-	Preset      string   `yaml:"preset"`
-	ReleaseLane string   `yaml:"releaseLane"`
+	Match        []string `yaml:"match"`
+	Language     string   `yaml:"language"`
+	Preset       string   `yaml:"preset"`
+	ReleaseLane  string   `yaml:"releaseLane"`
+	DefaultBuild *bool    `yaml:"defaultBuild"`
 }
 
 type yamlPreset struct {

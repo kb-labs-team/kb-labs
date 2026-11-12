@@ -20,6 +20,8 @@ import type {
   MiddlewaresInitMessage,
   UIPromptMessage,
   UIPromptResultMessage,
+  ProcessStartedMessage,
+  ProcessStartedAckMessage,
 } from './types.js';
 import type { RawMiddlewareDecl } from '@kb-labs/plugin-runtime';
 interface WithMiddlewareDecls {
@@ -97,6 +99,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
     onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
     onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>;
+    onProcessStarted?: (identity: import('@kb-labs/plugin-contracts').ProcessIdentity) => Promise<void>;
     uiPromptHint?: string;
     request: ExecutionRequest;
     startedAt: number;
@@ -281,6 +284,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     uiPromptHint?: string,
     signal?: AbortSignal,
+    onProcessStarted?: (identity: import('@kb-labs/plugin-contracts').ProcessIdentity) => Promise<void>,
   ): Promise<ExecutionResult> {
     if (this._state !== 'idle') {
       throw new Error(`Worker ${this.id} is not available (state: ${this._state})`);
@@ -381,6 +385,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
         onLog,
         onLoggerLog,
         onUIPrompt,
+        onProcessStarted,
         uiPromptHint,
         request,
         startedAt,
@@ -665,6 +670,21 @@ export class Worker extends EventEmitter<WorkerEvents> {
           };
           this.process.send(result);
         }
+        break;
+      }
+
+      case 'processStarted': {
+        const msg = message as ProcessStartedMessage;
+        const pending = this.pendingRequests.get(msg.requestId);
+        if (!pending) { break; }
+        Promise.resolve(pending.onProcessStarted?.(msg.identity)).then(
+          () => this.process?.send({ type: 'processStartedAck', requestId: msg.requestId } satisfies ProcessStartedAckMessage),
+          (error: unknown) => this.process?.send({
+            type: 'processStartedAck',
+            requestId: msg.requestId,
+            failure: error instanceof Error ? error.message : String(error),
+          } satisfies ProcessStartedAckMessage),
+        );
         break;
       }
 

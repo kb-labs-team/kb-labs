@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCapturedUI, createMockContext } from '@kb-labs/sdk/testing';
 
-vi.mock('@kb-labs/agents/tracing', () => ({
+vi.mock('../../../src/tracing/index.js', () => ({
   loadTrace: vi.fn().mockResolvedValue({ ok: true, events: [] }),
   formatTraceLoadError: vi.fn(),
 }));
-vi.mock('../../cli/commands/trace-event-normalizer.js', () => ({
+vi.mock('../../../src/cli/commands/trace-event-normalizer.js', () => ({
   normalizeTraceEvents: vi.fn(() => [{
     raw: { timestamp: '2026-10-11T00:00:00.000Z' },
     type: 'error:captured',

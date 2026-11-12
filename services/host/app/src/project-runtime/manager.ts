@@ -63,7 +63,7 @@ export interface RuntimeProcess {
 
 export interface RuntimeLauncher {
   /** Spawns the runtime. Does not wait for it to become healthy. */
-  launch(project: RuntimeProject): Promise<RuntimeProcess>;
+  launch(project: RuntimeProject, previousExitCause?: string): Promise<RuntimeProcess>;
   /** True when the runtime answers its health check. */
   probe(runtime: RuntimeProcess): Promise<boolean>;
 }
@@ -603,7 +603,7 @@ export class ProjectRuntimeManager {
         return;
       }
       try {
-        await this.startOnce(entry);
+        await this.startOnce(entry, entry.lastError);
       } catch (error) {
         entry.lastError = error instanceof Error ? error.message : String(error);
         if (!this.isState(entry, "restarting")) {
@@ -623,9 +623,9 @@ export class ProjectRuntimeManager {
    * cause when it exits first or times out; the process is stopped then.
    * Returns early (without throwing) when the entry is being stopped.
    */
-  private async startOnce(entry: Entry): Promise<void> {
+  private async startOnce(entry: Entry, previousExitCause?: string): Promise<void> {
     const project = entry.project;
-    const runtime = await this.options.launcher.launch(project);
+    const runtime = await this.options.launcher.launch(project, previousExitCause);
     entry.process = runtime;
     if (this.isState(entry, "stopping")) {
       return;

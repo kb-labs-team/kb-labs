@@ -276,12 +276,32 @@ def _run_llm_provider_steps(journey: Journey, *, project_id: str, project_root: 
         else "both registered project roots must return the deterministic OpenAI mock response"
     ), cases=["S-018.2"])
 
-    vibe_install = cli(kb_command([ "marketplace", "install", "@kb-labs/adapters-vibeproxy",
+    vibeproxy_package = "@kb-labs/adapters-vibeproxy"
+    vibe_install = cli(kb_command([ "marketplace", "install", vibeproxy_package,
                          "--scope", "platform", "--json"]), "setup-vibeproxy-install", runner)
     install_error = _install_error(vibe_install) if vibe_install.returncode != 0 else ""
+
+    def verify_vibeproxy_marketplace_lock() -> str | None:
+        platform_root = active_platform_root(Path(journey_value(
+            "KB_JOURNEY_PLATFORM_ROOT", str(Path.home() / "kb-platform"))))
+        lock_path = platform_root / ".kb" / "marketplace.lock"
+        try:
+            lock = json.loads(lock_path.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            return f"platform marketplace lock could not be read after VibeProxy install: {error}"
+        entry = lock.get("adapters", {}).get(vibeproxy_package)
+        if not isinstance(entry, dict):
+            return "marketplace lock does not contain the installed VibeProxy adapter identity"
+        if (entry.get("source") != "marketplace" or not entry.get("version")
+                or not entry.get("integrity") or entry.get("marketplaceSource") not in {"npm", "registry"}
+                or not entry.get("resolvedPath")):
+            return f"marketplace lock has incomplete version or provenance for {vibeproxy_package}: {entry!r}"
+        return None
+
     journey.step("install VibeProxy adapter prerequisite", "gateway", lambda: (
-        None if vibe_install.returncode == 0 else f"VibeProxy install failed: {install_error}"
-    ), cases=[])
+        verify_vibeproxy_marketplace_lock() if vibe_install.returncode == 0
+        else f"VibeProxy install failed: {install_error}"
+    ), cases=["S-292.1"])
     if vibe_install.returncode != 0:
         journey.step("switch to VibeProxy messages protocol in both projects", "gateway",
                      lambda: f"prerequisite not met: {install_error}", cases=["S-018.3"])

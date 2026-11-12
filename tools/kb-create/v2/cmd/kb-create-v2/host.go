@@ -108,11 +108,23 @@ func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, sta
 		}
 		return nil, nil
 	}
-	status, statusErr := process.Status(ctx)
+	truth, statusErr := supervisor.Observe(ctx, process, state)
 	if statusErr != nil {
 		return nil, startStatusDiagnostic(statusErr)
 	}
-	if status.State != host.StateStopped {
+	switch truth.Kind {
+	case supervisor.KindHostExited:
+		// The supervisor is alive and its child is dead: it owns the restart.
+		client, connectErr := control.Connect(state)
+		if connectErr != nil {
+			return nil, asDiag(host.HostUnreachable(process.Spec.HealthURL, connectErr))
+		}
+		response, restartErr := client.Restart(ctx, false)
+		if restartErr != nil {
+			return nil, asDiag(restartErr)
+		}
+		return hostCommandResult(map[string]any{"ok": true, "operation": "start", "host": response.Host}), nil
+	case supervisor.KindRunning, supervisor.KindUnhealthy:
 		command := contracts.ShellCommand("kb-create", "status", "--platform-root", c.PlatformRoot)
 		failure := contracts.NewDiag(contracts.CodeHostAlreadyRunning, "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
 		failure.Meta = map[string]any{"nextCommand": command}
@@ -120,12 +132,6 @@ func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, sta
 	}
 	if record, alive := activeLauncher(state); alive {
 		return nil, supervisor.Refusal(record, process.InstallRoot)
-	}
-	if pid, alive := supervisor.LivePID(state, process.InstallRoot); alive {
-		command := contracts.ShellCommand("kb-create", "status", "--platform-root", c.PlatformRoot)
-		e := contracts.NewDiag(contracts.CodeHostAlreadyRunning, "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
-		e.Meta = map[string]any{"supervisorPid": fmt.Sprint(pid), "nextCommand": command}
-		return nil, e
 	}
 	startupDeadline := time.Now().Add(process.Spec.ReadyTimeout)
 	info, err := c.spawnSupervisorUntil(ctx, process, state, startupDeadline)
@@ -227,9 +233,9 @@ func (c hostCommand) spawnSupervisorUntil(ctx context.Context, process *host.Pro
 	defer ticker.Stop()
 	for {
 		if c.supervisorHealthyNow(ctx, state) {
-			status, statusErr := process.Status(ctx)
-			if statusErr == nil && status.State == host.StateRunning {
-				return host.Info{Runner: process.Name(), PID: status.PID, HealthURL: process.Spec.HealthURL}, nil
+			truth, statusErr := supervisor.Observe(ctx, process, state)
+			if statusErr == nil && truth.Kind == supervisor.KindRunning {
+				return host.Info{Runner: process.Name(), PID: truth.Status.PID, HealthURL: process.Spec.HealthURL}, nil
 			}
 		}
 		select {
@@ -353,10 +359,14 @@ func (c hostCommand) stop(ctx context.Context, runner *host.ProcessRunner, state
 // halt stops the supervisor (which stops the host gracefully and removes the
 // control channel) and then whatever it left behind, or a foreground host.
 func halt(ctx context.Context, runner host.Runner, state host.State) (host.StopResult, error) {
-	before, _ := runner.Status(ctx)
 	platformRoot := ""
+	wasRunning := false
 	if process, ok := runner.(*host.ProcessRunner); ok {
 		platformRoot = process.InstallRoot
+		// A supervisor with a dead child still counts: stopping it is a stop.
+		if truth, observeErr := supervisor.Observe(ctx, process, state); observeErr == nil {
+			wasRunning = truth.Kind != supervisor.KindStopped
+		}
 	}
 	if record, identityStatus, stale := supervisor.StaleRecord(state); stale {
 		if identityStatus == host.ProcessIdentityUndetermined && record.InstallationID != "" {
@@ -375,7 +385,7 @@ func halt(ctx context.Context, runner host.Runner, state host.State) (host.StopR
 	if err != nil {
 		return result, err
 	}
-	result.WasRunning = result.WasRunning || before.State != host.StateStopped
+	result.WasRunning = result.WasRunning || wasRunning
 	if result.WasRunning && !result.Forced {
 		result.Graceful = true
 	}

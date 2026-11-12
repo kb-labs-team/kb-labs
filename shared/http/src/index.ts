@@ -29,6 +29,11 @@ export {
   type HttpLogContextInput,
 } from "./log-context.js";
 export {
+  SLOW_REQUEST_THRESHOLD_MS,
+  logRequestCompleted,
+  type RequestKind,
+} from "./request-completion-log.js";
+export {
   createRealtimeLogger,
   type RealtimeLogContextInput,
   type RealtimeTransport,

@@ -204,8 +204,13 @@ export class InProcessBackend implements RawExecutionBackend {
       // See: services/workflow/docs/adr/0019-log-stream-separation.md
       const onLog = options?.onLog;
       const onLoggerLog = options?.onLoggerLog;
-      const eventEmitter = (onLog || onLoggerLog)
+      const onProcessStarted = options?.onProcessStarted;
+      const eventEmitter = (onLog || onLoggerLog || onProcessStarted)
         ? async (name: string, payload?: unknown) => {
+            if (name === 'process.started') {
+              await onProcessStarted?.(payload as import('@kb-labs/plugin-contracts').ProcessIdentity);
+              return;
+            }
             const isLogLine = name === 'log.line' || name.endsWith(':log.line');
             const isLoggerLine = name === 'logger.line' || name.endsWith(':logger.line');
             if ((isLogLine || isLoggerLine) && payload && typeof payload === 'object') {

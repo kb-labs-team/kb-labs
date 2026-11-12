@@ -41,7 +41,7 @@ from installer_case_steps import (run_doctor_root_isolation_step,
                                   commit_marketplace_install_record,
                                   add_installed_host_stop_case_step)
 from installer_case_steps import parse_install_refusal
-from journey_resources import case_catalog_root, journey_module, parse_shell_commands, resource_root, workspace_resource
+from journey_resources import host_structured_log_problem, case_catalog_root, journey_module, parse_shell_commands, resource_root, workspace_resource
 from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
@@ -1530,8 +1530,11 @@ def _main(*, update_variant_runner=None):
         result, elapsed = run([launcher, "start", "--platform-root", str(PLATFORM)], env=env, timeout=300)
         TIMES["start"] = elapsed
         started = require(result, step="kb-create start")
-        record_case("start host", started,
-                    "kb-create start did not start the configured host", cases=["PC-002.1"])
+        failure = "kb-create start did not start the configured host"
+        if started:
+            failure = host_structured_log_problem(PLATFORM)
+            started = failure is None
+        record_case("start host", started, failure, cases=["PC-002.1"])
 
     host_status = outer_graph.flow("start platform host", "host", "platform.host", start_host_group,
                                    cases=["PC-002.1"])

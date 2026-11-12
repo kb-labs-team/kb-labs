@@ -20,6 +20,7 @@ import (
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/swap"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -178,15 +179,27 @@ func (i doctorCommandInput) inspectPlatform() doctor.Section {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	status, err := runner.Status(ctx)
+	truth, err := supervisor.Observe(ctx, runner, runner.State)
 	if err != nil {
 		return doctor.NewSection([]doctor.Check{{ID: "host-process", Detail: "The host status cannot be read: " + err.Error()}})
 	}
+	status := truth.Status
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		return doctor.NewSection([]doctor.Check{{ID: "host-process", Detail: "The active install receipt cannot be read while checking adapter bindings."}})
 	}
 	platform := doctor.InspectPlatform(ctx, status, nil, active.Plan.ProviderBindings)
+	if truth.Kind == supervisor.KindHostExited {
+		startHint := "Run `" + contracts.ShellCommand("kb-create", "start", "--platform-root", i.PlatformRoot) + "`."
+		detail := "The supervisor is running but its host process has exited."
+		if truth.Exit != nil {
+			detail = "The supervisor is running but its host process has exited (" + truth.Exit.Cause + ")."
+		}
+		return doctor.NewSection([]doctor.Check{
+			{ID: "host-process", Detail: detail, Hint: startHint},
+			{ID: "adapters", Detail: "Adapter status cannot be checked while the host is stopped.", Hint: startHint},
+		})
+	}
 	if status.State == host.StateStopped {
 		startHint := "Run `" + contracts.ShellCommand("kb-create", "start", "--platform-root", i.PlatformRoot) + "`."
 		for index := range platform.Checks {

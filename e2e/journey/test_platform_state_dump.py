@@ -11,6 +11,7 @@ from unittest.mock import patch
 from platform_state_dump import (MAX_DUMP_BYTES, MAX_FILE_BYTES, PlatformStateDumpOnce,
                                  _write_auth_state_probe, archive_service_logs, dump_platform_state,
                                  )
+from installed_fixture import layout_value
 from journey_resources import installer_record_path
 from test_install_layout import create_test_install_container, move_test_platform_into_container
 
@@ -153,6 +154,10 @@ class PlatformStateDumpTests(unittest.TestCase):
                 "\n".join(f"host-line-{number}" for number in range(500))
                 + "\napiKey: launcher-secret\n"
             )
+            (host_state / layout_value("hostLogFiles.structured")).write_text(
+                '{"level":50,"time":1,"msg":"structured-cause apiKey: launcher-secret"}\n')
+            (host_state / (layout_value("hostLogFiles.structured") + ".1")).write_text(
+                '{"level":50,"time":0,"msg":"rotated-cause"}\n')
             (host_state / "launcher.log").write_text("GATEWAY_INTERNAL_SECRET=probe-secret\n")
             platform = root / "platform"
             reports = root / "reports"
@@ -255,6 +260,11 @@ class PlatformStateDumpTests(unittest.TestCase):
             self.assertIn("host-line-499", launcher_tail)
             self.assertNotIn("host-line-99\n", launcher_tail)
             self.assertNotIn("launcher-secret", launcher_tail)
+            structured_name = layout_value("hostLogFiles.structured")
+            structured_dump = (destination / "installer-host-state" / structured_name).read_text()
+            self.assertIn("structured-cause", structured_dump)
+            self.assertNotIn("launcher-secret", structured_dump)
+            self.assertIn("rotated-cause", (destination / "installer-host-state" / (structured_name + ".1")).read_text())
             self.assertIn("GATEWAY_INTERNAL_SECRET", (destination / "installer-host-state/launcher.log").read_text())
             self.assertNotIn("launcher-secret", launcher_tail)
             self.assertNotIn("probe-secret", (destination / "installer-host-state/launcher.log").read_text())

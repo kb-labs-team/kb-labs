@@ -13,6 +13,7 @@ import {
 import { ConsoleLogger } from "@kb-labs/core-platform/inmemory";
 import {
   createHttpLogger,
+  logRequestCompleted,
   HttpObservabilityCollector,
   createServiceReadyResponse,
   getListenOptions,
@@ -133,14 +134,7 @@ class StateDaemonRuntime {
         }
       });
       instance.addHook("onResponse", async (request, reply) => {
-        const logger = request.kbLogger;
-        if (!logger) {
-          return;
-        }
-
-        logger.info("HTTP request completed", {
-          "http.status_code": reply.statusCode,
-        });
+        logRequestCompleted(request, reply);
       });
       instance.addHook("onSend", async (_request, reply, payload) => {
         reply.header("Access-Control-Allow-Origin", "*");
@@ -218,9 +212,9 @@ class StateDaemonRuntime {
   }
 
   private registerRoutes(server: FastifyInstance): void {
-    server.get("/health", async () => this.getBrokerHealth());
+    server.get("/health", { config: { kbRequestKind: "probe" } }, async () => this.getBrokerHealth());
 
-    server.get("/ready", async () => {
+    server.get("/ready", { config: { kbRequestKind: "probe" } }, async () => {
       const health = await this.getBrokerHealth();
       const degraded = health.status !== "ok";
       return createServiceReadyResponse({
@@ -236,9 +230,9 @@ class StateDaemonRuntime {
       });
     });
 
-    server.get("/stats", async () => this.getBrokerStats());
+    server.get("/stats", { config: { kbRequestKind: "probe" } }, async () => this.getBrokerStats());
 
-    server.get("/metrics", async (_request, reply) => {
+    server.get("/metrics", { config: { kbRequestKind: "probe" } }, async (_request, reply) => {
       const health = await this.getBrokerHealth();
       const stats = await this.getBrokerStats();
       reply.header("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
@@ -248,11 +242,11 @@ class StateDaemonRuntime {
       );
     });
 
-    server.get("/observability/describe", async () =>
+    server.get("/observability/describe", { config: { kbRequestKind: "probe" } }, async () =>
       this.observability.buildDescribe(),
     );
 
-    server.get("/observability/health", async () => {
+    server.get("/observability/health", { config: { kbRequestKind: "probe" } }, async () => {
       const health = await this.getBrokerHealth();
       const stats = await this.getBrokerStats();
 
@@ -271,7 +265,7 @@ class StateDaemonRuntime {
       });
     });
 
-    server.get("/state/:key", async (request, reply) => {
+    server.get("/state/:key", { config: { kbRequestKind: "polling" } }, async (request, reply) => {
       const { key } = request.params as { key: string };
       const value = await this.observability.observeOperation("state.get", () =>
         this.broker.get(key),
@@ -286,7 +280,7 @@ class StateDaemonRuntime {
       return JSON.stringify(value);
     });
 
-    server.put("/state/:key", async (request, reply) => {
+    server.put("/state/:key", { config: { kbRequestKind: "polling" } }, async (request, reply) => {
       const { key } = request.params as { key: string };
       const { value, ttl } = request.body as { value: unknown; ttl?: number };
       await this.observability.observeOperation("state.set", () =>
@@ -296,7 +290,7 @@ class StateDaemonRuntime {
       return null;
     });
 
-    server.put("/state/:key/if-absent", async (request, reply) => {
+    server.put("/state/:key/if-absent", { config: { kbRequestKind: "polling" } }, async (request, reply) => {
       const { key } = request.params as { key: string };
       const { value, ttl } = request.body as { value: unknown; ttl?: number };
       const inserted = await this.observability.observeOperation(
@@ -307,7 +301,7 @@ class StateDaemonRuntime {
       return null;
     });
 
-    server.put("/state/:key/zset", async (request, reply) => {
+    server.put("/state/:key/zset", { config: { kbRequestKind: "polling" } }, async (request, reply) => {
       const { key } = request.params as { key: string };
       const { score, member } = request.body as {
         score: number;
@@ -320,7 +314,7 @@ class StateDaemonRuntime {
       return null;
     });
 
-    server.delete("/state/:key/zset", async (request, reply) => {
+    server.delete("/state/:key/zset", { config: { kbRequestKind: "polling" } }, async (request, reply) => {
       const { key } = request.params as { key: string };
       const { member } = request.body as { member: string };
       await this.observability.observeOperation("state.zrem", () =>
@@ -330,7 +324,7 @@ class StateDaemonRuntime {
       return null;
     });
 
-    server.get("/state/:key/range", async (request, reply) => {
+    server.get("/state/:key/range", { config: { kbRequestKind: "polling" } }, async (request, reply) => {
       const { key } = request.params as { key: string };
       const query = request.query as { min?: string; max?: string };
       const members = await this.observability.observeOperation(
@@ -342,7 +336,7 @@ class StateDaemonRuntime {
       return members;
     });
 
-    server.delete("/state/:key", async (request, reply) => {
+    server.delete("/state/:key", { config: { kbRequestKind: "polling" } }, async (request, reply) => {
       const { key } = request.params as { key: string };
       await this.observability.observeOperation("state.delete", () =>
         this.broker.delete(key),

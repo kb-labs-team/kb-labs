@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { writeCheckResult } from './lib/check-result.mjs';
 
 const checkName = process.env.KB_DEVKIT_CHECK_NAME;
-const invariantCount = 12;
-// The check's contract is explicitly INV-01 through INV-12; this is the sole
+const invariantCount = 13;
+// The check's contract is explicitly INV-01 through INV-13; this is the sole
 // owner of the expected set and is intentionally independent of document headings.
 const INVARIANT_IDS = Array.from({ length: invariantCount }, (_, index) => `INV-${String(index + 1).padStart(2, '0')}`);
 const knownStatuses = new Set(['enforced', 'partial', 'debt']);
@@ -32,7 +32,7 @@ export function productInvariantIssues(markdown, root) {
     const id = heading[1];
     counts.set(id, (counts.get(id) ?? 0) + 1);
     if (!expectedIds.has(id)) {
-      addIssue(issues, id, lineAt(markdown, heading.index), `unexpected invariant id ${id}; expected INV-01 through INV-12`);
+      addIssue(issues, id, lineAt(markdown, heading.index), `unexpected invariant id ${id}; expected INV-01 through INV-13`);
     }
     if (counts.get(id) > 1) {
       addIssue(issues, id, lineAt(markdown, heading.index), `duplicate invariant id ${id}`);

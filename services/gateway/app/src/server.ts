@@ -6,6 +6,7 @@ import fastifyHttpProxy from "@fastify/http-proxy";
 import { platform, getAdapterStatus } from "@kb-labs/core-runtime";
 import {
   createHttpLogger,
+  logRequestCompleted,
   createServiceReadyResponse,
   registerOpenAPI,
 } from "@kb-labs/shared-http";
@@ -280,14 +281,7 @@ export async function createServer(
   });
 
   app.addHook("onResponse", async (request, reply) => {
-    const requestLogger = request.kbLogger;
-    if (!requestLogger) {
-      return;
-    }
-
-    requestLogger.info("HTTP request completed", {
-      "http.status_code": reply.statusCode,
-    });
+    logRequestCompleted(request, reply);
   });
 
   // ── Proxy upstreams ────────────────────────────────────────────────
@@ -566,7 +560,7 @@ export async function createServer(
 
     scope.get(
       "/health/identity",
-      { schema: { tags: ["System"], summary: "Gateway installation identity", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { installationId: { type: 'string' } }, additionalProperties: false } } } },
+      { config: { kbRequestKind: "probe" }, schema: { tags: ["System"], summary: "Gateway installation identity", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { installationId: { type: 'string' } }, additionalProperties: false } } } },
       async () => ({
         ...(installationIdentity?.installationId ? { installationId: installationIdentity.installationId } : {}),
       }),
@@ -574,7 +568,7 @@ export async function createServer(
 
     scope.get(
       "/health",
-      { schema: { tags: ["System"], summary: "Gateway health check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { studio: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'], additionalProperties: false }, status: { type: 'string', enum: ['healthy', 'degraded', 'unhealthy'] }, version: { type: 'string' }, uptime: { type: 'number' }, timestamp: { type: 'string', format: 'date-time' }, adapters: { type: 'object', additionalProperties: { type: 'object', properties: { available: { type: 'boolean' }, latencyMs: { type: 'number' } }, required: ['available'] } }, upstreams: { type: 'object', additionalProperties: { type: 'object', properties: { status: { type: 'string' }, latencyMs: { type: 'number' } }, required: ['status'] } }, projectRuntimes: { type: 'object', properties: { limit: { type: 'number' }, active: { type: 'number' }, runtimes: { type: 'array', items: { type: 'object', properties: { projectId: { type: 'string' }, state: { type: 'string' }, lastUsedAt: { type: 'string', format: 'date-time' }, inflight: { type: 'number' }, restarts: { type: 'number' }, keptRunningSchedules: { type: 'number' } }, required: ['projectId', 'state', 'lastUsedAt', 'inflight', 'restarts'], additionalProperties: false } } }, required: ['limit', 'active', 'runtimes'], additionalProperties: false } }, required: ['status', 'version', 'uptime', 'timestamp', 'adapters', 'upstreams'] } } } },
+      { config: { kbRequestKind: "probe" }, schema: { tags: ["System"], summary: "Gateway health check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { studio: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'], additionalProperties: false }, status: { type: 'string', enum: ['healthy', 'degraded', 'unhealthy'] }, version: { type: 'string' }, uptime: { type: 'number' }, timestamp: { type: 'string', format: 'date-time' }, adapters: { type: 'object', additionalProperties: { type: 'object', properties: { available: { type: 'boolean' }, latencyMs: { type: 'number' } }, required: ['available'] } }, upstreams: { type: 'object', additionalProperties: { type: 'object', properties: { status: { type: 'string' }, latencyMs: { type: 'number' } }, required: ['status'] } }, projectRuntimes: { type: 'object', properties: { limit: { type: 'number' }, active: { type: 'number' }, runtimes: { type: 'array', items: { type: 'object', properties: { projectId: { type: 'string' }, state: { type: 'string' }, lastUsedAt: { type: 'string', format: 'date-time' }, inflight: { type: 'number' }, restarts: { type: 'number' }, keptRunningSchedules: { type: 'number' } }, required: ['projectId', 'state', 'lastUsedAt', 'inflight', 'restarts'], additionalProperties: false } } }, required: ['limit', 'active', 'runtimes'], additionalProperties: false } }, required: ['status', 'version', 'uptime', 'timestamp', 'adapters', 'upstreams'] } } } },
       async (request, reply) => {
         if (readinessControlAddress) {reply.header("x-kb-host-active-work-address", readinessControlAddress);}
         const snapshot = await collectHealthSnapshot();
@@ -589,6 +583,7 @@ export async function createServer(
     scope.get(
       "/health/adapters",
       {
+        config: { kbRequestKind: "probe" },
         schema: {
           tags: ["System"],
           summary:
@@ -633,7 +628,7 @@ export async function createServer(
     scope.get(
       "/ready",
       {
-        config: { uxFixture: { validResult: "error-envelope" } },
+        config: { kbRequestKind: "probe", uxFixture: { validResult: "error-envelope" } },
         schema: {
           tags: ["System"],
           summary: "Gateway readiness check",
@@ -700,7 +695,7 @@ export async function createServer(
       "/metrics",
       {
         // Prometheus text exposition is consumed by scrapers, not UX JSON clients.
-        config: { ux: 'raw' },
+        config: { ux: 'raw', kbRequestKind: "probe" },
         schema: {
           tags: ["Observability"],
           summary: "Gateway metrics in Prometheus format",
@@ -722,6 +717,7 @@ export async function createServer(
     scope.get(
       "/observability/describe",
       {
+        config: { kbRequestKind: "probe" },
         schema: {
           tags: ["Observability"],
           summary: "Gateway observability contract descriptor",
@@ -735,6 +731,7 @@ export async function createServer(
     scope.get(
       "/observability/health",
       {
+        config: { kbRequestKind: "probe" },
         schema: {
           tags: ["Observability"],
           summary: "Gateway observability health snapshot",

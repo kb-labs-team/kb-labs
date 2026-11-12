@@ -25,7 +25,7 @@ function makeMarketplaceService(options: { platformRoot: string; logger: ILogger
       return { status: 'found', package: await options.source.resolve(identity) };
     },
   };
-  return new MarketplaceService({ platformRoot: options.platformRoot, logger: options.logger, sources: [source] });
+  return new MarketplaceService({ platformRoot: options.platformRoot, logger: options.logger, sources: [source], resolveSelectedAdapterSlot: async () => null });
 }
 
 interface CapturedLog {
@@ -202,6 +202,7 @@ describe('Marketplace API error boundary', () => {
         rollbackInstall: registry.rollbackInstall.bind(registry),
         remove: registry.remove.bind(registry),
       }],
+      resolveSelectedAdapterSlot: async () => null,
     });
     const server = await createServer({ service, logger });
     servers.push(server);

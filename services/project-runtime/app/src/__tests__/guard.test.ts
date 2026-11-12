@@ -24,10 +24,14 @@ async function ephemeralPort(): Promise<number> {
   });
   const address = probe.address();
   if (!address || typeof address === "string") {
-    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      probe.close(() => resolve());
+    });
     throw new Error("Test port probe did not return a TCP address");
   }
-  await new Promise<void>((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+  await new Promise<void>((resolve, reject) => {
+    probe.close((error) => (error ? reject(error) : resolve()));
+  });
   return address.port;
 }
 

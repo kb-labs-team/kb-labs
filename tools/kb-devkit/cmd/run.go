@@ -30,7 +30,39 @@ var (
 	runNoCache     bool
 	runLive        bool
 	runConcurrency int
+	runLane        string
 )
+
+// Release lanes partition the workspace for gating: "internal-tool" packages
+// (devkit.yaml releaseLane) never ship, everything else is "shipped".
+const (
+	laneInternalTool = "internal-tool"
+	laneShipped      = "shipped"
+)
+
+// selectReleaseLane keeps the packages that belong to lane. An empty lane
+// keeps everything. Membership is the package's declared ReleaseLane, so the
+// split follows the same devkit.yaml data the release gate reads.
+func selectReleaseLane(pkgs []workspace.Package, lane string) ([]workspace.Package, error) {
+	var internal bool
+	switch lane {
+	case "":
+		return pkgs, nil
+	case laneInternalTool:
+		internal = true
+	case laneShipped:
+	default:
+		return nil, diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("Unknown --lane %q.", lane),
+			diag.WithHint("Use --lane shipped or --lane internal-tool."))
+	}
+	selected := make([]workspace.Package, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		if (pkg.ReleaseLane == laneInternalTool) == internal {
+			selected = append(selected, pkg)
+		}
+	}
+	return selected, nil
+}
 
 var runCmd = &cobra.Command{
 	Use:   "run <task> [task2 ...]",
@@ -39,7 +71,9 @@ var runCmd = &cobra.Command{
 across all packages in dependency order.
 
 Results are cached by input hash — identical inputs skip execution and
-restore outputs instantly. Cache lives in .kb/devkit/.
+restore outputs instantly. Objects and manifests live in the repository's git
+common directory (kb-devkit/), shared by all of its worktrees; task state and
+logs stay in this worktree's .kb/devkit/.
 
 Examples:
   kb-devkit run build
@@ -89,16 +123,33 @@ Examples:
 			}
 		}
 
+		if runLane != "" {
+			// With no explicit selection the lane applies to the whole workspace.
+			if pkgs == nil {
+				pkgs = ws.Packages
+			}
+			pkgs, err = selectReleaseLane(pkgs, runLane)
+			if err != nil {
+				return err
+			}
+			if len(pkgs) == 0 {
+				newOutput().OK(fmt.Sprintf("No packages in lane %s — nothing to run", runLane))
+				return nil
+			}
+		}
+
 		diagnostics := clikitcommand.FromCommand(cmd).ErrorWriter()
 		opts := engine.RunOptions{
-			Tasks:       args,
-			Packages:    pkgs,
-			Affected:    runAffected,
-			NoCache:     runNoCache,
-			LiveOutput:  runLive,
-			Concurrency: runConcurrency,
-			WSRoot:      ws.Root,
-			CacheRoot:   cacheRoot,
+			Tasks:    args,
+			Packages: pkgs,
+			Affected: runAffected,
+
+			DefaultSelection: !runAffected && len(runPackages) == 0,
+			NoCache:          runNoCache,
+			LiveOutput:       runLive,
+			Concurrency:      runConcurrency,
+			WSRoot:           ws.Root,
+			CacheRoot:        cacheRoot,
 
 			MemoryProbe:    engine.HostMemoryProbe,
 			SampleInterval: resourceSampleInterval,
@@ -170,10 +221,18 @@ Examples:
 				"summary": summary,
 				"elapsed": elapsed.String(),
 			}
+			if len(result.SkippedBuilds) > 0 {
+				payload["skippedBuilds"] = result.SkippedBuilds
+			}
 			if !result.OK {
 				return taskFailure(failedTaskResult(result.Results), payload)
 			}
 			return JSONOut(payload)
+		}
+
+		if len(result.SkippedBuilds) > 0 {
+			clikitcommand.Printf("\n  %s\n", o.dim.Render(fmt.Sprintf("skipped build of %d product app packages (category defaultBuild: false); build them with `kb-devkit run build --packages %s`",
+				len(result.SkippedBuilds), strings.Join(result.SkippedBuilds, ","))))
 		}
 
 		// Summary line.
@@ -215,6 +274,7 @@ func init() {
 	runCmd.Flags().BoolVar(&runAffected, "affected", false, "run only changed packages + all downstream dependents")
 	runCmd.Flags().BoolVar(&runDiffOnly, "diff-only", false, "with --affected, use only the configured diff; do not include dirty or never-run packages")
 	runCmd.Flags().StringSliceVar(&runPackages, "packages", nil, "run specific packages (comma-separated)")
+	runCmd.Flags().StringVar(&runLane, "lane", "", "run only one release lane: shipped or internal-tool (devkit.yaml releaseLane)")
 	runCmd.Flags().BoolVar(&runNoCache, "no-cache", false, "bypass cache lookup (still stores result)")
 	runCmd.Flags().BoolVar(&runLive, "live", false, "stream output while running (forces concurrency=1)")
 	runCmd.Flags().IntVar(&runConcurrency, "concurrency", 0, "upper bound on parallel tasks; memory admission may run fewer (default: NumCPU-1)")
@@ -275,9 +335,14 @@ func printTaskResult(w io.Writer, o output, r engine.TaskResult, done, total int
 }
 
 // failLineLimit returns how many trailing lines of a failed task's output to
-// print. Defaults to 50; KB_DEVKIT_FAIL_LINES overrides it (0 = unlimited).
+// print. Defaults to 50, or unlimited on hosted CI (CI=true), where the runner
+// disk holding the full log is gone once the job ends. KB_DEVKIT_FAIL_LINES
+// overrides both (0 = unlimited).
 func failLineLimit() int {
 	limit := 50
+	if os.Getenv("CI") == "true" {
+		limit = 0
+	}
 	if v := os.Getenv("KB_DEVKIT_FAIL_LINES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			limit = n

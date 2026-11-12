@@ -5,17 +5,19 @@
 
 import type { AdapterManifest } from "@kb-labs/sdk/adapters";
 
+export const VIBEPROXY_MODEL_CONFIG_KEY = 'model' as const;
+
 /**
  * Adapter manifest for VibeProxy LLM.
  */
 export const manifest: AdapterManifest = {
   schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
-  id: "vibeproxy-llm",
+  id: "@kb-labs/adapters-vibeproxy",
   name: "VibeProxy LLM",
-  version: "0.1.0",
+  version: "2.120.1",
   description:
-    "VibeProxy local adapter supporting multiple LLM providers (Claude, GPT, etc.)",
+    "VibeProxy local adapter supporting multiple LLM providers",
   author: "KB Labs Team",
   license: "KBPL-1.1",
   type: "core",
@@ -39,10 +41,10 @@ export const manifest: AdapterManifest = {
       default: "any-string",
       description: "API key (any string works for local VibeProxy)",
     },
-    model: {
+    [VIBEPROXY_MODEL_CONFIG_KEY]: {
       type: "string",
-      default: "claude-sonnet-4-20250514",
-      description: "Model to use (claude-*, gpt-*, etc.)",
+      required: true,
+      description: "Required model identifier selected for this platform",
     },
     timeout: {
       type: "number",

@@ -454,7 +454,10 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             host_state_value = retention.get("hostState")
             if isinstance(host_state_value, str) and host_state_value:
                 host_state = Path(host_state_value)
-                logs = sorted(path for path in host_state.rglob("*.log") if path.is_file())
+                structured = layout_value("hostLogFiles.structured")
+                logs = sorted(path for path in host_state.rglob("*") if path.is_file()
+                              and (path.suffix == ".log" or path.name == structured
+                                   or path.name.startswith(structured + ".")))
                 if not logs:
                     host_state_missing = f"Doctor reported hostState `{host_state}` but it contains no log files."
                 else:
