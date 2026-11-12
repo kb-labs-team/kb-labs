@@ -30,7 +30,7 @@ export interface RegressionMetrics {
   driftRate: number;
   evidenceDensity: number;
   toolErrorRate: number;
-  tokensUsed: number;
+  tokensUsed?: number;
   iterationsUsed: number;
   iterationBudget: number;
   iterationUtilization: number;
@@ -52,7 +52,9 @@ export interface RunKpiPayload {
   startTier: string;
   finalTier: string;
   durationMs: number;
-  tokensUsed: number;
+  tokensUsed?: number;
+  usage?: import('../../contracts/index.js').AgentRunUsage;
+  runnerId?: string;
   toolCallsTotal: number;
   toolSuccessCount: number;
   toolErrorCount: number;
@@ -390,7 +392,9 @@ export function updateKpiBaseline(
         ? metrics.toolErrorRate
         : baseline.toolErrorRateEma * (1 - alpha) + metrics.toolErrorRate * alpha,
     samples: baseline.samples + 1,
-    tokenHistory: [...baseline.tokenHistory, metrics.tokensUsed].slice(-50),
+    tokenHistory: metrics.tokensUsed === undefined
+      ? baseline.tokenHistory
+      : [...baseline.tokenHistory, metrics.tokensUsed].slice(-50),
     iterationUtilizationHistory: [
       ...baseline.iterationUtilizationHistory,
       metrics.iterationUtilization,

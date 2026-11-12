@@ -125,7 +125,7 @@ export function createAsyncTaskToolPack(taskMw: TaskMiddleware): ToolPack {
           const r = await taskMw.collect(taskId);
           const status = r.success ? 'completed successfully' : 'failed';
           const lines = [
-            `Task ${taskId} ${status} [preset=${r.preset}, ${r.iterations} iters, ${r.tokensUsed.toLocaleString()} tokens, ${(r.durationMs / 1000).toFixed(1)}s]`,
+            `Task ${taskId} ${status} [preset=${r.preset}, ${r.iterations} iters, ${r.tokensUsed?.toLocaleString() ?? 'n/a'} tokens, ${(r.durationMs / 1000).toFixed(1)}s]`,
           ];
           if (r.filesRead.length > 0) { lines.push(`Files read: ${r.filesRead.length}`); }
           if (r.filesModified.length > 0) { lines.push(`Files modified: ${r.filesModified.join(', ')}`); }

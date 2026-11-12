@@ -35,6 +35,8 @@ type KpiRunEvent = {
     task?: string;
     summaryPreview?: string;
     tokensUsed?: number;
+    usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number; wallTimeMs?: number; rounds?: number; cost?: { amount: number; currency: string } };
+    runnerId?: string;
     durationMs?: number;
     iterationsUsed?: number;
     iterationBudget?: number;
@@ -81,7 +83,9 @@ type RunSnapshot = {
   success: boolean;
   task: string;
   summaryPreview: string;
-  tokensUsed: number;
+  tokensUsed?: number;
+  usage?: KpiRunEvent['payload'] extends infer P ? P extends { usage?: infer U } ? U : never : never;
+  runnerId?: string;
   durationMs: number;
   iterationsUsed: number;
   iterationBudget: number;
@@ -217,7 +221,9 @@ async function readEvents(
           success: Boolean(p.success),
           task: p.task || '',
           summaryPreview: p.summaryPreview || '',
-          tokensUsed: Number(p.tokensUsed || 0),
+          tokensUsed: typeof p.tokensUsed === 'number' ? p.tokensUsed : undefined,
+          usage: p.usage,
+          runnerId: p.runnerId,
           durationMs: Number(p.durationMs || 0),
           iterationsUsed: Number(p.iterationsUsed || 0),
           iterationBudget: Number(p.iterationBudget || 0),
@@ -341,7 +347,9 @@ function readInMemoryEvents(
         success: Boolean(p?.success),
         task: p?.task || '',
         summaryPreview: p?.summaryPreview || '',
-        tokensUsed: Number(p?.tokensUsed || 0),
+        tokensUsed: typeof p?.tokensUsed === 'number' ? p.tokensUsed : undefined,
+        usage: p?.usage,
+        runnerId: p?.runnerId,
         durationMs: Number(p?.durationMs || 0),
         iterationsUsed: Number(p?.iterationsUsed || 0),
         iterationBudget: Number(p?.iterationBudget || 0),
@@ -403,9 +411,9 @@ function buildReport(
 
   const scorecard = scorecardOf(runs);
 
-  const topTokenRuns = [...runs].sort((a, b) => b.tokensUsed - a.tokensUsed).slice(0, 5);
+  const topTokenRuns = [...runs].sort((a, b) => (b.tokensUsed ?? -1) - (a.tokensUsed ?? -1)).slice(0, 5);
   const worstQualityRuns = [...runs]
-    .sort((a, b) => a.qualityScore - b.qualityScore || b.tokensUsed - a.tokensUsed)
+    .sort((a, b) => a.qualityScore - b.qualityScore || (b.tokensUsed ?? -1) - (a.tokensUsed ?? -1))
     .slice(0, 5);
 
   const alerts: string[] = [];
@@ -435,8 +443,12 @@ function buildReport(
         successRate: latestScorecard.successRate - previousScorecard.successRate,
         qualityPassRate: latestScorecard.qualityPassRate - previousScorecard.qualityPassRate,
         avgQualityScore: latestScorecard.avgQualityScore - previousScorecard.avgQualityScore,
-        avgTokens: latestScorecard.avgTokens - previousScorecard.avgTokens,
-        p95Tokens: latestScorecard.p95Tokens - previousScorecard.p95Tokens,
+        avgTokens: latestScorecard.avgTokens !== null && previousScorecard.avgTokens !== null
+          ? latestScorecard.avgTokens - previousScorecard.avgTokens
+          : null,
+        p95Tokens: latestScorecard.p95Tokens !== null && previousScorecard.p95Tokens !== null
+          ? latestScorecard.p95Tokens - previousScorecard.p95Tokens
+          : null,
         avgDurationMs: latestScorecard.avgDurationMs - previousScorecard.avgDurationMs,
         avgToolCalls: latestScorecard.avgToolCalls - previousScorecard.avgToolCalls,
         avgToolErrorRate: latestScorecard.avgToolErrorRate - previousScorecard.avgToolErrorRate,
@@ -469,6 +481,8 @@ function toRunBrief(run: RunSnapshot) {
     sessionId: run.sessionId,
     task: run.task.slice(0, 120),
     tokensUsed: run.tokensUsed,
+    usage: run.usage,
+    runnerId: run.runnerId,
     durationMs: run.durationMs,
     toolCallsTotal: run.toolCallsTotal,
     qualityStatus: run.qualityStatus,
@@ -487,9 +501,23 @@ function avg(values: number[]): number {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function avgMeasured(values: Array<number | undefined>): number | null {
+  const measured = values.filter((value): value is number => value !== undefined);
+  if (measured.length === 0) {return null;}
+  return measured.reduce((sum, value) => sum + value, 0) / measured.length;
+}
+
 function p95(values: number[]): number {
   if (values.length === 0) {return 0;}
   const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.max(0, Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1));
+  return sorted[index] || 0;
+}
+
+function p95Measured(values: Array<number | undefined>): number | null {
+  const measured = values.filter((value): value is number => value !== undefined);
+  if (measured.length === 0) {return null;}
+  const sorted = [...measured].sort((a, b) => a - b);
   const index = Math.max(0, Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1));
   return sorted[index] || 0;
 }
@@ -502,8 +530,8 @@ function scorecardOf(runs: RunSnapshot[]) {
     successRate: avg(runs.map((r) => (r.success ? 1 : 0))),
     qualityPassRate: avg(runs.map((r) => (r.qualityStatus === 'pass' ? 1 : 0))),
     avgQualityScore: avg(runs.map((r) => r.qualityScore)),
-    avgTokens: avg(runs.map((r) => r.tokensUsed)),
-    p95Tokens: p95(runs.map((r) => r.tokensUsed)),
+    avgTokens: avgMeasured(runs.map((r) => r.tokensUsed)),
+    p95Tokens: p95Measured(runs.map((r) => r.tokensUsed)),
     avgDurationMs: avg(runs.map((r) => r.durationMs)),
     avgToolCalls: avg(runs.map((r) => r.toolCallsTotal)),
     avgToolErrorRate: avg(runs.map((r) => r.toolErrorRate)),
@@ -513,8 +541,8 @@ function scorecardOf(runs: RunSnapshot[]) {
     escalationRate: avg(runs.map((r) => (r.escalated ? 1 : 0))),
     escalationSuccessRate: escalatedRuns.length > 0 ? avg(escalatedRuns.map((r) => (r.success ? 1 : 0))) : 0,
     avgEscalationCount: avg(runs.map((r) => r.escalationCount)),
-    avgTokensEscalated: escalatedRuns.length > 0 ? avg(escalatedRuns.map((r) => r.tokensUsed)) : 0,
-    avgTokensNonEscalated: nonEscalatedRuns.length > 0 ? avg(nonEscalatedRuns.map((r) => r.tokensUsed)) : 0,
+    avgTokensEscalated: escalatedRuns.length > 0 ? avgMeasured(escalatedRuns.map((r) => r.tokensUsed)) : null,
+    avgTokensNonEscalated: nonEscalatedRuns.length > 0 ? avgMeasured(nonEscalatedRuns.map((r) => r.tokensUsed)) : null,
     avgQualityEscalated: escalatedRuns.length > 0 ? avg(escalatedRuns.map((r) => r.qualityScore)) : 0,
     avgQualityNonEscalated: nonEscalatedRuns.length > 0 ? avg(nonEscalatedRuns.map((r) => r.qualityScore)) : 0,
   };
@@ -538,13 +566,14 @@ function printReport(ctx: PluginCommandContextV3, report: ReturnType<typeof buil
   ctx.ui.write('│\n');
   ctx.ui.write(`│  Success Rate: ${(s.successRate * 100).toFixed(1)}%\n`);
   ctx.ui.write(`│  Quality Pass: ${(s.qualityPassRate * 100).toFixed(1)}% | Avg score: ${s.avgQualityScore.toFixed(2)}\n`);
-  ctx.ui.write(`│  Tokens: avg ${Math.round(s.avgTokens)} | p95 ${Math.round(s.p95Tokens)}\n`);
+  ctx.ui.write(`│  Tokens: avg ${s.avgTokens === null ? 'n/a' : Math.round(s.avgTokens)} | p95 ${s.p95Tokens === null ? 'n/a' : Math.round(s.p95Tokens)}\n`);
   ctx.ui.write(`│  Duration: avg ${(s.avgDurationMs / 1000).toFixed(1)}s\n`);
   ctx.ui.write(`│  Tools: avg ${s.avgToolCalls.toFixed(1)} | error ${(s.avgToolErrorRate * 100).toFixed(2)}%\n`);
   ctx.ui.write(`│  Drift: ${(s.avgDriftRate * 100).toFixed(2)}% | Evidence density: ${s.avgEvidenceDensity.toFixed(2)}\n`);
   ctx.ui.write(`│  Near budget rate: ${(s.nearBudgetRate * 100).toFixed(1)}%\n`);
   ctx.ui.write(`│  Escalation: ${(s.escalationRate * 100).toFixed(1)}% runs | success ${(s.escalationSuccessRate * 100).toFixed(1)}% | avg count ${s.avgEscalationCount.toFixed(2)}\n`);
-  if (s.escalationRate > 0 && s.escalationRate < 1) {
+  if (s.escalationRate > 0 && s.escalationRate < 1
+    && s.avgTokensEscalated !== null && s.avgTokensNonEscalated !== null) {
     const tokenDelta = s.avgTokensEscalated - s.avgTokensNonEscalated;
     const qualityDelta = s.avgQualityEscalated - s.avgQualityNonEscalated;
     ctx.ui.write(`│  Escalated vs non-escalated: Δtokens ${tokenDelta >= 0 ? '+' : ''}${Math.round(tokenDelta)} | Δquality ${qualityDelta >= 0 ? '+' : ''}${qualityDelta.toFixed(2)}\n`);
@@ -557,7 +586,7 @@ function printReport(ctx: PluginCommandContextV3, report: ReturnType<typeof buil
     ctx.ui.write('│\n');
     ctx.ui.write(`│  Slices (${report.slices.sliceSize} latest vs previous):\n`);
     ctx.ui.write(`│  Δ Quality score: ${d.avgQualityScore >= 0 ? '+' : ''}${d.avgQualityScore.toFixed(2)}\n`);
-    ctx.ui.write(`│  Δ Avg tokens: ${d.avgTokens >= 0 ? '+' : ''}${Math.round(d.avgTokens)}\n`);
+    ctx.ui.write(`│  Δ Avg tokens: ${d.avgTokens === null ? 'n/a' : `${d.avgTokens >= 0 ? '+' : ''}${Math.round(d.avgTokens)}`}\n`);
     ctx.ui.write(`│  Δ Avg duration: ${d.avgDurationMs >= 0 ? '+' : ''}${(d.avgDurationMs / 1000).toFixed(1)}s\n`);
     ctx.ui.write(`│  Δ Tool errors: ${d.avgToolErrorRate >= 0 ? '+' : ''}${(d.avgToolErrorRate * 100).toFixed(2)}%\n`);
     ctx.ui.write(`│  Δ Drift: ${d.avgDriftRate >= 0 ? '+' : ''}${(d.avgDriftRate * 100).toFixed(2)}%\n`);
@@ -578,14 +607,14 @@ function printReport(ctx: PluginCommandContextV3, report: ReturnType<typeof buil
   ctx.ui.write('│  Top expensive runs:\n');
   for (const run of report.topTokenRuns) {
     const esc = run.escalated ? ` | esc=${run.escalationCount}` : '';
-    ctx.ui.write(`│  - ${run.ts} | tok=${run.tokensUsed} | q=${run.qualityScore.toFixed(2)}${esc} | ${run.task}\n`);
+    ctx.ui.write(`│  - ${run.ts} | tok=${run.tokensUsed?.toLocaleString() ?? 'n/a'} | q=${run.qualityScore.toFixed(2)}${esc} | ${run.task}\n`);
   }
 
   ctx.ui.write('│\n');
   ctx.ui.write('│  Worst quality runs:\n');
   for (const run of report.worstQualityRuns) {
     const reasons = (run.qualityReasons || []).join(', ');
-    ctx.ui.write(`│  - ${run.ts} | q=${run.qualityScore.toFixed(2)} | tok=${run.tokensUsed} | reasons=${reasons || 'n/a'}\n`);
+    ctx.ui.write(`│  - ${run.ts} | q=${run.qualityScore.toFixed(2)} | tok=${run.tokensUsed?.toLocaleString() ?? 'n/a'} | reasons=${reasons || 'n/a'}\n`);
   }
   ctx.ui.write('└──\n');
 }
