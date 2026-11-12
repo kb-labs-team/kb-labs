@@ -1,0 +1,14 @@
+{
+  "description": "Baseline for scripts/ci/delivery-metrics.mjs taken from the 2026-11-12 audit. Every value cites its audit file and section; none is measured by this file.",
+  "values": {
+    "ci.totalMin.p50": { "value": 22.2, "source": "reports/audit-2026-11-12/ci.md §2.3 (whole run, n=37; also §1 TL;DR 1)" },
+    "ci.totalMin.p90": { "value": 44, "source": "reports/audit-2026-11-12/ci.md §2.3 (whole run, n=37)" },
+    "ci.queueMin.p50": { "value": 0, "source": "reports/audit-2026-11-12/ci.md §2.3 heading (queue ≈ 0 for all jobs)" },
+    "runnerQueue.shareOver5Min": { "value": 0, "source": "reports/audit-2026-11-12/ci.md §2.3 heading (queue ≈ 0 for all jobs, runner capacity is not the bottleneck)" },
+    "ci.redRate": { "value": 0.44, "source": "reports/audit-2026-11-12/ci.md §2.5 heading (20 red of the last 45 runs)" },
+    "builds.hitRate": { "value": 0, "source": "reports/audit-2026-11-12/cache.md §1 TL;DR 1 (real hit rate in PR CI is 0%)" },
+    "throughput.masterCommits.perDay": { "value": 0, "source": "reports/audit-2026-11-12/flow.md §1 TL;DR 1 (nothing landed on master since 2026-10-20)" },
+    "throughput.agentPrsMerged.perDay": { "value": 0, "source": "reports/audit-2026-11-12/flow.md §1 TL;DR 1 (nothing landed on master since 2026-10-20)" },
+    "openStreamPrs.count": { "value": 2, "source": "reports/audit-2026-11-12/flow.md §2.2 (PR #513 and PR #514, both agent/ heads)" }
+  }
+}
