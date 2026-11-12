@@ -71,11 +71,12 @@ func reusableApplyHost(plan contracts.ResolvedInstallPlan, platformRoot string) 
 	if err != nil {
 		return nil, asDiag(err)
 	}
-	status, err := runner.Status(context.Background())
+	truth, err := supervisor.Observe(context.Background(), runner, runner.State)
 	if err != nil {
 		return nil, asDiag(err)
 	}
-	if status.State != host.StateRunning || !status.Healthy || status.ReceiptID != active.ID ||
+	status := truth.Status
+	if truth.Kind != supervisor.KindRunning || !status.Healthy || status.ReceiptID != active.ID ||
 		active.Plan.Host == nil || plan.Host.Command != active.Plan.Host.Command ||
 		!reflect.DeepEqual(plan.Host.Args, active.Plan.Host.Args) || plan.Host.HealthURL != active.Plan.Host.HealthURL ||
 		!reflect.DeepEqual(plan.ServiceGraph, active.Plan.ServiceGraph) {

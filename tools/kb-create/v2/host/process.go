@@ -1380,6 +1380,25 @@ func (r *ProcessRunner) Status(ctx context.Context) (Status, error) {
 	return status, nil
 }
 
+// Exited is closed when the process this runner started exits; nil when
+// nothing was started here.
+func (r *ProcessRunner) Exited() <-chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.exited
+}
+
+// ExitCause describes how the started process ended. It is meaningful only
+// after Exited is closed.
+func (r *ProcessRunner) ExitCause() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.waitErr == nil {
+		return "exit code 0"
+	}
+	return processExit(r.waitErr)
+}
+
 // Wait blocks until the process this runner started exits. It is meant for
 // foreground supervision and returns immediately when nothing was started here.
 func (r *ProcessRunner) Wait(ctx context.Context) error {

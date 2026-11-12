@@ -65,6 +65,7 @@ func (s State) LauncherLog() string    { return filepath.Join(s.Dir, "launcher.l
 func (s State) SupervisorPID() string  { return filepath.Join(s.Dir, "supervisor.pid") }
 func (s State) SupervisorLog() string  { return filepath.Join(s.Dir, "supervisor.log") }
 func (s State) Control() string        { return filepath.Join(s.Dir, "control.json") }
+func (s State) HostExit() string       { return filepath.Join(s.Dir, "host-exit.json") }
 func (s State) UpdateRequests() string { return filepath.Join(s.Dir, "update-requests.json") }
 func (s State) OperationLock() string  { return operationlock.Path(s.Dir) }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
 )
@@ -145,7 +146,8 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 		response.Profile = active.Plan.ServiceGraph.Profile
 		runningRoot := ""
 		if runner, runnerErr := host.NewRecordedRunner(root); runnerErr == nil {
-			if running, statusErr := runner.Status(context.Background()); statusErr == nil {
+			if truth, statusErr := supervisor.Observe(context.Background(), runner, runner.State); statusErr == nil {
+				running := truth.Status
 				response.RunningVersion = running.PlatformVersion
 				response.PendingRestart = pendingRestart(active, running, root)
 				if running.PID > 0 {

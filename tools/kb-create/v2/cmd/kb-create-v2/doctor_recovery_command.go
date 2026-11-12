@@ -12,7 +12,6 @@ import (
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
-	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/supervisor"
 )
 
@@ -48,8 +47,11 @@ func executeRecover(inv doctorCommandInput) (doctorRecoveryResult, *diag.Diag) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	status, _ := runner.Status(ctx)
-	if _, supervised := supervisor.LivePID(state, inv.PlatformRoot); supervised || status.State != host.StateStopped {
+	truth, observeErr := supervisor.Observe(ctx, runner, state)
+	if observeErr != nil {
+		return doctorRecoveryResult{}, asDiag(observeErr)
+	}
+	if truth.Kind != supervisor.KindStopped {
 		return doctorRecoveryResult{}, contracts.NewDiag(contracts.CodeRecoveryHostRunning, "Recovery needs the host to be stopped, but it is running.", "Run \"kb-create stop\", recover, then \"kb-create start\".", nil)
 	}
 	var toolOutput bytes.Buffer
