@@ -38,9 +38,9 @@ test('parseArgs defaults to a 7 day window and rejects unknown flags', () => {
 });
 
 test('parseDevkitSummaries reads the devkit summary line and attributes it to the task of the preceding rows', () => {
-  const build = parseDevkitSummaries(fixture('build-job.log'));
+  const build = parseDevkitSummaries(fixture('build-job.txt'));
   assert.deepEqual(build, [{ task: 'build', scheduled: 153, passed: 153, cached: 0 }]);
-  assert.deepEqual(parseDevkitSummaries(fixture('test-job.log')), [{ task: 'test', scheduled: 2, passed: 2, cached: 0 }]);
+  assert.deepEqual(parseDevkitSummaries(fixture('test-job.txt')), [{ task: 'test', scheduled: 2, passed: 2, cached: 0 }]);
   assert.deepEqual(parseDevkitSummaries('nothing to see here\n'), []);
   const colored = '\u001b[2m  [ 1/1 ]\u001b[0m x  [build]  success  cached  1s\n\u001b[2m1 scheduled\u001b[0m  1 passed  \u001b[2m1 cached\u001b[0m  0 failed  0 blocked  0 not affected — 1s\n';
   assert.deepEqual(parseDevkitSummaries(colored), [{ task: 'build', scheduled: 1, passed: 1, cached: 1 }]);
@@ -221,7 +221,7 @@ function fakeGh(calls) {
     },
     async text(path) {
       calls.push(path);
-      return fixture('build-job.log');
+      return fixture('build-job.txt');
     },
   };
 }
