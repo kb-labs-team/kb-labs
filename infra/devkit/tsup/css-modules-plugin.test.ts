@@ -195,4 +195,30 @@ describe('cssModulesPlugin', () => {
     }
     expect(first.files).toEqual(second.files);
   });
+
+  // tsup and most callers never set absWorkingDir; the plugin then roots its
+  // virtual paths at the process working directory. Every other test sets
+  // absWorkingDir, which is how the fallback shipped broken (a local function
+  // named `process` shadowed the global) and failed every hosted tsup build.
+  // case: S-179.55
+  it('builds when the caller sets no absWorkingDir', async () => {
+    const dir = makeFixtureDir();
+    writeFileSync(path.join(dir, 'entry.js'), `
+      import styles from './x.module.css';
+      export const cls = styles.foo;
+    `);
+    writeFileSync(path.join(dir, 'x.module.css'), `.foo { color: red; }`);
+
+    const result = await esbuild.build({
+      entryPoints: [path.join(dir, 'entry.js')],
+      bundle: true,
+      write: false,
+      outdir: path.join(dir, 'out'),
+      format: 'esm',
+      plugins: [cssModulesPlugin()],
+    });
+
+    const js = result.outputFiles.find((f) => f.path.endsWith('.js'))!.text;
+    expect(js).toMatch(/"foo":\s*"foo_[\w-]+"/);
+  });
 });

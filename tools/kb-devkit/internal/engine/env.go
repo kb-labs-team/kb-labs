@@ -23,6 +23,32 @@ import (
 // failLineLimit). A task whose behaviour depends on CI declares it.
 var alwaysPassedEnv = []string{"PATH", "HOME", "TMPDIR", "TMP", "TEMP"}
 
+// toolchainLocationEnv is the part of each toolchain's environment that says
+// where its caches and installs live. It is passed to every task when set and
+// never hashed, for the reason above: a different location is a different
+// machine, not a different output.
+//
+//   - go: GOCACHE (build cache), GOMODCACHE and GOPATH (module cache and
+//     workspace), GOROOT (the SDK actions/setup-go selects);
+//   - node: COREPACK_HOME and PNPM_HOME (where corepack and pnpm are installed),
+//     XDG_CACHE_HOME and XDG_CONFIG_HOME (where they look for caches and config).
+var toolchainLocationEnv = []string{
+	"GOCACHE", "GOMODCACHE", "GOPATH", "GOROOT",
+	"COREPACK_HOME", "PNPM_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
+}
+
+// toolchainOutputEnv is the part of each toolchain's environment that changes
+// what a build produces. It is passed to every task when set and hashed into
+// the key (when unset it is absent from the key, so a host that sets none of
+// them keeps the same keys):
+//
+//   - go: GOFLAGS (build flags such as -mod or -tags), GOOS and GOARCH (target),
+//     CGO_ENABLED, GOTOOLCHAIN (which compiler version), GOEXPERIMENT.
+//
+// Node's output-changing variables (NODE_ENV and the like) are task-specific
+// and stay declared in devkit.yaml `env`.
+var toolchainOutputEnv = []string{"GOFLAGS", "GOOS", "GOARCH", "CGO_ENABLED", "GOTOOLCHAIN", "GOEXPERIMENT"}
+
 // taskEnv is the one description of a task's environment: run is the exact
 // KEY=value list the command receives (before devkit's own NODE_PATH), hashed
 // the declared variables that enter the task key.
@@ -59,6 +85,25 @@ func taskEnvironment(def TaskDef) taskEnv {
 		seen[name] = true
 		if value, ok := os.LookupEnv(name); ok {
 			env.run = append(env.run, name+"="+value)
+		}
+	}
+	for _, name := range toolchainLocationEnv {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if value, ok := os.LookupEnv(name); ok {
+			env.run = append(env.run, name+"="+value)
+		}
+	}
+	for _, name := range toolchainOutputEnv {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if value, ok := os.LookupEnv(name); ok {
+			env.run = append(env.run, name+"="+value)
+			env.hashed = append(env.hashed, name+"="+value)
 		}
 	}
 	return env

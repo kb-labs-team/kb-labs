@@ -35,7 +35,7 @@ func TestReleasePlatformRootsBuildClosureContainsTheCliAndNoSite(t *testing.T) {
 		t.Fatalf("release-flow-roots resolver failed (Node 24 must be on PATH): %v", err)
 	}
 	roots := ws.FilterByName(strings.Split(strings.TrimSpace(string(out)), ","))
-	closure, err := expandBuildDependencyClosure(roots, ws.Packages)
+	closure, err := expandBuildDependencyClosure(roots, ws.Packages, followsEveryDependency)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -109,6 +109,50 @@ func TestTaskEnvironmentAlwaysPassesToolchainVariables(t *testing.T) {
 	}
 }
 
+// A Go build run by a task needs the Go toolchain's own variables even though
+// the task declares none: CI hosts (actions/setup-go) and developers relocate
+// the build cache and module cache through them. Locations are passed and never
+// hashed; variables that change the produced binary are passed and hashed.
+// case: S-179.51
+func TestToolchainLocationsArePassedNotHashedAndOutputVariablesAreHashed(t *testing.T) {
+	root := t.TempDir()
+	cfg, pkgDir := hermeticFixture(t, root, config.TaskVariant{
+		Command: `sh seen.sh`,
+		Outputs: []string{"dist/**"},
+	})
+	writeEngineFile(t, filepath.Join(pkgDir, "seen.sh"), "mkdir -p dist\nprintf '%s|%s' \"$GOCACHE\" \"$GOFLAGS\" > dist/seen\n")
+	seen := func() string {
+		data, err := os.ReadFile(filepath.Join(pkgDir, "dist", "seen"))
+		if err != nil {
+			t.Fatalf("task did not run: %v", err)
+		}
+		return string(data)
+	}
+	keyAfter := func(cache, flags string) (string, string) {
+		t.Setenv("GOCACHE", cache)
+		t.Setenv("GOFLAGS", flags)
+		ws := mustWorkspace(t, root, cfg)
+		result, err := Run(ws, cfg, RunOptions{Tasks: []string{"build"}, WSRoot: root, CacheRoot: filepath.Join(root, ".kb", "devkit"), NoCache: true})
+		if err != nil || !result.OK {
+			t.Fatalf("build failed: %v %+v", err, result.Results)
+		}
+		return seen(), taskFingerprint(*ResolveTaskDef(cfg, "build", ""), "fingerprint")
+	}
+
+	seenA, keyA := keyAfter("/host/a/go-build", "-mod=mod")
+	if seenA != "/host/a/go-build|-mod=mod" {
+		t.Fatalf("toolchain variables set only in the parent env did not reach the task: %q", seenA)
+	}
+	_, keyOtherCache := keyAfter("/host/b/go-build", "-mod=mod")
+	if keyOtherCache != keyA {
+		t.Errorf("GOCACHE is a location and must not enter the task key")
+	}
+	_, keyOtherFlags := keyAfter("/host/a/go-build", "-mod=vendor")
+	if keyOtherFlags == keyA {
+		t.Errorf("GOFLAGS changes the produced binary and must enter the task key")
+	}
+}
+
 // case: S-179.52
 func TestStoreOutputsFailureFailsTaskAndWritesNoManifest(t *testing.T) {
 	root := t.TempDir()
@@ -325,5 +369,53 @@ func TestEntriesFromAnOlderFormatMissWithoutError(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(pkgDir, "dist", "a.js")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A task whose executable does not exist never started: it must fail with a
+// typed error naming the command, never report success (exit 0).
+// case: S-179.57
+func TestTaskWhoseCommandDoesNotExistFails(t *testing.T) {
+	root := t.TempDir()
+	cfg, _ := hermeticFixture(t, root, config.TaskVariant{Command: `kb-no-such-tool-x295d --build`})
+	result := runBuild(t, root, cfg)
+	task := result.Results[0]
+	if result.OK || task.OK {
+		t.Fatalf("a task whose command does not exist succeeded: %+v", task)
+	}
+	if !strings.Contains(task.Error, "command not found: kb-no-such-tool-x295d") {
+		t.Errorf("error %q does not name the missing command", task.Error)
+	}
+	if task.ExitCode == 0 {
+		t.Errorf("a task that never started reported exit code 0")
+	}
+}
+
+// A selection is built with exactly the prerequisites its build task declares.
+// A tool whose manifest lists a workspace package only for its tests (devDependency)
+// but whose build declares no `^build` must not drag that package into a build run:
+// this is what keeps a Go-only job free of node tasks on a host with no node_modules.
+// case: S-179.58
+func TestBuildRunSchedulesOnlyDeclaredPrerequisites(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*", "tools/*"})
+	writePkg(t, filepath.Join(root, "packages", "node-dep"), `{"name":"@kb/node-dep"}`)
+	writePkg(t, filepath.Join(root, "tools", "tool"), `{"name":"tool","devDependencies":{"@kb/node-dep":"workspace:*"}}`)
+	writeEngineFile(t, filepath.Join(root, ".gitignore"), "dist/\n.kb/\n")
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "libs", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}},
+		{Name: "tools", Category: config.CategoryConfig{Match: []string{"tools/*"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{"build": {
+		{Categories: []string{"libs"}, Command: `kb-no-such-node-tool`},
+		{Categories: []string{"tools"}, Command: `true`},
+	}}
+	ws := mustWorkspace(t, root, cfg)
+	result, err := Run(ws, cfg, RunOptions{Tasks: []string{"build"}, WSRoot: root, CacheRoot: filepath.Join(root, ".kb", "devkit"), Packages: ws.FilterByName([]string{"tool"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || len(result.Results) != 1 || result.Results[0].Package != "tool" {
+		t.Fatalf("build of the tool scheduled more than its declared prerequisites: %+v", result.Results)
 	}
 }

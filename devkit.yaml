@@ -179,9 +179,15 @@ workspace:
       preset: go-binary
       releaseLane: internal-tool
 
-    go-binary:
+    # A Go module that builds no executable: its build task declares no outputs.
+    go-library:
       match:
         - "tools/clikit"
+      language: go
+      preset: go-binary
+
+    go-binary:
+      match:
         - "tools/kb-dev"
         - "tools/kb-devkit"
         - "tools/kb-create"
@@ -640,6 +646,18 @@ tasks:
       deps:
         - "^build"
 
+    - categories: [go-library]
+      command: make build
+      env: [NODE_ENV]
+      inputs:
+        - "**/*.go"
+        - "go.mod"
+        - "go.sum"
+        - "Makefile"
+      # No deps: a Go build compiles Go sources only. Node packages a tool lists
+      # in package.json are prerequisites of its tests (the test task below), not
+      # of its build, so a Go-only job schedules no node task.
+
     - categories: [go-binary, internal-tool]
       command: make build
       env: [NODE_ENV]
@@ -656,8 +674,6 @@ tasks:
         - "kb-deploy"
         - "kb-monitor"
         - "kb-runner"
-      deps:
-        - "^build"
 
     - categories: [site-pkg, site-config]
       command: pnpm run build
@@ -693,7 +709,7 @@ tasks:
         - ".eslintrc*"
       outputs: []
 
-    - categories: [go-binary, internal-tool]
+    - categories: [go-binary, go-library, internal-tool]
       command: go vet ./...
       inputs:
         - "**/*.go"
@@ -772,7 +788,7 @@ tasks:
       deps:
         - "build"
 
-    - categories: [go-binary, internal-tool]
+    - categories: [go-binary, go-library, internal-tool]
       command: make test
       env: [CI, NODE_ENV]
       inputs:
@@ -801,7 +817,7 @@ tasks:
       deps:
         - "build"
 
-    - categories: [go-binary, internal-tool]
+    - categories: [go-binary, go-library, internal-tool]
       command: go test -short -coverprofile=coverage.out -covermode=atomic ./...
       env: [CI, NODE_ENV]
       inputs:
@@ -853,7 +869,7 @@ tasks:
       # though no test process actually executed — disabled, same as test:cli.
       cache: false
 
-    - categories: [go-binary]
+    - categories: [go-binary, go-library]
       command: make e2e
       env: [CI, NODE_ENV]
       inputs:
@@ -1128,7 +1144,7 @@ custom_checks:
   - name: tool-binaries-fresh
     run: node scripts/checks/check-tool-binaries.mjs
     on: [check]
-    categories: [go-binary, internal-tool]
+    categories: [go-binary, go-library, internal-tool]
 
   # .kb/marketplace.lock hygiene — catches drift (a package dir was deleted
   # or moved but its lock entry wasn't) and corruption (malformed id/path

@@ -45,7 +45,7 @@ export function cssModulesPlugin() {
    * path postcss-modules would use by default, so a class name is identical in
    * every checkout. Names stay `<local>_<5 chars>`, readable in devtools.
    */
-  async function process(filePath, virtualPath) {
+  async function transform(filePath, virtualPath) {
     const cached = cache.get(filePath);
     if (cached) {
       return cached;
@@ -83,7 +83,7 @@ export function cssModulesPlugin() {
       build.onLoad({ filter: /\?kb-css-modules-tokens$/, namespace: 'kb-css-modules-tokens' }, async (args) => {
         const virtualPath = args.path.replace(/\?kb-css-modules-tokens$/, '');
         const realPath = toReal(virtualPath);
-        const { tokens } = await process(realPath, virtualPath);
+        const { tokens } = await transform(realPath, virtualPath);
         return {
           // Side-effect import pulls in the scoped CSS via the paired
           // virtual-css namespace below; this module only exports tokens.
@@ -101,7 +101,7 @@ export function cssModulesPlugin() {
       build.onLoad({ filter: /\?kb-css-modules-css$/, namespace: 'kb-css-modules-css' }, async (args) => {
         const virtualPath = args.path.replace(/\?kb-css-modules-css$/, '');
         const realPath = toReal(virtualPath);
-        const { css } = await process(realPath, virtualPath);
+        const { css } = await transform(realPath, virtualPath);
         return { contents: css, loader: 'css', resolveDir: path.dirname(realPath) };
       });
     },

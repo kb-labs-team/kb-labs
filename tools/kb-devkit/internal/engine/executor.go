@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -322,12 +323,32 @@ func (e *Executor) runCommand(command, dir, packageName, taskName string, taskEn
 finished:
 	if completed.err != nil {
 		var commandFailure *toolchain.CommandError
-		if errors.As(completed.err, &commandFailure) {
+		var exit *exec.ExitError
+		// Only a process that ran and exited non-zero is an exit code. A process
+		// that never started has no exit code (0 would read as success).
+		if errors.As(completed.err, &commandFailure) && errors.As(commandFailure, &exit) {
 			return outBuf.String(), errBuf.String(), completed.result.ExitCode, nil
 		}
+		if errors.Is(completed.err, exec.ErrNotFound) || errors.Is(completed.err, fs.ErrNotExist) {
+			return outBuf.String(), errBuf.String(), 127, &CommandNotFoundError{Command: parts[0], Err: completed.err}
+		}
+		return outBuf.String(), errBuf.String(), 1, completed.err
 	}
 	return outBuf.String(), errBuf.String(), completed.result.ExitCode, completed.err
 }
+
+// CommandNotFoundError is a task command whose executable does not exist: the
+// process never started, so the task failed and no exit code was produced.
+type CommandNotFoundError struct {
+	Command string
+	Err     error
+}
+
+func (e *CommandNotFoundError) Error() string {
+	return fmt.Sprintf("command not found: %s (hint: install it, run `pnpm install` for a node tool)", e.Command)
+}
+
+func (e *CommandNotFoundError) Unwrap() error { return e.Err }
 
 // storeOutputs walks output glob patterns, stores each file in ObjectStore,
 // returns the OutputRef list for the manifest.
