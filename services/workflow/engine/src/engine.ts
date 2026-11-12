@@ -18,7 +18,7 @@ import {
 } from '@kb-labs/workflow-constants'
 import type { ICache, IStorage, IEventBus, ILogger, IAnalytics, ISnapshotManager, Unsubscribe } from '@kb-labs/core-platform'
 import type { ClassifiedFailure, RetryPolicyConfig } from '@kb-labs/core-contracts'
-import { isProcessIdentityAlive, type ProcessIdentity } from '@kb-labs/plugin-contracts'
+import { isProcessIdentityAlive } from '@kb-labs/plugin-contracts'
 import { classifyFailure, decideRetry } from '@kb-labs/core-retry'
 import { StateStore } from './state-store'
 import { ConcurrencyManager, type AcquireOptions } from './concurrency-manager'
@@ -1271,10 +1271,10 @@ export class WorkflowEngine {
         if (step.status !== 'running' || !identity || !(await isProcessIdentityAlive(identity))) { continue }
         const processTarget = process.platform === 'darwin' || process.platform === 'linux' ? -identity.pid : identity.pid
         this.signalProcess(processTarget, 'SIGTERM')
-        await new Promise<void>((resolve) => setTimeout(resolve, 250))
+        await new Promise<void>((resolve) => { setTimeout(resolve, 250) })
         if (await isProcessIdentityAlive(identity)) {
           this.signalProcess(processTarget, 'SIGKILL')
-          await new Promise<void>((resolve) => setTimeout(resolve, 100))
+          await new Promise<void>((resolve) => { setTimeout(resolve, 100) })
         }
         if (await isProcessIdentityAlive(identity)) {
           throw new Error(`Workflow daemon could not terminate process ${identity.pid} during restart reconciliation`)
