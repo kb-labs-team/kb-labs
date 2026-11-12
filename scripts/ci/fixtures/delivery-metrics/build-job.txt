@@ -1,0 +1,15 @@
+﻿2026-11-11T21:40:11.7018395Z Current runner version: '2.338.2'
+2026-11-11T21:40:11.7052175Z ##[group]Runner Image Provisioner
+2026-11-11T21:40:11.7053165Z Hosted Compute Agent
+2026-11-11T21:41:31.5644322Z devkit resource sample: {"sampledAt":"2026-11-11T21:41:31.563474073Z","running":0,"waiting":0,"admitted":0,"cap":4,"taskMemoryMb":2419,"totalBytes":16759439360,"availableBytes":15605776384,"budgetBytes":11731607552}
+2026-11-11T21:41:31.7662773Z   [  1/153] ● @kb-labs/e2e-analytics-emitter              [build]       success    -        202ms
+2026-11-11T21:41:31.7865449Z   [  2/153] ● journey-npm-only-fixture                    [build]       success    -        222ms
+2026-11-11T21:41:32.4065772Z   [  3/153] ● @kb-labs/web-config                         [build]       success    -        841ms
+2026-11-11T21:41:32.6275922Z   [  4/153] ● fixture-compat                              [build]       success    -        220ms
+2026-11-11T21:50:31.5641063Z devkit resource sample: {"sampledAt":"2026-11-11T21:50:31.563474404Z","running":1,"waiting":0,"admitted":152,"cap":4,"taskMemoryMb":2419,"totalBytes":16759439360,"availableBytes":14676824064,"budgetBytes":11731607552}
+2026-11-11T21:50:32.7664268Z   [152/153] ● @kb-labs/host-app                           [build]       success    -        7.649s
+2026-11-11T21:50:35.1312560Z   [153/153] ● kb-create                                   [build]       success    -        2.343s
+2026-11-11T21:50:35.1314130Z devkit resource sample: {"sampledAt":"2026-11-11T21:50:35.131072424Z","running":0,"waiting":0,"admitted":153,"cap":4,"taskMemoryMb":2419,"totalBytes":16759439360,"availableBytes":15390568448,"budgetBytes":11731607552}
+2026-11-11T21:50:35.1315274Z 153 scheduled  153 passed  0 cached  0 failed  0 blocked  0 not affected  — 9m22.39s
+2026-11-11T21:50:35.1398667Z ##[group]Run find . -path "*/dist" -not -path "*/node_modules/*" -type d | tar cf dist-artifacts.tar -T -
+2026-11-11T21:50:35.1399392Z [36;1mfind . -path "*/dist" -not -path "*/node_modules/*" -type d | tar cf dist-artifacts.tar -T -[0m

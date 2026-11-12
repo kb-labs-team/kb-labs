@@ -522,6 +522,38 @@ def active_platform_root(install_root: Path) -> Path:
     return resolve_active(install_root)
 
 
+def host_log_paths(install_root: Path) -> dict[str, Path]:
+    """Resolve the host's raw residue log and structured log through the layout owner."""
+    from installed_fixture import installed_path, layout_value
+    return {kind: installed_path(install_root, "hostStateDirectory", layout_value(f"hostLogFiles.{kind}"))
+            for kind in ("residue", "structured")}
+
+
+def host_log_tails(install_root: Path, limit: int = 16000) -> str:
+    """The tail of each host log file, labelled by file name, for failure diagnostics."""
+    parts = []
+    for path in host_log_paths(install_root).values():
+        text = path.read_text(errors="replace")[-limit:] if path.is_file() else f"{path.name} unavailable"
+        parts.append(f"--- {path.name} ---\n{text}")
+    return "\n".join(parts)
+
+
+def host_structured_log_problem(install_root: Path) -> str | None:
+    """Seam check: the launcher's KB_LOG_FILE and the platform logger agree on the
+    structured log, so a started host has written at least one record to it."""
+    path = host_log_paths(install_root)["structured"]
+    if not path.is_file():
+        return f"started host wrote no structured log at {path}: the launcher and the platform logger disagree on the log file"
+    for line in path.read_text(errors="replace").splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict) and "level" in record and "msg" in record:
+            return None
+    return f"structured host log {path} holds no log record after the host started"
+
+
 def installer_record_path(install_root: Path, record: str) -> Path:
     """Resolve an installer-owned record through the installed-root owner."""
     from installed_fixture import installed_path

@@ -305,9 +305,58 @@ jobs:
           retention-days: 1
           compression-level: 3
       - name: Run all unit tests
-        run: ./tools/kb-devkit/kb-devkit run test --no-cache
+        run: ./tools/kb-devkit/kb-devkit run test --lane shipped --no-cache
       - name: Run all CLI handler tests
-        run: ./tools/kb-devkit/kb-devkit run test:cli --no-cache
+        run: ./tools/kb-devkit/kb-devkit run test:cli --lane shipped --no-cache
+      - name: Upload devkit task logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: devkit-logs-full-unit-tests
+          path: .kb/devkit/logs/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ── 3b. Internal tools — tests of tools that never ship ───────────────────
+  #
+  # Packages whose devkit.yaml category declares `releaseLane: internal-tool`
+  # (the same declaration the release gate reads) are not part of the product
+  # gate above: an unrelated PR must not go red for them, but their tests are
+  # never skipped. They run here, on their own affected inputs, as their own
+  # check.
+  internal-tool-tests:
+    name: internal tools (go)
+    runs-on: ubuntu-latest
+    needs: build-tools
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: go-tools
+          path: tools-bin/
+      - name: Install Go tools
+        run: |
+          chmod +x tools-bin/*
+          cp tools-bin/kb-devkit tools/kb-devkit/kb-devkit
+      - name: Run internal tool tests
+        run: ./tools/kb-devkit/kb-devkit run test --lane internal-tool --affected --diff-only --no-cache
+      - name: Upload devkit task logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: devkit-logs-internal-tool-tests
+          path: .kb/devkit/logs/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
   # ── 4. Workspace checks — devkit structure, deps and boundaries ────────────
   devkit-checks:
@@ -348,7 +397,7 @@ jobs:
 
   ci-evidence:
     name: CI evidence
-    needs: [preflight, e2e-test-plan, launcher-v2-contracts, build-tools, build, checks, full-unit-tests, devkit-checks, launcher-e2e]
+    needs: [preflight, e2e-test-plan, launcher-v2-contracts, build-tools, build, checks, full-unit-tests, internal-tool-tests, devkit-checks, launcher-e2e]
     if: always()
     uses: ./.github/workflows/reusable-ci-evidence.yml
     permissions:

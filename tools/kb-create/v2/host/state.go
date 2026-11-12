@@ -59,12 +59,23 @@ func StateHome(platformRoot string) (State, error) {
 	return State{Dir: filepath.Join(root, "launcher")}, nil
 }
 
-func (s State) HostPID() string        { return filepath.Join(s.Dir, "host.pid") }
-func (s State) HostLog() string        { return filepath.Join(s.Dir, "host.log") }
+func (s State) HostPID() string { return filepath.Join(s.Dir, "host.pid") }
+func (s State) HostLog() string {
+	residue, _ := contracts.HostLogFileNames()
+	return filepath.Join(s.Dir, residue)
+}
+
+// HostStructuredLog is the base path of the host's bounded structured log; the
+// platform logger adapter owns its rotation (host.jsonl, host.jsonl.1 …).
+func (s State) HostStructuredLog() string {
+	_, structured := contracts.HostLogFileNames()
+	return filepath.Join(s.Dir, structured)
+}
 func (s State) LauncherLog() string    { return filepath.Join(s.Dir, "launcher.log") }
 func (s State) SupervisorPID() string  { return filepath.Join(s.Dir, "supervisor.pid") }
 func (s State) SupervisorLog() string  { return filepath.Join(s.Dir, "supervisor.log") }
 func (s State) Control() string        { return filepath.Join(s.Dir, "control.json") }
+func (s State) HostExit() string       { return filepath.Join(s.Dir, "host-exit.json") }
 func (s State) UpdateRequests() string { return filepath.Join(s.Dir, "update-requests.json") }
 func (s State) OperationLock() string  { return operationlock.Path(s.Dir) }
 

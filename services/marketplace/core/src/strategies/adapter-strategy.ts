@@ -5,6 +5,7 @@
 
 import type { EntityKind } from '@kb-labs/plugin-contracts';
 import { adapterManifestProvidesSlot, loadAdapterManifest as loadManifest } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform/error-envelope';
 import type { DetailsFor, ILogger } from '@kb-labs/core-platform';
 import type {
   EntityKindStrategy,
@@ -32,12 +33,19 @@ export class AdapterStrategy implements EntityKindStrategy {
   constructor(
     private readonly logger: ILogger,
     private readonly platformRoot: string,
+    private readonly resolveSelectedAdapterSlot: (packageId: string) => Promise<string | null>,
   ) {}
 
   async detectKind(packageRoot: string): Promise<EntityKind | null> {
     const result = await loadManifest({ packageRoot });
     if (result.kind === 'failed') {throw new AdapterManifestLoadError(packageRoot, result.reason);}
     return result.kind === 'adapter' ? 'adapter' : null;
+  }
+
+  async resolveId(packageRoot: string): Promise<string | null> {
+    const result = await loadManifest({ packageRoot });
+    if (result.kind === 'failed') {throw new AdapterManifestLoadError(packageRoot, result.reason);}
+    return result.kind === 'adapter' ? result.manifest.id : null;
   }
 
   async extractProvides(_packageRoot: string): Promise<EntityKind[]> {
@@ -81,6 +89,12 @@ export class AdapterStrategy implements EntityKindStrategy {
     service: MarketplaceServiceAPI,
     ctx: ScopeContext,
   ): Promise<void> {
+    const selectedSlot = await this.resolveSelectedAdapterSlot(packageId);
+    if (selectedSlot) {
+      throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_ADAPTER_SELECTED', {
+        details: { package: packageId, slot: selectedSlot },
+      }));
+    }
     const installed = await service.list(ctx, { kind: 'adapter' });
     if (installed.length > 1) {
       this.logger.warn(`Removing adapter "${packageId}" — verify no other adapters depend on it`, { packageId });

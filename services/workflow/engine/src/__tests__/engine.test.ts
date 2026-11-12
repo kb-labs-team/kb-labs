@@ -1391,4 +1391,64 @@ describe('WorkflowEngine', () => {
       expect(resolved!.jobs[0]!.steps[0]!.status).toBe('success');
     });
   });
+
+  describe('cleanupStaleRuns — reconciliation decides on the state read under the run lock', () => {
+    // Deterministic race: the finishing write is injected at the run lock's
+    // acquisition, i.e. exactly between the unlocked read that picked the job
+    // as abandoned and the locked write that fails it. No timing involved.
+    class LockHookCache extends MockCache {
+      beforeNextLock: (() => Promise<void>) | undefined;
+
+      override async setIfNotExists<T>(key: string, value: T, ttl?: number): Promise<boolean> {
+        const hook = this.beforeNextLock;
+        if (hook && key.includes('kb:lock:run:')) {
+          this.beforeNextLock = undefined;
+          await hook();
+        }
+        return super.setIfNotExists(key, value, ttl);
+      }
+    }
+
+    it('keeps a job and step that finished after the abandoned-job read, and logs it at debug', async () => {
+      const hookCache = new LockHookCache();
+      const racedLogger = mockLogger();
+      const racedEngine = new WorkflowEngine({
+        projectId: 'prj_0000000000000001',
+        secretProvider: new EnvSecretProvider(),
+        cache: hookCache,
+        storage,
+        events,
+        logger: racedLogger,
+        maxWorkflowDepth: 2,
+      });
+      const spec: WorkflowSpec = {
+        name: 'Race Workflow',
+        version: '1.0.0',
+        on: { manual: true },
+        jobs: { main: { runsOn: 'local', steps: [{ name: 'Step 1', uses: 'builtin:shell', with: { run: 'echo hi' } }] } },
+      };
+      const run = await racedEngine.createRun({ spec, trigger: { type: 'manual' } });
+      const job = run.jobs[0]!;
+      const step = job.steps[0]!;
+      await racedEngine.markJobStarted(run.id, job.id);
+      await racedEngine.markStepStarted(run.id, job.id, step.id);
+
+      hookCache.beforeNextLock = async () => {
+        await racedEngine.markStepCompleted(run.id, job.id, step.id);
+        await racedEngine.markJobCompleted(run.id, job.id);
+      };
+      await racedEngine.cleanupStaleRuns();
+
+      expect(hookCache.beforeNextLock).toBeUndefined();
+      const after = await racedEngine.getRun(run.id);
+      expect(after!.jobs[0]!.status).toBe('success');
+      expect(after!.jobs[0]!.steps[0]!.status).toBe('success');
+      expect(after!.jobs[0]!.error).toBeUndefined();
+      expect(after!.status).toBe('success');
+      expect(racedLogger.debug).toHaveBeenCalledWith(
+        'Restart reconciliation kept a job that is no longer abandoned',
+        expect.objectContaining({ runId: run.id, jobId: job.id, jobStatus: 'success' }),
+      );
+    });
+  });
 });

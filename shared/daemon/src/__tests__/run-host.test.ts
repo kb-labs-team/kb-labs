@@ -113,6 +113,18 @@ describe("runHost", () => {
     expect(order).toEqual(["setup:a", "setup:b"]);
   });
 
+  it("logs the previous supervisor exit cause when the host starts", async () => {
+    await runHost({
+      ...makeConfig([module("a", 9001)]),
+      previousExitCause: "signal SIGTERM",
+    });
+
+    expect(logger.event).toHaveBeenCalledWith("info", expect.objectContaining({
+      event: "service.host_started",
+      fields: expect.objectContaining({ previousExitCause: "signal SIGTERM" }),
+    }));
+  });
+
   // case: S-124.11
   it("launches with the scope and explicit project identity declared by the process", async () => {
     const projectId = "prj_1234567890123456";

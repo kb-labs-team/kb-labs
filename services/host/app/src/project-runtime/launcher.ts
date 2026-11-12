@@ -261,7 +261,7 @@ export function createChildProcessLauncher(
 ): RuntimeLauncher {
   const stopTimeoutMs = options.stopTimeoutMs ?? 10_000;
   return {
-    async launch(project: RuntimeProject): Promise<RuntimeProcess> {
+    async launch(project: RuntimeProject, previousExitCause?: string): Promise<RuntimeProcess> {
       const [port] = await reserveLoopbackPorts(1);
       const token = randomBytes(32).toString("hex");
       const env: NodeJS.ProcessEnv = { ...(options.baseEnv ?? process.env) };
@@ -271,6 +271,7 @@ export function createChildProcessLauncher(
       Object.assign(env, options.env, {
         KB_PROJECT_ROOT: project.root,
         [RUNTIME_TOKEN_ENV]: token,
+        ...(previousExitCause ? { KB_RUNTIME_PREVIOUS_EXIT_CAUSE: previousExitCause } : {}),
       });
 
       const child = spawn(

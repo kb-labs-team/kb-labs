@@ -31,8 +31,12 @@ type RunOptions struct {
 	LiveOutput  bool // stream stdout/stderr while running (disables parallel output)
 	Concurrency int  // upper bound on parallel tasks; memory admission may run fewer
 	WSRoot      string
-	CacheRoot   string // path to .kb/devkit/
+	CacheRoot   string // this worktree's .kb/devkit/: task state and logs (objects and manifests live in cache.SharedRoot)
 	Affected    bool   // selection came from --affected
+	// DefaultSelection is true when the caller named no target (no --packages,
+	// --closure-of or --affected). Packages of categories declared
+	// `defaultBuild: false` then keep their own build task out of the run.
+	DefaultSelection bool
 
 	// MemoryProbe reads host memory for admission. Nil disables memory
 	// admission (the concurrency cap alone applies).
@@ -63,6 +67,9 @@ type RunResult struct {
 	BlockedTasks     []BlockedTask
 	scheduledTasks   []TaskIdentity
 	notAffectedTasks []TaskIdentity
+	// SkippedBuilds names the packages whose build was left out because their
+	// category is declared `defaultBuild: false` and nothing targeted them.
+	SkippedBuilds []string `json:"skippedBuilds,omitempty"`
 }
 
 func (r RunResult) Summary() (RunSummary, error) {
@@ -186,7 +193,21 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	}
 
 	// Build DAG of (pkg, task) nodes — only for packages with a matching variant.
-	nodes, err := buildDAG(pkgs, opts.Tasks, cfg, ws)
+	var skippedBuilds []string
+	var seed seedFilter
+	if opts.DefaultSelection && containsTask(opts.Tasks, "build") {
+		for _, pkg := range pkgs {
+			if category, ok := cfg.Workspace.FindCategory(pkg.Category); ok && !category.BuiltByDefault() {
+				skippedBuilds = append(skippedBuilds, pkg.Name)
+			}
+		}
+		skipped := make(map[string]bool, len(skippedBuilds))
+		for _, name := range skippedBuilds {
+			skipped[name] = true
+		}
+		seed = func(pkg workspace.Package, task string) bool { return task == "build" && skipped[pkg.Name] }
+	}
+	nodes, err := buildDAGSeeded(pkgs, opts.Tasks, cfg, ws, seed)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -215,11 +236,17 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	if cacheRoot == "" {
 		cacheRoot = ".kb/devkit"
 	}
-	objects, err := cache.NewLocalStore(cacheRoot)
+	// Objects and manifests are shared by every worktree of the repository;
+	// task state and logs describe this worktree's runs and stay under cacheRoot.
+	sharedRoot, err := cache.SharedRoot(opts.WSRoot)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("cache init: %w", err)
 	}
-	manifests := cache.NewManifestStore(cacheRoot)
+	objects, err := cache.NewLocalStore(sharedRoot)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("cache init: %w", err)
+	}
+	manifests := cache.NewManifestStore(sharedRoot)
 	states := cache.NewStateStore(cacheRoot)
 	globalInputDigest, ownedInputDigests, dependencyDigests, err := workspaceInputDigests(ws)
 	if err != nil {
@@ -393,6 +420,7 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		OK:               ok && !failed,
 		Results:          allResults,
 		BlockedTasks:     blockedTasks,
+		SkippedBuilds:    skippedBuilds,
 		scheduledTasks:   make([]TaskIdentity, 0, len(allNodes)),
 		notAffectedTasks: notAffectedTasks,
 	}
@@ -546,11 +574,26 @@ func formatTaskCycleEdge(edge TaskCycleEdge) string {
 	return fmt.Sprintf("%s:%s --%s--> %s:%s", edge.From.Package, edge.From.Task, edge.Kind, edge.To.Package, edge.To.Task)
 }
 
+// seedFilter reports (package, task) pairs the caller leaves out of the
+// initial selection. Such a pair still runs when a selected task declares it as
+// a prerequisite.
+type seedFilter func(pkg workspace.Package, task string) bool
+
 func buildDAG(
 	pkgs []workspace.Package,
 	taskNames []string,
 	cfg *config.DevkitConfig,
 	ws *workspace.Workspace,
+) (map[nodeKey]dagNode, error) {
+	return buildDAGSeeded(pkgs, taskNames, cfg, ws, nil)
+}
+
+func buildDAGSeeded(
+	pkgs []workspace.Package,
+	taskNames []string,
+	cfg *config.DevkitConfig,
+	ws *workspace.Workspace,
+	omit seedFilter,
 ) (map[nodeKey]dagNode, error) {
 	// Build package name → Package map.
 	pkgByName := make(map[string]workspace.Package, len(pkgs))
@@ -568,6 +611,9 @@ func buildDAG(
 	var pending []nodeKey
 	for _, p := range pkgs {
 		for _, taskName := range taskNames {
+			if omit != nil && omit(p, taskName) {
+				continue
+			}
 			def := ResolvePackageTaskDef(ws, cfg, taskName, p)
 			if def == nil {
 				// No variant for this package category — skip silently.
@@ -1083,6 +1129,10 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 	if len(tasks) == 0 {
 		return nil, nil
 	}
+	sharedRoot, err := cache.SharedRoot(ws.Root)
+	if err != nil {
+		return nil, fmt.Errorf("cache init: %w", err)
+	}
 	states := cache.NewStateStore(cacheRoot)
 	runtimeFingerprint := cache.RuntimeFingerprint()
 	pkgByName := make(map[string]workspace.Package, len(ws.Packages))
@@ -1093,7 +1143,6 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 	var changed []workspace.Package
 	var globalInputDigest string
 	var ownedInputDigests, dependencyDigests map[string]string
-	var err error
 	inputDigestReady := false
 	for _, p := range ws.Packages {
 		for _, task := range tasks {
@@ -1130,7 +1179,7 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 				changed = append(changed, p)
 				break
 			}
-			if state.InputHash != inputHash || !taskOutputsMatch(p.Dir, *def, cache.NewManifestStore(cacheRoot), inputHash, p.Name) {
+			if state.InputHash != inputHash || !taskOutputsMatch(p.Dir, *def, cache.NewManifestStore(sharedRoot), inputHash, p.Name) {
 				changed = append(changed, p)
 				break
 			}

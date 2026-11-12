@@ -30,6 +30,7 @@ export class PoolQueueManager {
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     uiPromptHint?: string,
     signal?: AbortSignal,
+    onProcessStarted?: (identity: import('@kb-labs/plugin-contracts').ProcessIdentity) => Promise<void>,
   ) => Promise<ExecutionResult>;
   private onAcquireTimeout: () => void;
 
@@ -48,6 +49,7 @@ export class PoolQueueManager {
         onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
         uiPromptHint?: string,
         signal?: AbortSignal,
+        onProcessStarted?: (identity: import('@kb-labs/plugin-contracts').ProcessIdentity) => Promise<void>,
       ) => Promise<ExecutionResult>;
       onAcquireTimeout: () => void;
     }
@@ -87,6 +89,7 @@ export class PoolQueueManager {
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>,
     uiPromptHint?: string,
+    onProcessStarted?: (identity: import('@kb-labs/plugin-contracts').ProcessIdentity) => Promise<void>,
   ): Promise<ExecutionResult> {
     return new Promise<ExecutionResult>((resolve, reject) => {
       const queuedAt = Date.now();
@@ -146,6 +149,7 @@ export class PoolQueueManager {
         onLoggerLog,
         onUIPrompt,
         uiPromptHint,
+        onProcessStarted,
         resolve: (result) => {
           clearTimeout(acquireTimeout);
           if (signal) {
@@ -196,7 +200,7 @@ export class PoolQueueManager {
       const timeoutMs = queued.request.timeoutMs ?? 30_000;
       const startTime = queued.queuedAt;
 
-      this.onExecuteOnWorker(worker, queued.request, timeoutMs, startTime, queued.onLog, queued.onUIPrompt, queued.onLoggerLog, queued.uiPromptHint, queued.signal)
+      this.onExecuteOnWorker(worker, queued.request, timeoutMs, startTime, queued.onLog, queued.onUIPrompt, queued.onLoggerLog, queued.uiPromptHint, queued.signal, queued.onProcessStarted)
         .then((result) => {
           queued.resolve(result);
           // Process more from queue

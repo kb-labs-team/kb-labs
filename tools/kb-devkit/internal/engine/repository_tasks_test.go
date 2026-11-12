@@ -9,10 +9,10 @@ import (
 	"github.com/kb-labs/devkit/internal/workspace"
 )
 
-// case: S-179.49
 // The repository's own devkit.yaml and package manifests are the real producer of
 // task assignments. Every declared task must plan over the real workspace, so a
 // task/script mismatch fails here instead of on a hosted runner.
+// case: S-179.49
 func TestRepositoryTasksPlanOverTheRealWorkspace(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "..", ".."))
 	if err != nil {
