@@ -1,10 +1,8 @@
 /**
  * @module @kb-labs/project-runtime-app/transport
  *
- * The runtime's in-process service topology. The runtime picks loopback ports
- * for its own modules, so the addresses a module binds and the addresses other
- * modules of the same project route to always agree, and never collide with
- * another project's runtime.
+ * The runtime's in-process service topology. Each module publishes its bound
+ * loopback address, so routes always match the live listener.
  *
  * Unlike the host, the generated map is authoritative for the ids it knows:
  * a project's `adapterOptions.serviceTransport` may still carry hand-written
@@ -32,6 +30,10 @@ export class RuntimeServiceTransport implements IServiceTransport {
     private readonly generated: HttpServiceTransport,
     private readonly configured?: IServiceTransport,
   ) {}
+
+  publishListenAddress(serviceId: string, address: { host: string; port: number }): Promise<void> {
+    return this.generated.publishListenAddress(serviceId, address);
+  }
 
   private pick(serviceId: string): IServiceTransport {
     if (this.generated.connectionInfo(serviceId) || !this.configured) {

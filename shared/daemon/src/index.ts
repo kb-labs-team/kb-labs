@@ -8,5 +8,5 @@ export {
   type ServiceConfig,
   type ServiceContext,
 } from "./daemon.js";
-export { LOOPBACK_HOST, reserveLoopbackPorts } from "./net.js";
+export { LOOPBACK_HOST } from "./net.js";
 export { requireEnvironmentSecret } from "./required-secret.js";

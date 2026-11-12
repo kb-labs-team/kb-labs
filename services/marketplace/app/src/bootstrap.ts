@@ -29,6 +29,7 @@ export async function setup({
   port,
   host,
   platformRoot,
+  publishListenAddress,
 }: ServiceContext): Promise<() => Promise<void>> {
   const repoRoot = platformRoot;
 
@@ -72,6 +73,11 @@ export async function setup({
 
   const server = await createServer({ service, port, logger });
   await server.listen(getListenOptions(port, host));
+  const bound = server.server.address();
+  if (!bound || typeof bound === "string") {
+    throw new Error("Marketplace service did not bind a TCP address.");
+  }
+  await publishListenAddress({ host, port: bound.port });
 
   logger.info(`Marketplace service listening on http://${host}:${port}`);
   logger.info(`OpenAPI docs: http://localhost:${port}/docs`);

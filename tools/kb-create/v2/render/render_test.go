@@ -178,8 +178,13 @@ func TestDefaultInstallRendersReleaseMarketplaceSourcesAndBootsMarketplace(t *te
 	}
 	bootScript := fmt.Sprintf(`import { setup } from %q;
 import { NoOpLogger } from %q;
-const stop = await setup({ logger: new NoOpLogger(), port: 0, host: "127.0.0.1", platformRoot: process.argv[1] });
-try { /* setup returning a stop function proves the service listened successfully. */ } finally { await stop(); }`,
+const published = [];
+const stop = await setup({ logger: new NoOpLogger(), port: 0, host: "127.0.0.1", platformRoot: process.argv[1], publishListenAddress: async (address) => { published.push(address); } });
+try {
+  if (published.length !== 1 || !Number.isInteger(published[0].port) || published[0].port < 1) {
+    throw new Error("Marketplace did not publish its bound address: " + JSON.stringify(published));
+  }
+} finally { await stop(); }`,
 		"file://"+filepath.ToSlash(filepath.Join(root, "services/marketplace/app/dist/index.js")),
 		"file://"+filepath.ToSlash(filepath.Join(root, "core/platform/dist/noop/index.js")))
 	bootCommand := exec.Command("node", "--input-type=module", "-e", bootScript, platformRoot)

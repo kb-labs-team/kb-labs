@@ -25,7 +25,6 @@ import { setup as setupRest } from "@kb-labs/rest-api-app";
 import {
   defineHostModule,
   LOOPBACK_HOST,
-  reserveLoopbackPorts,
   type HostConfig,
   type HostModule,
   type ServiceContext,
@@ -80,12 +79,10 @@ export interface ProjectRuntimeOptions
   modules?: readonly ProjectRuntimeModule[];
   /** Entrypoint import.meta.url for installed-mode platform discovery. */
   moduleUrl?: string;
+  /** Sends the guard's bound address after every module has published its address. */
+  onReady?: (address: { host: string; port: number }) => Promise<void> | void;
   /** Cause reported by the host supervisor for the previous process. */
   previousExitCause?: string;
-}
-
-function loopbackUrl(port: number): string {
-  return `http://${LOOPBACK_HOST}:${port}`;
 }
 
 /**
@@ -93,11 +90,12 @@ function loopbackUrl(port: number): string {
  * transport does not know the service, runHost falls back to a well-known
  * default port that another project's runtime may already hold: refuse instead.
  */
-function assertModuleAddress(ctx: ServiceContext, serviceId: string): void {
-  const address = ctx.platform
-    .getAdapter<IServiceTransport>("serviceTransport")
-    ?.listenAddress?.(serviceId);
-  if (!address || !("port" in address) || address.port !== ctx.port) {
+function assertModuleAddress(
+  moduleAddresses: Readonly<Record<string, { host: string; port: number }>>,
+  serviceId: string,
+): void {
+  const address = moduleAddresses[serviceId];
+  if (!address || address.port === 0) {
     throw new Error(
       `The project runtime transport has no TCP address for "${serviceId}"; refusing to bind a well-known port.`,
     );
@@ -119,7 +117,7 @@ async function assertProjectRoot(
 
 /**
  * Builds the `runHost` configuration of one project runtime. Async because the
- * module ports are reserved before the platform launches (the transport must
+ * module addresses are published after each module binds (the transport must
  * exist when adapters are assembled). Every call returns an independent
  * runtime: nothing here is module-global.
  */
@@ -140,23 +138,16 @@ export async function createProjectRuntimeConfig(
   if (serviceDeclarations.length !== modules.length) {
     throw new Error("Every project runtime module must declare its project API in the service manifest.");
   }
-  const ports = await reserveLoopbackPorts(modules.length);
-  const moduleAddresses = Object.fromEntries(
-    modules.map((spec, index) => [
-      projectServiceId(spec),
-      { host: LOOPBACK_HOST, port: ports[index]! },
-    ]),
-  );
+  const moduleAddresses: Record<string, { host: string; port: number }> = {};
 
   const services: Record<string, { url: string }> = {
     [GUARD_SERVICE_ID]: {
       url: `http://${options.listen.host}:${options.listen.port}`,
     },
   };
-  modules.forEach((spec, index) => {
-    services[projectServiceId(spec)] = { url: loopbackUrl(ports[index]!) };
-  });
-  // offset 0: these are exact ports, not well-known ones to shift.
+  for (const module of modules) {
+    services[projectServiceId(module)] = { url: `http://${LOOPBACK_HOST}:0` };
+  }
   const generated = new HttpServiceTransport({ services, offset: 0 });
 
   const baseHook = makeAssemblyHook();
@@ -193,7 +184,6 @@ export async function createProjectRuntimeConfig(
       id: projectServiceId(spec),
       serviceId: projectServiceId(spec),
       defaultPort: 0,
-      portEnvVar: "KB_PROJECT_RUNTIME_UNUSED_PORT",
       // Project services never bind beyond loopback and take no env override.
       defaultHost: LOOPBACK_HOST,
       setup: async (ctx) => {
@@ -202,11 +192,11 @@ export async function createProjectRuntimeConfig(
             installResolveHook(ctx);
           }
           await assertProjectRoot(ctx, options.projectRoot);
-          assertModuleAddress(ctx, projectServiceId(spec));
           const teardown = await spec.setup(
             { ...ctx, logger: ctx.logger.forComponent(spec.manifest.id) },
             modules.map((module) => module.manifest),
           );
+          assertModuleAddress(moduleAddresses, projectServiceId(spec));
           if (index === 0) {
             return async () => {
               try {
@@ -233,10 +223,8 @@ export async function createProjectRuntimeConfig(
     id: "guard",
     serviceId: GUARD_SERVICE_ID,
     defaultPort: 0,
-    portEnvVar: "KB_PROJECT_RUNTIME_UNUSED_PORT",
     defaultHost: options.listen.host,
     setup: async (ctx) => {
-      assertModuleAddress(ctx, GUARD_SERVICE_ID);
       const server = createRuntimeGuard({
         token: options.token,
         projectId: options.projectId,
@@ -245,7 +233,9 @@ export async function createProjectRuntimeConfig(
         logger: ctx.logger.forComponent("guard"),
         listActiveWork: () => ctx.activeWork.list(),
       });
-      await server.listen({ host: ctx.host, port: ctx.port });
+      const address = await server.listen({ host: ctx.host, port: ctx.port });
+      await ctx.publishListenAddress(address);
+      await options.onReady?.(address);
       return () => server.close();
     },
   });
@@ -259,5 +249,12 @@ export async function createProjectRuntimeConfig(
     previousExitCause: options.previousExitCause,
     platform: { assemblyHook },
     modules: [...serviceModules, guard],
+    publishListenAddress: async (module, address) => {
+      const serviceId = module.serviceId ?? module.id;
+      await generated.publishListenAddress(serviceId, address);
+      if (serviceId !== GUARD_SERVICE_ID) {
+        moduleAddresses[serviceId] = address;
+      }
+    },
   };
 }

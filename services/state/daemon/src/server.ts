@@ -30,6 +30,7 @@ export interface StateDaemonConfig {
   port?: number;
   host?: string;
   logger?: ILogger;
+  publishListenAddress?: (address: { host: string; port: number }) => Promise<void>;
 }
 
 function createFallbackLogger(): IContextLogger {
@@ -158,6 +159,13 @@ class StateDaemonRuntime {
       this.registerRoutes(instance);
       this.observability.recordOperation("state.bootstrap", 0, "ok");
       await instance.listen(getListenOptions(port, host));
+      const address = instance.server.address();
+      if (address === null) {
+        throw new Error("State daemon did not bind an address.");
+      }
+      if (typeof address !== "string") {
+        await this.config.publishListenAddress?.({ host, port: address.port });
+      }
     } catch (startupError) {
       this.acceptingRequests = false;
       const cleanup = await Promise.allSettled([

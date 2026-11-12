@@ -18,6 +18,7 @@ const TOKEN = "0123456789abcdef0123456789abcdef";
 describe("parseListen", () => {
   it("accepts loopback host:port", () => {
     expect(parseListen("127.0.0.1:4711")).toEqual({ host: "127.0.0.1", port: 4711 });
+    expect(parseListen("127.0.0.1:0")).toEqual({ host: "127.0.0.1", port: 0 });
     expect(parseListen("localhost:4711")).toEqual({ host: "localhost", port: 4711 });
     expect(parseListen("[::1]:4711")).toEqual({ host: "::1", port: 4711 });
   });
@@ -29,7 +30,6 @@ describe("parseListen", () => {
 
   it("refuses malformed values", () => {
     expect(() => parseListen("4711")).toThrow(RuntimeArgsError);
-    expect(() => parseListen("127.0.0.1:0")).toThrow(/invalid port/);
     expect(() => parseListen("127.0.0.1:99999")).toThrow(/invalid port/);
   });
 });

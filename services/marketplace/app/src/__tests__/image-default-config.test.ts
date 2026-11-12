@@ -39,7 +39,11 @@ describe("Marketplace image default config", () => {
     const configPath = path.join(tempRoot, ".kb", "kb.config.json");
     execFileSync(process.execPath, [producerPath, configPath], { cwd: workspaceRoot });
     const generatedConfig = JSON.parse(await fs.readFile(configPath, "utf8")) as { marketplace: { sources: Array<{ url: string }> } };
-    mocks.createServer.mockResolvedValue({ listen: vi.fn(), close: vi.fn() });
+    mocks.createServer.mockResolvedValue({
+      listen: vi.fn(),
+      close: vi.fn(),
+      server: { address: () => ({ port: 5070 }) },
+    });
     mocks.MarketplaceService.mockImplementation(function (options) { return options; });
     mocks.createExtensionStore.mockReturnValue({});
 
@@ -48,6 +52,7 @@ describe("Marketplace image default config", () => {
       logger: { info: vi.fn() },
       port: 5070,
       host: "127.0.0.1",
+      publishListenAddress: vi.fn(),
       platformRoot: tempRoot,
       netOffset: 0,
       platform: {},

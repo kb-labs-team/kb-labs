@@ -389,6 +389,7 @@ describe("kb-host project routing", () => {
     process.env.GATEWAY_BOOTSTRAP_TENANT_ID = "tenant-g71";
     process.env.KB_HOME = kbHome;
     let runtimeBaseUrl: string | undefined;
+    let runtimeAddress: (() => { host: string; port: number }) | undefined;
     let runtimeToken: string | undefined;
     try {
       const installedPlatformRoot = join(kbHome, "installed-platform");
@@ -457,7 +458,7 @@ describe("kb-host project routing", () => {
                 },
                 stopTimeoutMs: 1500,
               }).launch(runtimeProject);
-              runtimeBaseUrl = `http://${runtime.address.host}:${runtime.address.port}`;
+              runtimeAddress = () => runtime.address;
               runtimeToken = runtime.token;
               return runtime;
             },
@@ -525,7 +526,10 @@ describe("kb-host project routing", () => {
         expect.objectContaining({ name: "kb-labs__mcp_diagnostics" }),
       ]));
 
-      if (!runtimeBaseUrl || !runtimeToken) { throw new Error("Project runtime did not expose its internal address"); }
+      const publishedRuntimeAddress = runtimeAddress?.();
+      expect(publishedRuntimeAddress?.port).toBeGreaterThan(0);
+      if (!publishedRuntimeAddress || !runtimeToken) { throw new Error("Project runtime did not expose its internal address"); }
+      runtimeBaseUrl = `http://${publishedRuntimeAddress.host}:${publishedRuntimeAddress.port}`;
       for (const internalSecret of [undefined, "forged-internal-secret"]) {
         const forged = await fetch(`${runtimeBaseUrl}/mcp`, {
           method: "POST",

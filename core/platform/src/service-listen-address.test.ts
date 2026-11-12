@@ -12,6 +12,14 @@ import {
 } from './service-listen-address.js';
 
 describe('resolveServiceListenAddress', () => {
+  it('preserves port zero as the module-owned ephemeral bind directive', () => {
+    expect(resolveServiceListenAddress(undefined, {
+      serviceId: 'runtime-test',
+      defaultHost: '127.0.0.1',
+      defaultPort: 0,
+    }, 500)).toEqual({ host: '127.0.0.1', port: 0 });
+  });
+
   it('uses the active root receipt address and verifies its installation identity', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, data: { installationId: 'root-b' } }), { status: 200 }));
