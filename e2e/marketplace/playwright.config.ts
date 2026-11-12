@@ -7,7 +7,7 @@ process.env.FLAKY_REPORT_OUT ??= path.join(__dirname, 'flaky-report.json')
 
 export default defineConfig({
   testDir: './scenarios',
-  testMatch: '**/cases/**/*.spec.ts',
+  testMatch: ['**/cases/**/*.spec.ts', '**/cases/**/*.spec.mjs'],
   timeout: 120_000,
   // Marketplace mutations share one scope lock. Exercise the public API
   // deterministically here; concurrency safety is covered at the service layer.

@@ -390,6 +390,12 @@ project-level adapter configuration from the config schema/loader, CLI, REST,
 Studio, health, doctor, and user documentation.
 Cases: S-017, S-018, S-048; S-200 is historical and superseded by S-048.
 
+Installing an adapter from the Marketplace does not select it. The platform
+owner explicitly binds an installed package with `platform.adapters.<slot>`;
+the matching options, including the LLM model, stay under
+`platform.adapterOptions.<slot>`. An adapter with a required model has no
+implicit model fallback. Cases: S-292, S-293, S-294.
+
 ### Plugin settings are platform-owned and project-scoped
 
 Plugin defaults are layered with platform defaults and per-project overrides.

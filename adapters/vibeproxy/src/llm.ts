@@ -1,7 +1,7 @@
 /**
  * @module @kb-labs/adapters-vibeproxy/llm
  * VibeProxy implementation of ILLM interface.
- * Connects to local VibeProxy server (supports Claude, GPT, and other models).
+ * Connects to a local VibeProxy server that routes to configured model providers.
  */
 
 import type {
@@ -16,6 +16,8 @@ import type {
   LLMProtocolCapabilities,
   LLMExecutionPolicy,
 } from "@kb-labs/sdk/adapters";
+import { createErrorEnvelope } from "@kb-labs/sdk/errors";
+import { VIBEPROXY_MODEL_CONFIG_KEY } from './manifest.js';
 
 /**
  * Configuration for VibeProxy LLM adapter.
@@ -25,8 +27,8 @@ export interface VibeProxyLLMConfig {
   baseURL?: string;
   /** API key (can be any string for VibeProxy) */
   apiKey?: string;
-  /** Default model to use */
-  defaultModel?: string;
+  /** Required model to use unless a request overrides it. */
+  model?: string;
   /** Request timeout in ms (defaults to 120000) */
   timeout?: number;
   /** Default max output tokens when caller does not specify. Overrides the hardcoded 4096. */
@@ -103,7 +105,7 @@ interface VibeProxyMessagesResponse {
 export class VibeProxyLLM implements ILLM {
   private baseURL: string;
   private apiKey: string;
-  private defaultModel: string;
+  private configuredModel: string;
   private timeout: number;
   private defaultMaxTokens: number;
 
@@ -112,10 +114,18 @@ export class VibeProxyLLM implements ILLM {
       config.baseURL ?? process.env.VIBEPROXY_URL ?? "http://localhost:8317";
     this.apiKey =
       config.apiKey ?? process.env.VIBEPROXY_API_KEY ?? "any-string";
-    this.defaultModel =
-      config.defaultModel ??
-      process.env.VIBEPROXY_MODEL ??
-      "claude-sonnet-4-20250514";
+    if (!config.model?.trim()) {
+      const optionPath = `platform.adapterOptions.llm.${VIBEPROXY_MODEL_CONFIG_KEY}`;
+      const envelope = createErrorEnvelope("KB_ADAPTER_CONFIG_REQUIRED", {
+        details: {
+          path: optionPath,
+          nextCommand: ['kb', 'config', 'set', '--scope', 'platform', optionPath, '<model>'].join(' '),
+        },
+        cause: "Required adapter option is missing.",
+      });
+      throw Object.assign(new Error(envelope.message, { cause: envelope.cause }), envelope);
+    }
+    this.configuredModel = config.model;
     this.timeout = config.timeout ?? 120000;
     this.defaultMaxTokens = config.defaultMaxTokens ?? DEFAULT_MAX_TOKENS;
   }
@@ -328,7 +338,7 @@ export class VibeProxyLLM implements ILLM {
   }
 
   async complete(prompt: string, options?: LLMOptions): Promise<LLMResponse> {
-    const model = options?.model ?? this.defaultModel;
+    const model = options?.model ?? this.configuredModel;
 
     const requestBody: VibeProxyMessagesRequest = {
       model,
@@ -372,7 +382,7 @@ export class VibeProxyLLM implements ILLM {
 
   async *stream(prompt: string, options?: LLMOptions): AsyncIterable<string> {
     const requestBody: VibeProxyMessagesRequest = {
-      model: options?.model ?? this.defaultModel,
+      model: options?.model ?? this.configuredModel,
       max_tokens: options?.maxTokens ?? this.defaultMaxTokens,
       messages: [{ role: "user", content: prompt }],
       stream: true,
@@ -446,7 +456,7 @@ export class VibeProxyLLM implements ILLM {
     messages: LLMMessage[],
     options: LLMToolCallOptions,
   ): Promise<LLMToolCallResponse> {
-    const model = options?.model ?? this.defaultModel;
+    const model = options?.model ?? this.configuredModel;
     const converted = this.convertMessagesForTools(messages);
 
     // Convert LLMTool[] to VibeProxy tools format

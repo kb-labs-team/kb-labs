@@ -16,6 +16,10 @@ import {
   RegistryPackageSource,
 } from "@kb-labs/marketplace-npm";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 /**
  * Marketplace service body. Importable and side-effect-free: it only starts
  * work when called with a resolved {@link ServiceContext}.
@@ -52,6 +56,18 @@ export async function setup({
     logger,
     extensionStore: createExtensionStore({ platformRoot }),
     sources,
+    resolveSelectedAdapterSlot: async (packageId) => {
+      const currentConfig = await readKbConfig(repoRoot);
+      const data = isRecord(currentConfig?.data) ? currentConfig.data : {};
+      const platform = isRecord(data.platform) ? data.platform : {};
+      const adapters = isRecord(platform.adapters) ? platform.adapters : {};
+      for (const [slot, binding] of Object.entries(adapters)) {
+        if (binding === packageId || (Array.isArray(binding) && binding.includes(packageId))) {
+          return slot;
+        }
+      }
+      return null;
+    },
   });
 
   const server = await createServer({ service, port, logger });

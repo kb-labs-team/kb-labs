@@ -506,6 +506,17 @@
       ]
     },
     {
+      "code": "KB_ADAPTER_CONFIG_REQUIRED",
+      "httpStatus": 400,
+      "area": "config",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "Required adapter configuration value {path} is missing.",
+      "hint": "Run `{nextCommand}` to configure the required adapter option."
+    },
+    {
       "code": "KB_CONFIG_LLM_KEY_INVALID",
       "httpStatus": 502,
       "area": "config",
@@ -1790,6 +1801,18 @@
       "processExitClass": "operation-failure",
       "message": "Marketplace could not authenticate with the configured source.",
       "hint": "Check the configured source credential, then run `kb marketplace install {package} --scope {scope}`."
+    },
+    {
+      "code": "KB_MARKETPLACE_ADAPTER_SELECTED",
+      "httpStatus": 409,
+      "area": "plugin",
+      "stage": "extend",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "Adapter {package} is selected for platform slot {slot}.",
+      "hint": "Run `kb adapter unbind {slot}`, then retry the Marketplace uninstall.",
+      "structuredDetailFields": ["package", "slot"]
     },
     {
       "code": "KB_MARKETPLACE_IDENTITY_RESERVED",
