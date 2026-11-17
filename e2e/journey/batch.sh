@@ -5,6 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 BUILD_BASE=${KB_DEVKIT_BASE_REF:-local/main...HEAD}
 BASELINE=${BATCH_BASELINE:-j28}
 SCRIPT_DIR="$ROOT/e2e/journey"
+HEARTBEAT_SECONDS=45
 
 usage() {
   echo "usage: batch.sh prepare <output-dir> [baseline] | mode <local|secured> <producer-artifact> <output-dir> [--cases <case-ids>] | summarize <output-dir> <producer-artifact> <local-artifact> <secured-artifact> | <output-dir> [baseline]" >&2
@@ -23,6 +24,53 @@ write_metadata() {
     "${reset_seconds:-0}" "${build_seconds:-0}" "${unit_seconds:-0}" "${candidate_seconds:-0}" \
     "${local_seconds:-0}" "${secured_seconds:-0}" "${total_seconds:-0}" \
     "$(absolute "${metadata_path%/batch-metadata.json}/build-candidate.tar")"
+}
+run_mode_with_heartbeat() {
+  heartbeat_mode=$1 heartbeat_log=$2
+  shift 2
+  heartbeat_started=$(date +%s)
+  heartbeat_signal_status=0
+  "$@" > "$heartbeat_log" 2>&1 &
+  heartbeat_runner_pid=$!
+  (
+    heartbeat_sleep_pid=""
+    trap '[ -z "$heartbeat_sleep_pid" ] || { kill "$heartbeat_sleep_pid" 2>/dev/null || :; wait "$heartbeat_sleep_pid" 2>/dev/null || :; }; exit 0' HUP INT TERM
+    while kill -0 "$heartbeat_runner_pid" 2>/dev/null; do
+      sleep "$HEARTBEAT_SECONDS" &
+      heartbeat_sleep_pid=$!
+      wait "$heartbeat_sleep_pid" || exit 0
+      heartbeat_sleep_pid=""
+      kill -0 "$heartbeat_runner_pid" 2>/dev/null || exit 0
+      heartbeat_elapsed=$(($(date +%s) - heartbeat_started))
+      printf 'JOURNEY HEARTBEAT: mode %s still running (%ss); output is in %s/batch.log\n' \
+        "$heartbeat_mode" "$heartbeat_elapsed" "$heartbeat_mode"
+    done
+  ) &
+  heartbeat_pid=$!
+  heartbeat_signal_handler() {
+    heartbeat_signal_status=$1
+    kill -TERM "$heartbeat_runner_pid" 2>/dev/null || :
+    kill -TERM "$heartbeat_pid" 2>/dev/null || :
+  }
+  trap 'heartbeat_signal_handler 129' HUP
+  trap 'heartbeat_signal_handler 130' INT
+  trap 'heartbeat_signal_handler 143' TERM
+  wait "$heartbeat_runner_pid"
+  heartbeat_status=$?
+  while kill -0 "$heartbeat_runner_pid" 2>/dev/null; do
+    wait "$heartbeat_runner_pid"
+    heartbeat_status=$?
+  done
+  kill "$heartbeat_pid" 2>/dev/null || :
+  wait "$heartbeat_pid" 2>/dev/null || :
+  while kill -0 "$heartbeat_pid" 2>/dev/null; do
+    wait "$heartbeat_pid" 2>/dev/null || :
+  done
+  trap - HUP INT TERM
+  if [ "$heartbeat_signal_status" -ne 0 ]; then
+    heartbeat_status=$heartbeat_signal_status
+  fi
+  return "$heartbeat_status"
 }
 run_prepare() {
   out=$(absolute "$1")
@@ -218,21 +266,27 @@ run_mode() {
   }
   rc=0
   KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
-    KB_JOURNEY_ONLY="$runner_selectors" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
-  if [ "$rc" -ne 0 ] && grep -q '^failed to solve:' "$mode_dir/batch.log"; then
-    mv "$mode_dir/batch.log" "$mode_dir/infra-failed.log"
-    rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
-    rm -rf .journey/reports/invocations
-    rc=0
-    KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
-      KB_JOURNEY_ONLY="$runner_selectors" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
-    echo "INFRA: first attempt failed during docker image build; retried once" >> "$mode_dir/batch.log"
-  fi
+    KB_JOURNEY_ONLY="$runner_selectors" run_mode_with_heartbeat "$mode" "$mode_dir/batch.log" "$SCRIPT_DIR/run.sh" --no-build || rc=$?
+  case "$rc" in
+    129|130|143) ;;
+    *)
+      if [ "$rc" -ne 0 ] && grep -q '^failed to solve:' "$mode_dir/batch.log"; then
+        mv "$mode_dir/batch.log" "$mode_dir/infra-failed.log"
+        rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
+        rm -rf .journey/reports/invocations
+        rc=0
+        KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
+          KB_JOURNEY_ONLY="$runner_selectors" run_mode_with_heartbeat "$mode" "$mode_dir/batch.log" "$SCRIPT_DIR/run.sh" --no-build || rc=$?
+        echo "INFRA: first attempt failed during docker image build; retried once" >> "$mode_dir/batch.log"
+      fi
+      ;;
+  esac
   printf 'exit=%s\n' "$rc" >> "$mode_dir/batch.log"
   if ! cp -R .journey/reports/. "$mode_dir/"; then
     rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
     rm -rf .journey/reports/invocations
     echo "journey $mode mode reports could not be copied; next: $(next_runner_command)" >&2
+    case "$rc" in 129|130|143) return "$rc" ;; esac
     return 1
   fi
   rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
@@ -245,8 +299,12 @@ run_mode() {
     result=FAIL
   fi
   source_meta="$shared/batch-metadata.json"
-  "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
-    "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" || return 1
+  if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
+    "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration"; then
+    case "$rc" in 129|130|143) return "$rc" ;; esac
+    return 1
+  fi
+  case "$rc" in 129|130|143) return "$rc" ;; esac
   if [ "$scoreboard_missing" -eq 1 ]; then
     echo "journey $mode mode produced no case scoreboard (entry exited with $rc); see $mode_dir/batch.log for the cause. Next: $(next_runner_command)" >&2
     return 1
@@ -301,7 +359,12 @@ case "${1:-}" in
     if [ "${prepare_rc:-0}" -eq 0 ]; then
       for mode in local secured; do
         mode_out="$full_out/.artifact-$mode"
-        run_mode "$mode" "$producer" "$mode_out" "" || mode_rc=1
+        run_mode "$mode" "$producer" "$mode_out" "" || mode_rc=$?
+        case "${mode_rc:-0}" in
+          129|130|143) exit "$mode_rc" ;;
+          0) ;;
+          *) mode_rc=1 ;;
+        esac
       done
       "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" "$full_out" "$producer" "$full_out/.artifact-local" "$full_out/.artifact-secured" || summary_rc=1
     fi

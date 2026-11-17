@@ -77,6 +77,16 @@ if [ -n "$KB_JOURNEY_ONLY" ] && [ ! -s "$ROOT/core/fixture/dist/index.js" ]; the
   printf 'candidate build artifact missing\\n' >&2
   exit 10
 fi
+if [ -n "$KB_JOURNEY_ONLY" ] && [ "${SLOW_MODE_RUN:-}" = 1 ]; then
+  printf 'secret-like PTY fixture must stay in the artifact log\\n' >&2
+  sleep 2
+fi
+if [ -n "$KB_JOURNEY_ONLY" ] && [ "${BLOCK_MODE_RUN:-}" = 1 ]; then
+  printf '%s\\n' "$$" > "$BLOCK_MODE_PID"
+  printf 'failed to solve: interruption fixture\\n' >&2
+  trap 'sleep 1; : > "$BLOCK_MODE_CLEANUP_MARKER"; exit 0' TERM
+  while :; do sleep 0.1; done
+fi
 if [ -n "${KB_JOURNEY_CASES:-}" ]; then
   printf 'cases %s\\n' "$KB_JOURNEY_CASES" >> "$CALLS"
 fi
@@ -214,7 +224,7 @@ exec "$REAL_TAR" "$@"
         self.env = {
             **isolated_environment(
                 Path(self.root / "home"), self.bin,
-                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash", "tar"),
+                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash", "tar", "sleep"),
             ),
             "CALLS": str(self.calls),
             "REPORTS": str(self.root / ".journey/reports"),
@@ -286,6 +296,96 @@ exec "$REAL_TAR" "$@"
         calls = self.calls.read_text().splitlines()
         self.assertIn("journey agent:commit --no-build", calls)
         self.assertIn("cases S-010,S-011", calls)
+
+    # case: S-262.1
+    def test_mode_heartbeat_is_safe_and_keeps_child_output_in_artifact(self):
+        real_sleep = shutil.which("sleep")
+        sleep_marker = self.root / "heartbeat-sleep-used"
+        self._script(self.bin / "sleep", f'''#!/bin/sh
+if [ "$1" = 45 ] && [ ! -e "{sleep_marker}" ]; then
+  : > "{sleep_marker}"
+  exit 0
+fi
+exec "{real_sleep}" "$@"
+''')
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        env = dict(self.env, SLOW_MODE_RUN="1")
+
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "mode-artifact")],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("JOURNEY HEARTBEAT: mode local still running (", result.stdout)
+        self.assertIn("output is in local/batch.log", result.stdout)
+        self.assertNotIn("secret-like PTY fixture", result.stdout)
+        self.assertNotIn("secret-like PTY fixture", result.stderr)
+        batch_log = (self.root / "mode-artifact/local/batch.log").read_text()
+        self.assertIn("secret-like PTY fixture", batch_log)
+        self.assertIn("exit=0", batch_log)
+
+    # case: S-262.1
+    def test_full_batch_signal_waits_for_cleanup_and_skips_retry_and_next_mode(self):
+        import signal
+        import time
+
+        real_sleep = shutil.which("sleep")
+        runner_pid_file = self.root / "mode-runner.pid"
+        timer_pid_file = self.root / "heartbeat-timer.pid"
+        cleanup_marker = self.root / "mode-cleanup-finished"
+        real_cp = shutil.which("cp")
+        self._script(self.bin / "cp", f'''#!/bin/sh
+if [ "${{FAIL_REPORT_COPY:-}}" = 1 ] && [ "$1" = "-R" ] && [ "$2" = ".journey/reports/." ]; then
+  exit 9
+fi
+exec "{real_cp}" "$@"
+''')
+        self._script(self.bin / "sleep", f'''#!/bin/sh
+if [ "$1" = 45 ]; then
+  printf '%s\\n' "$$" > "{timer_pid_file}"
+  exec "{real_sleep}" "$@"
+fi
+exec "{real_sleep}" "$@"
+''')
+        env = dict(self.env, BLOCK_MODE_RUN="1", BLOCK_MODE_PID=str(runner_pid_file),
+                   BLOCK_MODE_CLEANUP_MARKER=str(cleanup_marker), FAIL_REPORT_COPY="1")
+        process = subprocess.Popen(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            cwd=self.root, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and not (runner_pid_file.exists() and timer_pid_file.exists()):
+                time.sleep(0.05)
+            self.assertTrue(runner_pid_file.exists(), "mode runner did not start")
+            self.assertTrue(timer_pid_file.exists(), "heartbeat timer did not start")
+            runner_pid = int(runner_pid_file.read_text())
+            timer_pid = int(timer_pid_file.read_text())
+            os.kill(process.pid, signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 143, stdout + stderr)
+            self.assertTrue(cleanup_marker.exists(), "runner TERM cleanup did not finish before return")
+            self.assertIn("journey local mode reports could not be copied", stderr)
+            for pid in (runner_pid, timer_pid):
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+            batch_log = (self.root / "out/.artifact-local/local/batch.log").read_text()
+            self.assertIn("exit=143", batch_log)
+            self.assertNotIn("INFRA: first attempt failed", batch_log)
+            calls = self.calls.read_text().splitlines()
+            self.assertEqual(calls.count("journey service-local:explore --no-build"), 1)
+            self.assertNotIn("journey service-secured:explore --no-build", calls)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=10)
 
     # case: S-262.8
     def test_partial_batch_dispatches_multiple_owners_in_the_same_mode(self):
