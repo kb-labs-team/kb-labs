@@ -272,6 +272,7 @@ if (!configResult.ok || !lockResult.valid) {
                     "KB_JOURNEY_RUNNER_GID": str(os.getgid()),
                     "KB_JOURNEY_NODE_BASE_IMAGE": "node:22-bookworm-slim",
                     "KB_JOURNEY_WORKSPACE_SOURCE": str(ROOT),
+                    "KB_JOURNEY_PTY_WIZARD_BINARY": str(ROOT / "e2e" / "journey" / "pty-procfs-smoke.py"),
                 },
             )
             result = subprocess.run(
@@ -293,6 +294,9 @@ if (!configResult.ok || !lockResult.valid) {
         self.assertNotIn("build", runner)
         self.assertEqual(runner["entrypoint"], ["python3"])
         self.assertEqual(runner["command"], ["/opt/kb-workspace/e2e/journey/pty-procfs-smoke.py"])
+        wizard_mount = next(mount for mount in runner["volumes"] if mount.get("target") == "/opt/pty/wizard-pty")
+        self.assertEqual(wizard_mount["source"], str(ROOT / "e2e" / "journey" / "pty-procfs-smoke.py"))
+        self.assertTrue(wizard_mount["read_only"])
 
     def test_internal_network_setting_renders_an_offline_journey_network(self):
         compose_command = require_compose_command(self)

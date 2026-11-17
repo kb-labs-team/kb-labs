@@ -14,23 +14,22 @@ SPEC.loader.exec_module(SMOKE)
 
 
 class PtyProcfsSmokeTranscriptTests(unittest.TestCase):
-    def test_waits_for_complete_terminal_line_across_partial_reads(self):
+    def test_waits_for_complete_wizard_prompt_across_partial_reads(self):
         transcript = bytearray()
-        transcript.extend(b"PTY-PROCFS-SMOKE:/dev/pts/")
-        self.assertIsNone(SMOKE._terminal_announcement(transcript))
+        transcript.extend(b"Project directory (press Enter to install")
+        self.assertFalse(SMOKE._wizard_prompt_ready(transcript))
 
-        transcript.extend(b"17\r")
-        self.assertIsNone(SMOKE._terminal_announcement(transcript))
+        transcript.extend(b" without a project):")
+        self.assertFalse(SMOKE._wizard_prompt_ready(transcript))
 
-        transcript.extend(b"\n")
-        self.assertEqual(SMOKE._terminal_announcement(transcript), "/dev/pts/17")
+        transcript.extend(b" ")
+        self.assertTrue(SMOKE._wizard_prompt_ready(transcript))
 
-    def test_ignores_prefix_before_complete_marker_and_line(self):
-        self.assertIsNone(SMOKE._terminal_announcement(b"startup PTY-PROCFS-SMOKE:/dev/pts/3"))
-        self.assertEqual(
-            SMOKE._terminal_announcement(b"startup PTY-PROCFS-SMOKE:/dev/pts/3\n"),
-            "/dev/pts/3",
-        )
+    def test_requires_real_wizard_prompt(self):
+        self.assertFalse(SMOKE._wizard_prompt_ready(b"Project directory was selected"))
+        self.assertTrue(SMOKE._wizard_prompt_ready(
+            b"Project directory (press Enter to install without a project): "
+        ))
 
 
 if __name__ == "__main__":
