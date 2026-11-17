@@ -807,11 +807,16 @@ def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: fr
         fail(f"project MCP journey: {error}")
 
 
-def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local"):
+def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local",
+                expect_access_mode: bool = False):
     global MAX_PNPM_RSS_MIB
-    expectations = [(r"Project directory", str(PROJECT)), (r"Platform channel", "stable")]
+    expectations = [(r"Project directory", str(PROJECT))]
     if choice:
         expectations.append((r"(?:scenario|journey|setup)", choice))
+    expectations.extend([(r"Platform channel", "stable"),
+                         (r"Service profile", "default")])
+    if expect_access_mode:
+        expectations.append((r"Studio access", access_mode))
     if access_mode == "secured":
         expectations.extend([
             (r"Studio access", "secured"),
@@ -1303,8 +1308,13 @@ def _main(*, update_variant_runner=None):
         PROJECT.mkdir(parents=True, exist_ok=True)
         choice = "commit" if VARIANT == "human-nondefault" else ""
         access_mode = "secured" if VARIANT.endswith("secured") else "local"
+        install_command = [launcher, "install", "--registry", REGISTRY, *marketplace_flags]
+        if VARIANT == "human-default":
+            # Pin the human journey to explore so its profile allowlist is
+            # exercised against the release index's default and client profiles.
+            install_command.extend(["--scenario", "explore"])
         code, output, duration, apply_offset = pty_install(
-            [launcher, "install", "--registry", REGISTRY, *marketplace_flags], env, choice, access_mode
+            install_command, env, choice, access_mode, expect_access_mode=VARIANT == "human-default"
         )
         TIMES["questions"] = apply_offset if apply_offset is not None else duration
         if apply_offset is not None:
@@ -1317,6 +1327,15 @@ def _main(*, update_variant_runner=None):
         human_text_is_clean(output)
         if code != 0:
             fail(f"kb-create install: exit {code}; {' '.join(output.split())[-2000:]}")
+        human_transcript = OrderedPromptResponder._normalize_redraws(output)
+        expected_profile_prompt = {
+            "human-default": r"(?m)Service profile \[default\] \(default default\):",
+            "human-nondefault": r"(?m)Service profile \[client, default\] \(default default\):",
+        }.get(VARIANT)
+        scenario_profile_choices_ok = expected_profile_prompt is None or bool(
+            re.search(expected_profile_prompt, human_transcript))
+        if not scenario_profile_choices_ok:
+            fail("wizard service-profile choices did not match the selected scenario")
         if not re.search(r"(?i)install|download|configure|verify|starting", output):
             fail("kb-create install: terminal showed no progress")
         if not re.search(r"(?i)next|success|installed|ready", output):
@@ -1328,13 +1347,22 @@ def _main(*, update_variant_runner=None):
                             and str(PROJECT.resolve()) in output
                             and not (PROJECT / ".kb").exists()
                             and "Verification: platform installed" in output
-                            and re.search(r"(?i)next|success|installed|ready", output) is not None)
+                            and re.search(r"(?i)next|success|installed|ready", output) is not None
+                            and scenario_profile_choices_ok)
         if FRONT == "human" and not VARIANT.endswith("secured"):
             record_case("human interactive install",
                        human_install_ok, "interactive install did not show a plan and success result",
-                       cases=["S-040.1", "S-040.2", "S-187.1", "S-187.2", "S-187.3", "S-203.10"],
+                       cases=["S-040.2", "S-187.1", "S-187.2", "S-187.3", "S-203.10"],
                        requires=("step:candidate provenance",),
                        runners=("human:default", "human:nondefault"))
+            if VARIANT == "human-default":
+                record_case("explore profile allowlist", human_install_ok,
+                            "explore wizard did not restrict profile choices to default",
+                            cases=["S-040.1"], runners=("human:default",))
+            elif VARIANT == "human-nondefault":
+                record_case("unrestricted scenario profiles", human_install_ok,
+                            "commit wizard did not preserve all release-index profiles",
+                            cases=["S-040.5"], runners=("human:nondefault",))
     else:
         operation = "plan" if VARIANT in {"input", "relative-path"} else "install"
         PROJECT.mkdir(parents=True, exist_ok=True)

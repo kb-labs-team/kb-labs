@@ -14,6 +14,27 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 )
 
+// case: S-040.1
+func TestServiceProfileChoicesRespectScenarioAllowlist(t *testing.T) {
+	available := []string{"client", "default"}
+
+	got, err := serviceProfileChoices(available, []string{"default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "default" {
+		t.Fatalf("scenario profile choices = %v, want only default", got)
+	}
+
+	got, err = serviceProfileChoices(available, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "client,default" {
+		t.Fatalf("unrestricted scenario profile choices = %v, want all available profiles", got)
+	}
+}
+
 // case: S-284.19
 func TestChoiceAtEOFUsesDeclaredDefault(t *testing.T) {
 	var output bytes.Buffer

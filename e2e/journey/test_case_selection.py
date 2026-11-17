@@ -354,6 +354,20 @@ class CaseJourneySelectionTests(unittest.TestCase):
         self.assertEqual(result.status, "FAIL")
         self.assertIn("registered for runner(s) human:default", result.message)
 
+    def test_s040_profile_claims_are_owned_by_the_scenarios_they_check(self):
+        root = Path(__file__).resolve().parents[2]
+        declarations = _case_declarations("e2e/journey/runner.py", root)
+        claims = {
+            step_id: tuple(declaration["runners"])
+            for declaration in declarations.values()
+            for step_id in (declaration.get("cases") or [])
+            if step_id in {"S-040.1", "S-040.5"}
+        }
+        self.assertEqual(claims, {
+            "S-040.1": ("human:default",),
+            "S-040.5": ("human:nondefault",),
+        })
+
     def test_unselected_runner_variant_registration_is_not_emitted(self):
         with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "agent:commit"}, clear=False):
             journey = Journey("local", "wrong-unselected-variant")
