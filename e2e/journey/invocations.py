@@ -90,11 +90,11 @@ def _proc_status_diagnostic(pid: int | str) -> str:
     """Return a small allowlist of procfs credentials and tracing state only."""
     wanted = {"Uid", "Gid", "CapPrm", "CapEff", "CapBnd", "TracerPid", "Seccomp", "NoNewPrivs"}
     try:
-        lines = Path(f"/proc/{pid}/status").read_text(encoding="ascii").splitlines()
+        content = Path(f"/proc/{pid}/status").read_bytes().decode("ascii", errors="replace")
     except OSError as error:
         return f"status=unavailable:{errno.errorcode.get(error.errno or 0, 'ERROR')}"
     fields = {}
-    for line in lines:
+    for line in content.splitlines():
         key, separator, value = line.partition(":")
         if separator and key in wanted:
             fields[key] = value.strip()
