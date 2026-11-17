@@ -36,6 +36,14 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
 
 
 class CaseJourneySelectionTests(unittest.TestCase):
+    def test_artifact_name_for_selector_replaces_github_invalid_colon(self):
+        self.assertEqual(select_from_cases.artifact_name_for_selector("service-local:explore"),
+                         "service-local-explore")
+
+    def test_artifact_name_for_selector_rejects_unknown_runner(self):
+        with self.assertRaisesRegex(ValueError, "unknown registered journey runner"):
+            select_from_cases.artifact_name_for_selector("unknown:explore")
+
     def test_commit_default_and_registry_lane_step_graphs_are_disjoint(self):
         root = Path(__file__).resolve().parents[2]
         source = "e2e/journey/marketplace_steps.py"

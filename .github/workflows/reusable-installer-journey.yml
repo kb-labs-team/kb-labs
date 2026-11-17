@@ -110,10 +110,15 @@ jobs:
       - name: Add journey report to job summary
         if: always()
         run: if [ -f .journey/reports/journey-summary.md ]; then cat .journey/reports/journey-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Prepare artifact-safe journey selector
+        id: artifact-name
+        env:
+          JOURNEY_SELECTOR: ${{ matrix.case }}
+        run: printf 'selector=%s\n' "$(python3 e2e/journey/select_from_cases.py --artifact-name-for-selector "$JOURNEY_SELECTOR")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: service-journey-results-${{ matrix.os }}-${{ matrix.case }}
+          name: service-journey-results-${{ matrix.os }}-${{ steps.artifact-name.outputs.selector }}
           path: .journey/reports/service-*.json
           if-no-files-found: ignore
           retention-days: 90
