@@ -24,6 +24,7 @@
  */
 
 import type { CapabilityCall } from '@kb-labs/host-agent-contracts';
+import { realpathSync } from 'node:fs';
 import type { GatewayTransport } from '@kb-labs/host-agent-core';
 import { createProxyPlatform, type ITransport, type PlatformContainer } from '@kb-labs/core-runtime';
 import { runInProcess, runInSubprocess } from '@kb-labs/plugin-runtime';
@@ -56,6 +57,8 @@ export interface ExecutionHandlerOptions {
   executionMode: 'in-process' | 'subprocess';
   timeoutMs: number;
   allowedPlugins?: string[];
+  /** Trusted host startup root; never read from an execution request. */
+  platformRoot?: string;
 }
 
 // ── Constants ──
@@ -68,9 +71,11 @@ export class ExecutionHandler {
   private pluginResolver: LocalPluginResolver;
   private journal = new Map<string, JournalEntry>();
   private journalCleanupTimer: ReturnType<typeof setInterval>;
+  private readonly platformRoot?: string;
 
   constructor(private readonly opts: ExecutionHandlerOptions) {
     this.pluginResolver = new LocalPluginResolver(opts.allowedPaths);
+    this.platformRoot = opts.platformRoot ? realpathSync(opts.platformRoot) : undefined;
 
     // Periodic journal cleanup
     this.journalCleanupTimer = setInterval(() => this.cleanupJournal(), JOURNAL_TTL_MS);
@@ -196,6 +201,7 @@ export class ExecutionHandler {
       input,
       signal,
       cwd: resolved.pluginRoot,
+      platformRoot: this.platformRoot,
     });
     return result.data;
   }
@@ -224,6 +230,7 @@ export class ExecutionHandler {
       timeoutMs,
       signal,
       cwd: resolved.pluginRoot,
+      platformRoot: this.platformRoot,
     });
     return result.data;
   }

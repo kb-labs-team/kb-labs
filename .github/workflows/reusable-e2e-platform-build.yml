@@ -62,6 +62,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Restore kb-devkit build cache
+        id: devkit-cas
         uses: ./.github/actions/devkit-cas
         with:
           mode: ${{ inputs.cache-mode }}
@@ -170,7 +171,10 @@ jobs:
           elapsed=$(( $(date +%s) - started ))
           tarball_count=$(find e2e/packages -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d ' ')
           tarball_digest=$(find e2e/packages -maxdepth 1 -type f -name '*.tgz' -exec sha256sum {} \; | LC_ALL=C sort | sha256sum | awk '{print $1}')
-          cas_size=$(du -sh .kb/devkit 2>/dev/null | awk '{print $1}' || true)
+          cas_size=0
+          if [ -n "${{ steps.devkit-cas.outputs.store-path }}" ]; then
+            cas_size=$(du -sh "${{ steps.devkit-cas.outputs.store-path }}" 2>/dev/null | awk '{print $1}' || true)
+          fi
           jq -n \
             --arg source_sha "$GITHUB_SHA" \
             --arg cache_mode "${{ inputs.cache-mode }}" \

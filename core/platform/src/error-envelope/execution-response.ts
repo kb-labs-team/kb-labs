@@ -71,6 +71,12 @@ function moduleResolutionOf(error: Error): SerializedError['moduleResolution'] {
       typeof candidate.specifier === 'string' && candidate.specifier.length > 0) {
     return { code: candidate.code, specifier: candidate.specifier };
   }
+  if (candidate.code === 'ERR_MODULE_NOT_FOUND' || candidate.code === 'MODULE_NOT_FOUND') {
+    const missingModule = /Cannot find (?:package|module) ['"]([^'"]+)['"]/i.exec(error.message);
+    if (missingModule?.[1]) {
+      return { code: candidate.code, specifier: missingModule[1] };
+    }
+  }
   return undefined;
 }
 

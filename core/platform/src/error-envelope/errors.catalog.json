@@ -1343,6 +1343,7 @@
       "processExitClass": "operation-failure",
       "message": "The platform install needs at least {minimum} of available memory; {available} is available.",
       "hint": "Close memory-heavy applications or increase the machine memory, then run `kb-create install` again.",
+      "structuredDetailFields": ["availableBytes", "minimumBytes"],
       "httpStatus": 500
     },
     {

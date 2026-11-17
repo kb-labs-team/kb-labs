@@ -58,7 +58,7 @@ from installed_cli_contract_steps import run_installed_cli_contract_steps
 from worktree_steps import run_worktree_steps
 from project_identity_steps import (run_project_identity_steps, run_project_registration_case_steps,
                                     run_project_registry_corruption_case_step, run_project_registry_steps)
-from workspace_steps import run_workspace_cli_steps, workspace_checkout_problem
+from workspace_steps import run_devkit_cache_steps, run_devkit_zone_steps, run_workspace_cli_steps, workspace_checkout_problem
 from plugin_isolation_steps import run_project_plugin_availability_steps
 from unexpected_error_steps import run_unexpected_error_steps
 from mcp_project_steps import (
@@ -1012,6 +1012,9 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                     "S-142.5", "S-203.1", "S-203.19", "S-204.7",
                 ],
             )
+            run_devkit_zone_steps(journey, workspace_root,
+                                  unavailable_reason=f"BLOCKED: workspace checkout is unavailable: {problem}")
+            run_devkit_cache_steps(journey, workspace_root)
             return
         run_project_identity_steps(journey, workspace_root)
         run_workspace_cli_steps(journey, workspace_root, prechecked=True)
@@ -1019,7 +1022,10 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
     graph.flow("workspace CLI flows", "workspace", "workspace",
                run_workspace_flows,
                cases=["S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13", "S-179.33",
-                      "S-142.5", "S-203.1", "S-203.19", "S-204.7"], record_empty_success=False)
+                      "S-179.50", "S-179.51", "S-179.52",
+                      "S-142.5", "S-203.1", "S-203.19", "S-204.7",
+                      "S-298.1", "S-298.2", "S-298.3", "S-298.4", "S-298.5",
+                      "S-298.6", "S-298.7", "S-298.8", "S-298.9", "S-298.10"], record_empty_success=False)
     project_b_root = (service_project_b(graph).get("projectBRoot", "")
                       if graph.states.get("fixtures-installed", {}).get("passed") is True else "")
     def run_project_plugin_availability() -> str | None:

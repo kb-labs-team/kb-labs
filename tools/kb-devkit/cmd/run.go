@@ -27,6 +27,8 @@ var (
 	runAffected    bool
 	runDiffOnly    bool
 	runPackages    []string
+	runZone        string
+	runZones       []string
 	runNoCache     bool
 	runLive        bool
 	runConcurrency int
@@ -39,6 +41,38 @@ const (
 	laneInternalTool = "internal-tool"
 	laneShipped      = "shipped"
 )
+
+func normalizeRunZones(single string, many []string) ([]string, error) {
+	var result []string
+	seen := map[string]bool{}
+	for _, raw := range append([]string{single}, many...) {
+		for _, part := range strings.Split(raw, ",") {
+			name := strings.TrimSpace(part)
+			if name == "" {
+				continue
+			}
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			result = append(result, name)
+		}
+	}
+	return result, nil
+}
+
+func emptyRunSelection(message string) error {
+	if jsonMode {
+		return JSONOut(map[string]any{
+			"results": []any{},
+			"summary": engine.RunSummary{BlockedTasks: []engine.BlockedTask{}},
+			"elapsed": "0s",
+			"message": message,
+		})
+	}
+	newOutput().OK(message)
+	return nil
+}
 
 // selectReleaseLane keeps the packages that belong to lane. An empty lane
 // keeps everything. Membership is the package's declared ReleaseLane, so the
@@ -80,6 +114,8 @@ Examples:
   kb-devkit run build lint
   kb-devkit run build lint test --affected
   kb-devkit run build --packages @acme/core-types,@acme/core-runtime
+  kb-devkit run build --zone platform
+  kb-devkit run build --zones plugins,services --affected
   kb-devkit run build --no-cache
   kb-devkit run deploy`,
 	Args: cobra.MinimumNArgs(1),
@@ -101,6 +137,18 @@ Examples:
 		}
 
 		cacheRoot := filepath.Join(ws.Root, ".kb", "devkit")
+		zones, err := normalizeRunZones(runZone, runZones)
+		if err != nil {
+			return diag.New("KB_RUNTIME_INPUT_INVALID", err.Error())
+		}
+		if (cmd.Flags().Changed("zone") || cmd.Flags().Changed("zones")) && len(zones) == 0 {
+			return diag.New("KB_RUNTIME_INPUT_INVALID", "At least one workspace zone must be selected.")
+		}
+		for _, name := range zones {
+			if _, ok := cfg.Workspace.FindZone(name); !ok {
+				return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("Unknown workspace zone %q.", name), diag.WithHint("Run `kb-devkit deps` to inspect discovered packages, then declare the zone under workspace.zones in devkit.yaml."))
+			}
+		}
 
 		// Resolve package filter.
 		var pkgs []workspace.Package
@@ -111,9 +159,7 @@ Examples:
 				return fmt.Errorf("affected: %w", err)
 			}
 			if len(pkgs) == 0 {
-				o := newOutput()
-				o.OK("No affected or dirty packages — nothing to run")
-				return nil
+				return emptyRunSelection("No affected or dirty packages — nothing to run")
 			}
 		case len(runPackages) > 0:
 			pkgs = ws.FilterByName(runPackages)
@@ -121,6 +167,31 @@ Examples:
 				return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("No workspace packages match --packages %q.", strings.Join(runPackages, ", ")),
 					diag.WithHint("Run `kb-devkit deps` to list discovered packages, then rerun with one of those package names."))
 			}
+		}
+		if len(zones) > 0 {
+			zoneSet := make(map[string]bool, len(zones))
+			for _, name := range zones {
+				zoneSet[name] = true
+			}
+			base := pkgs
+			if base == nil {
+				base = ws.Packages
+			}
+			selected := make([]workspace.Package, 0, len(base))
+			for _, pkg := range base {
+				if zoneSet[pkg.Zone] {
+					selected = append(selected, pkg)
+				}
+			}
+			if len(selected) == 0 && runAffected {
+				return emptyRunSelection("No affected packages in the selected workspace zones — nothing to run")
+			}
+			if len(selected) == 0 {
+				return diag.New("KB_RUNTIME_INPUT_INVALID",
+					fmt.Sprintf("The package selection %q does not intersect the requested workspace zones %q.", strings.Join(runPackages, ", "), strings.Join(zones, ", ")),
+					diag.WithHint("Run `kb-devkit deps` to check package paths and their configured zones."))
+			}
+			pkgs = selected
 		}
 
 		if runLane != "" {
@@ -140,11 +211,13 @@ Examples:
 
 		diagnostics := clikitcommand.FromCommand(cmd).ErrorWriter()
 		opts := engine.RunOptions{
-			Tasks:    args,
-			Packages: pkgs,
-			Affected: runAffected,
+			Tasks:                    args,
+			Packages:                 pkgs,
+			Zones:                    zones,
+			ExplicitPackageSelection: runAffected || len(runPackages) > 0 || len(zones) > 0,
+			Affected:                 runAffected,
 
-			DefaultSelection: !runAffected && len(runPackages) == 0,
+			DefaultSelection: !runAffected && len(runPackages) == 0 && len(zones) == 0,
 			NoCache:          runNoCache,
 			LiveOutput:       runLive,
 			Concurrency:      runConcurrency,
@@ -274,6 +347,8 @@ func init() {
 	runCmd.Flags().BoolVar(&runAffected, "affected", false, "run only changed packages + all downstream dependents")
 	runCmd.Flags().BoolVar(&runDiffOnly, "diff-only", false, "with --affected, use only the configured diff; do not include dirty or never-run packages")
 	runCmd.Flags().StringSliceVar(&runPackages, "packages", nil, "run specific packages (comma-separated)")
+	runCmd.Flags().StringVar(&runZone, "zone", "", "run packages in one configured workspace zone")
+	runCmd.Flags().StringSliceVar(&runZones, "zones", nil, "run packages in configured workspace zones (comma-separated)")
 	runCmd.Flags().StringVar(&runLane, "lane", "", "run only one release lane: shipped or internal-tool (devkit.yaml releaseLane)")
 	runCmd.Flags().BoolVar(&runNoCache, "no-cache", false, "bypass cache lookup (still stores result)")
 	runCmd.Flags().BoolVar(&runLive, "live", false, "stream output while running (forces concurrency=1)")

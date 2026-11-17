@@ -77,6 +77,7 @@ import {
 export interface SubprocessBackendOptions {
   /** Platform services */
   platform: PlatformServices;
+  platformRoot?: string;
 
   /**
    * Subprocess runner implementation (dependency injection).
@@ -125,6 +126,7 @@ export class SubprocessBackend implements RawExecutionBackend {
   private executionTimes: number[] = [];
   private startTime = Date.now();
   private readonly platform: PlatformServices;
+  private readonly platformRoot?: string;
   private readonly runner: ISubprocessRunner;
   private readonly uiProvider: (hostType: HostType) => UIFacade;
   private readonly defaultTimeoutMs: number;
@@ -132,6 +134,7 @@ export class SubprocessBackend implements RawExecutionBackend {
 
   constructor(options: SubprocessBackendOptions) {
     this.platform = options.platform;
+    this.platformRoot = options.platformRoot ? fs.realpathSync(options.platformRoot) : undefined;
     this.runner = options.runner;
     this.uiProvider = options.uiProvider ?? (() => noopUI);
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
@@ -220,6 +223,7 @@ export class SubprocessBackend implements RawExecutionBackend {
             KB_TENANT_ID: requestToExecute.context?.tenantId ?? requestToExecute.descriptor.tenantId,
             KB_TRACE_ID: requestToExecute.context?.traceId,
           },
+          platformRoot: this.platformRoot,
           timeoutMs,
           signal: options?.signal,
           cwd: lease.cwd,

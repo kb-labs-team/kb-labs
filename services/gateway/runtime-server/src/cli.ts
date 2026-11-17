@@ -33,6 +33,7 @@ const server = new RuntimeServer({
   gatewayUrl,
   getAccessToken: () => token,
   agentVersion: '0.1.0',
+  platformRoot: process.env.KB_PLATFORM_ROOT,
 });
 
 process.on('SIGTERM', () => {

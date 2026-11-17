@@ -35,6 +35,7 @@ type Executor struct {
 	globalInputDigest  string
 	ownedInputDigests  map[string]string
 	dependencyDigests  map[string]string
+	trackedMetadata    map[string]cache.TrackedFile
 }
 
 const taskHeartbeatInterval = 30 * time.Second
@@ -61,11 +62,18 @@ func NewExecutor(objects cache.ObjectStore, manifests *cache.ManifestStore, stat
 //
 // depDirs is the list of workspace dependency directories for this package.
 // It is used to resolve "^"-prefixed input patterns (e.g. "^dist/**").
-func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs []string) TaskResult {
+func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs []string, contexts ...taskInputContext) TaskResult {
 	start := time.Now()
+	inputContext := taskInputContext{}
+	inputContext.trackedMetadata = e.trackedMetadata
+	if len(contexts) > 0 {
+		inputContext.dependencyOutputs = contexts[0].dependencyOutputs
+		inputContext.disableCache = contexts[0].disableCache
+	}
+	cacheable := def.Cache && !inputContext.disableCache
 
 	// 1. Compute input hash.
-	inputHash, err := hashTaskInputs(pkg, def, depDirs, e.runtimeFingerprint, e.globalInputDigest, e.ownedInputDigests[pkg.Name], e.dependencyDigests[pkg.Name])
+	inputHash, err := hashTaskInputs(pkg, def, depDirs, e.runtimeFingerprint, e.globalInputDigest, e.ownedInputDigests[pkg.Name], e.dependencyDigests[pkg.Name], inputContext)
 	if err != nil {
 		failure := fmt.Sprintf("hash inputs: %v", err)
 		logPath, logErr := e.writeTaskLog(pkg.Name, def.Name, "", "", failure)
@@ -85,7 +93,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	}
 
 	// 2. Cache lookup (skip if cache:false or --no-cache).
-	if def.Cache && !noCache {
+	if cacheable && !noCache {
 		// Only successful runs are replayed. A failure can come from state the
 		// input hash does not see (a dependency rebuilt mid-run, a flaky
 		// process), and replaying it reports a stale red result.
@@ -150,7 +158,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 
 	// 4. Cache successful results only. Failed tasks depend on execution state
 	//     outside the input hash and must be retried on the next run.
-	if def.Cache && result.OK {
+	if cacheable && result.OK {
 		m := &cache.Manifest{
 			InputHash: inputHash,
 			ExitCode:  exitCode,
@@ -234,12 +242,37 @@ func taskFingerprint(def TaskDef, runtimeFingerprint string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func hashTaskInputs(pkg workspace.Package, def TaskDef, depDirs []string, runtimeFingerprint, globalInputDigest, ownedInputDigest, dependencyDigest string) (string, error) {
+type taskInputContext struct {
+	dependencyOutputs []cache.DependencyInput
+	disableCache      bool
+	trackedMetadata   map[string]cache.TrackedFile
+}
+
+func hashTaskInputs(pkg workspace.Package, def TaskDef, depDirs []string, runtimeFingerprint, globalInputDigest, ownedInputDigest, dependencyDigest string, contexts ...taskInputContext) (string, error) {
+	var context taskInputContext
+	if len(contexts) > 0 {
+		context = contexts[0]
+	}
 	dependencyOutputs := make([]string, 0, len(def.Inputs))
 	for _, input := range def.Inputs {
 		if strings.HasPrefix(input, "^") {
 			dependencyOutputs = append(dependencyOutputs, input)
 		}
+	}
+	untrackedDigest, err := cache.HashLocalInputsWithTrackedMetadata(pkg.Dir, context.trackedMetadata, def.Inputs, def.Outputs)
+	if err != nil {
+		return "", err
+	}
+	dependencyOutputDigest, err := cache.HashDependencyInputs(pkg.Dir, context.dependencyOutputs)
+	if err != nil {
+		return "", err
+	}
+	if untrackedDigest != "" || dependencyOutputDigest != "" {
+		dependencyDigest = cache.CombineContentDigests(map[string]string{
+			"workspace-dependencies": dependencyDigest,
+			"untracked-local-inputs": untrackedDigest,
+			"dependency-outputs":     dependencyOutputDigest,
+		})
 	}
 	return cache.HashInputsWithOwnership(pkg.Dir, depDirs, dependencyOutputs, taskFingerprint(def, runtimeFingerprint), globalInputDigest, ownedInputDigest, dependencyDigest)
 }

@@ -270,6 +270,7 @@ async function launch(
         workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
         workspaceRoot: projectRoot,
         catalog: loadResult.catalog,
+        executionPlatformRoot: platformRoot,
       },
     );
   } catch (error) {
@@ -291,6 +292,7 @@ async function launch(
         workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
         workspaceRoot: projectRoot,
         catalog: loadResult.catalog,
+        executionPlatformRoot: platformRoot,
       },
     );
   }

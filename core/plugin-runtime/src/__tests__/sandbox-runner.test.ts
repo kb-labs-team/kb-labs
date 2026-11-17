@@ -24,7 +24,7 @@ import type { PluginContextDescriptor } from '@kb-labs/plugin-contracts';
 import { createMockUI, createMockPlatform } from './test-mocks.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { installPlatformResolveHook } from '../platform-resolve/index.js';
 
 describe('Sandbox Runner', () => {
@@ -41,7 +41,8 @@ describe('Sandbox Runner', () => {
   describe('runInProcess - RunResult contract', () => {
     it('loads platform packages from the platform root for a store-installed handler', async () => {
       const previousPlatformRoot = process.env.KB_PLATFORM_ROOT;
-      const platformRoot = join(testDir, 'platform');
+      const releaseRoot = join(testDir, 'platform', 'releases', 'current');
+      const platformRoot = join(testDir, 'platform', 'current');
       const storeRoot = join(testDir, 'store', 'entries', 'plugin@1.0.0', 'node_modules');
       const writePackage = (root: string, name: string, source: string): void => {
         const packageDir = join(root, ...name.split('/'));
@@ -49,15 +50,19 @@ describe('Sandbox Runner', () => {
         writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name, type: 'module', exports: './index.mjs' }));
         writeFileSync(join(packageDir, 'index.mjs'), source);
       };
-      writePackage(join(platformRoot, 'node_modules'), '@kb-labs/sdk', "import { owner } from '@kb-labs/shared-command-kit'; export const ownerFromSdk = owner;");
-      writePackage(join(platformRoot, 'node_modules'), '@kb-labs/shared-command-kit', "export const owner = 'platform';");
+      mkdirSync(releaseRoot, { recursive: true });
+      symlinkSync(releaseRoot, platformRoot, 'dir');
+      writePackage(join(releaseRoot, 'node_modules'), '@kb-labs/sdk', "import { owner } from '@kb-labs/shared-command-kit'; export const ownerFromSdk = owner;");
+      writePackage(join(releaseRoot, 'node_modules'), '@kb-labs/shared-command-kit', "export const owner = 'platform';");
       writePackage(storeRoot, '@kb-labs/sdk', "import { owner } from '@kb-labs/shared-command-kit'; export const ownerFromSdk = owner;");
+      writeFileSync(join(storeRoot, '@kb-labs', 'sdk', 'index.mjs'),
+        `throw new Error('plugin SDK copy must not load'); export const ownerFromSdk = 'plugin';`);
       const pluginRoot = join(testDir, 'store', 'entries', 'plugin@1.0.0', 'node_modules', 'plugin');
       mkdirSync(pluginRoot, { recursive: true });
       writeFileSync(join(pluginRoot, 'package.json'), JSON.stringify({ name: 'plugin', type: 'module' }));
       const handlerPath = join(pluginRoot, 'handler.mjs');
       writeFileSync(handlerPath, "import { ownerFromSdk } from '@kb-labs/sdk'; export default { execute: async () => ownerFromSdk };");
-      process.env.KB_PLATFORM_ROOT = platformRoot;
+      delete process.env.KB_PLATFORM_ROOT;
 
       try {
         const result = await runInProcess({
@@ -67,6 +72,7 @@ describe('Sandbox Runner', () => {
             hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
           },
           platform: mockPlatform, ui: mockUI, handlerPath, input: {}, cwd: testDir,
+          platformRoot,
         });
         expect(result.data).toBe('platform');
       } finally {

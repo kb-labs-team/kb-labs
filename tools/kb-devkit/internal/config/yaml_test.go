@@ -50,6 +50,49 @@ tasks:
 	}
 }
 
+func TestYAMLOrderedWorkspaceZonesStaySeparateFromCategories(t *testing.T) {
+	cfg, err := parseYAMLBytes([]byte(`schemaVersion: 2
+workspace:
+  zones:
+    platform: ["core/*", "sdk/*"]
+    plugins: ["plugins/*"]
+  categories:
+    libraries:
+      match: ["core/*", "sdk/*", "plugins/*"]
+      preset: node-lib
+`))
+	if err != nil {
+		t.Fatalf("parse workspace zones: %v", err)
+	}
+	if len(cfg.Workspace.Zones) != 2 || cfg.Workspace.Zones[0].Name != "platform" || cfg.Workspace.Zones[1].Name != "plugins" {
+		t.Fatalf("workspace zones = %#v, want ordered platform and plugins", cfg.Workspace.Zones)
+	}
+	if len(cfg.Workspace.Categories) != 1 || cfg.Workspace.Categories[0].Name != "libraries" {
+		t.Fatalf("workspace categories = %#v, zones must not replace categories", cfg.Workspace.Categories)
+	}
+	zone, ok := cfg.Workspace.FindZone("plugins")
+	if !ok || len(zone.Match) != 1 || zone.Match[0] != "plugins/*" {
+		t.Fatalf("FindZone(plugins) = (%#v, %v)", zone, ok)
+	}
+}
+
+func TestYAMLRejectsMalformedWorkspaceZones(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "empty match", raw: "workspace:\\n  zones:\\n    platform: []\\n", want: "at least one match pattern"},
+		{name: "invalid name", raw: "workspace:\\n  zones:\\n    Platform: [core/*]\\n", want: "lowercase letters"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := parseYAMLBytes([]byte(strings.ReplaceAll(tc.raw, "\\n", "\n"))); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("parse zone error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestYAMLReleaseLaneIsPreservedOnCategory(t *testing.T) {
 	cfg, err := parseYAMLBytes([]byte(`schemaVersion: 2
 workspace:

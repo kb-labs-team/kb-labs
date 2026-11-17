@@ -148,6 +148,7 @@ export async function initializePlatform(
       ),
       workspaceDevelopment,
       catalog: loadResult.catalog,
+      executionPlatformRoot: platformRoot,
       ...(workspaceRoot ? { workspaceRoot } : {}),
     },
   );

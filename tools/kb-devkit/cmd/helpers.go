@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/workspace"
 )
@@ -38,6 +40,12 @@ func loadWorkspace() (*workspace.Workspace, *config.DevkitConfig, error) {
 
 	ws, err := workspace.New(root, cfg)
 	if err != nil {
+		var zoneError *workspace.ZoneClassificationError
+		if errors.As(err, &zoneError) {
+			return nil, nil, diag.New("KB_RUNTIME_INPUT_INVALID", zoneError.Error(),
+				diag.WithHint("Update workspace.zones in devkit.yaml so each discovered package matches exactly one zone, then run `kb-devkit deps` to inspect package paths."),
+				diag.WithCauseAndReason(err.Error()))
+		}
 		return nil, nil, fmt.Errorf("discover workspace: %w", err)
 	}
 

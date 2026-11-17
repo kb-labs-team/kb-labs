@@ -59,6 +59,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
     platform?: PlatformServices,
     platformTransport?: PlatformTransportFactory,
     processTableSource?: ProcessTableSource,
+    platformRoot?: string,
   ) {
     super();
 
@@ -118,6 +119,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
       platform,
       platformTransport,
       processTableSource,
+      platformRoot,
     );
 
     // Initialize queue manager

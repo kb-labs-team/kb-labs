@@ -111,6 +111,182 @@ func TestHashInputsIsDeterministicAndSkipsIgnoredDirs(t *testing.T) {
 	}
 }
 
+func TestHashLocalInputsSkipsGeneratedDistUnlessExplicitlyDeclared(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "src", "index.ts"), "export const value = 1\n")
+	mustWriteFile(t, filepath.Join(root, "dist", "generated.ts"), "generated v1\n")
+
+	broadBefore, err := HashLocalInputs(root, []string{"**"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(root, "dist", "generated.ts"), "generated v2\n")
+	broadAfter, err := HashLocalInputs(root, []string{"**"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if broadBefore != broadAfter {
+		t.Fatal("broad local glob included dist output; want generated output excluded by default")
+	}
+	explicitBefore, err := HashLocalInputs(root, []string{"dist/**"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(root, "dist", "generated.ts"), "generated v3\n")
+	explicitAfter, err := HashLocalInputs(root, []string{"dist/**"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicitBefore == explicitAfter {
+		t.Fatal("explicit dist input did not change its hash")
+	}
+}
+
+func TestHashLocalInputsIncludesExplicitHiddenAndCoveragePaths(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "nested", ".config", "app", "settings.json"), "one\n")
+	mustWriteFile(t, filepath.Join(root, "nested", "coverage", "report.json"), "one\n")
+	for _, pattern := range []string{"**/.config/**", "**/coverage/**"} {
+		before, err := HashLocalInputs(root, []string{pattern}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, filepath.FromSlash(strings.TrimSuffix(pattern, "**")))
+		if strings.Contains(pattern, ".config") {
+			path = filepath.Join(root, "nested", ".config", "app", "settings.json")
+		} else {
+			path = filepath.Join(root, "nested", "coverage", "report.json")
+		}
+		mustWriteFile(t, path, "two\n")
+		after, err := HashLocalInputs(root, []string{pattern}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if before == after {
+			t.Fatalf("explicit input pattern %q did not include its file", pattern)
+		}
+	}
+}
+
+func TestHashLocalInputsUsesGitModeForTrackedFiles(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "src", "tracked.ts")
+	mustWriteFile(t, path, "same contents\n")
+	tracked := map[string]TrackedFile{filepath.Clean(path): {Mode: 0100644}}
+	before, err := HashLocalInputsWithTrackedMetadata(root, tracked, []string{"src/**"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	after, err := HashLocalInputsWithTrackedMetadata(root, tracked, []string{"src/**"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatal("tracked local input hash changed with checkout permissions; want Git index mode")
+	}
+}
+
+func TestHashLocalInputsNormalizesEmptyAndExcludesOwnOutput(t *testing.T) {
+	root := t.TempDir()
+	before, err := HashLocalInputs(root, []string{"dist/generated.txt"}, []string{"dist/generated.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(root, "dist", "generated.txt"), "created output\n")
+	after, err := HashLocalInputs(root, []string{"dist/generated.txt"}, []string{"dist/generated.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after || before != "" {
+		t.Fatalf("hash before=%q after=%q; own output must stay absent from inputs", before, after)
+	}
+	trackedOutput, err := HashUntrackedInputs(root, nil, []string{"dist/generated.txt"}, []string{"dist/generated.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trackedOutput != "" {
+		t.Fatalf("untracked hash of excluded output = %q, want empty", trackedOutput)
+	}
+}
+
+func TestHashUntrackedInputsExcludingDoesNotWalkNestedPackages(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission-denied traversal is not observable when running as root")
+	}
+	root := t.TempDir()
+	child := filepath.Join(root, "packages", "child")
+	mustWriteFile(t, filepath.Join(child, "src", "owned.ts"), "child-owned source\n")
+	if err := os.Chmod(child, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(child, 0o755)
+
+	if _, err := HashUntrackedInputsExcluding(root, nil, []string{"**"}, nil, []string{child}); err != nil {
+		t.Fatalf("hashing aggregate inputs traversed excluded nested package: %v", err)
+	}
+}
+
+func TestHashLocalInputsIncludesExplicitNestedDist(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "vendor", "dist", "generated.js")
+	mustWriteFile(t, file, "one\n")
+	before, err := HashLocalInputs(root, []string{"vendor/dist/**"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, file, "two\n")
+	after, err := HashLocalInputs(root, []string{"vendor/dist/**"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("explicit nested dist input did not affect local hash")
+	}
+}
+
+func TestHashDependencyInputsTracksGeneratedOutputMode(t *testing.T) {
+	root := t.TempDir()
+	output := filepath.Join(root, "dist", "helper")
+	mustWriteFile(t, output, "same bytes\n")
+	input := DependencyInput{Package: "@fixture/a", Task: "generate", Dir: root, Outputs: []string{"dist/helper"}}
+	before, err := HashDependencyInputs(t.TempDir(), []DependencyInput{input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(output, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	after, err := HashDependencyInputs(t.TempDir(), []DependencyInput{input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("generated output mode change did not affect dependent input hash")
+	}
+}
+
+func TestHashDependencyInputsSkipsWorkspacePrefixedPrerequisiteInputs(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "upstream.txt"), "one\n")
+	mustWriteFile(t, filepath.Join(root, "dist", "helper"), "generated\n")
+	input := DependencyInput{Package: "@fixture/a", Task: "generate", Dir: root, Inputs: []string{"^upstream.txt"}, Outputs: []string{"dist/helper"}}
+	before, err := HashDependencyInputs(t.TempDir(), []DependencyInput{input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(root, "upstream.txt"), "two\n")
+	after, err := HashDependencyInputs(t.TempDir(), []DependencyInput{input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatal("producer workspace-prefixed input was hashed as producer-local content")
+	}
+}
+
 func TestHashInputsWithFingerprintPartitionsTaskSemantics(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "src", "index.ts"), "export const value = 1\n")

@@ -15,6 +15,7 @@ import type {
 } from '../../types.js';
 import { PoolLifecycleManager, type WorkerPoolServingOwner } from './pool-lifecycle.js';
 import type { WorkerPoolBackendOptions } from './types.js';
+import { realpathSync } from 'node:fs';
 
 /**
  * The facade holds only this capability. Resource construction and lifecycle
@@ -24,7 +25,8 @@ export class WorkerPoolBackend implements RawExecutionBackend {
   private readonly owner: WorkerPoolServingOwner;
 
   constructor(options: WorkerPoolBackendOptions) {
-    this.owner = new PoolLifecycleManager(options);
+    const platformRoot = options.platformRoot ? realpathSync(options.platformRoot) : undefined;
+    this.owner = new PoolLifecycleManager({ ...options, platformRoot });
   }
 
   start(): Promise<ExecutionStartOutcome> {

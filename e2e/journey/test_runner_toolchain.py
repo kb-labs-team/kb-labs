@@ -406,11 +406,16 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
             "    assert target == 'toolchain', f'unmodeled build target {target}'\n"
             "    if not any(image['ref'] == tag for image in state['images']):\n"
             "        state['images'].append({'id': 'id-' + tag, 'ref': tag, 'label': label})\n"
-            "elif args[:2] == ['images', '--filter']:\n"
-            "    wanted = args[2].removeprefix('label=')\n"
+            "elif args[0] == 'images' and '--filter' in args:\n"
+            "    wanted = args[args.index('--filter') + 1].removeprefix('label=')\n"
+            "    expected_format = '{{.ID}} {{.Repository}}:{{.Tag}} {{.Label \"' + wanted + '\"}}'\n"
+            "    if args[args.index('--format') + 1] != expected_format:\n"
+            "        raise SystemExit('image listing omitted the toolchain label value')\n"
+            "    repository = args[-1]\n"
             "    for image in state['images']:\n"
-            "        if image['label'].split('=', 1)[0] == wanted:\n"
-            "            print(image['id'], image['ref'])\n"
+            "        image_repository = image['ref'].rsplit(':', 1)[0]\n"
+            "        if image['label'].split('=', 1)[0] == wanted and image_repository == repository:\n"
+            "            print(image['id'], image['ref'], image['label'].split('=', 1)[1])\n"
             "elif args[:3] == ['image', 'rm', '-f']:\n"
             "    state['images'] = [image for image in state['images'] if image['id'] != args[3]]\n"
             "else:\n"
@@ -515,6 +520,56 @@ class RunnerToolchainEnsureTests(unittest.TestCase):
         self.assertIn("ensure-completed", result.stdout)
         self.assertIn("could not remove previous journey runner toolchain image", result.stderr)
         self.assertIn("id-stuck", [image["id"] for image in state["images"]])
+
+    def test_reclaim_keeps_derived_images_with_inherited_toolchain_labels(self):
+        from journey_resources import TOOLCHAIN_IMAGE_LABEL
+        with temporary_directory(prefix="journey-toolchain-inherited-label-") as temporary:
+            root = Path(temporary)
+            bin_dir = root / "bin"
+            state_path = root / "docker-state.json"
+            repository = TOOLCHAIN_IMAGE_REPOSITORY
+            old_tag = "0123456789abcdef"
+            current_tag = "fedcba9876543210"
+            state_path.write_text(json.dumps({"images": [
+                {"id": "id-toolchain-old", "ref": f"{repository}:{old_tag}",
+                 "label": f"{TOOLCHAIN_IMAGE_LABEL}={old_tag}"},
+                {"id": "id-derived", "ref": "my-derived-app:latest",
+                 "label": f"{TOOLCHAIN_IMAGE_LABEL}={old_tag}"},
+                {"id": "id-toolchain-derived-tag", "ref": f"{repository}:development",
+                 "label": f"{TOOLCHAIN_IMAGE_LABEL}={old_tag}"},
+                {"id": "id-toolchain-derived-hash-tag", "ref": f"{repository}:aaaaaaaaaaaaaaaa",
+                 "label": f"{TOOLCHAIN_IMAGE_LABEL}={old_tag}"},
+                {"id": "id-toolchain-current", "ref": f"{repository}:{current_tag}",
+                 "label": f"{TOOLCHAIN_IMAGE_LABEL}={current_tag}"},
+            ]}), encoding="utf-8")
+            image_argument = runner_toolchain_contract()["imageArgument"]
+            node_base_image_argument = json.loads(
+                (REPOSITORY_ROOT / "tools/clikit/toolchain/node_policy_gen.json").read_text()
+            )["nodeBaseImageArgument"]
+            self._fake_docker(bin_dir, state_path, image_argument, node_base_image_argument)
+            env = isolated_environment(
+                root / "home", bin_dir, required_tools=("bash", "python3"),
+                overrides={"PYTHONDONTWRITEBYTECODE": "1"})
+            driver = (
+                "set -e\n"
+                f"source {TOOLCHAIN_SCRIPT}\n"
+                f"journey_toolchain_reclaim {TOOLCHAIN_IMAGE_LABEL} {repository}:{current_tag}\n"
+            )
+            result = subprocess.run(["bash", "-c", driver], cwd=REPOSITORY_ROOT, env=env,
+                                    text=True, capture_output=True, check=False)
+            state = json.loads(state_path.read_text())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        remaining_ids = {image["id"] for image in state["images"]}
+        self.assertNotIn("id-toolchain-old", remaining_ids)
+        self.assertIn("id-derived", remaining_ids,
+                      "a derived image outside the toolchain repository must survive inherited labels")
+        self.assertIn("id-toolchain-derived-tag", remaining_ids,
+                      "a noncanonical derived tag must not be reclaimed as a toolchain image")
+        self.assertIn("id-toolchain-derived-hash-tag", remaining_ids,
+                      "a hash-tagged descendant must not be reclaimed when the label names its parent")
+        self.assertIn("id-toolchain-current", remaining_ids,
+                      "the current toolchain image must be kept")
 
     def _run_ensure(self, temporary: str, driver: str | None):
         fixture = self._fixture_root(Path(temporary))

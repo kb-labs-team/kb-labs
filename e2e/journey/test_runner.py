@@ -17,6 +17,7 @@ from unittest.mock import patch
 import jsonl
 from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint, catalogued_error_message
+from journey_resources import host_log_paths
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import commit_marketplace_install_record
 import runner
@@ -694,6 +695,11 @@ thread.join()
             if len(argv) > 1 and argv[1] in {"stop", "start"} and "--foreground" not in argv:
                 host_cycle.append(argv[1])
                 events.append(f"host:{argv[1]}")
+                if argv[1] == "start":
+                    structured_log = host_log_paths(platform)["structured"]
+                    structured_log.parent.mkdir(parents=True, exist_ok=True)
+                    with structured_log.open("a", encoding="utf-8") as stream:
+                        stream.write(json.dumps({"level": "info", "msg": "host started"}) + "\n")
             output = ""
             returncode = 0
             if argv[0].endswith("install.sh"):

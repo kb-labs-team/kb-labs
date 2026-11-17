@@ -53,6 +53,8 @@ export interface WorkerEvents {
 export interface WorkerOptions {
   /** Worker script path */
   workerScript: string;
+  /** Host-owned platform root for package resolution in this worker. */
+  platformRoot?: string;
 
   /** Platform transport factory for cross-process adapter calls */
   platformTransport?: PlatformTransportFactory;
@@ -89,7 +91,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
   private process: ChildProcess | null = null;
   private _state: WorkerState = 'stopped';
   private _info: WorkerInfo;
-  private readonly options: Required<Omit<WorkerOptions, 'platform' | 'platformTransport' | 'processTableSource'>> & Pick<WorkerOptions, 'platform' | 'platformTransport' | 'processTableSource'>;
+  private readonly options: Required<Omit<WorkerOptions, 'platform' | 'platformTransport' | 'processTableSource' | 'platformRoot'>> & Pick<WorkerOptions, 'platform' | 'platformTransport' | 'processTableSource' | 'platformRoot'>;
 
   // Pending request tracking
   private pendingRequests = new Map<string, {
@@ -128,6 +130,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
     this.id = `worker_${randomBytes(4).toString('hex')}`;
     this.options = {
       workerScript: options.workerScript,
+      platformRoot: options.platformRoot,
       platform: options.platform,
       platformTransport: options.platformTransport,
       processTableSource: options.processTableSource ?? systemProcessTable,
@@ -409,6 +412,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
         type: 'execute',
         requestId: executionId,
         request,
+        platformRoot: this.options.platformRoot,
         timeoutMs,
       };
 

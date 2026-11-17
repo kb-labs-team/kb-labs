@@ -50,11 +50,11 @@ func TestDirtyPackagesExcludesCleanState(t *testing.T) {
 	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{{Name: "app", Category: config.CategoryConfig{Match: []string{"packages/app"}, Preset: "node-lib"}}}}, Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}}}
 	def := TaskDef{Name: "build", Command: "true", Cache: true}
 	ws := mustWorkspace(t, root, cfg)
-	global, owned, dependencies, err := workspaceInputDigests(ws)
+	global, owned, dependencies, trackedMetadata, err := workspaceInputDigests(ws, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputHash, err := hashTaskInputs(ws.Packages[0], def, nil, cache.RuntimeFingerprint(), global, owned["@kb/app"], dependencies["@kb/app"])
+	inputHash, err := hashTaskInputs(ws.Packages[0], def, nil, cache.RuntimeFingerprint(), global, owned["@kb/app"], dependencies["@kb/app"], taskInputContext{trackedMetadata: trackedMetadata})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,15 +135,15 @@ func TestDirtyPackagesAllTasksMustBeClean(t *testing.T) {
 	states := cache.NewStateStore(cacheRoot)
 	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{Categories: []config.NamedCategory{{Name: "app", Category: config.CategoryConfig{Match: []string{"packages/app"}, Preset: "node-lib"}}}}, Tasks: map[string]config.TaskConfig{"build": {{Command: "true"}}, "test": {{Command: "true"}}}}
 	ws := mustWorkspace(t, root, cfg)
-	global, owned, dependencies, err := workspaceInputDigests(ws)
+	global, owned, dependencies, trackedMetadata, err := workspaceInputDigests(ws, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	buildHash, err := hashTaskInputs(ws.Packages[0], *ResolveTaskDef(cfg, "build", ""), nil, cache.RuntimeFingerprint(), global, owned[ws.Packages[0].Name], dependencies[ws.Packages[0].Name])
+	buildHash, err := hashTaskInputs(ws.Packages[0], *ResolveTaskDef(cfg, "build", ""), nil, cache.RuntimeFingerprint(), global, owned[ws.Packages[0].Name], dependencies[ws.Packages[0].Name], taskInputContext{trackedMetadata: trackedMetadata})
 	if err != nil {
 		t.Fatal(err)
 	}
-	testHash, err := hashTaskInputs(ws.Packages[0], *ResolveTaskDef(cfg, "test", ""), nil, cache.RuntimeFingerprint(), global, owned[ws.Packages[0].Name], dependencies[ws.Packages[0].Name])
+	testHash, err := hashTaskInputs(ws.Packages[0], *ResolveTaskDef(cfg, "test", ""), nil, cache.RuntimeFingerprint(), global, owned[ws.Packages[0].Name], dependencies[ws.Packages[0].Name], taskInputContext{trackedMetadata: trackedMetadata})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestDirtyPackagesDetectsChangedAndMissingOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	executor := NewExecutor(store, cache.NewManifestStore(cacheRoot), cache.NewStateStore(cacheRoot), root, cacheRoot, false)
-	executor.globalInputDigest, executor.ownedInputDigests, executor.dependencyDigests, err = workspaceInputDigests(ws)
+	executor.globalInputDigest, executor.ownedInputDigests, executor.dependencyDigests, executor.trackedMetadata, err = workspaceInputDigests(ws, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -44,6 +44,27 @@ describe('structured diagnostic details', () => {
   });
 });
 
+describe('install resource diagnostics', () => {
+  it('preserves exact available and required memory bytes in the user envelope', () => {
+    const envelope = createErrorEnvelope('KB_INSTALL_MEMORY_INSUFFICIENT', {
+      details: {
+        available: '1220.80 MiB (1280101580 bytes)',
+        minimum: '1228.80 MiB (1288490188 bytes)',
+        availableBytes: '1280101580',
+        minimumBytes: '1288490188',
+      },
+    });
+
+    expect(envelope).toMatchObject({
+      code: 'KB_INSTALL_MEMORY_INSUFFICIENT',
+      details: {
+        availableBytes: '1280101580',
+        minimumBytes: '1288490188',
+      },
+    });
+  });
+});
+
 describe('mapErrorEnvelopeToExitCode', () => {
   it('maps catalogued invalid input to usage exit and other envelopes to failure', () => {
     expect(mapErrorEnvelopeToExitCode('KB_RUNTIME_INPUT_INVALID')).toBe(2);

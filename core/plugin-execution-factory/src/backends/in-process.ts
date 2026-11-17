@@ -70,6 +70,7 @@ import {
  */
 export interface InProcessBackendOptions {
   platform: PlatformServices;
+  platformRoot?: string;
   /**
    * UI provider for different host types.
    * Default: always noopUI (silent).
@@ -95,12 +96,14 @@ export class InProcessBackend implements RawExecutionBackend {
   private executionTimes: number[] = [];
   private startTime = Date.now();
   private readonly platform: PlatformServices;
+  private readonly platformRoot?: string;
   private readonly uiProvider: (hostType: HostType) => UIFacade;
   private _middlewaresCache: LoadedMiddleware[] | null = null;
   private readonly pluginInvoker?: PluginInvokerFn;
 
   constructor(options: InProcessBackendOptions) {
     this.platform = options.platform;
+    this.platformRoot = options.platformRoot ? fs.realpathSync(options.platformRoot) : undefined;
     this.uiProvider = options.uiProvider ?? (() => noopUI);
     this.pluginInvoker = options.pluginInvoker;
   }
@@ -157,7 +160,7 @@ export class InProcessBackend implements RawExecutionBackend {
             sourceRef: requestToExecute.pluginRoot,
             basePath: requestToExecute.pluginRoot,
             projectRoot: process.env.KB_PROJECT_ROOT,
-            platformRoot: process.env.KB_PLATFORM_ROOT,
+            platformRoot: this.platformRoot,
             metadata: { executionId: requestToExecute.executionId },
           });
           if (workspaceDescriptor.rootPath) {
@@ -262,6 +265,7 @@ export class InProcessBackend implements RawExecutionBackend {
         handlerPath: `${handlerPath}${exportSelector}`,
         input: requestToExecute.input,
         environment: requestToExecute.env,
+        platformRoot: this.platformRoot,
         signal: executionSignal,
         cwd: lease.cwd,           // From WorkspaceLease
         outdir: undefined,        // Optional, defaults to cwd/.kb/output
@@ -372,6 +376,7 @@ export class InProcessBackend implements RawExecutionBackend {
   }
 
   async shutdown(): Promise<void> {
-    // No-op for in-process backend
+    // The process-wide resolve hook is pinned to this host process's platform
+    // lifetime. Embedded hosts must restart the process after retargeting it.
   }
 }

@@ -35,6 +35,9 @@ func mergeConfigs(base, child *DevkitConfig) *DevkitConfig {
 		out.Workspace.Categories = append([]NamedCategory(nil), child.Workspace.Categories...)
 		out.Categories = append([]NamedCategory(nil), child.Workspace.Categories...)
 	}
+	if len(child.Workspace.Zones) > 0 {
+		out.Workspace.Zones = append([]NamedZone(nil), child.Workspace.Zones...)
+	}
 	if child.Run.Concurrency != 0 {
 		out.Run.Concurrency = child.Run.Concurrency
 	}

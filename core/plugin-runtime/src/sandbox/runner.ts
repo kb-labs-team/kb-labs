@@ -35,6 +35,7 @@ import type { WSInputReference } from '@kb-labs/plugin-contracts';
 import { executeCleanup, type PluginInvokerFn, type EventEmitterFn } from '../api/index.js';
 import type { LoadedMiddleware } from '../platform/pipeline.js';
 import { installPlatformResolveHook } from '../platform-resolve/index.js';
+import { resolveExecutionPlatformRoot } from './platform-root.js';
 
 /**
  * Create execution metadata from descriptor and timing
@@ -65,6 +66,8 @@ export interface RunInProcessOptions {
   cwd: string;
   outdir?: string;
   environment?: Record<string, string | undefined>;
+  /** Host-resolved platform root; this is runtime metadata, not a plugin environment grant. */
+  platformRoot?: string;
   /** Resolved adapter middlewares to apply before governance. */
   adapterMiddlewares?: LoadedMiddleware[];
 }
@@ -79,6 +82,8 @@ export interface RunInSubprocessOptions {
   cwd: string;
   outdir?: string;
   environment?: Record<string, string | undefined>;
+  /** Host-resolved platform root carried separately from plugin environment permissions. */
+  platformRoot?: string;
   onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
 }
 
@@ -95,6 +100,11 @@ export async function runInProcess<T = unknown>(
 ): Promise<RunResult<T>> {
   const { descriptor, platform, ui, pluginInvoker, eventEmitter, handlerPath, input, signal, cwd, outdir, environment, adapterMiddlewares } = options;
   const startTime = Date.now();
+
+  const executionPlatformRoot = await resolveExecutionPlatformRoot(options.platformRoot, import.meta.url);
+  if (executionPlatformRoot) {
+    installPlatformResolveHook({ platformRoot: executionPlatformRoot, anchors: [import.meta.url] });
+  }
 
   // Create context
   const { context, cleanupStack } = createPluginContextV3({
@@ -142,11 +152,6 @@ export async function runInProcess<T = unknown>(
     // Plugin code can be outside the installed platform tree (for example, a
     // Marketplace store entry). Resolve its platform packages from the one
     // platform copy in this process before importing the handler.
-    const platformRoot = process.env.KB_PLATFORM_ROOT;
-    if (platformRoot) {
-      installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
-    }
-
     // Import and execute handler
     const [modulePath = handlerPath, exportName] = handlerPath.split('#', 2);
     const handlerModule = await import(modulePath);
@@ -331,6 +336,7 @@ export async function runInSubprocess<T = unknown>(
       handlerPath,
       input,
       cwd: options.cwd,
+      platformRoot: options.platformRoot,
       strictFilesystemPermissions: false,
       outdir: options.outdir,
     };

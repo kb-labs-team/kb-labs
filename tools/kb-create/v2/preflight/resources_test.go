@@ -1,6 +1,7 @@
 package preflight
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
 	"strings"
@@ -21,6 +22,38 @@ func TestValidateResourcesReportsAvailableMemoryAndMinimum(t *testing.T) {
 	if failure.Message == "" || !strings.Contains(failure.Message, "1228.80 MiB (1288490188 bytes)") || !strings.Contains(failure.Message, "1220.80 MiB (1280101580 bytes)") ||
 		!strings.Contains(failure.Hint, "Close memory-heavy applications") || !strings.Contains(failure.Hint, "kb-create install") {
 		t.Fatalf("message/hint = %q / %q", failure.Message, failure.Hint)
+	}
+}
+
+// case: S-052.1
+func TestValidateResourcesSerializesExactMemoryDetailsInPublicEnvelope(t *testing.T) {
+	err := validateResources(MinimumAvailableMemory-8*(1<<20), MinimumFreeDisk)
+	failure, ok := err.(*diag.Diag)
+	if !ok {
+		t.Fatalf("error = %#v", err)
+	}
+	envelope, err := diag.ToEnvelope(failure)
+	if err != nil {
+		t.Fatalf("serialize memory diagnostic: %v", err)
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("marshal memory envelope: %v", err)
+	}
+	var got struct {
+		Code    string         `json:"code"`
+		Message string         `json:"message"`
+		Hint    string         `json:"hint"`
+		Details map[string]any `json:"details"`
+	}
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatalf("decode public envelope: %v", err)
+	}
+	if got.Code != contracts.CodeMemoryInsufficient ||
+		got.Details["availableBytes"] != "1280101580" || got.Details["minimumBytes"] != "1288490188" ||
+		!strings.Contains(got.Message, "1220.80 MiB") || !strings.Contains(got.Message, "1228.80 MiB") ||
+		!strings.Contains(got.Hint, "Close memory-heavy applications") || !strings.Contains(got.Hint, "kb-create install") {
+		t.Fatalf("serialized public envelope = %s", encoded)
 	}
 }
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -109,7 +109,7 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
 
   assert.equal(nodeSetup.with.cache, 'pnpm');
   assert.equal(goSetup.with['cache-dependency-path'], 'tools/kb-create/go.sum');
-  assert.equal(cache.with.path, '.kb/devkit/');
+  assert.equal(cache.with.path, '${{ steps.resolve-store.outputs.path }}');
   assert.match(cache.with.key, /\$\{\{ github\.sha \}\}/);
   const toolchain = cas.runs.steps.find((step) => step.name === 'Identify cache toolchain partition');
   assert.equal(toolchain.id, 'toolchain');
@@ -120,8 +120,95 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
   assert.doesNotMatch(cache.with.key, /hashFiles\(/);
   assert.equal(cache.with['restore-keys'].trim(), 'devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-');
   assert.equal(cas.outputs['cache-hit'].value, '${{ steps.restore.outputs.cache-hit }}');
+  assert.equal(cas.outputs['store-path'].value, '${{ steps.resolve-store.outputs.path }}');
   assert.ok(profile.buildDependentTestStages.candidate.includes('journey-unit-suite'));
   assert.ok(!profile.buildDependentTestStages.stream.includes('journey-unit-suite'));
+});
+
+test('DevKit CAS transport resolves the same SharedRoot for normal and linked worktrees', () => {
+  const cas = readYaml('.github/actions/devkit-cas/action.yml');
+  const resolve = cas.runs.steps.find((step) => step.name === 'Resolve shared kb-devkit CAS location');
+  const cache = cas.runs.steps.find((step) => step.uses?.startsWith('actions/cache@'));
+  assert.equal(cache.with.path, '${{ steps.resolve-store.outputs.path }}');
+  assert.equal(resolve.id, 'resolve-store');
+
+  const fixture = mkdtempSync(path.join(os.tmpdir(), 'devkit-cas-root-'));
+  try {
+    const repo = path.join(fixture, 'repo');
+    const linked = path.join(fixture, 'linked');
+    mkdirSync(repo, { recursive: true });
+    execFileSync('git', ['-C', repo, 'init', '-q', '-b', 'main']);
+    execFileSync('git', ['-C', repo, 'config', 'user.name', 'DevKit CAS Test']);
+    execFileSync('git', ['-C', repo, 'config', 'user.email', 'devkit-cas@example.test']);
+    execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-m', 'fixture', '-q']);
+
+    const resolvePath = (workspace) => {
+      const githubOutput = path.join(fixture, `output-${path.basename(workspace)}`);
+      execFileSync('bash', [path.join(root, '.github/actions/devkit-cas/resolve-shared-root.sh'), workspace, githubOutput], {
+        env: { ...process.env, GITHUB_WORKSPACE: workspace },
+      });
+      return readFileSync(githubOutput, 'utf8').match(/^path=(.+)$/m)?.[1];
+    };
+
+    const commonDir = execFileSync('git', ['-C', repo, 'rev-parse', '--git-common-dir'], { encoding: 'utf8' }).trim();
+    const expected = path.join(realpathSync(path.resolve(repo, commonDir)), 'kb-devkit');
+    const mainPath = resolvePath(repo);
+    assert.equal(mainPath, expected);
+    assert.ok(!mainPath.includes(`${path.sep}.kb${path.sep}devkit${path.sep}`), 'do not cache worktree state or logs');
+
+    execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', '-b', 'linked', linked]);
+    assert.equal(statSync(path.join(linked, '.git')).isFile(), true, 'linked worktrees use a .git file');
+    assert.equal(resolvePath(linked), expected, 'linked worktree cache must resolve to the common git directory');
+
+    const nested = path.join(repo, 'nested-workspace');
+    mkdirSync(nested);
+    assert.equal(resolvePath(nested), path.join(realpathSync(nested), '.kb', 'devkit', 'shared'),
+      'a workspace nested under another repository uses the same fallback as cache.SharedRoot');
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('authoritative e2e runs keep shared CAS restoration disabled', () => {
+  const e2e = readYaml('.github/workflows/e2e-platform.yml');
+  const coldOutsidePullRequest = "${{ github.event_name == 'workflow_call' && 'read-write' || 'off' }}";
+  assert.equal(e2e.jobs.prepare.with['cache-mode'], coldOutsidePullRequest);
+  for (const job of [e2e.jobs.e2e, e2e.jobs['e2e-mcp'], e2e.jobs['e2e-auth'], e2e.jobs['e2e-oauth']]) {
+    assert.equal(job.with['cache-mode'], coldOutsidePullRequest);
+  }
+  const action = readYaml('.github/actions/devkit-cas/action.yml');
+  for (const step of action.runs.steps) {
+    if (['toolchain', 'restore'].includes(step.id)) {
+      assert.equal(step.if, "inputs.mode == 'read-write'");
+    }
+  }
+  assert.equal(action.runs.steps.find((step) => step.id === 'resolve-store').if, undefined,
+    'store path stays observable in cold mode for accurate telemetry');
+});
+
+test('candidate remote verification is cold while stream verification stays cacheable', () => {
+  const remote = readYaml('.github/workflows/remote-verify.yml');
+  const mode = "${{ (inputs.profile || github.event.inputs.profile || 'stream') == 'candidate' && 'off' || 'read-write' }}";
+  for (const jobName of ['build', 'independent-test-shards', 'build-dependent-test-shards', 'internal-tool-test-shards']) {
+    const cacheStep = remote.jobs[jobName].steps.find((step) => step.id === 'devkit-cache');
+    assert.ok(cacheStep, `${jobName} must have a named DevKit CAS step`);
+    assert.equal(cacheStep.with.mode, mode);
+  }
+  const release = readYaml('.github/workflows/release-build-candidate.yml');
+  assert.equal(release.jobs['unit-test-gate'].with.profile, 'candidate');
+  assert.equal(release.jobs['unit-test-gate'].with.target_sha, '${{ inputs.commit_sha }}');
+});
+
+test('E2E bundle CAS telemetry measures the resolved shared store, not task state', () => {
+  const workflow = readYaml('.github/workflows/reusable-e2e-platform-build.yml');
+  const restore = workflow.jobs.build.steps.find((step) => step.id === 'devkit-cas');
+  const metrics = workflow.jobs.build.steps.find((step) => step.name === 'Emit bundle metrics');
+  assert.equal(restore.uses, './.github/actions/devkit-cas');
+  assert.match(metrics.run, /steps\.devkit-cas\.outputs\.store-path/);
+  assert.match(metrics.run, /cas_size=0/);
+  assert.match(metrics.run, /if \[ -n/);
+  assert.match(metrics.run, /du -sh "\$\{\{ steps\.devkit-cas\.outputs\.store-path \}\}"/);
+  assert.doesNotMatch(metrics.run, /du -sh \.kb\/devkit/);
 });
 
 // case: S-262.7

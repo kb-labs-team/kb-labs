@@ -80,6 +80,7 @@ type WorkspaceConfig struct {
 	PackageManager string          `yaml:"packageManager"`
 	Discovery      []string        `yaml:"discovery"`
 	Categories     []NamedCategory `yaml:"categories"`
+	Zones          []NamedZone     `yaml:"zones"`
 	// MaxDepth controls how deep to recurse when expanding ** globs.
 	// Default: 3. Increase if your monorepo has deeply nested packages.
 	MaxDepth int `yaml:"maxDepth"`
@@ -89,6 +90,23 @@ type WorkspaceConfig struct {
 	// Exclude skips directories matching these glob patterns (relative to workspace root).
 	// Evaluated after Include. Supports the same glob syntax as category match patterns.
 	Exclude []string `yaml:"exclude"`
+}
+
+// NamedZone assigns workspace package paths to one user-selectable run zone.
+// Zones are independent of categories, which continue to select task variants.
+type NamedZone struct {
+	Name  string
+	Match []string
+}
+
+// FindZone returns the configured zone with the exact name.
+func (ws *WorkspaceConfig) FindZone(name string) (NamedZone, bool) {
+	for _, zone := range ws.Zones {
+		if zone.Name == name {
+			return zone, true
+		}
+	}
+	return NamedZone{}, false
 }
 
 // NamedCategory is a category entry with its name preserved.

@@ -3,8 +3,8 @@
 # Journey runner toolchain image lifecycle. The tag is derived by
 # e2e/journey/journey_resources.py from the `AS toolchain` stage of
 # e2e/journey/Dockerfile.runner and the staged Playwright version; this script
-# builds that tag once, reclaims older tags it created (identified by the
-# journey toolchain image label, never by name matching), and exports the
+# builds that tag once, reclaims older canonical toolchain tags with the
+# journey toolchain image label, and exports the
 # reference for the compose runner build. Source this file from the owning
 # journey entry (e2e/journey/run.sh).
 
@@ -73,14 +73,19 @@ journey_toolchain_require_shared_store() {
 }
 
 journey_toolchain_reclaim() {
-  local label="$1" keep_image="$2" keep_id image_id reference
+  local label="$1" keep_image="$2" keep_id image_id reference repository tag label_value format
+  repository="${keep_image%:*}"
+  format="{{.ID}} {{.Repository}}:{{.Tag}} {{.Label \"$label\"}}"
   keep_id="$(docker images -q "$keep_image" || true)"
-  while read -r image_id reference; do
+  while read -r image_id reference label_value; do
     [[ -n "$image_id" && "$image_id" != "$keep_id" ]] || continue
+    [[ "$reference" == "$repository:"* ]] || continue
+    tag="${reference##*:}"
+    [[ "$tag" =~ ^[0-9a-f]{16}$ && "$label_value" == "$tag" ]] || continue
     if ! docker image rm -f "$image_id"; then
       echo "WARNING: could not remove previous journey runner toolchain image $reference. Next: docker image rm -f $image_id" >&2
     fi
-  done < <(docker images --filter "label=$label" --format '{{.ID}} {{.Repository}}:{{.Tag}}')
+  done < <(docker images --filter "label=$label" --format "$format" "$repository")
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

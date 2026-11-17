@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { rmSync } from 'node:fs';
 import type { IPlatformAdapters } from '@kb-labs/core-platform';
+import { symlinkSync } from 'node:fs';
 
 function createPlatform(): IPlatformAdapters {
   const logger = {
@@ -46,6 +47,103 @@ function createPlatform(): IPlatformAdapters {
 }
 
 describe('Subprocess Integration Tests', () => {
+  // case: S-243.9
+  it('resolves an external peer SDK from the host root before filtering plugin environment', async () => {
+    const testDir = join(tmpdir(), `sandbox-platform-root-${Date.now()}`);
+    const releaseRoot = join(testDir, 'platform', 'releases', 'current');
+    const platformRoot = join(testDir, 'platform', 'current');
+    const pluginRoot = join(testDir, 'store', 'entries', 'publisher@1.0.0', 'node_modules', 'publisher');
+    mkdirSync(releaseRoot, { recursive: true });
+    mkdirSync(join(releaseRoot, 'node_modules', '@kb-labs', 'sdk'), { recursive: true });
+    mkdirSync(join(pluginRoot, 'node_modules', '@kb-labs', 'sdk'), { recursive: true });
+    symlinkSync(releaseRoot, platformRoot, 'dir');
+    writeFileSync(join(releaseRoot, 'package.json'), JSON.stringify({ name: 'platform' }));
+    writeFileSync(join(releaseRoot, 'node_modules', '@kb-labs', 'sdk', 'package.json'), JSON.stringify({
+      name: '@kb-labs/sdk', type: 'module', exports: { '.': './index.mjs', './gateway': './gateway.mjs' },
+    }));
+    writeFileSync(join(releaseRoot, 'node_modules', '@kb-labs', 'sdk', 'index.mjs'), `export const owner = 'host';`);
+    writeFileSync(join(releaseRoot, 'node_modules', '@kb-labs', 'sdk', 'gateway.mjs'), `export const gatewayOwner = 'host-gateway';`);
+    writeFileSync(join(pluginRoot, 'package.json'), JSON.stringify({
+      name: 'publisher', type: 'module', peerDependencies: { '@kb-labs/sdk': 'workspace:*' },
+    }));
+    writeFileSync(join(pluginRoot, 'node_modules', '@kb-labs', 'sdk', 'package.json'), JSON.stringify({
+      name: '@kb-labs/sdk', type: 'module', exports: { '.': './index.mjs', './gateway': './gateway.mjs' },
+    }));
+    writeFileSync(join(pluginRoot, 'node_modules', '@kb-labs', 'sdk', 'index.mjs'),
+      `throw new Error('plugin SDK copy must not load'); export const owner = 'plugin';`);
+    const handlerPath = join(pluginRoot, 'handler.mjs');
+    writeFileSync(handlerPath, [
+      `import { owner } from '@kb-labs/sdk';`,
+      `import { gatewayOwner } from '@kb-labs/sdk/gateway';`,
+      `export default { execute: async () => ({ owner, gatewayOwner, platformRootVisible: process.env.KB_PLATFORM_ROOT ?? null }) };`,
+    ].join('\n'));
+
+    try {
+      const result = await runInSubprocess({
+        descriptor: {
+          hostType: 'cli', pluginId: '@kb-labs/test-publisher', pluginVersion: '1.0.0',
+          requestId: 'peer-sdk-platform-root', handlerId: 'test:publisher',
+          permissions: { env: { read: ['KB_GATEWAY_URL'] } },
+          hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+        },
+        platform: createPlatform(), handlerPath, input: {}, cwd: testDir,
+        platformRoot,
+        environment: { KB_GATEWAY_URL: 'http://127.0.0.1:4300' },
+      });
+
+      expect(result.data).toEqual({ owner: 'host', gatewayOwner: 'host-gateway', platformRootVisible: null });
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  // case: S-243.9
+  it('ignores request environment roots and uses only trusted module-origin discovery', async () => {
+    const testDir = join(tmpdir(), `sandbox-platform-root-absent-${Date.now()}`);
+    const candidateRoot = join(testDir, 'candidate-platform');
+    const pluginRoot = join(testDir, 'store', 'entries', 'publisher@1.0.0', 'node_modules', 'publisher');
+    mkdirSync(join(candidateRoot, 'node_modules', '@kb-labs', 'sdk'), { recursive: true });
+    mkdirSync(pluginRoot, { recursive: true });
+    writeFileSync(join(candidateRoot, 'node_modules', '@kb-labs', 'sdk', 'package.json'), JSON.stringify({
+      name: '@kb-labs/sdk', type: 'module', exports: './index.mjs',
+    }));
+    writeFileSync(join(candidateRoot, 'node_modules', '@kb-labs', 'sdk', 'index.mjs'), `export const owner = 'wrong-root';`);
+    writeFileSync(join(pluginRoot, 'package.json'), JSON.stringify({
+      name: 'publisher', type: 'module', peerDependencies: { '@kb-labs/sdk': 'workspace:*' },
+    }));
+    const handlerPath = join(pluginRoot, 'handler.mjs');
+    writeFileSync(handlerPath, `export default { execute: async () => import.meta.resolve('@kb-labs/sdk') };`);
+
+    try {
+      let result: Awaited<ReturnType<typeof runInSubprocess>> | undefined;
+      let failure: unknown;
+      try {
+        result = await runInSubprocess({
+          descriptor: {
+            hostType: 'cli', pluginId: '@kb-labs/test-publisher', pluginVersion: '1.0.0',
+            requestId: 'peer-sdk-root-absent', handlerId: 'test:publisher',
+            permissions: { env: { read: ['KB_PLATFORM_ROOT'] } },
+            hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+          },
+          platform: createPlatform(), handlerPath, input: {}, cwd: testDir,
+          environment: { KB_PLATFORM_ROOT: candidateRoot },
+        });
+      } catch (error) {
+        failure = error;
+      }
+      if (result) {
+        expect(result.data).toMatch(/@kb-labs[\\/]sdk/);
+        expect(result.data).not.toContain(candidateRoot);
+      } else {
+        expect(failure).toBeInstanceOf(Error);
+        expect((failure as Error).message).toMatch(/Cannot find package ['"]?@kb-labs\/sdk/);
+        expect((failure as Error).message).not.toContain(candidateRoot);
+      }
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it('preserves canonical envelopes across real sandbox IPC', async () => {
     const testDir = join(tmpdir(), `sandbox-error-ipc-${Date.now()}`);
     mkdirSync(testDir, { recursive: true });

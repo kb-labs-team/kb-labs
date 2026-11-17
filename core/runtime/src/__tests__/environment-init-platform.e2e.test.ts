@@ -66,6 +66,29 @@ describe('initPlatform environment orchestration e2e', () => {
     resetPlatform();
   });
 
+  // case: S-243.9
+  it('passes the selected host platform root to the local execution backend', async () => {
+    const platformRoot = path.resolve(process.cwd(), '../../..');
+
+    await initPlatform({ execution: { mode: 'in-process' } }, process.cwd(), undefined, platformRoot);
+
+    expect(createExecutionBackendMock).toHaveBeenCalledWith(expect.objectContaining({ platformRoot }));
+  });
+
+  // case: S-243.9
+  it('does not infer a host platform root from process environment when none was selected', async () => {
+    const previousRoot = process.env.KB_PLATFORM_ROOT;
+    process.env.KB_PLATFORM_ROOT = path.join(process.cwd(), 'request-controlled-root');
+    try {
+      await initPlatform({ execution: { mode: 'in-process' } }, process.cwd());
+
+      expect(createExecutionBackendMock).toHaveBeenCalledWith(expect.objectContaining({ platformRoot: undefined }));
+    } finally {
+      if (previousRoot === undefined) { delete process.env.KB_PLATFORM_ROOT; }
+      else { process.env.KB_PLATFORM_ROOT = previousRoot; }
+    }
+  });
+
   it.skipIf(
     !hasDocker() ||
       !hasAdapterPackage('@kb-labs/adapters-sqlite') ||

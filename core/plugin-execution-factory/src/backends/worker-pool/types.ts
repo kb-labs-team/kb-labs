@@ -20,6 +20,7 @@ import type { ProcessTableSource } from './process-tree.js';
 
 export interface WorkerPoolBackendOptions extends WorkerPoolOptions {
   platform: PlatformServices;
+  platformRoot?: string;
   platformTransport?: PlatformTransportFactory;
   uiProvider?: (hostType: HostType) => UIFacade;
   workerScript?: string;
@@ -174,6 +175,8 @@ export interface ExecuteMessage extends BaseWorkerMessage {
   type: 'execute';
   requestId: string;
   request: ExecutionRequest;
+  /** Host-only platform root supplied by backend construction. */
+  platformRoot?: string;
   timeoutMs: number;
 }
 

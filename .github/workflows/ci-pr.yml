@@ -284,18 +284,47 @@ jobs:
           cp tools-bin/kb-devkit tools/kb-devkit/kb-devkit
           cp tools-bin/kb-dev tools/kb-dev/kb-dev
       - run: pnpm install --frozen-lockfile
+      - name: Restore kb-devkit shared CAS
+        id: devkit-cas
+        uses: ./.github/actions/devkit-cas
+        with:
+          mode: read-write
       # `test` resolves workspace packages through their built exports. The
       # build artifact above contains only affected packages, which is enough
       # for fast checks but not for this deliberately full unit-test gate. Keep
       # the dependency-order build cacheable so the gate is reproducible
       # without turning every PR into an unbounded cold rebuild.
       - name: Build complete workspace for unit resolution
+        id: full-workspace-build
         env:
           # Studio Module Federation DTS workers are a development convenience
           # and can hang indefinitely when several rspack builds overlap. Unit
           # resolution needs built JS, not those background DTS workers.
           NODE_ENV: production
-        run: ./tools/kb-devkit/kb-devkit run build
+          DEVKIT_CAS_CACHE_HIT: ${{ steps.devkit-cas.outputs.cache-hit }}
+        run: |
+          started_at=$(date +%s)
+          result_path="$RUNNER_TEMP/full-workspace-build.json"
+          set +e
+          ./tools/kb-devkit/kb-devkit run build --json > "$result_path"
+          build_status=$?
+          set -e
+          elapsed_seconds=$(($(date +%s) - started_at))
+          cat "$result_path"
+          node - "$result_path" "$elapsed_seconds" "$DEVKIT_CAS_CACHE_HIT" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
+          const fs = require('node:fs');
+          let envelope;
+          try { envelope = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')); } catch {}
+          const summary = envelope?.data?.summary ?? {};
+          const cached = Number.isInteger(summary.cached) ? summary.cached : 0;
+          const scheduled = Number.isInteger(summary.scheduled) ? summary.scheduled : 0;
+          const ratio = scheduled > 0 ? `${(cached * 100 / scheduled).toFixed(1)}%` : 'unavailable';
+          console.log('### Full workspace build cache');
+          console.log(`- Build elapsed: ${process.argv[3]}s`);
+          console.log(`- Exact CAS key hit: ${process.argv[4] === 'true' ? 'yes' : 'no'}`);
+          console.log(`- DevKit task cache hits: ${cached}/${scheduled} (${ratio})`);
+          NODE
+          exit "$build_status"
       - name: Archive workspace outputs for repository checks
         run: find . -path '*/node_modules/*' -prune -o -path '*/.kb/*' -prune -o -type d -name dist -print | tar cf full-dist-artifacts.tar -T -
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

@@ -34,6 +34,7 @@ describe('ExecutionHandler subprocess transport', () => {
       allowedPaths: ['/plugins'],
       executionMode: 'subprocess',
       timeoutMs: 5000,
+      platformRoot: process.cwd(),
     });
 
     try {
@@ -49,7 +50,10 @@ describe('ExecutionHandler subprocess transport', () => {
         }],
       })).resolves.toBe('executed');
 
-      expect(mocks.runInSubprocess).toHaveBeenCalledWith(expect.objectContaining({ platform: proxyPlatform }));
+      expect(mocks.runInSubprocess).toHaveBeenCalledWith(expect.objectContaining({
+        platform: proxyPlatform,
+        platformRoot: process.cwd(),
+      }));
     } finally {
       handler.stop();
     }
