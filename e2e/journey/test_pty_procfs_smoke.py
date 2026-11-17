@@ -31,6 +31,16 @@ class PtyProcfsSmokeTranscriptTests(unittest.TestCase):
             b"Project directory (press Enter to install without a project): "
         ))
 
+    def test_installed_mode_launches_release_cli_until_its_wizard_prompt(self):
+        self.assertEqual(
+            SMOKE._wizard_command("installed"),
+            [
+                "/opt/pty/wizard-pty", "install", "--registry", "http://verdaccio:4873",
+                "--index", "/opt/pty/release-index.json",
+                "--platform-root", "/tmp/kb-journey-pty-procfs-platform",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

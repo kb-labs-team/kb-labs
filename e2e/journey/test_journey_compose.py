@@ -273,6 +273,9 @@ if (!configResult.ok || !lockResult.valid) {
                     "KB_JOURNEY_NODE_BASE_IMAGE": "node:22-bookworm-slim",
                     "KB_JOURNEY_WORKSPACE_SOURCE": str(ROOT),
                     "KB_JOURNEY_PTY_WIZARD_BINARY": str(ROOT / "e2e" / "journey" / "pty-procfs-smoke.py"),
+                    "KB_JOURNEY_PTY_RELEASE_INDEX": str(
+                        ROOT / "tools" / "kb-create" / "v2" / "cmd" / "kb-create-v2" / "testdata" / "x251-release-index.json"
+                    ),
                 },
             )
             result = subprocess.run(
@@ -290,13 +293,17 @@ if (!configResult.ok || !lockResult.valid) {
         self.assertFalse(runner.get("privileged", False))
         self.assertNotEqual(runner.get("pid"), "host")
         self.assertFalse(any("unconfined" in option for option in runner.get("security_opt", [])))
-        self.assertEqual(runner["image"], "python:3.12.12-alpine")
-        self.assertNotIn("build", runner)
+        self.assertEqual(runner["image"], "kb-journey-pty-smoke:local")
+        self.assertEqual(runner["build"]["context"], str(ROOT / "e2e" / "journey"))
+        self.assertEqual(runner["build"]["dockerfile"], "Dockerfile.pty-smoke")
         self.assertEqual(runner["entrypoint"], ["python3"])
         self.assertEqual(runner["command"], ["/opt/kb-workspace/e2e/journey/pty-procfs-smoke.py"])
         wizard_mount = next(mount for mount in runner["volumes"] if mount.get("target") == "/opt/pty/wizard-pty")
         self.assertEqual(wizard_mount["source"], str(ROOT / "e2e" / "journey" / "pty-procfs-smoke.py"))
         self.assertTrue(wizard_mount["read_only"])
+        index_mount = next(mount for mount in runner["volumes"] if mount.get("target") == "/opt/pty/release-index.json")
+        self.assertEqual(index_mount["source"], str(ROOT / "tools" / "kb-create" / "v2" / "cmd" / "kb-create-v2" / "testdata" / "x251-release-index.json"))
+        self.assertTrue(index_mount["read_only"])
 
     def test_internal_network_setting_renders_an_offline_journey_network(self):
         compose_command = require_compose_command(self)
