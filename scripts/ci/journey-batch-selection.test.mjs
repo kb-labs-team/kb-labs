@@ -53,3 +53,13 @@ test('consumer jobs take the selection only from the producer-owned output', () 
   }
   assert.match(JSON.stringify(workflow.jobs.producer.steps), /journey-batch-selection\.mjs resolve/);
 });
+
+test('journey batch concurrency cancels stale runs only within the same ref', () => {
+  const group = workflow.concurrency.group;
+  assert.equal(workflow.concurrency['cancel-in-progress'], true);
+  assert.match(group, /\$\{\{\s*github\.ref\s*\}\}/);
+  const groupForRef = (ref) => group.replace(/\$\{\{\s*github\.ref\s*\}\}/, ref);
+
+  assert.equal(groupForRef('refs/heads/batch/one'), groupForRef('refs/heads/batch/one'));
+  assert.notEqual(groupForRef('refs/heads/batch/one'), groupForRef('refs/heads/batch/two'));
+});
