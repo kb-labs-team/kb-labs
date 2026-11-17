@@ -745,8 +745,17 @@ thread.join()
                 "S-140.5": {"project MCP cross-project isolation": ["S-140.5"]},
                 "PC-001.4": {"selected isolated installer claim": ["PC-001.4"]},
             }.get(selection, {})
-        mode_variant = "default" if mode == "local" else "human-secured"
-        front = "agent" if mode == "local" else "human"
+        runner_selector = selector or f"service-{mode}:explore"
+        # The secured service journey is non-interactive. Only the explicit
+        # human-secured selector exercises the TTY installer variant.
+        mode_variant = (
+            "default" if mode == "local" else
+            "human-secured" if runner_selector.startswith("human-secured:") else
+            "secured"
+        )
+        front = "human" if runner_selector.startswith("human-") else (
+            "agent" if mode == "local" else "human"
+        )
         fixture_calls = []
         host_cycle = []
         events = []
@@ -882,7 +891,7 @@ thread.join()
                 "workflow" if "S-002.1" in selection else
                 "mcp" if "S-140.5" in selection else "platform.install,gateway,projects"),
             "KB_JOURNEY_GIT_REVISION": "fixture-commit",
-            "KB_JOURNEY_RUNNER_SELECTOR": selector or f"service-{mode}:explore",
+            "KB_JOURNEY_RUNNER_SELECTOR": runner_selector,
             "KB_CREATE_DOWNLOAD_BASE_URL": "http://journey.invalid/candidate",
         }
         console = io.StringIO()
