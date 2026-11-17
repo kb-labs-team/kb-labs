@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import errno
+import fcntl
 import os
 import platform
 import pty
 import select
 import signal
+import subprocess
 import sys
+import termios
 import time
 from pathlib import Path
 
@@ -165,22 +168,6 @@ def _wizard_command(mode: str) -> list[str]:
     raise RuntimeError(f"unsupported wizard smoke mode: {mode}")
 
 
-def _read_pipe_line(fd: int, deadline: float) -> bytes:
-    transcript = bytearray()
-    while b"\n" not in transcript:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise RuntimeError("wizard PTY bootstrap did not finish")
-        readable, _, _ = select.select([fd], [], [], remaining)
-        if not readable:
-            continue
-        chunk = os.read(fd, 256)
-        if not chunk:
-            raise RuntimeError("wizard PTY bootstrap closed before reporting its terminal")
-        transcript.extend(chunk)
-    return bytes(transcript).split(b"\n", 1)[0]
-
-
 def _yama_ptrace_scope() -> str:
     try:
         return Path("/proc/sys/kernel/yama/ptrace_scope").read_text(encoding="ascii").strip()
@@ -225,30 +212,36 @@ def main() -> int:
 
     self_status = _process_status("self")
     effective_ptrace = _capability_status(self_status, "CapEff")
-    bootstrap_read_fd, bootstrap_write_fd = os.pipe()
-    pid, master_fd = pty.fork()
-    if pid == 0:
-        os.close(bootstrap_read_fd)
-        try:
-            os.write(bootstrap_write_fd, (os.ttyname(0) + "\n").encode("ascii"))
-            os.close(bootstrap_write_fd)
-            os.execv(wizard_command[0], wizard_command)
-        except BaseException:
-            os._exit(127)
-
-    os.close(bootstrap_write_fd)
+    master_fd, slave_fd = pty.openpty()
+    tty = os.ttyname(slave_fd)
+    os.set_blocking(master_fd, False)
+    process = subprocess.Popen(
+        wizard_command,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+        start_new_session=True,
+        preexec_fn=lambda: fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0),
+    )
+    pid = process.pid
+    os.close(slave_fd)
     deadline = time.monotonic() + 5
     transcript = bytearray()
     try:
-        tty = _read_pipe_line(bootstrap_read_fd, deadline).decode("ascii")
-        os.close(bootstrap_read_fd)
         while not _wizard_prompt_ready(transcript):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise RuntimeError("real wizard did not finish writing its initial PTY prompt")
             readable, _, _ = select.select([master_fd], [], [], remaining)
             if readable:
-                chunk = os.read(master_fd, 4096)
+                try:
+                    chunk = os.read(master_fd, 4096)
+                except OSError as error:
+                    if error.errno == errno.EIO:
+                        chunk = b""
+                    else:
+                        raise
                 if not chunk:
                     raise RuntimeError("real wizard exited before finishing its initial PTY prompt")
                 transcript.extend(chunk)
@@ -264,7 +257,7 @@ def main() -> int:
         candidate_count, procfs_result = _procfs_probe(pid, tty, uid)
         print(
             "wizard-procfs-diagnostic "
-            f"mode={mode} uid={uid} arch={machine} kernel={platform.release()} "
+            f"mode={mode} pty_launch=popen_controlling_tty uid={uid} arch={machine} kernel={platform.release()} "
             f"wizard_uid_match={wizard_uid_match} "
             f"runner_cap_sys_ptrace={_capability_status(self_status, 'CapPrm')}/"
             f"{effective_ptrace}/{_capability_status(self_status, 'CapBnd')} "
@@ -288,20 +281,16 @@ def main() -> int:
         return 0
     finally:
         try:
-            os.close(bootstrap_read_fd)
-        except OSError:
-            pass
-        try:
             os.close(master_fd)
         except OSError:
             pass
         try:
-            os.kill(pid, signal.SIGKILL)
+            os.killpg(pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
         try:
-            os.waitpid(pid, 0)
-        except ChildProcessError:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
             pass
 
 
