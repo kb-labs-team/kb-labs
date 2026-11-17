@@ -91,6 +91,38 @@ class DockerBuildInputsTest(unittest.TestCase):
         self.assertTrue(is_dockerignored(".journey/tmp/node_modules/pkg/index.js", rules))
         self.assertTrue(is_dockerignored(".journey/reports/registry-secret.txt", rules))
 
+    def test_registry_dockerfiles_use_the_selected_platform_deploy_root(self):
+        cases = (
+            (ROOT / "services/state/daemon/Dockerfile", "state-daemon"),
+            (ROOT / "services/marketplace-registry/app/Dockerfile", "marketplace-registry-app"),
+        )
+        for dockerfile, deploy_tree in cases:
+            with self.subTest(dockerfile=dockerfile):
+                lines = dockerfile.read_text().splitlines()
+                self.assertIn("ARG KB_DEPLOY_ROOT=.kb/deploy", lines)
+                self.assertIn(
+                    f"COPY --chown=kb:nodejs ${{KB_DEPLOY_ROOT}}/{deploy_tree}/node_modules ./node_modules",
+                    lines,
+                )
+                self.assertIn(
+                    f"COPY --chown=kb:nodejs ${{KB_DEPLOY_ROOT}}/{deploy_tree}/dist ./dist",
+                    lines,
+                )
+                self.assertIn(
+                    "COPY --chown=kb:nodejs ${KB_DEPLOY_ROOT}/image-default/kb.config.json /app/.kb/kb.config.json",
+                    lines,
+                )
+
+    def test_registry_consumer_prepares_deploy_inputs_before_building_images(self):
+        source = (ROOT / "e2e/journey/run.sh").read_text()
+        prepare = source.index("bash e2e/journey/prepare-registry-deploy-artifacts.sh")
+        build = source.index("journey_compose build marketplace-state marketplace-registry")
+        self.assertLess(prepare, build)
+        self.assertIn("KB_JOURNEY_DEPLOY_ROOT=\"$ROOT/.journey/deploy/run-$journey_run_suffix\"", source)
+        composition = (ROOT / "services/marketplace-registry/app/scripts/render-journey-composition.mjs").read_text()
+        deploy_root_arg = "KB_DEPLOY_ROOT: ${JSON.stringify(process.env.KB_JOURNEY_DEPLOY_ROOT ?? '.kb/deploy')}"
+        self.assertEqual(2, composition.count(deploy_root_arg))
+
     def test_copy_sources_are_available_in_the_root_docker_context(self):
         rules = dockerignore_rules(ROOT / ".dockerignore")
         dockerfile = ROOT / "e2e/journey/Dockerfile.runner"
