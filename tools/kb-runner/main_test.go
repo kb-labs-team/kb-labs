@@ -688,11 +688,11 @@ func runHintCommand(ctx context.Context, command string, env []string, budget ti
 	defer os.RemoveAll(state)
 	stdoutPath := filepath.Join(state, "stdout")
 	stderrPath := filepath.Join(state, "stderr")
-	run, err := proc.Start(ctx, proc.Config{
+	run, err := proc.StartWithHostResourceSource(ctx, proc.Config{
 		StateDir: state, Tag: "hint-command", Stall: budget,
 		StdoutPath: stdoutPath, StderrPath: stderrPath,
 		Command: []string{"/bin/sh", "-c", command}, Env: env, CleanEnv: true,
-	})
+	}, stableHintHostResources{})
 	var canceledBeforeHandshake *proc.CommandCanceledError
 	if errors.As(err, &canceledBeforeHandshake) {
 		// The command was spawned and its tree reaped by Start; this is a cancellation, not a startup failure.
@@ -752,6 +752,19 @@ func runHintCommand(ctx context.Context, command string, env []string, budget ti
 			hintCommandStageError("read teardown", readTeardown()),
 		)
 		return output, hintCancellationError(ctx, command, budget, started, "command.wait", cause)
+	}
+}
+
+// Hint formatting tests exercise whether emitted commands are runnable. Keep
+// those short subprocess checks independent of the test host's live CPU PSI;
+// admission pressure behavior is covered separately in internal/proc tests.
+type stableHintHostResources struct{}
+
+func (stableHintHostResources) Snapshot() proc.HostResourceSnapshot {
+	return proc.HostResourceSnapshot{
+		PhysicalMemory: 16 << 30, AvailableMemory: 8 << 30, MemoryAvailableKnown: true,
+		Pressure: "normal", PressureAvailable: true, LoadAvailable: true, LogicalCPUs: runtime.NumCPU(),
+		FreeDiskBytes: 16 << 30, FreeDiskKnown: true,
 	}
 }
 
