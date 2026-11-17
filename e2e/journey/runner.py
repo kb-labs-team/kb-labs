@@ -70,6 +70,7 @@ from invocations import (
     read_kb_create_cli_result,
     read_ux_cli_result,
     read_ux_cli_stream,
+    read_ux_http_result,
     run_command,
     run_pty_command,
     start_background_command,
@@ -134,10 +135,7 @@ def acquire_marketplace_http_session(env: dict[str, str]) -> None:
         f"{gateway_url.rstrip('/')}/auth/login/cli", data=body,
         headers={"Content-Type": "application/json"}, method="POST")
     status, raw, _ = open_http(urllib.request.urlopen, request, timeout=30, env=env)
-    try:
-        payload = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"Gateway CLI login returned invalid JSON (HTTP {status}): {error}") from error
+    payload = decode_ux_success_result(read_ux_http_result(raw, status))
     token = payload.get("accessToken") or payload.get("token") if isinstance(payload, dict) else None
     if status not in {200, 201} or not isinstance(token, str) or not token:
         raise RuntimeError(f"Gateway CLI login did not return an HTTP session token (HTTP {status})")
