@@ -150,9 +150,14 @@ func TestSecondWorktreeReusesTheFirstWorktreesBuildOutputs(t *testing.T) {
 		t.Fatalf("restored output = %q, %v", data, err)
 	}
 
-	// The shared store lives with the repository; per-worktree state does not.
-	if _, err := os.Stat(filepath.Join(main, ".git", "kb-devkit", "objects")); err != nil {
-		t.Fatalf("shared store missing from the git common directory: %v", err)
+	// Hosted CI places the shared store under RUNNER_TEMP; local runs use the
+	// repository's git common directory. In both cases worktrees share one CAS.
+	sharedRoot := filepath.Join(main, ".git", "kb-devkit")
+	if override := os.Getenv("KBLABS_CI_DEVKIT_CAS_ROOT"); override != "" {
+		sharedRoot = override
+	}
+	if _, err := os.Stat(filepath.Join(sharedRoot, "objects")); err != nil {
+		t.Fatalf("shared store missing from its configured root %s: %v", sharedRoot, err)
 	}
 	for _, shared := range []string{"objects", "tasks"} {
 		if _, err := os.Stat(filepath.Join(second, ".kb", "devkit", shared)); err == nil {
@@ -168,7 +173,7 @@ func TestSecondWorktreeReusesTheFirstWorktreesBuildOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out, stderr = runDevkit(t, first, second, home, "doctor", "--verify-cache")
-	if code != 0 || !strings.Contains(string(out), filepath.Join(main, ".git", "kb-devkit")) || !strings.Contains(string(out), "verified") {
+	if code != 0 || !strings.Contains(string(out), sharedRoot) || !strings.Contains(string(out), "verified") {
 		t.Fatalf("doctor --verify-cache: exit=%d stdout=%s stderr=%s", code, out, stderr)
 	}
 }
