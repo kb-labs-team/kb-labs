@@ -1,8 +1,12 @@
 import json
 import ast
+import base64
+import hashlib
+import io
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from urllib.parse import urlparse
@@ -24,11 +28,13 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                run_ordered_source_journey_steps,
                                run_plugin_policy_diagnostic_step,
                                run_marketplace_steps, configure_registry_gateway_route,
+                               seed_commit_registry_fixture,
                                validate_commit_status_response,
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
 from service_steps import FlowGraph, Journey
-from marketplace_tamper_proxy import tamper_tarball
+from marketplace_tamper_proxy import (gateway_download_url, inject_download_fault,
+                                      registry_upstream_headers, tamper_tarball)
 from journey_dependencies import Dependency
 import service_runner
 from test_install_layout import create_test_install_container
@@ -45,6 +51,110 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_registry_fixture_proxy_attaches_only_its_mounted_internal_secret(self):
+        headers = registry_upstream_headers({
+            "host": "untrusted.example.test",
+            "authorization": "Bearer public-package-token",
+            "x-kb-auth-type": "identity",
+            "x-kb-auth-user-id": "journey-admin",
+            "x-kb-auth-namespace-id": "local",
+            "x-internal-secret": "caller-controlled-value",
+        }, "isolated-fixture-secret")
+        self.assertEqual(headers, {
+            "authorization": "Bearer public-package-token",
+            "x-kb-auth-type": "identity",
+            "x-kb-auth-user-id": "journey-admin",
+            "x-kb-auth-namespace-id": "local",
+            "x-internal-secret": "isolated-fixture-secret",
+        })
+
+    def test_clean_install_seeds_the_candidate_commit_through_hub(self):
+        workspace = Path(__file__).resolve().parents[2]
+        candidate_version = json.loads((workspace / "plugins/commit/package.json").read_text())["version"]
+        with tempfile.TemporaryDirectory(prefix="journey-seed-candidate-") as directory:
+            archive_root = Path(directory)
+            platform_dependencies = archive_root / "platform/node_modules"
+            sdk = platform_dependencies / "@kb-labs/sdk/package.json"
+            sdk.parent.mkdir(parents=True)
+            sdk.write_text('{"name":"@kb-labs/sdk"}')
+            manifest = json.dumps({"name": "@kb-labs/commit", "version": candidate_version}).encode()
+            with tarfile.open(archive_root / "kb-labs+commit.tgz", "w:gz") as archive:
+                info = tarfile.TarInfo("package/package.json")
+                info.size = len(manifest)
+                archive.addfile(info, io.BytesIO(manifest))
+            candidate_bytes = (archive_root / "kb-labs+commit.tgz").read_bytes()
+            env = {
+               "KB_JOURNEY_CANDIDATE_PACKAGES_ROOT": str(archive_root),
+               "KB_JOURNEY_MARKETPLACE_GATEWAY_URL": "http://127.0.0.1:4000",
+               "KB_JOURNEY_MARKETPLACE_SERVICE_URL": "http://marketplace-registry:5071",
+               "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey",
+               "KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://registry.invalid",
+               "KB_JOURNEY_MARKETPLACE_GATEWAY_URL": "http://127.0.0.1:4000",
+               "KB_JOURNEY_SERVICE_TOKEN": "registry-session-token-fixture",
+               "KB_JOURNEY_CLI_PATH": "/journey/bin/kb"}
+            calls = []
+
+            def publish(command, *, cwd, env, timeout):
+                calls.append((command, cwd, env, timeout))
+                self.assertTrue((cwd / "node_modules").is_symlink())
+                self.assertEqual((cwd / "node_modules").resolve(), platform_dependencies.resolve())
+                return subprocess.CompletedProcess(command, 0,
+                    json.dumps({"ok": True, "data": {"version": candidate_version}}), "")
+
+            with patch("marketplace_steps.active_platform_root", return_value=archive_root / "platform"), \
+                    patch("marketplace_steps.configure_registry_gateway_route") as configure, \
+                    patch("marketplace_steps.open_http", side_effect=[
+                        (200, json.dumps({"status": "found", "package": {
+                            "id": "@kb-labs/commit", "version": candidate_version,
+                            "integrity": "sha256-" + base64.b64encode(
+                                hashlib.sha256(candidate_bytes).digest()).decode(),
+                            "downloadUrl": "http://registry.invalid/api/v1/packages/journey/%40kb-labs%2Fcommit/"
+                                           f"{candidate_version}/tarball"}}).encode(), {}),
+                        (200, candidate_bytes, {})]) as registry_http, \
+                    patch("marketplace_steps._publish_package_fixture", side_effect=lambda *args: publish(
+                        ["kb", "hub", "publish", "--json"], cwd=args[0], env=env, timeout=300)):
+                version = seed_commit_registry_fixture(Path("/journey/kb-platform"), env,
+                                                       expected_version=candidate_version)
+
+            self.assertEqual(version, candidate_version)
+            configure.assert_called_once()
+            command, cwd, call_env, timeout = calls[0]
+            self.assertEqual(command, ["kb", "hub", "publish", "--json"])
+            self.assertEqual(cwd.name, "package")
+            self.assertTrue(cwd.parent.name.startswith("journey-commit-candidate-"))
+            self.assertEqual(call_env, env)
+            self.assertEqual(timeout, 300)
+            self.assertEqual(registry_http.call_args_list[0].args[1].get_header("Authorization"),
+                             "Bearer registry-session-token-fixture")
+            self.assertIn("127.0.0.1:4000/api/v1/marketplace-registry/api/v1/resolve",
+                          registry_http.call_args_list[0].args[1].full_url)
+            self.assertIn("127.0.0.1:4000/api/v1/marketplace-registry/api/v1/packages/",
+                          registry_http.call_args_list[1].args[1].full_url)
+
+    def test_clean_install_seed_rejects_a_hub_version_that_differs_from_candidate(self):
+        workspace = Path(__file__).resolve().parents[2]
+        candidate_version = json.loads((workspace / "plugins/commit/package.json").read_text())["version"]
+        with tempfile.TemporaryDirectory(prefix="journey-seed-candidate-") as directory:
+            archive_root = Path(directory)
+            platform_root = archive_root / "platform"
+            sdk = platform_root / "node_modules/@kb-labs/sdk/package.json"
+            sdk.parent.mkdir(parents=True)
+            sdk.write_text('{"name":"@kb-labs/sdk"}')
+            manifest = json.dumps({"name": "@kb-labs/commit", "version": candidate_version}).encode()
+            with tarfile.open(archive_root / "kb-labs+commit.tgz", "w:gz") as archive:
+                info = tarfile.TarInfo("package/package.json")
+                info.size = len(manifest)
+                archive.addfile(info, io.BytesIO(manifest))
+            env = {"KB_JOURNEY_CANDIDATE_PACKAGES_ROOT": str(archive_root)}
+            with patch("marketplace_steps.active_platform_root", return_value=platform_root), \
+                    patch("marketplace_steps.configure_registry_gateway_route"), \
+                    patch("marketplace_steps._publish_package_fixture", return_value=subprocess.CompletedProcess(
+                        ["kb", "hub", "publish", "--json"], 0,
+                        json.dumps({"ok": True, "data": {"version": "9.9.9"}}), "")):
+                with self.assertRaisesRegex(RuntimeError, "expected candidate Commit"):
+                    seed_commit_registry_fixture(Path("/journey/kb-platform"), env,
+                                                 expected_version=candidate_version)
+
     def test_registry_publish_uses_the_installed_platform_cli_identity(self):
         workspace = Path(__file__).resolve().parents[2]
         cli = "/journey-home/kb-platform/current/.kb/v2/bin/kb"
@@ -98,18 +208,74 @@ class MarketplaceStepTests(unittest.TestCase):
 
         configure_registry_gateway_route(Path("/journey/platform"), {
             "KB_JOURNEY_MARKETPLACE_SERVICE_URL": "http://marketplace-registry:5071",
+            "KB_JOURNEY_MARKETPLACE_SOURCE_URL": "http://marketplace-tamper:8081",
+            "KB_JOURNEY_MARKETPLACE_GATEWAY_URL": "http://127.0.0.1:4000",
         }, runner)
-        self.assertEqual([call[0][5] for call in calls[:2]], [
+        self.assertEqual([call[0][5] for call in calls[:4]], [
             "gateway.upstreams.marketplace-registry",
+            "gateway.upstreams.marketplace-registry-source",
             "platform.adapterOptions.serviceTransport.services.marketplace-registry",
+            "platform.adapterOptions.serviceTransport.services.marketplace-registry-source",
         ])
         self.assertEqual(json.loads(calls[0][0][6]), {
             "serviceId": "marketplace-registry", "prefix": "/api/v1/registry",
             "rewritePrefix": "/api/v1",
         })
-        self.assertEqual(json.loads(calls[1][0][6]), {"url": "http://marketplace-registry:5071"})
+        self.assertEqual(json.loads(calls[1][0][6]), {
+            "serviceId": "marketplace-registry-source", "prefix": "/api/v1/marketplace-registry",
+            "rewritePrefix": "",
+        })
+        self.assertEqual(json.loads(calls[2][0][6]), {"url": "http://marketplace-registry:5071"})
+        self.assertEqual(json.loads(calls[3][0][6]), {"url": "http://marketplace-tamper:8081"})
+        hub_source = (Path(__file__).resolve().parents[2]
+                      / "plugins/marketplace-registry/src/registry-http.ts").read_text()
+        self.assertIn("const REGISTRY_GATEWAY_PREFIX = '/api/v1/registry'", hub_source)
+        self.assertEqual("/api/v1" + "/api/v1/registry/packages/publish"[len("/api/v1/registry"):],
+                         "/api/v1/packages/publish")
+        self.assertEqual("" + "/api/v1/marketplace-registry/api/v1/resolve"[
+            len("/api/v1/marketplace-registry"):], "/api/v1/resolve")
         self.assertEqual(calls[-1][0], ["kb-create", "restart", "--platform-root", "/journey/platform"])
         self.assertFalse(any("x-internal-secret" in str(call[1].get("env", {})).lower() for call in calls))
+
+    def test_commit_seed_configures_registry_sources_with_the_installed_cli(self):
+        calls = []
+        cli = "/journey-home/.local/bin/kb"
+
+        def runner(command, **kwargs):
+            calls.append((command, kwargs))
+            if command[1:4] == ["config", "set", "--scope"]:
+                data = {"nextCommand": "kb-create restart --platform-root /journey/platform"}
+                return subprocess.CompletedProcess(command, 0,
+                    json.dumps({"ok": True, "data": data}), "")
+            if command[0] == "/journey-home/.local/bin/kb-create":
+                return subprocess.CompletedProcess(command, 0, "restarted", "")
+            raise AssertionError(f"unexpected installed CLI invocation: {command}")
+
+        env = {
+            "KB_JOURNEY_CLI_PATH": cli,
+            "KB_JOURNEY_MARKETPLACE_GATEWAY_URL": "http://127.0.0.1:4000",
+            "KB_JOURNEY_KB_CREATE_PATH": "/journey-home/.local/bin/kb-create",
+            "KB_JOURNEY_MARKETPLACE_SERVICE_URL": "http://marketplace-registry:5071",
+            "KB_JOURNEY_MARKETPLACE_SOURCE_URL": "http://marketplace-tamper:8081",
+            "KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://marketplace-tamper:8081",
+            "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY": "public-key-fixture",
+            "KB_JOURNEY_MARKETPLACE_TOKEN": "token-reference-fixture",
+            "KB_JOURNEY_REGISTRY": "http://verdaccio:4873",
+        }
+
+        configure_registry_gateway_route(Path("/journey/platform"), env, runner)
+
+        source_command = next(command for command, _kwargs in calls
+                              if command[1:6] == ["config", "set", "--scope", "platform", "marketplace.sources"])
+        self.assertEqual(source_command[0], cli)
+        sources = json.loads(source_command[6])
+        self.assertEqual(sources, [
+            {"kind": "registry", "url": "http://127.0.0.1:4000/api/v1/marketplace-registry",
+             "signingPublicKey": "${KB_JOURNEY_MARKETPLACE_PUBLIC_KEY}",
+             "authToken": "${KB_JOURNEY_MARKETPLACE_TOKEN}"},
+            {"kind": "npm", "url": "http://verdaccio:4873"},
+        ])
+        self.assertEqual(calls[-1][0][:2], ["/journey-home/.local/bin/kb-create", "restart"])
 
     def test_not_found_source_expectations_come_from_kb_create_status(self):
         self.assertEqual(configured_marketplace_source_kinds({"marketplaceSources": [
@@ -294,6 +460,17 @@ class MarketplaceStepTests(unittest.TestCase):
         body = b"sealed package archive"
         self.assertNotEqual(tamper_tarball("/api/v1/packages/acme/plugin/1.0.0/tarball", body), body)
         self.assertEqual(tamper_tarball("/api/v1/packages/acme/plugin", body), body)
+
+    def test_registry_download_gateway_route_preserves_tamper_proxy_and_limits_fault(self):
+        upstream = "http://marketplace-registry:5071/api/v1/packages/author/plugin/1.0.0/tarball"
+        routed = gateway_download_url(upstream, "http://127.0.0.1:4000/api/v1/marketplace-registry")
+        self.assertEqual(routed,
+                         "http://127.0.0.1:4000/api/v1/marketplace-registry/api/v1/packages/author/plugin/1.0.0/tarball")
+        integrity = inject_download_fault(routed, "integrity")
+        self.assertIn("127.0.0.1:4000/api/v1/marketplace-registry/api/v1/packages/", integrity)
+        self.assertEqual(urlparse(integrity).query, "journey-tamper=1")
+        for fault in (None, "auth", "transport", "signature"):
+            self.assertEqual(inject_download_fault(routed, fault), routed)
 
     def test_commit_fixture_publisher_uses_the_real_hub_publish_request(self):
         self.assertEqual(commit_publish_command(), ["hub", "publish", "--json"])

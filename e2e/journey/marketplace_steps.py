@@ -7,11 +7,15 @@ from project_service_path import project_service_path
 
 import json
 import hashlib
+import base64
+import io
 import os
 import shlex
+import tarfile
 import tempfile
 import time
 import urllib.request
+from urllib.parse import urlencode, urlsplit
 from pathlib import Path
 from typing import Callable
 
@@ -48,6 +52,12 @@ def _publish_fixture_command() -> list[str]:
 
 def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dict[str, str],
                                runner: CommandRunner) -> CompletedProcess[str]:
+    package_root = (workspace_root / package_path).resolve()
+    return _publish_package_fixture(package_root, env, runner)
+
+
+def _publish_package_fixture(package_root: Path, env: dict[str, str],
+                             runner: CommandRunner) -> CompletedProcess[str]:
     gateway_url = env.get("KB_JOURNEY_MARKETPLACE_GATEWAY_URL")
     author_handle = env.get("KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE")
     if not gateway_url or not author_handle:
@@ -56,7 +66,6 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     if not platform_cli:
         raise RuntimeError("Registry fixture publishing requires the installed platform kb command")
     publish = _publish_fixture_command()
-    package_root = (workspace_root / package_path).resolve()
     command = kb_command(publish, executable=platform_cli)
     publish_env = dict(env)
     publish_env.pop("KB_REGISTRY_URL", None)
@@ -65,26 +74,110 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     return runner(command, cwd=package_root, env=publish_env, timeout=300)
 
 
+def service_url_for_gateway(env: dict[str, str]) -> str:
+    gateway_url = env.get("KB_JOURNEY_MARKETPLACE_GATEWAY_URL")
+    if not gateway_url:
+        raise RuntimeError("journey Gateway address is missing for authenticated Registry access")
+    return gateway_url.rstrip("/")
+
+
+def registry_verification_headers(env: dict[str, str]) -> dict[str, str]:
+    token = env.get("KB_JOURNEY_SERVICE_TOKEN")
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    if env.get("KB_JOURNEY_VARIANT") == "human-secured":
+        raise RuntimeError("secured Registry verification requires the active Gateway HTTP session token")
+    return {}
+
+
+def _extract_candidate_package(archive: tarfile.TarFile, destination: Path) -> None:
+    members = archive.getmembers()
+    for member in members:
+        relative = Path(member.name)
+        if (relative.is_absolute() or ".." in relative.parts or member.issym() or member.islnk()
+                or "node_modules" in relative.parts):
+            raise RuntimeError(f"candidate package archive contains an unsafe path: {member.name!r}")
+    data_filter = getattr(tarfile, "data_filter", None)
+    if data_filter is None:
+        archive.extractall(destination, members=members)
+    else:
+        archive.extractall(destination, members=members, filter="data")
+
+
+def _package_archive_content_digest(data: bytes | Path) -> str:
+    digest = hashlib.sha256()
+    archive_context = (tarfile.open(data, "r:gz") if isinstance(data, Path)
+                       else tarfile.open(fileobj=io.BytesIO(data), mode="r:gz"))
+    try:
+        with archive_context as archive:
+            files: list[tuple[str, bytes]] = []
+            for member in archive.getmembers():
+                relative = Path(member.name)
+                if (relative.is_absolute() or ".." in relative.parts or member.issym() or member.islnk()
+                        or "node_modules" in relative.parts):
+                    raise RuntimeError(f"package archive contains an unsafe path: {member.name!r}")
+                if not member.isfile():
+                    continue
+                parts = relative.parts
+                if len(parts) < 2 or parts[0] != "package":
+                    raise RuntimeError(f"package archive has an unexpected member path: {member.name!r}")
+                stream = archive.extractfile(member)
+                if stream is None:
+                    raise RuntimeError(f"package archive member could not be read: {member.name!r}")
+                files.append((Path(*parts[1:]).as_posix(), stream.read()))
+    except (OSError, tarfile.TarError) as error:
+        raise RuntimeError(f"could not inspect package archive: {error}") from error
+    if not files:
+        raise RuntimeError("package archive contains no regular files")
+    for name, content in sorted(files):
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(content)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def configure_registry_gateway_route(platform_root: Path, env: dict[str, str],
                                      runner: CommandRunner) -> None:
     """Configure the installed Gateway's canonical Registry proxy route."""
     service_url = env.get("KB_JOURNEY_MARKETPLACE_SERVICE_URL")
-    if not service_url:
+    source_service_url = env.get("KB_JOURNEY_MARKETPLACE_SOURCE_URL")
+    if not service_url or not source_service_url:
         raise RuntimeError("journey Registry service address is missing")
-    values = (
+    values = [
         ("gateway.upstreams.marketplace-registry", {
             "serviceId": "marketplace-registry",
             "prefix": "/api/v1/registry",
             "rewritePrefix": "/api/v1",
         }),
+        ("gateway.upstreams.marketplace-registry-source", {
+            "serviceId": "marketplace-registry-source",
+            "prefix": "/api/v1/marketplace-registry",
+            "rewritePrefix": "",
+        }),
         ("platform.adapterOptions.serviceTransport.services.marketplace-registry", {
             "url": service_url,
         }),
-    )
+        ("platform.adapterOptions.serviceTransport.services.marketplace-registry-source", {
+            "url": source_service_url,
+        }),
+    ]
+    registry_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL")
+    public_key_ref = "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY"
+    token_ref = "KB_JOURNEY_MARKETPLACE_TOKEN"
+    if registry_url and env.get(public_key_ref):
+        npm_url = env.get("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
+        gateway_registry_url = f"{service_url_for_gateway(env)}/api/v1/marketplace-registry"
+        values.append(("marketplace.sources", [
+            {"kind": "registry", "url": gateway_registry_url,
+             "signingPublicKey": f"${{{public_key_ref}}}", "authToken": f"${{{token_ref}}}"},
+            {"kind": "npm", "url": npm_url},
+        ]))
+    executable = env.get("KB_JOURNEY_CLI_PATH", "kb")
     restart_command: str | None = None
     for key, value in values:
         command = kb_command(["config", "set", "--scope", "platform", key,
-                              json.dumps(value, separators=(",", ":")), "--json"])
+                              json.dumps(value, separators=(",", ":")), "--json"], executable=executable)
         result = run_with_runner(runner, command, cwd=platform_root, env=env, timeout=300)
         payload = _json(result, command)
         if payload.get("shadowedBy"):
@@ -95,6 +188,8 @@ def configure_registry_gateway_route(platform_root: Path, env: dict[str, str],
     if restart_command is None:
         raise RuntimeError("platform config did not provide its supported restart command")
     restart = shlex.split(restart_command)
+    if restart and restart[0] == "kb-create" and env.get("KB_JOURNEY_KB_CREATE_PATH"):
+        restart[0] = env["KB_JOURNEY_KB_CREATE_PATH"]
     result = run_with_runner(runner, restart, cwd=platform_root, env=env, timeout=300)
     _output(result, restart)
 
@@ -539,6 +634,93 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
                  requires=("step:publish and install Commit through Registry",),
                  runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
     return captured.get("entry")
+
+
+def seed_commit_registry_fixture(platform_root: Path, env: dict[str, str],
+                                 runner: CommandRunner = run_command,
+                                 *, expected_version: str | None = None) -> str:
+    """Publish the packed candidate Commit artifact through Hub to this journey's Registry."""
+    package_dir = Path(env.get("KB_JOURNEY_CANDIDATE_PACKAGES_ROOT", ""))
+    if not package_dir.is_dir():
+        raise RuntimeError("candidate package artifacts are unavailable at KB_JOURNEY_CANDIDATE_PACKAGES_ROOT")
+    candidate_tarball: Path | None = None
+    candidate_manifest: dict | None = None
+    for archive_path in sorted(package_dir.glob("*.tgz")):
+        try:
+            with tarfile.open(archive_path, "r:gz") as archive:
+                member = archive.extractfile("package/package.json")
+                if member is None:
+                    continue
+                manifest = json.load(member)
+        except (OSError, tarfile.TarError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"cannot inspect candidate package artifact {archive_path.name}: {error}") from error
+        if manifest.get("name") == "@kb-labs/commit":
+            candidate_tarball, candidate_manifest = archive_path, manifest
+            break
+    if candidate_tarball is None or candidate_manifest is None:
+        raise RuntimeError(f"candidate package artifacts contain no @kb-labs/commit tarball: {package_dir}")
+    version = candidate_manifest.get("version")
+    if not isinstance(version, str) or (expected_version and version != expected_version):
+        raise RuntimeError(
+            f"candidate Commit artifact version {version!r} does not match the sealed index pin {expected_version!r}")
+
+    installed_platform = active_platform_root(platform_root)
+    platform_node_modules = installed_platform / "node_modules"
+    sdk_manifest = platform_node_modules / "@kb-labs" / "sdk" / "package.json"
+    if not sdk_manifest.is_file():
+        raise RuntimeError(
+            "installed platform does not contain the SDK required to load the Commit manifest; "
+            f"expected {sdk_manifest}")
+    configure_registry_gateway_route(installed_platform, env, runner)
+    with tempfile.TemporaryDirectory(prefix="journey-commit-candidate-") as temporary:
+        try:
+            with tarfile.open(candidate_tarball, "r:gz") as archive:
+                _extract_candidate_package(archive, Path(temporary))
+        except (OSError, tarfile.TarError) as error:
+            raise RuntimeError(f"cannot unpack candidate Commit artifact {candidate_tarball.name}: {error}") from error
+        package_root = Path(temporary) / "package"
+        if not (package_root / "package.json").is_file():
+            raise RuntimeError(f"candidate Commit archive has no package manifest: {candidate_tarball.name}")
+        (package_root / "node_modules").symlink_to(platform_node_modules, target_is_directory=True)
+        publish = _publish_package_fixture(package_root, env, runner)
+        result = _json(publish, commit_publish_command())
+    published_version = result.get("version")
+    if published_version != version:
+        raise RuntimeError(f"isolated Registry seed expected candidate Commit {version}, Hub reported {published_version!r}")
+    gateway_registry_url = f"{service_url_for_gateway(env)}/api/v1/marketplace-registry"
+    resolve_request = urllib.request.Request(
+        f"{gateway_registry_url}/api/v1/resolve?{urlencode({'identity': '@kb-labs/commit'})}",
+        headers=registry_verification_headers(env))
+    status, body, _ = open_http(urllib.request.urlopen, resolve_request, timeout=30, env=env)
+    try:
+        resolution = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"isolated Registry resolve returned invalid JSON: {error}") from error
+    resolved = resolution.get("data", resolution) if isinstance(resolution, dict) else None
+    if (status != 200 or not isinstance(resolved, dict) or resolved.get("status") != "found"
+            or not isinstance(resolved.get("package"), dict)):
+        raise RuntimeError(f"isolated Registry did not resolve the seeded Commit: HTTP {status} {resolution!r}")
+    package = resolved["package"]
+    if package.get("id") != "@kb-labs/commit" or package.get("version") != version:
+        raise RuntimeError(f"isolated Registry resolved a different Commit candidate: {package!r}")
+    advertised_download_url, advertised_integrity = package.get("downloadUrl"), package.get("integrity")
+    if not isinstance(advertised_download_url, str) or not isinstance(advertised_integrity, str):
+        raise RuntimeError("isolated Registry resolve omitted the candidate download URL or integrity")
+    download_path = urlsplit(advertised_download_url).path
+    if not download_path.startswith("/api/v1/packages/"):
+        raise RuntimeError(f"isolated Registry returned an unexpected download URL: {advertised_download_url!r}")
+    download_url = f"{gateway_registry_url}{download_path}"
+    status, downloaded, _ = open_http(
+        urllib.request.urlopen, urllib.request.Request(download_url, headers=registry_verification_headers(env)),
+        timeout=60, env=env)
+    actual_integrity = f"sha256-{base64.b64encode(hashlib.sha256(downloaded).digest()).decode('ascii')}"
+    if status != 200 or actual_integrity != advertised_integrity:
+        raise RuntimeError(
+            f"Registry Commit tarball integrity mismatch: HTTP {status}, "
+            f"advertised {advertised_integrity!r}, actual {actual_integrity!r}")
+    if _package_archive_content_digest(candidate_tarball) != _package_archive_content_digest(downloaded):
+        raise RuntimeError("Registry Commit tarball contents differ from the sealed candidate artifact")
+    return version
 
 
 def _set_marketplace_proxy_faults(project: Path, env: dict[str, str], runner: CommandRunner,

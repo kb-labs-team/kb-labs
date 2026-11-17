@@ -27,9 +27,10 @@ MARKETPLACE_REGISTRY_LANE = "marketplace-registry"
 
 RUNNERS = {
     "agent:explore": Runner("agent:explore", "agent", "explore", "default", "local"),
-    "agent:commit": Runner("agent:commit", "agent", "commit", "default", "local", claim_family="journey"),
+    "agent:commit": Runner("agent:commit", "agent", "commit", "default", "local", claim_family="journey",
+                            lane=MARKETPLACE_REGISTRY_LANE),
     "agent-secured:commit": Runner("agent-secured:commit", "agent", "commit", "secured",
-                                    "secured", claim_family="journey"),
+                                    "secured", claim_family="journey", lane=MARKETPLACE_REGISTRY_LANE),
     "agent-input:commit": Runner("agent-input:commit", "agent", "commit", "input", "local"),
     "agent-relative:commit": Runner("agent-relative:commit", "agent", "commit", "relative-path", "local"),
     "human:default": Runner("human:default", "human", "explore", "human-default", "local"),

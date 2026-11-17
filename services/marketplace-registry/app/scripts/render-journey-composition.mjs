@@ -25,7 +25,7 @@ const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
 const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
 const config = {
   marketplace: {
-    sources: [{ kind: 'registry', url: registryUrl, signingPublicKey: publicPem }],
+    sources: [{ kind: 'registry', url: 'http://127.0.0.1:4000/api/v1/marketplace-registry', signingPublicKey: publicPem }],
   },
 };
 const configValidation = validateProductConfig('marketplace', config.marketplace);
@@ -51,7 +51,8 @@ services:
     environment:
       KB_JOURNEY_GATEWAY_INTERNAL_SECRET_FILE: /run/secrets/journey-gateway-internal
       KB_JOURNEY_MARKETPLACE_GATEWAY_URL: "http://127.0.0.1:4000"
-      KB_JOURNEY_MARKETPLACE_SERVICE_URL: ${JSON.stringify(registryUrl)}
+      KB_JOURNEY_MARKETPLACE_SERVICE_URL: "http://marketplace-registry:5071"
+      KB_JOURNEY_MARKETPLACE_SOURCE_URL: "http://marketplace-tamper:8081"
       KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE: journey
 
   marketplace-state:
@@ -94,6 +95,9 @@ services:
     command: ["python3", "/fixture/marketplace_tamper_proxy.py"]
     environment:
       MARKETPLACE_TAMPER_UPSTREAM: http://marketplace-registry:5071
+      MARKETPLACE_TAMPER_GATEWAY_REGISTRY_URL: http://127.0.0.1:4000/api/v1/marketplace-registry
+      MARKETPLACE_TAMPER_INTERNAL_SECRET_FILE: /run/secrets/journey-gateway-internal
+    secrets: [journey-gateway-internal]
     volumes:
       - ${JSON.stringify(`${path.join(root, 'e2e/journey/marketplace_tamper_proxy.py')}:/fixture/marketplace_tamper_proxy.py:ro`)}
     depends_on:

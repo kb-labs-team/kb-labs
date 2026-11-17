@@ -57,6 +57,7 @@ services:
       KB_JOURNEY_VARIANT: ${KB_JOURNEY_VARIANT:-default}
       KB_JOURNEY_SERVICE_PROFILE: ${KB_JOURNEY_SERVICE_PROFILE:-fast}
       KB_JOURNEY_WORKSPACE_ROOT: /opt/kb-workspace
+      KB_JOURNEY_CANDIDATE_PACKAGES_ROOT: /candidate/packages
       KB_JOURNEY_MARKETPLACE_REGISTRY_URL: ${KB_JOURNEY_MARKETPLACE_REGISTRY_URL:-}
       KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64: ${KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64:-}
       OIDC_CORP_CLIENT_SECRET: journey-oidc-client-secret
@@ -71,6 +72,7 @@ services:
     volumes:
       - ${KB_JOURNEY_REPORT_ROOT:-../.journey/reports}:/summary
       - ${KB_JOURNEY_WORKSPACE_SOURCE:?run journey_compose_init "$$ROOT" first}:/opt/kb-workspace:ro
+      - ${KB_JOURNEY_PACKAGES_DIR:-../../e2e/packages}:/candidate/packages:ro
       - ./oidc-idp/certs:/e2e-oidc-certs:ro
     networks: [journey]
     init: true

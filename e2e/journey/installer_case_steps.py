@@ -1809,13 +1809,15 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                              update_index: Path, jump_index: Path,
                              canary_index: Path, platform_root: Path,
                              secret_value: str, registry: str,
-                             run_command: CommandRunner) -> Journey:
+                             run_command: CommandRunner,
+                             marketplace_flags: list[str] | None = None) -> Journey:
     """Claim request, configuration, doctor-repair, and compatibility cases.
 
     Install roots used by the request-selection steps are children of the
     journey's already isolated HOME; callers must pass that HOME's paths.
     """
     journey = Journey(mode, f"installer-cases-{mode}")
+    marketplace_flags = list(marketplace_flags or [])
     host_os = "darwin" if sys.platform == "darwin" else "linux" if sys.platform.startswith("linux") else "unsupported"
     host_arch = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
     try:
@@ -1863,11 +1865,12 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         selected_plan["serviceGraph"] = _json_command(
             run_command, [launcher, "plan", "--json", "--index", str(stable_index),
                           "--platform-root", str(apply_root),
-                          "--service-profile", "default", "--scenario", "commit"],
+                          "--service-profile", "default", "--scenario", "commit", *marketplace_flags],
             "PC-001 selected profile plan").get("plan", {}).get("serviceGraph", {})
         result = _data(run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                    "--platform-root", str(apply_root),
-                                   "--service-profile", "default", "--scenario", "commit"]),
+                                   "--service-profile", "default", "--scenario", "commit",
+                                   *marketplace_flags]),
                       "PC-001 apply")
         if result.get("operation") != "apply" or not result.get("receipt") or not result.get("logPath"):
             raise RuntimeError("apply result omitted operation, receipt, or logPath")
@@ -1875,8 +1878,9 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         index = json.loads(stable_index.read_text())
         pin = next(item for item in index["plugins"] if item["package"] == "@kb-labs/commit")
         record = next(item for item in result["receipt"].get("marketplaceInstalls", []) if item.get("id") == "@kb-labs/commit")
-        if record.get("spec") != f"@kb-labs/commit@{pin['version']}" or record.get("version") != pin["version"]:
-            raise RuntimeError("Commit Marketplace receipt does not match the verified release index pin")
+        if (record.get("spec") != f"@kb-labs/commit@{pin['version']}"
+                or record.get("version") != pin["version"] or record.get("source") != "registry"):
+            raise RuntimeError("Commit Marketplace receipt does not match the verified pin and isolated Registry source")
         status = _data(run_command([launcher, "status", "--json", "--platform-root", str(apply_root)]),
                        "PC-001 apply status")
         host = status.get("host", {})
