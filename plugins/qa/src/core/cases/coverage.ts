@@ -12,7 +12,15 @@ export function computeQACaseCoverage(
       return { id: testCase.id, title: testCase.title, status: testCase.status, release: testCase.release, statusResult: 'NOT REQUIRED' as const, reason: `Case does not apply to ${mode} mode.`, steps: [] };
     }
     if (testCase.status !== 'active') {
-      return { id: testCase.id, title: testCase.title, status: testCase.status, release: testCase.release, statusResult: 'NOT REQUIRED' as const, reason: `${testCase.status} cases are retained for reference and are not gated.`, steps: [] };
+      const steps = testCase.status === 'planned'
+        ? testCase.steps.map(step => ({
+          stepId: step.id,
+          status: 'NOT COVERED' as const,
+          reason: 'Planned case claims are listed for explicit selection only; they do not count toward release coverage.',
+          claims: claims.filter(claim => claim.stepId === step.id),
+        }))
+        : [];
+      return { id: testCase.id, title: testCase.title, status: testCase.status, release: testCase.release, statusResult: 'NOT REQUIRED' as const, reason: `${testCase.status} cases are retained for reference and are not gated.`, steps };
     }
     const steps = testCase.steps.map(step => {
       const stepClaims = claims.filter(claim => claim.stepId === step.id);

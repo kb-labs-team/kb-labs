@@ -46,6 +46,9 @@ from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
                            record_runner_exception, replay_steps)
+from secured_human_wizard_steps import (register_secured_human_wizard_auth,
+                                        register_secured_human_wizard_install,
+                                        register_secured_human_wizard_status)
 from journey_dependencies import FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import (JourneySelectionError, active_journey_selection,
                                read_journey_selection, use_journey_selection)
@@ -76,6 +79,7 @@ from invocations import (
     store_report_secret,
     write_report_text,
 )
+import redaction
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = journey_value("KB_JOURNEY_FRONT_DOOR", "agent")
@@ -559,10 +563,10 @@ def sample_pnpm_rss(_root_pid: int) -> float:
     return peak_kib / 1024
 
 
-def fail(message: str):
+def fail(message: str, *, env=None):
     global FIRST_FAILURE
     if not FIRST_FAILURE:
-        FIRST_FAILURE = message
+        FIRST_FAILURE = redaction.redact_text(message, env or ACTIVE_MAIN_ENV or BASE_ENV)
 
 
 def write_journey_diagnostic(message: str, *, env=None) -> None:
@@ -824,6 +828,8 @@ def pty_install(command: list[str], env: dict[str, str], choice: str = "", acces
             (r"Admin tenant", "journey"),
             (r"Admin password", "JourneyPassw0rd!"),
             (r"Confirm admin password", "JourneyPassw0rd!"),
+            (r"Session signing secret", "JourneySessionSigningSecret-0123456789-abcdef"),
+            (r"Confirm session signing secret", "JourneySessionSigningSecret-0123456789-abcdef"),
         ])
     prompt_responder = OrderedPromptResponder(expectations)
     apply_started = None
@@ -1302,19 +1308,27 @@ def _main(*, update_variant_runner=None):
             fail(f"port conflict: expected KB_INSTALL_PORT_IN_USE for port 4000; {' '.join(result.stdout.split())[-500:]}")
         return finalize_run(passed)
     first_admin_shown_once = False
+    first_admin_ready = False
+    secured_human_wizard_install_ok = False
     install_plan_summary_ok = False
     install_marketplace_ok = False
-    if FRONT == "human" and not VARIANT.endswith("secured"):
+    if FRONT == "human" and (not VARIANT.endswith("secured") or VARIANT == "human-secured"):
         PROJECT.mkdir(parents=True, exist_ok=True)
-        choice = "commit" if VARIANT == "human-nondefault" else ""
+        choice = "commit" if VARIANT == "human-nondefault" else "explore" if VARIANT == "human-secured" else ""
         access_mode = "secured" if VARIANT.endswith("secured") else "local"
+        if VARIANT == "human-secured":
+            store_report_secret(env, "KB_JOURNEY_ADMIN_PASSWORD", "JourneyPassw0rd!",
+                                "secured human wizard fixture password")
+            store_report_secret(env, "KB_JOURNEY_JWT_SECRET",
+                                "JourneySessionSigningSecret-0123456789-abcdef",
+                                "secured human wizard fixture session signing secret")
         install_command = [launcher, "install", "--registry", REGISTRY, *marketplace_flags]
         if VARIANT == "human-default":
-            # Pin the human journey to explore so its profile allowlist is
-            # exercised against the release index's default and client profiles.
+            # Keep the release-index profile allowlist check deterministic.
             install_command.extend(["--scenario", "explore"])
         code, output, duration, apply_offset = pty_install(
-            install_command, env, choice, access_mode, expect_access_mode=VARIANT == "human-default"
+            install_command, env, choice, access_mode,
+            expect_access_mode=VARIANT == "human-default"
         )
         TIMES["questions"] = apply_offset if apply_offset is not None else duration
         if apply_offset is not None:
@@ -1349,6 +1363,25 @@ def _main(*, update_variant_runner=None):
                             and "Verification: platform installed" in output
                             and re.search(r"(?i)next|success|installed|ready", output) is not None
                             and scenario_profile_choices_ok)
+        if VARIANT == "human-secured":
+            password = env["KB_JOURNEY_ADMIN_PASSWORD"]
+            secured_prompts_ok = (
+                "Studio access" in human_transcript
+                and "Admin email" in human_transcript
+                and "Admin tenant" in human_transcript
+                and "Admin password" in human_transcript
+                and "Confirm admin password" in human_transcript
+                and "Session signing secret" in human_transcript
+                and "Confirm session signing secret" in human_transcript
+                and password not in output
+                and env["KB_JOURNEY_JWT_SECRET"] not in output
+            )
+            human_install_ok = human_install_ok and secured_prompts_ok
+            if not secured_prompts_ok:
+                fail("secured wizard did not collect administrator inputs without echoing the password")
+            env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
+            first_admin_ready = human_install_ok
+            secured_human_wizard_install_ok = human_install_ok
         if FRONT == "human" and not VARIANT.endswith("secured"):
             record_case("human interactive install",
                        human_install_ok, "interactive install did not show a plan and success result",
@@ -1445,6 +1478,7 @@ def _main(*, update_variant_runner=None):
                     )
                     if first_admin_shown_once:
                         env["KB_JOURNEY_ADMIN_EMAIL"] = credential["email"]
+                        first_admin_ready = True
                 if not first_admin_shown_once:
                     fail("secured install did not return exactly one firstAdmin credential with state=disclosed")
                 else:
@@ -1525,6 +1559,9 @@ def _main(*, update_variant_runner=None):
         record_case("post-install running status", install_running,
                     "successful install did not leave a running, reachable host", cases=["S-039.2"],
                     runners=("agent:commit", "agent-secured:commit"))
+    elif VARIANT == "human-secured":
+        register_secured_human_wizard_install(CASE_JOURNEY, secured_human_wizard_install_ok, install_running)
+        register_secured_human_wizard_status(CASE_JOURNEY, install_running)
     else:
         record_case("post-install running status", install_running,
                     "successful install did not leave a running, reachable host", cases=["S-040.3"],
@@ -2046,13 +2083,35 @@ def _main(*, update_variant_runner=None):
                 lambda: run_cli_corrupt_session_file(str(BIN / "kb"), service_env),
                 cases=["S-041.18"], runners=("service-secured:explore",),
             )
-            auth_journey.step("admin invite, reset, and restart persistence", auth_capability, run_auth_flow,
-                              cases=["S-041.2", "S-041.3", "S-104.6"],
-                              runners=("service-secured:explore",))
+            def run_secured_installer_auth():
+                def restart_auth_host() -> str:
+                    mutation = "secured human wizard auth verification"
+                    return restart_shared_host(outer_graph, launcher, env, mutation)
+
+                run_secured_auth_steps(
+                    "http://127.0.0.1:4000",
+                    service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                    service_env["KB_JOURNEY_ADMIN_PASSWORD"],
+                    "auth-reset-member@example.test",
+                    restart_auth_host,
+                )
+                run_cli_auth_status(
+                    str(BIN / "kb"), service_env, authenticated=True,
+                    email=service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                    password=service_env["KB_JOURNEY_ADMIN_PASSWORD"],
+                    base_url="http://127.0.0.1:4000",
+                )
+
+            if VARIANT == "human-secured":
+                register_secured_human_wizard_auth(auth_journey, run_secured_installer_auth)
+            else:
+                auth_journey.step("admin invite, reset, and restart persistence", auth_capability, run_auth_flow,
+                                  cases=["S-041.2", "S-041.3", "S-104.6"],
+                                  runners=("service-secured:explore",))
 
             def bootstrap_admin_status():
-                if not first_admin_shown_once:
-                    raise AssertionError("secured install did not disclose a first administrator credential exactly once")
+                if not (first_admin_shown_once or first_admin_ready):
+                    raise AssertionError("secured install did not leave a usable first administrator credential")
                 installed, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"],
                                    env=service_env, timeout=120)
                 status_result = read_kb_create_cli_result("status", installed)
@@ -2642,10 +2701,10 @@ if __name__ == "__main__":
         if CASE_JOURNEY is not None:
             diagnostics = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
                 "journey-diagnostics.log")
-            record_runner_exception(CASE_JOURNEY, error, diagnostics, env=BASE_ENV)
+            record_runner_exception(CASE_JOURNEY, error, diagnostics, env=ACTIVE_MAIN_ENV or BASE_ENV)
         else:
             log_group_exception("outer journey orchestration")
-        fail(f"outer journey orchestration: {error}")
+        fail(f"outer journey orchestration: {error}", env=ACTIVE_MAIN_ENV or BASE_ENV)
         if (ACTIVE_OUTER_GRAPH is not None and ACTIVE_MAIN_ENV is not None and ACTIVE_LAUNCHER
                 and (PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json").is_file()):
             _run_final_uninstall(ACTIVE_OUTER_GRAPH, ACTIVE_MAIN_ENV, ACTIVE_LAUNCHER)

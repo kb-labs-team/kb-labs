@@ -5,6 +5,7 @@ import json
 import time
 import traceback
 import os
+import redaction
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
@@ -443,6 +444,7 @@ def record_runner_exception(journey: Journey, error: Exception,
                             diagnostics_path: str | Path | None = None, *,
                             env: Mapping[str, str] | None = None) -> StepResult:
     """Turn an unexpected runner exception into a durable journey failure row."""
+    safe_error = redaction.redact_text(str(error) or error.__class__.__name__, env)
     diagnostic = traceback.format_exc()
     if diagnostics_path:
         write_report_text(diagnostics_path,
@@ -450,7 +452,7 @@ def record_runner_exception(journey: Journey, error: Exception,
                           env=env, append=True)
 
     def failed() -> str:
-        raise RuntimeError(str(error) or error.__class__.__name__)
+        raise RuntimeError(safe_error)
 
     return journey.step("outer journey orchestration", "journey.runner", failed)
 

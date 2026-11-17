@@ -34,6 +34,9 @@ RUNNERS = {
     "agent-relative:commit": Runner("agent-relative:commit", "agent", "commit", "relative-path", "local"),
     "human:default": Runner("human:default", "human", "explore", "human-default", "local"),
     "human:nondefault": Runner("human:nondefault", "human", "commit", "human-nondefault", "local"),
+    "human-secured:default": Runner(
+        "human-secured:default", "human", "explore", "human-secured", "secured", "nightly",
+        ("e2e/journey/secured_human_wizard_steps.py",)),
     "negative:wrong-node": Runner("negative:wrong-node", "agent", "explore", "wrong-node", "local"),
     "negative:occupied-port": Runner("negative:occupied-port", "agent", "explore", "occupied-port", "local"),
     "service-local:explore": Runner(

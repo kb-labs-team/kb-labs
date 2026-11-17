@@ -988,10 +988,17 @@ def selectors_from_coverage(results: list[dict]) -> list[str]:
 
 
 def selection_from_coverage(results: list[dict], requested: str, *, mode: str | None = None,
-                            requested_runners: str | None = None) -> dict:
+                            requested_runners: str | None = None,
+                            catalog_cases: list[dict] | None = None) -> dict:
     """Resolve requested cases/steps against the QA coverage claim registry."""
     if mode is not None and mode not in {"local", "secured"}:
         raise ValueError(f"unsupported QA coverage mode: {mode!r}")
+    tokens = [item.strip() for item in requested.split(",") if item.strip()]
+    if not tokens:
+        raise ValueError("KB_JOURNEY_CASES must contain at least one case or step ID")
+    requested_case_ids = {token.split(".", 1)[0] for token in tokens}
+    catalog_by_id = {case.get("id"): case for case in (catalog_cases or [])
+                     if isinstance(case, dict) and isinstance(case.get("id"), str)}
     registry: dict[str, set[str]] = {}
     sources_by_step: dict[str, set[str]] = {}
     declarations_by_step: dict[str, dict] = {}
@@ -1001,12 +1008,22 @@ def selection_from_coverage(results: list[dict], requested: str, *, mode: str | 
     root = resource_root()
     for coverage in results:
         for case in coverage.get("cases", []):
-            if case.get("status") != "active":
-                continue
             case_id = case.get("id")
+            catalog_case = catalog_by_id.get(case_id)
+            is_explicit_planned = (case.get("status") == "planned"
+                                   and isinstance(case_id, str)
+                                   and case_id in requested_case_ids
+                                   and catalog_case is not None
+                                   and catalog_case.get("status") == "planned")
+            if case.get("status") != "active" and not is_explicit_planned:
+                continue
             if not isinstance(case_id, str):
                 continue
-            for step in case.get("steps", []):
+            case_steps = case.get("steps", [])
+            if is_explicit_planned:
+                if coverage.get("mode") not in catalog_case.get("modes", []):
+                    continue
+            for step in case_steps:
                 step_id = step.get("stepId")
                 journey_claimed = any(
                     claim.get("kind") in {"journey", "e2e"}
@@ -1051,9 +1068,6 @@ def selection_from_coverage(results: list[dict], requested: str, *, mode: str | 
 
     case_ids = set(registry)
     step_ids = set().union(*registry.values()) if registry else set()
-    tokens = [item.strip() for item in requested.split(",") if item.strip()]
-    if not tokens:
-        raise ValueError("KB_JOURNEY_CASES must contain at least one case or step ID")
     selected: set[str] = set()
     for token in tokens:
         if token in case_ids:
@@ -1097,12 +1111,38 @@ def selection_from_coverage(results: list[dict], requested: str, *, mode: str | 
     return {"selection": sorted(set(tokens)), **resolved}
 
 
-def runners_for_case_selection(results: list[dict], requested: str, mode: str) -> list[str]:
+def runners_for_case_selection(results: list[dict], requested: str, mode: str,
+                               catalog_cases: list[dict] | None = None) -> list[str]:
     """Return registered owners for selected claims in one execution mode."""
     if mode not in {"local", "secured"}:
         raise ValueError(f"unsupported QA coverage mode: {mode!r}")
-    selected = selection_from_coverage(results, requested, mode=mode, requested_runners="")
+    selected = selection_from_coverage(results, requested, mode=mode, requested_runners="",
+                                       catalog_cases=catalog_cases)
     return selected["runners"]
+
+
+def case_catalog_results(root: Path | None = None) -> list[dict]:
+    """Read case metadata to resolve explicit planned selections without changing their status."""
+    root = Path.cwd() if root is None else root
+    command = ["node", "./cli/bin/dist/bin.js", "qa", "cases", "list", "--json"]
+    with invocation_context(step_id="journey.case-selection.catalog"):
+        result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120,
+                                  workspace_root=root)
+    if result.returncode != 0:
+        raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
+    payload = decode_ux_success_result(read_ux_cli_result(result))
+    if not isinstance(payload, dict) or not isinstance(payload.get("cases"), list):
+        raise ValueError("QA case catalog result is not a valid case list")
+    return [case for case in payload["cases"] if isinstance(case, dict)]
+
+
+def _requested_planned_catalog(results: list[dict], requested: str) -> list[dict] | None:
+    tokens = {item.strip() for item in requested.split(",") if item.strip()}
+    planned_ids = {case.get("id") for coverage in results for case in coverage.get("cases", [])
+                   if isinstance(case, dict) and case.get("status") == "planned"}
+    if not any(token in planned_ids or token.split(".", 1)[0] in planned_ids for token in tokens):
+        return None
+    return case_catalog_results()
 
 
 def main() -> int:
@@ -1112,14 +1152,18 @@ def main() -> int:
         return 0
     if len(sys.argv) == 4 and sys.argv[1] == "--runners-for-mode":
         results = coverage_results()
-        print_report_text(json.dumps(runners_for_case_selection(results, sys.argv[3], sys.argv[2])), flush=True)
+        catalog_cases = _requested_planned_catalog(results, sys.argv[3])
+        print_report_text(json.dumps(runners_for_case_selection(
+            results, sys.argv[3], sys.argv[2], catalog_cases=catalog_cases)), flush=True)
         return 0
     results = coverage_results()
     requested = ",".join(read_requested_cases(os.environ))
     if requested:
         mode = journey_value("KB_JOURNEY_SELECTION_MODE")
+        catalog_cases = _requested_planned_catalog(results, requested)
         print_report_text(json.dumps(selection_from_coverage(
-            results, requested, mode=mode, requested_runners="" if mode else None)), flush=True)
+            results, requested, mode=mode, requested_runners="" if mode else None,
+            catalog_cases=catalog_cases)), flush=True)
     else:
         print_report_text(json.dumps(selectors_from_coverage(results)), flush=True)
     return 0
