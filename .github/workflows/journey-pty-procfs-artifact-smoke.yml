@@ -55,17 +55,34 @@ jobs:
           python3 e2e/journey/batch_summary.py verify-candidate \
             "$PRODUCER_INPUT/shared/batch-metadata.json" \
             "$PRODUCER_INPUT/shared/build-candidate.tar"
+      - name: Create and verify runner-owned report bind mount target
+        id: reports-owner-before
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$DIAGNOSTIC_OUTPUT"
+          python3 e2e/journey/report_directory_guard.py prepare \
+            .journey/reports "$DIAGNOSTIC_OUTPUT/reports-owner.log"
       - name: Diagnose the installed wizard's PTY procfs access
         run: e2e/journey/pty-procfs-artifact-smoke.sh "$PRODUCER_INPUT"
+      - name: Verify report owner after the Compose probe
+        id: reports-owner-after-probe
+        if: ${{ always() && steps.reports-owner-before.outcome == 'success' }}
+        shell: bash
+        run: |
+          python3 e2e/journey/report_directory_guard.py check \
+            .journey/reports "$DIAGNOSTIC_OUTPUT/reports-owner.log" --phase after-probe
       - name: Restore producer source and overlay safe diagnostics
         id: diagnostic-source
-        if: ${{ always() && inputs.run_journey && steps.candidate-identity.outcome == 'success' }}
+        if: ${{ always() && inputs.run_journey && steps.candidate-identity.outcome == 'success' && steps.reports-owner-after-probe.outcome == 'success' }}
         shell: bash
         run: |
           diagnostic_commit="$(git rev-parse HEAD)"
           cp e2e/journey/invocations.py "$RUNNER_TEMP/diagnostic-invocations.py"
+          cp e2e/journey/report_directory_guard.py "$RUNNER_TEMP/diagnostic-report-directory-guard.py"
           git checkout --detach "$PRODUCER_SHA"
           cp "$RUNNER_TEMP/diagnostic-invocations.py" e2e/journey/invocations.py
+          cp "$RUNNER_TEMP/diagnostic-report-directory-guard.py" e2e/journey/report_directory_guard.py
           printf 'Producer source SHA: %s\nDiagnostic patch SHA: %s\n' "$PRODUCER_SHA" "$diagnostic_commit"
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         if: ${{ always() && inputs.run_journey && steps.diagnostic-source.outcome == 'success' }}
@@ -87,6 +104,20 @@ jobs:
       - name: Run only affected local case S-040.1
         if: ${{ always() && inputs.run_journey && steps.diagnostic-source.outcome == 'success' }}
         run: e2e/journey/batch.sh mode local "$PRODUCER_INPUT" "$DIAGNOSTIC_OUTPUT" --cases S-040.1
+      - name: Record report owner after one-case run
+        if: ${{ always() && inputs.run_journey && steps.diagnostic-source.outcome == 'success' }}
+        shell: bash
+        run: |
+          python3 e2e/journey/report_directory_guard.py check \
+            .journey/reports "$DIAGNOSTIC_OUTPUT/reports-owner.log" --phase after-one-case
+      - name: Upload report ownership evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: journey-pty-procfs-report-ownership
+          path: ${{ env.DIAGNOSTIC_OUTPUT }}/reports-owner.log
+          if-no-files-found: warn
+          retention-days: 30
       - name: Upload one-case diagnostics
         if: ${{ always() && inputs.run_journey }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
