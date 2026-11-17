@@ -248,10 +248,51 @@ if (!configResult.ok || !lockResult.valid) {
             )
             result = subprocess.run(
                 ["/bin/bash", "-c",
-                 'source e2e/compose-owner.sh; journey_compose_init "$PWD"; journey_compose config --quiet'],
+                 'source e2e/compose-owner.sh; journey_compose_init "$PWD"; journey_compose config --format json'],
                 cwd=ROOT, env=env, capture_output=True, text=True, check=False,
             )
         self.assertEqual(result.returncode, 0, result.stderr)
+        rendered = json.loads(result.stdout)
+        runner_service = rendered["services"]["runner"]
+        self.assertEqual(runner_service["cap_add"], ["SYS_PTRACE"])
+        self.assertFalse(runner_service.get("privileged", False))
+        self.assertFalse(any("unconfined" in option for option in runner_service.get("security_opt", [])))
+        self.assertNotEqual(runner_service.get("pid"), "host")
+        self.assertFalse(any(service.get("cap_add") for name, service in rendered["services"].items()
+                             if name != "runner"))
+
+    def test_pty_procfs_smoke_overrides_only_runner_image_and_command(self):
+        compose_command = require_compose_command(self)
+        with tempfile.TemporaryDirectory(prefix="journey-pty-smoke-config-") as temp:
+            env = isolated_environment(
+                Path(temp) / "home", Path(temp) / "bin", required_tools=(compose_command[0],),
+                overrides={
+                    "KB_JOURNEY_GIT_REVISION": "test-revision",
+                    "KB_JOURNEY_RUNNER_UID": str(os.getuid()),
+                    "KB_JOURNEY_RUNNER_GID": str(os.getgid()),
+                    "KB_JOURNEY_NODE_BASE_IMAGE": "node:22-bookworm-slim",
+                    "KB_JOURNEY_WORKSPACE_SOURCE": str(ROOT),
+                },
+            )
+            result = subprocess.run(
+                [*compose_command,
+                 "-f", "e2e/docker-compose.yml",
+                 "-f", "e2e/journey/docker-compose.yml",
+                 "-f", "e2e/journey/pty-procfs-smoke.override.yml",
+                 "config", "--format", "json"],
+                cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        runner = json.loads(result.stdout)["services"]["runner"]
+        self.assertEqual(runner["user"], f"{os.getuid()}:{os.getgid()}")
+        self.assertEqual(runner["cap_add"], ["SYS_PTRACE"])
+        self.assertFalse(runner.get("privileged", False))
+        self.assertNotEqual(runner.get("pid"), "host")
+        self.assertFalse(any("unconfined" in option for option in runner.get("security_opt", [])))
+        self.assertEqual(runner["image"], "python:3.12.12-alpine")
+        self.assertNotIn("build", runner)
+        self.assertEqual(runner["entrypoint"], ["python3"])
+        self.assertEqual(runner["command"], ["/opt/kb-workspace/e2e/journey/pty-procfs-smoke.py"])
 
     def test_internal_network_setting_renders_an_offline_journey_network(self):
         compose_command = require_compose_command(self)

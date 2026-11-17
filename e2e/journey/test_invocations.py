@@ -456,6 +456,23 @@ class PtyInvocationTest(unittest.TestCase):
         self.assertEqual(records[0]["exit_code"], 1)
         self.assertIsNone(records[0]["error"])
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux procfs is required for PTY read readiness")
+    def test_pty_procfs_permission_failure_stays_fail_closed(self):
+        answers = []
+        with patch.object(
+                invocations, "_linux_terminal_reader",
+                side_effect=invocations.PtyReadinessUnsupported(
+                    "Linux procfs syscall state is not readable with this user's permissions")):
+            with self.assertRaisesRegex(invocations.PtyReadinessUnsupported, "procfs syscall state"):
+                invocations.run_pty_command(
+                    [sys.executable, "-c",
+                     "import time; print('Project directory: ', end='', flush=True); time.sleep(60)"],
+                    timeout=5, on_read_ready=lambda _output: answers.append("sent"),
+                    start_new_session=True,
+                )
+
+        self.assertEqual(answers, [])
+
 
 class ReportRedactionTest(unittest.TestCase):
     def test_kb_create_failure_row_names_copied_log_and_diagnostic_paths(self):
