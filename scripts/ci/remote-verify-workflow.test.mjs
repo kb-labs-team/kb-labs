@@ -68,9 +68,9 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(buildRun.env.REMOTE_STAGE, '${{ needs.prepare.outputs.build_stage }}');
   assert.equal(buildRun.env.REMOTE_RESOURCE_SAMPLES, 'stage-resource-samples.jsonl');
   assert.ok(!prepareSteps.some((step) => step.name === 'Install workspace dependencies'));
-  assert.ok(buildSteps.some((step) => step.uses === './.ci-control/.github/actions/devkit-cas'));
-  assert.ok(independentSteps.some((step) => step.uses === './.ci-control/.github/actions/devkit-cas'));
-  assert.ok(dependentSteps.some((step) => step.uses === './.ci-control/.github/actions/devkit-cas'));
+  assert.ok(buildSteps.some((step) => step.uses === 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'));
+  assert.ok(independentSteps.some((step) => step.uses === 'actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'));
+  assert.ok(dependentSteps.some((step) => step.uses === 'actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'));
   assert.ok(independentSteps.some((step) => step.uses?.startsWith('actions/download-artifact@')));
   assert.ok(dependentSteps.some((step) => step.uses?.startsWith('actions/download-artifact@')));
   assert.ok(dependentSteps.some((step) => step.run === 'tar xf workspace-dist.tar'));
@@ -128,21 +128,23 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
 test('remote verification lets only the build producer save the devkit CAS', () => {
   const workflow = readYaml('.github/workflows/remote-verify.yml');
   const cas = readYaml('.github/actions/devkit-cas/action.yml');
-  const cacheFor = (job) => job.steps.find((step) => step.uses === './.ci-control/.github/actions/devkit-cas');
-  const scopeFor = (job) => cacheFor(job)?.with?.scope;
-  const writer = cas.runs.steps.find((step) => step.id === 'restore-writer');
-  const reader = cas.runs.steps.find((step) => step.id === 'restore-reader');
+  const cacheFor = (job) => job.steps.find((step) => step.id === 'devkit-cache');
 
   for (const jobName of ['build', 'independent-test-shards', 'build-dependent-test-shards', 'internal-tool-test-shards']) {
     const job = workflow.jobs[jobName];
     const cacheStep = cacheFor(job);
     const scopeStep = workflow.jobs[jobName].steps.find((step) => step.id === 'cache-scope');
     assert.equal(scopeStep.run, 'node .ci-control/scripts/ci/resolve-remote-cache-scope.mjs');
-    assert.equal(cacheStep.with.mode, jobName === 'build'
-      ? '${{ steps.cache-scope.outputs.mode }}'
-      : "${{ steps.cache-scope.outputs.mode == 'off' && 'off' || 'read-only' }}");
-    assert.equal(scopeFor(workflow.jobs[jobName]), '${{ steps.cache-scope.outputs.scope }}');
-    assert.equal(cacheStep.with.sha, '${{ steps.cache-scope.outputs.sha }}');
+    assert.equal(cacheStep.uses, jobName === 'build'
+      ? 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+      : 'actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
+    assert.equal(cacheStep.if, jobName === 'build'
+      ? "steps.cache-scope.outputs.mode == 'read-write'"
+      : "steps.cache-scope.outputs.mode != 'off'");
+    assert.equal(cacheStep.with.path, '${{ steps.cache-scope.outputs.path }}');
+    assert.equal(cacheStep.with.key, '${{ steps.cache-scope.outputs.cache_key }}');
+    assert.equal(cacheStep.with['restore-keys'], '${{ steps.cache-scope.outputs.restore_key }}');
+    assert.ok(cacheStep.with.key.includes('steps.cache-scope.outputs.cache_key'));
     const source = jobName === 'build-dependent-test-shards' ? 'build' : 'prepare';
     const upstreamSha = source === 'build' ? '${{ needs.build.outputs.devkit_cache_sha }}' : '${{ needs.prepare.outputs.devkit_cache_sha }}';
     const upstreamBase = source === 'build' ? '${{ needs.build.outputs.devkit_cache_base_sha }}' : '${{ needs.prepare.outputs.devkit_cache_base_sha }}';
@@ -150,17 +152,6 @@ test('remote verification lets only the build producer save the devkit CAS', () 
     assert.equal(scopeStep.env.REMOTE_REQUESTED_SHA, upstreamSha);
     assert.equal(scopeStep.env.REMOTE_SELECTION_BASE_SHA, upstreamBase);
     assert.equal(scopeStep.env.REMOTE_UPSTREAM_CACHE_MODE, upstreamMode);
-  }
-  assert.equal(writer.uses, 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
-  assert.equal(writer.if, "inputs.mode == 'read-write'");
-  assert.equal(reader.uses, 'actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
-  assert.equal(reader.if, "inputs.mode == 'read-only'");
-  assert.equal(cas.runs.steps.filter((step) => step.uses?.startsWith('actions/cache/save@')).length, 0);
-  for (const step of [writer, reader]) {
-    assert.equal(step.with.path, '${{ runner.temp }}/kb-devkit-cas');
-    assert.match(step.with.key, /\$\{\{ inputs\.sha \}\}/);
-    assert.match(step.with.key, /steps\.toolchain\.outputs\.partition/);
-    assert.equal(step.with['restore-keys'].trim(), 'devkit-cas-v2-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-');
   }
   for (const jobName of ['build', 'independent-test-shards', 'build-dependent-test-shards', 'internal-tool-test-shards']) {
     const job = workflow.jobs[jobName];
@@ -170,7 +161,8 @@ test('remote verification lets only the build producer save the devkit CAS', () 
     assert.equal(sourceCheckout.with.ref, '${{ inputs.target_sha || github.sha }}');
     const cleanup = job.steps.findIndex((step) => step.name === 'Remove temporary CI control checkout');
     assert.equal(control.with.ref, '${{ github.workflow_sha }}');
-    assert.match(control.with['sparse-checkout'], /\.github\/actions\/devkit-cas/);
+    assert.match(control.with['sparse-checkout'], /resolve-remote-cache-scope\.mjs/);
+    assert.doesNotMatch(control.with['sparse-checkout'], /\.github\/actions\/devkit-cas/);
     assert.ok(job.steps.indexOf(control) < job.steps.indexOf(cacheStep));
     assert.ok(cleanup > job.steps.indexOf(cacheStep));
     const guard = job.steps.findIndex((step) => step.name === 'Guard CI control checkout path');
@@ -178,6 +170,7 @@ test('remote verification lets only the build producer save the devkit CAS', () 
     assert.match(job.steps[guard].run, /\[ -L \.ci-control \]/);
     assert.equal(control.with['persist-credentials'], false);
   }
+  assert.ok(workflow.jobs.build.steps.every((step) => !step.uses?.startsWith('./.ci-control/')));
 });
 
 test('remote prepare propagates one resolved cache scope to all jobs', () => {
@@ -186,6 +179,8 @@ test('remote prepare propagates one resolved cache scope to all jobs', () => {
   assert.equal(workflow.jobs.prepare.outputs.devkit_cache_scope, '${{ steps.cache-scope.outputs.scope }}');
   assert.equal(workflow.jobs.prepare.outputs.devkit_cache_sha, '${{ steps.cache-scope.outputs.sha }}');
   assert.equal(workflow.jobs.prepare.outputs.devkit_cache_base_sha, '${{ steps.plan.outputs.selection_base_sha }}');
+  const cacheStep = workflow.jobs.prepare.steps.find((step) => step.id === 'cache-scope');
+  assert.equal(cacheStep.run, 'node .ci-control/scripts/ci/resolve-remote-cache-scope.mjs');
   const prepareScope = workflow.jobs.prepare.steps.find((step) => step.id === 'cache-scope');
   assert.equal(prepareScope.env.REMOTE_REQUESTED_SHA, '${{ inputs.target_sha || github.sha }}');
   assert.equal(prepareScope.env.REMOTE_SELECTION_BASE_SHA, '${{ steps.plan.outputs.selection_base_sha }}');

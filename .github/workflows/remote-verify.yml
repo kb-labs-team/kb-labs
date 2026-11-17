@@ -106,7 +106,6 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: .ci-control
           sparse-checkout: |
-            .github/actions/devkit-cas
             scripts/ci/resolve-remote-cache-scope.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
@@ -187,7 +186,6 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: .ci-control
           sparse-checkout: |
-            .github/actions/devkit-cas
             scripts/ci/resolve-remote-cache-scope.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
@@ -200,12 +198,13 @@ jobs:
           REMOTE_UPSTREAM_CACHE_MODE: ${{ needs.prepare.outputs.devkit_cache_mode }}
         run: node .ci-control/scripts/ci/resolve-remote-cache-scope.mjs
       - name: Restore kb-devkit content-addressed cache
+        if: steps.cache-scope.outputs.mode == 'read-write'
         id: devkit-cache
-        uses: ./.ci-control/.github/actions/devkit-cas
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          mode: ${{ steps.cache-scope.outputs.mode }}
-          scope: ${{ steps.cache-scope.outputs.scope }}
-          sha: ${{ steps.cache-scope.outputs.sha }}
+          path: ${{ steps.cache-scope.outputs.path }}
+          key: ${{ steps.cache-scope.outputs.cache_key }}
+          restore-keys: ${{ steps.cache-scope.outputs.restore_key }}
       - name: Remove temporary CI control checkout
         if: always() && steps.ci-control.outcome == 'success'
         run: rm -rf .ci-control
@@ -302,7 +301,6 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: .ci-control
           sparse-checkout: |
-            .github/actions/devkit-cas
             scripts/ci/resolve-remote-cache-scope.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
@@ -315,12 +313,13 @@ jobs:
           REMOTE_UPSTREAM_CACHE_MODE: ${{ needs.prepare.outputs.devkit_cache_mode }}
         run: node .ci-control/scripts/ci/resolve-remote-cache-scope.mjs
       - name: Restore kb-devkit content-addressed cache
+        if: steps.cache-scope.outputs.mode != 'off'
         id: devkit-cache
-        uses: ./.ci-control/.github/actions/devkit-cas
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          mode: ${{ steps.cache-scope.outputs.mode == 'off' && 'off' || 'read-only' }}
-          scope: ${{ steps.cache-scope.outputs.scope }}
-          sha: ${{ steps.cache-scope.outputs.sha }}
+          path: ${{ steps.cache-scope.outputs.path }}
+          key: ${{ steps.cache-scope.outputs.cache_key }}
+          restore-keys: ${{ steps.cache-scope.outputs.restore_key }}
       - name: Remove temporary CI control checkout
         if: always() && steps.ci-control.outcome == 'success'
         run: rm -rf .ci-control
@@ -393,7 +392,6 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: .ci-control
           sparse-checkout: |
-            .github/actions/devkit-cas
             scripts/ci/resolve-remote-cache-scope.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
@@ -406,12 +404,13 @@ jobs:
           REMOTE_UPSTREAM_CACHE_MODE: ${{ needs.build.outputs.devkit_cache_mode }}
         run: node .ci-control/scripts/ci/resolve-remote-cache-scope.mjs
       - name: Restore kb-devkit content-addressed cache
+        if: steps.cache-scope.outputs.mode != 'off'
         id: devkit-cache
-        uses: ./.ci-control/.github/actions/devkit-cas
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          mode: ${{ steps.cache-scope.outputs.mode == 'off' && 'off' || 'read-only' }}
-          scope: ${{ steps.cache-scope.outputs.scope }}
-          sha: ${{ steps.cache-scope.outputs.sha }}
+          path: ${{ steps.cache-scope.outputs.path }}
+          key: ${{ steps.cache-scope.outputs.cache_key }}
+          restore-keys: ${{ steps.cache-scope.outputs.restore_key }}
       - name: Remove temporary CI control checkout
         if: always() && steps.ci-control.outcome == 'success'
         run: rm -rf .ci-control
@@ -487,7 +486,6 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: .ci-control
           sparse-checkout: |
-            .github/actions/devkit-cas
             scripts/ci/resolve-remote-cache-scope.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
@@ -500,12 +498,13 @@ jobs:
           REMOTE_UPSTREAM_CACHE_MODE: ${{ needs.prepare.outputs.devkit_cache_mode }}
         run: node .ci-control/scripts/ci/resolve-remote-cache-scope.mjs
       - name: Restore kb-devkit content-addressed cache
+        if: steps.cache-scope.outputs.mode != 'off'
         id: devkit-cache
-        uses: ./.ci-control/.github/actions/devkit-cas
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          mode: ${{ steps.cache-scope.outputs.mode == 'off' && 'off' || 'read-only' }}
-          scope: ${{ steps.cache-scope.outputs.scope }}
-          sha: ${{ steps.cache-scope.outputs.sha }}
+          path: ${{ steps.cache-scope.outputs.path }}
+          key: ${{ steps.cache-scope.outputs.cache_key }}
+          restore-keys: ${{ steps.cache-scope.outputs.restore_key }}
       - name: Remove temporary CI control checkout
         if: always() && steps.ci-control.outcome == 'success'
         run: rm -rf .ci-control
