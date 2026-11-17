@@ -326,6 +326,7 @@ if (config.platform !== undefined || !configResult.ok) {
             ("publisher", "/journey-packages"): ROOT / "e2e" / "packages",
             ("runner", "/summary"): ROOT / ".journey" / "reports",
             ("runner", "/opt/kb-workspace"): ROOT,
+            ("runner", "/candidate/packages"): ROOT / "e2e" / "packages",
             ("runner", "/e2e-oidc-certs"): ROOT / "e2e" / "oidc-idp" / "certs",
             ("marketplace-tamper", "/fixture/marketplace_tamper_proxy.py"): ROOT / "e2e" / "journey" / "marketplace_tamper_proxy.py",
             ("origin", "/release"): ROOT / ".journey" / "release",
@@ -353,16 +354,25 @@ if (config.platform !== undefined || !configResult.ok) {
             self.assertEqual(rendered["services"]["marketplace-state"]["build"]["dockerfile"],
                              "services/state/daemon/Dockerfile")
             self.assertEqual(rendered["services"]["marketplace-tamper"]["profiles"], ["marketplace-registry"])
+            self.assertEqual(rendered["services"]["marketplace-tamper"]["environment"][
+                "MARKETPLACE_TAMPER_INTERNAL_SECRET_FILE"], "/run/secrets/journey-gateway-internal")
+            self.assertTrue(any(secret.get("source") == "journey-gateway-internal"
+                                for secret in rendered["services"]["marketplace-tamper"]["secrets"]))
             runner_environment = rendered["services"]["runner"]["environment"]
+            self.assertEqual(runner_environment["KB_JOURNEY_CANDIDATE_PACKAGES_ROOT"], "/candidate/packages")
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_GATEWAY_URL"],
                              "http://127.0.0.1:4000")
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_SERVICE_URL"],
                              "http://marketplace-registry:5071")
+            self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_SOURCE_URL"],
+                             "http://marketplace-tamper:8081")
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE"], "journey")
             self.assertEqual(runner_environment["KB_JOURNEY_GATEWAY_INTERNAL_SECRET_FILE"],
                              "/run/secrets/journey-gateway-internal")
             self.assertTrue(any(secret.get("source") == "journey-gateway-internal"
                                 for secret in rendered["services"]["runner"]["secrets"]))
+            self.assertTrue(any(mount.get("target") == "/candidate/packages" and mount.get("read_only")
+                                for mount in rendered["services"]["runner"].get("volumes", [])))
             registry_service = rendered["services"]["marketplace-registry"]
             self.assertTrue(any(secret.get("source") == "journey-gateway-internal"
                                 for secret in registry_service["secrets"]))

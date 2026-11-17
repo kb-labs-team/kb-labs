@@ -174,7 +174,8 @@ class CaseJourneySelectionTests(unittest.TestCase):
             [coverage_for("S-268", registry_steps, release=False)], ",".join(sorted(registry_steps)))
 
         self.assertEqual(default["steps"], ["S-047.1"])
-        self.assertNotIn("marketplace-registry", default["composeProfiles"])
+        self.assertEqual(default["composeProfiles"], ["marketplace-registry"])
+        self.assertEqual(default["capabilities"], ["marketplace"])
         self.assertEqual(set(registry["steps"]), registry_steps)
         self.assertEqual(registry["runners"], ["service-marketplace-registry:local"])
         self.assertEqual(registry["composeProfiles"], ["marketplace-registry"])
@@ -331,6 +332,8 @@ class CaseJourneySelectionTests(unittest.TestCase):
             selectors_from_coverage([coverage("local", source="e2e/journey/runner.py")]),
             ["agent:commit"],
         )
+        from dispatch_registry import lanes_for_runners
+        self.assertEqual(lanes_for_runners(["agent:commit"]), ["marketplace-registry"])
 
     # case: S-262.8
     def test_partial_batch_runners_follow_selected_claim_owners_by_mode(self):

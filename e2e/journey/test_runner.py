@@ -86,6 +86,31 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
             self.assertNotIn("KB_JOURNEY_GATEWAY_INTERNAL_SECRET_FILE", env)
 
 class MarketplaceInstallFlagTests(unittest.TestCase):
+    def test_registry_http_session_uses_the_gateway_cli_login_response(self):
+        env = {
+            "KB_JOURNEY_MARKETPLACE_GATEWAY_URL": "http://127.0.0.1:4000",
+            "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
+            "KB_JOURNEY_ADMIN_PASSWORD": "JourneyPassw0rd!",
+        }
+        calls = []
+
+        def open_http(_opener, request, *, timeout, env):
+            calls.append((request, timeout, env))
+            return 200, json.dumps({"accessToken": "registry-http-session-token-value"}).encode(), {}
+
+        with patch.object(runner, "open_http", side_effect=open_http):
+            runner.acquire_marketplace_http_session(env)
+
+        self.assertEqual(env["KB_JOURNEY_SERVICE_TOKEN"], "registry-http-session-token-value")
+        self.assertEqual(env["KB_JOURNEY_MARKETPLACE_TOKEN"], "registry-http-session-token-value")
+        request, timeout, _ = calls[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:4000/auth/login/cli")
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(json.loads(request.data), {
+            "email": "journey-admin@example.test", "password": "JourneyPassw0rd!",
+        })
+        self.assertEqual(timeout, 30)
+
     def test_default_lane_passes_npm_mirror_without_registry_credentials(self):
         env = {"HOME": "/tmp/kb-journey-test-home"}
 
@@ -594,14 +619,16 @@ thread.join()
         setup = runner.runner_scenario("commit", secured=True)
         self.assertEqual(setup["installer"], "custom")
         self.assertEqual(setup["marketplace_packages"], ("@kb-labs/commit",))
+        self.assertEqual(setup["marketplace_bootstrap_packages"], ("@kb-labs/marketplace-registry",))
         self.assertEqual(setup["command_help_paths"], (("commit", "commit", "--help"),))
         self.assertTrue(setup["commit_first_value_check"])
 
     def test_local_commit_scenario_uses_commit_installer_scenario(self):
         runner = importlib.import_module("runner")
         setup = runner.runner_scenario("commit", secured=False)
-        self.assertEqual(setup["installer"], "commit")
-        self.assertEqual(setup["marketplace_packages"], ())
+        self.assertEqual(setup["installer"], "explore")
+        self.assertEqual(setup["marketplace_packages"], ("@kb-labs/commit",))
+        self.assertEqual(setup["marketplace_bootstrap_packages"], ("@kb-labs/marketplace-registry",))
         self.assertEqual(setup["command_help_paths"], (("commit", "commit", "--help"),))
         self.assertTrue(setup["commit_first_value_check"])
 
@@ -627,6 +654,28 @@ thread.join()
                "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64": "cHVibGljLWtleQ=="}
         self.assertEqual(runner.marketplace_install_flags(env, include_registry=False),
                          ["--marketplace-npm-url", runner.REGISTRY])
+
+    def test_clean_install_can_resolve_commit_from_the_isolated_registry_source(self):
+        runner = importlib.import_module("runner")
+        env = {"KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://marketplace-registry:5071",
+               "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64": "cHVibGljLWtleQ=="}
+
+        flags = runner.marketplace_install_flags(env)
+
+        self.assertEqual(flags[:6], [
+            "--marketplace-registry-url", "http://marketplace-registry:5071",
+            "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
+            "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN",
+        ])
+        self.assertEqual(flags[-2:], ["--marketplace-npm-url", runner.REGISTRY])
+        self.assertEqual(env["KB_JOURNEY_MARKETPLACE_PUBLIC_KEY"], "public-key")
+
+    def test_clean_install_reports_incomplete_central_registry_fixture_configuration(self):
+        runner = importlib.import_module("runner")
+        env = {"KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://marketplace-registry:5071"}
+
+        with self.assertRaisesRegex(ValueError, "URL and generated public key must be configured together"):
+            runner.marketplace_install_flags(env)
 
     def test_local_marketplace_registry_scenario_runs_service_journey(self):
         runner = importlib.import_module("runner")
@@ -819,9 +868,18 @@ thread.join()
                                      "version": "1.0.0", "source": "registry"}],
         }
         receipt_path.write_text(json.dumps(install_receipt), encoding="utf-8")
+        release_index = root / ".local" / "share" / "kb-create" / "release-index.json"
+        release_index.parent.mkdir(parents=True, exist_ok=True)
+        release_index.write_text(json.dumps({"plugins": [{
+            "package": "@kb-labs/commit", "version": "1.0.0",
+        }]}), encoding="utf-8")
         selection = selection if selection is not None else "PC-001.2,PC-002.3,PC-002.8"
         if selected_owners is None:
             selected_owners = {
+                "PC-002.3,PC-002.8": {
+                    "platform readiness (gateway + project workflow)": ["PC-002.3"],
+                    "registered project runtime identity": ["PC-002.8"],
+                },
                 "PC-001.2,PC-002.3,PC-002.8": {
                     "candidate provenance": ["PC-001.2", "PC-002.3", "PC-002.8"],
                     "clean install leaves a running host and reports its resolved plan": ["PC-001.2"],
@@ -896,7 +954,7 @@ thread.join()
                 output = json.dumps({"ok": True, "data": {"session": {"authenticated": False}}})
             elif "status" in argv:
                 output = json.dumps({"ok": True, "data": {"installed": True, "running": True,
-                                    "reachable": True, "host": {"state": "running"},
+                                    "reachable": True, "host": {"state": "running", "stateDirectory": "running"},
                                     "bootstrapCompleted": True,
                                     "installation": {"receiptId": "receipt-main"}}})
             elif "project show" in " ".join(argv):
@@ -905,6 +963,25 @@ thread.join()
                 output = json.dumps({"ok": True, "data": {"project": {"id": "prj_main", "name": "fresh-project"}}})
             elif "project list" in " ".join(argv):
                 output = json.dumps({"ok": True, "data": {"projects": [{"id": "prj_main"}]}})
+            elif "marketplace plugins list" in " ".join(argv):
+                output = json.dumps({"ok": True, "data": {"entries": [{
+                    "id": "@kb-labs/commit", "version": "1.0.0",
+                    "source": "marketplace", "marketplaceSource": "registry",
+                    "signatureStatus": "verified",
+                }]}})
+            elif "marketplace install @kb-labs/commit" in " ".join(argv):
+                lock_path = platform_current / ".kb" / "marketplace.lock"
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                lock_path.write_text(json.dumps({"plugins": {"@kb-labs/commit": {
+                    "version": "1.0.0", "marketplaceSource": "registry",
+                    "signatureStatus": "verified", "integrity": "sha256-fixture",
+                }}}), encoding="utf-8")
+                output = json.dumps({"ok": True, "data": {"installed": [{
+                    "id": "@kb-labs/commit", "version": "1.0.0",
+                    "source": "registry", "signatureStatus": "verified",
+                }]}})
+            elif "marketplace install" in " ".join(argv):
+                output = json.dumps({"ok": True, "data": {"installed": []}})
             elif "workflow defs list" in " ".join(argv):
                 output = json.dumps({"ok": True, "data": [{"id": "journey-hello"}]})
             elif "workflow crons list" in " ".join(argv):
@@ -958,6 +1035,8 @@ thread.join()
 
         def fake_http(_opener, request, **_kwargs):
             url = request.full_url
+            if url.endswith("/auth/login/cli"):
+                return 200, json.dumps({"accessToken": "journey-http-session-token-value"}).encode(), None
             if url.endswith("/health/auth"):
                 return 200, json.dumps({"data": {"ok": True, "activeAdmins": 1}}).encode(), None
             if url.endswith("/ready"):
@@ -992,6 +1071,8 @@ thread.join()
             stack.enter_context(patch.object(
                 runner, "run_command", side_effect=lambda command, **kwargs: fake_run(command, **kwargs)[0]))
             stack.enter_context(patch.object(runner, "open_http", side_effect=fake_http))
+            stack.enter_context(patch("marketplace_steps.seed_commit_registry_fixture",
+                                      return_value="1.0.0"))
             stack.enter_context(patch.object(runner, "write_scoreboards"))
             if extra_update_group:
                 original_outer_selection_groups = runner.outer_selection_groups
@@ -1062,7 +1143,8 @@ thread.join()
         isolated_groups = [group.__name__ for group in runner.ISOLATED_FIXTURE_GROUPS]
         for mode in ("local", "secured"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix="journey-main-smoke-") as temporary:
-                code, summary, service, outer, observed = self._run_selected_main(Path(temporary), mode)
+                code, summary, service, outer, observed = self._run_selected_main(
+                    Path(temporary), mode, selection="PC-002.3,PC-002.8")
                 self.assertEqual(code, 0)
                 self.assertNotIn("runner crash", summary)
                 service_claims = {claim for step in service["steps"] for claim in step.get("cases", [])}
@@ -1078,8 +1160,8 @@ thread.join()
                 self.assertEqual(skipped_groups, isolated_groups)
                 for group in isolated_groups:
                     self.assertEqual(summary.count(f"SKIPPED {group}: not selected"), 1)
-                self.assertIn({"claimId": "PC-001.2", "kind": "journey", "status": "PASS"},
-                              outer["case_run"]["claims"])
+                self.assertNotIn({"claimId": "PC-001.2", "kind": "journey", "status": "PASS"},
+                                 outer["case_run"]["claims"])
 
     def test_main_project_b_selection_runs_its_state_handoff(self):
         with tempfile.TemporaryDirectory(prefix="journey-main-project-b-") as temporary:
@@ -1143,8 +1225,8 @@ thread.join()
                 Path(temporary), "local", selection="", update_variant_runner=fake_update_variants)
         self.assertEqual(code, 0, output)
         self.assertNotIn("SKIPPED", output)
-        self.assertIn({"claimId": "PC-001.2", "kind": "journey", "status": "PASS"},
-                      outer["case_run"]["claims"])
+        self.assertNotIn({"claimId": "PC-001.2", "kind": "journey", "status": "PASS"},
+                         outer["case_run"]["claims"])
         self.assertTrue(service["states"]["fixtures-installed"]["value"]["projectBRoot"])
         self.assertEqual(len(variant_args), 1)
         self.assertEqual(variant_args[0]["project_b"].resolve(),

@@ -130,12 +130,36 @@ def marketplace_install_flags(env: dict[str, str], *, include_registry: bool = T
     return flags
 
 
+def acquire_marketplace_http_session(env: dict[str, str]) -> None:
+    """Acquire the Gateway bearer used by Registry downloads after CLI login."""
+    gateway_url = env.get("KB_JOURNEY_MARKETPLACE_GATEWAY_URL", "http://127.0.0.1:4000")
+    body = json.dumps({"email": env["KB_JOURNEY_ADMIN_EMAIL"],
+                       "password": env["KB_JOURNEY_ADMIN_PASSWORD"]}).encode()
+    request = urllib.request.Request(
+        f"{gateway_url.rstrip('/')}/auth/login/cli", data=body,
+        headers={"Content-Type": "application/json"}, method="POST")
+    status, raw, _ = open_http(urllib.request.urlopen, request, timeout=30, env=env)
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Gateway CLI login returned invalid JSON (HTTP {status}): {error}") from error
+    token = payload.get("accessToken") or payload.get("token") if isinstance(payload, dict) else None
+    if status not in {200, 201} or not isinstance(token, str) or not token:
+        raise RuntimeError(f"Gateway CLI login did not return an HTTP session token (HTTP {status})")
+    store_report_secret(env, "KB_JOURNEY_SERVICE_TOKEN", token,
+                        "Marketplace Registry Gateway session")
+    store_report_secret(env, "KB_JOURNEY_MARKETPLACE_TOKEN", token,
+                        "Marketplace Registry source authentication")
+
+
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
 RUNNER_SCENARIOS = {
     "commit": {
-        "installer": "commit",
+        "installer": "explore",
         "secured_installer": "custom",
+        "marketplace_packages": ("@kb-labs/commit",),
         "secured_marketplace_packages": ("@kb-labs/commit",),
+        "marketplace_bootstrap_packages": ("@kb-labs/marketplace-registry",),
         "command_help_paths": (("commit", "commit", "--help"),),
         "commit_first_value_check": True,
     },
@@ -167,7 +191,8 @@ def runner_scenario(name: str, *, secured: bool) -> dict:
         raise ValueError(f"unknown journey scenario {name!r}")
     return {
         "installer": description["secured_installer"] if secured else description["installer"],
-        "marketplace_packages": description["secured_marketplace_packages"] if secured else (),
+        "marketplace_packages": description.get("secured_marketplace_packages", ()) if secured else
+        description.get("marketplace_packages", ()),
         "marketplace_bootstrap_packages": description.get("marketplace_bootstrap_packages", ()),
         "command_help_paths": description["command_help_paths"],
         "commit_first_value_check": description["commit_first_value_check"],
@@ -1298,6 +1323,7 @@ def _main(*, update_variant_runner=None):
 
     launcher = str(BIN / "kb-create")
     env["KB_JOURNEY_KB_CREATE_PATH"] = launcher
+    env["KB_JOURNEY_CLI_PATH"] = str(BIN / "kb")
     ACTIVE_LAUNCHER = launcher
     version, _ = run([launcher, "--version"], env=env, timeout=30)
     version_ok = version.returncode == 0 and re.fullmatch(r"kb-create [^\s]+\s*", version.stdout) is not None
@@ -1601,13 +1627,6 @@ def _main(*, update_variant_runner=None):
                     "successful install did not leave a running, reachable host", cases=["S-040.3"],
                     requires=("step:candidate provenance",),
                     runners=("human:default", "human:nondefault"))
-    record_case("clean install leaves a running host and reports its resolved plan",
-                install_running and install_plan_summary_ok and install_marketplace_ok
-                and (mode != "secured" or first_admin_shown_once),
-                "install did not leave a reachable host, return its Commit Marketplace receipt and resolved plan, or return the secured credential exactly once",
-                cases=["PC-001.2"], requires=("step:candidate provenance",),
-                runners=("agent:commit", "agent-secured:commit", "service-local:explore",
-                         "service-secured:explore"))
     installed_doctor, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"],
                               env=env, timeout=120)
     try:
@@ -1657,8 +1676,8 @@ def _main(*, update_variant_runner=None):
 
     # New shell with the installed profile proves user-facing PATH and runtime isolation.
     PROJECT.mkdir(exist_ok=True)
-    for package in (*scenario_setup["marketplace_bootstrap_packages"],
-                    *scenario_setup["marketplace_packages"]):
+    commit_pin_version: str | None = None
+    for package in scenario_setup["marketplace_bootstrap_packages"]:
         if mode == "secured":
             login, _ = run(kb_login_shell(["auth", "login", "--gateway-url", "http://127.0.0.1:4000",
                                           "--email", env["KB_JOURNEY_ADMIN_EMAIL"], "--password-stdin"]),
@@ -1666,6 +1685,7 @@ def _main(*, update_variant_runner=None):
                            input_text=env["KB_JOURNEY_ADMIN_PASSWORD"] + "\n")
             if not require(login, step="secured runner administrator login"):
                 return finalize_run(False)
+            acquire_marketplace_http_session(env)
         install, _ = run(kb_login_shell(["marketplace", "install", package, "--scope", "platform", "--json"]),
                          env=env, cwd=PROJECT, timeout=300)
         if not require(install, step=f"marketplace install {package} for runner scenario"):
@@ -1675,12 +1695,94 @@ def _main(*, update_variant_runner=None):
                                  env=env, cwd=PROJECT, timeout=90)
         if not require(bootstrap_help, step="author plugin hub publish discovery"):
             return finalize_run(False)
-        update_args = [launcher, "update", "--json", "--index",
-                       str(HOME / ".local/share/kb-create/release-index.json"),
-                       "--platform-root", str(PLATFORM), "--registry", REGISTRY, *marketplace_flags]
-        registry_configured, _ = run(update_args, env=env, cwd=PROJECT, timeout=1200)
-        if not require(registry_configured, step="enable Registry source after npm author bootstrap"):
+        if SCENARIO == "commit":
+            from marketplace_steps import seed_commit_registry_fixture
+            try:
+                candidate_index = json.loads((HOME / ".local/share/kb-create/release-index.json").read_text())
+                commit_pin = next(item for item in candidate_index.get("plugins", [])
+                                  if item.get("package") == "@kb-labs/commit")
+                commit_pin_version = commit_pin.get("version")
+                seed_commit_registry_fixture(PLATFORM, env, run_command,
+                                             expected_version=commit_pin_version)
+            except Exception as error:
+                fail(f"isolated Marketplace Registry seed failed before plugin install: {error}")
+                return finalize_run(False)
+    for package in scenario_setup["marketplace_packages"]:
+        if mode == "secured":
+            login, _ = run(kb_login_shell(["auth", "login", "--gateway-url", "http://127.0.0.1:4000",
+                                          "--email", env["KB_JOURNEY_ADMIN_EMAIL"], "--password-stdin"]),
+                           env=env, cwd=PROJECT, timeout=90,
+                           input_text=env["KB_JOURNEY_ADMIN_PASSWORD"] + "\n")
+            if not require(login, step="secured runner administrator login"):
+                return finalize_run(False)
+            acquire_marketplace_http_session(env)
+        install, _ = run(kb_login_shell(["marketplace", "install", package, "--scope", "platform", "--json"]),
+                         env=env, cwd=PROJECT, timeout=300)
+        if not require(install, step=f"marketplace install {package} for runner scenario"):
             return finalize_run(False)
+        if package == "@kb-labs/commit" and SCENARIO == "commit":
+            try:
+                payload = decode_ux_success_result(read_ux_cli_result(install))
+            except (json.JSONDecodeError, ValueError) as error:
+                fail(f"Registry-seeded Commit install returned invalid Marketplace JSON: {error}")
+                return finalize_run(False)
+            installed = payload.get("installed") if isinstance(payload, dict) else None
+            record = next((item for item in installed if isinstance(item, dict)
+                           and item.get("id") == package), None) if isinstance(installed, list) else None
+            if (not isinstance(record, dict) or record.get("source") != "registry"
+                    or record.get("signatureStatus") != "verified"
+                    or not commit_pin_version or record.get("version") != commit_pin_version):
+                fail("Registry-seeded Commit install did not report Registry source and verified signature")
+                return finalize_run(False)
+            install_marketplace_ok = True
+            lock_path = PLATFORM_CURRENT / ".kb" / "marketplace.lock"
+            try:
+                platform_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+                lock_entry = platform_lock.get("plugins", {}).get(package)
+            except (OSError, json.JSONDecodeError) as error:
+                fail(f"platform Marketplace lock is unavailable after the Registry install: {error}")
+                return finalize_run(False)
+            if (not isinstance(lock_entry, dict) or lock_entry.get("version") != commit_pin_version
+                    or lock_entry.get("marketplaceSource") != "registry"
+                    or lock_entry.get("signatureStatus") != "verified"
+                    or not lock_entry.get("integrity")):
+                fail("platform Marketplace lock did not pin the verified Registry Commit artifact")
+                return finalize_run(False)
+            listed, _ = run(kb_login_shell(["marketplace", "plugins", "list", "--scope", "platform", "--json"]),
+                            env=env, cwd=PROJECT, timeout=90)
+            try:
+                list_payload = decode_ux_success_result(read_ux_cli_result(listed))
+                entries = list_payload.get("entries") if isinstance(list_payload, dict) else None
+                listed_entry = next((item for item in entries if isinstance(item, dict)
+                                     and item.get("id") == package), None) if isinstance(entries, list) else None
+            except (json.JSONDecodeError, ValueError):
+                listed_entry = None
+            if (listed.returncode != 0 or not isinstance(listed_entry, dict)
+                    or listed_entry.get("version") != commit_pin_version
+                    or listed_entry.get("source") != "marketplace"
+                    or listed_entry.get("marketplaceSource") != "registry"
+                    or listed_entry.get("signatureStatus") != "verified"):
+                fail("Marketplace plugin list did not show the pinned verified Registry Commit version")
+                return finalize_run(False)
+    if SCENARIO == "commit":
+        post_marketplace_status, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"],
+                                         env=env, timeout=120)
+        try:
+            status_payload = decode_ux_success_result(read_kb_create_cli_result("status", post_marketplace_status))
+            status_host = status_payload.get("host", {})
+            install_running = (post_marketplace_status.returncode == 0
+                               and status_payload.get("installed") is True
+                               and status_payload.get("running") is True
+                               and status_payload.get("reachable") is True
+                               and status_host.get(layout_value('sharedStateDirectory')) == "running")
+        except (json.JSONDecodeError, ValueError, AttributeError):
+            install_running = False
+        record_case("clean install leaves a running host and installs pinned Registry Commit",
+                    install_running and install_plan_summary_ok and install_marketplace_ok
+                    and (mode != "secured" or first_admin_shown_once),
+                    "install did not leave a reachable host, install the verified Commit package from the isolated Registry, return its resolved plan, or disclose the secured credential exactly once",
+                    cases=["PC-001.2"], requires=("step:candidate provenance",),
+                    runners=("agent:commit", "agent-secured:commit"))
     run(["git", "init", "-q"], env=env, cwd=PROJECT)
     (PROJECT / "note.txt").write_text("journey first value\n")
     run(["git", "add", "note.txt"], env=env, cwd=PROJECT)
@@ -2009,7 +2111,8 @@ def _main(*, update_variant_runner=None):
                     update_index=container_update_indexes["update"],
                     jump_index=container_update_indexes["jump"], canary_index=canary_index,
                     platform_root=PLATFORM, secret_value=installer_secret, registry=REGISTRY,
-                    run_command=installer_command_for_fixture)
+                    run_command=installer_command_for_fixture,
+                    marketplace_flags=marketplace_install_flags(env))
                 register_supplied_password_absence_step(
                     fixture_journey, Path(env["HOME"]), installer_secret)
                 return fixture_journey
