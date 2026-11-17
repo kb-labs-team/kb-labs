@@ -831,6 +831,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     "platformRoot": args[args.index("--platform-root") + 1],
                     "providerPreferences": {"cache": "state-broker"},
                     "scenarioId": "commit",
+                    "marketplaceInstallSpecs": ["@kb-labs/commit@1.2.3"],
                 }, "artifacts": []}, "marketplaceInstalls": [
                     {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
                 ]}

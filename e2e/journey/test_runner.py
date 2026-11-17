@@ -729,10 +729,15 @@ thread.join()
         receipt_path.parent.mkdir(parents=True)
         install_receipt = {
             "id": "receipt-main",
-            "plan": {"request": {"scenarioId": "commit"},
-                     "serviceGraph": {"platformVersion": "2.120.1"},
-                     "artifacts": [{"id": "fixture-package", "kind": "plugin",
-                                    "package": "@kb-labs/fixture-package", "version": "1.0.0"}]},
+            "plan": {
+                "request": {
+                    "scenarioId": "commit",
+                    "marketplaceInstallSpecs": ["@kb-labs/commit@1.0.0"],
+                },
+                "serviceGraph": {"platformVersion": "2.120.1"},
+                "artifacts": [{"id": "fixture-package", "kind": "plugin",
+                               "package": "@kb-labs/fixture-package", "version": "1.0.0"}],
+            },
             "marketplaceInstalls": [{"id": "@kb-labs/commit", "spec": "@kb-labs/commit@1.0.0",
                                      "version": "1.0.0", "source": "registry"}],
         }

@@ -243,8 +243,12 @@ test('reusable installer workflow runs a native macOS install from the candidate
   assert.deepEqual(workflow.jobs.journey.strategy.matrix.os, ['ubuntu-latest']);
   const native = workflow.jobs.native_macos;
   assert.equal(native['runs-on'], 'macos-latest');
+  const pnpmSetup = native.steps.find((step) => step.uses?.startsWith('pnpm/action-setup@'));
+  assert.ok(pnpmSetup, 'the native smoke must install pnpm before the CLI can install Marketplace packages');
+  assert.equal(pnpmSetup.with.run_install, false);
   const nodeSetup = native.steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
   assert.equal(nodeSetup.with['node-version-file'], 'package.json');
+  assert.ok(native.steps.indexOf(pnpmSetup) < native.steps.indexOf(nodeSetup));
   const coverage = workflow.jobs.coverage;
   const coverageNodeSetup = coverage.steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
   assert.equal(coverageNodeSetup.with['node-version-file'], 'package.json');
