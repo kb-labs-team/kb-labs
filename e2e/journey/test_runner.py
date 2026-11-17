@@ -100,10 +100,22 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
         self.assertNotIn("never-serialize-this-value", " ".join(flags))
 
     def test_clean_install_requires_the_marketplace_commit_receipt(self):
-        self.assertIsNotNone(commit_marketplace_install_record({"marketplaceInstalls": [
-            {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
-        ]}))
-        self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": []}))
+        self.assertIsNotNone(commit_marketplace_install_record({
+            "plan": {"request": {"marketplaceInstallSpecs": ["@kb-labs/commit"]}},
+            "marketplaceInstalls": [
+                {"spec": "@kb-labs/commit", "id": "@kb-labs/commit", "version": "1.2.3", "source": "npm"},
+            ],
+        }))
+        self.assertIsNotNone(commit_marketplace_install_record({
+            "plan": {"request": {"marketplaceInstallSpecs": ["@kb-labs/commit@1.2.3"]}},
+            "marketplaceInstalls": [
+                {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+            ],
+        }))
+        self.assertIsNone(commit_marketplace_install_record({
+            "plan": {"request": {"marketplaceInstallSpecs": ["@kb-labs/commit"]}},
+            "marketplaceInstalls": [],
+        }))
         self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": [
             {"spec": "@kb-labs/commit", "id": "@kb-labs/other", "primaryKind": "plugin"},
         ]}))

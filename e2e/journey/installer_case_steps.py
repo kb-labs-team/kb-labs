@@ -119,10 +119,15 @@ def _candidate_package_records(index: dict) -> list[dict]:
 
 def commit_marketplace_install_record(receipt: dict) -> dict | None:
     """Return the resolved Marketplace record for the requested Commit scenario plugin."""
+    specs = receipt.get("plan", {}).get("request", {}).get("marketplaceInstallSpecs", [])
+    requested_spec = next((spec for spec in specs if isinstance(spec, str)
+                           and (spec == "@kb-labs/commit" or spec.startswith("@kb-labs/commit@"))), None)
+    if requested_spec is None:
+        return None
     installs = receipt.get("marketplaceInstalls", [])
     return next((entry for entry in installs
                  if isinstance(entry, dict) and entry.get("id") == "@kb-labs/commit"
-                 and entry.get("spec") == f"@kb-labs/commit@{entry.get('version')}"
+                 and entry.get("spec") == requested_spec
                  and entry.get("version") and entry.get("source")), None)
 
 
@@ -132,7 +137,7 @@ def assert_commit_marketplace_receipt(receipt: dict) -> None:
     if request.get("scenarioId") != "commit":
         raise RuntimeError("Commit scenario receipt does not identify the commit scenario")
     if not commit_marketplace_install_record(receipt):
-        raise RuntimeError("Commit scenario receipt omitted requested spec, Marketplace source, or resolved version")
+        raise RuntimeError("Commit scenario receipt omitted the Marketplace requested spec, source, or resolved version")
     if any(artifact.get("id") == "@kb-labs/commit" for artifact in receipt.get("plan", {}).get("artifacts", [])):
         raise RuntimeError("Commit Marketplace identity was incorrectly resolved from the release index")
 

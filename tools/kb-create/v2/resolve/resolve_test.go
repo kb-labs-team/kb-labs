@@ -957,6 +957,34 @@ func TestScenarioMarketplaceUsesReleaseIndexPin(t *testing.T) {
 	t.Fatal("fixture missing commit")
 }
 
+// case: PC-001.4, S-268.9
+func TestScenarioMarketplacePreservesOriginalSpecWithoutReleaseIndexPin(t *testing.T) {
+	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Plugins = nil
+	source, err = catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const spec = "@kb-labs/commit"
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default",
+		Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{spec}}, source)
+	if err != nil {
+		t.Fatalf("scenario Marketplace plugin without a release-index pin was rejected: %v", err)
+	}
+	if got := plan.Request.MarketplaceInstallSpecs; len(got) != 1 || got[0] != spec {
+		t.Fatalf("Marketplace install specs = %#v, want original scenario spec %q", got, spec)
+	}
+	for _, artifact := range plan.Artifacts {
+		if artifact.ID == spec || artifact.Package == spec {
+			t.Fatalf("Marketplace plugin entered sealed platform artifacts: %#v", artifact)
+		}
+	}
+}
+
 func TestScenarioMarketplacePreservesReleaseIndexIdentityWhenPackageDiffers(t *testing.T) {
 	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
 	if err != nil {
