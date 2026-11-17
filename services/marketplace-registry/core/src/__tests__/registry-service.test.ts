@@ -108,6 +108,53 @@ describe('RegistryService.publish', () => {
     expect(entry?.versions[0]?.version).toBe('1.0.0');
   });
 
+  // case: S-026.6
+  it('rejects a second namespace publishing an existing package without changing its versions or tarballs', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
+
+    const intruderTarball = Buffer.from('intruder package bytes');
+    const err = await svc.publish(
+      intruderTarball,
+      makePkg({ version: '2.0.0' }),
+      'kirill',
+      'ns-other',
+    ).catch(error => error);
+
+    expect(err).toMatchObject({ code: 'FORBIDDEN' });
+    const entry = await svc.getEntry('kirill', 'my-plugin');
+    expect(entry?.authorNamespaceId).toBe('ns-kirill');
+    expect(entry?.versions.map(version => version.version)).toEqual(['1.0.0']);
+    await expect(svc.getTarball('kirill', 'my-plugin', '2.0.0')).rejects.toMatchObject({
+      code: 'VERSION_NOT_FOUND',
+    });
+    await expect(svc.getTarball('kirill', 'my-plugin', '1.0.0')).resolves.toMatchObject({
+      tarball: SMALL_TARBALL,
+    });
+  });
+
+  // case: S-026.6
+  it('serializes owner authorization with publication writes for competing namespaces', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
+    const ownerTarball = Buffer.from('owner version bytes');
+    const intruderTarball = Buffer.from('intruder version bytes');
+
+    const results = await Promise.allSettled([
+      svc.publish(intruderTarball, makePkg({ version: '2.0.0' }), 'kirill', 'ns-other'),
+      svc.publish(ownerTarball, makePkg({ version: '2.0.0' }), 'kirill', 'ns-kirill'),
+    ]);
+
+    expect(results[0]?.status).toBe('rejected');
+    expect(results[1]?.status).toBe('fulfilled');
+    const entry = await svc.getEntry('kirill', 'my-plugin');
+    expect(entry?.authorNamespaceId).toBe('ns-kirill');
+    expect(entry?.versions.map(version => version.version)).toEqual(['1.0.0', '2.0.0']);
+    await expect(svc.getTarball('kirill', 'my-plugin', '2.0.0')).resolves.toMatchObject({
+      tarball: ownerTarball,
+    });
+  });
+
   // case: S-026.5
   it('RS-02: version already exists → throws VERSION_ALREADY_EXISTS without replacing bytes', async () => {
     const svc = makeService();
