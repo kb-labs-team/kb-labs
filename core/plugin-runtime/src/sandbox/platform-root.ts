@@ -8,7 +8,9 @@ export async function resolveExecutionPlatformRoot(
   explicitRoot: string | undefined,
   moduleUrl: string,
 ): Promise<string | undefined> {
-  if (explicitRoot) return realpath(explicitRoot);
+  if (explicitRoot) {
+    return realpath(explicitRoot);
+  }
   const result = await resolvePlatformRoot({
     moduleUrl,
     startDir: dirname(fileURLToPath(moduleUrl)),
