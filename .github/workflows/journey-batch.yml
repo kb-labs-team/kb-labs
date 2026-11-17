@@ -26,7 +26,7 @@ on:
       - 'pnpm-workspace.yaml'
 
 concurrency:
-  group: journey-batch
+  group: journey-batch-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
