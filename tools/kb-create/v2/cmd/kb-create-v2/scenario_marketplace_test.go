@@ -13,9 +13,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/secrets"
 )
 
@@ -244,12 +246,13 @@ func TestScenarioMarketplaceReceiptJoinsRequestedSpecAndResolvedManifestIdentity
 		t.Fatalf("Marketplace receipt = %#v, %v", readBack.MarketplaceInstalls, err)
 	}
 	result := readBack.MarketplaceInstalls[0]
-	if result.Spec != "@kb-labs/commit" || result.ID != "@kb-labs/commit" || result.Source != "npm" {
+	if result.Spec != "@kb-labs/commit" || result.ID != "@kb-labs/commit" || result.Version != "2.1.0" || result.Source != "npm" {
 		t.Fatalf("Marketplace receipt result = %#v", result)
 	}
 }
 
-func TestScenarioMarketplaceFailureKeepsVerifiedInstallReceiptAndHost(t *testing.T) {
+// case: S-268.13, PC-001.4
+func TestScenarioMarketplaceFailureWithoutReleaseIndexPinKeepsReceiptAndHost(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/health" {
 			writer.WriteHeader(http.StatusOK)
@@ -275,11 +278,26 @@ func TestScenarioMarketplaceFailureKeepsVerifiedInstallReceiptAndHost(t *testing
 	defer server.Close()
 
 	root := t.TempDir()
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Plugins = nil
+	source, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := resolve.Plan(contracts.InstallRequest{
+		PlatformRoot: root, ScenarioID: "commit", ServiceProfile: "default",
+		Platform:                contracts.VersionSelector{Channel: contracts.ChannelStable},
+		MarketplaceInstallSpecs: []string{"@kb-labs/commit"},
+	}, source)
+	if err != nil {
+		t.Fatalf("plan rejected Marketplace-owned scenario plugin without a release-index pin: %v", err)
+	}
+	if got := plan.Request.MarketplaceInstallSpecs; len(got) != 1 || got[0] != "@kb-labs/commit" {
+		t.Fatalf("planned Marketplace specs = %#v; want original scenario spec", got)
+	}
 	installed := contracts.InstallReceipt{
 		Schema: contracts.ReceiptSchema, ID: "verified-receipt",
-		Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{
-			PlatformRoot: root, ScenarioID: "commit", MarketplaceInstallSpecs: []string{"@kb-labs/commit"},
-		}},
+		Plan:         plan,
 		Verification: contracts.Verification{HostHealthURL: server.URL + "/health"},
 	}
 	if err := receipt.Write(root, installed); err != nil {

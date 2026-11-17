@@ -957,7 +957,7 @@ func TestScenarioMarketplaceUsesReleaseIndexPin(t *testing.T) {
 	t.Fatal("fixture missing commit")
 }
 
-// case: S-268.9
+// case: PC-001.4, S-268.9
 func TestScenarioMarketplacePreservesOriginalSpecWithoutReleaseIndexPin(t *testing.T) {
 	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
 	if err != nil {

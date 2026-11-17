@@ -853,7 +853,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             ])
 
     def test_commit_scenario_receipt_rejects_release_index_plugin(self):
-        receipt = {"plan": {"request": {"scenarioId": "commit"}, "artifacts": [
+        receipt = {"plan": {"request": {"scenarioId": "commit", "marketplaceInstallSpecs": ["@kb-labs/commit@1.2.3"]}, "artifacts": [
             {"id": "@kb-labs/commit"},
         ]}, "marketplaceInstalls": [
             {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
@@ -862,10 +862,16 @@ class InstallerCaseStepsTest(unittest.TestCase):
             installer_case_steps.assert_commit_marketplace_receipt(receipt)
 
     def test_commit_scenario_receipt_requires_requested_spec(self):
-        receipt = {"plan": {"request": {"scenarioId": "commit"}, "artifacts": []},
+        receipt = {"plan": {"request": {"scenarioId": "commit", "marketplaceInstallSpecs": ["@kb-labs/commit"]}, "artifacts": []},
                    "marketplaceInstalls": [{"id": "@kb-labs/commit", "version": "1.2.3", "source": "npm"}]}
         with self.assertRaisesRegex(RuntimeError, "requested spec"):
             installer_case_steps.assert_commit_marketplace_receipt(receipt)
+
+    def test_commit_scenario_receipt_accepts_original_marketplace_spec(self):
+        receipt = {"plan": {"request": {"scenarioId": "commit", "marketplaceInstallSpecs": ["@kb-labs/commit"]}, "artifacts": []},
+                   "marketplaceInstalls": [{"spec": "@kb-labs/commit", "id": "@kb-labs/commit",
+                                            "version": "2.120.1", "source": "npm"}]}
+        installer_case_steps.assert_commit_marketplace_receipt(receipt)
 
     def test_apply_shim_owner_uses_the_canonical_platform_root(self):
         with tempfile.TemporaryDirectory(prefix="journey-apply-shim-owner-") as temp:
