@@ -77,6 +77,20 @@ def copy_sources(dockerfile):
 
 
 class DockerBuildInputsTest(unittest.TestCase):
+    def test_next_build_output_is_excluded_but_deploy_inputs_remain_available(self):
+        rules = dockerignore_rules(ROOT / ".dockerignore")
+        self.assertTrue(is_dockerignored("sites/web/apps/docs/.next/cache/webpack/server-production/0.pack", rules))
+        self.assertTrue(is_dockerignored("sites/web/apps/web/.next/cache/webpack/client-production/0.pack", rules))
+        self.assertFalse(is_dockerignored(".kb/deploy/marketplace-registry-app/node_modules/pkg/index.js", rules))
+        self.assertFalse(is_dockerignored(".journey/deploy/run.example/state-daemon/node_modules/pkg/index.js", rules))
+
+    def test_isolated_registry_deploy_trees_are_included_but_other_journey_state_is_not(self):
+        rules = dockerignore_rules(ROOT / ".dockerignore")
+        self.assertFalse(is_dockerignored(".journey/deploy/run.example/state-daemon/node_modules/pkg/index.js", rules))
+        self.assertFalse(is_dockerignored(".journey/deploy/run.example/marketplace-registry-app/dist/bootstrap.js", rules))
+        self.assertTrue(is_dockerignored(".journey/tmp/node_modules/pkg/index.js", rules))
+        self.assertTrue(is_dockerignored(".journey/reports/registry-secret.txt", rules))
+
     def test_copy_sources_are_available_in_the_root_docker_context(self):
         rules = dockerignore_rules(ROOT / ".dockerignore")
         dockerfile = ROOT / "e2e/journey/Dockerfile.runner"

@@ -20,6 +20,13 @@
 **/node_modules
 !.kb/deploy/**/node_modules
 !.kb/deploy/**/node_modules/**
+**/.next
+.journey/**
+!.journey/deploy/
+!.journey/deploy/**
+!.journey/deploy/**/node_modules/**
+!.journey/runner-inputs/
+!.journey/runner-inputs/**
 
 # Build output — same story: excluded broadly, except candidate fixture
 # manifests and the CI-produced deploy artifacts used by Docker builds.
@@ -32,6 +39,8 @@
 !.kb/deploy/**/dist/**
 !.kb/bundle/**/dist
 !.kb/bundle/**/dist/**
+!.journey/deploy/**/dist
+!.journey/deploy/**/dist/**
 
 # Runtime/local-only .kb state — never something an image build should see.
 **/.kb/database

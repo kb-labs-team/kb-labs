@@ -7,9 +7,9 @@ source "$ROOT/e2e/compose-owner.sh"
 source "$ROOT/e2e/journey/candidate-services.sh"
 journey_compose_init "$ROOT"
 trap journey_compose_cleanup EXIT
-OUT="$ROOT/.journey"
-PACKAGES="$ROOT/e2e/packages"
-TAG="journey-candidate"
+OUT="${KB_JOURNEY_CANDIDATE_OUTPUT_ROOT:-$ROOT/.journey}"
+PACKAGES="${KB_JOURNEY_PACKAGES_DIR:-$ROOT/e2e/packages}"
+TAG="${KB_JOURNEY_CANDIDATE_TAG:-journey-candidate}"
 TARGET="$OUT/release/$TAG"
 COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
 
@@ -23,7 +23,7 @@ node "$ROOT/e2e/platform/validate-package-outputs.mjs" --build-outputs "$ROOT"
 
 bash "$ROOT/e2e/journey/stage-runner-inputs.sh"
 
-mkdir -p "$PACKAGES" "$TARGET"
+mkdir -p "$OUT" "$PACKAGES" "$TARGET"
 node "$ROOT/e2e/platform/release-index-package-stage.mjs" --packages-dir "$PACKAGES" --output-dir "$TARGET"
 rm -rf "$TARGET"
 mkdir -p "$TARGET"

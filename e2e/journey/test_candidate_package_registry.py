@@ -61,7 +61,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         )
         return result, operations
 
-    def _start_compose_registry(self, temporary: str) -> tuple[subprocess.CompletedProcess[str], list[str], Path, list[str]]:
+    def _start_compose_registry(self, temporary: str, *, preserve: bool = False) -> tuple[subprocess.CompletedProcess[str], list[str], Path, list[str]]:
         root = Path(temporary)
         workspace = root / "workspace"
         bin_dir = root / "bin"
@@ -106,7 +106,8 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         env = isolated_environment(
             root / "home", bin_dir, required_tools=("bash", "cat"),
             overrides={"FAKE_DOCKER_CALLS": str(calls_path), "FAKE_CLEAR_SCRIPT": str(clear_path),
-                       "FAKE_NODE_ARGS": str(candidate_registry_args)},
+                       "FAKE_NODE_ARGS": str(candidate_registry_args),
+                       **({"KB_JOURNEY_PRESERVE_CANDIDATE_REGISTRY": "1"} if preserve else {})},
         )
         result = subprocess.run(
             ["bash", "-c",
@@ -130,6 +131,15 @@ class CandidatePackageRegistryTests(unittest.TestCase):
         self.assertEqual(node_args[-1], "http://127.0.0.1:49183", node_args)
         self.assertIn("Journey candidate registry: http://127.0.0.1:49666", result.stdout)
         self.assertNotIn("127.0.0.1:4873", result.stdout)
+
+    def test_isolated_candidate_registry_does_not_clear_or_reuse_candidate_metadata(self):
+        with tempfile.TemporaryDirectory(prefix="journey-compose-registry-preserve-") as temporary:
+            result, calls, clear_script, _ = self._start_compose_registry(temporary, preserve=True)
+            clear_content = clear_script.read_text() if clear_script.exists() else ""
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(clear_content)
+        self.assertFalse(any("/verdaccio/storage" in call for call in calls), calls)
+        self.assertTrue(any("up -d --wait verdaccio" in call for call in calls), calls)
 
     def test_candidate_runtime_requires_owner_workspace_source(self):
         with tempfile.TemporaryDirectory(prefix="journey-runtime-no-owner-") as temporary:

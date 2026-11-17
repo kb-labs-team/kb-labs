@@ -406,17 +406,17 @@ if (config.platform !== undefined || !configResult.ok) {
                 "KB_JOURNEY_PUBLISH_PACKAGES_HOST_DIR": str(package_root),
                 "KB_JOURNEY_PUBLISH_PACKAGES_CONTAINER_DIR": "/journey-packages",
             })
-        mounts = {
-            (service_name, mount["target"]): Path(mount["source"]).resolve()
-            for service_name, service in rendered["services"].items()
-            for mount in service.get("volumes", [])
-            if mount.get("type") == "bind"
-        }
-        self.assertEqual(mounts[("origin", "/release")], release_root.resolve())
-        self.assertEqual(mounts[("runner", "/summary")], report_root.resolve())
-        self.assertEqual(mounts[("publisher", "/journey-packages")], package_root.resolve())
-        self.assertEqual(rendered["services"]["publisher"]["environment"]["PUBLISH_PACKAGES_DIR"],
-                         "/journey-packages")
+            mounts = {
+                (service_name, mount["target"]): Path(mount["source"]).resolve()
+                for service_name, service in rendered["services"].items()
+                for mount in service.get("volumes", [])
+                if mount.get("type") == "bind"
+            }
+            self.assertEqual(mounts[("origin", "/release")], release_root.resolve())
+            self.assertEqual(mounts[("runner", "/summary")], report_root.resolve())
+            self.assertEqual(mounts[("publisher", "/journey-packages")], package_root.resolve())
+            self.assertEqual(rendered["services"]["publisher"]["environment"]["PUBLISH_PACKAGES_DIR"],
+                             "/journey-packages")
 
     # case: S-262.1
     def test_local_and_hosted_journey_use_the_same_compose_file_list(self):

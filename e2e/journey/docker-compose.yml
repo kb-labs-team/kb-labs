@@ -6,7 +6,7 @@ services:
     image: python:3.12-alpine
     command: ["python3", "-m", "http.server", "8080", "--directory", "/release"]
     volumes:
-      - ../.journey/release:/release:ro
+      - ${KB_JOURNEY_CANDIDATE_RELEASE_ROOT:-../.journey/release}:/release:ro
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080', timeout=2)"]
       interval: 1s
@@ -69,14 +69,14 @@ services:
       GITHUB_STEP_SUMMARY: /tmp/journey-summary.md
       KB_JOURNEY_SUMMARY: /summary/journey-summary.md
     volumes:
-      - ../.journey/reports:/summary
+      - ${KB_JOURNEY_REPORT_ROOT:-../.journey/reports}:/summary
       - ${KB_JOURNEY_WORKSPACE_SOURCE:?run journey_compose_init "$$ROOT" first}:/opt/kb-workspace:ro
       - ./oidc-idp/certs:/e2e-oidc-certs:ro
     networks: [journey]
     init: true
 
   idp-stub:
-    image: kb-e2e-oidc-idp:1.0.0
+    image: ${KB_JOURNEY_IDP_IMAGE:-kb-e2e-oidc-idp:1.0.0}
     build:
       context: ./oidc-idp
       dockerfile: Dockerfile

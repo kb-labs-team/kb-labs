@@ -43,10 +43,10 @@ RUNNERS = {
         "service-secured:explore", "human", "explore", "secured", "secured", "nightly",
         ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), claim_family="service", batch_default=True),
     "service-marketplace-registry:local": Runner(
-        "service-marketplace-registry:local", "agent", "explore", "default", "local", "nightly",
+        "service-marketplace-registry:local", "agent", "marketplace-registry", "default", "local", "nightly",
         ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), lane=MARKETPLACE_REGISTRY_LANE),
     "service-marketplace-registry:secured": Runner(
-        "service-marketplace-registry:secured", "human", "explore", "secured", "secured", "nightly",
+        "service-marketplace-registry:secured", "human", "marketplace-registry", "secured", "secured", "nightly",
         ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), lane=MARKETPLACE_REGISTRY_LANE),
 }
 RUNNER_GROUPS = {
