@@ -420,7 +420,11 @@ jobs:
       - run: tar xf full-dist-artifacts.tar
       - run: pnpm install --frozen-lockfile
       - name: Lint workflow definitions
-        run: pnpm kb workflow lint --path .kb/workflows --strict
+        run: |
+          pnpm kb project add "$GITHUB_WORKSPACE"
+          pnpm kb workflow lint --path .kb/workflows --strict
+        env:
+          KB_HOME: ${{ runner.temp }}/kb-home
       - name: Devkit workspace checks (structure, dependencies, boundaries)
         run: ./tools/kb-devkit/kb-devkit check
 

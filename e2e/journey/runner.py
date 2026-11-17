@@ -512,6 +512,14 @@ def handle_json_install_failure(operation: str, result: CompletedProcess) -> boo
         return False
     refusal = parse_install_refusal(result)
     if refusal is None:
+        diagnostic = (
+            "kb-create install --json failed without a parseable product error envelope\n"
+            f"exit code: {result.returncode}\n"
+            f"stdout tail:\n{(result.stdout or '')[-3000:]}\n"
+            f"stderr tail:\n{(result.stderr or '')[-3000:]}"
+        )
+        write_journey_diagnostic(diagnostic, env=LAST_COMMAND_ENV)
+        print_report_text(diagnostic, env=LAST_COMMAND_ENV, stream=sys.stderr, flush=True)
         fail("kb-create install --json: failed without a parseable product error envelope")
         return True
     message = (f"{refusal['code']}: {refusal['message']}; "

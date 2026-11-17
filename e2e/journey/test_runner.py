@@ -10,7 +10,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from contextlib import ExitStack, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1615,6 +1615,34 @@ thread.join()
         self.assertIn(envelope["cause"], report.first_failure["message"])
         self.assertIn(envelope["hint"], report.first_failure["message"])
         self.assertEqual(first_failure, f"kb-create install --json: {envelope['code']}: {envelope['message']}; cause={envelope['cause']}; hint={envelope['hint']}")
+
+    def test_json_install_unparseable_failure_reports_bounded_redacted_output(self):
+        runner = importlib.import_module("runner")
+        secret = "journey-registry-token-value"
+        with tempfile.TemporaryDirectory(prefix="journey-install-unparseable-") as directory:
+            summary = Path(directory) / "journey-summary.md"
+            env = {"KB_JOURNEY_MARKETPLACE_TOKEN": secret}
+            process = subprocess.CompletedProcess(
+                ["kb-create", "install", "--json"], 1,
+                stdout=f"registry refused request with credential {secret}\n", stderr="raw transport failure\n",
+            )
+            stderr = io.StringIO()
+            with patch.object(runner, "LAST_COMMAND_ENV", env), \
+                    patch.object(runner, "FIRST_FAILURE", ""), \
+                    patch.object(runner, "journey_value",
+                                 side_effect=lambda name, default=None: str(summary) if name == "KB_JOURNEY_SUMMARY" else default), \
+                    redirect_stderr(stderr):
+                handled = runner.handle_json_install_failure("install", process)
+
+            diagnostic = summary.with_name("journey-diagnostics.log").read_text(encoding="utf-8")
+            self.assertTrue(handled)
+            self.assertIn("registry refused request", diagnostic)
+            self.assertIn("raw transport failure", diagnostic)
+            self.assertIn("[REDACTED]", diagnostic)
+            self.assertNotIn(secret, diagnostic)
+            self.assertIn("stdout tail", stderr.getvalue())
+            self.assertIn("[REDACTED]", stderr.getvalue())
+            self.assertNotIn(secret, stderr.getvalue())
 
 class ProjectRegistrationContractTests(unittest.TestCase):
     def test_project_registration_accessor_returns_a_typed_value_or_state_failure(self):

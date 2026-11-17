@@ -77,3 +77,12 @@ test('every devkit test job uploads its task logs when it fails', () => {
     assert.match(upload.with.name, new RegExp(id));
   }
 });
+
+test('workflow lint registers the checkout in an isolated project registry first', () => {
+  const step = (ciPr.jobs['devkit-checks'].steps ?? []).find((s) => s.name === 'Lint workflow definitions');
+  assert.ok(step, 'the workflow-definition lint step must exist');
+  assert.equal(step.env?.KB_HOME, '${{ runner.temp }}/kb-home');
+  const commands = step.run.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  assert.match(commands[0], /^pnpm kb project add "\$GITHUB_WORKSPACE"$/);
+  assert.match(commands[1], /^pnpm kb workflow lint --path \.kb\/workflows --strict$/);
+});
