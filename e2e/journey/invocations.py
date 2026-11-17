@@ -40,14 +40,15 @@ _LINUX_READ_SYSCALLS = {"x86_64": 0, "amd64": 0, "aarch64": 63, "arm64": 63}
 MAX_ERROR_LOG_BYTES = 1024 * 1024
 
 
-def _parse_proc_stat(stat: str) -> tuple[int, int, int, str] | None:
+def _parse_proc_stat(stat: str) -> tuple[int, int, int, str, int] | None:
     fields = stat.rpartition(")")[2].split()
-    if len(fields) < 5:
+    if len(fields) < 20:
         return None
-    return int(fields[1]), int(fields[3]), int(fields[4]), fields[0]  # parent, session, tty, state
+    # Include starttime (field 22) so procfs reads can detect PID/TID reuse.
+    return int(fields[1]), int(fields[3]), int(fields[4]), fields[0], int(fields[19])
 
 
-def _proc_stat(pid: int) -> tuple[int, int, int, str] | None:
+def _proc_stat(pid: int) -> tuple[int, int, int, str, int] | None:
     try:
         stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
     except FileNotFoundError:
@@ -59,13 +60,13 @@ def _proc_stat(pid: int) -> tuple[int, int, int, str] | None:
     return _parse_proc_stat(stat)
 
 
-def _pty_reader_pids(root_pid: int) -> list[int]:
+def _pty_reader_pids(root_pid: int) -> list[tuple[int, int]]:
     proc = Path("/proc")
     root = _proc_stat(root_pid)
     if root is None:
         return []
-    pids = {root_pid}
-    parent_by_pid: dict[int, int] = {}
+    pids = {root_pid: root[4]}
+    parent_by_pid: dict[int, tuple[int, int]] = {}
     for entry in proc.iterdir():
         if not entry.name.isdecimal():
             continue
@@ -75,15 +76,15 @@ def _pty_reader_pids(root_pid: int) -> list[int]:
         except PtyReadinessUnsupported:
             continue
         if details is not None:
-            parent_by_pid[pid] = details[0]
+            parent_by_pid[pid] = details[0], details[4]
     changed = True
     while changed:
         changed = False
-        for pid, parent in parent_by_pid.items():
+        for pid, (parent, starttime) in parent_by_pid.items():
             if parent in pids and pid not in pids:
-                pids.add(pid)
+                pids[pid] = starttime
                 changed = True
-    return sorted(pids)
+    return sorted(pids.items())
 
 
 def _proc_status_diagnostic(pid: int | str) -> str:
@@ -135,23 +136,36 @@ def _linux_terminal_reader(pid: int, terminal_path: str) -> tuple[int, int, str]
     except OSError as error:
         raise PtyReadinessUnsupported(f"Linux procfs process state is unavailable: {error}") from error
     terminal_device = (os.major(terminal_stat.st_rdev), os.minor(terminal_stat.st_rdev))
-    for child_pid in pids:
+    for child_pid, snapshot_starttime in pids:
         details = _proc_stat(child_pid)
-        if details is None:
+        if (details is None or details[3] == "Z"
+                or details[4] != snapshot_starttime):
             continue
-        _, session_id, controlling_tty, _ = details
+        _, session_id, controlling_tty, _, _ = details
         if (session_id != pid
                 or _decode_linux_device_number(controlling_tty) != terminal_device):
             continue
         try:
             if os.readlink(f"/proc/{child_pid}/fd/0") != terminal_path:
                 continue
+            current = _proc_stat(child_pid)
+            if (current is None or current[4] != snapshot_starttime
+                    or current[4] != details[4] or current[3] == "Z"):
+                continue
             tasks = Path(f"/proc/{child_pid}/task").iterdir()
             for task in tasks:
-                task_state = _parse_proc_stat(Path(task, "stat").read_text(encoding="ascii"))
+                task_stat_path = Path(task, "stat")
+                task_state = _parse_proc_stat(task_stat_path.read_text(encoding="ascii"))
                 if task_state is None or task_state[3] not in {"S", "D"}:
                     continue
                 syscall = Path(task, "syscall").read_text(encoding="ascii").split()
+                task_state_after = _parse_proc_stat(task_stat_path.read_text(encoding="ascii"))
+                process_after = _proc_stat(child_pid)
+                if (task_state_after is None or task_state_after[4] != task_state[4]
+                        or task_state_after[3] not in {"S", "D"}
+                        or process_after is None or process_after[4] != details[4]
+                        or process_after[3] == "Z"):
+                    continue
                 if len(syscall) >= 2:
                     try:
                         is_terminal_read = (int(syscall[0], 10) == read_syscall
@@ -163,6 +177,13 @@ def _linux_terminal_reader(pid: int, terminal_path: str) -> tuple[int, int, str]
         except FileNotFoundError:
             continue
         except PermissionError as error:
+            # The process can exit after Popen.poll() and before this procfs
+            # scan. A zombie cannot be blocked on terminal input; changed
+            # starttime means the PID now refers to a different process.
+            current = _proc_stat(child_pid)
+            if (current is None or current[4] != snapshot_starttime
+                    or current[4] != details[4] or current[3] == "Z"):
+                continue
             raise PtyReadinessUnsupported(
                 "Linux procfs syscall state is not readable with this user's permissions; "
                 f"runner_uid={os.getuid()},runner_gid={os.getgid()};"
