@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { summarizeRootClosure, summarizeTaskRows, unwrapCliEnvelope } from './metrics.mjs';
+import { describeCliFailure, summarizeRootClosure, summarizeTaskRows, unwrapCliEnvelope } from './metrics.mjs';
 
 test('unwraps the CLI envelope and validates scheduled task rows', () => {
   const payload = unwrapCliEnvelope({
     ok: true,
     status: 'success',
-    json: {
+    data: {
       elapsed: '1s',
       summary: { scheduled: 2, passed: 2, failed: 0, cached: 1, blocked: 0, notAffected: 0 },
       results: [
@@ -28,12 +28,26 @@ test('unwraps the CLI envelope and validates scheduled task rows', () => {
 
 test('fails closed on bare, unsuccessful, empty-task, and inconsistent responses', () => {
   assert.throws(() => unwrapCliEnvelope({ results: [], summary: { scheduled: 0 } }), /invalid or unsuccessful/);
-  assert.throws(() => unwrapCliEnvelope({ ok: false, json: {} }), /invalid or unsuccessful/);
-  assert.throws(() => unwrapCliEnvelope({ ok: true, json: { results: [], summary: { scheduled: 0 } } }), /no task results/);
+  assert.throws(() => unwrapCliEnvelope({ ok: false, data: {} }), /invalid or unsuccessful/);
+  assert.throws(() => unwrapCliEnvelope({ ok: true, data: { results: [], summary: { scheduled: 0 } } }), /no task results/);
   assert.throws(() => unwrapCliEnvelope({
     ok: true,
-    json: { elapsed: '1s', results: [{}], summary: { scheduled: 2, blocked: 0, notAffected: 0 } },
+    data: { elapsed: '1s', results: [{}], summary: { scheduled: 2, blocked: 0, notAffected: 0 } },
   }), /task count mismatch/);
+});
+
+test('reports safe diagnostic context from the CLI failure envelope', () => {
+  const failure = describeCliFailure({
+    ok: false,
+    error: {
+      code: 'KB_DEVKIT_TASK_FAILED',
+      message: 'Task failed with TOKEN=secret-value',
+      hint: 'Retry with https://name:password@example.test and {"apiKey":"hidden"}',
+    },
+    data: { results: [{ Stderr: 'do not print this' }] },
+  });
+  assert.equal(failure, 'KB_DEVKIT_TASK_FAILED: Task failed with TOKEN=[REDACTED] — Retry with https://[REDACTED]@example.test and {"apiKey":"[REDACTED]"}');
+  assert.doesNotMatch(failure, /secret-value|password|hidden|do not print this/);
 });
 
 test('marks one cache hit among many rows partial, never warm', () => {

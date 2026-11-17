@@ -1,8 +1,9 @@
 export function unwrapCliEnvelope(envelope) {
-  if (!envelope || envelope.ok !== true || !envelope.json || typeof envelope.json !== 'object') {
+  // clikit/result.Render serializes successful --json output as {ok, data}.
+  if (!envelope || envelope.ok !== true || !envelope.data || typeof envelope.data !== 'object') {
     throw new Error('DevKit CLI returned an invalid or unsuccessful JSON envelope');
   }
-  const payload = envelope.json;
+  const payload = envelope.data;
   if (!Array.isArray(payload.results) || payload.results.length === 0) {
     throw new Error('DevKit CLI JSON envelope has no task results');
   }
@@ -18,6 +19,26 @@ export function unwrapCliEnvelope(envelope) {
   }
   if (typeof payload.elapsed !== 'string') throw new Error('DevKit CLI JSON envelope has no elapsed duration');
   return payload;
+}
+
+export function describeCliFailure(envelope) {
+  const diagnostic = envelope?.ok === false && envelope.error && typeof envelope.error === 'object'
+    ? envelope.error
+    : null;
+  if (!diagnostic) return null;
+  const code = typeof diagnostic.code === 'string' ? diagnostic.code : 'KB_CLI_FAILURE';
+  const message = safeDiagnosticText(diagnostic.message);
+  const hint = safeDiagnosticText(diagnostic.hint);
+  return `${code}${message ? `: ${message}` : ''}${hint ? ` — ${hint}` : ''}`;
+}
+
+function safeDiagnosticText(value) {
+  if (typeof value !== 'string') return '';
+  return value
+    .replace(/(\b[A-Z0-9_]*(?:PASSWORD|TOKEN|SECRET|API[_-]?KEY|PRIVATE[_-]?KEY)[A-Z0-9_]*\s*=\s*)[^\s]+/gi, '$1[REDACTED]')
+    .replace(/(["']?(?:password|token|secret|apiKey|key)["']?\s*:\s*)("[^"\\]*(?:\\.[^"\\]*)*"|'[^']*'|[^,}\]\s]+)/gi, '$1"[REDACTED]"')
+    .replace(/(https?:\/\/)[^/@\s:]+:[^/@\s]+@/gi, '$1[REDACTED]@')
+    .slice(0, 600);
 }
 
 export function summarizeTaskRows(rows) {

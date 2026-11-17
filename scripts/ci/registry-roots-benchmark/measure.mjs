@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { unwrapCliEnvelope, summarizeTaskRows, summarizeRootClosure } from './metrics.mjs';
+import { unwrapCliEnvelope, describeCliFailure, summarizeTaskRows, summarizeRootClosure } from './metrics.mjs';
 import { performance } from 'node:perf_hooks';
 const { registryJourneyBuildRoots } = await import(pathToFileURL(`${process.cwd()}/e2e/journey/registry-build-roots.mjs`));
 
@@ -38,7 +38,12 @@ function run(label, noCache) {
   try { envelope = JSON.parse(raw); } catch {
     throw new Error(`${label} output was not JSON (exit ${result.status}); stderr is in the Actions log`);
   }
-  if (result.status !== 0) throw new Error(`${label} failed (exit ${result.status}); stderr is in the Actions log`);
+  if (result.status !== 0) {
+    const diagnostic = describeCliFailure(envelope);
+    throw new Error(diagnostic
+      ? `${label} failed (exit ${result.status}): ${diagnostic}`
+      : `${label} failed (exit ${result.status}); CLI returned no structured failure envelope`);
+  }
   const payload = unwrapCliEnvelope(envelope);
   const rows = payload.results;
   return {
