@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tempfile
 from pathlib import Path
 
-from invocations import run_command, run_harness_command
+from invocations import TimeoutExpired, run_command, run_harness_command
 from service_steps import Journey
 
 
@@ -84,7 +83,7 @@ def run_devkit_cache_steps(journey: Journey, repo_root: Path) -> None:
                       f"(exit {help_result.returncode}): {help_result.stderr or help_result.stdout}")
         else:
             reason = None
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except (OSError, TimeoutExpired) as error:
         reason = f"BLOCKED: candidate kb-devkit is incompatible with this runner: {error}"
     if reason:
         for claim in DEVKIT_CACHE_CLAIMS:
@@ -123,7 +122,7 @@ def run_devkit_cache_steps(journey: Journey, repo_root: Path) -> None:
                 outside = _tasks(_run(binary, root, home, "build"))
                 _require(outside[key] is True, "untracked file outside declared inputs invalidated cache")
             return None
-        except (AssertionError, OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        except (AssertionError, OSError, RuntimeError, TimeoutExpired) as error:
             return str(error)
 
     journey.step("track only declared local source inputs", "workspace-cli", local_inputs, cases=["S-298.1", "S-298.3", "S-298.6"],
@@ -158,7 +157,7 @@ def run_devkit_cache_steps(journey: Journey, repo_root: Path) -> None:
                 _require((app / "dist/built.txt").read_text() == "generated content\n",
                          "cached consumer did not restore its output")
             return None
-        except (AssertionError, OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        except (AssertionError, OSError, RuntimeError, TimeoutExpired) as error:
             return str(error)
 
     journey.step("restore ignored generated input from task cache", "workspace-cli", output_restore, cases=["S-298.2"],
@@ -186,7 +185,7 @@ def run_devkit_cache_steps(journey: Journey, repo_root: Path) -> None:
                 _require(third[("@fixture/b", "generate")] is False, "new upstream untracked source left consumer cached")
                 _require((b / "dist/list.txt").read_text() == "known.ts\nnew.ts", "consumer output did not include upstream source")
             return None
-        except (AssertionError, OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        except (AssertionError, OSError, RuntimeError, TimeoutExpired) as error:
             return str(error)
 
     journey.step("invalidate workspace consumers for a source-only dependency", "workspace-cli", upstream_source, cases=["S-298.8"],
@@ -216,7 +215,7 @@ def run_devkit_cache_steps(journey: Journey, repo_root: Path) -> None:
                 output = (b / "dist/output.txt").read_text()
                 _require(output == "known.ts\\nnew.ts", f"consumer output after upstream change was {output!r}")
             return None
-        except (AssertionError, OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        except (AssertionError, OSError, RuntimeError, TimeoutExpired) as error:
             return str(error)
 
     journey.step("invalidate dependent build after upstream untracked source", "workspace-cli", workspace_build_dependency, cases=["S-298.4"],
@@ -239,7 +238,7 @@ def run_devkit_cache_steps(journey: Journey, repo_root: Path) -> None:
                     _require((app / "dist/out").read_text() == ("p", "ppp")[attempt],
                              "prerequisite or consumer did not execute its command on this run")
             return None
-        except (AssertionError, OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        except (AssertionError, OSError, RuntimeError, TimeoutExpired) as error:
             return str(error)
 
     journey.step("disable cache when prerequisite has no declared outputs", "workspace-cli", no_outputs, cases=["S-298.5"],
@@ -274,7 +273,7 @@ def run_devkit_cache_steps(journey: Journey, repo_root: Path) -> None:
                 final = (root / "packages/test/dist/test.txt").read_text()
                 _require(final == "one\ntwo\n", f"final affected output was {final!r}")
             return None
-        except (AssertionError, OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        except (AssertionError, OSError, RuntimeError, TimeoutExpired) as error:
             return str(error)
 
     journey.step("propagate affected source through a deep task chain", "workspace-cli", affected_chain, cases=["S-298.7"],
@@ -297,7 +296,7 @@ def run_devkit_cache_steps(journey: Journey, repo_root: Path) -> None:
                 _require(len(result) == 3 and all(not hit for hit in result.values()), f"same-package affected chain was {result}")
                 _require((app / "dist/test").read_text() == "one\ntwo\n", "same-package final output omitted new input")
             return None
-        except (AssertionError, OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        except (AssertionError, OSError, RuntimeError, TimeoutExpired) as error:
             return str(error)
 
     journey.step("propagate affected source through same-package prerequisites", "workspace-cli", same_package_chain, cases=["S-298.9"],
@@ -328,7 +327,7 @@ def run_devkit_cache_steps(journey: Journey, repo_root: Path) -> None:
                          "aggregate-owned source did not change dependency digest")
                 _require((consumer / "dist/list.txt").read_text() == "own.ts", "consumer did not observe aggregate-owned source")
             return None
-        except (AssertionError, OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        except (AssertionError, OSError, RuntimeError, TimeoutExpired) as error:
             return str(error)
 
     journey.step("respect nested package ownership in aggregate dependency digest", "workspace-cli", aggregate_ownership, cases=["S-298.10"],

@@ -5,10 +5,9 @@ from pathlib import Path
 import json
 import os
 import re
-import subprocess
 from typing import Callable, Mapping
 
-from invocations import CompletedProcess, catalogued_error_hint, run_command, run_harness_command
+from invocations import CompletedProcess, TimeoutExpired, catalogued_error_hint, run_command, run_harness_command
 from installed_fixture import active_platform_root
 from kb_invocation import kb_command
 from service_steps import Journey
@@ -97,7 +96,7 @@ def check_installed_cli_node_engine(
         if not match:
             return f"installed runtime declares an unsupported Node policy resolved from {cli_entry}"
         required_major = int(match.group(1))
-    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as error:
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, TimeoutExpired) as error:
         return f"cannot read the installed runtime Node policy: {error}"
     versions: dict[Path, str] = {}
     for candidate in (unsupported, supported):

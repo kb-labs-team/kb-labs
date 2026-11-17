@@ -8,7 +8,6 @@ import os
 import platform
 import shutil
 import struct
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -17,6 +16,7 @@ from service_steps import Journey
 from devkit_cache_steps import run_devkit_cache_steps
 from invocations import (
     CompletedProcess,
+    TimeoutExpired,
     decode_ux_error_result,
     decode_ux_success_result,
     invocation_context,
@@ -189,7 +189,7 @@ def run_devkit_zone_steps(journey: Journey, repo_root: Path, *, unavailable_reas
             if help_result.returncode != 0:
                 binary_problem = (f"BLOCKED: candidate kb-devkit could not execute --help "
                                   f"(exit {help_result.returncode}): {help_result.stderr or help_result.stdout}")
-        except (OSError, subprocess.TimeoutExpired) as error:
+        except (OSError, TimeoutExpired) as error:
             binary_problem = f"BLOCKED: candidate kb-devkit is incompatible with this runner: {error}"
 
     if binary_problem:
@@ -242,7 +242,7 @@ def run_devkit_zone_steps(journey: Journey, repo_root: Path, *, unavailable_reas
                 if "@fixture/site" in _result_packages(plain_result):
                     return "plain build unexpectedly selected the defaultBuild:false site package"
                 return None
-            except (KeyError, TypeError, ValueError, OSError, subprocess.TimeoutExpired) as error:
+            except (KeyError, TypeError, ValueError, OSError, TimeoutExpired) as error:
                 return f"DevKit zone build contract could not be observed: {error}"
 
         journey.step("build configured zones and upstream dependencies", "workspace-cli",
@@ -287,7 +287,7 @@ def run_devkit_zone_steps(journey: Journey, repo_root: Path, *, unavailable_reas
                 if no_op.get("data", {}).get("results") != []:
                     return f"affected zone no-op results were {no_op.get('data', {}).get('results')!r}; expected []"
                 return None
-            except (KeyError, TypeError, ValueError, OSError, subprocess.TimeoutExpired) as error:
+            except (KeyError, TypeError, ValueError, OSError, TimeoutExpired) as error:
                 return f"DevKit affected zone contract could not be observed: {error}"
 
         journey.step("intersect zones with explicit and affected selection", "workspace-cli",
@@ -343,7 +343,7 @@ def run_devkit_zone_steps(journey: Journey, repo_root: Path, *, unavailable_reas
                         "kb-devkit deps" not in overlap_error.get("hint", "")):
                     return f"zone overlap diagnostic did not identify the package, matches, and inspection command: {overlap}"
                 return None
-            except (KeyError, TypeError, ValueError, OSError, subprocess.TimeoutExpired) as error:
+            except (KeyError, TypeError, ValueError, OSError, TimeoutExpired) as error:
                 return f"DevKit invalid selector contract could not be observed: {error}"
 
         journey.step("reject unknown, empty, gap, and overlapping zone selections", "workspace-cli",
