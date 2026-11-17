@@ -68,13 +68,16 @@ run_prepare() {
   trap 'prepare_interrupted=1; exit 130' INT
   trap 'prepare_interrupted=1; exit 143' TERM
   reset_started=$(date +%s)
+  printf 'STAGE START: reset\n'
   reset_rc=0
   "$SCRIPT_DIR/run.sh" --down > "$shared/reset.log" 2>&1 || reset_rc=$?
   reset_seconds=$(($(date +%s) - reset_started))
+  reset_result=PASS; [ "$reset_rc" -eq 0 ] || reset_result=FAIL
+  printf 'STAGE END: reset %s (%ss)\n' "$reset_result" "$reset_seconds"
   if [ "$reset_rc" -ne 0 ]; then
     printf '\n- Failed stage: `reset`\n- Stage log: `reset.log`\n- Result: FAIL\n' >> "$shared/summary.md"
     result=FAIL
-    echo "journey stack reset failed; see $shared/reset.log; next: e2e/journey/run.sh --down" >&2
+    echo "journey stack reset failed; artifact: $shared/reset.log; next: e2e/journey/run.sh --down" >&2
     total_seconds=$(($(date +%s) - batch_started)); build_seconds=0; unit_seconds=0; candidate_seconds=0; local_seconds=0; secured_seconds=0
     write_metadata "$shared/batch-metadata.json" shared "$result" "$commit" "$BASELINE" "$BUILD_BASE"
     trap - EXIT HUP INT TERM
@@ -96,11 +99,12 @@ run_prepare() {
     write_metadata "$shared/batch-metadata.json" shared "$result" "$commit" "$BASELINE" "$BUILD_BASE"
     printf '\n- Result: FAIL\n' >> "$shared/summary.md"
     trap - EXIT HUP INT TERM
-    echo "journey shared $failed_stage stage failed; see $shared/$failed_stage.log; next: e2e/journey/$([ "$failed_stage" = candidate ] && echo prepare-candidate.sh || echo preflight.sh)" >&2
+    echo "journey shared $failed_stage stage failed; artifact: $shared/$failed_stage.log; next: e2e/journey/$([ "$failed_stage" = candidate ] && echo prepare-candidate.sh || echo preflight.sh)" >&2
     return "$preflight_rc"
   fi
   archive="$shared/build-candidate.tar"
   pack_started=$(date +%s)
+  printf 'STAGE START: candidate-package\n'
   if ! (
     cd "$ROOT" &&
     pnpm -r list --depth -1 --parseable > "$shared/workspace-packages.txt" &&
@@ -121,15 +125,17 @@ run_prepare() {
   ) > "$shared/candidate-package.log" 2>&1; then
     pack_elapsed=$(($(date +%s) - pack_started))
     candidate_seconds=$((candidate_seconds + pack_elapsed))
+    printf 'STAGE END: candidate-package FAIL (%ss)\n' "$pack_elapsed"
     printf '\n- Failed stage: `candidate`\n- Stage log: `candidate-package.log`\n- Result: FAIL\n' >> "$shared/summary.md"
     total_seconds=$(($(date +%s) - batch_started)); local_seconds=0; secured_seconds=0
     write_metadata "$shared/batch-metadata.json" shared FAIL "$commit" "$BASELINE" "$BUILD_BASE"
     trap - EXIT HUP INT TERM
-    echo "journey candidate artifact packaging failed; see $shared/candidate-package.log; next: tar -cf \"$archive\" -T \"$shared/archive-files.txt\"" >&2
+    echo "journey candidate artifact packaging failed; artifact: $shared/candidate-package.log; next: tar -cf \"$archive\" -T \"$shared/archive-files.txt\"" >&2
     return 1
   fi
   pack_elapsed=$(($(date +%s) - pack_started))
   candidate_seconds=$((candidate_seconds + pack_elapsed))
+  printf 'STAGE END: candidate-package PASS (%ss)\n' "$pack_elapsed"
   rm -f "$shared/archive-files.txt" "$shared/workspace-packages.txt"
   result=PASS; total_seconds=$(($(date +%s) - batch_started)); local_seconds=0; secured_seconds=0
   write_metadata "$shared/batch-metadata.json" shared "$result" "$commit" "$BASELINE" "$BUILD_BASE"
@@ -165,7 +171,7 @@ run_mode() {
     echo "journey producer build-candidate.tar could not be extracted; see $mode_dir/archive-extract.log; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
     return 1
   fi
-  for log in reset build unit candidate release-build-output-check; do
+  for log in reset build unit candidate release-build-output-check remote-stage-stderr; do
     if [ ! -f "$shared/$log.log" ]; then
       echo "journey producer artifact is missing shared/$log.log; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
       return 1

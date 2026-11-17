@@ -13,9 +13,34 @@ candidate_seconds=0
 unit_seconds=0
 failed_stage=build
 started=$(date +%s)
+active_stage=""
+active_log=""
+active_started=0
+
+stage_start() {
+  active_stage=$1
+  active_log=$2
+  active_started=$(date +%s)
+  printf 'STAGE START: %s\n' "$active_stage"
+}
+
+stage_end() {
+  stage_status=$1
+  stage_elapsed=$(( $(date +%s) - active_started ))
+  if [ "$stage_status" -eq 0 ]; then
+    printf 'STAGE END: %s PASS (%ss)\n' "$active_stage" "$stage_elapsed"
+  else
+    printf 'STAGE END: %s FAIL (%ss); artifact: %s\n' "$active_stage" "$stage_elapsed" "$active_log"
+  fi
+  active_stage=""
+  active_log=""
+}
 
 cleanup() {
   result=$?
+  if [ -n "$active_stage" ]; then
+    stage_end 1
+  fi
   cleanup_rc=0
   trap - EXIT HUP INT TERM
   if [ -n "$unit_home" ] && [ -d "$unit_home" ]; then
@@ -44,12 +69,18 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 cd "$ROOT"
 
-bash e2e/scripts/check-frozen-lockfile.sh
+stage_start lockfile "$OUT/build.log"
+bash e2e/scripts/check-frozen-lockfile.sh > "$OUT/build.log" 2>&1
+stage_end 0
 
+stage_start build "$OUT/build.log"
 stage_started=$(date +%s)
+remote_stage_stderr="$OUT/remote-stage-stderr.log"
+: > "$remote_stage_stderr"
 if ! (cd tools/kb-devkit && go build -trimpath -o "$work/kb-devkit" .) > "$OUT/build.log" 2>&1; then
   build_seconds=$(( $(date +%s) - stage_started ))
-  echo "could not build kb-devkit from this checkout; see $OUT/build.log; next: (cd tools/kb-devkit && go build .)" >&2
+  stage_end 1
+  echo "could not build kb-devkit from this checkout; artifact: $OUT/build.log; next: (cd tools/kb-devkit && go build .)" >&2
   exit 1
 fi
 if ! (
@@ -63,10 +94,11 @@ if ! (
     REMOTE_AFFECTED_BUILD=1 \
     REMOTE_DEVKIT_EXECUTABLE="$work/kb-devkit" \
     KB_DEVKIT_BASE_REF="$BUILD_BASE" \
-    node scripts/ci/run-remote-stage.mjs
+    node scripts/ci/run-remote-stage.mjs >/dev/null 2>"$remote_stage_stderr"
 ); then
   build_seconds=$(( $(date +%s) - stage_started ))
-  echo "devkit affected build failed; see $OUT/build.log; next: KB_DEVKIT_BASE_REF='$BUILD_BASE' REMOTE_STAGE=workspace-build REMOTE_STAGE_RESULT='$OUT/workspace-build-stage.json' REMOTE_RESOURCE_SAMPLES='$OUT/resource-samples.jsonl' REMOTE_SELECTED_PACKAGE_COUNT=0 REMOTE_AFFECTED_BUILD=1 REMOTE_DEVKIT_EXECUTABLE='$work/kb-devkit' node scripts/ci/run-remote-stage.mjs" >&2
+  stage_end 1
+  echo "devkit affected build failed; artifacts: $OUT/build.log and $remote_stage_stderr; next: KB_DEVKIT_BASE_REF='$BUILD_BASE' REMOTE_STAGE=workspace-build REMOTE_STAGE_RESULT='$OUT/workspace-build-stage.json' REMOTE_RESOURCE_SAMPLES='$OUT/resource-samples.jsonl' REMOTE_SELECTED_PACKAGE_COUNT=0 REMOTE_AFFECTED_BUILD=1 REMOTE_DEVKIT_EXECUTABLE='$work/kb-devkit' node scripts/ci/run-remote-stage.mjs" >&2
   exit 1
 fi
 output_check_rc=0
@@ -74,30 +106,37 @@ node "$ROOT/e2e/platform/validate-package-outputs.mjs" --build-outputs "$ROOT" >
 cat "$OUT/release-build-output-check.log" >> "$OUT/build.log"
 if [ "$output_check_rc" -ne 0 ]; then
   build_seconds=$(( $(date +%s) - stage_started ))
-  cat "$OUT/release-build-output-check.log" >&2
-  echo "release package build outputs are missing; see $OUT/build.log; next: kb-devkit run build --affected" >&2
+  stage_end 1
+  echo "release package build outputs are missing; artifact: $OUT/build.log; next: kb-devkit run build --affected" >&2
   exit 1
 fi
 build_seconds=$(( $(date +%s) - stage_started ))
+stage_end 0
 
 failed_stage=candidate
+stage_start candidate "$OUT/candidate.log"
 stage_started=$(date +%s)
 candidate_rc=0
 bash "$ROOT/e2e/journey/prepare-candidate.sh" > "$OUT/candidate.log" 2>&1 || candidate_rc=$?
 candidate_seconds=$(( $(date +%s) - stage_started ))
 if [ "$candidate_rc" -ne 0 ]; then
-  echo "journey candidate preparation failed; see $OUT/candidate.log; next: e2e/journey/prepare-candidate.sh" >&2
+  stage_end 1
+  echo "journey candidate preparation failed; artifact: $OUT/candidate.log; next: e2e/journey/prepare-candidate.sh" >&2
   exit "$candidate_rc"
 fi
+stage_end 0
 
 failed_stage=unit
 unit_home=$(mktemp -d "${TMPDIR:-/tmp}/kb-journey-unit.XXXXXX")
+stage_start unit "$OUT/unit.log"
 stage_started=$(date +%s)
 unit_rc=0
 HOME="$unit_home" env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET python3 -m unittest discover -s e2e/journey -p 'test_*.py' > "$OUT/unit.log" 2>&1 || unit_rc=$?
 unit_seconds=$(( $(date +%s) - stage_started ))
 if [ "$unit_rc" -ne 0 ]; then
-  echo "journey unit suite failed; see $OUT/unit.log; next: python3 -m unittest discover -s e2e/journey -p 'test_*.py'" >&2
+  stage_end 1
+  echo "journey unit suite failed; artifact: $OUT/unit.log; next: python3 -m unittest discover -s e2e/journey -p 'test_*.py'" >&2
   exit "$unit_rc"
 fi
+stage_end 0
 failed_stage=none
