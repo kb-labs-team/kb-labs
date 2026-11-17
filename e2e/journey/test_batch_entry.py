@@ -111,6 +111,10 @@ exit 0
         self._script(self.bin / "node", '''#!/bin/sh
 case "$*" in
   *scripts/ci/run-remote-stage.mjs*)
+    if [ "${EARLY_REMOTE_FAIL:-}" = 1 ]; then
+      printf 'early import failure fixture\n' >&2
+      exit 17
+    fi
     "$REMOTE_DEVKIT_EXECUTABLE" > "$REMOTE_STAGE_LOG" 2>&1
     result=$?
     cat "$REMOTE_STAGE_LOG"
@@ -435,6 +439,10 @@ exec "$REAL_TAR" "$@"
     def test_entry_runs_product_steps_in_order_and_exports_both_modes(self):
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        for stage in ("reset", "lockfile", "build", "candidate", "unit", "candidate-package"):
+            self.assertIn(f"STAGE START: {stage}", result.stdout)
+            self.assertRegex(result.stdout, rf"STAGE END: {stage} PASS \([0-9]+s\)")
+        self.assertNotIn("built artifact", result.stdout)
         self.assertNotIn("not found", result.stderr)
         calls = self.calls.read_text().splitlines()
         self.assertEqual(calls, [
@@ -450,7 +458,8 @@ exec "$REAL_TAR" "$@"
         self.assertIn("- Result: PASS", (self.root / "out/shared/summary.md").read_text())
         self.assertTrue((self.root / "out/local/local.json").is_file())
         self.assertTrue((self.root / "out/secured/secured.json").is_file())
-        for stage_log in ("reset.log", "build.log", "release-build-output-check.log", "unit.log", "candidate.log"):
+        for stage_log in ("reset.log", "build.log", "release-build-output-check.log", "unit.log",
+                          "candidate.log", "remote-stage-stderr.log"):
             self.assertTrue((self.root / "out/shared" / stage_log).is_file(), stage_log)
         for mode in ("local", "secured"):
             self.assertTrue((self.root / f"out/{mode}/batch.log").is_file())
@@ -814,6 +823,9 @@ exec "$REAL_TAR" "$@"
         self.assertIn("candidate failure fixture", (self.root / "out/shared/candidate.log").read_text())
         self.assertIn("- Failed stage: `candidate`", (self.root / "out/shared/summary.md").read_text())
         self.assertIn("next: e2e/journey/prepare-candidate.sh", result.stderr)
+        self.assertIn("STAGE END: candidate FAIL (", result.stdout)
+        self.assertIn("artifact: ", result.stderr)
+        self.assertIn("candidate.log", result.stderr)
 
     # case: S-262.1
     def test_reset_failure_summary_has_one_final_result(self):
@@ -827,6 +839,9 @@ exec "$REAL_TAR" "$@"
         self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")],
                          ["- Result: FAIL"])
         self.assertIn("reset failure fixture", (self.root / "out/shared/reset.log").read_text())
+        self.assertIn("STAGE END: reset FAIL (", result.stdout)
+        self.assertIn("artifact: ", result.stderr)
+        self.assertIn("reset.log", result.stderr)
 
     # case: S-262.1
     def test_candidate_archive_failure_is_reported_in_shared_metadata(self):
@@ -841,6 +856,7 @@ exec "$REAL_TAR" "$@"
         self.assertIn("- Failed stage: `candidate`", summary)
         self.assertIn("- Stage log: `candidate-package.log`", summary)
         self.assertIn('next: tar -cf "', result.stderr)
+        self.assertIn("STAGE END: candidate-package FAIL (", result.stdout)
         import json
         metadata = json.loads((self.root / "out/shared/batch-metadata.json").read_text())
         self.assertEqual(metadata["result"], "FAIL")
@@ -885,7 +901,8 @@ exec "$REAL_TAR" "$@"
         self.assertFalse((self.root / "out/secured/local.json").exists())
         self.assertTrue((self.root / "out/secured/batch.log").is_file())
         for mode in ("local", "secured"):
-            for stage_log in ("reset.log", "build.log", "unit.log", "candidate.log"):
+            for stage_log in ("reset.log", "build.log", "unit.log", "candidate.log",
+                              "remote-stage-stderr.log"):
                 self.assertTrue((self.root / f"out/{mode}/{stage_log}").is_file())
             import json
             mode_metadata = json.loads((self.root / f"out/{mode}/batch-metadata.json").read_text())
@@ -1075,6 +1092,24 @@ exec "$REAL_TAR" "$@"
         self.assertIn("preflight fixture failed", build_log)
         self.assertNotIn("candidate", self.calls.read_text())
         self.assertIn("- Failed stage: `build`", (self.root / "out/shared/summary.md").read_text())
+
+    # case: S-262.1
+    def test_early_remote_stage_failure_is_saved_without_console_output_leak(self):
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            cwd=self.root, env={**self.env, "EARLY_REMOTE_FAIL": "1"},
+            text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        early_stderr = (self.root / "out/shared/remote-stage-stderr.log").read_text()
+        build_log = (self.root / "out/shared/build.log").read_text()
+        self.assertIn("early import failure fixture", early_stderr)
+        self.assertNotIn("early import failure fixture", build_log)
+        self.assertNotIn("early import failure fixture", result.stdout)
+        self.assertIn("STAGE END: build FAIL (", result.stdout)
+        self.assertIn("artifact: ", result.stderr)
+        self.assertIn("build.log", result.stderr)
+        self.assertIn("remote-stage-stderr.log", result.stderr)
 
     # case: S-262.1
     def test_candidate_output_preflight_fails_before_package_packing(self):
