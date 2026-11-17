@@ -538,16 +538,25 @@ exec "$REAL_TAR" "$@"
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertNotIn("not found", result.stderr)
         calls = self.calls.read_text().splitlines()
-        self.assertEqual(calls, [
+        self.assertEqual(calls[:6], [
             "journey  --down",
             "go build -trimpath",
             "build",
             "build-output-check",
             "candidate",
             "unit",
-            "journey service-local:explore --no-build",
-            "journey service-secured:explore --no-build",
         ])
+        self.assertEqual(len(calls), 10, calls)
+        report_roots = []
+        for journey_index, mode, report_index in ((6, "local", 7), (8, "secured", 9)):
+            self.assertEqual(calls[journey_index], f"journey service-{mode}:explore --no-build")
+            self.assertTrue(calls[report_index].startswith("report-root "), calls)
+            report_root = Path(calls[report_index].removeprefix("report-root "))
+            self.assertEqual(report_root.parent, self.root / f"out/.artifact-{mode}/{mode}")
+            self.assertTrue(report_root.name.startswith("runner-reports."))
+            self.assertFalse(report_root.exists(), "mode-owned report roots are staged then cleaned")
+            report_roots.append(report_root)
+        self.assertNotEqual(report_roots[0], report_roots[1])
         self.assertIn("- Result: PASS", (self.root / "out/shared/summary.md").read_text())
         self.assertTrue((self.root / "out/local/local.json").is_file())
         self.assertTrue((self.root / "out/secured/secured.json").is_file())
