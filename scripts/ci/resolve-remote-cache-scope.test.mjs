@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isTrustedRemoteCacheInvocation, resolveRemoteCacheScope } from './resolve-remote-cache-scope.mjs';
+import { isTrustedRemoteCacheInvocation, remoteCacheConfig, resolveRemoteCacheScope } from './resolve-remote-cache-scope.mjs';
 
 test('remote cache scope binds the actual target SHA, profile, and resolved selection base', () => {
   const sha = 'c'.repeat(40);
@@ -64,4 +64,19 @@ test('remote cache trust is limited to direct push or dispatch of this workflow'
   assert.equal(isTrustedRemoteCacheInvocation(identity), true);
   assert.equal(isTrustedRemoteCacheInvocation({ ...identity, eventName: 'workflow_call' }), false);
   assert.equal(isTrustedRemoteCacheInvocation({ ...identity, workflowRef: 'kb-labs-team/kb-labs/.github/workflows/release-build-candidate.yml@refs/heads/develop' }), false);
+});
+
+test('remote writer and readers share one versioned runner-toolchain cache key', () => {
+  const config = remoteCacheConfig({
+    scope: 'remote-stream-b',
+    sha: 'c'.repeat(40),
+    runnerOs: 'Linux',
+    runnerArch: 'X64',
+    runnerTemp: '/runner/temp',
+    nodeVersion: 'v24.11.0',
+    goVersion: 'go version go1.26.8 linux/amd64',
+  });
+  assert.match(config.key, /^devkit-cas-v2-remote-stream-b-Linux-X64-[0-9a-f]{16}-c{40}$/);
+  assert.match(config.restoreKey, /^devkit-cas-v2-remote-stream-b-Linux-X64-[0-9a-f]{16}-$/);
+  assert.equal(config.path, '/runner/temp/kb-devkit-cas');
 });
