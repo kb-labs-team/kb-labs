@@ -231,7 +231,11 @@ RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 if (( ! no_build )); then
   e2e/journey/install-workspace-dependencies.sh
-  kb-devkit run build --affected
+  if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
+    kb-devkit run build --packages "$(node e2e/journey/registry-build-roots.mjs)"
+  else
+    kb-devkit run build --affected
+  fi
   e2e/journey/prepare-candidate.sh
 fi
 
