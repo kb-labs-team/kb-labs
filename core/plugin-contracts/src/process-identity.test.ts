@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { sameProcessIdentity } from './process-identity.js';
 
-// case: S-297.1
 describe('process identity', () => {
+  // case: S-297.1
   it('does not treat a reused pid with a different start time as the original process', () => {
     expect(sameProcessIdentity(
       { pid: 101, startTime: 'first-process-start' },
