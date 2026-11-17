@@ -482,7 +482,13 @@ class FlowGraph:
                 or self.journey.selected_claims.intersection(spec.get("cases", ()))
                 or self.journey.prerequisite_steps.intersection(spec.get("steps", ())))
         }
-        self.needed_states = set(filter(None, journey_value("KB_JOURNEY_NEEDED_STATES", "").split(",")))
+        # A nested runner receives the outer runner's state hints, but an
+        # explicit claim selection must derive prerequisites from its own
+        # selected groups. Carrying the outer set across this boundary can run
+        # unrelated fixture producers (for example the npm Commit fixture in
+        # a Registry-only selection).
+        self.needed_states = (set(filter(None, journey_value(
+            "KB_JOURNEY_NEEDED_STATES", "").split(","))) if not self.selection_active else set())
         for group in self.selected_groups:
             self.needed_states.update(self.dependencies.get(
                 group, self.groups.get(group, {}).get("depends_on", ())))

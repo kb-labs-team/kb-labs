@@ -20,6 +20,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                configured_marketplace_source_kinds,
                                commit_publish_command,
                                _publish_workspace_fixture,
+                               _ensure_analytics_emitter_fixture_built,
                                _publish_fixture_command,
                                _assert_catalogued_marketplace_failure,
                                prepare_commit_project_fixture,
@@ -483,6 +484,16 @@ class MarketplaceStepTests(unittest.TestCase):
             (project / ".kb").mkdir(parents=True)
             (project / ".kb" / "kb.config.json").write_text("{}\n")
             workspace = root / "workspace"
+            analytics_fixture = workspace / "e2e/journey/fixtures/analytics-emitter"
+            analytics_fixture.mkdir(parents=True)
+            (analytics_fixture / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/e2e-analytics-emitter",
+                "scripts": {"build": "node ./build.mjs"},
+                "kb": {"manifest": "./dist/manifest.js",
+                       "requiredOutputs": ["./dist/manifest.js", "./dist/manifest.json",
+                                           "./dist/commands/*.js"]},
+            }))
+            (analytics_fixture / "build.mjs").write_text("// fixture build stub\n")
             calls = []
 
             def runner(command, *, cwd, env, timeout, capture_output=True, text=True, **_kwargs):
@@ -494,7 +505,17 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": data}), "")
                 if command[:2] == ["kb-create", "restart"]:
                     return subprocess.CompletedProcess(command, 0, "restarted", "")
+                if command == ["node", "./build.mjs"]:
+                    self.assertEqual(Path(cwd), analytics_fixture.resolve())
+                    output = analytics_fixture / "dist"
+                    (output / "commands").mkdir(parents=True, exist_ok=True)
+                    (output / "manifest.js").write_text("export const manifest = {};")
+                    (output / "manifest.json").write_text("{}")
+                    (output / "commands/emit.js").write_text("export default {};")
+                    return subprocess.CompletedProcess(command, 0, "", "")
                 if command[0] == "/platform/kb" and command[1:] == ["hub", "publish", "--json"]:
+                    if Path(cwd) == analytics_fixture.resolve():
+                        self.assertTrue((analytics_fixture / "dist/manifest.js").is_file())
                     return subprocess.CompletedProcess(command, 0, json.dumps({
                         "ok": True, "data": {"version": "2.120.1"},
                     }), "")
@@ -540,6 +561,60 @@ class MarketplaceStepTests(unittest.TestCase):
                 (("/platform/kb", "hub", "publish", "--json"), resolved_workspace / "e2e/journey/fixtures/analytics-emitter"),
                 (("/platform/kb", "hub", "publish", "--json"), resolved_workspace / "plugins/qa"),
             ])
+            analytics_publish = next(
+                index for index, call in enumerate(calls)
+                if call[0][1:] == ("hub", "publish", "--json")
+                and call[1] == analytics_fixture.resolve())
+            analytics_build = next(
+                index for index, call in enumerate(calls) if call[0] == ("node", "./build.mjs"))
+            self.assertLess(analytics_build, analytics_publish)
+
+    # case: S-268.18
+    def test_registry_analytics_fixture_build_fails_closed_when_outputs_are_missing(self):
+        with tempfile.TemporaryDirectory(prefix="kb-marketplace-analytics-build-") as directory:
+            workspace = Path(directory)
+            package_root = workspace / "e2e/journey/fixtures/analytics-emitter"
+            package_root.mkdir(parents=True)
+            (package_root / "package.json").write_text(json.dumps({
+                "scripts": {"build": "node ./build.mjs"},
+                "kb": {"requiredOutputs": ["./dist/manifest.js"]},
+            }))
+            (package_root / "build.mjs").write_text("// fixture build stub\n")
+            calls = []
+
+            def runner(command, **kwargs):
+                calls.append((command, kwargs))
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with self.assertRaisesRegex(RuntimeError, "without required outputs"):
+                _ensure_analytics_emitter_fixture_built(workspace, {}, runner)
+
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], ["node", "./build.mjs"])
+            self.assertEqual(Path(calls[0][1]["cwd"]), package_root.resolve())
+
+    # case: S-268.18
+    def test_registry_analytics_fixture_build_failure_stops_before_publication(self):
+        with tempfile.TemporaryDirectory(prefix="kb-marketplace-analytics-build-failure-") as directory:
+            workspace = Path(directory)
+            package_root = workspace / "e2e/journey/fixtures/analytics-emitter"
+            package_root.mkdir(parents=True)
+            (package_root / "package.json").write_text(json.dumps({
+                "scripts": {"build": "node ./build.mjs"},
+                "kb": {"requiredOutputs": ["./dist/manifest.js"]},
+            }))
+            (package_root / "build.mjs").write_text("// fixture build stub\n")
+            calls = []
+
+            def runner(command, **kwargs):
+                calls.append((command, kwargs))
+                return subprocess.CompletedProcess(command, 1, "", "fixture build failed")
+
+            with self.assertRaisesRegex(RuntimeError, "node ./build.mjs.*fixture build failed"):
+                _ensure_analytics_emitter_fixture_built(workspace, {}, runner)
+
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], ["node", "./build.mjs"])
 
     def test_policy_diagnostic_step_restores_config_and_proves_blocked_fixture_and_first_party_cli(self):
         with tempfile.TemporaryDirectory(prefix="kb-policy-journey-unit-") as directory:
