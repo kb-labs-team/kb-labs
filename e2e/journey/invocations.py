@@ -102,14 +102,11 @@ def _proc_status_diagnostic(pid: int | str) -> str:
     return ",".join(f"{key}={fields.get(key, 'unavailable')}" for key in sorted(wanted))
 
 
-def _proc_identity_diagnostic(pid: int) -> str:
-    try:
-        details = _proc_stat(pid)
-    except PtyReadinessUnsupported:
-        details = None
-    stat = (f"ppid={details[0]},session={details[1]},tty_nr={details[2]},state={details[3]}"
-            if details is not None else "stat=unavailable")
-    return f"{stat};{_proc_status_diagnostic(pid)}"
+def _proc_identity_diagnostic(details: tuple[int, int, int, str, int], status: str) -> str:
+    """Format identity facts captured before a procfs access can race process exit."""
+    parent, session, tty, state, starttime = details
+    return (f"ppid={parent},session={session},tty_nr={tty},state={state},starttime={starttime};"
+            f"{status}")
 
 
 def _decode_linux_device_number(encoded: int) -> tuple[int, int]:
@@ -145,6 +142,7 @@ def _linux_terminal_reader(pid: int, terminal_path: str) -> tuple[int, int, str]
         if (session_id != pid
                 or _decode_linux_device_number(controlling_tty) != terminal_device):
             continue
+        candidate_status = _proc_status_diagnostic(child_pid)
         try:
             if os.readlink(f"/proc/{child_pid}/fd/0") != terminal_path:
                 continue
@@ -188,7 +186,8 @@ def _linux_terminal_reader(pid: int, terminal_path: str) -> tuple[int, int, str]
                 "Linux procfs syscall state is not readable with this user's permissions; "
                 f"runner_uid={os.getuid()},runner_gid={os.getgid()};"
                 f"runner_status={_proc_status_diagnostic('self')};"
-                f"candidate_pid={child_pid};candidate={_proc_identity_diagnostic(child_pid)}"
+                f"root_pid={pid};candidate_pid={child_pid};"
+                f"candidate={_proc_identity_diagnostic(details, candidate_status)}"
             ) from error
         except OSError:
             continue

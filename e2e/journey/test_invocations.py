@@ -10,7 +10,7 @@ import tempfile
 import unittest
 import urllib.request
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import invocations
@@ -601,6 +601,38 @@ class PtyInvocationTest(unittest.TestCase):
         self.assertNotIn("Name=", message)
         self.assertNotIn("argv", message.lower())
         self.assertNotIn("secret", message.lower())
+
+    def test_pty_procfs_permission_failure_keeps_candidate_snapshot_after_exit(self):
+        terminal_stat = type("TerminalStat", (), {"st_rdev": 0})()
+        candidate_stat = (100, 100, 0, "S", 77)
+        candidate_status = (
+            b"Name:\twizard\nUid:\t1001\t1001\t1001\t1001\n"
+            b"Gid:\t1001\t1001\t1001\t1001\nCapEff:\t0000000000000000\n"
+            b"TracerPid:\t0\nSeccomp:\t2\nNoNewPrivs:\t0\n"
+        )
+        proc_stat = Mock(side_effect=[candidate_stat, candidate_stat, None])
+        with (patch.object(invocations, "_pty_reader_pids", return_value=[(125, 77)]),
+              patch.object(invocations.sys, "platform", "linux"),
+              patch.object(invocations, "_proc_stat", proc_stat),
+              patch.object(invocations, "_decode_linux_device_number", return_value=(136, 5)),
+              patch.object(invocations.os, "stat", return_value=terminal_stat),
+              patch.object(invocations.os, "major", return_value=136),
+              patch.object(invocations.os, "minor", return_value=5),
+              patch.object(invocations.os, "readlink", side_effect=PermissionError(13, "Permission denied")),
+              patch.object(Path, "read_bytes", return_value=candidate_status)):
+            with self.assertRaises(invocations.PtyReadinessUnsupported) as raised:
+                invocations._linux_terminal_reader(100, "/dev/pts/5")
+
+        message = str(raised.exception)
+        self.assertIn("root_pid=100", message)
+        self.assertIn("candidate_pid=125", message)
+        self.assertIn("candidate=ppid=100,session=100,tty_nr=0,state=S,starttime=77", message)
+        self.assertIn("Uid=1001", message)
+        self.assertIn("CapEff=0000000000000000", message)
+        self.assertIn("Seccomp=2", message)
+        self.assertNotIn("Name=", message)
+        self.assertEqual(proc_stat.call_count, 2,
+                         "diagnostics must use the validated snapshot instead of rereading a vanished PID")
 
 
 class ReportRedactionTest(unittest.TestCase):
