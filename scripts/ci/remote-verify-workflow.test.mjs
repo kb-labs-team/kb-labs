@@ -104,7 +104,7 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
   const nodeSetup = steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
   const goSetup = steps.find((step) => step.uses?.startsWith('actions/setup-go@'));
   const cas = readYaml('.github/actions/devkit-cas/action.yml');
-  const cache = cas.runs.steps.find((step) => step.uses?.startsWith('actions/cache@'));
+  const cache = cas.runs.steps.find((step) => step.id === 'restore-writer');
   const profile = JSON.parse(readFileSync(path.join(root, 'scripts/ci/verification-profile.json'), 'utf8'));
 
   assert.equal(nodeSetup.with.cache, 'pnpm');
@@ -119,9 +119,33 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
   assert.match(cache.with.key, /steps\.toolchain\.outputs\.partition/);
   assert.doesNotMatch(cache.with.key, /hashFiles\(/);
   assert.equal(cache.with['restore-keys'].trim(), 'devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-');
-  assert.equal(cas.outputs['cache-hit'].value, '${{ steps.restore.outputs.cache-hit }}');
+  assert.equal(cas.outputs['cache-hit'].value, '${{ steps.restore-writer.outputs.cache-hit || steps.restore-reader.outputs.cache-hit }}');
   assert.ok(profile.buildDependentTestStages.candidate.includes('journey-unit-suite'));
   assert.ok(!profile.buildDependentTestStages.stream.includes('journey-unit-suite'));
+});
+
+test('remote verification lets only the build producer save the devkit CAS', () => {
+  const workflow = readYaml('.github/workflows/remote-verify.yml');
+  const cas = readYaml('.github/actions/devkit-cas/action.yml');
+  const modeFor = (job) => job.steps.find((step) => step.uses === './.github/actions/devkit-cas')?.with?.mode;
+  const writer = cas.runs.steps.find((step) => step.id === 'restore-writer');
+  const reader = cas.runs.steps.find((step) => step.id === 'restore-reader');
+
+  assert.equal(modeFor(workflow.jobs.build), 'read-write');
+  assert.equal(modeFor(workflow.jobs['independent-test-shards']), 'read-only');
+  assert.equal(modeFor(workflow.jobs['build-dependent-test-shards']), 'read-only');
+  assert.equal(modeFor(workflow.jobs['internal-tool-test-shards']), 'read-only');
+  assert.equal(writer.uses, 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
+  assert.equal(writer.if, "inputs.mode == 'read-write'");
+  assert.equal(reader.uses, 'actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
+  assert.equal(reader.if, "inputs.mode == 'read-only'");
+  assert.equal(cas.runs.steps.filter((step) => step.uses?.startsWith('actions/cache/save@')).length, 0);
+  for (const step of [writer, reader]) {
+    assert.equal(step.with.path, '.kb/devkit/');
+    assert.match(step.with.key, /\$\{\{ github\.sha \}\}/);
+    assert.match(step.with.key, /steps\.toolchain\.outputs\.partition/);
+    assert.equal(step.with['restore-keys'].trim(), 'devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-');
+  }
 });
 
 // case: S-262.7

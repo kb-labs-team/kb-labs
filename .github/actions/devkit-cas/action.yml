@@ -3,33 +3,42 @@ description: Restore the addressable kb-devkit build cache for fast CI lanes.
 
 inputs:
   mode:
-    description: 'read-write restores and saves the CAS; off always builds cold'
+    description: 'read-write restores and saves, read-only restores, and off always builds cold'
     required: false
     default: read-write
 
 outputs:
   cache-hit:
     description: Whether the exact immutable cache key was restored.
-    value: ${{ steps.restore.outputs.cache-hit }}
+    value: ${{ steps.restore-writer.outputs.cache-hit || steps.restore-reader.outputs.cache-hit }}
 
 runs:
   using: composite
   steps:
     - name: Identify cache toolchain partition
-      if: inputs.mode == 'read-write'
+      if: inputs.mode != 'off'
       id: toolchain
       shell: bash
       run: |
         partition=$(printf '%s\n%s\n' "$(node --version)" "$(go version)" | shasum -a 256 | cut -c 1-16)
         printf 'partition=%s\n' "$partition" >> "$GITHUB_OUTPUT"
-    - name: Restore kb-devkit CAS
+    - name: Restore and save kb-devkit CAS for build producer
+      id: restore-writer
       if: inputs.mode == 'read-write'
-      id: restore
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: .kb/devkit/
         # Task fingerprints own source validity. This outer cache only transports
         # objects between runs sharing a runner platform and Node/Go toolchain.
+        key: devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ github.sha }}
+        restore-keys: |
+          devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-
+    - name: Restore kb-devkit CAS for consumers
+      id: restore-reader
+      if: inputs.mode == 'read-only'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: .kb/devkit/
         key: devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ github.sha }}
         restore-keys: |
           devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-
