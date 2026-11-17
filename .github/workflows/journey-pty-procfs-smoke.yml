@@ -26,5 +26,5 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Probe production Compose identity and PTY procfs access
+      - name: Diagnose real wizard PTY procfs access in production Compose identity
         run: e2e/journey/pty-procfs-smoke.sh

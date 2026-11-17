@@ -13,7 +13,15 @@ export KB_JOURNEY_NODE_BASE_IMAGE="$(node -p 'require("./tools/clikit/toolchain/
 export KB_JOURNEY_WORKSPACE_SOURCE="$ROOT"
 
 rendered_config="$(mktemp "${TMPDIR:-/tmp}/journey-pty-compose.XXXXXX.json")"
-trap 'rm -f "$rendered_config"' EXIT
+wizard_binary="$(mktemp "${TMPDIR:-/tmp}/journey-pty-wizard.XXXXXX")"
+trap 'rm -f "$rendered_config" "$wizard_binary"' EXIT
+(
+  cd "$ROOT/tools/kb-create"
+  CGO_ENABLED=0 GOTOOLCHAIN=auto go build -trimpath -o "$wizard_binary" ./v2/testsupport/wizard-pty
+)
+chmod 0755 "$wizard_binary"
+export KB_JOURNEY_PTY_WIZARD_BINARY="$wizard_binary"
+
 e2e/journey/run.sh --render-compose-config > "$rendered_config"
 
 python3 - "$rendered_config" <<'PY'

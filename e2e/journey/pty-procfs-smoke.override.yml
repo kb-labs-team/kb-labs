@@ -6,3 +6,5 @@ services:
     image: python:3.12.12-alpine
     entrypoint: ["python3"]
     command: ["/opt/kb-workspace/e2e/journey/pty-procfs-smoke.py"]
+    volumes:
+      - ${KB_JOURNEY_PTY_WIZARD_BINARY:?smoke script must build the wizard fixture}:/opt/pty/wizard-pty:ro
