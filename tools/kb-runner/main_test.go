@@ -671,6 +671,9 @@ func TestHintCommandDeadlineReturnsNamedTimeout(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "HINT_COMMAND_TIMEOUT") {
 		t.Fatalf("hint deadline error = %v, want HINT_COMMAND_TIMEOUT (output %q)", err, output)
 	}
+	if !strings.Contains(err.Error(), "stage=command.wait") {
+		t.Fatalf("hint timeout diagnostic lacks the cancellation stage: %v", err)
+	}
 	if !strings.Contains(err.Error(), "budget=") || !strings.Contains(err.Error(), "elapsed=") || !strings.Contains(err.Error(), "host_load=") {
 		t.Fatalf("hint timeout diagnostic lacks budget, elapsed time, or host load: %v", err)
 	}
@@ -693,7 +696,7 @@ func runHintCommand(ctx context.Context, command string, env []string, budget ti
 	var canceledBeforeHandshake *proc.CommandCanceledError
 	if errors.As(err, &canceledBeforeHandshake) {
 		// The command was spawned and its tree reaped by Start; this is a cancellation, not a startup failure.
-		return nil, hintCancellationError(ctx, command, budget, started, err)
+		return nil, hintCancellationError(ctx, command, budget, started, "proc.Start", err)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("start supervised hint command: %w", err)
@@ -742,16 +745,29 @@ func runHintCommand(ctx context.Context, command string, env []string, budget ti
 		killErr := run.Kill()
 		waitErr := <-wait
 		output, readErr := readOutput()
-		return output, hintCancellationError(ctx, command, budget, started, errors.Join(waitErr, nonProcessDone(killErr), readErr, readTeardown()))
+		cause := errors.Join(
+			hintCommandStageError("kill", nonProcessDone(killErr)),
+			hintCommandStageError("wait after cancellation", waitErr),
+			hintCommandStageError("read output", readErr),
+			hintCommandStageError("read teardown", readTeardown()),
+		)
+		return output, hintCancellationError(ctx, command, budget, started, "command.wait", cause)
 	}
 }
 
-func hintCancellationError(ctx context.Context, command string, budget time.Duration, started time.Time, cause error) error {
+func hintCommandStageError(stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", stage, err)
+}
+
+func hintCancellationError(ctx context.Context, command string, budget time.Duration, started time.Time, stage string, cause error) error {
 	kind := "HINT_COMMAND_CANCELED"
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		kind = "HINT_COMMAND_TIMEOUT"
 	}
-	return fmt.Errorf("%s command=%q %s: %w", kind, command, testdeadline.FailureDetails(budget, time.Since(started)), errors.Join(ctx.Err(), cause))
+	return fmt.Errorf("%s stage=%s command=%q %s: %w", kind, stage, command, testdeadline.FailureDetails(budget, time.Since(started)), errors.Join(ctx.Err(), cause))
 }
 
 func nonProcessDone(err error) error {
