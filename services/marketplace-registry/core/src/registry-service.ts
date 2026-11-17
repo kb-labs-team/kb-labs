@@ -79,6 +79,8 @@ export class RegistryService {
     authorNamespaceId: string,
   ): Promise<PublishResponse> {
     const key = `${authorHandle}/${req.meta.name}`;
+    // Ownership and immutable-version checks run inside this per-package queue
+    // in publishVersion, before any tarball or metadata write.
     const previous = this.publishTails.get(key) ?? Promise.resolve();
     let release: () => void = () => undefined;
     const tail = new Promise<void>((resolve) => { release = resolve; });
@@ -112,6 +114,11 @@ export class RegistryService {
     const existing = await this.loadEntry(authorHandle, name);
 
     if (existing) {
+      if (existing.authorNamespaceId !== authorNamespaceId) {
+        throw Object.assign(new Error('Only the package owner can publish new versions.'), {
+          code: 'FORBIDDEN',
+        });
+      }
       if (existing.versions.some(v => v.version === version)) {
         throw Object.assign(
           new Error(`Version ${version} already exists. Versions are immutable.`),
