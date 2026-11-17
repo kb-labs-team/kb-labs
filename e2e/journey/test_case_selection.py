@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import select_from_cases
+from dispatch_registry import RUNNERS
 from select_from_cases import (read_coverage_result, runners_for_case_selection,
                                selection_from_coverage, selectors_from_coverage)
 from service_steps import Journey
@@ -177,8 +178,14 @@ class CaseJourneySelectionTests(unittest.TestCase):
         self.assertEqual(set(registry["steps"]), registry_steps)
         self.assertEqual(registry["runners"], ["service-marketplace-registry:local"])
         self.assertEqual(registry["composeProfiles"], ["marketplace-registry"])
+        self.assertEqual(registry["capabilities"], ["marketplace-registry"])
+        self.assertIn("marketplace-registry", registry["capabilities"])
+        self.assertNotIn("marketplace-fixtures", registry["capabilities"])
+        self.assertEqual(RUNNERS["service-marketplace-registry:local"].scenario, "marketplace-registry")
+        self.assertEqual(RUNNERS["service-marketplace-registry:secured"].scenario, "marketplace-registry")
 
         from service_runner import service_selection_groups
+        from service_runner import SERVICE_GROUPS
         default_groups = service_selection_groups(runner_selector="service-local:explore")
         registry_groups = service_selection_groups(runner_selector="service-marketplace-registry:local")
         self.assertIn("S-047.1", default_groups["marketplace-lifecycle"]["cases"])
@@ -190,6 +197,17 @@ class CaseJourneySelectionTests(unittest.TestCase):
                       registry_groups["marketplace-registry"]["steps"])
         self.assertIn("verify Commit Registry signature and provenance",
                       registry_groups["marketplace-registry"]["steps"])
+
+        from service_runner import SERVICE_GROUPS
+        self.assertEqual(SERVICE_GROUPS["marketplace-fixtures"]["depends_on"],
+                         ("host-running", "project-registered", "marketplace-available"))
+        self.assertEqual(SERVICE_GROUPS["mcp"]["depends_on"],
+                         ("host-running", "project-registered", "fixtures-installed", "service-api-session"))
+        for consumer in ("mcp", "analytics", "plugin-availability", "plugin-author"):
+            self.assertIn("fixtures-installed", SERVICE_GROUPS[consumer]["depends_on"])
+        self.assertNotIn("fixtures-installed", SERVICE_GROUPS["studio"]["depends_on"])
+        self.assertIn("marketplace-available", SERVICE_GROUPS["marketplace-fixtures"]["depends_on"])
+        self.assertIn("fixtures-installed", SERVICE_GROUPS["mcp"]["depends_on"])
 
     def test_hermetic_fixture_stages_declared_lock_at_its_shared_root(self):
         repository = Path(__file__).resolve().parents[2]

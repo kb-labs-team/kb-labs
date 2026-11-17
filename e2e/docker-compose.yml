@@ -48,6 +48,9 @@ services:
         condition: service_healthy
     environment:
       VERDACCIO_URL: http://verdaccio:4873
+      PUBLISH_PACKAGES_DIR: ${KB_JOURNEY_PUBLISH_PACKAGES_CONTAINER_DIR:-/journey-packages}
+    volumes:
+      - ${KB_JOURNEY_PUBLISH_PACKAGES_HOST_DIR:-../e2e/packages}:/journey-packages:ro
 
   # ── Full KB Labs platform (installed from Verdaccio) ──────────────────────
   platform:

@@ -89,6 +89,49 @@ MONITORED_CONTAINER_IDS=()
 source "$ROOT/e2e/compose-owner.sh"
 source "$ROOT/e2e/journey/runner-toolchain.sh"
 trap journey_compose_cleanup EXIT
+if [[ -z "$compose_action" && ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
+  if [[ -z "${KB_JOURNEY_CANDIDATE_ROOT:-}" ]]; then
+    if (( no_build )); then
+      echo "Registry --no-build requires KB_JOURNEY_CANDIDATE_ROOT from a completed isolated candidate preparation." >&2
+      exit 2
+    fi
+    KB_JOURNEY_CANDIDATE_ROOT="$(python3 e2e/journey/registry_candidate.py allocate \
+      --workspace "$ROOT" --parent "$ROOT/.journey/registry-candidates")"
+  else
+    KB_JOURNEY_CANDIDATE_ROOT="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$KB_JOURNEY_CANDIDATE_ROOT")"
+    if [[ ! -f "$KB_JOURNEY_CANDIDATE_ROOT/source-identity.json" ]]; then
+      echo "KB_JOURNEY_CANDIDATE_ROOT has no source identity; prepare a candidate with registry_candidate.py allocate first." >&2
+      exit 2
+    fi
+  fi
+  if (( no_build )) && [[ ! -f "$KB_JOURNEY_CANDIDATE_ROOT/release/journey-candidate/release-index.json" ]]; then
+    echo "The selected Registry candidate root has no prepared release index." >&2
+    exit 2
+  fi
+  mkdir -p "$ROOT/.journey/registry-runs"
+  KB_JOURNEY_RUN_ROOT="$(mktemp -d "$ROOT/.journey/registry-runs/run-XXXXXX")"
+  journey_run_suffix="$(python3 -c 'import sys; print(sys.argv[1].lower())' "${KB_JOURNEY_RUN_ROOT##*run-}")"
+  KB_JOURNEY_REPORT_ROOT="$KB_JOURNEY_RUN_ROOT/reports"
+  mkdir "$KB_JOURNEY_REPORT_ROOT"
+  cp "$KB_JOURNEY_CANDIDATE_ROOT/source-identity.json" "$KB_JOURNEY_REPORT_ROOT/source-identity.json"
+  export KB_JOURNEY_CANDIDATE_ROOT KB_JOURNEY_CANDIDATE_OUTPUT_ROOT="$KB_JOURNEY_CANDIDATE_ROOT"
+  export KB_JOURNEY_CANDIDATE_RELEASE_ROOT="$KB_JOURNEY_CANDIDATE_ROOT/release"
+  export KB_JOURNEY_PACKAGES_DIR="$KB_JOURNEY_CANDIDATE_ROOT/packages"
+  export KB_JOURNEY_REPORT_ROOT KB_JOURNEY_PRESERVE_CANDIDATE_REGISTRY=1
+  COMPOSE_PROJECT_NAME="kb-registry-journey-$journey_run_suffix"
+  export COMPOSE_PROJECT_NAME
+  KB_JOURNEY_NETWORK="kb-registry-net-$journey_run_suffix"
+  export KB_JOURNEY_NETWORK
+  KB_JOURNEY_DEPLOY_ROOT="$ROOT/.journey/deploy/run-$journey_run_suffix"
+  mkdir -p "$KB_JOURNEY_DEPLOY_ROOT"
+  KB_JOURNEY_DEPLOY_ROOT="${KB_JOURNEY_DEPLOY_ROOT#"$ROOT"/}"
+  export KB_JOURNEY_DEPLOY_ROOT
+  journey_image_tag="${COMPOSE_PROJECT_NAME}"
+  export KB_JOURNEY_IMAGE_TAG="$journey_image_tag"
+  export KB_E2E_PUBLISHER_IMAGE="kb-e2e-ci-publisher:${journey_image_tag}"
+  export KB_JOURNEY_RUNNER_IMAGE="kb-installer-journey:${journey_image_tag}"
+  export KB_JOURNEY_IDP_IMAGE="kb-e2e-oidc-idp:${journey_image_tag}"
+fi
 journey_compose_init "$ROOT"
 if (( COMPOSE_AVAILABLE )); then COMPOSE=("${JOURNEY_COMPOSE[@]}"); else COMPOSE=(); fi
 source "$ROOT/e2e/journey/candidate-services.sh"
@@ -138,7 +181,7 @@ cleanup() {
       (( status != 0 )) || status=1
     fi
     if [[ -n "${RUN_STARTED_AT:-}" ]]; then
-      if ! bash e2e/journey/teardown-compose.sh "$status" .journey/reports "$RUN_STARTED_AT" "${COMPOSE[@]}"; then
+      if ! bash e2e/journey/teardown-compose.sh "$status" "${KB_JOURNEY_REPORT_ROOT:-.journey/reports}" "$RUN_STARTED_AT" "${COMPOSE[@]}"; then
         status=1
       fi
     elif ! journey_compose down --remove-orphans >/dev/null; then
@@ -150,8 +193,13 @@ cleanup() {
   exit "$status"
 }
 
-mkdir -p .journey/reports
-export KB_JOURNEY_INVOCATIONS="$ROOT/.journey/reports"
+if [[ -n "${KB_JOURNEY_REPORT_ROOT:-}" ]]; then
+  mkdir -p "$KB_JOURNEY_REPORT_ROOT"
+  export KB_JOURNEY_INVOCATIONS="$KB_JOURNEY_REPORT_ROOT"
+else
+  mkdir -p .journey/reports
+  export KB_JOURNEY_INVOCATIONS="$ROOT/.journey/reports"
+fi
 
 if (( ! COMPOSE_AVAILABLE )); then
   exit 127
@@ -188,7 +236,7 @@ if (( ! no_build )); then
 fi
 
 start_container_monitor() {
-  python3 e2e/journey/container_outcomes.py --monitor "$1" --report-dir .journey/reports &
+  python3 e2e/journey/container_outcomes.py --monitor "$1" --report-dir "${KB_JOURNEY_REPORT_ROOT:-.journey/reports}" &
   ACTIVE_MONITORS+=("$!")
   MONITORED_CONTAINER_IDS+=("$1")
 }
@@ -205,10 +253,15 @@ start_project_container_monitors() {
   done <<< "$container_listing"
 }
 
-mkdir -p .journey/reports
-rm -f .journey/reports/journey-summary.md
-find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf {} +
+mkdir -p "${KB_JOURNEY_REPORT_ROOT:-.journey/reports}"
+if [[ -z "${KB_JOURNEY_REPORT_ROOT:-}" ]]; then
+  rm -f .journey/reports/journey-summary.md
+  find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf {} +
+fi
 journey_toolchain_ensure "$ROOT"
+if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
+  bash e2e/journey/prepare-registry-deploy-artifacts.sh
+fi
 journey_compose build publisher runner idp-stub
 if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
   journey_compose build marketplace-state marketplace-registry
@@ -233,10 +286,10 @@ run_journey() {
   start_container_monitor "$container_id"
   start_project_container_monitors
   if ! container_exit=$(docker wait "$container_id"); then
-    echo "Could not wait for journey runner container $container_id. Next: cat .journey/reports/container-outcomes.json" >&2
+    echo "Could not wait for journey runner container $container_id. Next: cat ${KB_JOURNEY_REPORT_ROOT:-.journey/reports}/container-outcomes.json" >&2
     status=1
   elif [[ "$container_exit" != "0" ]]; then
-    echo "Journey runner container $container_id exited $container_exit. Next: cat .journey/reports/container-outcomes.json" >&2
+    echo "Journey runner container $container_id exited $container_exit. Next: cat ${KB_JOURNEY_REPORT_ROOT:-.journey/reports}/container-outcomes.json" >&2
     status=1
   fi
 }
