@@ -456,6 +456,152 @@ class PtyInvocationTest(unittest.TestCase):
         self.assertEqual(records[0]["exit_code"], 1)
         self.assertIsNone(records[0]["error"])
 
+    def test_pty_exit_after_readiness_scan_keeps_redacted_transcript(self):
+        secret = "pty-exit-diagnostic-secret"
+
+        class ExitingProcess:
+            pid = 12345
+            returncode = None
+
+            def __init__(self):
+                self.poll_count = 0
+
+            def poll(self):
+                self.poll_count += 1
+                return None if self.poll_count == 1 else 7
+
+            def wait(self, timeout=None):
+                self.returncode = 7
+                return self.returncode
+
+            def kill(self):
+                raise AssertionError("an exited PTY child must not be killed as a timeout")
+
+        process = ExitingProcess()
+        select_results = iter([([10], [], []), ([], [], [])])
+        with tempfile.TemporaryDirectory(prefix="journey-pty-exit-evidence-") as temp:
+            with (invocations.invocation_context(report_root=temp),
+                  patch.object(invocations.pty, "openpty", return_value=(10, 11)),
+                  patch.object(invocations.os, "ttyname", return_value="/dev/pts/5"),
+                  patch.object(invocations.os, "set_blocking"),
+                  patch.object(invocations.subprocess, "Popen", return_value=process),
+                  patch.object(invocations.sys, "platform", "linux"),
+                  patch.object(invocations.select, "select", side_effect=lambda *_args: next(select_results)),
+                  patch.object(invocations.os, "read", side_effect=[
+                      f"installer exited: {secret}\n".encode(), BlockingIOError(11, "would block")]),
+                  patch.object(invocations.os, "close"),
+                  patch.object(invocations, "_linux_terminal_reader", return_value=None)):
+                result, _ = invocations.run_pty_command(
+                    ["kb-create", "install"], env={"KB_JOURNEY_ADMIN_PASSWORD": secret},
+                    timeout=5, on_read_ready=lambda _output: None, start_new_session=True,
+                )
+
+            self.assertEqual(result.returncode, 7)
+            self.assertIn(secret, result.stdout)
+            invocation = jsonl.read_jsonl(Path(temp) / "invocations/calls.jsonl")[0].value
+            self.assertIn("[REDACTED]", invocation["stdout"])
+            self.assertNotIn(secret, json.dumps(invocation))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux procfs is required for PTY read readiness")
+    def test_pty_procfs_permission_failure_stays_fail_closed(self):
+        answers = []
+        with patch.object(
+                invocations, "_linux_terminal_reader",
+                side_effect=invocations.PtyReadinessUnsupported(
+                    "Linux procfs syscall state is not readable with this user's permissions")):
+            with self.assertRaisesRegex(invocations.PtyReadinessUnsupported, "procfs syscall state"):
+                invocations.run_pty_command(
+                    [sys.executable, "-c",
+                     "import time; print('Project directory: ', end='', flush=True); time.sleep(60)"],
+                    timeout=5, on_read_ready=lambda _output: answers.append("sent"),
+                    start_new_session=True,
+                )
+
+        self.assertEqual(answers, [])
+
+    def test_pty_procfs_zombie_and_vanished_candidates_are_not_readers(self):
+        terminal_stat = type("TerminalStat", (), {"st_rdev": 0})()
+        with (patch.object(invocations, "_pty_reader_pids", return_value=[(125, 77)]),
+              patch.object(invocations.sys, "platform", "linux"),
+              patch.object(invocations, "_proc_stat", return_value=(100, 100, 0, "Z", 77)),
+              patch.object(invocations, "_decode_linux_device_number", return_value=(136, 5)),
+              patch.object(invocations.os, "stat", return_value=terminal_stat),
+              patch.object(invocations.os, "major", return_value=136),
+              patch.object(invocations.os, "minor", return_value=5),
+              patch.object(invocations.os, "readlink") as readlink):
+            self.assertIsNone(invocations._linux_terminal_reader(100, "/dev/pts/5"))
+            readlink.assert_not_called()
+
+        with (patch.object(invocations, "_pty_reader_pids", return_value=[(125, 77)]),
+              patch.object(invocations.sys, "platform", "linux"),
+              patch.object(invocations, "_proc_stat", return_value=None),
+              patch.object(invocations, "_decode_linux_device_number", return_value=(136, 5)),
+              patch.object(invocations.os, "stat", return_value=terminal_stat),
+              patch.object(invocations.os, "major", return_value=136),
+              patch.object(invocations.os, "minor", return_value=5),
+              patch.object(invocations.os, "readlink") as readlink):
+            self.assertIsNone(invocations._linux_terminal_reader(100, "/dev/pts/5"))
+            readlink.assert_not_called()
+
+    def test_pty_procfs_permission_failure_on_reused_pid_is_ignored(self):
+        terminal_stat = type("TerminalStat", (), {"st_rdev": 0})()
+        original = (100, 100, 0, "S", 77)
+        reused = (100, 100, 0, "S", 78)
+        with (patch.object(invocations, "_pty_reader_pids", return_value=[(125, 77)]),
+              patch.object(invocations.sys, "platform", "linux"),
+              patch.object(invocations, "_proc_stat", side_effect=[original, reused]),
+              patch.object(invocations, "_decode_linux_device_number", return_value=(136, 5)),
+              patch.object(invocations.os, "stat", return_value=terminal_stat),
+              patch.object(invocations.os, "major", return_value=136),
+              patch.object(invocations.os, "minor", return_value=5),
+              patch.object(invocations.os, "readlink", side_effect=PermissionError(13, "Permission denied"))):
+            self.assertIsNone(invocations._linux_terminal_reader(100, "/dev/pts/5"))
+
+    def test_pty_procfs_pid_reuse_between_traversal_and_first_stat_is_ignored(self):
+        terminal_stat = type("TerminalStat", (), {"st_rdev": 0})()
+        with (patch.object(invocations, "_pty_reader_pids", return_value=[(125, 77)]),
+              patch.object(invocations.sys, "platform", "linux"),
+              patch.object(invocations, "_proc_stat", return_value=(100, 100, 0, "S", 78)),
+              patch.object(invocations, "_decode_linux_device_number", return_value=(136, 5)),
+              patch.object(invocations.os, "stat", return_value=terminal_stat),
+              patch.object(invocations.os, "major", return_value=136),
+              patch.object(invocations.os, "minor", return_value=5),
+              patch.object(invocations.os, "readlink") as readlink):
+            self.assertIsNone(invocations._linux_terminal_reader(100, "/dev/pts/5"))
+            readlink.assert_not_called()
+
+    def test_pty_procfs_permission_failure_reports_only_safe_candidate_status(self):
+        terminal_stat = type("TerminalStat", (), {"st_rdev": 0})()
+        status = (
+            b"Name:\twiz\xffard\nUid:\t1001\t1001\t1001\t1001\n"
+            b"Gid:\t1001\t1001\t1001\t1001\nCapPrm:\t0000000000000000\n"
+            b"CapEff:\t0000000000000000\nCapBnd:\t0000000000000000\n"
+            b"TracerPid:\t0\nSeccomp:\t2\nNoNewPrivs:\t0\n"
+        )
+        with (patch.object(invocations, "_pty_reader_pids", return_value=[(125, 77)]),
+              patch.object(invocations.sys, "platform", "linux"),
+              patch.object(invocations, "_proc_stat", return_value=(100, 100, 0, "S", 77)),
+              patch.object(invocations, "_decode_linux_device_number", return_value=(136, 5)),
+              patch.object(invocations.os, "stat", return_value=terminal_stat),
+              patch.object(invocations.os, "major", return_value=136),
+              patch.object(invocations.os, "minor", return_value=5),
+              patch.object(invocations.os, "readlink", side_effect=PermissionError(13, "Permission denied")),
+              patch.object(Path, "read_bytes", return_value=status)):
+            with self.assertRaises(invocations.PtyReadinessUnsupported) as raised:
+                invocations._linux_terminal_reader(100, "/dev/pts/5")
+
+        message = str(raised.exception)
+        self.assertIn("candidate_pid=125", message)
+        self.assertIn(f"runner_uid={os.getuid()}", message)
+        self.assertIn("runner_status=", message)
+        self.assertIn("Uid=1001", message)
+        self.assertIn("CapEff=0000000000000000", message)
+        self.assertIn("TracerPid=0", message)
+        self.assertIn("Seccomp=2", message)
+        self.assertNotIn("Name=", message)
+        self.assertNotIn("argv", message.lower())
+        self.assertNotIn("secret", message.lower())
+
 
 class ReportRedactionTest(unittest.TestCase):
     def test_kb_create_failure_row_names_copied_log_and_diagnostic_paths(self):
