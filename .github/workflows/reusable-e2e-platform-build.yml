@@ -65,6 +65,8 @@ jobs:
         uses: ./.github/actions/devkit-cas
         with:
           mode: ${{ inputs.cache-mode }}
+          scope: e2e-platform-build
+          sha: ${{ github.sha }}
 
       - name: Build all packages (topological order)
         run: |

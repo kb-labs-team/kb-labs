@@ -49,6 +49,7 @@ jobs:
       - id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - id: selection
         name: Resolve the case selection for this trigger
@@ -70,6 +71,15 @@ jobs:
       - id: dependencies
         name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
+      - id: cas-scope
+        name: Resolve exact-SHA devkit cache scope
+        run: node scripts/ci/resolve-journey-cache-scope.mjs
+      - name: Restore and save journey producer devkit CAS
+        uses: ./.github/actions/devkit-cas
+        with:
+          mode: ${{ steps.cas-scope.outputs.mode }}
+          scope: ${{ steps.cas-scope.outputs.scope }}
+          sha: ${{ steps.cas-scope.outputs.sha }}
       - uses: ./.github/actions/install-goreleaser
       - id: batch
         name: Produce shared build and candidate

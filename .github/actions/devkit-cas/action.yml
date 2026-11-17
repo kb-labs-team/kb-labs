@@ -6,6 +6,12 @@ inputs:
     description: 'read-write restores and saves, read-only restores, and off always builds cold'
     required: false
     default: read-write
+  scope:
+    description: Internal cache scope shared by one producer and its consumers.
+    required: true
+  sha:
+    description: Exact checked-out commit SHA shared by the producer and its consumers.
+    required: true
 
 outputs:
   cache-hit:
@@ -22,23 +28,24 @@ runs:
       run: |
         partition=$(printf '%s\n%s\n' "$(node --version)" "$(go version)" | shasum -a 256 | cut -c 1-16)
         printf 'partition=%s\n' "$partition" >> "$GITHUB_OUTPUT"
+        printf 'KBLABS_CI_DEVKIT_CAS_ROOT=%s/kb-devkit-cas\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
     - name: Restore and save kb-devkit CAS for build producer
       id: restore-writer
       if: inputs.mode == 'read-write'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
-        path: .kb/devkit/
+        path: ${{ runner.temp }}/kb-devkit-cas
         # Task fingerprints own source validity. This outer cache only transports
         # objects between runs sharing a runner platform and Node/Go toolchain.
-        key: devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ github.sha }}
+        key: devkit-cas-v2-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ inputs.sha }}
         restore-keys: |
-          devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-
+          devkit-cas-v2-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-
     - name: Restore kb-devkit CAS for consumers
       id: restore-reader
       if: inputs.mode == 'read-only'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
-        path: .kb/devkit/
-        key: devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ github.sha }}
+        path: ${{ runner.temp }}/kb-devkit-cas
+        key: devkit-cas-v2-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ inputs.sha }}
         restore-keys: |
-          devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-
+          devkit-cas-v2-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-
