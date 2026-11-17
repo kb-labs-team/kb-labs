@@ -1,0 +1,83 @@
+name: Registry roots paired benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact immutable commit SHA to benchmark (same SHA used by every lane)
+        required: true
+        type: string
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-roots-benchmark-${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.strategy }} / ${{ matrix.cache }} / repeat ${{ matrix.repeat }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.label.name == 'registry-roots-benchmark' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        strategy: [affected, registry-roots]
+        cache: [cold, warm]
+        repeat: [1, 2, 3]
+    env:
+      GOTOOLCHAIN: local
+      BENCH_STRATEGY: ${{ matrix.strategy }}
+      BENCH_CACHE_MODE: ${{ matrix.cache }}
+      BENCH_REPEAT: ${{ matrix.repeat }}
+      BENCH_OUTPUT: ${{ runner.temp }}/registry-roots-benchmark/${{ matrix.strategy }}-${{ matrix.cache }}-${{ matrix.repeat }}.json
+      BENCH_SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Validate immutable source SHA
+        shell: bash
+        run: [[ "$BENCH_SOURCE_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-devkit/go.sum
+      - name: Install frozen workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Build current DevKit binary outside the timed interval
+        run: cd tools/kb-devkit && go build -o "$RUNNER_TEMP/kb-devkit-bench" .
+      - name: Verify immutable source and report toolchain
+        run: |
+          test "$(git rev-parse HEAD)" = "$BENCH_SOURCE_SHA"
+          node --version
+          go version
+          printf 'source_sha=%s\nstrategy=%s\ncache=%s\nrepeat=%s\n' "$BENCH_SOURCE_SHA" "$BENCH_STRATEGY" "$BENCH_CACHE_MODE" "$BENCH_REPEAT"
+      - name: Measure selected build
+        run: node scripts/ci/registry-roots-benchmark/measure.mjs
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: registry-roots-benchmark-${{ matrix.strategy }}-${{ matrix.cache }}-${{ matrix.repeat }}
+          path: ${{ env.BENCH_OUTPUT }}
+          if-no-files-found: warn
+          retention-days: 30
