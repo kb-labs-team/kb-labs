@@ -125,6 +125,24 @@ def _record_process_failure(summary_path: str | Path, mode: str, error: BaseExce
     print_report_text(message, stream=sys.stdout, flush=True)
 
 
+def load_gateway_internal_secret(environment: dict[str, str] | None = None) -> None:
+    """Load the Registry journey's shared Gateway secret from its Docker secret mount."""
+    target = os.environ if environment is None else environment
+    secret_path = target.pop("KB_JOURNEY_GATEWAY_INTERNAL_SECRET_FILE", None)
+    if not secret_path:
+        return
+    try:
+        secret = Path(secret_path).read_text().strip()
+    except OSError as error:
+        raise RuntimeError("journey Gateway internal secret mount is unavailable") from error
+    if not secret:
+        raise RuntimeError("journey Gateway internal secret mount is empty")
+    existing = target.get("GATEWAY_INTERNAL_SECRET")
+    if existing and existing != secret:
+        raise RuntimeError("journey Gateway internal secret conflicts with the mounted secret")
+    target["GATEWAY_INTERNAL_SECRET"] = secret
+
+
 def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> int:
     namespace = None
     phase = "startup"
@@ -176,6 +194,7 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
 
 
 def main() -> int:
+    load_gateway_internal_secret()
     summary_path = journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")
     mode = "secured" if journey_value("KB_JOURNEY_VARIANT", "default").endswith("secured") else "local"
     try:
