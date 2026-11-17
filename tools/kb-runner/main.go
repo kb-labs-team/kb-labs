@@ -75,9 +75,10 @@ func execute(args []string, stdout, stderr io.Writer) (int, error) {
 
 type runnerRoot struct {
 	command.Root
-	invocation string
-	executable string
-	supervisor schedulerJobSupervisor
+	invocation     string
+	executable     string
+	supervisor     schedulerJobSupervisor
+	processStarter func(context.Context, proc.Config) (*proc.Run, error)
 }
 
 func (root runnerRoot) Invocation() string { return root.invocation }
@@ -85,6 +86,9 @@ func (root runnerRoot) Invocation() string { return root.invocation }
 func (root runnerRoot) InvocationCommand() string { return shellQuote(root.invocation) }
 
 func (root runnerRoot) startProcess(ctx context.Context, config proc.Config) (*proc.Run, error) {
+	if root.processStarter != nil {
+		return root.processStarter(ctx, config)
+	}
 	return proc.Start(ctx, config)
 }
 

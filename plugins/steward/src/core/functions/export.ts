@@ -8,10 +8,9 @@ export interface Snapshot {
 }
 
 /**
- * Dumps every collection to plain objects for the daily backup artifact.
- * Writing the result to disk and pushing it to the private repo is a job
- * concern (`entry/src/jobs/export-backup.ts`), not core's — core only
- * produces the data (ADR-0001 §Бэкапы, §"Разделение core/entry").
+ * Dumps every collection to plain objects for the daily storage object.
+ * Persistence is a job concern; the successful-export event is recorded only
+ * after the storage write completes.
  */
 export async function exportSnapshot(): Promise<Snapshot> {
   const docs = await getDb();
@@ -22,12 +21,14 @@ export async function exportSnapshot(): Promise<Snapshot> {
 
   const snapshot: Snapshot = { exportedAt: Date.now(), collections };
 
+  return snapshot;
+}
+
+export async function recordExportCompleted(snapshot: Snapshot): Promise<void> {
   await appendEvent({
     subjectType: 'project',
     subjectId: 'global',
     kind: 'export.completed',
-    meta: { counts: Object.fromEntries(Object.entries(collections).map(([k, v]) => [k, v.length])) },
+    meta: { counts: Object.fromEntries(Object.entries(snapshot.collections).map(([k, v]) => [k, v.length])) },
   });
-
-  return snapshot;
 }

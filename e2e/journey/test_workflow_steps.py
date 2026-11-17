@@ -299,6 +299,10 @@ class WorkflowJourneyTests(unittest.TestCase):
                 if args[:2] == ["marketplace", "install"]:
                     marketplace_install_calls.append(args)
                     output = {"ok": True, "data": {"installed": [{"id": "@kb-labs/steward"}]}}
+                elif args[:3] == ["steward", "project", "add"]:
+                    output = {"ok": True, "data": {"id": "prj-s301"}}
+                elif args[:3] == ["steward", "commitment", "add"]:
+                    output = {"ok": True, "data": {"id": "cmt-s301"}}
                 elif args == ["workflow", "create"]:
                     target = cwd / ".kb" / "workflows" / "hello.yml"
                     target.parent.mkdir(parents=True, exist_ok=True)
@@ -448,7 +452,10 @@ class WorkflowJourneyTests(unittest.TestCase):
 
             old_run_cli = workflow_steps.run_cli
             old_run_pty_command = workflow_steps.run_pty_command
+            old_steward_artifact_steps = workflow_steps.run_steward_artifact_steps
             workflow_steps.run_cli = fake_run
+            workflow_steps.run_steward_artifact_steps = lambda *_args, **_kwargs: None
+
             def fake_run_pty(command, *, cwd, env, timeout, on_output):
                 run_id = command[-1]
                 transcript = (f"Watching run {run_id}\nstep.started step:first-id\nstep.succeeded step:first-id\n"
@@ -472,6 +479,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             finally:
                 workflow_steps.run_cli = old_run_cli
                 workflow_steps.run_pty_command = old_run_pty_command
+                workflow_steps.run_steward_artifact_steps = old_steward_artifact_steps
 
         self.assertEqual(journey_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID"), "failed-run")
         self.assertEqual(successful_workflow_commands, ["journey-hello"])

@@ -859,7 +859,7 @@ export function getHandlerPath(
  */
 export function getHandlerPermissions(
   manifest: ManifestV3,
-  host: HostType,
+  host: HostType | 'job',
   id: string,
 ): PermissionSpec {
   // Get handler-specific permissions
@@ -887,6 +887,9 @@ export function getHandlerPermissions(
       handlerPerms = manifest.workflows?.handlers.find(
         (h) => h.id === id,
       )?.permissions;
+      break;
+    case "job":
+      handlerPerms = manifest.jobs?.handlers.find((h) => h.id === id)?.permissions;
       break;
     case "webhook":
       handlerPerms = manifest.webhooks?.handlers.find(

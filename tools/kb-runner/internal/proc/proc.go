@@ -663,6 +663,17 @@ func Start(ctx context.Context, cfg Config) (*Run, error) {
 	return startWithHostResourceSource(ctx, cfg, systemHostResourceSource())
 }
 
+// StartWithHostResourceSource starts a supervised command using the supplied
+// host sample source. Coordinated callers can share one source across their
+// admissions; production callers that do not need that behavior should use
+// Start, which samples the host directly.
+func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostResourceSource) (*Run, error) {
+	if source == nil {
+		return nil, errors.New("proc: host resource source is required")
+	}
+	return startWithHostResourceSource(ctx, cfg, source)
+}
+
 // CanonicalStateDir resolves a command-line state path before any keeper is started.
 func CanonicalStateDir(stateDir string) (string, error) {
 	if stateDir == "" {

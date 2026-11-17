@@ -5,12 +5,14 @@ import json
 import tempfile
 import time
 import threading
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
 from kb_invocation import kb_command, kb_login_shell
+from steward_artifact_steps import run_steward_artifact_steps
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
 from invocations import (
     CompletedProcess,
@@ -995,6 +997,39 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
     if journey.mode == "secured":
         run_secured_cli_auth_step(journey, env=env, project=project)
     journey.step("install plugin cron fixture", "workflow", install_plugin_cron_fixture)
+
+    def seed_steward_records() -> str | None:
+        marker = env.get("KB_JOURNEY_S301_DATA_MARKER", f"s301-{journey.run_id}")
+        try:
+            project_data = _json_cli(
+                ["steward", "project", "add", f"--name={marker} project", "--json"],
+                env=env, cwd=project,
+            )
+            if not isinstance(project_data, dict) or not isinstance(project_data.get("id"), str):
+                raise AssertionError(f"Steward project add returned no project ID: {project_data!r}")
+            overdue = (datetime.now(timezone.utc) - timedelta(days=1)).replace(microsecond=0).isoformat()
+            _json_cli(
+                ["steward", "commitment", "add", f"--text={marker} stale commitment",
+                 f"--project={project_data['id']}", f"--remind-at={overdue}", "--json"],
+                env=env, cwd=project,
+            )
+            reminder = (datetime.now(timezone.utc) + timedelta(days=1)).replace(microsecond=0).isoformat()
+            _json_cli(
+                ["steward", "commitment", "add", f"--text={marker} upcoming commitment",
+                 f"--project={project_data['id']}", f"--remind-at={reminder}", "--json"],
+                env=env, cwd=project,
+            )
+            return None
+        except Exception as error:
+            return str(error)
+
+    journey.step("seed Steward review and backup records", "steward-artifacts", seed_steward_records,
+                 cases=[])
+    run_steward_artifact_steps(
+        journey,
+        project_root=str(project),
+        env=env,
+    )
     _solo_workflow_case(journey, env=env, project=project, clock=clock, sleep=sleep)
     prepare_workflow_fixtures(project)
 

@@ -122,12 +122,23 @@ export class CronDiscovery {
           const job = value.job && typeof value.job === 'object' && !Array.isArray(value.job)
             ? value.job as Record<string, unknown>
             : undefined;
+          const jobs = this.cliApi.queryEntities({ kind: 'job' });
+          const registeredJob = job && typeof job.type === 'string'
+            ? jobs.find((candidate) => candidate.ref.pluginId === entity.ref.pluginId && (
+                candidate.ref.entityId === job.type
+                || `${candidate.ref.pluginId}:${candidate.ref.entityId}` === job.type
+                || `plugin:${candidate.ref.pluginId}/job/${candidate.ref.entityId}` === job.type
+              ))
+            : undefined;
+          if (job && typeof job.type === 'string' && !registeredJob) {
+            throw new Error(`unknown job handler ${job.type}`);
+          }
           const pluginCron = typeof value.handler === 'string'
             ? value
-            : job && typeof job.type === 'string'
+            : job && registeredJob
               ? {
                   ...value,
-                  handler: job.type.includes(':') ? job.type : `${entity.ref.pluginId}:${job.type}`,
+                  handler: `plugin:${registeredJob.ref.pluginId}/job/${registeredJob.ref.entityId}`,
                   input: job.payload,
                 }
               : value;
@@ -195,15 +206,16 @@ export class CronDiscovery {
             throw new Error(`cron id must match filename ${id}`);
           }
           if (validated.handler) {
-            const [pluginId, jobId, ...extra] = validated.handler.split(':');
-            if (!pluginId || !jobId || extra.length > 0) {
-              throw new Error(`unknown job handler ${validated.handler}`);
-            }
-            const exists = this.cliApi.queryEntities({ kind: 'job' }).some((entity) =>
-              entity.ref.pluginId === pluginId && entity.ref.entityId === jobId
+            const registeredJob = this.cliApi.queryEntities({ kind: 'job' }).find((entity) =>
+              validated.handler === `${entity.ref.pluginId}:${entity.ref.entityId}`
+              || validated.handler === `${entity.ref.pluginId}:job:${entity.ref.entityId}`
+              || validated.handler === `plugin:${entity.ref.pluginId}/job/${entity.ref.entityId}`
             );
-            if (!exists) { throw new Error(`unknown job handler ${validated.handler}`); }
-            this.scheduler.registerUserCron(validated);
+            if (!registeredJob) { throw new Error(`unknown job handler ${validated.handler}`); }
+            this.scheduler.registerUserCron({
+              ...validated,
+              handler: `plugin:${registeredJob.ref.pluginId}/job/${registeredJob.ref.entityId}`,
+            });
             return 1;
           }
           const workflowId = validated.workflow;

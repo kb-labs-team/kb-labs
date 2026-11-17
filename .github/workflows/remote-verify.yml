@@ -14,6 +14,14 @@ on:
         type: string
         required: false
         default: ''
+      baseline_sha:
+        type: string
+        required: false
+        default: ''
+      candidate_sha:
+        type: string
+        required: false
+        default: ''
   push:
     branches: ['verify/**']
   workflow_dispatch:
@@ -22,12 +30,25 @@ on:
         description: Verification profile
         required: true
         type: choice
-        options: [stream, candidate, benchmark]
+        options: [stream, candidate, benchmark, plugin-benchmark]
         default: candidate
       base_ref:
         description: Optional diff base selected by the local candidate verifier
         required: false
         type: string
+      baseline_sha:
+        description: Full immutable pre-change commit SHA for the paired plugin benchmark
+        required: false
+        type: string
+      candidate_sha:
+        description: Full immutable post-change commit SHA for the paired plugin benchmark
+        required: false
+        type: string
+      include_long_soak:
+        description: Add one separate 2,000-call correctness soak per mode and source revision
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: '17 4 * * *'
 
@@ -40,7 +61,7 @@ env:
 
 jobs:
   prepare:
-    if: github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
+    if: github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark') && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'plugin-benchmark')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -107,7 +128,7 @@ jobs:
 
   build:
     needs: prepare
-    if: needs.prepare.result == 'success' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
+    if: needs.prepare.result == 'success' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark') && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'plugin-benchmark')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     outputs:
@@ -189,7 +210,7 @@ jobs:
 
   independent-test-shards:
     needs: prepare
-    if: needs.prepare.result == 'success' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
+    if: needs.prepare.result == 'success' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark') && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'plugin-benchmark')
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}
     name: Independent test ${{ matrix.stage }}
@@ -248,7 +269,7 @@ jobs:
 
   build-dependent-test-shards:
     needs: build
-    if: needs.build.result == 'success' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
+    if: needs.build.result == 'success' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark') && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'plugin-benchmark')
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.build.outputs.shard_timeout_minutes) }}
     name: Build-dependent test ${{ matrix.shard || matrix.stage }}
@@ -311,7 +332,7 @@ jobs:
 
   internal-tool-test-shards:
     needs: prepare
-    if: needs.prepare.result == 'success' && needs.prepare.outputs.internal_tool_packages != '' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
+    if: needs.prepare.result == 'success' && needs.prepare.outputs.internal_tool_packages != '' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark') && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'plugin-benchmark')
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}
@@ -372,7 +393,7 @@ jobs:
           retention-days: 1
 
   verdict:
-    if: always() && github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
+    if: always() && github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark') && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'plugin-benchmark')
     needs: [prepare, build, independent-test-shards, build-dependent-test-shards, internal-tool-test-shards]
     runs-on: ubuntu-latest
     permissions:
@@ -504,3 +525,145 @@ jobs:
               gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$encoded"
             fi
           done
+
+  plugin-execution-benchmark:
+    name: Plugin execution paired benchmark / repeat ${{ matrix.repeat }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 180
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'plugin-benchmark'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        repeat: [1, 2, 3, 4, 5]
+    permissions:
+      contents: read
+    env:
+      GOTOOLCHAIN: local
+      BENCH_BASELINE_SHA: ${{ inputs.baseline_sha }}
+      BENCH_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      BENCH_REPEAT: ${{ matrix.repeat }}
+      BENCH_STAGE: fast
+      BENCH_SOAK_CALLS: '100'
+      BENCH_OUTPUT: .benchmark/plugin-execution-benchmark/repeat-${{ matrix.repeat }}.json
+      BENCH_HARNESS_SHA: ${{ github.sha }}
+    steps:
+      - name: Validate immutable source SHAs
+        shell: bash
+        run: |
+          [[ "$BENCH_BASELINE_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
+          [[ "$BENCH_CANDIDATE_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
+          [[ "$BENCH_HARNESS_SHA" =~ ^[a-fA-F0-9]{40}$ ]]
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.BENCH_HARNESS_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-devkit/go.sum
+      - name: Ensure baseline and candidate commits are available
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          ensure_commit() {
+            local sha="$1"
+            if git cat-file -e "${sha}^{commit}" 2>/dev/null; then
+              return
+            fi
+            local auth
+            auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+            git -c "http.extraHeader=AUTHORIZATION: basic ${auth}" fetch --depth=1 --no-tags "https://github.com/${GITHUB_REPOSITORY}.git" "$sha"
+            git cat-file -e "${sha}^{commit}"
+          }
+          ensure_commit "$BENCH_BASELINE_SHA"
+          ensure_commit "$BENCH_CANDIDATE_SHA"
+      - name: Add exact baseline and candidate worktrees
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/baseline" "$BENCH_BASELINE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$BENCH_CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/baseline" rev-parse HEAD)" = "$BENCH_BASELINE_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate" rev-parse HEAD)" = "$BENCH_CANDIDATE_SHA"
+      - name: Install and build baseline (outside timed interval)
+        working-directory: ${{ runner.temp }}/baseline
+        run: |
+          corepack pnpm install --frozen-lockfile
+          (cd tools/kb-devkit && go build -o "$RUNNER_TEMP/kb-devkit-baseline" .)
+          "$RUNNER_TEMP/kb-devkit-baseline" run build --packages @kb-labs/core-ipc,@kb-labs/plugin-runtime,@kb-labs/plugin-execution-factory
+      - name: Install and build candidate (outside timed interval)
+        working-directory: ${{ runner.temp }}/candidate
+        run: |
+          corepack pnpm install --frozen-lockfile
+          (cd tools/kb-devkit && go build -o "$RUNNER_TEMP/kb-devkit-candidate" .)
+          "$RUNNER_TEMP/kb-devkit-candidate" run build --packages @kb-labs/core-ipc,@kb-labs/plugin-runtime,@kb-labs/plugin-execution-factory
+      - name: Check lightweight benchmark assertions
+        run: node --test scripts/ci/plugin-execution-benchmark/metrics.test.mjs scripts/ci/plugin-execution-benchmark/aggregate.test.mjs
+      - name: Run paired workload (alternating measurement order)
+        run: node scripts/ci/plugin-execution-benchmark/paired.mjs
+        env:
+          BENCH_BASELINE_ROOT: ${{ runner.temp }}/baseline
+          BENCH_CANDIDATE_ROOT: ${{ runner.temp }}/candidate
+      - name: Run optional extended correctness soak
+        if: github.event.inputs.include_long_soak == 'true' && matrix.repeat == 1
+        run: node scripts/ci/plugin-execution-benchmark/paired.mjs
+        env:
+          BENCH_BASELINE_ROOT: ${{ runner.temp }}/baseline
+          BENCH_CANDIDATE_ROOT: ${{ runner.temp }}/candidate
+          BENCH_STAGE: long-soak
+          BENCH_SOAK_CALLS: '2000'
+          BENCH_OUTPUT: .benchmark/plugin-execution-benchmark/long-soak.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: plugin-execution-benchmark-repeat-${{ matrix.repeat }}
+          path: ${{ env.BENCH_OUTPUT }}
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && github.event.inputs.include_long_soak == 'true' && matrix.repeat == 1
+        with:
+          name: plugin-execution-benchmark-long-soak
+          path: .benchmark/plugin-execution-benchmark/long-soak.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  plugin-execution-benchmark-aggregate:
+    name: Plugin execution paired benchmark summary
+    runs-on: ubuntu-26.04
+    needs: plugin-execution-benchmark
+    if: always() && needs.plugin-execution-benchmark.result == 'success'
+    permissions:
+      contents: read
+      actions: read
+    env:
+      BENCH_BASELINE_SHA: ${{ inputs.baseline_sha }}
+      BENCH_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      BENCH_HARNESS_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: plugin-execution-benchmark-repeat-*
+          path: .benchmark/plugin-execution-benchmark/pairs
+          merge-multiple: true
+      - name: Validate pairs and summarize results
+        run: node scripts/ci/plugin-execution-benchmark/aggregate.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: plugin-execution-benchmark-summary
+          path: .benchmark/plugin-execution-benchmark/summary.json
+          if-no-files-found: error
+          retention-days: 30

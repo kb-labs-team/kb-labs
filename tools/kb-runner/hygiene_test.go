@@ -983,9 +983,19 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 	t.Setenv("FAKE_AGENT_RELEASE_FIFO", releaseFIFO)
 	t.Setenv("FAKE_AGENT_BLOCK_STREAM", first.Stream)
 	clock := &controlledSchedulerClock{now: time.Now()}
-	options := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor, slots: 2, clock: clock})
+	sweepLeaseAcquired := make(chan struct{})
+	releaseSweep := make(chan struct{})
+	var sweepLeaseAcquiredOnce sync.Once
+	var releaseSweepOnce sync.Once
+	releaseScheduledSweep := func() { releaseSweepOnce.Do(func() { close(releaseSweep) }) }
+	options := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{
+		root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor, slots: 2, clock: clock,
+		hygieneLeaseAcquired: func() {
+			sweepLeaseAcquiredOnce.Do(func() { close(sweepLeaseAcquired) })
+			<-releaseSweep
+		},
+	})
 	ctx, cancel := context.WithCancel(t.Context())
-	var eventsFile *os.File
 	var workerRelease *os.File
 	var err error
 	runDone := make(chan struct {
@@ -996,10 +1006,7 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 	startedReaderUsed := false
 	t.Cleanup(func() {
 		cancel()
-		if eventsFile != nil {
-			_ = syscall.Flock(int(eventsFile.Fd()), syscall.LOCK_UN)
-			_ = eventsFile.Close()
-		}
+		releaseScheduledSweep()
 		if workerRelease != nil {
 			_, _ = workerRelease.WriteString("release\n")
 			_ = workerRelease.Close()
@@ -1061,22 +1068,12 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 		cancel()
 		t.Fatal(err)
 	}
-	eventsFile, err = os.OpenFile(filepath.Join(first.WorktreeRoot, "logs", "events.log"), os.O_RDWR, 0)
-	if err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	if err := syscall.Flock(int(eventsFile.Fd()), syscall.LOCK_EX); err != nil {
-		_ = eventsFile.Close()
-		cancel()
-		t.Fatal(err)
-	}
 	second := f.addTask(t, "slow-hygiene-two", "worker")
 	clock.Advance(2 * time.Hour)
 	leasePath := hygieneLeasePath(f.state)
-	if !waitForHygieneLeaseBusy(t, leasePath) {
-		_ = syscall.Flock(int(eventsFile.Fd()), syscall.LOCK_UN)
-		_ = eventsFile.Close()
+	select {
+	case <-sweepLeaseAcquired:
+	case <-time.After(10 * time.Second):
 		cancel()
 		t.Fatal("scheduled hygiene did not acquire its dedicated lease")
 	}
@@ -1107,16 +1104,9 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		cancel()
-		t.Fatal("queued task did not dispatch while hygiene was blocked on its journal")
+		t.Fatal("queued task did not dispatch while the scheduled hygiene lease was held")
 	}
-	if err := syscall.Flock(int(eventsFile.Fd()), syscall.LOCK_UN); err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	if err := eventsFile.Close(); err != nil {
-		cancel()
-		t.Fatal(err)
-	}
+	releaseScheduledSweep()
 	_, _ = workerRelease.WriteString("release\n")
 	_ = workerRelease.Close()
 	workerRelease = nil
@@ -1127,23 +1117,6 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("scheduler did not stop after cancellation")
 	}
-}
-
-func waitForHygieneLeaseBusy(t *testing.T, path string) bool {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		lease, acquired, err := proc.AcquireFileLease(path, proc.LeaseExclusiveTry)
-		if err != nil {
-			t.Fatalf("probe scheduled hygiene lease: %v", err)
-		}
-		if !acquired {
-			return true
-		}
-		_ = lease.Close()
-		runtime.Gosched()
-	}
-	return false
 }
 
 func waitForHygieneEvent(path, event string) error {

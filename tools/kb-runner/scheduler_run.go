@@ -518,14 +518,15 @@ type schedulerRunOptions struct {
 }
 
 type schedulerRunOptionsConfig struct {
-	root        runnerRoot
-	state       string
-	lifecycle   context.Context
-	slots       int
-	selected    map[string]bool
-	clock       schedulerClock
-	maintenance *hygieneSupervisor
-	supervisor  schedulerJobSupervisor
+	root                 runnerRoot
+	state                string
+	lifecycle            context.Context
+	slots                int
+	selected             map[string]bool
+	clock                schedulerClock
+	maintenance          *hygieneSupervisor
+	supervisor           schedulerJobSupervisor
+	hygieneLeaseAcquired func()
 }
 
 func newSchedulerRunOptions(store *schedulerStore, config schedulerRunOptionsConfig) schedulerRunOptions {

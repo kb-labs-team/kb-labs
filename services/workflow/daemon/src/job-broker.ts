@@ -41,9 +41,13 @@ export class JobBroker {
     // Handler can be in format:
     // - "command:name" for CLI commands (e.g., "command:mind:rag-index")
     // - "plugin:id/handler" for workflow handlers
+    // - "plugin:pluginId/job/jobId" for manifest.jobs.handlers
     // - "builtin:shell" for shell execution
-    // If no prefix, assume it's a CLI command for backward compatibility
-    const uses = request.handler.includes(':')
+    // Explicit executor prefixes are preserved. All other legacy handler text,
+    // including names containing colons, denotes a CLI command.
+    const uses = request.handler.startsWith('plugin:')
+      || request.handler.startsWith('command:')
+      || request.handler.startsWith('builtin:')
       ? request.handler
       : `command:${request.handler}`;
 

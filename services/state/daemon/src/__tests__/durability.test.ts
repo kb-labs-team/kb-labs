@@ -138,6 +138,9 @@ describe('StateBroker durability', () => {
       } else {
         const role = process.env.JOURNAL_ROLE;
         process.stdout.write('locked-' + role + '\\n');
+        if (role === 'first') {
+          await new Promise((resolve) => process.stdin.once('data', resolve));
+        }
         await broker.set('writer-' + role, 'acknowledged', 60000);
         if (role === 'first' || role === 'reclaimer-0') {
           for (let value = 0; value < 1000; value++) await broker.set('compact-me', value, 60000);

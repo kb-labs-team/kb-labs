@@ -9,7 +9,7 @@ export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, pla
   const createPath = path.join(tempRoot, 'kb-create');
   const createModule = path.join(workspace, 'tools/kb-create');
   const indexPath = path.join(workspace, '.journey/release/journey-candidate/release-index.json');
-  const installedCLI = path.join(platformRoot, 'node_modules/.bin/kb');
+  const installedCLI = path.join(path.dirname(createPath), 'kb');
   return [
     { command: 'make', args: ['build', `BINARY=${createPath}`], cwd: createModule },
     {

@@ -1,6 +1,8 @@
 import { defineJob, type JobInput, type PluginContextV3 } from '@kb-labs/sdk';
 import { getDailyReview, type DailyReview } from '../core/index.js';
 
+const REVIEW_PREFIX = 'steward/reviews/';
+
 function renderMarkdown(review: DailyReview): string {
   const backupLine =
     review.lastBackupDaysAgo === null
@@ -25,8 +27,8 @@ function renderMarkdown(review: DailyReview): string {
 }
 
 /**
- * Cron-scheduled job — see ADR-0001 §"Артефакты и фоновые джобы". Writes the
- * `steward.review.md` artifact declared in the manifest; delivery/notification
+ * Cron-scheduled job — see ADR-0001 §"Артефакты и фоновые джобы". Persists the
+ * dated review as a governed platform storage object; delivery/notification
  * is the platform's responsibility, not this plugin's.
  */
 const job = defineJob({
@@ -35,11 +37,10 @@ const job = defineJob({
   describe: 'Generates the daily review artifact',
   handler: async (_input: JobInput, ctx: PluginContextV3) => {
     try {
+      const storage = ctx.platform.storage;
       const review = await getDailyReview();
       const dateKey = new Date(review.generatedAt).toISOString().slice(0, 10);
-      await ctx.platform.artifacts?.write(`reviews/${dateKey}.md`, renderMarkdown(review), {
-        contentType: 'text/markdown',
-      });
+      await storage.write(`${REVIEW_PREFIX}${dateKey}.md`, Buffer.from(renderMarkdown(review), 'utf8'));
       ctx.platform.logger?.debug?.('steward:daily-review generated', { staleCount: review.staleCommitments.length });
       return { ok: true, staleCount: review.staleCommitments.length };
     } catch (err) {

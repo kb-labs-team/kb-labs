@@ -15,6 +15,7 @@ const JSON_FLAG = { name: 'json', type: 'boolean', description: 'Emit JSON inste
 const permissions = combinePermissions()
   .with(kbPlatformPreset)
   .withPlatform({
+    storage: { paths: ['steward/'] },
     database: {
       document: {
         collections: [
@@ -43,7 +44,7 @@ const baseManifest = {
     tags: ['pm', 'crm', 'agents', 'productivity'],
   },
   platform: {
-    requires: ['documentDatabase'],
+    requires: ['documentDatabase', 'storage'],
   },
   cli: {
     groupMeta: [{ path: 'steward', describe: 'Personal PM/CRM for AI agents' }],
@@ -326,28 +327,16 @@ const baseManifest = {
     handlers: [
       {
         id: 'daily-review',
-        describe: 'Writes .kb/steward/reviews/<date>.md',
+        describe: 'Writes steward/reviews/<UTC-date>.md to platform storage',
         handler: './jobs/daily-review.js#default',
       },
       {
         id: 'export-backup',
-        describe: 'Writes .kb/steward/exports/<date>.json — git commit/push happens at the workflow level',
+        describe: 'Writes steward/exports/<UTC-date>.json to platform storage — git commit/push happens at the workflow level',
         handler: './jobs/export-backup.js#default',
       },
     ],
   },
-  artifacts: [
-    {
-      id: 'steward.review.md',
-      pathTemplate: '.kb/steward/reviews/{date}.md',
-      description: 'Daily review — stale commitments, upcoming reminders, backup health.',
-    },
-    {
-      id: 'steward.export.json',
-      pathTemplate: '.kb/steward/exports/{date}.json',
-      description: 'Daily snapshot of every collection, for the private-repo backup.',
-    },
-  ],
 } as const;
 
 export const manifestWithPermissions: typeof baseManifest & { permissions: unknown } = { ...baseManifest, permissions };

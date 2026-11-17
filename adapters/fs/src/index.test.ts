@@ -53,6 +53,15 @@ describe("FilesystemStorageAdapter", () => {
   });
 
   describe("Basic Operations", () => {
+    it("keeps objects across adapter reconstruction", async () => {
+      await storage.write("steward/reviews/2026-11-17.md", Buffer.from("# durable review"));
+      const restartedStorage = createAdapter({ baseDir: tmpDir });
+
+      expect(await restartedStorage.read("steward/reviews/2026-11-17.md")).toEqual(
+        Buffer.from("# durable review"),
+      );
+    });
+
     it("should write and read a file", async () => {
       const content = Buffer.from("Hello, World!");
 

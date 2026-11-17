@@ -140,7 +140,7 @@ Event {
 - `daily-review` (1×/сутки) → `getDailyReview()`: просроченные обещания, ближайшие сроки, застоявшиеся записи. Первой строкой — `last successful backup: N days ago`, чтобы молчаливый отказ бэкапа стал шумным.
 - `export-backup` (1×/сутки) → снапшот всех коллекций → git commit + push в приватный репозиторий.
 
-Артефакты объявляются полем `artifacts[]` манифеста и пишутся в `.kb/steward/` (`reviews/YYYY-MM-DD.md`, `exports/`). Markdown выбран не для читаемости, а как будущий корпус для штатной файловой индексации `mind` — без связанности между плагинами.
+Результаты daily-review и export-backup хранятся как объекты через governed `ctx.platform.storage` по ключам `steward/reviews/YYYY-MM-DD.md` и `steward/exports/YYYY-MM-DD.json`. Пользователь получает их через authenticated Platform API `POST /platform/v1/storage/read`; это объекты настроенного adapter (по умолчанию FS), а не файлы проекта и не записи `artifacts[]` manifest. Этот выбор не вводит связанность с `mind`.
 
 Доставка и уведомления — ответственность платформы, не плагина.
 

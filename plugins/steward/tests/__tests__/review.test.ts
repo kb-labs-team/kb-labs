@@ -4,7 +4,7 @@ import { COLLECTIONS } from '@kb-labs/steward/contracts';
 import { getDailyReview, checkIntegrity } from '../../src/core/functions/review.js';
 import { addProject } from '../../src/core/functions/project.js';
 import { addCommitment } from '../../src/core/functions/commitment.js';
-import { exportSnapshot } from '../../src/core/functions/export.js';
+import { exportSnapshot, recordExportCompleted } from '../../src/core/functions/export.js';
 import { getDb } from '../../src/core/db.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -24,7 +24,7 @@ describe('getDailyReview', () => {
   });
 
   it('reports lastBackupDaysAgo once an export has completed', async () => {
-    await exportSnapshot();
+    await recordExportCompleted(await exportSnapshot());
     const review = await getDailyReview();
     expect(review.lastBackupDaysAgo).toBe(0);
   });

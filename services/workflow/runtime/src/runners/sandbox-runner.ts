@@ -522,7 +522,8 @@ export class SandboxRunner implements Runner {
       throw new Error(`Invalid plugin reference: ${uses}. Expected "plugin:id/handler"`)
     }
 
-    const handlerName = handlerParts.join('/')
+    const isJobHandler = handlerParts[0] === 'job'
+    const handlerName = (isJobHandler ? handlerParts.slice(1) : handlerParts).join('/')
 
     // Get plugin manifest from CLI API snapshot
     const snapshot = this.cliApi.snapshot()
@@ -535,21 +536,35 @@ export class SandboxRunner implements Runner {
       throw new Error(`Plugin not found: ${pluginId}`)
     }
 
-    // Find workflow handler by name
-    const workflowHandlers = entry.manifest.workflows?.handlers ?? []
-    const handler = workflowHandlers.find((h: { id: string }) => h.id === handlerName)
+    // Resolve either a workflow handler or the explicit `job/<id>` reference
+    // emitted by JobBroker for manifest.jobs.handlers.
+    const handler = isJobHandler
+      ? entry.manifest.jobs?.handlers.find((h) => h.id === handlerName)
+      : entry.manifest.workflows?.handlers.find((h) => h.id === handlerName)
 
     if (!handler) {
-      throw new Error(`Workflow handler not found: ${handlerName} in plugin ${pluginId}`)
+      const handlerKind = isJobHandler ? 'job' : 'workflow'
+      throw new Error(`${handlerKind} handler not found: ${handlerName} in plugin ${pluginId}`)
     }
+
+    const handlerInput = isJobHandler
+      ? {
+          ...(typeof input === 'object' && input !== null && !Array.isArray(input)
+            ? input as Record<string, unknown>
+            : {}),
+          jobId: handlerName,
+          executedAt: new Date(),
+          runCount: 1,
+        }
+      : input;
 
     return {
       pluginId,
       pluginVersion: entry.manifest.version,
       pluginRoot: entry.pluginRoot,
       handler: handler.handler, // File path from manifest
-      input,
-      permissions: getHandlerPermissions(entry.manifest, 'workflow', handlerName),
+      input: handlerInput,
+      permissions: getHandlerPermissions(entry.manifest, isJobHandler ? 'job' : 'workflow', handlerName),
     }
   }
 

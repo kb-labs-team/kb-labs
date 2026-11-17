@@ -1,5 +1,19 @@
 # Product decisions log
 
+## 2026-11-17
+
+### Steward artifacts use platform storage objects and Platform API retrieval
+
+Steward writes review Markdown and collection snapshots as objects through the
+governed `ctx.platform.storage` API. Stable keys are
+`steward/reviews/<UTC-date>.md` and `steward/exports/<UTC-date>.json`; users
+retrieve them through the authenticated Platform API storage methods. The
+installed production default is `@kb-labs/adapters-fs` under the project's KB
+state directory, while an operator may bind S3-compatible storage. These are
+storage objects, not files in the repository. In-memory storage remains valid
+for development and tests, and its values are process-local; those environments
+do not provide the persistence guarantee in this case. Case: S-301.1–3.
+
 ## 2026-10-31
 
 ### SQLite vector search breaks equal-score ties by record ID

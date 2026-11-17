@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { setupTestPlatform } from '@kb-labs/sdk/testing';
 import { COLLECTIONS } from '@kb-labs/steward/contracts';
-import { exportSnapshot } from '../../src/core/functions/export.js';
+import { exportSnapshot, recordExportCompleted } from '../../src/core/functions/export.js';
 import { addProject } from '../../src/core/functions/project.js';
 import { listEvents } from '../../src/core/functions/event.js';
 
@@ -31,9 +31,12 @@ describe('exportSnapshot', () => {
     expect(projects.some((p) => p.id === project.id)).toBe(true);
   });
 
-  it('appends an export.completed event with per-collection counts', async () => {
+  it('records export.completed only after the caller confirms persistence', async () => {
     await addProject({ name: 'Counted', status: 'active' });
-    await exportSnapshot();
+    const snapshot = await exportSnapshot();
+
+    expect(await listEvents({ kind: 'export.completed' })).toHaveLength(0);
+    await recordExportCompleted(snapshot);
 
     const events = await listEvents({ kind: 'export.completed' });
     expect(events).toHaveLength(1);

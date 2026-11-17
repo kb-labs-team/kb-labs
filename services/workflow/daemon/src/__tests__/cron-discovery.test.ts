@@ -31,7 +31,42 @@ describe('CronDiscovery', () => {
 
     expect(result.plugins).toBe(1);
     expect(registerPluginJob).toHaveBeenCalledWith('steward', expect.objectContaining({
-      id: 'daily-review', handler: 'steward:daily-review', input: { channel: 'team' },
+      id: 'daily-review', handler: 'plugin:steward/job/daily-review', input: { channel: 'team' },
+    }));
+  });
+
+  it('normalizes scoped plugin IDs with colons for both manifest and project cron jobs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'workflow-cron-scoped-job-'));
+    roots.push(root);
+    await mkdir(join(root, '.kb', 'crons'), { recursive: true });
+    const pluginId = '@kb-labs/steward:custom';
+    const jobId = 'daily-review';
+    await writeFile(join(root, '.kb', 'crons', 'project-review.yml'),
+      `schedule: "0 3 * * *"\nhandler: "${pluginId}:${jobId}"\n`);
+    const declaration = { id: 'daily', schedule: '0 0 * * *', job: { type: jobId } };
+    const jobEntity = { ref: { pluginId, entityId: jobId } };
+    const registerPluginJob = vi.fn();
+    const registerUserCron = vi.fn();
+    const registry = {
+      queryEntities: ({ kind }: { kind: string }) => kind === 'cron'
+        ? [{ ref: { pluginId, entityId: 'daily' }, declaration }]
+        : kind === 'job' ? [jobEntity] : [],
+    } as unknown as IEntityRegistry;
+    const scheduler = { registerPluginJob, registerUserCron } as unknown as CronScheduler;
+    const workflowService = { get: vi.fn() } as unknown as WorkflowService;
+    const discovery = new CronDiscovery({
+      cliApi: registry, scheduler, logger: new NoOpLogger(), workspaceRoot: root, workflowService,
+    });
+
+    const result = await discovery.discoverAll();
+
+    expect(result.plugins).toBe(1);
+    expect(result.users).toBe(1);
+    expect(registerPluginJob).toHaveBeenCalledWith(pluginId, expect.objectContaining({
+      handler: `plugin:${pluginId}/job/${jobId}`,
+    }));
+    expect(registerUserCron).toHaveBeenCalledWith(expect.objectContaining({
+      handler: `plugin:${pluginId}/job/${jobId}`,
     }));
   });
 
@@ -81,7 +116,7 @@ describe('CronDiscovery', () => {
 
     expect(result.users).toBe(1);
     expect(registerUserCron).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'user-job', handler: 'steward:daily-review', input: { channel: 'team' },
+      id: 'user-job', handler: 'plugin:steward/job/daily-review', input: { channel: 'team' },
     }));
     expect(result.errors).toEqual([expect.objectContaining({
       file: join(root, '.kb', 'crons', 'missing-job.yml'), reason: 'unknown job handler steward:missing',

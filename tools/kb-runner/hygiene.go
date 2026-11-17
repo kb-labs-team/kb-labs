@@ -299,6 +299,9 @@ func (options schedulerRunOptions) startHygieneSweep(parent context.Context, wor
 			return
 		}
 		defer lease.Close()
+		if options.hygieneLeaseAcquired != nil {
+			options.hygieneLeaseAcquired()
+		}
 		if err := appendHygieneEvent(hygiene.Root, hygieneAction{Rule: "sweep", Path: hygiene.Root, Action: "started"}); err != nil {
 			options.reportSchedulerHygieneAlert("journal", hygiene.Root, fmt.Errorf("record sweep start: %w", err))
 			return

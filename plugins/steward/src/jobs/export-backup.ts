@@ -1,9 +1,11 @@
 import { defineJob, type JobInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { exportSnapshot } from '../core/index.js';
+import { exportSnapshot, recordExportCompleted } from '../core/index.js';
+
+const EXPORT_PREFIX = 'steward/exports/';
 
 /**
- * Cron-scheduled job — see ADR-0001 §Бэкапы. Writes the `steward.export.json`
- * artifact declared in the manifest. Committing/pushing it to the private
+ * Cron-scheduled job — see ADR-0001 §Бэкапы. Persists a dated snapshot as a
+ * governed platform storage object. Committing/pushing it to the private
  * backup repo happens at the workflow/git level (existing github plugin /
  * git commands), not inside this handler — deliberately out of scope here.
  */
@@ -13,11 +15,11 @@ const job = defineJob({
   describe: 'Snapshots all collections for the private-repo backup',
   handler: async (_input: JobInput, ctx: PluginContextV3) => {
     try {
+      const storage = ctx.platform.storage;
       const snapshot = await exportSnapshot();
       const dateKey = new Date(snapshot.exportedAt).toISOString().slice(0, 10);
-      await ctx.platform.artifacts?.write(`exports/${dateKey}.json`, snapshot, {
-        contentType: 'application/json',
-      });
+      await storage.write(`${EXPORT_PREFIX}${dateKey}.json`, Buffer.from(JSON.stringify(snapshot), 'utf8'));
+      await recordExportCompleted(snapshot);
       const counts = Object.fromEntries(
         Object.entries(snapshot.collections).map(([k, v]) => [k, v.length]),
       );

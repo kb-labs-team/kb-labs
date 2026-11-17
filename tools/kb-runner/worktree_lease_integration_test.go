@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/kb-runner/internal/proc"
 )
 
 // case: S-276.1
@@ -45,7 +46,12 @@ func TestRunCommandLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 		err  error
 	}
 	result := make(chan commandResult, 1)
-	commandRoot := runnerRoot{Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner"}
+	commandRoot := runnerRoot{
+		Root: command.InvocationRoot("kb-runner"), invocation: "kb-runner",
+		processStarter: func(ctx context.Context, config proc.Config) (*proc.Run, error) {
+			return proc.StartWithHostResourceSource(ctx, config, stableLeaseHostResources{})
+		},
+	}
 	go func() {
 		code, err := runCommandWithContext(ctx, commandRoot, []string{"--tag", "lease-child", "--state", state, "--stall", "1m", "--stdout", filepath.Join(state, "child.stdout"), "--stderr", filepath.Join(state, "child.stderr"), "--", "/bin/sh", "-c", "printf ready > \"$1\"; exec /bin/sleep 60", "sh", childReady}, runnerStdout, runnerStderr)
 		result <- commandResult{code: code, err: err}
@@ -122,7 +128,10 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	}
 	t.Setenv("CODEX_BIN", fakeCodex)
 	runner := buildRunnerBinary(t)
-	commandRoot := runnerRoot{Root: command.InvocationRoot(runner), invocation: runner, executable: runner}
+	commandRoot := runnerRoot{
+		Root: command.InvocationRoot(runner), invocation: runner, executable: runner,
+		supervisor: stableLeaseHostSupervisor{},
+	}
 	var runnerStdout, runnerStderr bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
 	type commandResult struct {
@@ -176,6 +185,21 @@ func TestAgentStartLeaseBlocksWorktreeRemovalForChildLifetime(t *testing.T) {
 	if err := lease.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type stableLeaseHostResources struct{}
+
+func (stableLeaseHostResources) Snapshot() proc.HostResourceSnapshot {
+	return proc.HostResourceSnapshot{
+		PhysicalMemory: 1 << 50, AvailableMemory: 1 << 50, MemoryAvailableKnown: true,
+		PressureAvailable: true, Pressure: "normal", LoadAvailable: true, LogicalCPUs: 64,
+	}
+}
+
+type stableLeaseHostSupervisor struct{ clikitSchedulerSupervisor }
+
+func (stableLeaseHostSupervisor) Start(ctx context.Context, config proc.Config) (schedulerJobRun, error) {
+	return proc.StartWithHostResourceSource(ctx, config, stableLeaseHostResources{})
 }
 
 func derivedWorktreeLeasePath(t *testing.T, worktree string) string {

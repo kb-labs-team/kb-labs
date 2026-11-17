@@ -12,12 +12,6 @@ import (
 	"testing"
 )
 
-// StartWithHostResourceSource is available only to this package's tests so
-// admission can be exercised against deterministic host snapshots.
-func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostResourceSource) (*Run, error) {
-	return startWithHostResourceSource(ctx, cfg, source)
-}
-
 // TestExecutable identifies a test binary built with proc linked in.
 type TestExecutable struct {
 	path string
