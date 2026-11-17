@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import jsonl
+import invocations
 from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
@@ -93,16 +94,17 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
             "KB_JOURNEY_ADMIN_PASSWORD": "JourneyPassw0rd!",
         }
         calls = []
+        access_token = "registry-http-session-token-value"
 
         def open_http(_opener, request, *, timeout, env):
             calls.append((request, timeout, env))
-            return 200, json.dumps({"accessToken": "registry-http-session-token-value"}).encode(), {}
+            return 200, json.dumps({"ok": True, "data": {"accessToken": access_token}}).encode(), {}
 
         with patch.object(runner, "open_http", side_effect=open_http):
             runner.acquire_marketplace_http_session(env)
 
-        self.assertEqual(env["KB_JOURNEY_SERVICE_TOKEN"], "registry-http-session-token-value")
-        self.assertEqual(env["KB_JOURNEY_MARKETPLACE_TOKEN"], "registry-http-session-token-value")
+        self.assertEqual(env["KB_JOURNEY_SERVICE_TOKEN"], access_token)
+        self.assertEqual(env["KB_JOURNEY_MARKETPLACE_TOKEN"], access_token)
         request, timeout, _ = calls[0]
         self.assertEqual(request.full_url, "http://127.0.0.1:4000/auth/login/cli")
         self.assertEqual(request.method, "POST")
@@ -110,6 +112,114 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
             "email": "journey-admin@example.test", "password": "JourneyPassw0rd!",
         })
         self.assertEqual(timeout, 30)
+
+    def test_marketplace_http_login_rejects_non_enveloped_response_without_logging_token(self):
+        env = {
+            "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
+            "KB_JOURNEY_ADMIN_PASSWORD": "JourneyPassw0rd!",
+        }
+        token_sentinel = "do-not-include-this-token-in-errors"
+
+        with patch.object(
+            runner, "open_http",
+            return_value=(200, json.dumps({"accessToken": token_sentinel}).encode(), {}),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                runner.acquire_marketplace_http_session(env)
+
+        self.assertNotIn(token_sentinel, str(raised.exception))
+        self.assertNotIn("KB_JOURNEY_SERVICE_TOKEN", env)
+        self.assertNotIn("KB_JOURNEY_MARKETPLACE_TOKEN", env)
+
+    def test_marketplace_http_login_rejects_envelope_without_token_without_logging_body(self):
+        env = {
+            "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
+            "KB_JOURNEY_ADMIN_PASSWORD": "JourneyPassw0rd!",
+        }
+
+        with patch.object(
+            runner, "open_http",
+            return_value=(200, json.dumps({"ok": True, "data": {}}).encode(), {}),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "did not return an HTTP session token \(HTTP 200\)") as raised:
+                runner.acquire_marketplace_http_session(env)
+
+        self.assertNotIn("data", str(raised.exception))
+        self.assertNotIn("KB_JOURNEY_SERVICE_TOKEN", env)
+        self.assertNotIn("KB_JOURNEY_MARKETPLACE_TOKEN", env)
+
+    def test_marketplace_http_login_redacts_real_http_report_on_success_and_failure(self):
+        class Response:
+            def __init__(self, body, status, headers):
+                self.body = body
+                self.status = status
+                self.headers = headers
+
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def read(self): return self.body
+
+        success_secret = "http-access-session-sentinel-123"
+        refresh_secret = "http-refresh-session-sentinel-456"
+        header_secret = "http-set-cookie-sentinel-789"
+        success_body = json.dumps({
+            "ok": True,
+            "data": {"accessToken": success_secret, "refreshToken": refresh_secret},
+        }).encode()
+        response = Response(success_body, 200, {"Set-Cookie": header_secret})
+        env = {
+            "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
+            "KB_JOURNEY_ADMIN_PASSWORD": "JourneyPassw0rd!",
+        }
+
+        with tempfile.TemporaryDirectory(prefix="journey-http-login-report-") as temp:
+            with invocations.invocation_context(report_root=temp):
+                with patch.object(runner.urllib.request, "urlopen", return_value=response):
+                    runner.acquire_marketplace_http_session(env)
+
+            calls_path = Path(temp) / "invocations" / "calls.jsonl"
+            calls = calls_path.read_text(encoding="utf-8")
+            self.assertNotIn(success_secret, calls)
+            self.assertNotIn(refresh_secret, calls)
+            self.assertNotIn(header_secret, calls)
+            success_record = json.loads(calls)
+            self.assertEqual(success_record["exit_code"], 200)
+            redacted_success = json.loads(success_record["stdout"])
+            self.assertEqual(redacted_success["data"]["accessToken"], "[REDACTED]")
+            self.assertEqual(redacted_success["data"]["refreshToken"], "[REDACTED]")
+
+        failure_secret = "http-failure-refresh-sentinel-321"
+        failure_body = json.dumps({
+            "ok": False,
+            "error": {"code": "AUTH_FAILED", "message": "denied",
+                      "refreshToken": failure_secret},
+        }).encode()
+        failure_headers = {"Set-Cookie": "http-failure-cookie-sentinel-654"}
+        failure_env = {
+            "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
+            "KB_JOURNEY_ADMIN_PASSWORD": "JourneyPassw0rd!",
+        }
+
+        def unauthorized(*_args, **_kwargs):
+            raise runner.urllib.error.HTTPError(
+                "http://127.0.0.1:4000/auth/login/cli", 401, "Unauthorized",
+                failure_headers, io.BytesIO(failure_body),
+            )
+
+        with tempfile.TemporaryDirectory(prefix="journey-http-login-failure-report-") as temp:
+            with invocations.invocation_context(report_root=temp):
+                with patch.object(runner.urllib.request, "urlopen", side_effect=unauthorized):
+                    with self.assertRaises(ValueError):
+                        runner.acquire_marketplace_http_session(failure_env)
+
+            calls = (Path(temp) / "invocations" / "calls.jsonl").read_text(encoding="utf-8")
+            self.assertNotIn(failure_secret, calls)
+            self.assertNotIn(failure_headers["Set-Cookie"], calls)
+            failure_record = json.loads(calls)
+            redacted_failure = json.loads(failure_record["stdout"])
+            self.assertEqual(redacted_failure["error"]["refreshToken"], "[REDACTED]")
+            self.assertNotIn("KB_JOURNEY_SERVICE_TOKEN", failure_env)
+            self.assertNotIn("KB_JOURNEY_MARKETPLACE_TOKEN", failure_env)
 
     def test_default_lane_passes_npm_mirror_without_registry_credentials(self):
         env = {"HOME": "/tmp/kb-journey-test-home"}
