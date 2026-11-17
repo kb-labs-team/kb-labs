@@ -282,6 +282,11 @@ run_mode() {
   fi
   if [ "$rc" -ne 0 ]; then
     printf '\n- Failed stage: `%s`\n- Stage log: `%s/batch.log`\n' "$mode" "$mode/batch.log" >> "$mode_dir/batch.log"
+    if [ -n "$selected_cases" ]; then
+      printf 'Result: FAIL (selected partial run)\n' >> "$mode_dir/batch.log"
+      echo "journey $mode mode failed for the explicit case selection; see $mode_dir/batch.log; next: $(next_runner_command)" >&2
+      return "$rc"
+    fi
     gate_rc=0
     "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-gating "$mode_dir" "$mode" "$producer" "$out" "$selected_cases" || gate_rc=$?
     if [ "$gate_rc" -eq 1 ]; then
