@@ -111,8 +111,16 @@ if [[ -z "$compose_action" && ",${COMPOSE_PROFILES:-}," == *",marketplace-regist
   mkdir -p "$ROOT/.journey/registry-runs"
   KB_JOURNEY_RUN_ROOT="$(mktemp -d "$ROOT/.journey/registry-runs/run-XXXXXX")"
   journey_run_suffix="$(python3 -c 'import sys; print(sys.argv[1].lower())' "${KB_JOURNEY_RUN_ROOT##*run-}")"
-  KB_JOURNEY_REPORT_ROOT="$KB_JOURNEY_RUN_ROOT/reports"
-  mkdir "$KB_JOURNEY_REPORT_ROOT"
+  # Batch callers supply their per-mode artifact root; direct Registry runs keep
+  # reports under this run's private root.
+  if [[ -z "${KB_JOURNEY_REPORT_ROOT:-}" ]]; then
+    KB_JOURNEY_REPORT_ROOT="$KB_JOURNEY_RUN_ROOT/reports"
+  fi
+  if [[ -L "$KB_JOURNEY_REPORT_ROOT" ]]; then
+    echo "KB_JOURNEY_REPORT_ROOT must be a real directory, not a symlink." >&2
+    exit 2
+  fi
+  mkdir -p "$KB_JOURNEY_REPORT_ROOT"
   cp "$KB_JOURNEY_CANDIDATE_ROOT/source-identity.json" "$KB_JOURNEY_REPORT_ROOT/source-identity.json"
   export KB_JOURNEY_CANDIDATE_ROOT KB_JOURNEY_CANDIDATE_OUTPUT_ROOT="$KB_JOURNEY_CANDIDATE_ROOT"
   export KB_JOURNEY_CANDIDATE_RELEASE_ROOT="$KB_JOURNEY_CANDIDATE_ROOT/release"

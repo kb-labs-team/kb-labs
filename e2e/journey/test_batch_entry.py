@@ -57,6 +57,12 @@ class JourneyBatchEntryTests(unittest.TestCase):
             self.scoreboard_fixtures[mode] = fixture
         self._script(self.root / "e2e/journey/run.sh", '''#!/bin/sh
 printf 'journey %s %s\\n' "$KB_JOURNEY_ONLY" "$*" >> "$CALLS"
+if [ -n "${KB_JOURNEY_CANDIDATE_ROOT:-}" ]; then
+  printf 'candidate-root %s\\n' "$KB_JOURNEY_CANDIDATE_ROOT" >> "$CALLS"
+fi
+if [ -n "${KB_JOURNEY_REPORT_ROOT:-}" ]; then
+  printf 'report-root %s\\n' "$KB_JOURNEY_REPORT_ROOT" >> "$CALLS"
+fi
 if [ "$*" = "--down" ] && [ "${FAIL_RESET:-}" = 1 ]; then
   printf 'reset failure fixture\\n' >&2
   exit 8
@@ -90,16 +96,20 @@ fi
 if [ -n "${KB_JOURNEY_CASES:-}" ]; then
   printf 'cases %s\\n' "$KB_JOURNEY_CASES" >> "$CALLS"
 fi
-mkdir -p "$REPORTS"
+reports="${KB_JOURNEY_REPORT_ROOT:-$REPORTS}"
+mkdir -p "$reports"
 if [ "${OMIT_SCOREBOARD:-}" != "$mode" ]; then
   case "$mode" in
-    local) cp "$SCOREBOARD_LOCAL" "$REPORTS/case-scoreboard.json" ;;
-    secured) cp "$SCOREBOARD_SECURED" "$REPORTS/case-scoreboard.json" ;;
+    local) cp "$SCOREBOARD_LOCAL" "$reports/case-scoreboard.json" ;;
+    secured) cp "$SCOREBOARD_SECURED" "$reports/case-scoreboard.json" ;;
   esac
 fi
-printf '%s report\\n' "$mode" > "$REPORTS/$mode.json"
+printf '%s report\\n' "$mode" > "$reports/$mode.json"
+mkdir -p "$reports/containers"
+printf 'runner diagnostic for %s\\n' "$mode" > "$reports/containers/journey-runner.log"
 if [ "$mode" = "${FAIL_MODE:-}" ] && [ ! -f "$ATTEMPT_MARKER" ]; then
   : > "$ATTEMPT_MARKER"
+  printf 'first attempt only\\n' > "$reports/first-attempt-only.log"
   if [ "${FAIL_KIND:-infra}" = infra ]; then
     printf 'failed to solve: fixture image failure\\n'
   else
@@ -409,6 +419,41 @@ exec "{real_sleep}" "$@"
         calls = self.calls.read_text().splitlines()
         self.assertEqual(sum(call.startswith("registry-stage ") for call in calls), 1)
         self.assertFalse(any(call.startswith("journey agent:commit --no-build") for call in calls))
+
+    # case: S-262.2
+    def test_registry_mode_collects_failure_evidence_from_its_explicit_report_root(self):
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        shared_report = self.root / ".journey/reports/shared-sentinel.txt"
+        shared_report.parent.mkdir(parents=True, exist_ok=True)
+        shared_report.write_text("outside the owned mode report root\n", encoding="utf-8")
+        env = dict(
+            self.env,
+            SELECTED_RUNNERS_LOCAL='["service-marketplace-registry:local"]',
+            FAIL_MODE="local",
+            FAIL_KIND="ordinary",
+        )
+
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--cases", "S-268.1"],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        mode_dir = self.root / "local-artifact/local"
+        self.assertIn("runner diagnostic for local", (mode_dir / "containers/journey-runner.log").read_text())
+        self.assertTrue((mode_dir / "case-scoreboard.json").is_file())
+        roots = [row.removeprefix("report-root ") for row in self.calls.read_text().splitlines()
+                 if row.startswith("report-root ")]
+        self.assertEqual(len(roots), 1)
+        self.assertTrue(roots[0].startswith(str(mode_dir / "runner-reports.")))
+        self.assertFalse(Path(roots[0]).exists(), "owned report root is staged then cleaned")
+        self.assertEqual(shared_report.read_text(encoding="utf-8"), "outside the owned mode report root\n")
 
     # case: S-268.1
     def test_archive_refuses_existing_symlink_before_extraction(self):
@@ -1055,6 +1100,13 @@ exec "{real_sleep}" "$@"
                       if row == "journey service-local:explore --no-build"]
         self.assertEqual(len(local_runs), 2)
         self.assertTrue((self.root / "out/local/infra-failed.log").is_file())
+        report_roots = [row.removeprefix("report-root ")
+                        for row in self.calls.read_text().splitlines()
+                        if row.startswith("report-root ") and "/local/runner-reports." in row]
+        self.assertEqual(len(report_roots), 2, self.calls.read_text())
+        self.assertNotEqual(report_roots[0], report_roots[1])
+        self.assertFalse((self.root / "out/local/first-attempt-only.log").exists())
+        self.assertTrue((self.root / "out/local/containers/journey-runner.log").is_file())
         self.assertEqual(
             sum(row == "journey service-secured:explore --no-build"
                 for row in self.calls.read_text().splitlines()),

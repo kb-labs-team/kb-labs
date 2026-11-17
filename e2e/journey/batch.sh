@@ -284,8 +284,24 @@ run_mode() {
       printf 'KB_JOURNEY_ONLY=%s e2e/journey/run.sh --no-build' "$runner_selectors"
     fi
   }
+  # Each mode attempt gets one fresh host-mounted report root. Pass that exact
+  # root through run.sh so Registry and ordinary modes share the artifact path.
+  new_report_root() {
+    report_root=$(mktemp -d "$mode_dir/runner-reports.XXXXXX") || {
+      echo "journey $mode mode could not allocate an isolated report root under $mode_dir" >&2
+      return 1
+    }
+  }
+  remove_report_root() {
+    if [ -L "$report_root" ] || [ ! -d "$report_root" ]; then
+      echo "journey $mode mode report root changed type before cleanup: $report_root" >&2
+      return 1
+    fi
+    rm -rf "$report_root"
+  }
+  new_report_root || return 1
   rc=0
-  KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
+  KB_JOURNEY_REPORT_ROOT="$report_root" KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
     KB_JOURNEY_ONLY="$runner_selectors" KB_JOURNEY_CANDIDATE_ROOT="$candidate_root" \
     run_mode_with_heartbeat "$mode" "$mode_dir/batch.log" "$SCRIPT_DIR/run.sh" --no-build || rc=$?
   case "$rc" in
@@ -293,10 +309,10 @@ run_mode() {
     *)
       if [ "$rc" -ne 0 ] && grep -q '^failed to solve:' "$mode_dir/batch.log"; then
         mv "$mode_dir/batch.log" "$mode_dir/infra-failed.log"
-        rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
-        rm -rf .journey/reports/invocations
+        remove_report_root || return 1
+        new_report_root || return 1
         rc=0
-        KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
+        KB_JOURNEY_REPORT_ROOT="$report_root" KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
           KB_JOURNEY_ONLY="$runner_selectors" KB_JOURNEY_CANDIDATE_ROOT="$candidate_root" \
           run_mode_with_heartbeat "$mode" "$mode_dir/batch.log" "$SCRIPT_DIR/run.sh" --no-build || rc=$?
         echo "INFRA: first attempt failed during docker image build; retried once" >> "$mode_dir/batch.log"
@@ -304,15 +320,14 @@ run_mode() {
       ;;
   esac
   printf 'exit=%s\n' "$rc" >> "$mode_dir/batch.log"
-  if ! cp -R .journey/reports/. "$mode_dir/"; then
-    rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
-    rm -rf .journey/reports/invocations
-    echo "journey $mode mode reports could not be copied; next: $(next_runner_command)" >&2
+  if [ -L "$report_root" ] || [ ! -d "$report_root" ] || ! cp -R "$report_root/." "$mode_dir/"; then
+    echo "journey $mode mode reports could not be collected from its owned root $report_root; next: $(next_runner_command)" >&2
     case "$rc" in 129|130|143) return "$rc" ;; esac
     return 1
   fi
-  rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
-  rm -rf .journey/reports/invocations
+    return 1
+  fi
+  remove_report_root || return 1
   duration=$(($(date +%s) - run_started))
   result=PASS; [ "$rc" -eq 0 ] || result=FAIL
   scoreboard_missing=0
