@@ -21,6 +21,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import urlopen
 
 from invocations import run_harness_command
+from batch_summary import verify_candidate_archive, verify_run_commit
 
 
 _SOURCE_EXCLUDES = {".git", ".journey", ".kb", "node_modules", "dist", ".next", "target"}
@@ -81,6 +82,45 @@ def allocate_candidate_root(workspace: Path, parent: Path) -> Path:
     identity.update({"schema": "kb.journey.registry-candidate/v1", "candidateId": candidate_id,
                      "createdAt": datetime.now(timezone.utc).isoformat(), "candidateRoot": str(root)})
     (root / "source-identity.json").write_text(json.dumps(identity, indent=2) + "\n", encoding="utf-8")
+    return root
+
+
+def stage_verified_batch_candidate(workspace: Path, parent: Path, run: Path,
+                                   metadata: Path, archive_path: Path) -> Path:
+    """Stage only Registry inputs from a verified producer into a new candidate root."""
+    identity = source_identity(workspace)
+    if identity["dirty"]:
+        raise ValueError("batch candidate staging requires a clean checkout at the producer commit")
+    verify_run_commit(run, identity["gitHead"])
+    producer_metadata = json.loads(metadata.read_text(encoding="utf-8"))
+    if producer_metadata.get("commit") != identity["gitHead"]:
+        raise ValueError("candidate metadata is bound to a foreign commit")
+    members = verify_candidate_archive(metadata, archive_path)
+    selected: list[tuple[tarfile.TarInfo, Path]] = []
+    for member in members:
+        if not member.isfile():
+            continue
+        parts = list(Path(member.name).parts)
+        if parts[:2] == [".journey", "release"]:
+            selected.append((member, Path("release", *parts[2:])))
+        elif parts[:2] == ["e2e", "packages"]:
+            selected.append((member, Path("packages", *parts[2:])))
+    selected_paths = {target for _, target in selected}
+    if Path("release/journey-candidate/release-index.json") not in selected_paths:
+        raise FileNotFoundError("verified candidate archive has no Registry release index")
+    if not any(target.parent == Path("packages") and target.suffix == ".tgz"
+               for target in selected_paths):
+        raise FileNotFoundError("verified candidate archive has no Registry package tarballs")
+    root = allocate_candidate_root(workspace, parent)
+    with tarfile.open(archive_path, "r:") as source:
+        for member, target in selected:
+            destination = root / target
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            stream = source.extractfile(member)
+            if stream is None:
+                raise ValueError(f"verified candidate archive member is unreadable: {member.name}")
+            with stream, destination.open("xb") as output:
+                shutil.copyfileobj(stream, output)
     return root
 
 
@@ -314,6 +354,12 @@ def main() -> int:
     allocate = commands.add_parser("allocate")
     allocate.add_argument("--workspace", type=Path, required=True)
     allocate.add_argument("--parent", type=Path, required=True)
+    stage = commands.add_parser("stage-batch")
+    stage.add_argument("--workspace", type=Path, required=True)
+    stage.add_argument("--parent", type=Path, required=True)
+    stage.add_argument("--run", type=Path, required=True)
+    stage.add_argument("--metadata", type=Path, required=True)
+    stage.add_argument("--archive", type=Path, required=True)
     preflight = commands.add_parser("preflight")
     preflight.add_argument("--release-index", type=Path, required=True)
     preflight.add_argument("--packages-dir", type=Path, required=True)
@@ -326,6 +372,11 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "allocate":
         root = allocate_candidate_root(args.workspace, args.parent)
+        print(root)
+        return 0
+    if args.command == "stage-batch":
+        root = stage_verified_batch_candidate(args.workspace, args.parent, args.run,
+                                              args.metadata, args.archive)
         print(root)
         return 0
     plan = preflight_release_graph(args.release_index, args.packages_dir, args.registry_url,

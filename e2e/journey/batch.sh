@@ -212,7 +212,7 @@ run_mode() {
   if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" verify-run "$shared/run.json" "$current_commit"; then
     return 1
   fi
-  if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" verify-candidate "$shared/batch-metadata.json" "$shared/build-candidate.tar"; then
+  if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" verify-candidate "$shared/batch-metadata.json" "$shared/build-candidate.tar" "$ROOT"; then
     return 1
   fi
   if ! tar -xf "$shared/build-candidate.tar" -C "$ROOT" > "$mode_dir/archive-extract.log" 2>&1; then
@@ -256,7 +256,27 @@ run_mode() {
     }
     runner_selectors=$(printf '%s' "$runner_selectors" | "${BATCH_PYTHON:-python3}" -c 'import json,sys; print(",".join(json.load(sys.stdin)))')
   fi
+  selected_lanes=$(
+    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/dispatch_registry.py" --lanes "$runner_selectors"
+  ) || {
+    echo "journey $mode mode could not resolve selected composition lanes" >&2
+    return 1
+  }
+  candidate_root=""
+  if printf '%s' "$selected_lanes" | "${BATCH_PYTHON:-python3}" -c \
+    'import json,sys; sys.exit(0 if "marketplace-registry" in json.load(sys.stdin) else 1)'; then
+    candidate_root=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/registry_candidate.py" stage-batch \
+      --workspace "$ROOT" --parent "$ROOT/.journey/registry-candidates" \
+      --run "$shared/run.json" --metadata "$shared/batch-metadata.json" \
+      --archive "$shared/build-candidate.tar") || {
+      echo "journey $mode Registry candidate staging failed; next: rerun e2e/journey/batch.sh prepare" >&2
+      return 1
+    }
+  fi
   next_runner_command() {
+    if [ -n "$candidate_root" ]; then
+      printf 'KB_JOURNEY_CANDIDATE_ROOT=%s ' "$candidate_root"
+    fi
     if [ -n "$selected_cases" ]; then
       printf 'KB_JOURNEY_CASES=%s KB_JOURNEY_SELECTION_MODE=%s KB_JOURNEY_ONLY=%s e2e/journey/run.sh --no-build' \
         "$selected_cases" "$mode" "$runner_selectors"
@@ -266,7 +286,8 @@ run_mode() {
   }
   rc=0
   KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
-    KB_JOURNEY_ONLY="$runner_selectors" run_mode_with_heartbeat "$mode" "$mode_dir/batch.log" "$SCRIPT_DIR/run.sh" --no-build || rc=$?
+    KB_JOURNEY_ONLY="$runner_selectors" KB_JOURNEY_CANDIDATE_ROOT="$candidate_root" \
+    run_mode_with_heartbeat "$mode" "$mode_dir/batch.log" "$SCRIPT_DIR/run.sh" --no-build || rc=$?
   case "$rc" in
     129|130|143) ;;
     *)
@@ -276,7 +297,8 @@ run_mode() {
         rm -rf .journey/reports/invocations
         rc=0
         KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
-          KB_JOURNEY_ONLY="$runner_selectors" run_mode_with_heartbeat "$mode" "$mode_dir/batch.log" "$SCRIPT_DIR/run.sh" --no-build || rc=$?
+          KB_JOURNEY_ONLY="$runner_selectors" KB_JOURNEY_CANDIDATE_ROOT="$candidate_root" \
+          run_mode_with_heartbeat "$mode" "$mode_dir/batch.log" "$SCRIPT_DIR/run.sh" --no-build || rc=$?
         echo "INFRA: first attempt failed during docker image build; retried once" >> "$mode_dir/batch.log"
       fi
       ;;

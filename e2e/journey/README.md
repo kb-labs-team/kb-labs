@@ -63,16 +63,19 @@ project workflow and REST runtime health claims. Run these two commands to
 prove both access modes:
 
 ```bash
-e2e/journey/smoke.sh local --no-build
-e2e/journey/smoke.sh secured --no-build
+e2e/journey/smoke.sh local
+e2e/journey/smoke.sh secured
 ```
 
-The script selects `PC-001.2`, `PC-002.3`, and `PC-002.8` and sets the matching
-runner filter for each mode. Each mode uses its service runner for the install
-and service claims, so the smoke performs one fresh install. It exits zero only
-when all three claims pass; any FAIL or BLOCKED claim makes the command
-nonzero. Preview the selected runner and prerequisite steps without building
-or starting containers with:
+The script selects `PC-001.2`, `PC-002.3`, and `PC-002.8`. The Commit runner
+installs the candidate and verifies a signed Commit plugin from the isolated
+Marketplace Registry; the service runner performs a separate fresh install
+for Gateway and project health. The first run builds the candidate, so invoke
+the commands without `--no-build` unless `KB_JOURNEY_CANDIDATE_ROOT` points to
+a completed isolated Registry candidate. It exits zero only when all three
+claims pass; any FAIL or BLOCKED claim makes the command nonzero. Preview the
+selected runners and prerequisite steps without building or starting
+containers with:
 
 ```bash
 e2e/journey/smoke.sh local --resolve-only

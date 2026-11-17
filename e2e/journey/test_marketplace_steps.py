@@ -487,7 +487,7 @@ class MarketplaceStepTests(unittest.TestCase):
 
             def runner(command, *, cwd, env, timeout, capture_output=True, text=True, **_kwargs):
                 calls.append((tuple(command), cwd, env.copy()))
-                if command[:3] == ["kb", "config", "set"]:
+                if command[:3] == ["/platform/kb", "config", "set"]:
                     key = command[5]
                     data = {"nextCommand": "kb-create restart --platform-root /platform"} \
                         if key.startswith("platform.adapterOptions.") else {}
@@ -518,6 +518,7 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_CLI_PATH": "/platform/kb",
                    "KB_JOURNEY_MARKETPLACE_GATEWAY_URL": "http://gateway.test",
                    "KB_JOURNEY_MARKETPLACE_SERVICE_URL": "http://registry.test",
+                   "KB_JOURNEY_MARKETPLACE_SOURCE_URL": "http://registry-source.test",
                    "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey"}
             with patch("marketplace_steps.wait_for_marketplace_ready"), \
                     patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):

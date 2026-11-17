@@ -7,7 +7,9 @@ import json
 from pathlib import Path
 import shutil
 import shlex
+import stat
 import sys
+import tarfile
 from typing import Any
 
 from scoreboard_contract import release_gate_modes
@@ -96,7 +98,46 @@ def write_stage_metadata(path: Path, mode: str, result: str, commit: str, baseli
     _write_metadata(path, value)
 
 
-def verify_candidate_archive(metadata_path: Path, archive: Path) -> None:
+def candidate_archive_members(archive: Path, destination: Path | None = None) -> list[tarfile.TarInfo]:
+    """Validate every producer member before the checkout extraction or isolated staging."""
+    members = []
+    seen_files = set()
+    with tarfile.open(archive, "r:") as source:
+        for member in source:
+            parts = member.name.split("/")
+            while parts and parts[0] == ".":
+                parts.pop(0)
+            if member.isdir() and parts and parts[-1] == "":
+                parts.pop()
+            if (member.name.startswith("/") or "\\" in member.name or
+                    any(part in {"", ".."} for part in parts) or
+                    not (member.isfile() or member.isdir())):
+                raise CandidateArchiveError(f"unsafe candidate archive entry: {member.name}")
+            if not parts:
+                if member.isdir():
+                    continue
+                raise CandidateArchiveError(f"unsafe candidate archive entry: {member.name}")
+            relative = Path(*parts)
+            if member.isfile():
+                if relative in seen_files:
+                    raise CandidateArchiveError(f"duplicate candidate archive file: {member.name}")
+                seen_files.add(relative)
+            if destination is not None:
+                current = destination
+                for part in parts:
+                    current = current / part
+                    try:
+                        existing = current.lstat()
+                    except FileNotFoundError:
+                        continue
+                    if stat.S_ISLNK(existing.st_mode) or (stat.S_ISREG(existing.st_mode) and existing.st_nlink > 1):
+                        raise CandidateArchiveError(f"unsafe existing candidate extraction path: {current}")
+            members.append(member)
+    return members
+
+
+def verify_candidate_archive(metadata_path: Path, archive: Path,
+                             destination: Path | None = None) -> list[tarfile.TarInfo]:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     expected = metadata.get("candidateArchiveSha256") if isinstance(metadata, dict) else None
     if not isinstance(expected, str) or not expected:
@@ -104,6 +145,7 @@ def verify_candidate_archive(metadata_path: Path, archive: Path) -> None:
     actual = candidate_archive_sha256(archive)
     if actual != expected:
         raise CandidateArchiveError("candidate archive digest does not match producer metadata")
+    return candidate_archive_members(archive, destination)
 
 
 def write_mode_metadata(source: Path, destination: Path, mode: str, result: str, elapsed: int) -> None:
@@ -273,9 +315,10 @@ def main(argv: list[str]) -> int:
         except (OSError, ValueError, json.JSONDecodeError) as error:
             print(f"journey batch candidate identity check failed: {error}", file=sys.stderr)
             return 1
-    if len(argv) == 4 and argv[1] == "verify-candidate":
+    if len(argv) in {4, 5} and argv[1] == "verify-candidate":
         try:
-            verify_candidate_archive(Path(argv[2]), Path(argv[3]))
+            verify_candidate_archive(Path(argv[2]), Path(argv[3]),
+                                     Path(argv[4]) if len(argv) == 5 else None)
             return 0
         except (OSError, ValueError, json.JSONDecodeError) as error:
             producer = Path(argv[2]).parent.parent
