@@ -76,6 +76,48 @@ class ProjectPluginSettingsFixtureTests(unittest.TestCase):
 
 
 class AdapterDefaultsProbeTests(unittest.TestCase):
+    def test_registry_selection_drops_unrelated_outer_npm_fixture_state(self):
+        environment = {
+            "KB_JOURNEY_CASES": "S-268.1",
+            "KB_JOURNEY_SELECTED_STEPS": "S-268.1",
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "marketplace-registry",
+            "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps({
+                "verify Commit Registry signature and provenance": ["S-268.1"],
+            }),
+            "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps([
+                "publish and install Commit through Registry",
+            ]),
+            "KB_JOURNEY_PREREQUISITE_FLOWS": "[]",
+            "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local",
+            "KB_JOURNEY_NEEDED_STATES": (
+                "fixtures-installed,host-running,marketplace-available,platform-installed,"
+                "platform-version-known,project-registered,service-api-session"
+            ),
+        }
+        calls = []
+        with patch.dict(os.environ, environment, clear=True):
+            journey = Journey("local", "selected-registry-does-not-need-npm-fixture")
+            groups = service_runner.service_selection_groups(
+                runner_selector="service-marketplace-registry:local")
+            graph = FlowGraph(
+                journey,
+                {name: tuple(spec["depends_on"]) for name, spec in groups.items()},
+                state_producers=service_runner.STATE_PRODUCERS,
+                groups=groups,
+            )
+            flow = graph.flow(
+                "produce Commit project fixture", "marketplace-fixture-producer",
+                "marketplace-fixtures", lambda: calls.append("npm fixture ran"),
+                role="lifecycle",
+            )
+
+        self.assertNotIn("marketplace-available", graph.needed_states)
+        self.assertNotIn("fixtures-installed", graph.needed_states)
+        self.assertIn("host-running", graph.needed_states)
+        self.assertIn("project-registered", graph.needed_states)
+        self.assertEqual(flow, "SKIPPED")
+        self.assertEqual(calls, [])
+
     def test_cleanup_probe_is_skipped_when_its_flow_did_not_run(self):
         selected = "S-054.3"
         with patch.dict(os.environ, {

@@ -56,6 +56,40 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     return _publish_package_fixture(package_root, env, runner)
 
 
+def _ensure_analytics_emitter_fixture_built(workspace_root: Path, env: dict[str, str],
+                                            runner: CommandRunner) -> None:
+    """Build the non-workspace Analytics fixture before its Registry publish."""
+    package_root = (workspace_root / "e2e/journey/fixtures/analytics-emitter").resolve()
+    try:
+        package = json.loads((package_root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Registry Analytics fixture manifest is unavailable: {error}") from error
+    if not isinstance(package, dict):
+        raise RuntimeError("Registry Analytics fixture package manifest is not an object")
+    kb_manifest = package.get("kb")
+    required = kb_manifest.get("requiredOutputs") if isinstance(kb_manifest, dict) else None
+    if not isinstance(required, list) or not required or any(not isinstance(item, str) for item in required):
+        raise RuntimeError("Registry Analytics fixture has no valid required build outputs")
+
+    def output_exists(pattern: str) -> bool:
+        return any(package_root.glob(pattern)) if "*" in pattern else (package_root / pattern).is_file()
+
+    missing = [pattern for pattern in required if not output_exists(pattern)]
+    if not missing:
+        return
+    scripts = package.get("scripts")
+    build_script = scripts.get("build") if isinstance(scripts, dict) else None
+    if build_script != "node ./build.mjs" or not (package_root / "build.mjs").is_file():
+        raise RuntimeError(
+            "Registry Analytics fixture outputs are missing and its repository build contract is unsupported")
+    command = ["node", "./build.mjs"]
+    _output(run_with_runner(runner, command, cwd=package_root, env=env, timeout=300), command)
+    missing = [pattern for pattern in required if not output_exists(pattern)]
+    if missing:
+        raise RuntimeError(
+            "Registry Analytics fixture build completed without required outputs: " + ", ".join(missing))
+
+
 def _publish_package_fixture(package_root: Path, env: dict[str, str],
                              runner: CommandRunner) -> CompletedProcess[str]:
     gateway_url = env.get("KB_JOURNEY_MARKETPLACE_GATEWAY_URL")
@@ -598,6 +632,7 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
         version = published.get("version")
         if not isinstance(version, str) or not version:
             raise RuntimeError("kb hub publish did not return the published Commit version")
+        _ensure_analytics_emitter_fixture_built(workspace, base_env, runner)
         for fixture_path in ("e2e/journey/fixtures/analytics-emitter", "plugins/qa"):
             publication = _json(_publish_workspace_fixture(workspace, fixture_path, base_env, runner),
                                 _publish_fixture_command())
