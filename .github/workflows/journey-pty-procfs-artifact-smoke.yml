@@ -1,0 +1,103 @@
+name: Journey installed PTY procfs diagnostic
+
+on:
+  push:
+    branches: ['verify/*']
+    paths:
+      - '.github/workflows/journey-pty-procfs-artifact-smoke.yml'
+      - 'e2e/journey/invocations.py'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: journey-pty-procfs-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secured-pty-diagnostic:
+    name: Secured human wizard PTY diagnostic
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PRODUCER_RUN_ID: '44173949878'
+      PRODUCER_SHA: '0e86d75a0a324e993247b7a9db2cb6c5540d5655'
+      DIAGNOSTIC_SOURCE_SHA: 'caaa2e5b4dc5a32f063f67569dc29b43ce4eea46'
+      PRODUCER_INPUT: .journey/batch-input/producer
+      DIAGNOSTIC_OUTPUT: .journey/secured-pty-diagnostic
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: package.json
+          cache: pnpm
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-devkit/go.sum
+
+      - name: Download exact producer artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: journey-build-candidate
+          path: ${{ env.PRODUCER_INPUT }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.PRODUCER_RUN_ID }}
+
+      - name: Verify producer commit and archive digest before execution
+        id: candidate-identity
+        run: |
+          python3 e2e/journey/batch_summary.py verify-run \
+            "$PRODUCER_INPUT/shared/run.json" "$PRODUCER_SHA"
+          python3 e2e/journey/batch_summary.py verify-candidate \
+            "$PRODUCER_INPUT/shared/batch-metadata.json" \
+            "$PRODUCER_INPUT/shared/build-candidate.tar"
+
+      - name: Overlay only the reviewed PTY diagnostic on producer source
+        id: diagnostic-overlay
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$PRODUCER_SHA" "$DIAGNOSTIC_SOURCE_SHA"
+          diagnostic_blob="$(git rev-parse "$DIAGNOSTIC_SOURCE_SHA:e2e/journey/invocations.py")"
+          git show "$DIAGNOSTIC_SOURCE_SHA:e2e/journey/invocations.py" \
+            > "$RUNNER_TEMP/diagnostic-invocations.py"
+          git checkout --detach "$PRODUCER_SHA"
+          install -m 0644 "$RUNNER_TEMP/diagnostic-invocations.py" e2e/journey/invocations.py
+          test "$(git rev-parse HEAD)" = "$PRODUCER_SHA"
+          test "$(git hash-object e2e/journey/invocations.py)" = "$diagnostic_blob"
+          install -d "$DIAGNOSTIC_OUTPUT"
+          {
+            printf 'producer_run=%s\nproducer_sha=%s\n' "$PRODUCER_RUN_ID" "$PRODUCER_SHA"
+            printf 'diagnostic_source_sha=%s\ndiagnostic_blob=%s\n' "$DIAGNOSTIC_SOURCE_SHA" "$diagnostic_blob"
+            printf 'selection=S-305.1,S-305.2,S-305.3\nmode=secured\n'
+          } > "$DIAGNOSTIC_OUTPUT/provenance.txt"
+
+      - name: Install workspace dependencies
+        if: ${{ steps.candidate-identity.outcome == 'success' && steps.diagnostic-overlay.outcome == 'success' }}
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Run only the secured S-305 claims
+        if: ${{ steps.candidate-identity.outcome == 'success' && steps.diagnostic-overlay.outcome == 'success' }}
+        run: e2e/journey/batch.sh mode secured "$PRODUCER_INPUT" "$DIAGNOSTIC_OUTPUT" --cases S-305.1,S-305.2,S-305.3
+
+      - name: Upload secured journey evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: journey-secured-pty-diagnostic-${{ github.run_id }}
+          path: ${{ env.DIAGNOSTIC_OUTPUT }}
+          if-no-files-found: warn
+          retention-days: 30
