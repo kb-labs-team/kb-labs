@@ -15,7 +15,7 @@ const JSON_FLAG = { name: 'json', type: 'boolean', description: 'Emit JSON inste
 const permissions = combinePermissions()
   .with(kbPlatformPreset)
   .withPlatform({
-    storage: { paths: ['steward/'] },
+    storage: ['steward/'],
     database: {
       document: {
         collections: [

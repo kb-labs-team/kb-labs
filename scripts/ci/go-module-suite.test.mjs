@@ -299,10 +299,10 @@ test('native macOS smoke entry installs the candidate and runs the installed CLI
       '--platform-root', '/tmp/platform', '--project-root', '/workspace', '--scenario', 'explore',
       '--scenario-answers', '{"access.mode":"local"}', '--registry', 'http://127.0.0.1:49183',
     ], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['--version'], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['doctor', '--json'], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['project', 'add', '/workspace', '--json'], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['qa', 'cases', 'list', '--json'], '/workspace'],
+    ['/tmp/native/kb', ['--version'], '/workspace'],
+    ['/tmp/native/kb', ['doctor', '--json'], '/workspace'],
+    ['/tmp/native/kb', ['project', 'add', '/workspace', '--json'], '/workspace'],
+    ['/tmp/native/kb', ['qa', 'cases', 'list', '--json'], '/workspace'],
   ]);
 });
 

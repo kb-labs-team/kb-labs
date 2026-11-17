@@ -17,16 +17,16 @@ export interface PlatformPermissions {
    * - `true` - full access (all read/write)
    * - `false` - no access
    * - `string[]` - path prefixes (both read + write)
-   * - `{ read?: string[]; write?: string[] }` - granular read/write
+   * - `{ paths?: string[] }` - explicit path-prefix allow-list
    *
    * **Examples:**
    * ```typescript
    * storage: true  // Full access
-   * storage: ['.kb/artifacts/**']  // Read + write .kb/artifacts
-   * storage: { read: ['**'], write: ['.kb/artifacts/**'] }  // Read all, write only .kb/artifacts
+   * storage: ['.kb/artifacts/']  // Read + write keys under .kb/artifacts/
+   * storage: { paths: ['.kb/artifacts/'] }  // Read and write only within .kb/artifacts
    * ```
    */
-  storage?: boolean | string[] | { read?: string[]; write?: string[] };
+  storage?: boolean | string[] | { paths?: string[] };
   /**
    * Database access (SQL, Document, KV, TimeSeries)
    *
@@ -153,13 +153,13 @@ export interface PresetBuilder {
   /**
    * Add storage permissions.
    *
-   * @param storage - Storage permissions (true, string[], or { read, write })
+   * @param storage - Storage permissions (true, string[], or { paths })
    * @returns Builder for chaining
    *
    * @example
    * ```typescript
-   * .withStorage({ read: ['**'], write: ['.kb/artifacts/**'] })
-   * .withStorage(['.kb/data/**'])  // Both read + write
+   * .withStorage({ paths: ['.kb/artifacts/'] })
+   * .withStorage(['.kb/data/'])  // Both read + write
    * ```
    */
   withStorage(storage: PlatformPermissions['storage']): PresetBuilder;

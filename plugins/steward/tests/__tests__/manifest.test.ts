@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { manifest } from '../../src/manifest.js';
+import { manifest, manifestWithPermissions } from '../../src/manifest.js';
 
 describe('Steward platform requirements and scheduled jobs', () => {
   // case: S-301.1
@@ -11,5 +11,7 @@ describe('Steward platform requirements and scheduled jobs', () => {
       expect.objectContaining({ id: 'export-backup', describe: expect.stringContaining('steward/exports/') }),
     ]));
     expect('artifacts' in manifest).toBe(false);
+    expect((manifestWithPermissions.permissions as { platform: { storage: { paths: string[] } } }).platform.storage.paths)
+      .toEqual(['steward/']);
   });
 });
