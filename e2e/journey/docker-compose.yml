@@ -28,6 +28,9 @@ services:
 
   runner:
     user: "${KB_JOURNEY_RUNNER_UID:-0}:${KB_JOURNEY_RUNNER_GID:-0}"
+    # The PTY harness verifies the child's actual read(0) state through procfs.
+    # Keep this capability on the isolated, short-lived runner container only.
+    cap_add: [SYS_PTRACE]
     build:
       context: ..
       dockerfile: e2e/journey/Dockerfile.runner

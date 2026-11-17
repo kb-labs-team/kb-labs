@@ -1,0 +1,8 @@
+services:
+  runner:
+    # Reuse the production runner's user, capability, namespace, init, mounts,
+    # and network settings, while replacing its heavyweight image/entrypoint.
+    build: !reset null
+    image: python:3.12.12-alpine
+    entrypoint: ["python3"]
+    command: ["/opt/kb-workspace/e2e/journey/pty-procfs-smoke.py"]

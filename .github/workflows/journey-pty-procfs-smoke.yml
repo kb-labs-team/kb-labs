@@ -1,0 +1,30 @@
+name: Journey PTY procfs readiness smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'verify/*'
+    paths:
+      - '.github/workflows/journey-pty-procfs-smoke.yml'
+      - 'e2e/journey/**'
+      - 'e2e/docker-compose.yml'
+      - 'e2e/compose-owner.sh'
+  pull_request:
+    paths:
+      - '.github/workflows/journey-pty-procfs-smoke.yml'
+      - 'e2e/journey/**'
+      - 'e2e/docker-compose.yml'
+      - 'e2e/compose-owner.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  procfs-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Probe production Compose identity and PTY procfs access
+        run: e2e/journey/pty-procfs-smoke.sh
