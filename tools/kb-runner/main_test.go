@@ -582,7 +582,13 @@ func assertSingleRunnableHintCommand(t *testing.T, commandName, command string) 
 	budget := testdeadline.Budget(t)
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
-	output, err := runHintCommand(ctx, command, []string{"PATH=" + binDir, "NEXT_HINT_CALLS=" + callsPath}, budget)
+	// This assertion checks that the rendered hint is a runnable command and
+	// invokes it exactly once. Do not route this stub through proc.Start: its
+	// host-pressure admission is tested separately and can legitimately delay
+	// unrelated diagnostics tests while the full hosted matrix is busy.
+	invocation := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	invocation.Env = []string{"PATH=" + binDir, "NEXT_HINT_CALLS=" + callsPath}
+	output, err := invocation.CombinedOutput()
 	if err != nil {
 		t.Fatalf("next hint is not a runnable command %q: %v (%s)", command, err, output)
 	}
