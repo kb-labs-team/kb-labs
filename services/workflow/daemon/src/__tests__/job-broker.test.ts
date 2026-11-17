@@ -19,7 +19,12 @@ describe('JobBroker', () => {
     expect(runFromInline).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'job-fixture:background-task',
-        jobs: { main: { steps: [expect.objectContaining({ uses: 'command:fixture:background-task' })] } },
+        jobs: {
+          main: expect.objectContaining({
+            runsOn: 'local',
+            steps: [expect.objectContaining({ uses: 'command:fixture:background-task' })],
+          }),
+        },
       }),
       expect.objectContaining({
         metadata: expect.objectContaining({ workflowId: 'job-fixture:background-task' }),
