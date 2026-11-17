@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { QA_CASE_RUN_SCHEMA, type QACase, type QACaseClaim, type QACaseRunResult } from '@kb-labs/qa/contracts';
 import { computeQACaseCoverage, parseQACatalog, RELEASE_CASE_CLAIM_BASELINE, scanQACaseClaims, validateReleaseCaseClaims } from '../../src/core/index.js';
@@ -213,16 +213,41 @@ describe('release case journey claim validation', () => {
 });
 
 describe('QA case coverage', () => {
-  it('filters by mode and marks planned, draft, or historical cases NOT REQUIRED', () => {
+  it('exposes real S-305 planned claims for explicit selection without opening the release gate', () => {
+    const root = resolve(process.cwd(), '../..');
+    const catalog = parseQACatalog(join(root, 'docs/qa/scenarios'));
+    expect(catalog.diagnostics).toEqual([]);
+    const testCase = catalog.cases.find(item => item.id === 'S-305');
+    expect(testCase).toMatchObject({ status: 'planned', release: false, modes: ['secured'] });
+    const scanned = scanQACaseClaims(root, [testCase!]);
+    const coverage = computeQACaseCoverage([testCase!], scanned.claims, [], 'secured');
+    expect(coverage.cases[0]).toMatchObject({ statusResult: 'NOT REQUIRED', release: false });
+    expect(coverage.cases[0]?.steps.map(step => ({ stepId: step.stepId, status: step.status }))).toEqual([
+      { stepId: 'S-305.1', status: 'NOT COVERED' },
+      { stepId: 'S-305.2', status: 'NOT COVERED' },
+      { stepId: 'S-305.3', status: 'NOT COVERED' },
+    ]);
+    expect(coverage.cases[0]?.steps.every(step =>
+      step.claims[0]?.source.endsWith('e2e/journey/secured_human_wizard_steps.py'))).toBe(true);
+    expect(coverage.releasePassed).toBe(true);
+  });
+
+  it('keeps planned claims available for explicit selection without making them release coverage', () => {
     const directory = fixture();
     const active = parsedCase(directory);
-    const planned = { ...active, id: 'S-011', status: 'planned' as const, release: true, modes: ['secured' as const], steps: active.steps.map(step => ({ ...step, id: step.id.replace('S-010', 'S-011') })) };
+    const planned = { ...active, id: 'S-011', status: 'planned' as const, release: true, modes: ['local' as const], steps: active.steps.map(step => ({ ...step, id: step.id.replace('S-010', 'S-011') })) };
     const historical = { ...planned, id: 'S-012', status: 'historical' as const };
     const draft = { ...planned, id: 'S-013', status: 'draft' as const, release: false };
     const modeOnly = { ...active, id: 'S-014', modes: ['secured' as const], steps: active.steps.map(step => ({ ...step, id: step.id.replace('S-010', 'S-014') })) };
-    const result = computeQACaseCoverage([active, planned, draft, historical, modeOnly], [], [], 'local');
+    const plannedClaim = { id: 'S-011.1', stepId: 'S-011.1', kind: 'journey' as const,
+      source: 'e2e/journey/planned.py', line: 1 };
+    const result = computeQACaseCoverage([active, planned, draft, historical, modeOnly], [plannedClaim], [], 'local');
     expect(result.cases[0]?.steps[0]).toMatchObject({ status: 'NOT COVERED', reason: expect.any(String) });
     expect(result.cases[1]).toMatchObject({ statusResult: 'NOT REQUIRED', reason: expect.any(String) });
+    expect(result.cases[1]?.steps[0]).toMatchObject({
+      stepId: 'S-011.1', status: 'NOT COVERED',
+      claims: [plannedClaim],
+    });
     expect(result.cases[2]).toMatchObject({ statusResult: 'NOT REQUIRED', reason: expect.any(String) });
     expect(result.cases[3]).toMatchObject({ statusResult: 'NOT REQUIRED', reason: expect.any(String) });
     expect(result.cases[4]).toMatchObject({ statusResult: 'NOT REQUIRED', reason: expect.stringContaining('local') });

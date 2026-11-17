@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from contextlib import ExitStack, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
@@ -19,6 +20,7 @@ from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import commit_marketplace_install_record
+from secured_human_wizard_steps import register_secured_human_wizard_install
 import runner
 from runner import REGISTRY, marketplace_install_flags
 from journey_resources import host_log_paths
@@ -86,6 +88,65 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
         self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": [
             {"spec": "@kb-labs/commit", "id": "@kb-labs/other", "primaryKind": "plugin"},
         ]}))
+
+    def test_secured_human_install_answers_real_tty_prompts_in_order(self):
+        prompts = [
+            ("Project directory", str(runner.PROJECT)),
+            ("scenario", "explore"),
+            ("Platform channel", "stable"),
+            ("Service profile", "default"),
+            ("Studio access", "secured"),
+            ("Admin email", "journey-admin@example.test"),
+            ("Admin tenant", "journey"),
+            ("Admin password", "JourneyPassw0rd!"),
+            ("Confirm admin password", "JourneyPassw0rd!"),
+            ("Session signing secret", "JourneySessionSigningSecret-0123456789-abcdef"),
+            ("Confirm session signing secret", "JourneySessionSigningSecret-0123456789-abcdef"),
+        ]
+
+        def fake_pty(_command, *, on_read_ready, **_kwargs):
+            transcript = ""
+            for prompt, expected_answer in prompts:
+                transcript += prompt + ": "
+                self.assertEqual(on_read_ready(transcript), expected_answer + "\n", prompt)
+            return SimpleNamespace(returncode=0, stdout=transcript), 1.0
+
+        with patch.object(runner, "run_pty_command", side_effect=fake_pty):
+            code, output, _duration, _apply_offset = runner.pty_install(
+                ["kb-create", "install"], {}, choice="explore", access_mode="secured")
+
+        self.assertEqual(code, 0)
+        self.assertNotIn("JourneyPassw0rd!", output)
+        self.assertNotIn("JourneySessionSigningSecret-0123456789-abcdef", output)
+
+    def test_secured_wizard_install_claim_requires_host_reachability(self):
+        outcomes = []
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "human-secured:default"}, clear=False):
+            for wizard_passed, host_reachable in ((True, True), (True, False), (False, True)):
+                journey = Journey("secured", "secured-wizard-install-verdict")
+                journey.step("candidate provenance", "platform.install", lambda: None)
+                result = register_secured_human_wizard_install(
+                    journey, wizard_passed, host_reachable)
+                outcomes.append((wizard_passed, host_reachable, result.status, result.message))
+
+        self.assertEqual(outcomes[0][2], "PASS")
+        self.assertEqual(outcomes[1][2], "FAIL")
+        self.assertIn("not running and reachable", outcomes[1][3])
+        self.assertEqual(outcomes[2][2], "FAIL")
+
+    def test_first_failure_redacts_secured_wizard_fixture_secrets_immediately(self):
+        admin_password = "JourneyPassw0rd!"
+        jwt_secret = "JourneySessionSigningSecret-0123456789-abcdef"
+        active_env = {"KB_JOURNEY_ADMIN_PASSWORD": admin_password,
+                      "KB_JOURNEY_JWT_SECRET": jwt_secret}
+        with (patch.object(runner, "ACTIVE_MAIN_ENV", active_env),
+              patch.object(runner, "FIRST_FAILURE", "")):
+            runner.fail(f"install failed: {admin_password} {jwt_secret}")
+            failure = runner.FIRST_FAILURE
+
+        self.assertNotIn(admin_password, failure)
+        self.assertNotIn(jwt_secret, failure)
+        self.assertEqual(failure.count("[REDACTED]"), 2)
 
 
 def state_environment_reader_violations(sources: dict[str, str]) -> list[str]:

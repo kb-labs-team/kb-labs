@@ -35,6 +35,119 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
 
 
 class CaseJourneySelectionTests(unittest.TestCase):
+    # case: S-262.14
+    def test_explicit_planned_case_and_step_selection_does_not_change_full_release_selection(self):
+        source = "e2e/journey/secured_human_wizard_steps.py"
+        declarations = _case_declarations(source, Path(__file__).resolve().parents[2])
+        claims_by_step = {
+            step_id: [{"source": source, "kind": "journey", "line": line}]
+            for line, declaration in declarations.items()
+            for step_id in declaration.get("cases", [])
+        }
+        results = [
+            {"mode": mode, "cases": [
+                {"id": "S-305", "status": "planned", "release": False,
+                 "statusResult": "NOT REQUIRED", "steps": [
+                    {"stepId": f"S-305.{number}", "status": "NOT COVERED",
+                     "claims": claims_by_step[f"S-305.{number}"]}
+                    for number in range(1, 4)
+                ]},
+            ]}
+            for mode in ("local", "secured")
+        ]
+        catalog = [{
+            "id": "S-305", "status": "planned", "release": False, "modes": ["secured"],
+            "steps": [{"id": f"S-305.{number}"} for number in range(1, 4)],
+        }]
+
+        whole_case = selection_from_coverage(results, "S-305", catalog_cases=catalog)
+        one_step = selection_from_coverage(results, "S-305.2", mode="secured", catalog_cases=catalog)
+        batch_owners = select_from_cases.runners_for_case_selection(
+            results, "S-305.2", "secured", catalog_cases=catalog)
+
+        self.assertEqual(whole_case["steps"], ["S-305.1", "S-305.2", "S-305.3"])
+        self.assertEqual(whole_case["runners"], ["human-secured:default"])
+        self.assertEqual(one_step["steps"], ["S-305.2"])
+        self.assertEqual(one_step["runners"], ["human-secured:default"])
+        self.assertEqual(batch_owners, ["human-secured:default"])
+        self.assertEqual(selectors_from_coverage(results), [])
+        self.assertEqual(catalog[0]["status"], "planned")
+        self.assertIs(catalog[0]["release"], False)
+
+    # case: S-262.14
+    def test_explicit_planned_whole_case_refuses_an_unclaimed_step(self):
+        source = "e2e/journey/secured_human_wizard_steps.py"
+        declarations = _case_declarations(source, Path(__file__).resolve().parents[2])
+        claims_by_step = {
+            step_id: [{"source": source, "kind": "journey", "line": line}]
+            for line, declaration in declarations.items()
+            for step_id in declaration.get("cases", [])
+        }
+        results = [{
+            "mode": "secured",
+            "cases": [{"id": "S-305", "status": "planned", "release": False,
+                       "statusResult": "NOT REQUIRED", "steps": [
+                {"stepId": f"S-305.{number}", "status": "NOT COVERED",
+                 "claims": claims_by_step.get(f"S-305.{number}", [])}
+                for number in range(1, 5)
+            ]}],
+        }]
+        catalog = [{
+            "id": "S-305", "status": "planned", "release": False, "modes": ["secured"],
+            "steps": [{"id": "S-305.1"}, {"id": "S-305.2"},
+                      {"id": "S-305.3"}, {"id": "S-305.4"}],
+        }]
+
+        with self.assertRaisesRegex(ValueError, r"S-305.*unclaimed.*S-305.4"):
+            selection_from_coverage(results, "S-305", mode="secured", catalog_cases=catalog)
+
+    # case: S-262.14
+    def test_batch_owner_command_loads_catalog_for_an_explicit_planned_step(self):
+        source = "e2e/journey/secured_human_wizard_steps.py"
+        declarations = _case_declarations(source, Path(__file__).resolve().parents[2])
+        claim_line = next(line for line, declaration in declarations.items()
+                          if "S-305.1" in declaration.get("cases", []))
+        results = [{
+            "mode": "secured",
+            "cases": [{"id": "S-305", "status": "planned", "release": False,
+                       "statusResult": "NOT REQUIRED", "steps": [
+                {"stepId": "S-305.1", "status": "NOT COVERED",
+                 "claims": [{"source": source, "kind": "journey", "line": claim_line}]},
+            ]}],
+        }]
+        catalog = [{
+            "id": "S-305", "status": "planned", "release": False, "modes": ["secured"],
+            "steps": [{"id": "S-305.1"}],
+        }]
+        output = StringIO()
+
+        with (patch.object(select_from_cases, "coverage_results", return_value=results),
+              patch.object(select_from_cases, "case_catalog_results", return_value=catalog),
+              patch.object(sys, "argv", ["select_from_cases.py", "--runners-for-mode", "secured", "S-305.1"]),
+              redirect_stdout(output)):
+            self.assertEqual(select_from_cases.main(), 0)
+
+        self.assertEqual(json.loads(output.getvalue()), ["human-secured:default"])
+
+    # case: S-262.14
+    def test_planned_selector_does_not_infer_claim_from_commented_playwright_case(self):
+        with tempfile.TemporaryDirectory(prefix="planned-case-playwright-claims-") as temporary:
+            root = Path(temporary)
+            source = root / "e2e/studio/scenarios/default/cases/sample.spec.ts"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "// test('disabled dashboard @S-273.1', async ({ page }) => {});\n",
+                encoding="utf-8",
+            )
+            coverage_result = [{"mode": "secured", "cases": [{
+                "id": "S-273", "status": "planned", "release": False,
+                "steps": [{"stepId": "S-273.1", "claims": []}],
+            }]}]
+            catalog = [{"id": "S-273", "status": "planned", "release": False, "modes": ["secured"],
+                        "steps": [{"id": "S-273.1"}]}]
+            with self.assertRaisesRegex(ValueError, r"unknown or unclaimed.*S-273\.1"):
+                selection_from_coverage(coverage_result, "S-273.1", mode="secured", catalog_cases=catalog)
+
     def test_commit_default_and_registry_lane_step_graphs_are_disjoint(self):
         root = Path(__file__).resolve().parents[2]
         source = "e2e/journey/marketplace_steps.py"
@@ -367,6 +480,25 @@ class CaseJourneySelectionTests(unittest.TestCase):
             "S-040.1": ("human:default",),
             "S-040.5": ("human:nondefault",),
         })
+
+    def test_secured_human_wizard_claims_route_only_to_secured_tty_runner(self):
+        root = Path(__file__).resolve().parents[2]
+        declarations = _case_declarations("e2e/journey/secured_human_wizard_steps.py", root)
+        claims = {
+            step_id: tuple(declaration["runners"])
+            for declaration in declarations.values()
+            for step_id in (declaration.get("cases") or [])
+            if step_id in {"S-305.1", "S-305.2", "S-305.3"}
+        }
+        self.assertEqual(claims, {
+            "S-305.1": ("human-secured:default",),
+            "S-305.2": ("human-secured:default",),
+            "S-305.3": ("human-secured:default",),
+        })
+        from dispatch_registry import RUNNERS
+        runner = RUNNERS["human-secured:default"]
+        self.assertEqual((runner.front_door, runner.scenario, runner.variant, runner.mode),
+                         ("human", "explore", "human-secured", "secured"))
 
     def test_unselected_runner_variant_registration_is_not_emitted(self):
         with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "agent:commit"}, clear=False):

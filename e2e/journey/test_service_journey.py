@@ -709,6 +709,29 @@ raise SystemExit(1)
         self.assertIn("Traceback", diagnostic)
         self.assertEqual(result.status, "FAIL")
 
+    def test_runner_exception_redacts_local_environment_secrets_before_json_serialization(self):
+        admin_password = "FixtureAdminPass-9081"
+        jwt_secret = "FixtureSessionSigningSecret-0123456789-abcdef"
+        local_env = {"KB_JOURNEY_ADMIN_PASSWORD": admin_password,
+                     "KB_JOURNEY_JWT_SECRET": jwt_secret}
+        with tempfile.TemporaryDirectory(prefix="journey-runner-secret-crash-") as temp:
+            root = Path(temp)
+            journey = Journey("secured", "runner-secret-crash")
+            try:
+                raise RuntimeError(f"PTY prompt failed with {admin_password} and {jwt_secret}")
+            except RuntimeError as error:
+                record_runner_exception(journey, error, root / "journey-diagnostics.log", env=local_env)
+            report = root / "installer-case.json"
+            journey.write_json(report)
+            serialized = report.read_text()
+            diagnostic = (root / "journey-diagnostics.log").read_text()
+
+        self.assertNotIn(admin_password, serialized)
+        self.assertNotIn(jwt_secret, serialized)
+        self.assertIn("[REDACTED]", serialized)
+        self.assertNotIn(admin_password, diagnostic)
+        self.assertNotIn(jwt_secret, diagnostic)
+
     def test_fixture_journey_rows_are_replayed_into_the_reporting_journey(self):
         fixture = Journey("local", "fixture-rows")
         fixture.step("fixture passes", "journey.test", lambda: None, cases=["S-900.1"])
