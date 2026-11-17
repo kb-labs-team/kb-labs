@@ -9,6 +9,16 @@ from test_environment import isolated_environment
 
 
 class RunShellOptionTests(unittest.TestCase):
+    def test_registry_run_preserves_an_explicit_batch_report_root(self):
+        root = Path(__file__).resolve().parents[2]
+        script = (root / "e2e/journey/run.sh").read_text(encoding="utf-8")
+        registry_setup = script.split('if [[ -z "$compose_action" && ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then', 1)[1]
+
+        self.assertIn('if [[ -z "${KB_JOURNEY_REPORT_ROOT:-}" ]]; then', registry_setup)
+        self.assertIn('KB_JOURNEY_REPORT_ROOT="$KB_JOURNEY_RUN_ROOT/reports"', registry_setup)
+        self.assertIn('if [[ -L "$KB_JOURNEY_REPORT_ROOT" ]]; then', registry_setup)
+        self.assertIn('mkdir -p "$KB_JOURNEY_REPORT_ROOT"', registry_setup)
+
     def test_registry_no_build_requires_a_prepared_candidate_before_starting_compose(self):
         root = Path(__file__).resolve().parents[2]
         script = root / "e2e/journey/run.sh"
