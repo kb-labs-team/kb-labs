@@ -411,7 +411,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.status, "PASS")
         self.assertEqual(
             [step["cases"] for step in result.steps],
-            [["S-003.1"], ["S-003.2"], ["S-003.3"], ["S-041.10"], ["S-003.7"],
+            [["S-003.1"], ["S-003.2", "S-003.9"], ["S-003.3"], ["S-041.10"], ["S-003.7"],
              ["S-003.8"], ["S-003.4", "S-210.1"], ["S-003.5"], ["S-003.6"]],
         )
         claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
@@ -421,7 +421,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(
             {claim["claimId"]: (claim["kind"], claim["status"])
              for claim in result.case_run["claims"]},
-            {f"S-003.{step}": ("journey", "PASS") for step in range(1, 9)}
+            {f"S-003.{step}": ("journey", "PASS") for step in range(1, 10)}
             | {"S-041.10": ("journey", "PASS"), "S-210.1": ("journey", "PASS")},
         )
         self.assertEqual(json.loads((self.project / ".kb/marketplace.lock").read_text())["plugins"], {})
@@ -478,6 +478,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.case_run["claims"], [
             {"claimId": "S-003.1", "kind": "journey", "status": "PASS"},
             {"claimId": "S-003.2", "kind": "journey", "status": "FAIL"},
+            {"claimId": "S-003.9", "kind": "journey", "status": "FAIL"},
         ])
         self.assertFalse((self.project / ".kb/plugins/demo").exists())
 

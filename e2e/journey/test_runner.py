@@ -21,6 +21,7 @@ from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import commit_marketplace_install_record
 import runner
 from runner import REGISTRY, marketplace_install_flags
+from journey_resources import host_log_paths
 
 
 class WorkflowHostStateBoundaryTests(unittest.TestCase):
@@ -694,6 +695,13 @@ thread.join()
             if len(argv) > 1 and argv[1] in {"stop", "start"} and "--foreground" not in argv:
                 host_cycle.append(argv[1])
                 events.append(f"host:{argv[1]}")
+                if argv[1] == "start":
+                    structured_log = host_log_paths(platform)["structured"]
+                    structured_log.parent.mkdir(parents=True, exist_ok=True)
+                    structured_log.write_text(
+                        json.dumps({"level": "info", "msg": "fixture host started"}) + "\n",
+                        encoding="utf-8",
+                    )
             output = ""
             returncode = 0
             if argv[0].endswith("install.sh"):

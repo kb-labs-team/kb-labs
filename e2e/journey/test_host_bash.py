@@ -63,7 +63,8 @@ class HostBashTests(unittest.TestCase):
 
             environment = isolated_environment(
                 sandbox, bin_dir,
-                required_tools=("bash", "git", "python3", "dirname", "id", "mkdir", "rm", "find", "date"),
+                required_tools=("bash", "git", "python3", "dirname", "id", "mkdir", "rm", "find", "date",
+                                "awk"),
                 overrides={
                 "FAKE_DOCKER_CALLS": str(calls_path),
                 "KB_JOURNEY_ONLY": "service-local:explore",
@@ -89,6 +90,8 @@ class HostBashTests(unittest.TestCase):
             docker_records = jsonl.read_jsonl(calls_path)
             self.assertEqual([row.line_number for row in docker_records if row.error is not None], [])
             docker_calls = [row.value for row in docker_records]
+            self.assertIn(["buildx", "inspect"], docker_calls,
+                          f"the active builder was not inspected: {docker_calls}")
             ps_calls = [call for call in docker_calls if "ps" in call]
             self.assertEqual(len(ps_calls), 2, f"expected empty monitor and teardown listings: {docker_calls}")
             default_compose_calls = [call for call in docker_calls if call[:1] == ["compose"] and call[1:2] != ["version"]]
@@ -120,6 +123,7 @@ class HostBashTests(unittest.TestCase):
             "from jsonl import write_jsonl\n"
             "args = sys.argv[1:]\n"
             "write_jsonl(os.environ['FAKE_DOCKER_CALLS'], [args], append=True)\n"
+            "if args[:2] == ['buildx', 'inspect']:\n    print('Name: default\\nDriver: docker')\n    raise SystemExit(0)\n"
             "action = next((item for item in args if item in {'version', 'ps', 'run', 'exec', 'down', 'build', 'up', 'stop', 'rm', 'logs', 'port'}), None)\n"
             "if action in {'version', 'ps', 'down', 'build', 'up', 'stop', 'rm'}: raise SystemExit(0)\n"
             "if action == 'run':\n    print('publisher-container-id')\n    raise SystemExit(0)\n"
