@@ -138,6 +138,8 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: read-write
       - name: Download prepared kb-devkit binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -221,6 +223,8 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: read-only
       - name: Download prepared kb-devkit binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -280,6 +284,8 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: read-only
       - name: Download producer build outputs and kb-devkit
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -342,6 +348,8 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: read-only
       - name: Download prepared kb-devkit binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
