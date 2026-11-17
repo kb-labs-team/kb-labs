@@ -473,6 +473,38 @@ class PtyInvocationTest(unittest.TestCase):
 
         self.assertEqual(answers, [])
 
+    def test_pty_procfs_permission_failure_reports_only_safe_candidate_status(self):
+        terminal_stat = type("TerminalStat", (), {"st_rdev": 0})()
+        status = (
+            "Name:\twizard\nUid:\t1001\t1001\t1001\t1001\n"
+            "Gid:\t1001\t1001\t1001\t1001\nCapPrm:\t0000000000000000\n"
+            "CapEff:\t0000000000000000\nCapBnd:\t0000000000000000\n"
+            "TracerPid:\t0\nSeccomp:\t2\nNoNewPrivs:\t0\n"
+        )
+        with (patch.object(invocations, "_pty_reader_pids", return_value=[125]),
+              patch.object(invocations.sys, "platform", "linux"),
+              patch.object(invocations, "_proc_stat", return_value=(100, 100, 0, "S")),
+              patch.object(invocations, "_decode_linux_device_number", return_value=(136, 5)),
+              patch.object(invocations.os, "stat", return_value=terminal_stat),
+              patch.object(invocations.os, "major", return_value=136),
+              patch.object(invocations.os, "minor", return_value=5),
+              patch.object(invocations.os, "readlink", side_effect=PermissionError(13, "Permission denied")),
+              patch.object(Path, "read_text", return_value=status)):
+            with self.assertRaises(invocations.PtyReadinessUnsupported) as raised:
+                invocations._linux_terminal_reader(100, "/dev/pts/5")
+
+        message = str(raised.exception)
+        self.assertIn("candidate_pid=125", message)
+        self.assertIn(f"runner_uid={os.getuid()}", message)
+        self.assertIn("runner_status=", message)
+        self.assertIn("Uid=1001", message)
+        self.assertIn("CapEff=0000000000000000", message)
+        self.assertIn("TracerPid=0", message)
+        self.assertIn("Seccomp=2", message)
+        self.assertNotIn("Name=", message)
+        self.assertNotIn("argv", message.lower())
+        self.assertNotIn("secret", message.lower())
+
 
 class ReportRedactionTest(unittest.TestCase):
     def test_kb_create_failure_row_names_copied_log_and_diagnostic_paths(self):

@@ -86,6 +86,31 @@ def _pty_reader_pids(root_pid: int) -> list[int]:
     return sorted(pids)
 
 
+def _proc_status_diagnostic(pid: int | str) -> str:
+    """Return a small allowlist of procfs credentials and tracing state only."""
+    wanted = {"Uid", "Gid", "CapPrm", "CapEff", "CapBnd", "TracerPid", "Seccomp", "NoNewPrivs"}
+    try:
+        lines = Path(f"/proc/{pid}/status").read_text(encoding="ascii").splitlines()
+    except OSError as error:
+        return f"status=unavailable:{errno.errorcode.get(error.errno or 0, 'ERROR')}"
+    fields = {}
+    for line in lines:
+        key, separator, value = line.partition(":")
+        if separator and key in wanted:
+            fields[key] = value.strip()
+    return ",".join(f"{key}={fields.get(key, 'unavailable')}" for key in sorted(wanted))
+
+
+def _proc_identity_diagnostic(pid: int) -> str:
+    try:
+        details = _proc_stat(pid)
+    except PtyReadinessUnsupported:
+        details = None
+    stat = (f"ppid={details[0]},session={details[1]},tty_nr={details[2]},state={details[3]}"
+            if details is not None else "stat=unavailable")
+    return f"{stat};{_proc_status_diagnostic(pid)}"
+
+
 def _decode_linux_device_number(encoded: int) -> tuple[int, int]:
     major = ((encoded >> 8) & 0xFFF) | ((encoded >> 32) & ~0xFFF)
     minor = (encoded & 0xFF) | ((encoded >> 12) & ~0xFF)
@@ -139,7 +164,10 @@ def _linux_terminal_reader(pid: int, terminal_path: str) -> tuple[int, int, str]
             continue
         except PermissionError as error:
             raise PtyReadinessUnsupported(
-                "Linux procfs syscall state is not readable with this user's permissions"
+                "Linux procfs syscall state is not readable with this user's permissions; "
+                f"runner_uid={os.getuid()},runner_gid={os.getgid()};"
+                f"runner_status={_proc_status_diagnostic('self')};"
+                f"candidate_pid={child_pid};candidate={_proc_identity_diagnostic(child_pid)}"
             ) from error
         except OSError:
             continue
