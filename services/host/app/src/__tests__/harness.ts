@@ -203,7 +203,10 @@ export async function startTestHost(
 
   try {
     await runHost(
-      await createHostConfig({ ...hostOptions, startDir: projectRoot }),
+      await createHostConfig(
+        { ...hostOptions, startDir: projectRoot },
+        { excludedPorts: [gatewayPort] },
+      ),
     );
   } catch (error) {
     await cleanup();

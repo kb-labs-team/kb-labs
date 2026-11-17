@@ -228,8 +228,12 @@ function defaultRuntimeEntry(): string {
  */
 export async function createHostConfig(
   options: HostOptions = {},
+  portOptions: { excludedPorts?: readonly number[] } = {},
 ): Promise<HostConfig> {
-  const ports = await reserveLoopbackPorts(INTERNAL_MODULES.length);
+  const ports = await reserveLoopbackPorts(
+    INTERNAL_MODULES.length,
+    portOptions.excludedPorts,
+  );
   const statePort = ports[INTERNAL_MODULES.findIndex((module) => module.serviceId === "state-daemon")]!;
   const stateDaemonUrl = `http://${INTERNAL_BIND_HOST}:${statePort}`;
   const generated = createGeneratedTransport(
