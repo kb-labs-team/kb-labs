@@ -1,0 +1,39 @@
+name: Journey installed PTY procfs diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      producer_run_id:
+        description: Actions run containing journey-build-candidate
+        required: true
+        default: '44135591916'
+        type: string
+  push:
+    branches:
+      - 'verify/*'
+    paths:
+      - '.github/workflows/journey-pty-procfs-artifact-smoke.yml'
+      - 'e2e/journey/**'
+      - 'e2e/docker-compose.yml'
+      - 'e2e/compose-owner.sh'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  installed-procfs-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Download the producer candidate artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: journey-build-candidate
+          path: ${{ runner.temp }}/journey-build-candidate
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.producer_run_id || '44135591916' }}
+      - name: Diagnose the installed wizard's PTY procfs access
+        run: e2e/journey/pty-procfs-artifact-smoke.sh "${{ runner.temp }}/journey-build-candidate"

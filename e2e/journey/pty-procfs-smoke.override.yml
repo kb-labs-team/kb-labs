@@ -1,10 +1,15 @@
 services:
   runner:
     # Reuse the production runner's user, capability, namespace, init, mounts,
-    # and network settings, while replacing its heavyweight image/entrypoint.
-    build: !reset null
-    image: python:3.12.12-alpine
+    # and network settings with a tiny Node+Python probe image.
+    build: !override
+      context: ./journey
+      dockerfile: Dockerfile.pty-smoke
+    image: kb-journey-pty-smoke:local
     entrypoint: ["python3"]
     command: ["/opt/kb-workspace/e2e/journey/pty-procfs-smoke.py"]
+    environment:
+      KB_JOURNEY_PTY_WIZARD_MODE: ${KB_JOURNEY_PTY_WIZARD_MODE:-fixture}
     volumes:
       - ${KB_JOURNEY_PTY_WIZARD_BINARY:?smoke script must build the wizard fixture}:/opt/pty/wizard-pty:ro
+      - ${KB_JOURNEY_PTY_RELEASE_INDEX:?smoke script must provide a release index}:/opt/pty/release-index.json:ro

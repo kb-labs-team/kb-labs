@@ -11,15 +11,22 @@ export KB_JOURNEY_RUNNER_GID="$(id -g)"
 export KB_JOURNEY_GIT_REVISION="$(git rev-parse HEAD)"
 export KB_JOURNEY_NODE_BASE_IMAGE="$(node -p 'require("./tools/clikit/toolchain/node_policy_gen.json").nodeBaseImage')"
 export KB_JOURNEY_WORKSPACE_SOURCE="$ROOT"
+export KB_JOURNEY_PTY_WIZARD_MODE="${KB_JOURNEY_PTY_WIZARD_MODE:-fixture}"
+export KB_JOURNEY_PTY_RELEASE_INDEX="${KB_JOURNEY_PTY_RELEASE_INDEX:-$ROOT/tools/kb-create/v2/cmd/kb-create-v2/testdata/x251-release-index.json}"
 
 rendered_config="$(mktemp "${TMPDIR:-/tmp}/journey-pty-compose.XXXXXX.json")"
-wizard_binary="$(mktemp "${TMPDIR:-/tmp}/journey-pty-wizard.XXXXXX")"
-trap 'rm -f "$rendered_config" "$wizard_binary"' EXIT
-(
+wizard_binary="${KB_JOURNEY_PTY_WIZARD_BINARY:-}"
+generated_wizard_binary=""
+if [[ -z "$wizard_binary" ]]; then
+  generated_wizard_binary="$(mktemp "${TMPDIR:-/tmp}/journey-pty-wizard.XXXXXX")"
+  wizard_binary="$generated_wizard_binary"
+  (
   cd "$ROOT/tools/kb-create"
   CGO_ENABLED=0 GOTOOLCHAIN=auto go build -trimpath -o "$wizard_binary" ./v2/testsupport/wizard-pty
-)
-chmod 0755 "$wizard_binary"
+  )
+  chmod 0755 "$wizard_binary"
+fi
+trap 'rm -f "$rendered_config" "$generated_wizard_binary"' EXIT
 export KB_JOURNEY_PTY_WIZARD_BINARY="$wizard_binary"
 
 e2e/journey/run.sh --render-compose-config > "$rendered_config"
@@ -56,4 +63,4 @@ COMPOSE=("${COMPOSE_OWNER_COMMAND[@]}")
   -f e2e/docker-compose.yml \
   -f e2e/journey/docker-compose.yml \
   -f e2e/journey/pty-procfs-smoke.override.yml \
-  run --rm --no-deps runner
+  run --build --rm --no-deps runner

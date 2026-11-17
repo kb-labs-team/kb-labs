@@ -17,6 +17,7 @@ CAP_SYS_PTRACE = 19
 READ_SYSCALLS = {"x86_64": 0, "amd64": 0, "aarch64": 63, "arm64": 63}
 WIZARD_PROMPT = b"Project directory (press Enter to install without a project): "
 WIZARD_BINARY = "/opt/pty/wizard-pty"
+WIZARD_INDEX = "/opt/pty/release-index.json"
 
 
 def _process_status(pid: int) -> dict[str, str]:
@@ -43,18 +44,52 @@ def _error_name(error: OSError) -> str:
     return errno.errorcode.get(error.errno or 0, f"ERRNO_{error.errno}")
 
 
-def _procfs_probe(pid: int, tty: str) -> tuple[str, str]:
+def _proc_stat(pid: int) -> tuple[int, int, int, str] | None:
     try:
-        fd_target = os.readlink(f"/proc/{pid}/fd/0")
-        fd_result = "match" if fd_target == tty else "mismatch"
-    except OSError as error:
-        fd_result = _error_name(error)
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+    except OSError:
+        return None
+    fields = stat.rpartition(")")[2].split()
+    if len(fields) < 5:
+        return None
+    return int(fields[1]), int(fields[3]), int(fields[4]), fields[0]
 
+
+def _descendant_pids(root_pid: int) -> list[int]:
+    root = _proc_stat(root_pid)
+    if root is None:
+        return []
+    pids = {root_pid}
+    parents: dict[int, int] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdecimal():
+            continue
+        pid = int(entry.name)
+        details = _proc_stat(pid)
+        if details is not None:
+            parents[pid] = details[0]
+    changed = True
+    while changed:
+        changed = False
+        for pid, parent in parents.items():
+            if parent in pids and pid not in pids:
+                pids.add(pid)
+                changed = True
+    return sorted(pids)
+
+
+def _decode_linux_device_number(encoded: int) -> tuple[int, int]:
+    major = ((encoded >> 8) & 0xFFF) | ((encoded >> 32) & ~0xFFF)
+    minor = (encoded & 0xFF) | ((encoded >> 12) & ~0xFF)
+    return major, minor
+
+
+def _task_syscall(pid: int) -> str:
     read_nr = READ_SYSCALLS.get(platform.machine().lower())
     try:
         tasks = list(Path(f"/proc/{pid}/task").iterdir())
     except OSError as error:
-        return fd_result, f"taskdir-{_error_name(error)}"
+        return f"taskdir-{_error_name(error)}"
 
     errors: set[str] = set()
     observed_syscalls: set[str] = set()
@@ -78,14 +113,56 @@ def _procfs_probe(pid: int, tty: str) -> tuple[str, str]:
             syscall_number = int(syscall[0], 10)
             observed_syscalls.add(str(syscall_number))
             if syscall_number == read_nr and int(syscall[1], 16) == 0:
-                return fd_result, "read0"
+                return "read0"
         except ValueError:
             continue
     if errors:
-        return fd_result, "denied:" + "+".join(sorted(errors))
+        return "denied:" + "+".join(sorted(errors))
     if observed_syscalls:
-        return fd_result, "not-read0:" + "+".join(sorted(observed_syscalls))
-    return fd_result, "no-blocked-task"
+        return "not-read0:" + "+".join(sorted(observed_syscalls))
+    return "no-blocked-task"
+
+
+def _procfs_probe(root_pid: int, tty: str, expected_uid: int) -> tuple[int, str]:
+    terminal_stat = os.stat(tty)
+    terminal_device = (os.major(terminal_stat.st_rdev), os.minor(terminal_stat.st_rdev))
+    summaries: list[str] = []
+    pids = _descendant_pids(root_pid)
+    for pid in pids:
+        details = _proc_stat(pid)
+        if details is None:
+            continue
+        _, session_id, tty_nr, _ = details
+        if session_id != root_pid or _decode_linux_device_number(tty_nr) != terminal_device:
+            continue
+        try:
+            status = _process_status(pid)
+            uid_fields = status.get("Uid", "").split()
+            uid_match = bool(uid_fields) and int(uid_fields[0]) == expected_uid
+        except OSError:
+            status = {}
+            uid_match = False
+        try:
+            fd_result = "match" if os.readlink(f"/proc/{pid}/fd/0") == tty else "mismatch"
+        except OSError as error:
+            fd_result = _error_name(error)
+        syscall_result = _task_syscall(pid) if fd_result == "match" else "not-read"
+        summaries.append(
+            f"uid={'match' if uid_match else 'unknown-or-different'},fd0={fd_result},syscall={syscall_result}"
+        )
+    return len(summaries), ";".join(summaries) if summaries else "no-pty-descendants"
+
+
+def _wizard_command(mode: str) -> list[str]:
+    if mode == "fixture":
+        return [WIZARD_BINARY, "/tmp"]
+    if mode == "installed":
+        return [
+            WIZARD_BINARY, "install", "--registry", "http://verdaccio:4873",
+            "--index", WIZARD_INDEX,
+            "--platform-root", "/tmp/kb-journey-pty-procfs-platform",
+        ]
+    raise RuntimeError(f"unsupported wizard smoke mode: {mode}")
 
 
 def _read_pipe_line(fd: int, deadline: float) -> bytes:
@@ -134,6 +211,7 @@ def _lsm_label(pid: int | str) -> str:
 def main() -> int:
     uid = os.getuid()
     machine = platform.machine().lower()
+    mode = os.environ.get("KB_JOURNEY_PTY_WIZARD_MODE", "fixture")
     read_nr = READ_SYSCALLS.get(machine)
     if uid == 0:
         raise RuntimeError("smoke must run as the non-root UID selected by e2e/journey/run.sh")
@@ -141,6 +219,9 @@ def main() -> int:
         raise RuntimeError(f"unsupported Linux architecture for syscall probe: {machine}")
     if not os.path.isfile(WIZARD_BINARY) or not os.access(WIZARD_BINARY, os.X_OK):
         raise RuntimeError("compiled wizard PTY fixture is unavailable in the smoke container")
+    if mode == "installed" and not os.path.isfile(WIZARD_INDEX):
+        raise RuntimeError("producer release index is unavailable in the smoke container")
+    wizard_command = _wizard_command(mode)
 
     self_status = _process_status("self")
     effective_ptrace = _capability_status(self_status, "CapEff")
@@ -151,7 +232,7 @@ def main() -> int:
         try:
             os.write(bootstrap_write_fd, (os.ttyname(0) + "\n").encode("ascii"))
             os.close(bootstrap_write_fd)
-            os.execv(WIZARD_BINARY, [WIZARD_BINARY, "/tmp"])
+            os.execv(wizard_command[0], wizard_command)
         except BaseException:
             os._exit(127)
 
@@ -180,10 +261,10 @@ def main() -> int:
             wizard_status_error = _error_name(error)
         wizard_uid = wizard_status.get("Uid", "").split()
         wizard_uid_match = str(bool(wizard_uid) and int(wizard_uid[0]) == uid).lower()
-        fd_result, syscall_result = _procfs_probe(pid, tty)
+        candidate_count, procfs_result = _procfs_probe(pid, tty, uid)
         print(
             "wizard-procfs-diagnostic "
-            f"uid={uid} arch={machine} kernel={platform.release()} "
+            f"mode={mode} uid={uid} arch={machine} kernel={platform.release()} "
             f"wizard_uid_match={wizard_uid_match} "
             f"runner_cap_sys_ptrace={_capability_status(self_status, 'CapPrm')}/"
             f"{effective_ptrace}/{_capability_status(self_status, 'CapBnd')} "
@@ -195,11 +276,15 @@ def main() -> int:
             f"yama_ptrace_scope={_yama_ptrace_scope()} "
             f"proc_hidepid={_procfs_hidepid()} "
             f"lsm={_lsm_label(pid)} "
-            f"fd0={fd_result} syscall={syscall_result}"
+            f"pty_descendants={candidate_count} candidates=[{procfs_result}]"
         )
-        if fd_result != "match" or syscall_result != "read0":
+        has_read0 = any(
+            "uid=match" in candidate and "fd0=match" in candidate and "syscall=read0" in candidate
+            for candidate in procfs_result.split(";")
+        )
+        if not has_read0:
             raise RuntimeError("real wizard PTY read could not be proven through procfs")
-        print("real wizard PTY procfs probe PASS (full journey still required)")
+        print(f"{mode} wizard PTY procfs probe PASS (full journey still required)")
         return 0
     finally:
         try:
