@@ -631,6 +631,33 @@ exec "{real_sleep}" "$@"
                       summary.stderr + summary.stdout + rendered)
         self.assertIn("Partial evidence is iteration-only and cannot produce a gate verdict.", rendered)
 
+    # case: S-262.8
+    def test_selected_secured_failure_fails_mode_job_even_when_full_mode_is_non_gating(self):
+        import json
+        scoreboard = json.loads(self.scoreboard_fixtures["secured"].read_text())
+        scoreboard["selection"] = ["S-187.11"]
+        self.scoreboard_fixtures["secured"].write_text(json.dumps(scoreboard), encoding="utf-8")
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "secured",
+             str(producer), str(self.root / "secured-artifact"), "--cases", "S-187.11"],
+            cwd=self.root,
+            env={**self.env, "SELECTED_RUNNERS_SECURED": '["service-secured:explore"]',
+                 "FAIL_MODE": "secured", "FAIL_KIND": "product"},
+            text=True, capture_output=True, check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        mode_dir = self.root / "secured-artifact/secured"
+        self.assertIn("journey secured mode failed for the explicit case selection", result.stderr)
+        self.assertNotIn("Result: FAIL (non-gating for Release 1)", (mode_dir / "batch.log").read_text())
+        self.assertEqual(json.loads((mode_dir / "batch-metadata.json").read_text())["result"], "FAIL")
+
     # case: S-262.1
     def test_entry_runs_product_steps_in_order_and_exports_both_modes(self):
         result = self._run()
