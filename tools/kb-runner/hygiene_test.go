@@ -987,10 +987,19 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 	releaseSweep := make(chan struct{})
 	var sweepLeaseAcquiredOnce sync.Once
 	var releaseSweepOnce sync.Once
+	var sweepAcquireMu sync.Mutex
+	sweepAcquireCount := 0
 	releaseScheduledSweep := func() { releaseSweepOnce.Do(func() { close(releaseSweep) }) }
 	options := newSchedulerRunOptions(newSchedulerStore(f.state), schedulerRunOptionsConfig{
 		root: runnerRoot{invocation: "kb-runner"}, state: f.state, supervisor: f.supervisor, slots: 2, clock: clock,
 		hygieneLeaseAcquired: func() {
+			sweepAcquireMu.Lock()
+			sweepAcquireCount++
+			acquisition := sweepAcquireCount
+			sweepAcquireMu.Unlock()
+			if acquisition == 1 {
+				return
+			}
 			sweepLeaseAcquiredOnce.Do(func() { close(sweepLeaseAcquired) })
 			<-releaseSweep
 		},
