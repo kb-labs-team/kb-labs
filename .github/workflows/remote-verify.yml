@@ -436,7 +436,7 @@ jobs:
       BENCH_STRATEGY: ${{ matrix.strategy }}
       BENCH_CACHE_MODE: ${{ matrix.cache }}
       BENCH_REPEAT: ${{ matrix.repeat }}
-      BENCH_OUTPUT: ${{ runner.temp }}/registry-roots-benchmark/${{ matrix.strategy }}-${{ matrix.cache }}-${{ matrix.repeat }}.json
+      BENCH_OUTPUT: .benchmark/registry-roots-benchmark/${{ matrix.strategy }}-${{ matrix.cache }}-${{ matrix.repeat }}.json
       BENCH_SOURCE_SHA: ${{ github.sha }}
     steps:
       - name: Validate immutable source SHA

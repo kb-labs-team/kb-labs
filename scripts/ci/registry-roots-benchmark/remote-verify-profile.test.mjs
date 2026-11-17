@@ -35,6 +35,8 @@ test('benchmark checks out the dispatch SHA with read-only permissions and no re
   assert.equal(checkout.with.ref, '${{ github.sha }}');
   assert.equal(checkout.with['persist-credentials'], false);
   assert.equal(job.env.BENCH_SOURCE_SHA, '${{ github.sha }}');
+  assert.match(job.env.BENCH_OUTPUT, /^\.benchmark\/registry-roots-benchmark\//);
+  assert.doesNotMatch(JSON.stringify(job.env), /runner\.temp/);
   assert.equal(workflow.permissions.contents, 'read');
   assert.equal(workflow.permissions.actions, 'read');
   assert.ok(!job.steps.some(step => step.uses === './.github/actions/devkit-cas'));
