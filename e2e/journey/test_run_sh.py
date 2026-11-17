@@ -28,7 +28,7 @@ class RunShellOptionTests(unittest.TestCase):
             docker.chmod(0o755)
             env = isolated_environment(
                 home, bin_dir,
-                required_tools=("bash", "git", "dirname", "docker", "python3", "date", "mkdir", "rm", "find"),
+                required_tools=("bash", "git", "dirname", "docker", "python3", "date", "mkdir", "rm", "find", "id"),
                 overrides={"KB_JOURNEY_ONLY": "service-marketplace-registry:local"},
             )
             result = subprocess.run(["bash", str(script), "--no-build"], cwd=root, env=env,
@@ -59,14 +59,14 @@ class RunShellOptionTests(unittest.TestCase):
             docker.chmod(0o755)
             env = isolated_environment(
                 home, bin_dir,
-                required_tools=("bash", "git", "dirname", "docker", "python3", "date", "mkdir", "rm", "find"),
-                overrides={"KB_JOURNEY_ONLY": "agent:commit"},
+                required_tools=("bash", "git", "dirname", "docker", "python3", "date", "mkdir", "rm", "find", "id", "mktemp"),
+                overrides={"KB_JOURNEY_ONLY": "agent:explore"},
             )
             for options in (("--no-build", "--resolve-only"), ("--resolve-only", "--no-build")):
                 result = subprocess.run(["bash", str(script), *options], cwd=root, env=env,
                                         text=True, capture_output=True, check=False)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn('"selector": "agent:commit"', result.stdout)
+                self.assertIn('"selector": "agent:explore"', result.stdout)
             self.assertFalse(docker_log.exists(), "resolve-only must not probe or start Docker")
 
             for options, expected in (

@@ -1183,18 +1183,17 @@ class DispatchRegistryTests(unittest.TestCase):
         resolved = selection_from_coverage(self._coverage(), "PC-001.2")
         self.assertEqual(resolved["prerequisiteSteps"], ["candidate provenance"])
 
-    def test_installed_smoke_claims_resolve_to_one_service_runner_per_mode(self):
+    def test_installed_smoke_routes_registry_install_and_service_health_to_their_owners(self):
         root = Path(__file__).resolve().parents[2]
         smoke_source = (root / "e2e/journey/smoke.sh").read_text(encoding="utf-8")
         smoke_selection = re.search(r'^export KB_JOURNEY_CASES="([^"]+)"$', smoke_source, re.MULTILINE)
         self.assertIsNotNone(smoke_selection)
         selected_claims = set(smoke_selection.group(1).split(","))
         registrations: dict[str, list[tuple[str, dict]]] = {}
-        runner_sources = {}
-        for selector, runner in RUNNERS.items():
-            if not runner.service_profile:
-                continue
-            runner_sources[selector] = _imported_journey_sources(set(runner.journey_sources), root)
+        runner_sources = {
+            selector: _imported_journey_sources(set(runner.journey_sources), root)
+            for selector, runner in RUNNERS.items()
+        }
         for source in set().union(*runner_sources.values()):
             declarations_by_signature = {}
             for declaration in _case_declarations(source, root).values():
@@ -1211,31 +1210,37 @@ class DispatchRegistryTests(unittest.TestCase):
                 smoke_source,
             )
             self.assertIsNotNone(mode_branch)
-            selector = mode_branch.group(1)
-            runner = RUNNERS[selector]
-            declarations = _source_step_declarations(runner_sources[selector], root)
+            selectors = set(mode_branch.group(1).split(","))
+            expected_owners = ({
+                "PC-001.2": "agent:commit",
+                "PC-002.3": "service-local:explore",
+                "PC-002.8": "service-local:explore",
+            } if mode == "local" else {
+                "PC-001.2": "agent-secured:commit",
+                "PC-002.3": "service-secured:explore",
+                "PC-002.8": "service-secured:explore",
+            })
+            self.assertEqual(selectors, set(expected_owners.values()))
             claim_prerequisites = set()
             for claim_id in selected_claims:
                 with self.subTest(mode=mode, claim=claim_id):
-                    owners = []
+                    owners = set()
                     for source, declaration in registrations.get(claim_id, []):
                         declared_runners = declaration["runners"] or runners_for_source(source, mode)
-                        if selector in declared_runners and source in runner_sources[selector]:
-                            owners.append((source, declaration))
-                    self.assertEqual(len(owners), 1, f"{claim_id} must have one registration on {selector}")
-                    claim_source, declaration = owners[0]
-                    for prerequisite_name in declaration["requires"]:
-                        prerequisite = declarations[prerequisite_name]
-                        self.assertTrue(prerequisite["sources"].intersection(runner_sources[selector]))
-                        claim_prerequisites.add(prerequisite_name)
-
-            self.assertEqual(
-                {claim_id for claim_id in registrations if any(
-                    selector in (declaration["runners"] or runners_for_source(source, mode))
-                    for source, declaration in registrations[claim_id]
-                    if source in runner_sources[selector])}.intersection(selected_claims),
-                selected_claims,
-            )
+                        for selector in selectors.intersection(declared_runners):
+                            if source not in runner_sources[selector]:
+                                continue
+                            owners.add((selector, declaration["name"]))
+                            declarations = _source_step_declarations(runner_sources[selector], root)
+                            for prerequisite_name in declaration["requires"]:
+                                prerequisite = declarations[prerequisite_name]
+                                self.assertTrue(prerequisite["sources"].intersection(runner_sources[selector]))
+                                claim_prerequisites.add(prerequisite_name)
+                    self.assertEqual({selector for selector, _name in owners}, {expected_owners[claim_id]})
+                    if claim_id == "PC-001.2":
+                        self.assertIn(
+                            (expected_owners[claim_id],
+                             "clean install leaves a running host and installs pinned Registry Commit"), owners)
             self.assertTrue(claim_prerequisites)
 
     def test_s100_1_selects_both_bootstrap_secret_scans_and_update_journey(self):

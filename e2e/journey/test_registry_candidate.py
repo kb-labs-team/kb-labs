@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import http.server
+import io
 import json
 import sys
 import shutil
@@ -12,7 +13,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from registry_candidate import allocate_candidate_root, preflight_release_graph
+from registry_candidate import allocate_candidate_root, preflight_release_graph, stage_verified_batch_candidate
 
 
 def package_tarball(directory: Path, package: str, version: str, marker: str = "built") -> Path:
@@ -44,6 +45,109 @@ class RegistryMetadataHandler(http.server.BaseHTTPRequestHandler):
 
 
 class RegistryCandidateTests(unittest.TestCase):
+    # case: S-268.1
+    def test_batch_candidate_stages_only_verified_registry_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+            subprocess.run(["git", "config", "user.email", "journey@example.test"], cwd=workspace, check=True)
+            subprocess.run(["git", "config", "user.name", "Journey Test"], cwd=workspace, check=True)
+            (workspace / "source.txt").write_text("candidate source\n")
+            subprocess.run(["git", "add", "source.txt"], cwd=workspace, check=True)
+            subprocess.run(["git", "commit", "-qm", "candidate"], cwd=workspace, check=True)
+            sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=workspace, text=True).strip()
+            archive_path = root / "build-candidate.tar"
+            contents = {
+                "./.journey/release/journey-candidate/release-index.json": b'{"platforms": []}\n',
+                "./.journey/release/journey-candidate/kb-create-linux-amd64": b"candidate binary",
+                "./e2e/packages/commit.tgz": b"packed Commit",
+                "./core/config/dist/index.js": b"built output outside Registry root",
+            }
+            with tarfile.open(archive_path, "w") as archive:
+                for name, data in contents.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(data)
+                    archive.addfile(member, io.BytesIO(data))
+            run = root / "run.json"
+            run.write_text(json.dumps({"commit": sha}))
+            metadata = root / "batch-metadata.json"
+            metadata.write_text(json.dumps({"commit": sha, "candidateArchiveSha256": hashlib.sha256(
+                archive_path.read_bytes()).hexdigest()}))
+
+            candidate = stage_verified_batch_candidate(workspace, root / "candidates", run, metadata, archive_path)
+
+            self.assertEqual((candidate / "packages/commit.tgz").read_bytes(), b"packed Commit")
+            self.assertEqual((candidate / "release/journey-candidate/release-index.json").read_bytes(),
+                             contents["./.journey/release/journey-candidate/release-index.json"])
+            self.assertFalse((candidate / "core").exists())
+            self.assertEqual(json.loads((candidate / "source-identity.json").read_text())["gitHead"], sha)
+            (workspace / "source.txt").write_text("modified source\n")
+            with self.assertRaisesRegex(ValueError, "clean checkout"):
+                stage_verified_batch_candidate(workspace, root / "candidates", run, metadata, archive_path)
+            (workspace / "source.txt").write_text("candidate source\n")
+            archive_path.write_bytes(archive_path.read_bytes() + b"tampered")
+            with self.assertRaisesRegex(ValueError, "digest"):
+                stage_verified_batch_candidate(workspace, root / "candidates", run, metadata, archive_path)
+            self.assertEqual(len(list((root / "candidates").iterdir())), 1)
+
+    # case: S-268.1
+    def test_batch_candidate_rejects_foreign_sha_and_unsafe_archive_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+            subprocess.run(["git", "config", "user.email", "journey@example.test"], cwd=workspace, check=True)
+            subprocess.run(["git", "config", "user.name", "Journey Test"], cwd=workspace, check=True)
+            (workspace / "source.txt").write_text("candidate source\n")
+            subprocess.run(["git", "add", "source.txt"], cwd=workspace, check=True)
+            subprocess.run(["git", "commit", "-qm", "candidate"], cwd=workspace, check=True)
+            archive_path = root / "build-candidate.tar"
+            def write_archive(extra: tarfile.TarInfo) -> None:
+                with tarfile.open(archive_path, "w") as archive:
+                    for name in ("./.journey/release/journey-candidate/release-index.json",
+                                 "./e2e/packages/commit.tgz"):
+                        data = b"fixture"
+                        member = tarfile.TarInfo(name)
+                        member.size = len(data)
+                        archive.addfile(member, io.BytesIO(data))
+                    if extra.isfile():
+                        extra.size = len(b"fixture")
+                        archive.addfile(extra, io.BytesIO(b"fixture"))
+                    else:
+                        archive.addfile(extra)
+
+            write_archive(tarfile.TarInfo("./e2e/packages/../escape"))
+            metadata = root / "batch-metadata.json"
+            metadata.write_text(json.dumps({"commit": "foreign", "candidateArchiveSha256": hashlib.sha256(
+                archive_path.read_bytes()).hexdigest()}))
+            run = root / "run.json"
+            run.write_text(json.dumps({"commit": "foreign"}))
+            with self.assertRaisesRegex(ValueError, "bound to foreign"):
+                stage_verified_batch_candidate(workspace, root / "candidates", run, metadata, archive_path)
+            sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=workspace, text=True).strip()
+            run.write_text(json.dumps({"commit": sha}))
+            unsafe_members = [tarfile.TarInfo("./e2e/packages/../escape"),
+                              tarfile.TarInfo("/tmp/escape"),
+                              tarfile.TarInfo("./e2e/packages/escape-link"),
+                              tarfile.TarInfo("./e2e/packages/escape-hardlink")]
+            unsafe_members[2].type = tarfile.SYMTYPE
+            unsafe_members[2].linkname = "/tmp/escape"
+            unsafe_members[3].type = tarfile.LNKTYPE
+            unsafe_members[3].linkname = "../../escape"
+            for member in unsafe_members:
+                with self.subTest(entry=member.name, kind=member.type):
+                    write_archive(member)
+                    metadata.write_text(json.dumps({"commit": sha, "candidateArchiveSha256": hashlib.sha256(
+                        archive_path.read_bytes()).hexdigest()}))
+                    with self.assertRaisesRegex(ValueError, "unsafe"):
+                        stage_verified_batch_candidate(workspace, root / "candidates", run, metadata, archive_path)
+            self.assertFalse((root / "candidates").exists())
+
     def test_allocate_records_dirty_tree_identity_and_never_reuses_a_candidate_root(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory) / "workspace"

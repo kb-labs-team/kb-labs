@@ -10,10 +10,10 @@ mode="$1"
 shift
 case "$mode" in
   local)
-    export KB_JOURNEY_ONLY="service-local:explore"
+    export KB_JOURNEY_ONLY="agent:commit,service-local:explore"
     ;;
   secured)
-    export KB_JOURNEY_ONLY="service-secured:explore"
+    export KB_JOURNEY_ONLY="agent-secured:commit,service-secured:explore"
     ;;
   *)
     echo "Unsupported smoke mode '$mode'. Use 'local' or 'secured'." >&2

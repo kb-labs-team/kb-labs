@@ -57,6 +57,9 @@ class JourneyBatchEntryTests(unittest.TestCase):
             self.scoreboard_fixtures[mode] = fixture
         self._script(self.root / "e2e/journey/run.sh", '''#!/bin/sh
 printf 'journey %s %s\\n' "$KB_JOURNEY_ONLY" "$*" >> "$CALLS"
+if [ -n "${KB_JOURNEY_CANDIDATE_ROOT:-}" ]; then
+  printf 'candidate-root %s\\n' "$KB_JOURNEY_CANDIDATE_ROOT" >> "$CALLS"
+fi
 if [ "$*" = "--down" ] && [ "${FAIL_RESET:-}" = 1 ]; then
   printf 'reset failure fixture\\n' >&2
   exit 8
@@ -151,6 +154,12 @@ case "$1" in
       secured) printf '%s\\n' "${{SELECTED_RUNNERS_SECURED:-[]}}" ;;
       *) exit 2 ;;
     esac
+    ;;
+  *registry_candidate.py)
+    [ "$2" = stage-batch ] || exit 2
+    printf 'registry-stage %s\\n' "$*" >> "$CALLS"
+    [ "${{FAIL_REGISTRY_STAGE:-}}" = 1 ] && exit 7
+    printf '%s\\n' "$ROOT/.journey/registry-candidates/fixture"
     ;;
   *) exec "{sys.executable}" "$@" ;;
 esac
@@ -281,7 +290,57 @@ exec "$REAL_TAR" "$@"
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         calls = self.calls.read_text().splitlines()
         self.assertIn("journey agent:commit --no-build", calls)
+        self.assertEqual(sum(call.startswith("registry-stage ") for call in calls), 1)
+        self.assertIn(f"candidate-root {self.root}/.journey/registry-candidates/fixture", calls)
         self.assertIn("cases S-010,S-011", calls)
+
+    # case: S-268.1
+    def test_registry_candidate_stage_failure_prevents_mode_execution(self):
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        env = dict(self.env, SELECTED_RUNNERS_LOCAL='["agent:commit"]', FAIL_REGISTRY_STAGE="1")
+
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--cases", "S-268.1"],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        calls = self.calls.read_text().splitlines()
+        self.assertEqual(sum(call.startswith("registry-stage ") for call in calls), 1)
+        self.assertFalse(any(call.startswith("journey agent:commit --no-build") for call in calls))
+
+    # case: S-268.1
+    def test_archive_refuses_existing_symlink_before_extraction(self):
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        dist = self.root / "core/fixture/dist"
+        shutil.rmtree(dist)
+        outside = self.root / "outside"
+        outside.mkdir()
+        dist.symlink_to(outside, target_is_directory=True)
+        env = dict(self.env, SELECTED_RUNNERS_LOCAL='["agent:commit"]')
+
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--cases", "S-268.1"],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe existing candidate extraction path", result.stderr)
+        self.assertFalse((outside / "index.js").exists())
+        self.assertFalse(any(call.startswith("journey agent:commit --no-build")
+                             for call in self.calls.read_text().splitlines()))
 
     # case: S-262.8
     def test_partial_batch_dispatches_multiple_owners_in_the_same_mode(self):
