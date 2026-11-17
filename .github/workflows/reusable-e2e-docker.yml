@@ -141,6 +141,8 @@ jobs:
         uses: ./.github/actions/devkit-cas
         with:
           mode: ${{ inputs.cache-mode }}
+          scope: e2e-docker
+          sha: ${{ github.sha }}
 
       - name: Build all packages (topological order)
         if: inputs.prebuilt-artifact == '' && inputs.prebuilt-files-artifact == ''

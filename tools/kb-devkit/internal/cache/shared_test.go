@@ -21,6 +21,7 @@ func gitIn(t *testing.T, dir string, args ...string) {
 
 // case: S-179.45
 func TestSharedRootIsOneStoreForEveryWorktreeOfARepository(t *testing.T) {
+	t.Setenv(ciSharedRootOverrideEnv, "")
 	base := t.TempDir()
 	main := filepath.Join(base, "main")
 	if err := os.MkdirAll(main, 0o755); err != nil {
@@ -48,6 +49,7 @@ func TestSharedRootIsOneStoreForEveryWorktreeOfARepository(t *testing.T) {
 }
 
 func TestSharedRootOfAWorkspaceNestedInAnotherRepositoryStaysInsideTheWorkspace(t *testing.T) {
+	t.Setenv(ciSharedRootOverrideEnv, "")
 	outer := t.TempDir()
 	gitIn(t, outer, "init", "-q")
 	nested := filepath.Join(outer, "fixture")
@@ -60,6 +62,99 @@ func TestSharedRootOfAWorkspaceNestedInAnotherRepositoryStaysInsideTheWorkspace(
 	}
 	if want := filepath.Join(nested, ".kb", "devkit", "shared"); root != want {
 		t.Fatalf("shared store = %s, want %s: a nested workspace must not write into the outer repository's git directory", root, want)
+	}
+}
+
+func setCISharedRoot(t *testing.T, runnerTemp string) string {
+	t.Helper()
+	store := filepath.Join(runnerTemp, "kb-devkit-cas")
+	t.Setenv("RUNNER_TEMP", runnerTemp)
+	t.Setenv(ciSharedRootOverrideEnv, store)
+	return store
+}
+
+func TestSharedRootUsesOnlyRunnerTempCIOverride(t *testing.T) {
+	runnerTemp := t.TempDir()
+	setCISharedRoot(t, runnerTemp)
+	got, err := SharedRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedTemp, err := filepath.EvalSymlinks(runnerTemp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(resolvedTemp, "kb-devkit-cas"); got != want {
+		t.Fatalf("shared root = %s, want trusted runner-temp path %s", got, want)
+	}
+}
+
+func TestSharedRootRejectsCIOverrideOutsideRunnerTemp(t *testing.T) {
+	runnerTemp := t.TempDir()
+	t.Setenv("RUNNER_TEMP", runnerTemp)
+	t.Setenv(ciSharedRootOverrideEnv, t.TempDir())
+
+	if _, err := SharedRoot(t.TempDir()); err == nil || !strings.Contains(err.Error(), "must stay inside RUNNER_TEMP") {
+		t.Fatalf("SharedRoot error = %v, want a runner-temp-bound path error", err)
+	}
+}
+
+func TestSharedRootRejectsSymlinkInCASPathComponents(t *testing.T) {
+	runnerTemp := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(runnerTemp, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RUNNER_TEMP", runnerTemp)
+	t.Setenv(ciSharedRootOverrideEnv, filepath.Join(runnerTemp, "linked", "cas"))
+
+	if _, err := SharedRoot(t.TempDir()); err == nil || !strings.Contains(err.Error(), "path contains a symlink") {
+		t.Fatalf("SharedRoot error = %v, want a symlink-path error", err)
+	}
+}
+
+func TestSharedRootRejectsRecursiveSymlinksFromRestoredCache(t *testing.T) {
+	runnerTemp := t.TempDir()
+	store := setCISharedRoot(t, runnerTemp)
+	if err := os.MkdirAll(filepath.Join(store, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(store, "objects", "poisoned")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SharedRoot(t.TempDir()); err == nil || !strings.Contains(err.Error(), "store contains a symlink") {
+		t.Fatalf("SharedRoot error = %v, want a recursive restored-cache symlink error", err)
+	}
+}
+
+func TestSharedRootRejectsWorkspaceTaskStateSymlinks(t *testing.T) {
+	workspace := t.TempDir()
+	runnerTemp := t.TempDir()
+	setCISharedRoot(t, runnerTemp)
+	devkitState := filepath.Join(workspace, ".kb", "devkit", "state")
+	if err := os.MkdirAll(filepath.Dir(devkitState), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), devkitState); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SharedRoot(workspace); err == nil || !strings.Contains(err.Error(), "workspace devkit state") {
+		t.Fatalf("SharedRoot error = %v, want a workspace task-state symlink error", err)
+	}
+}
+
+func TestSharedRootRejectsSymlinkedWorkspaceStateParent(t *testing.T) {
+	workspace := t.TempDir()
+	runnerTemp := t.TempDir()
+	setCISharedRoot(t, runnerTemp)
+	if err := os.Symlink(t.TempDir(), filepath.Join(workspace, ".kb")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SharedRoot(workspace); err == nil || !strings.Contains(err.Error(), "workspace devkit state path") {
+		t.Fatalf("SharedRoot error = %v, want an ancestor-symlink error", err)
 	}
 }
 

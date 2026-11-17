@@ -19,6 +19,10 @@ import (
 // directory, that holds the object and manifest store shared by every worktree.
 const SharedDirName = "kb-devkit"
 
+// ciSharedRootOverrideEnv is an internal hosted-CI override. Hosted runners put
+// the CAS in RUNNER_TEMP so cache restores never populate target-controlled files.
+const ciSharedRootOverrideEnv = "KBLABS_CI_DEVKIT_CAS_ROOT"
+
 // SharedRoot returns the location of the content-addressed store (objects and
 // manifests) for the repository that owns wsRoot.
 //
@@ -30,6 +34,57 @@ const SharedDirName = "kb-devkit"
 // <wsRoot>/.kb/devkit/shared, so a fixture nested in another repository never
 // writes into that repository's git directory.
 func SharedRoot(wsRoot string) (string, error) {
+	if override := strings.TrimSpace(os.Getenv(ciSharedRootOverrideEnv)); override != "" {
+		if !filepath.IsAbs(override) {
+			return "", fmt.Errorf("%s must be an absolute path inside RUNNER_TEMP", ciSharedRootOverrideEnv)
+		}
+		runnerTemp := strings.TrimSpace(os.Getenv("RUNNER_TEMP"))
+		if runnerTemp == "" || !filepath.IsAbs(runnerTemp) {
+			return "", fmt.Errorf("RUNNER_TEMP must be an absolute path when %s is set", ciSharedRootOverrideEnv)
+		}
+		tempRoot, err := filepath.Abs(runnerTemp)
+		if err != nil {
+			return "", fmt.Errorf("resolve RUNNER_TEMP: %w", err)
+		}
+		tempRoot, err = filepath.EvalSymlinks(tempRoot)
+		if err != nil {
+			return "", fmt.Errorf("resolve RUNNER_TEMP symlinks: %w", err)
+		}
+		requested, err := filepath.Abs(override)
+		if err != nil {
+			return "", fmt.Errorf("resolve %s: %w", ciSharedRootOverrideEnv, err)
+		}
+		relative, err := filepath.Rel(filepath.Clean(runnerTemp), requested)
+		if err != nil {
+			return "", fmt.Errorf("resolve %s relative to RUNNER_TEMP: %w", ciSharedRootOverrideEnv, err)
+		}
+		if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+			return "", fmt.Errorf("%s must stay inside RUNNER_TEMP", ciSharedRootOverrideEnv)
+		}
+		shared := filepath.Clean(filepath.Join(tempRoot, relative))
+		if err := rejectSymlinkPathComponents(tempRoot, shared); err != nil {
+			return "", err
+		}
+		if err := rejectSymlinkTree(shared); err != nil {
+			return "", err
+		}
+		workspaceRoot, err := filepath.Abs(wsRoot)
+		if err != nil {
+			return "", fmt.Errorf("resolve workspace root %s: %w", wsRoot, err)
+		}
+		workspaceRoot, err = filepath.EvalSymlinks(workspaceRoot)
+		if err != nil {
+			return "", fmt.Errorf("resolve workspace root symlinks %s: %w", wsRoot, err)
+		}
+		workspaceCacheRoot := filepath.Join(workspaceRoot, ".kb", "devkit")
+		if err := rejectSymlinkPathComponents(workspaceRoot, workspaceCacheRoot); err != nil {
+			return "", fmt.Errorf("validate workspace devkit state path: %w", err)
+		}
+		if err := rejectSymlinkTree(workspaceCacheRoot); err != nil {
+			return "", fmt.Errorf("validate workspace devkit state: %w", err)
+		}
+		return shared, nil
+	}
 	top, err := gitOutput(wsRoot, "rev-parse", "--show-toplevel")
 	if err != nil || !sameDir(top, wsRoot) {
 		return filepath.Join(wsRoot, ".kb", "devkit", "shared"), nil
@@ -42,6 +97,46 @@ func SharedRoot(wsRoot string) (string, error) {
 		common = filepath.Join(wsRoot, common)
 	}
 	return filepath.Join(filepath.Clean(common), SharedDirName), nil
+}
+
+func rejectSymlinkPathComponents(root, path string) error {
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return fmt.Errorf("CI CAS root must stay inside RUNNER_TEMP")
+	}
+	current := root
+	for _, part := range strings.Split(relative, string(filepath.Separator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect CI CAS path %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("CI CAS path contains a symlink: %s", current)
+		}
+	}
+	return nil
+}
+
+func rejectSymlinkTree(root string) error {
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) && path == root {
+				return filepath.SkipAll
+			}
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("CI CAS store contains a symlink: %s", path)
+		}
+		return nil
+	})
 }
 
 func gitOutput(dir string, args ...string) (string, error) {
