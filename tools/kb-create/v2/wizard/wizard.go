@@ -178,14 +178,20 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 	if !ok {
 		return contracts.InstallRequest{}, fmt.Errorf("channel %q does not resolve to a platform bundle", channel)
 	}
-	profiles := make([]string, 0, len(platform.Profiles))
+	availableProfiles := make([]string, 0, len(platform.Profiles))
 	for profile := range platform.Profiles {
-		profiles = append(profiles, profile)
+		availableProfiles = append(availableProfiles, profile)
 	}
-	sort.Strings(profiles)
+	profiles, err := serviceProfileChoices(availableProfiles, definition.Profiles)
+	if err != nil {
+		return contracts.InstallRequest{}, fmt.Errorf("scenario %q: %w", definition.ID, err)
+	}
 	profile := terminal.ServiceProfile
 	if profile == "" {
 		profile = "default"
+		if !containsProfile(profiles, profile) && len(profiles) > 0 {
+			profile = profiles[0]
+		}
 		if interactive {
 			profile, err = choose(reader, terminal.Out, "Service profile", profiles, profile)
 			if err != nil {
@@ -344,6 +350,37 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		terminal.PendingSecrets[id] = secrets.PendingSecret{Value: value, Origin: origin}
 	}
 	return request, nil
+}
+
+func serviceProfileChoices(available, allowed []string) ([]string, error) {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, profile := range allowed {
+		allowedSet[profile] = struct{}{}
+	}
+	choices := make([]string, 0, len(available))
+	for _, profile := range available {
+		if len(allowedSet) == 0 {
+			choices = append(choices, profile)
+			continue
+		}
+		if _, ok := allowedSet[profile]; ok {
+			choices = append(choices, profile)
+		}
+	}
+	sort.Strings(choices)
+	if len(choices) == 0 {
+		return nil, fmt.Errorf("scenario allows no service profiles available in the selected release")
+	}
+	return choices, nil
+}
+
+func containsProfile(profiles []string, wanted string) bool {
+	for _, profile := range profiles {
+		if profile == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func withoutRequirements(definition scenario.Scenario, requirements []string) scenario.Scenario {
