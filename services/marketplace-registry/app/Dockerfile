@@ -2,15 +2,17 @@
 FROM node:24-slim AS runner
 WORKDIR /app
 
+ARG KB_DEPLOY_ROOT=.kb/deploy
+
 ENV NODE_ENV=production
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser  --system --uid 1001 --ingroup nodejs kb
 
 # deploy/ produced on CI by: pnpm deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app
-COPY --chown=kb:nodejs .kb/deploy/marketplace-registry-app/node_modules ./node_modules
-COPY --chown=kb:nodejs .kb/deploy/marketplace-registry-app/dist ./dist
-COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json
+COPY --chown=kb:nodejs ${KB_DEPLOY_ROOT}/marketplace-registry-app/node_modules ./node_modules
+COPY --chown=kb:nodejs ${KB_DEPLOY_ROOT}/marketplace-registry-app/dist ./dist
+COPY --chown=kb:nodejs ${KB_DEPLOY_ROOT}/image-default/kb.config.json /app/.kb/kb.config.json
 
 # The release composition declares cloud topology; deployment-specific config
 # may be layered at runtime.
