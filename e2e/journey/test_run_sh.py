@@ -9,6 +9,35 @@ from test_environment import isolated_environment
 
 
 class RunShellOptionTests(unittest.TestCase):
+    def test_registry_no_build_requires_a_prepared_candidate_before_starting_compose(self):
+        root = Path(__file__).resolve().parents[2]
+        script = root / "e2e/journey/run.sh"
+        with tempfile.TemporaryDirectory(prefix="journey-registry-no-build-") as temporary:
+            home = Path(temporary) / "home"
+            home.mkdir()
+            bin_dir = Path(temporary) / "bin"
+            bin_dir.mkdir()
+            docker_log = Path(temporary) / "docker.log"
+            docker = bin_dir / "docker"
+            docker.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s\\n' \"$*\" >> {docker_log}\n"
+                "exit 97\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o755)
+            env = isolated_environment(
+                home, bin_dir,
+                required_tools=("bash", "git", "dirname", "docker", "python3", "date", "mkdir", "rm", "find"),
+                overrides={"KB_JOURNEY_ONLY": "service-marketplace-registry:local"},
+            )
+            result = subprocess.run(["bash", str(script), "--no-build"], cwd=root, env=env,
+                                    text=True, capture_output=True, check=False)
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("Registry --no-build requires KB_JOURNEY_CANDIDATE_ROOT", result.stderr)
+        self.assertFalse(docker_log.exists(), "no-build candidate validation must happen before Compose")
+
     def test_resolve_only_and_no_build_are_order_independent_and_do_not_start_compose(self):
         root = Path(__file__).resolve().parents[2]
         script = root / "e2e/journey/run.sh"
