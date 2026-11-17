@@ -22,6 +22,9 @@ func makeWS(names ...string) *workspace.Workspace {
 }
 
 func TestDirtyPackagesIncludesNeverBuilt(t *testing.T) {
+	// These unit fixtures use a synthetic workspace root. Keep them on the
+	// default local path instead of inheriting a hosted runner's trusted CAS.
+	t.Setenv("KBLABS_CI_DEVKIT_CAS_ROOT", "")
 	cacheRoot := filepath.Join(t.TempDir(), ".kb", "devkit")
 	ws := makeWS("@kb/app")
 
@@ -72,6 +75,9 @@ func TestDirtyPackagesExcludesCleanState(t *testing.T) {
 }
 
 func TestDirtyPackagesIncludesDirtyState(t *testing.T) {
+	// These unit fixtures use a synthetic workspace root. Keep them on the
+	// default local path instead of inheriting a hosted runner's trusted CAS.
+	t.Setenv("KBLABS_CI_DEVKIT_CAS_ROOT", "")
 	cacheRoot := filepath.Join(t.TempDir(), ".kb", "devkit")
 	states := cache.NewStateStore(cacheRoot)
 	if err := states.SetDirty("@kb/app", "build", "last_run_failed"); err != nil {
