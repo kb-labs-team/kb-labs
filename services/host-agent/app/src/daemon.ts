@@ -147,6 +147,7 @@ export async function startDaemon(): Promise<void> {
     executionMode: config.execution.mode,
     timeoutMs: config.execution.timeoutMs,
     allowedPlugins: config.execution.allowedPlugins,
+    platformRoot: process.env.KB_PLATFORM_ROOT,
   });
 
   gatewayClient.registerHandler('execution', (call) => executionHandler.handle(call));

@@ -18,6 +18,7 @@ import { setGlobalContext, clearGlobalContext } from './context-holder.js';
 import { connectToPlatform, disconnectFromPlatform } from './platform-client.js';
 import type { ExecuteMessage } from './ipc-protocol.js';
 import { installPlatformResolveHook } from '../platform-resolve/index.js';
+import { resolveExecutionPlatformRoot } from './platform-root.js';
 
 const rawStdout = process.stdout;
 const writeRawStdout = rawStdout.write.bind(rawStdout);
@@ -90,6 +91,10 @@ async function execute(requestId: string, message: ExecuteMessage): Promise<void
       throw new Error('Execution start frame request id does not match its payload');
     }
     const { descriptor, handlerPath, input, cwd, outdir, strictFilesystemPermissions } = message;
+    const executionPlatformRoot = await resolveExecutionPlatformRoot(message.platformRoot, import.meta.url);
+    if (executionPlatformRoot) {
+      installPlatformResolveHook({ platformRoot: executionPlatformRoot, anchors: [import.meta.url] });
+    }
     platform = await connectToPlatform(channel);
     const sandboxMode = (process.env.KB_SANDBOX_MODE || 'enforce') as SandboxMode;
     restoreSandbox = applySandboxPatches({ permissions: descriptor.permissions, mode: sandboxMode });
@@ -127,10 +132,6 @@ async function execute(requestId: string, message: ExecuteMessage): Promise<void
     }
     if (descriptor.pluginId && descriptor.pluginVersion && platform.analytics) {
       platform.analytics.setSource?.({ product: descriptor.pluginId, version: descriptor.pluginVersion });
-    }
-    const platformRoot = process.env.KB_PLATFORM_ROOT;
-    if (platformRoot) {
-      installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
     }
     const handlerModule = await import(handlerPath);
     const handler = handlerModule.default ?? handlerModule;

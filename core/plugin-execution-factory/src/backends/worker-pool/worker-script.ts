@@ -167,7 +167,7 @@ function createStdoutUI(currentRequestId?: string): UIFacade {
  * Handle execute message.
  */
 async function handleExecute(message: ExecuteMessage): Promise<void> {
-  const { requestId, request, timeoutMs: _timeoutMs } = message;
+  const { requestId, request, platformRoot, timeoutMs: _timeoutMs } = message;
   const startMs = Date.now();
   try {
     // Dynamic import to avoid loading at startup
@@ -301,6 +301,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
         cwd,
         input: request.input,
         environment: request.env,
+        platformRoot,
         adapterMiddlewares,
       });
     } finally {

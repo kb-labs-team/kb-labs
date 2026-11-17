@@ -1,10 +1,13 @@
 package workspace
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/config"
@@ -19,6 +22,103 @@ func TestClassifyCarriesInternalToolReleaseLane(t *testing.T) {
 	category, preset, language, releaseLane := classify("tools/kb-runner", cfg)
 	if category != "internal-tool" || preset != "go-binary" || language != "go" || releaseLane != "internal-tool" {
 		t.Fatalf("classify = (%q, %q, %q, %q)", category, preset, language, releaseLane)
+	}
+}
+
+func TestDiscoverPackagesAssignsConfiguredZonesToEveryDiscoveredPackage(t *testing.T) {
+	root := t.TempDir()
+	mustWritePackage(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*"]}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "core", "package.json"), `{"name":"@kb/core"}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "plugin", "package.json"), `{"name":"@kb/plugin"}`)
+	mustWritePackage(t, filepath.Join(root, "packages", "site", "package.json"), `{"name":"@kb/site"}`)
+	cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{
+		Categories: []config.NamedCategory{{Name: "packages", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}}},
+		Zones: []config.NamedZone{
+			{Name: "platform", Match: []string{"packages/core"}},
+			{Name: "plugins", Match: []string{"packages/plugin"}},
+			{Name: "sites", Match: []string{"packages/site"}},
+		},
+	}}
+
+	pkgs, err := discoverPackages(root, cfg)
+	if err != nil {
+		t.Fatalf("discoverPackages: %v", err)
+	}
+	zones := make(map[string]string, len(pkgs))
+	for _, pkg := range pkgs {
+		zones[pkg.Name] = pkg.Zone
+	}
+	want := map[string]string{"@kb/core": "platform", "@kb/plugin": "plugins", "@kb/site": "sites"}
+	if len(zones) != len(want) {
+		t.Fatalf("discovered zones = %#v, want all packages %#v", zones, want)
+	}
+	for name, zone := range want {
+		if zones[name] != zone {
+			t.Errorf("package %s zone = %q, want %q", name, zones[name], zone)
+		}
+	}
+}
+
+func TestDiscoverPackagesRejectsUnclassifiedOrAmbiguousZones(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		zones []config.NamedZone
+		want  string
+	}{
+		{name: "unclassified", zones: []config.NamedZone{{Name: "platform", Match: []string{"packages/core"}}}, want: "does not match any workspace zone"},
+		{name: "ambiguous", zones: []config.NamedZone{{Name: "platform", Match: []string{"packages/*"}}, {Name: "plugins", Match: []string{"packages/core"}}}, want: "matches multiple workspace zones"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			mustWritePackage(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*"]}`)
+			mustWritePackage(t, filepath.Join(root, "packages", "core", "package.json"), `{"name":"@kb/core"}`)
+			if tc.name == "unclassified" {
+				mustWritePackage(t, filepath.Join(root, "packages", "other", "package.json"), `{"name":"@kb/other"}`)
+			}
+			cfg := &config.DevkitConfig{Workspace: config.WorkspaceConfig{
+				Categories: []config.NamedCategory{{Name: "packages", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}}},
+				Zones:      tc.zones,
+			}}
+			_, err := discoverPackages(root, cfg)
+			var zoneError *ZoneClassificationError
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !errors.As(err, &zoneError) {
+				t.Fatalf("discoverPackages error = %v, want %q", err, tc.want)
+			}
+			if zoneError.PackagePath == "" || (tc.name == "ambiguous" && len(zoneError.Matches) != 2) ||
+				(tc.name == "unclassified" && len(zoneError.Matches) != 0) {
+				t.Fatalf("zone classification details = %+v; want package path and exact matches", zoneError)
+			}
+		})
+	}
+}
+
+func TestRepositoryPackagesHaveExactlyOneConfiguredZone(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../../../.."))
+	cfg, err := config.LoadFile(filepath.Join(root, "devkit.yaml"))
+	if err != nil {
+		t.Fatalf("load repository devkit config: %v", err)
+	}
+	ws, err := New(root, cfg)
+	if err != nil {
+		t.Fatalf("discover repository packages: %v", err)
+	}
+	if len(cfg.Workspace.Zones) == 0 {
+		t.Fatal("repository has no configured zones")
+	}
+	for _, pkg := range ws.Packages {
+		if pkg.Zone == "" {
+			t.Errorf("package %s (%s) has no zone", pkg.Name, pkg.RelPath)
+		}
+	}
+	all, err := DiscoverAll(root, cfg)
+	if err != nil {
+		t.Fatalf("discover all repository packages: %v", err)
+	}
+	for _, pkg := range all {
+		if pkg.Zone == "" {
+			t.Errorf("workspace package %s (%s) has no zone", pkg.Name, pkg.RelPath)
+		}
 	}
 }
 

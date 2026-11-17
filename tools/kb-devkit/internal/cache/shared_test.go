@@ -42,7 +42,11 @@ func TestSharedRootIsOneStoreForEveryWorktreeOfARepository(t *testing.T) {
 	if fromMain != fromSecond {
 		t.Fatalf("worktrees resolve different stores: %s != %s", fromMain, fromSecond)
 	}
-	if want := filepath.Join(main, ".git", SharedDirName); fromMain != want {
+	commonDir, err := filepath.EvalSymlinks(filepath.Join(main, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(commonDir, SharedDirName); fromMain != want {
 		t.Fatalf("shared store = %s, want %s inside the git common directory", fromMain, want)
 	}
 }

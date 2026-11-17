@@ -101,6 +101,16 @@ describe('InProcessBackend — loggerOverride platform handoff', () => {
     expect(passedPlatform).toBe(platform);
   });
 
+  // case: S-243.9
+  it('passes the host-owned platform root separately from plugin environment values', async () => {
+    const platform = new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'];
+    const backend = new InProcessBackend({ platform, platformRoot: process.cwd() });
+
+    await backend.execute(makeRequest({ env: { KB_PLATFORM_ROOT: '/request/controlled' } }));
+
+    expect(vi.mocked(runInProcess).mock.calls[0]?.[0]?.platformRoot).toBe(process.cwd());
+  });
+
   it('preserves a named handler export through in-process dispatch', async () => {
     const backend = new InProcessBackend({
       platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'],

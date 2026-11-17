@@ -68,6 +68,7 @@ export class PoolLifecycleManager implements WorkerPoolServingOwner {
   private started = false;
   private readonly logger: IContextLogger;
   private readonly platform: PlatformServices;
+  private readonly platformRoot?: string;
   private readonly platformTransport: PlatformTransportFactory;
   private readonly processTableSource?: ProcessTableSource;
   private readonly workerScript: string;
@@ -83,6 +84,7 @@ export class PoolLifecycleManager implements WorkerPoolServingOwner {
 
   constructor(options: WorkerPoolBackendOptions) {
     this.platform = options.platform;
+    this.platformRoot = options.platformRoot;
     this.platformTransport = options.platformTransport ?? new UnixSocketPlatformTransportFactory();
     this.processTableSource = options.processTableSource;
     this.uiProvider = options.uiProvider ?? (() => noopUI);
@@ -206,7 +208,7 @@ export class PoolLifecycleManager implements WorkerPoolServingOwner {
   }
 
   private createPool(): WorkerPool {
-    const pool = new WorkerPool(this.workerScript, this.config, this.platform, this.platformTransport, this.processTableSource);
+    const pool = new WorkerPool(this.workerScript, this.config, this.platform, this.platformTransport, this.processTableSource, this.platformRoot);
     pool.on('workerSpawned', (worker) => {
       this.platform.logger.debug('Worker spawned', { workerId: worker.id });
     });
@@ -410,6 +412,7 @@ export class WorkerLifecycleManager {
     platform?: PlatformServices,
     platformTransport?: PlatformTransportFactory,
     private readonly processTableSource?: ProcessTableSource,
+    private readonly platformRoot?: string,
   ) {
     this.workers = workers;
     this.config = config;
@@ -480,6 +483,7 @@ export class WorkerLifecycleManager {
       platform: this.platform,
       platformTransport: this.platformTransport,
       processTableSource: this.processTableSource,
+      platformRoot: this.platformRoot,
     });
 
     // Setup event handlers

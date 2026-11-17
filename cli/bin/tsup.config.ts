@@ -11,6 +11,7 @@ export default defineConfig({
   },
   tsconfig: "tsconfig.build.json", // Используем конфиг без paths, чтобы избежать бандлинга workspace пакетов
   clean: false,
+  splitting: true,
   dts: {
     resolve: false,
   },

@@ -5,18 +5,24 @@ from marketplace_sync_fixture import start_marketplace_sync_fixture, stop_market
 
 import json
 import os
+import platform
 import shutil
+import struct
+import sys
 import tempfile
 from pathlib import Path
 
 from service_steps import Journey
+from devkit_cache_steps import run_devkit_cache_steps
 from invocations import (
     CompletedProcess,
+    TimeoutExpired,
     decode_ux_error_result,
     decode_ux_success_result,
     invocation_context,
     read_ux_cli_result,
     run_command,
+    run_harness_command,
 )
 
 
@@ -72,6 +78,278 @@ def _stage_workspace_checkout(repo_root: Path, stage_root: Path) -> Path:
     return stage_root
 
 
+DEVKIT_ZONE_CLAIMS = ("S-179.50", "S-179.51", "S-179.52")
+
+
+def devkit_binary_problem(binary: Path) -> str | None:
+    """Fail closed when the journey image cannot execute the candidate DevKit binary."""
+    if not binary.is_file():
+        return f"BLOCKED: candidate kb-devkit binary is missing at {binary}; restore the devkit-cli artifact"
+    if not os.access(binary, os.X_OK):
+        return f"BLOCKED: candidate kb-devkit binary is not executable at {binary}; chmod it after artifact download"
+    try:
+        data = binary.read_bytes()[:64]
+        if sys.platform.startswith("linux"):
+            if data[:4] != b"\x7fELF" or len(data) < 20 or data[5] not in (1, 2):
+                return f"BLOCKED: candidate kb-devkit is not a supported Linux ELF binary: {binary}"
+            endian = "<" if data[5] == 1 else ">"
+            machine_code = struct.unpack_from(endian + "H", data, 18)[0]
+            expected = {62: "x86_64", 183: "aarch64"}.get(machine_code)
+        elif sys.platform == "darwin":
+            if data[:4] == b"\xcf\xfa\xed\xfe":
+                endian = "<"
+            elif data[:4] == b"\xfe\xed\xfa\xcf":
+                endian = ">"
+            else:
+                return f"BLOCKED: candidate kb-devkit is not a supported Darwin Mach-O binary: {binary}"
+            machine_code = struct.unpack_from(endian + "I", data, 4)[0]
+            expected = {0x01000007: "x86_64", 0x0100000C: "aarch64"}.get(machine_code)
+        else:
+            return f"BLOCKED: candidate kb-devkit does not support journey runner OS {platform.system()}"
+    except OSError as error:
+        return f"BLOCKED: cannot inspect candidate kb-devkit binary {binary}: {error}"
+    actual = platform.machine().lower()
+    actual = {"amd64": "x86_64", "arm64": "aarch64"}.get(actual, actual)
+    if expected is None or expected != actual:
+        return (f"BLOCKED: candidate kb-devkit targets {expected or f'machine {machine_code}'}, "
+                f"but journey runner is {platform.system()}/{actual}; rebuild with matching GOOS/GOARCH")
+    return None
+
+
+def _write_devkit_fixture(root: Path) -> None:
+    packages = {
+        "platform": '{"name":"@fixture/platform"}',
+        "plugin": '{"name":"@fixture/plugin","dependencies":{"@fixture/platform":"workspace:*"}}',
+        "service": '{"name":"@fixture/service"}',
+        "site": '{"name":"@fixture/site"}',
+    }
+    for name, package_json in packages.items():
+        package_dir = root / "packages" / name
+        (package_dir / "src").mkdir(parents=True, exist_ok=True)
+        (package_dir / "package.json").write_text(package_json + "\n", encoding="utf-8")
+        (package_dir / "src" / "change.ts").write_text("export const changed = true\n", encoding="utf-8")
+    (root / "package.json").write_text('{"name":"zone-fixture","private":true,"workspaces":["packages/*"]}\n', encoding="utf-8")
+    (root / ".gitignore").write_text(".kb/\n**/dist/\n", encoding="utf-8")
+    config_text = '''schemaVersion: 2
+workspace:
+  zones:
+    platform: ["packages/platform"]
+    plugins: ["packages/plugin"]
+    services: ["packages/service"]
+    sites: ["packages/site"]
+  categories:
+    sites:
+      match: ["packages/site"]
+      preset: node-lib
+      defaultBuild: false
+    packages:
+      match: ["packages/*"]
+      preset: node-lib
+tasks:
+  build:
+    command: 'sh -c "mkdir -p dist && printf built > dist/marker"'
+    inputs: ["package.json", "src/**"]
+    outputs: ["dist/**"]
+    deps: ["^build"]
+'''
+    (root / "devkit.yaml").write_text(config_text, encoding="utf-8")
+    for args in (("init", "--quiet"), ("config", "user.name", "Zone Journey"),
+                 ("config", "user.email", "zone-journey@example.test"),
+                 ("add", "--all"), ("commit", "--quiet", "-m", "baseline")):
+        completed = run_harness_command(["git", *args], cwd=root)
+        if completed.returncode != 0:
+            raise RuntimeError(f"git {' '.join(args)} failed: {completed.stderr or completed.stdout}")
+
+
+def _devkit_json(binary: Path, root: Path, home: Path, *args: str) -> tuple[dict, int]:
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "CI": "1"}
+    result = run_command([str(binary), "run", "build", *args, "--json"], cwd=root, env=env, timeout=60)
+    try:
+        envelope = json.loads(result.stdout or "")
+    except json.JSONDecodeError as error:
+        raise ValueError(f"kb-devkit {' '.join(args)} did not return JSON: {error}") from error
+    return envelope, result.returncode
+
+
+def _result_packages(envelope: dict) -> list[str]:
+    data = envelope.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+        raise ValueError("kb-devkit JSON did not contain data.results")
+    return [item.get("package", item.get("Package")) for item in data["results"] if isinstance(item, dict)]
+
+
+def run_devkit_zone_steps(journey: Journey, repo_root: Path, *, unavailable_reason: str | None = None) -> None:
+    """Exercise zone selection using the candidate's actual kb-devkit executable."""
+    binary = repo_root / "tools" / "kb-devkit" / "kb-devkit"
+    binary_problem = unavailable_reason or devkit_binary_problem(binary)
+    if binary_problem is None:
+        try:
+            help_result = run_command([str(binary), "--help"], cwd=repo_root,
+                                      env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")}, timeout=30)
+            if help_result.returncode != 0:
+                binary_problem = (f"BLOCKED: candidate kb-devkit could not execute --help "
+                                  f"(exit {help_result.returncode}): {help_result.stderr or help_result.stdout}")
+        except (OSError, TimeoutExpired) as error:
+            binary_problem = f"BLOCKED: candidate kb-devkit is incompatible with this runner: {error}"
+
+    if binary_problem:
+        for claim in DEVKIT_ZONE_CLAIMS:
+            journey.step(f"candidate kb-devkit is available for {claim}", "workspace-cli",
+                         lambda reason=binary_problem: reason, cases=[claim])
+        return
+
+    with tempfile.TemporaryDirectory(prefix="kb-devkit-zone-journey-") as temporary:
+        root = Path(temporary) / "workspace"
+        root.mkdir()
+        home = Path(temporary) / "home"
+        home.mkdir()
+        try:
+            _write_devkit_fixture(root)
+        except (OSError, RuntimeError) as error:
+            reason = f"BLOCKED: could not prepare the DevKit zone fixture: {error}"
+            for claim in DEVKIT_ZONE_CLAIMS:
+                journey.step(f"DevKit fixture is available for {claim}", "workspace-cli",
+                             lambda reason=reason: reason, cases=[claim])
+            return
+
+        def zone_contract() -> str | None:
+            try:
+                platform_result, code = _devkit_json(binary, root, home, "--zone", "platform")
+                if code != 0 or platform_result.get("ok") is not True:
+                    return f"platform zone build failed: {platform_result}"
+                if _result_packages(platform_result) != ["@fixture/platform"]:
+                    return f"platform zone results were {_result_packages(platform_result)}"
+
+                plugin_zone, code = _devkit_json(binary, root, home, "--zone", "plugins")
+                if code != 0 or plugin_zone.get("ok") is not True:
+                    return f"plugins zone build failed: {plugin_zone}"
+                plugin_results = _result_packages(plugin_zone)
+                if plugin_results != ["@fixture/platform", "@fixture/plugin"]:
+                    return f"plugins zone results were {plugin_results}; expected ordered upstream closure"
+                if any(name in plugin_results for name in ("@fixture/service", "@fixture/site")):
+                    return f"plugins zone included unrelated roots: {plugin_results}"
+
+                product_result, code = _devkit_json(binary, root, home, "--zones", "sites,services")
+                if code != 0 or product_result.get("ok") is not True:
+                    return f"sites,services zone build failed: {product_result}"
+                product_packages = set(_result_packages(product_result))
+                if product_packages != {"@fixture/service", "@fixture/site"}:
+                    return f"sites,services results were {sorted(product_packages)}"
+
+                plain_result, code = _devkit_json(binary, root, home)
+                if code != 0 or plain_result.get("ok") is not True:
+                    return f"plain workspace build failed: {plain_result}"
+                if "@fixture/site" in _result_packages(plain_result):
+                    return "plain build unexpectedly selected the defaultBuild:false site package"
+                return None
+            except (KeyError, TypeError, ValueError, OSError, TimeoutExpired) as error:
+                return f"DevKit zone build contract could not be observed: {error}"
+
+        journey.step("build configured zones and upstream dependencies", "workspace-cli",
+                     zone_contract, cases=["S-179.50"])
+
+        def affected_contract() -> str | None:
+            try:
+                package_result, code = _devkit_json(binary, root, home, "--zone", "plugins",
+                                                    "--packages", "@fixture/plugin")
+                if code != 0 or package_result.get("ok") is not True:
+                    return f"package and zone intersection failed: {package_result}"
+                package_results = _result_packages(package_result)
+                if package_results != ["@fixture/platform", "@fixture/plugin"]:
+                    return f"package and zone intersection results were {package_results}; expected ordered upstream closure"
+                if any(name in package_results for name in ("@fixture/service", "@fixture/site")):
+                    return f"package and zone intersection included unrelated roots: {package_results}"
+
+                (root / "packages/plugin/src/change.ts").write_text("export const changed = false\n", encoding="utf-8")
+                (root / "packages/site/src/change.ts").write_text("export const changed = false\n", encoding="utf-8")
+                selected, code = _devkit_json(binary, root, home, "--zones", "plugins,services",
+                                              "--affected", "--diff-only")
+                if code != 0 or selected.get("ok") is not True:
+                    return f"affected zone build failed: {selected}"
+                results = _result_packages(selected)
+                if results != ["@fixture/platform", "@fixture/plugin"]:
+                    return f"affected plugins,services results were {results}; expected platform upstream and plugin only"
+
+                (root / "packages/plugin/src/change.ts").write_text("export const changed = true\n", encoding="utf-8")
+                no_op, code = _devkit_json(binary, root, home, "--zone", "plugins",
+                                           "--affected", "--diff-only")
+                if code != 0 or no_op.get("ok") is not True or _result_packages(no_op):
+                    return f"affected changes outside selected zones were not a successful no-op: {no_op}"
+                summary = no_op.get("data", {}).get("summary", {})
+                expected_summary = {
+                    "scheduled": 0, "passed": 0, "failed": 0, "cached": 0,
+                    "blocked": 0, "notAffected": 0, "blockedTasks": [],
+                }
+                if summary != expected_summary:
+                    return f"affected zone no-op summary was {summary}; expected {expected_summary}"
+                if no_op.get("data", {}).get("elapsed") != "0s":
+                    return f"affected zone no-op elapsed was {no_op.get('data', {}).get('elapsed')!r}; expected '0s'"
+                if no_op.get("data", {}).get("results") != []:
+                    return f"affected zone no-op results were {no_op.get('data', {}).get('results')!r}; expected []"
+                return None
+            except (KeyError, TypeError, ValueError, OSError, TimeoutExpired) as error:
+                return f"DevKit affected zone contract could not be observed: {error}"
+
+        journey.step("intersect zones with explicit and affected selection", "workspace-cli",
+                     affected_contract, cases=["S-179.51"])
+
+        def invalid_contract() -> str | None:
+            try:
+                unknown, code = _devkit_json(binary, root, home, "--zone", "missing")
+                if code == 0 or unknown.get("ok") is not False:
+                    return f"unknown zone unexpectedly succeeded: {unknown}"
+                if unknown.get("error", {}).get("code") != "KB_RUNTIME_INPUT_INVALID":
+                    return f"unknown zone did not return KB_RUNTIME_INPUT_INVALID: {unknown}"
+                if "missing" not in unknown.get("error", {}).get("message", "") or "kb-devkit deps" not in unknown.get("error", {}).get("hint", ""):
+                    return f"unknown zone diagnostic did not identify the selection and inspection command: {unknown}"
+                mismatch, code = _devkit_json(binary, root, home, "--zone", "platform",
+                                             "--packages", "@fixture/plugin")
+                if code == 0 or mismatch.get("ok") is not False:
+                    return f"empty package-zone intersection unexpectedly succeeded: {mismatch}"
+                if mismatch.get("error", {}).get("code") != "KB_RUNTIME_INPUT_INVALID":
+                    return f"empty package-zone intersection did not return KB_RUNTIME_INPUT_INVALID: {mismatch}"
+                if "@fixture/plugin" not in mismatch.get("error", {}).get("message", "") or "platform" not in mismatch.get("error", {}).get("message", "") or "kb-devkit deps" not in mismatch.get("error", {}).get("hint", ""):
+                    return f"empty intersection diagnostic did not identify the selection and inspection command: {mismatch}"
+
+                config_path = root / "devkit.yaml"
+                original_config = config_path.read_text(encoding="utf-8")
+                gap_config = original_config.replace(
+                    'platform: ["packages/platform"]', 'platform: ["packages/no-such-platform"]', 1)
+                if gap_config == original_config:
+                    return "could not prepare workspace zone gap probe"
+                config_path.write_text(gap_config, encoding="utf-8")
+                gap, code = _devkit_json(binary, root, home)
+                config_path.write_text(original_config, encoding="utf-8")
+                if code == 0 or gap.get("ok") is not False:
+                    return f"unclassified package from a zone gap unexpectedly succeeded: {gap}"
+                if gap.get("error", {}).get("code") != "KB_RUNTIME_INPUT_INVALID" or "packages/platform" not in gap.get("error", {}).get("message", "") or "kb-devkit deps" not in gap.get("error", {}).get("hint", ""):
+                    return f"zone gap diagnostic did not identify the package and inspection command: {gap}"
+
+                overlap_config = original_config.replace(
+                    'plugins: ["packages/plugin"]', 'plugins: ["packages/plugin", "packages/platform"]', 1)
+                if overlap_config == original_config:
+                    return "could not prepare workspace zone overlap probe"
+                config_path.write_text(overlap_config, encoding="utf-8")
+                overlap, code = _devkit_json(binary, root, home)
+                config_path.write_text(original_config, encoding="utf-8")
+                if code == 0 or overlap.get("ok") is not False:
+                    return f"package matched by overlapping zones unexpectedly succeeded: {overlap}"
+                overlap_error = overlap.get("error", {})
+                if (overlap_error.get("code") != "KB_RUNTIME_INPUT_INVALID" or
+                        "packages/platform" not in overlap_error.get("message", "") or
+                        "matches multiple workspace zones" not in overlap_error.get("message", "") or
+                        "plugins" not in overlap_error.get("message", "") or
+                        "platform" not in overlap_error.get("message", "") or
+                        "kb-devkit deps" not in overlap_error.get("hint", "")):
+                    return f"zone overlap diagnostic did not identify the package, matches, and inspection command: {overlap}"
+                return None
+            except (KeyError, TypeError, ValueError, OSError, TimeoutExpired) as error:
+                return f"DevKit invalid selector contract could not be observed: {error}"
+
+        journey.step("reject unknown, empty, gap, and overlapping zone selections", "workspace-cli",
+                     invalid_contract, cases=["S-179.52"])
+
+
 def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bool = False) -> None:
     if not prechecked:
         problem = workspace_checkout_problem(repo_root)
@@ -85,6 +363,8 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                     "S-142.5", "S-203.1", "S-203.19", "S-204.7",
                 ],
             )
+            run_devkit_zone_steps(journey, repo_root, unavailable_reason=f"BLOCKED: workspace checkout is unavailable: {problem}")
+            run_devkit_cache_steps(journey, repo_root)
             return
 
     cli = repo_root / "cli/bin/dist/bin.js"
@@ -372,3 +652,6 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
             return None
 
         journey.step("verify synced workspace plugins and adapters in the v3 lock", "workspace-cli", verify_synced_workspace_lock, cases=["S-179.4", "S-179.33"])
+
+        run_devkit_zone_steps(journey, repo_root)
+        run_devkit_cache_steps(journey, repo_root)

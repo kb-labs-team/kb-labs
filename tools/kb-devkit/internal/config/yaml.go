@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -36,6 +37,33 @@ func (o *yamlOrderedCategories) UnmarshalYAML(value *yaml.Node) error {
 				DefaultBuild: cat.DefaultBuild,
 			},
 		})
+	}
+	return nil
+}
+
+type yamlOrderedZones []NamedZone
+
+func (o *yamlOrderedZones) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("zones must be a mapping")
+	}
+	seen := make(map[string]bool)
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		name := value.Content[i].Value
+		if seen[name] {
+			return fmt.Errorf("workspace zone %q is declared more than once", name)
+		}
+		seen[name] = true
+		var zone yamlZone
+		node := value.Content[i+1]
+		if node.Kind == yaml.SequenceNode {
+			if err := node.Decode(&zone.Match); err != nil {
+				return fmt.Errorf("workspace zone %q: %w", name, err)
+			}
+		} else if err := node.Decode(&zone); err != nil {
+			return fmt.Errorf("workspace zone %q: %w", name, err)
+		}
+		*o = append(*o, NamedZone{Name: name, Match: zone.Match})
 	}
 	return nil
 }
@@ -122,9 +150,14 @@ type yamlWorkspace struct {
 	PackageManager string                `yaml:"packageManager"`
 	Discovery      []string              `yaml:"discovery"`
 	Categories     yamlOrderedCategories `yaml:"categories"`
+	Zones          yamlOrderedZones      `yaml:"zones"`
 	MaxDepth       int                   `yaml:"maxDepth"`
 	Include        []string              `yaml:"include"`
 	Exclude        []string              `yaml:"exclude"`
+}
+
+type yamlZone struct {
+	Match []string `yaml:"match"`
 }
 
 type yamlCategory struct {
@@ -361,8 +394,23 @@ func parseYAMLBytes(data []byte) (*DevkitConfig, error) {
 			}
 		}
 	}
+	for _, zone := range cfg.Workspace.Zones {
+		if !workspaceZoneName.MatchString(zone.Name) {
+			return nil, fmt.Errorf("workspace zone %q must use lowercase letters, digits, and hyphens, and start with a letter", zone.Name)
+		}
+		if len(zone.Match) == 0 {
+			return nil, fmt.Errorf("workspace zone %q must declare at least one match pattern", zone.Name)
+		}
+		for _, pattern := range zone.Match {
+			if strings.TrimSpace(pattern) == "" || strings.HasPrefix(pattern, "/") || filepath.Clean(pattern) == ".." || strings.HasPrefix(filepath.Clean(pattern), ".."+string(filepath.Separator)) {
+				return nil, fmt.Errorf("workspace zone %q has invalid match pattern %q", zone.Name, pattern)
+			}
+		}
+	}
 	return cfg, nil
 }
+
+var workspaceZoneName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 func mapYAML(raw yamlConfig) *DevkitConfig {
 	cfg := &DevkitConfig{
@@ -372,6 +420,7 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 		Workspace: WorkspaceConfig{
 			PackageManager: raw.Workspace.PackageManager,
 			Discovery:      raw.Workspace.Discovery,
+			Zones:          raw.Workspace.Zones,
 			MaxDepth:       raw.Workspace.MaxDepth,
 			Include:        raw.Workspace.Include,
 			Exclude:        raw.Workspace.Exclude,

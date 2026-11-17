@@ -33,6 +33,9 @@ export interface SubprocessRunOptions {
   /** Explicit environment values for this execution. */
   environment?: Record<string, string | undefined>;
 
+  /** Host-owned platform root for resolving external plugin platform imports. */
+  platformRoot?: string;
+
   /** Timeout in milliseconds */
   timeoutMs?: number;
 

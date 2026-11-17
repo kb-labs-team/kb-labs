@@ -99,7 +99,7 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
 """)
         compose.chmod(0o755)
         env = isolated_environment(Path(temp) / "home", bin_dir,
-                                   required_tools=("bash", "git", "dirname", "id", "node", "python3", "mktemp", "rm"),
+                                   required_tools=("bash", "git", "dirname", "id", "node", "python3", "mktemp", "mkdir", "rm"),
                                    overrides={"COMPOSE_ARGS_OUT": str(compose_args)})
         return env, compose_args
 
@@ -163,18 +163,19 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("journey_compose_init requires an existing workspace root", result.stderr)
 
-    def _config(self, *, hosted: bool) -> dict:
+    def _config(self, *, hosted: bool, extra_environment: dict | None = None) -> dict:
         with tempfile.TemporaryDirectory(prefix="journey-compose-render-") as temp:
             bin_dir = Path(temp) / "bin"
             bin_dir.mkdir()
             compose_command = require_compose_command(self)
             env = isolated_environment(Path(temp) / "home", bin_dir,
-                                       required_tools=("bash", "git", "dirname", "id", "node", "python3", "mktemp", "rm",
+                                       required_tools=("bash", "git", "dirname", "id", "node", "python3", "mktemp", "mkdir", "rm",
                                                        tuple(compose_command)),
                                        overrides={
                                            "KB_JOURNEY_GIT_REVISION": "test-revision",
                                            "KB_JOURNEY_RUNNER_UID": str(os.getuid()),
                                            "KB_JOURNEY_RUNNER_GID": str(os.getgid()),
+                                           **(extra_environment or {}),
                                        })
             composition = Path(temp) / "marketplace-registry-composition"
             producer = ROOT / "services" / "marketplace-registry" / "app" / "scripts" / "render-journey-composition.mjs"
@@ -186,21 +187,21 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             self.assertEqual(rendered.returncode, 0, rendered.stderr)
             producer_output = json.loads(rendered.stdout)
             overlay = Path(producer_output["composeOverlayPath"])
-            self.assertTrue((composition / ".kb" / "kb.config.jsonc").is_file())
-            self.assertTrue((composition / ".kb" / "marketplace.lock").is_file())
+            self.assertTrue((composition / ".kb" / "kb.config.override.json").is_file())
+            secret_mount = composition / ".kb" / "gateway-internal.secret"
+            self.assertTrue(secret_mount.is_file())
+            self.assertEqual(secret_mount.stat().st_mode & 0o777, 0o444)
+            self.assertFalse((composition / ".kb" / "marketplace.lock").exists())
             self.assertTrue(overlay.is_file())
             validation = subprocess.run(
                 ["node", "--input-type=module", "-e", """
 import fs from 'node:fs';
 import { validateProductConfig } from './core/config/dist/index.js';
-import { validateMarketplaceLock } from '@kb-labs/core-discovery';
 const root = process.argv[1];
-const config = JSON.parse(fs.readFileSync(`${root}/.kb/kb.config.jsonc`, 'utf8'));
-const lock = JSON.parse(fs.readFileSync(`${root}/.kb/marketplace.lock`, 'utf8'));
+const config = JSON.parse(fs.readFileSync(`${root}/.kb/kb.config.override.json`, 'utf8'));
 const configResult = validateProductConfig('marketplace', config.marketplace);
-const lockResult = validateMarketplaceLock(lock, 'platform');
-if (!configResult.ok || !lockResult.valid) {
-  process.stderr.write(JSON.stringify({ config: configResult.errors, lock: lockResult }));
+if (config.platform !== undefined || !configResult.ok) {
+  process.stderr.write(JSON.stringify({ config: configResult.errors, platform: config.platform }));
   process.exitCode = 1;
 }
 """, str(composition)],
@@ -225,12 +226,9 @@ if (!configResult.ok || !lockResult.valid) {
             for mount in rendered["services"]["marketplace-registry"].get("volumes", [])
             if mount.get("type") == "bind"
         }
-        self.assertEqual(set(mounts), {"/app/.kb/kb.config.jsonc", "/app/.kb/marketplace.lock"})
-        config_source = Path(mounts["/app/.kb/kb.config.jsonc"]["source"])
-        lock_source = Path(mounts["/app/.kb/marketplace.lock"]["source"])
-        self.assertEqual(config_source.name, "kb.config.jsonc")
-        self.assertEqual(lock_source.name, "marketplace.lock")
-        self.assertEqual(config_source.parent, lock_source.parent)
+        self.assertEqual(set(mounts), {"/app/.kb/kb.config.override.json"})
+        config_source = Path(mounts["/app/.kb/kb.config.override.json"]["source"])
+        self.assertEqual(config_source.name, "kb.config.override.json")
         self.assertEqual(config_source.parent.name, ".kb")
         self.assertTrue(all(mount.get("read_only") is True for mount in mounts.values()))
         return rendered
@@ -325,6 +323,7 @@ if (!configResult.ok || !lockResult.valid) {
     def test_local_and_hosted_journeys_render_the_same_compose_bind_set(self):
         expected = {
             ("platform", "/workspace/e2e-host"): ROOT / "e2e",
+            ("publisher", "/journey-packages"): ROOT / "e2e" / "packages",
             ("runner", "/summary"): ROOT / ".journey" / "reports",
             ("runner", "/opt/kb-workspace"): ROOT,
             ("runner", "/e2e-oidc-certs"): ROOT / "e2e" / "oidc-idp" / "certs",
@@ -355,9 +354,20 @@ if (!configResult.ok || !lockResult.valid) {
                              "services/state/daemon/Dockerfile")
             self.assertEqual(rendered["services"]["marketplace-tamper"]["profiles"], ["marketplace-registry"])
             runner_environment = rendered["services"]["runner"]["environment"]
-            self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_PUBLISH_URL"],
-                             "http://marketplace-registry:5071/api/v1")
+            self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_GATEWAY_URL"],
+                             "http://127.0.0.1:4000")
+            self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_SERVICE_URL"],
+                             "http://marketplace-registry:5071")
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE"], "journey")
+            self.assertEqual(runner_environment["KB_JOURNEY_GATEWAY_INTERNAL_SECRET_FILE"],
+                             "/run/secrets/journey-gateway-internal")
+            self.assertTrue(any(secret.get("source") == "journey-gateway-internal"
+                                for secret in rendered["services"]["runner"]["secrets"]))
+            registry_service = rendered["services"]["marketplace-registry"]
+            self.assertTrue(any(secret.get("source") == "journey-gateway-internal"
+                                for secret in registry_service["secrets"]))
+            self.assertNotIn("GATEWAY_INTERNAL_SECRET", registry_service.get("environment", {}))
+            self.assertIn("cat /run/secrets/journey-gateway-internal", registry_service["command"][0])
             workspace_mount = next(mount for mount in rendered["services"]["runner"]["volumes"]
                                    if mount.get("target") == "/opt/kb-workspace")
             workspace_source = Path(workspace_mount["source"])
@@ -368,6 +378,45 @@ if (!configResult.ok || !lockResult.valid) {
                     "plugins/marketplace-registry/dist/commands/publish.js",
                     ):
                 self.assertTrue((workspace_source / relative).exists(), relative)
+
+    def test_registry_gateway_secret_is_mounted_to_runner_and_registry(self):
+        rendered = self._config(hosted=False)
+        runner = rendered["services"]["runner"]
+        registry = rendered["services"]["marketplace-registry"]
+        self.assertEqual(runner["environment"]["KB_JOURNEY_GATEWAY_INTERNAL_SECRET_FILE"],
+                         "/run/secrets/journey-gateway-internal")
+        self.assertTrue(any(secret.get("source") == "journey-gateway-internal"
+                            for secret in runner["secrets"]))
+        self.assertTrue(any(secret.get("source") == "journey-gateway-internal"
+                            for secret in registry["secrets"]))
+        self.assertNotIn("GATEWAY_INTERNAL_SECRET", registry.get("environment", {}))
+        self.assertIn("cat /run/secrets/journey-gateway-internal", registry["command"][0])
+
+    def test_registry_candidate_roots_mount_without_touching_shared_reports(self):
+        with tempfile.TemporaryDirectory(prefix="journey-compose-isolated-roots-") as temporary:
+            root = Path(temporary)
+            release_root = root / "candidate" / "release"
+            report_root = root / "run" / "reports"
+            package_root = root / "run" / "publish-packages"
+            for path in (release_root / "journey-candidate", report_root, package_root):
+                path.mkdir(parents=True)
+            rendered = self._config(hosted=False, extra_environment={
+                "KB_JOURNEY_CANDIDATE_RELEASE_ROOT": str(release_root),
+                "KB_JOURNEY_REPORT_ROOT": str(report_root),
+                "KB_JOURNEY_PUBLISH_PACKAGES_HOST_DIR": str(package_root),
+                "KB_JOURNEY_PUBLISH_PACKAGES_CONTAINER_DIR": "/journey-packages",
+            })
+            mounts = {
+                (service_name, mount["target"]): Path(mount["source"]).resolve()
+                for service_name, service in rendered["services"].items()
+                for mount in service.get("volumes", [])
+                if mount.get("type") == "bind"
+            }
+            self.assertEqual(mounts[("origin", "/release")], release_root.resolve())
+            self.assertEqual(mounts[("runner", "/summary")], report_root.resolve())
+            self.assertEqual(mounts[("publisher", "/journey-packages")], package_root.resolve())
+            self.assertEqual(rendered["services"]["publisher"]["environment"]["PUBLISH_PACKAGES_DIR"],
+                             "/journey-packages")
 
     # case: S-262.1
     def test_local_and_hosted_journey_use_the_same_compose_file_list(self):

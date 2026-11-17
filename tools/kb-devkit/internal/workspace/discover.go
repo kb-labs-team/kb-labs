@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/kb-labs/devkit/internal/config"
@@ -22,11 +24,17 @@ func DiscoverAll(root string, cfg *config.DevkitConfig) ([]Package, error) {
 	var result []Package
 	for _, dir := range dirs.all {
 		rel, _ := filepath.Rel(root, dir)
+		rel = filepath.ToSlash(rel)
+		zone, err := classifyZone(rel, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("workspace package %q: %w", rel, err)
+		}
 		name := readPackageName(dir)
 		result = append(result, Package{
 			Name:       name,
 			Dir:        dir,
 			RelPath:    rel,
+			Zone:       zone,
 			PnpmMember: dirs.pnpm[dir],
 		})
 	}
@@ -50,7 +58,10 @@ func discoverPackages(root string, cfg *config.DevkitConfig) ([]Package, error) 
 	if err != nil {
 		return nil, err
 	}
-	packages := classifyPackages(root, dirs.all, cfg)
+	packages, err := classifyPackages(root, dirs.all, cfg)
+	if err != nil {
+		return nil, err
+	}
 	for i := range packages {
 		packages[i].PnpmMember = dirs.pnpm[packages[i].Dir]
 	}
@@ -277,10 +288,11 @@ func isSkipped(name string) bool {
 }
 
 // classifyPackages maps each package dir to a category+preset.
-func classifyPackages(root string, dirs []string, cfg *config.DevkitConfig) []Package {
+func classifyPackages(root string, dirs []string, cfg *config.DevkitConfig) ([]Package, error) {
 	var result []Package
 	for _, dir := range dirs {
 		rel, _ := filepath.Rel(root, dir)
+		rel = filepath.ToSlash(rel)
 		name := readPackageName(dir)
 
 		// Apply workspace.include filter (if any): rel must match at least one pattern.
@@ -309,6 +321,11 @@ func classifyPackages(root string, dirs []string, cfg *config.DevkitConfig) []Pa
 			continue
 		}
 
+		zone, err := classifyZone(rel, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("workspace package %q: %w", rel, err)
+		}
+
 		category, preset, language, releaseLane := classify(rel, cfg)
 		if category == "" {
 			continue // uncategorized — skip silently
@@ -318,13 +335,55 @@ func classifyPackages(root string, dirs []string, cfg *config.DevkitConfig) []Pa
 			Name:        name,
 			Dir:         dir,
 			Category:    category,
+			Zone:        zone,
 			ReleaseLane: releaseLane,
 			Preset:      preset,
 			Language:    language,
 			RelPath:     rel,
 		})
 	}
-	return result
+	return result, nil
+}
+
+// classifyZone requires a discovered package to match exactly one configured
+// zone. Unlike categories, zones have no first-match behavior: overlaps and
+// gaps would make a zone-scoped run surprising.
+func classifyZone(relPath string, cfg *config.DevkitConfig) (string, error) {
+	if cfg == nil || len(cfg.Workspace.Zones) == 0 {
+		return "", nil
+	}
+	var matches []string
+	for _, zone := range cfg.Workspace.Zones {
+		for _, pattern := range zone.Match {
+			if matchPattern(pattern, relPath) {
+				matches = append(matches, zone.Name)
+				break
+			}
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", &ZoneClassificationError{PackagePath: relPath}
+	case 1:
+		return matches[0], nil
+	default:
+		sort.Strings(matches)
+		return "", &ZoneClassificationError{PackagePath: relPath, Matches: matches}
+	}
+}
+
+// ZoneClassificationError reports a discovered package that is assigned to
+// zero or multiple user-configured workspace zones.
+type ZoneClassificationError struct {
+	PackagePath string
+	Matches     []string
+}
+
+func (e *ZoneClassificationError) Error() string {
+	if len(e.Matches) == 0 {
+		return fmt.Sprintf("workspace package %q does not match any workspace zone", e.PackagePath)
+	}
+	return fmt.Sprintf("workspace package %q matches multiple workspace zones %q", e.PackagePath, strings.Join(e.Matches, ", "))
 }
 
 // classify returns category/preset/language for a relative package path.

@@ -7,6 +7,8 @@ export interface ExecuteMessage {
   handlerPath: string;
   input: unknown;
   cwd: string;
+  /** Host-resolved platform root. Never exposed through plugin environment grants. */
+  platformRoot?: string;
   strictFilesystemPermissions: boolean;
   outdir?: string;
 }

@@ -41,7 +41,11 @@ func SharedRoot(wsRoot string) (string, error) {
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(wsRoot, common)
 	}
-	return filepath.Join(filepath.Clean(common), SharedDirName), nil
+	common, err = filepath.EvalSymlinks(common)
+	if err != nil {
+		return "", fmt.Errorf("resolve canonical git common directory of %s: %w", wsRoot, err)
+	}
+	return filepath.Join(common, SharedDirName), nil
 }
 
 func gitOutput(dir string, args ...string) (string, error) {

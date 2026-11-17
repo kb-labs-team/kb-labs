@@ -335,6 +335,9 @@ export interface BackendOptions {
    */
   platform: PlatformServices;
 
+  /** Authoritative host platform root for resolving platform imports from extension stores. */
+  platformRoot?: string;
+
   /**
    * UI provider for CLI execution.
    *

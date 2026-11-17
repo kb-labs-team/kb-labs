@@ -243,8 +243,12 @@ test('reusable installer workflow runs a native macOS install from the candidate
   assert.deepEqual(workflow.jobs.journey.strategy.matrix.os, ['ubuntu-latest']);
   const native = workflow.jobs.native_macos;
   assert.equal(native['runs-on'], 'macos-latest');
+  const pnpmSetup = native.steps.find((step) => step.uses?.startsWith('pnpm/action-setup@'));
+  assert.ok(pnpmSetup, 'the native smoke must install pnpm before the CLI can install Marketplace packages');
+  assert.equal(pnpmSetup.with.run_install, false);
   const nodeSetup = native.steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
   assert.equal(nodeSetup.with['node-version-file'], 'package.json');
+  assert.ok(native.steps.indexOf(pnpmSetup) < native.steps.indexOf(nodeSetup));
   const coverage = workflow.jobs.coverage;
   const coverageNodeSetup = coverage.steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
   assert.equal(coverageNodeSetup.with['node-version-file'], 'package.json');
@@ -256,6 +260,33 @@ test('reusable installer workflow runs a native macOS install from the candidate
   assert.deepEqual(native.steps.filter((step) => step.run).map((step) => step.run), ['e2e/journey/native-macos-smoke.sh']);
   assert.ok(!native.steps.some((step) => step.uses?.startsWith('docker/')));
   assert.equal(native['timeout-minutes'] > 0, true);
+});
+
+test('reusable installer journey delivers the executable DevKit CLI to its workspace mount', () => {
+  const workflow = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
+  const prepareSteps = workflow.jobs.prepare.steps;
+  const upload = prepareSteps.find((step) => step.name === 'Upload the candidate DevKit executable for CLI journey claims');
+  assert.ok(upload, 'the prepare job must publish the already-built workspace CLI binary');
+  assert.equal(upload.with.name, 'installer-journey-devkit-cli');
+  assert.equal(upload.with.path, 'tools/kb-devkit/kb-devkit');
+  assert.equal(upload.with['if-no-files-found'], 'error');
+
+  const journeySteps = workflow.jobs.journey.steps;
+  const prepareCheckout = workflow.jobs.prepare.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+  const journeyCheckout = journeySteps.find((step) => step.uses?.startsWith('actions/checkout@'));
+  const coverageCheckout = workflow.jobs.coverage.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+  assert.equal(journeyCheckout.with.ref, prepareCheckout.with.ref,
+    'the journey scripts and candidate CLI must come from the same requested source ref');
+  assert.equal(coverageCheckout.with.ref, prepareCheckout.with.ref,
+    'coverage must validate claims against the same requested source ref');
+  const download = journeySteps.find((step) => step.uses?.startsWith('actions/download-artifact@')
+    && step.with?.name === 'installer-journey-devkit-cli');
+  assert.ok(download, 'the runner job must restore the exact prepared CLI artifact');
+  assert.equal(download.with.path, 'tools/kb-devkit/');
+  const chmod = journeySteps.find((step) => step.name === 'Restore DevKit executable permission');
+  assert.equal(chmod.run, 'chmod +x tools/kb-devkit/kb-devkit');
+  assert.ok(journeySteps.indexOf(download) < journeySteps.indexOf(chmod));
+  assert.ok(journeySteps.indexOf(chmod) < journeySteps.findIndex((step) => step.run === 'e2e/journey/run.sh --no-build'));
 });
 
 // case: S-261.2

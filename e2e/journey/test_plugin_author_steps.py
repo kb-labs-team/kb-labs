@@ -403,6 +403,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.steps[0]["status"], "PASS", result.steps)
 
     # case: S-003.1
+    # case: S-003.9
     # case: S-003.7, S-003.8, S-041.10
     # case: S-210.1
     def test_scaffold_add_edit_invoke_and_remove_records_all_case_steps(self):
@@ -411,7 +412,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.status, "PASS")
         self.assertEqual(
             [step["cases"] for step in result.steps],
-            [["S-003.1"], ["S-003.2"], ["S-003.3"], ["S-041.10"], ["S-003.7"],
+            [["S-003.1"], ["S-003.2", "S-003.9"], ["S-003.3"], ["S-041.10"], ["S-003.7"],
              ["S-003.8"], ["S-003.4", "S-210.1"], ["S-003.5"], ["S-003.6"]],
         )
         claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
@@ -422,6 +423,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             {claim["claimId"]: (claim["kind"], claim["status"])
              for claim in result.case_run["claims"]},
             {f"S-003.{step}": ("journey", "PASS") for step in range(1, 9)}
+            | {"S-003.9": ("journey", "PASS")}
             | {"S-041.10": ("journey", "PASS"), "S-210.1": ("journey", "PASS")},
         )
         self.assertEqual(json.loads((self.project / ".kb/marketplace.lock").read_text())["plugins"], {})
@@ -439,7 +441,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             "kb demo hello",
             "kb docs generate-cli-reference --output docs/CLI-REFERENCE.md",
             "kb docs generate-cli-reference --output docs/CLI-REFERENCE.md",
-            f"kb marketplace plugins add --link {self.project / '.kb/plugins/demo'}",
+            f"kb marketplace plugins add --link {self.project.resolve() / '.kb/plugins/demo'}",
             "kb --help",
             "kb demo hello",
             "pnpm build",
@@ -469,6 +471,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
         self.assertEqual(claims["S-003.3"], "PASS")
 
+    # case: S-003.9
     def test_build_failure_is_reported_and_generated_files_are_cleaned(self):
         result = self.run_flow(fail_build=True)
 
@@ -478,6 +481,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.case_run["claims"], [
             {"claimId": "S-003.1", "kind": "journey", "status": "PASS"},
             {"claimId": "S-003.2", "kind": "journey", "status": "FAIL"},
+            {"claimId": "S-003.9", "kind": "journey", "status": "FAIL"},
         ])
         self.assertFalse((self.project / ".kb/plugins/demo").exists())
 

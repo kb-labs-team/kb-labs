@@ -82,10 +82,12 @@ journey_start_registry() {
     echo "Journey registry needs Docker Compose. Next: install Docker Compose and call e2e/journey/run.sh." >&2
     return 2
   fi
-  # The Verdaccio volume owns immutable third-party tarballs. Clear only
-  # candidate package metadata before the service starts for this run.
-  journey_compose run --rm --no-deps --entrypoint sh verdaccio -s -- /verdaccio/storage \
-    < e2e/verdaccio/clear-candidates.sh
+  # Preserve mode is reserved for isolated candidate projects with their own
+  # volume. Legacy reusable projects retain their targeted cleanup behavior.
+  if [[ "${KB_JOURNEY_PRESERVE_CANDIDATE_REGISTRY:-0}" != "1" ]]; then
+    journey_compose run --rm --no-deps --entrypoint sh verdaccio -s -- /verdaccio/storage \
+      < e2e/verdaccio/clear-candidates.sh
+  fi
   journey_compose up -d --wait verdaccio
   local published_port host_port
   published_port=$(journey_compose port verdaccio 4873)
@@ -98,6 +100,32 @@ journey_start_registry() {
   JOURNEY_REGISTRY_HOST_URL="http://127.0.0.1:$host_port"
   export JOURNEY_REGISTRY_HOST_URL
   echo "Journey registry: $JOURNEY_REGISTRY_HOST_URL (third-party tarball cache retained in the Verdaccio volume)." >&2
+}
+
+journey_prepare_registry_publish_plan() {
+  [[ "${KB_JOURNEY_PRESERVE_CANDIDATE_REGISTRY:-0}" == "1" ]] || return 0
+  local root index_path packages_path publish_path plan_path bootstrap_package fixture_package
+  journey_compose_require_workspace_source || return
+  root="$KB_JOURNEY_WORKSPACE_SOURCE"
+  index_path="${KB_JOURNEY_CANDIDATE_RELEASE_ROOT:-}/journey-candidate/release-index.json"
+  packages_path="${KB_JOURNEY_PACKAGES_DIR:-}"
+  publish_path="${KB_JOURNEY_REPORT_ROOT:-}/publish-packages"
+  plan_path="${KB_JOURNEY_REPORT_ROOT:-}/publish-plan.json"
+  [[ -n "${KB_JOURNEY_CANDIDATE_ROOT:-}" && -f "$index_path" && -d "$packages_path" && -d "${KB_JOURNEY_REPORT_ROOT:-}" ]] || {
+    echo "Registry preflight requires a prepared candidate root, package graph, and unique report directory." >&2
+    return 2
+  }
+  bootstrap_package="$(node -p "const p=require('$root/plugins/marketplace-registry/package.json');p.name+'@'+p.version")"
+  fixture_package="$(node -p "const p=require('$root/e2e/journey/fixtures/npm-only/package.json');p.name+'@'+p.version")"
+  python3 "$root/e2e/journey/registry_candidate.py" preflight \
+    --release-index "$index_path" --packages-dir "$packages_path" \
+    --registry-url "$JOURNEY_REGISTRY_HOST_URL" --publish-dir "$publish_path" \
+    --plan-output "$plan_path" \
+    --candidate-root "$KB_JOURNEY_CANDIDATE_ROOT" --workspace-root "$root" \
+    --root-package "$bootstrap_package" --root-package "$fixture_package" || return
+  export KB_JOURNEY_PUBLISH_PACKAGES_HOST_DIR="$publish_path"
+  export KB_JOURNEY_PUBLISH_PACKAGES_CONTAINER_DIR=/journey-packages
+  echo "Registry package preflight: $plan_path"
 }
 
 journey_install_candidate_runtime() {
@@ -168,6 +196,7 @@ journey_start_container_services() {
     return 2
   fi
   journey_start_registry
+  journey_prepare_registry_publish_plan
   journey_compose up -d --wait origin
   if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
     journey_compose up -d --wait marketplace-state marketplace-registry marketplace-tamper
@@ -184,7 +213,7 @@ journey_wait_container_publisher() {
   fi
   exit_code=$(docker wait "$JOURNEY_PUBLISHER_ID")
   if [[ "$exit_code" != "0" ]]; then
-    if ! log_path=$(docker logs "$JOURNEY_PUBLISHER_ID" 2>&1 | python3 e2e/journey/container_outcomes.py --report-dir .journey/reports --write-log-name publisher); then
+    if ! log_path=$(docker logs "$JOURNEY_PUBLISHER_ID" 2>&1 | python3 e2e/journey/container_outcomes.py --report-dir "${KB_JOURNEY_REPORT_ROOT:-.journey/reports}" --write-log-name publisher); then
       echo "Journey package publisher container exited $exit_code; its logs could not be captured or saved. Next: docker logs $JOURNEY_PUBLISHER_ID" >&2
       return 1
     fi
@@ -222,6 +251,7 @@ journey_start_host_services() {
   local temp_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
   local host_line="127.0.0.1 origin"
   journey_start_registry
+  journey_prepare_registry_publish_plan
   JOURNEY_HOST_STATE=$(mktemp -d "$temp_root/kb-journey-host-services.XXXXXX")
 
   if ! sudo grep -Fqx "$host_line" /etc/hosts; then
@@ -229,14 +259,16 @@ journey_start_host_services() {
     JOURNEY_HOSTS_ADDED=1
   fi
 
-  python3 -m http.server 8080 --directory "$root/.journey/release" > "$JOURNEY_HOST_STATE/origin.log" 2>&1 &
+  local candidate_output_root="${KB_JOURNEY_CANDIDATE_OUTPUT_ROOT:-$root/.journey}"
+  python3 -m http.server 8080 --directory "$candidate_output_root/release" > "$JOURNEY_HOST_STATE/origin.log" 2>&1 &
   JOURNEY_HOST_PIDS+=("$!")
 
   local attempt
   for attempt in {1..60}; do
     if curl --fail --silent http://127.0.0.1:8080/journey-candidate/release-index.json >/dev/null \
       && curl --fail --silent "$JOURNEY_REGISTRY_HOST_URL/-/ping" >/dev/null; then
-      PUBLISH_PACKAGES_DIR="$root/e2e/packages" VERDACCIO_URL="$JOURNEY_REGISTRY_HOST_URL" sh "$root/e2e/publisher/publish.sh"
+      PUBLISH_PACKAGES_DIR="${KB_JOURNEY_PUBLISH_PACKAGES_HOST_DIR:-$root/e2e/packages}" \
+        VERDACCIO_URL="$JOURNEY_REGISTRY_HOST_URL" sh "$root/e2e/publisher/publish.sh"
       return
     fi
     if ! kill -0 "${JOURNEY_HOST_PIDS[0]}" 2>/dev/null; then

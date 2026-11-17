@@ -19,6 +19,7 @@ import { GatewayClient } from '@kb-labs/host-agent-core';
 import type { GatewayClientOptions } from '@kb-labs/host-agent-core';
 import type { CapabilityCall } from '@kb-labs/host-agent-contracts';
 import { runInProcess } from '@kb-labs/plugin-runtime';
+import { realpathSync } from 'node:fs';
 import { noopUI } from '@kb-labs/plugin-contracts';
 
 /**
@@ -49,13 +50,17 @@ export interface RuntimeServerOptions {
    * where full platform is not available).
    */
   platform?: unknown;
+  /** Trusted host startup root; never taken from a remote execution request. */
+  platformRoot?: string;
 }
 
 export class RuntimeServer {
   private readonly client: GatewayClient;
   private hostId: string | null = null;
+  private readonly platformRoot?: string;
 
   constructor(private readonly opts: RuntimeServerOptions) {
+    this.platformRoot = opts.platformRoot ? realpathSync(opts.platformRoot) : undefined;
     const clientOpts: GatewayClientOptions = {
       gatewayUrl: opts.gatewayUrl,
       agentVersion: opts.agentVersion ?? '0.1.0',
@@ -120,6 +125,7 @@ export class RuntimeServer {
       handlerPath,
       input: request.input,
       cwd: request.pluginRoot,
+      platformRoot: this.platformRoot,
     });
 
     return runResult.data;

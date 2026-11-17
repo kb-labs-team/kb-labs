@@ -75,6 +75,9 @@ kb-devkit run build
 kb-devkit run build lint
 kb-devkit run build lint test --affected
 kb-devkit run build --packages @acme/core-types,@acme/core-runtime
+kb-devkit run build --zone platform
+kb-devkit run test --zones plugins,services
+kb-devkit run build --zones plugins,services --affected
 kb-devkit run build --no-cache
 kb-devkit run build --live          # stream stdout/stderr in real time
 kb-devkit run build --json
@@ -86,19 +89,78 @@ kb-devkit run build --json
 |------|-------------|
 | `--affected` | Run only changed packages + all downstream dependents |
 | `--packages` | Comma-separated list of package names |
+| `--zone` | Select packages in one configured workspace zone |
+| `--zones` | Select packages in multiple configured workspace zones (comma-separated) |
 | `--no-cache` | Bypass cache lookup (still stores result) |
 | `--live` | Stream output in real time (forces `concurrency=1`) |
 | `--concurrency N` | Max parallel tasks (default: `run.concurrency` in yaml, then `NumCPU-1`) |
 
+#### Workspace zones
+
+Zones group workspace packages for focused runs, independently of categories.
+Categories still choose the task variant; a zone only chooses which packages
+are roots for this invocation. Declare zones under `workspace.zones` in
+`devkit.yaml` using workspace-relative match patterns:
+
+```yaml
+workspace:
+  discovery: ["packages/**"]
+  zones:
+    platform:
+      match: ["packages/platform/**"]
+    plugins:
+      match: ["packages/plugins/**"]
+    services:
+      match: ["packages/services/**"]
+```
+
+This example assumes the complete workspace has packages only under those
+three trees. If `packages/**` discovers packages elsewhere, add a zone pattern
+for them too.
+
+Every discovered package must match exactly one configured zone. Keep the
+patterns disjoint and cover all discovered packages; discovery reports a
+configuration error for a package with no zone or multiple zones. Use
+`--zone <name>` for one zone or `--zones <name>,<name>` for several. For
+example, `kb-devkit run test --zones plugins,services` runs `test` for packages
+in either zone.
+
+The selected packages are roots for the requested tasks. A `build` task also
+schedules their transitive upstream workspace dependencies so clean builds
+have the required dependency artifacts. Other tasks can add prerequisites
+through their declared `deps`: for example, `^build` schedules `build` for each
+workspace dependency of a selected package, while `build` schedules it for the
+same package. You can combine zones with `--packages` or `--affected`; those
+selections are intersected before the build dependency closure is added. For
+example, `kb-devkit run build --zones plugins,services --affected` builds affected
+packages in those zones and their upstream dependencies. If no affected package
+is in the selected zones, the command succeeds as a no-op; with `--json` it
+returns empty `results`, a zeroed `summary`, and `elapsed`.
+
+An explicit zone selection includes packages whose category has
+`defaultBuild: false`. A plain `kb-devkit run build` keeps the default package
+selection and skips those packages. `--packages` also makes the selection
+explicit.
+
 **How caching works:**
 
-1. Hash all input files matching `inputs:` glob patterns → SHA256 key
+1. Hash tracked workspace files by package ownership, plus untracked package files matched by local `inputs:` globs and generated dependency files matched by `^` patterns → SHA256 key
 2. Cache hit → restore output files in ~1ms, mark `cached`
 3. Cache miss → run command → store outputs → write manifest
 
 Cache lives in `.kb/devkit/`. Objects are content-addressable — the same file content in two packages is stored once.
 
-Each task has its own independent cache keyed by `(taskName, package, inputHash)`. Running `build` does not populate the `lint` cache — they track different inputs and are stored separately. The only connection between tasks is `deps:` — if `lint` declares `deps: ["build"]`, build runs first (from cache if available), then lint runs fresh.
+Tracked package files participate in task keys even when they fall outside a
+task's local input globs. Untracked package files matched by task `inputs:`
+globs also invalidate that package and its dependents when they are not
+declared as task outputs. At task execution time, local inputs are hashed
+again after prerequisites finish, so a generated file can be an input to a
+later task while remaining excluded from its producer's own key. Dependency
+prerequisites contribute their declared inputs and outputs to the consumer
+key. If a prerequisite declares no outputs, both it and its consumers run
+without cache reuse because the side effects cannot be restored safely.
+
+Each task has its own cache entries keyed by `(taskName, package, inputHash)`. Running `build` does not populate the `lint` cache. `deps:` establishes execution order; `^` input patterns make dependency outputs part of the key (for example, `^dist/**`).
 
 **`--affected` detection:**
 

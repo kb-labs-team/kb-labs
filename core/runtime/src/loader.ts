@@ -529,6 +529,8 @@ export async function initPlatform(
   uiProvider?: (hostType: string) => any,
   platformRoot?: string,
   options: {
+    /** Host-resolved platform root for execution package resolution; distinct from adapterRoot. */
+    executionPlatformRoot?: string;
     assemblyHook?: (
       platform: PlatformContainer,
       broker: IResourceBroker,
@@ -546,7 +548,12 @@ export async function initPlatform(
     workspaceRoot,
     hostServiceEnvironment,
     catalog: suppliedCatalog,
+    executionPlatformRoot,
   } = options;
+  const requestedExecutionRoot = executionPlatformRoot ?? platformRoot;
+  const hostPlatformRoot = requestedExecutionRoot
+    ? await fs.realpath(requestedExecutionRoot)
+    : undefined;
 
   if (workspaceDevelopment && !workspaceRoot) {
     throw new Error('Workspace development requires the root supplied by its CLI or service launcher.');
@@ -1085,7 +1092,7 @@ export async function initPlatform(
         };
 
         const backend = createIsolatedExecutionBackend({
-          localBackend: { platform, mode: 'in-process', uiProvider },
+          localBackend: { platform, mode: 'in-process', uiProvider, platformRoot: hostPlatformRoot },
           executionMode: 'container',
           strictIsolation,
         });
@@ -1135,6 +1142,7 @@ export async function initPlatform(
         const backend = createIsolatedExecutionBackend({
           localBackend: {
             platform,
+            platformRoot: hostPlatformRoot,
             mode: localExecutionMode,
             uiProvider,
             workerPool: execution.workerPool ? {
@@ -1162,6 +1170,7 @@ export async function initPlatform(
         const localExecutionMode = execution.mode ?? 'auto';
         const executionBackend = createExecutionBackend({
           platform: platform,
+          platformRoot: hostPlatformRoot,
           mode: localExecutionMode,
           uiProvider,
           workerPool: execution.workerPool ? {

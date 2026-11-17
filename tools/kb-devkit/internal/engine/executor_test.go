@@ -85,7 +85,7 @@ func TestConsumerBuildIsNotCachedAfterInheritedTsConfigChanges(t *testing.T) {
 	writeFile(t, filepath.Join(appDir, "tsconfig.build.json"), `{"extends":"../tsconfig.base.json","include":["src"]}`)
 	writeFile(t, filepath.Join(gatewayDir, "tsconfig.base.json"), `{"compilerOptions":{"strict":true}}`)
 	initTrackedFixture(t, root)
-	globalDigest, ownedInputDigests, dependencyDigests, err := workspaceInputDigests(&workspace.Workspace{Root: root})
+	globalDigest, ownedInputDigests, dependencyDigests, trackedMetadata, err := workspaceInputDigests(&workspace.Workspace{Root: root}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestConsumerBuildIsNotCachedAfterInheritedTsConfigChanges(t *testing.T) {
 	exec := &Executor{
 		objects: store, manifests: cache.NewManifestStore(cacheRoot), states: cache.NewStateStore(cacheRoot),
 		wsRoot: workspaceRoot, logRoot: filepath.Join(cacheRoot, "logs"), runtimeFingerprint: "fixture-toolchain",
-		ownedInputDigests: ownedInputDigests, dependencyDigests: dependencyDigests, globalInputDigest: globalDigest,
+		ownedInputDigests: ownedInputDigests, dependencyDigests: dependencyDigests, globalInputDigest: globalDigest, trackedMetadata: trackedMetadata,
 	}
 	pkg := workspace.Package{Name: "@fixture/gateway-app", Dir: appDir, Language: "typescript"}
 	def := TaskDef{Name: "build", Command: "true", Inputs: []string{"src/**", "tsconfig*.json"}, Cache: true}
@@ -132,7 +132,7 @@ func TestConsumerTestIsNotCachedAfterImportedVitestConfigChanges(t *testing.T) {
 	writeFile(t, filepath.Join(appDir, "vitest.config.ts"), "import base from '../../vitest.config.mjs'; export default base\n")
 	writeFile(t, filepath.Join(servicesDir, "vitest.config.mjs"), "export default { test: { testTimeout: 1000 } }\n")
 	initTrackedFixture(t, root)
-	globalDigest, ownedInputDigests, dependencyDigests, err := workspaceInputDigests(&workspace.Workspace{Root: root})
+	globalDigest, ownedInputDigests, dependencyDigests, trackedMetadata, err := workspaceInputDigests(&workspace.Workspace{Root: root}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestConsumerTestIsNotCachedAfterImportedVitestConfigChanges(t *testing.T) {
 	exec := &Executor{
 		objects: store, manifests: cache.NewManifestStore(cacheRoot), states: cache.NewStateStore(cacheRoot),
 		wsRoot: workspaceRoot, logRoot: filepath.Join(cacheRoot, "logs"), runtimeFingerprint: "fixture-toolchain",
-		ownedInputDigests: ownedInputDigests, dependencyDigests: dependencyDigests, globalInputDigest: globalDigest,
+		ownedInputDigests: ownedInputDigests, dependencyDigests: dependencyDigests, globalInputDigest: globalDigest, trackedMetadata: trackedMetadata,
 	}
 	pkg := workspace.Package{Name: "@fixture/gateway-app", Dir: appDir, Language: "typescript"}
 	def := TaskDef{Name: "test", Command: "true", Inputs: []string{"src/**", "vitest.config.*"}, Cache: true}

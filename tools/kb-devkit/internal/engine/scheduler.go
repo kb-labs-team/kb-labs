@@ -25,14 +25,16 @@ import (
 
 // RunOptions controls the scheduler behaviour.
 type RunOptions struct {
-	Tasks       []string // task names to run (in order)
-	Packages    []workspace.Package
-	NoCache     bool
-	LiveOutput  bool // stream stdout/stderr while running (disables parallel output)
-	Concurrency int  // upper bound on parallel tasks; memory admission may run fewer
-	WSRoot      string
-	CacheRoot   string // this worktree's .kb/devkit/: task state and logs (objects and manifests live in cache.SharedRoot)
-	Affected    bool   // selection came from --affected
+	Tasks                    []string // task names to run (in order)
+	Packages                 []workspace.Package
+	Zones                    []string // configured workspace zones; applied to roots before build closure
+	ExplicitPackageSelection bool     // preserves an intentionally empty selection
+	NoCache                  bool
+	LiveOutput               bool // stream stdout/stderr while running (disables parallel output)
+	Concurrency              int  // upper bound on parallel tasks; memory admission may run fewer
+	WSRoot                   string
+	CacheRoot                string // this worktree's .kb/devkit/: task state and logs (objects and manifests live in cache.SharedRoot)
+	Affected                 bool   // selection came from --affected
 	// DefaultSelection is true when the caller named no target (no --packages,
 	// --closure-of or --affected). Packages of categories declared
 	// `defaultBuild: false` then keep their own build task out of the run.
@@ -170,21 +172,42 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	}
 
 	pkgs := opts.Packages
-	if len(pkgs) == 0 {
+	if len(pkgs) == 0 && !opts.ExplicitPackageSelection {
 		pkgs = ws.Packages
 	}
+	if len(opts.Zones) > 0 {
+		zoneSet := make(map[string]bool, len(opts.Zones))
+		for _, name := range opts.Zones {
+			if _, ok := cfg.Workspace.FindZone(name); !ok {
+				return RunResult{}, fmt.Errorf("unknown workspace zone %q", name)
+			}
+			zoneSet[name] = true
+		}
+		selected := make([]workspace.Package, 0, len(pkgs))
+		for _, pkg := range pkgs {
+			if zoneSet[pkg.Zone] {
+				selected = append(selected, pkg)
+			}
+		}
+		if len(selected) == 0 {
+			return RunResult{}, fmt.Errorf("no packages match the requested workspace zones")
+		}
+		pkgs = selected
+	}
+	var zoneRoots map[string]bool
 	if containsTask(opts.Tasks, "build") {
+		if len(opts.Zones) > 0 && len(opts.Tasks) > 1 {
+			zoneRoots = make(map[string]bool, len(pkgs))
+			for _, pkg := range pkgs {
+				zoneRoots[pkg.Name] = true
+			}
+		}
 		expanded, err := expandBuildDependencyClosure(pkgs, ws.Packages)
 		if err != nil {
 			return RunResult{}, err
 		}
 		pkgs = expanded
 	}
-	selectedPackageNames := make(map[string]bool, len(pkgs))
-	for _, pkg := range pkgs {
-		selectedPackageNames[pkg.Name] = true
-	}
-
 	// Validate all requested tasks exist in config (at least one variant).
 	for _, name := range opts.Tasks {
 		if _, ok := cfg.Tasks[name]; !ok {
@@ -194,18 +217,21 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 
 	// Build DAG of (pkg, task) nodes — only for packages with a matching variant.
 	var skippedBuilds []string
-	var seed seedFilter
+	skipped := make(map[string]bool)
 	if opts.DefaultSelection && containsTask(opts.Tasks, "build") {
 		for _, pkg := range pkgs {
 			if category, ok := cfg.Workspace.FindCategory(pkg.Category); ok && !category.BuiltByDefault() {
 				skippedBuilds = append(skippedBuilds, pkg.Name)
+				skipped[pkg.Name] = true
 			}
 		}
-		skipped := make(map[string]bool, len(skippedBuilds))
-		for _, name := range skippedBuilds {
-			skipped[name] = true
+	}
+	seed := func(pkg workspace.Package, task string) bool {
+		if task == "build" {
+			return skipped[pkg.Name]
 		}
-		seed = func(pkg workspace.Package, task string) bool { return task == "build" && skipped[pkg.Name] }
+		// Packages added by build closure seed only build; other prerequisites enter through DAG edges.
+		return zoneRoots != nil && !zoneRoots[pkg.Name]
 	}
 	nodes, err := buildDAGSeeded(pkgs, opts.Tasks, cfg, ws, seed)
 	if err != nil {
@@ -225,7 +251,7 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 			return RunResult{}, err
 		}
 		for key := range allNodes {
-			if !selectedPackageNames[key.pkg] {
+			if _, scheduled := nodes[key]; !scheduled {
 				notAffectedTasks = append(notAffectedTasks, TaskIdentity{Package: key.pkg, Task: key.task})
 			}
 		}
@@ -248,7 +274,7 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	}
 	manifests := cache.NewManifestStore(sharedRoot)
 	states := cache.NewStateStore(cacheRoot)
-	globalInputDigest, ownedInputDigests, dependencyDigests, err := workspaceInputDigests(ws)
+	globalInputDigest, ownedInputDigests, dependencyDigests, trackedMetadata, err := workspaceInputDigests(ws, cfg)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("cache inputs: %w", err)
 	}
@@ -256,6 +282,7 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	executor.globalInputDigest = globalInputDigest
 	executor.ownedInputDigests = ownedInputDigests
 	executor.dependencyDigests = dependencyDigests
+	executor.trackedMetadata = trackedMetadata
 	executor.onHeartbeat = opts.OnHeartbeat
 
 	// Precompute direct workspace dep directories for each package in the run.
@@ -266,24 +293,43 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	for _, p := range ws.Packages {
 		allPkgByName[p.Name] = p
 	}
+	depReader, err := NewWorkspaceDependencyReader(allPkgByName)
+	if err != nil {
+		return RunResult{}, err
+	}
 	pkgDepDirs := make(map[nodeKey][]string, len(nodes))
-	for _, p := range pkgs {
-		for _, taskName := range opts.Tasks {
-			def := ResolveTaskDef(cfg, taskName, p.Category)
-			if def == nil {
-				continue
+	pkgDepContexts := make(map[nodeKey]taskInputContext, len(nodes))
+	for key, node := range nodes {
+		def := ResolvePackageTaskDef(ws, cfg, node.task, node.pkg)
+		if def == nil {
+			continue
+		}
+		depNames, err := depReader.WorkspaceDeps(node.pkg.Dir)
+		if err != nil {
+			return RunResult{}, err
+		}
+		dirs := make([]string, 0, len(depNames))
+		for _, name := range depNames {
+			if dep, ok := allPkgByName[name]; ok {
+				dirs = append(dirs, dep.Dir)
 			}
-			depNames, err := WorkspaceDeps(p.Dir, allPkgByName)
-			if err != nil {
-				return RunResult{}, err
+		}
+		pkgDepDirs[key] = dirs
+		context, err := dependencyTaskInputs(ws, cfg, node.pkg, *def, allPkgByName, executor.runtimeFingerprint, depReader, trackedMetadata)
+		if err != nil {
+			return RunResult{}, err
+		}
+		pkgDepContexts[key] = context
+	}
+	for _, node := range nodes {
+		for _, edge := range node.deps {
+			producer := nodes[edge.to]
+			producerDef := ResolvePackageTaskDef(ws, cfg, producer.task, producer.pkg)
+			if producerDef != nil && len(producerDef.Outputs) == 0 {
+				context := pkgDepContexts[edge.to]
+				context.disableCache = true
+				pkgDepContexts[edge.to] = context
 			}
-			dirs := make([]string, 0, len(depNames))
-			for _, name := range depNames {
-				if dep, ok := allPkgByName[name]; ok {
-					dirs = append(dirs, dep.Dir)
-				}
-			}
-			pkgDepDirs[nodeKey{pkg: p.Name, task: taskName}] = dirs
 		}
 	}
 
@@ -372,7 +418,7 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 			done++
 			opts.OnResult(result, done, total)
 		}
-		layerResults := runLayer(layer, nodes, executor, cfg, ws, opts.NoCache, concurrency, pkgDepDirs, complete)
+		layerResults := runLayer(layer, nodes, executor, cfg, ws, opts.NoCache, concurrency, pkgDepDirs, pkgDepContexts, complete)
 		allResults = append(allResults, layerResults...)
 
 		for _, r := range layerResults {
@@ -464,6 +510,10 @@ func expandBuildDependencyClosure(selected, all []workspace.Package) ([]workspac
 	for _, pkg := range all {
 		byName[pkg.Name] = pkg
 	}
+	depReader, err := NewWorkspaceDependencyReader(byName)
+	if err != nil {
+		return nil, err
+	}
 
 	seen := make(map[string]bool, len(selected))
 	queue := make([]workspace.Package, 0, len(selected))
@@ -477,7 +527,7 @@ func expandBuildDependencyClosure(selected, all []workspace.Package) ([]workspac
 	for len(queue) > 0 {
 		pkg := queue[0]
 		queue = queue[1:]
-		depNames, err := WorkspaceDeps(pkg.Dir, byName)
+		depNames, err := depReader.WorkspaceDeps(pkg.Dir)
 		if err != nil {
 			return nil, err
 		}
@@ -596,13 +646,12 @@ func buildDAGSeeded(
 	omit seedFilter,
 ) (map[nodeKey]dagNode, error) {
 	// Build package name → Package map.
-	pkgByName := make(map[string]workspace.Package, len(pkgs))
-	for _, p := range pkgs {
+	pkgByName := make(map[string]workspace.Package, len(ws.Packages))
+	for _, p := range ws.Packages {
 		pkgByName[p.Name] = p
 	}
-
 	// Build dep map: package name → all direct workspace dependencies with their manifest kind.
-	pkgDeps, err := buildPkgDepMap(pkgs, pkgByName)
+	pkgDeps, err := buildPkgDepMap(ws.Packages, pkgByName)
 	if err != nil {
 		return nil, err
 	}
@@ -1012,6 +1061,8 @@ func WorkspaceDeps(pkgDir string, pkgByName map[string]workspace.Package) ([]str
 type WorkspaceDependencyReader struct {
 	pkgByName        map[string]workspace.Package
 	goModulePackages map[string]workspace.Package
+	depsByDir        map[string][]string
+	depErrByDir      map[string]error
 }
 
 // NewWorkspaceDependencyReader resolves Go module paths once for repeated package lookups.
@@ -1020,14 +1071,19 @@ func NewWorkspaceDependencyReader(pkgByName map[string]workspace.Package) (*Work
 	if err != nil {
 		return nil, err
 	}
-	return &WorkspaceDependencyReader{pkgByName: pkgByName, goModulePackages: goModulePackages}, nil
+	return &WorkspaceDependencyReader{pkgByName: pkgByName, goModulePackages: goModulePackages, depsByDir: make(map[string][]string), depErrByDir: make(map[string]error)}, nil
 }
 
 // WorkspaceDeps returns all direct workspace dependencies for pkgDir.
 func (reader *WorkspaceDependencyReader) WorkspaceDeps(pkgDir string) ([]string, error) {
+	key := filepath.Clean(pkgDir)
+	if deps, ok := reader.depsByDir[key]; ok {
+		return append([]string(nil), deps...), reader.depErrByDir[key]
+	}
 	edges := readWorkspaceDependencyEdges(pkgDir, reader.pkgByName)
 	goEdges, err := readGoWorkspaceDependencyEdges(pkgDir, reader.pkgByName, reader.goModulePackages)
 	if err != nil {
+		reader.depErrByDir[key] = err
 		return nil, err
 	}
 	edges = append(edges, goEdges...)
@@ -1040,7 +1096,8 @@ func (reader *WorkspaceDependencyReader) WorkspaceDeps(pkgDir string) ([]string,
 		seen[edge.Name] = struct{}{}
 		result = append(result, edge.Name)
 	}
-	return result, nil
+	reader.depsByDir[key] = result
+	return append([]string(nil), result...), nil
 }
 
 // WorkspaceProdDeps returns direct workspace:* dependency names for a package dir,
@@ -1087,6 +1144,7 @@ func runLayer(
 	noCache bool,
 	concurrency int,
 	pkgDepDirs map[nodeKey][]string,
+	pkgDepContexts map[nodeKey]taskInputContext,
 	onComplete func(TaskResult),
 ) []TaskResult {
 	results := make([]TaskResult, len(layer))
@@ -1111,13 +1169,53 @@ func runLayer(
 				onComplete(results[i])
 				return
 			}
-			results[i] = executor.Run(n.pkg, *def, noCache, pkgDepDirs[k])
+			results[i] = executor.Run(n.pkg, *def, noCache, pkgDepDirs[k], pkgDepContexts[k])
 			onComplete(results[i])
 		}()
 	}
 
 	wg.Wait()
 	return results
+}
+
+func dependencyTaskInputs(ws *workspace.Workspace, cfg *config.DevkitConfig, pkg workspace.Package, def TaskDef, pkgByName map[string]workspace.Package, runtimeFingerprint string, reader *WorkspaceDependencyReader, trackedMetadata map[string]cache.TrackedFile) (taskInputContext, error) {
+	depNames, err := reader.WorkspaceDeps(pkg.Dir)
+	if err != nil {
+		return taskInputContext{}, err
+	}
+	context := taskInputContext{}
+	for _, dependency := range def.Deps {
+		workspaceDependency := strings.HasPrefix(dependency, "^")
+		taskName := strings.TrimPrefix(dependency, "^")
+		dependencyPackages := []workspace.Package{pkg}
+		if workspaceDependency {
+			dependencyPackages = dependencyPackages[:0]
+			for _, depName := range depNames {
+				if depPkg, ok := pkgByName[depName]; ok {
+					dependencyPackages = append(dependencyPackages, depPkg)
+				}
+			}
+		}
+		for _, depPkg := range dependencyPackages {
+			depDef := ResolvePackageTaskDef(ws, cfg, taskName, depPkg)
+			if depDef == nil {
+				continue
+			}
+			context.dependencyOutputs = append(context.dependencyOutputs, cache.DependencyInput{
+				Package:     depPkg.Name,
+				Task:        taskName,
+				Dir:         depPkg.Dir,
+				Inputs:      depDef.Inputs,
+				Outputs:     depDef.Outputs,
+				Fingerprint: taskFingerprint(*depDef, runtimeFingerprint),
+				Tracked:     trackedMetadata,
+			})
+			if len(depDef.Outputs) == 0 {
+				context.disableCache = true
+			}
+		}
+	}
+	return context, nil
 }
 
 // ─── Dirty packages ───────────────────────────────────────────────────────────
@@ -1133,59 +1231,123 @@ func DirtyPackages(ws *workspace.Workspace, cfg *config.DevkitConfig, tasks []st
 	if err != nil {
 		return nil, fmt.Errorf("cache init: %w", err)
 	}
+	nodes, err := buildDAG(ws.Packages, tasks, cfg, ws)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTaskGraph(nodes); err != nil {
+		return nil, err
+	}
 	states := cache.NewStateStore(cacheRoot)
+	hasCleanState := false
+	for key := range nodes {
+		if state, exists := states.Get(key.pkg, key.task); exists && state.Kind == cache.TaskStateClean {
+			hasCleanState = true
+			break
+		}
+	}
+	if !hasCleanState {
+		changed := make(map[string]workspace.Package, len(nodes))
+		for _, node := range nodes {
+			changed[node.pkg.Name] = node.pkg
+		}
+		changedPackages := make([]workspace.Package, 0, len(changed))
+		for _, pkg := range changed {
+			changedPackages = append(changedPackages, pkg)
+		}
+		return packagesAndDependents(ws, changedPackages)
+	}
+	globalInputDigest, ownedInputDigests, dependencyDigests, trackedMetadata, err := workspaceInputDigests(ws, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("cache inputs: %w", err)
+	}
+	manifests := cache.NewManifestStore(sharedRoot)
 	runtimeFingerprint := cache.RuntimeFingerprint()
 	pkgByName := make(map[string]workspace.Package, len(ws.Packages))
 	for _, p := range ws.Packages {
 		pkgByName[p.Name] = p
 	}
-
-	var changed []workspace.Package
-	var globalInputDigest string
-	var ownedInputDigests, dependencyDigests map[string]string
-	inputDigestReady := false
-	for _, p := range ws.Packages {
-		for _, task := range tasks {
-			def := ResolvePackageTaskDef(ws, cfg, task, p)
-			if def == nil {
-				continue
-			}
-			state, exists := states.Get(p.Name, task)
-			if !exists || state.Kind != cache.TaskStateClean {
-				changed = append(changed, p)
-				break
-			}
-			if !inputDigestReady {
-				globalInputDigest, ownedInputDigests, dependencyDigests, err = workspaceInputDigests(ws)
-				if err != nil {
-					return nil, fmt.Errorf("cache inputs: %w", err)
-				}
-				inputDigestReady = true
-			}
-			depNames, err := WorkspaceDeps(p.Dir, pkgByName)
-			if err != nil {
-				return nil, err
-			}
-			depDirs := make([]string, 0, len(depNames))
-			for _, name := range depNames {
-				if dep, ok := pkgByName[name]; ok {
-					depDirs = append(depDirs, dep.Dir)
-				}
-			}
-			inputHash, err := hashTaskInputs(p, *def, depDirs, runtimeFingerprint, globalInputDigest, ownedInputDigests[p.Name], dependencyDigests[p.Name])
-			if err != nil {
-				// Schedule the package so Executor reports the input read failure
-				// through the task's catalogued error and recovery hint.
-				changed = append(changed, p)
-				break
-			}
-			if state.InputHash != inputHash || !taskOutputsMatch(p.Dir, *def, cache.NewManifestStore(sharedRoot), inputHash, p.Name) {
-				changed = append(changed, p)
-				break
+	depReader, err := NewWorkspaceDependencyReader(pkgByName)
+	if err != nil {
+		return nil, err
+	}
+	depDirs := make(map[nodeKey][]string, len(nodes))
+	contexts := make(map[nodeKey]taskInputContext, len(nodes))
+	for key, node := range nodes {
+		def := ResolvePackageTaskDef(ws, cfg, key.task, node.pkg)
+		if def == nil {
+			continue
+		}
+		depNames, err := depReader.WorkspaceDeps(node.pkg.Dir)
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range depNames {
+			if dep, ok := pkgByName[name]; ok {
+				depDirs[key] = append(depDirs[key], dep.Dir)
 			}
 		}
+		context, err := dependencyTaskInputs(ws, cfg, node.pkg, *def, pkgByName, runtimeFingerprint, depReader, trackedMetadata)
+		if err != nil {
+			return nil, err
+		}
+		context.trackedMetadata = trackedMetadata
+		contexts[key] = context
 	}
-	return packagesAndDependents(ws, changed)
+
+	// Dirty state propagates from task prerequisites, including same-package
+	// edges that workspace package dependency digests cannot represent.
+	memo := make(map[nodeKey]bool, len(nodes))
+	visiting := make(map[nodeKey]bool, len(nodes))
+	changed := make(map[string]workspace.Package)
+	var nodeDirty func(nodeKey) (bool, error)
+	nodeDirty = func(key nodeKey) (bool, error) {
+		if dirty, ok := memo[key]; ok {
+			return dirty, nil
+		}
+		if visiting[key] {
+			return false, fmt.Errorf("task dependency cycle while checking affected inputs at %s:%s", key.pkg, key.task)
+		}
+		visiting[key] = true
+		node := nodes[key]
+		def := ResolvePackageTaskDef(ws, cfg, key.task, node.pkg)
+		dirty := def == nil
+		if def != nil {
+			state, exists := states.Get(key.pkg, key.task)
+			dirty = !exists || state.Kind != cache.TaskStateClean || contexts[key].disableCache
+			if !dirty {
+				inputHash, err := hashTaskInputs(node.pkg, *def, depDirs[key], runtimeFingerprint, globalInputDigest, ownedInputDigests[key.pkg], dependencyDigests[key.pkg], contexts[key])
+				if err != nil || state.InputHash != inputHash || !taskOutputsMatch(node.pkg.Dir, *def, manifests, inputHash, key.pkg) {
+					dirty = true
+				}
+			}
+		}
+		for _, edge := range node.deps {
+			prerequisiteDirty, err := nodeDirty(edge.to)
+			if err != nil {
+				return false, err
+			}
+			if prerequisiteDirty {
+				dirty = true
+			}
+		}
+		delete(visiting, key)
+		memo[key] = dirty
+		if dirty {
+			changed[node.pkg.Name] = node.pkg
+		}
+		return dirty, nil
+	}
+	for key := range nodes {
+		if _, err := nodeDirty(key); err != nil {
+			return nil, err
+		}
+	}
+	changedPackages := make([]workspace.Package, 0, len(changed))
+	for _, pkg := range changed {
+		changedPackages = append(changedPackages, pkg)
+	}
+	return packagesAndDependents(ws, changedPackages)
 }
 
 // taskOutputsMatch checks the content and modes owned by the successful cache manifest.
@@ -1218,32 +1380,78 @@ func taskOutputsMatch(pkgDir string, def TaskDef, manifests *cache.ManifestStore
 	return true
 }
 
-func workspaceInputDigests(ws *workspace.Workspace) (string, map[string]string, map[string]string, error) {
+func workspaceInputDigests(ws *workspace.Workspace, cfg *config.DevkitConfig) (string, map[string]string, map[string]string, map[string]cache.TrackedFile, error) {
 	unownedFiles, ownedFiles, tracked, err := ws.TrackedFileOwnership()
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
 	globalDigest, err := cache.ContentDigest(ws.Root, unownedFiles, tracked)
 	if err != nil {
-		return "", nil, nil, err
-	}
-	ownedDigests := make(map[string]string, len(ownedFiles))
-	for name, files := range ownedFiles {
-		digest, err := cache.ContentDigest(ws.Root, files, tracked)
-		if err != nil {
-			return "", nil, nil, err
-		}
-		ownedDigests[name] = digest
+		return "", nil, nil, nil, err
 	}
 	pkgByName := make(map[string]workspace.Package, len(ws.Packages))
 	for _, pkg := range ws.Packages {
 		pkgByName[pkg.Name] = pkg
 	}
-	dependencies := make(map[string][]string, len(ws.Packages))
+	nestedPackageDirs := make(map[string][]string, len(ws.Packages))
 	for _, pkg := range ws.Packages {
-		deps, err := WorkspaceDeps(pkg.Dir, pkgByName)
+		for _, childName := range ws.AggregateChildren(pkg.Name) {
+			if child, ok := pkgByName[childName]; ok {
+				nestedPackageDirs[pkg.Name] = append(nestedPackageDirs[pkg.Name], child.Dir)
+			}
+		}
+	}
+	ownedDigests := make(map[string]string, len(ownedFiles))
+	dependencyOwnedDigests := make(map[string]string, len(ownedFiles))
+	for name, files := range ownedFiles {
+		digest, err := cache.ContentDigest(ws.Root, files, tracked)
 		if err != nil {
-			return "", nil, nil, err
+			return "", nil, nil, nil, err
+		}
+		dependencyDigest := digest
+		if cfg != nil {
+			if pkg, ok := pkgByName[name]; ok {
+				var inputs, outputs []string
+				hasTaskVariant := false
+				for taskName := range cfg.Tasks {
+					def := ResolvePackageTaskDef(ws, cfg, taskName, pkg)
+					if def == nil {
+						continue
+					}
+					hasTaskVariant = true
+					inputs = append(inputs, def.Inputs...)
+					outputs = append(outputs, def.Outputs...)
+				}
+				// A source-only workspace dependency has no task variant from
+				// which to infer its source globs. Conservatively include its
+				// ordinary (non-dist) untracked files in dependent package keys.
+				if !hasTaskVariant {
+					inputs = []string{"**"}
+				}
+				untrackedSourceDigest, err := cache.HashUntrackedInputsExcluding(pkg.Dir, files, inputs, outputs, nestedPackageDirs[pkg.Name])
+				if err != nil {
+					return "", nil, nil, nil, err
+				}
+				if untrackedSourceDigest != "" {
+					dependencyDigest = cache.CombineContentDigests(map[string]string{
+						"tracked":           digest,
+						"untracked-sources": untrackedSourceDigest,
+					})
+				}
+			}
+		}
+		ownedDigests[name] = digest
+		dependencyOwnedDigests[name] = dependencyDigest
+	}
+	dependencies := make(map[string][]string, len(ws.Packages))
+	depReader, err := NewWorkspaceDependencyReader(pkgByName)
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+	for _, pkg := range ws.Packages {
+		deps, err := depReader.WorkspaceDeps(pkg.Dir)
+		if err != nil {
+			return "", nil, nil, nil, err
 		}
 		dependencies[pkg.Name] = deps
 	}
@@ -1259,14 +1467,14 @@ func workspaceInputDigests(ws *workspace.Workspace) (string, map[string]string, 
 				continue
 			}
 			visited[name] = true
-			if digest, ok := ownedDigests[name]; ok {
+			if digest, ok := dependencyOwnedDigests[name]; ok {
 				closure[name] = digest
 			}
 			queue = append(queue, dependencies[name]...)
 		}
 		dependencyDigests[pkg.Name] = cache.CombineContentDigests(closure)
 	}
-	return globalDigest, ownedDigests, dependencyDigests, nil
+	return globalDigest, ownedDigests, dependencyDigests, tracked, nil
 }
 
 // AffectedRunPackages selects by configured Git diff only when diffOnly is
@@ -1381,9 +1589,13 @@ func packagesAndDependents(ws *workspace.Workspace, direct []workspace.Package) 
 	for _, p := range ws.Packages {
 		pkgByName[p.Name] = p
 	}
+	depReader, err := NewWorkspaceDependencyReader(pkgByName)
+	if err != nil {
+		return nil, err
+	}
 	reverseDeps := make(map[string][]string, len(ws.Packages))
 	for _, p := range ws.Packages {
-		deps, err := WorkspaceDeps(p.Dir, pkgByName)
+		deps, err := depReader.WorkspaceDeps(p.Dir)
 		if err != nil {
 			return nil, err
 		}

@@ -103,6 +103,15 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
 
 
 class PtyInvocationTest(unittest.TestCase):
+    def test_harness_command_runs_from_requested_working_directory(self):
+        with tempfile.TemporaryDirectory(prefix="journey-harness-cwd-") as temporary:
+            root = Path(temporary)
+            result = invocations.run_harness_command(
+                [sys.executable, "-c", "import os; print(os.getcwd())"], cwd=root)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(Path(result.stdout.strip()), root.resolve())
+
     def test_failed_envelope_log_path_is_captured_bounded_and_redacted(self):
         with tempfile.TemporaryDirectory(prefix="journey-error-log-artifact-") as temp:
             root = Path(temp)

@@ -10,6 +10,11 @@ source "$ROOT/e2e/journey/candidate-services.sh"
 journey_compose_init "$ROOT" native
 
 native_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/native-installer-smoke.XXXXXX")"
+# Keep Go's module and build caches outside the disposable HOME. Go intentionally
+# stores extracted module files read-only, which makes recursive HOME cleanup fail.
+export GOPATH="${GOPATH:-$(go env GOPATH)}"
+export GOMODCACHE="${GOMODCACHE:-$(go env GOMODCACHE)}"
+export GOCACHE="${GOCACHE:-$(go env GOCACHE)}"
 export HOME="$native_root/home"
 mkdir -p "$HOME"
 unset KB_PLATFORM_ROOT KB_HOME KB_NET_OFFSET

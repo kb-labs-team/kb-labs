@@ -55,6 +55,13 @@ jobs:
         env:
           KB_JOURNEY_PACKAGES_READY: ${{ steps.tgz-cache.outputs.cache-hit == 'true' && '1' || '0' }}
         run: e2e/journey/prepare-candidate.sh
+      - name: Upload the candidate DevKit executable for CLI journey claims
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: installer-journey-devkit-cli
+          path: tools/kb-devkit/kb-devkit
+          if-no-files-found: error
+          retention-days: 1
       - id: matrix
         name: Select journeys from release case claims
         run: printf 'journeys=%s\n' "$(python3 e2e/journey/select_from_cases.py)" >> "$GITHUB_OUTPUT"
@@ -81,9 +88,17 @@ jobs:
         case: ${{ fromJSON(needs.prepare.outputs.journeys) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: installer-journey-candidate
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: installer-journey-devkit-cli
+          path: tools/kb-devkit/
+      - name: Restore DevKit executable permission
+        run: chmod +x tools/kb-devkit/kb-devkit
       - name: Run journey in a fresh container
         env:
           KB_JOURNEY_SERVICE_PROFILE: ${{ startsWith(matrix.case, 'service-') && 'nightly' || '' }}
@@ -95,10 +110,15 @@ jobs:
       - name: Add journey report to job summary
         if: always()
         run: if [ -f .journey/reports/journey-summary.md ]; then cat .journey/reports/journey-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Prepare artifact-safe journey selector
+        id: artifact-name
+        env:
+          JOURNEY_SELECTOR: ${{ matrix.case }}
+        run: printf 'selector=%s\n' "$(python3 e2e/journey/select_from_cases.py --artifact-name-for-selector "$JOURNEY_SELECTOR")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: service-journey-results-${{ matrix.os }}-${{ matrix.case }}
+          name: service-journey-results-${{ matrix.os }}-${{ steps.artifact-name.outputs.selector }}
           path: .journey/reports/service-*.json
           if-no-files-found: ignore
           retention-days: 90
@@ -112,6 +132,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.ref || github.sha }}
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with: { run_install: false }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version-file: package.json
@@ -131,6 +153,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with: { run_install: false }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020

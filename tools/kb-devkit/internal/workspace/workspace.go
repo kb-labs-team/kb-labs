@@ -17,6 +17,7 @@ type Package struct {
 	Name        string // @acme/core-runtime
 	Dir         string // absolute path
 	Category    string // ts-lib, go-binary, site, ...
+	Zone        string // user-selectable workspace zone from devkit.yaml
 	ReleaseLane string // internal-tool; an empty value retains default gating membership
 	Preset      string // node-lib, go-binary, ...
 	Language    string // typescript, go
@@ -154,6 +155,9 @@ func (ws *Workspace) TrackedFileOwnership() (unowned []string, owned map[string]
 	}
 
 	owned = make(map[string][]string, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		owned[pkg.Name] = nil
+	}
 	tracked = make(map[string]cache.TrackedFile)
 	for _, record := range strings.Split(string(output), "\x00") {
 		if record == "" {

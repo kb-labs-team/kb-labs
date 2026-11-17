@@ -72,6 +72,7 @@ export function createExecutionBackend(options: BackendOptions): ExecutionBacken
     case 'in-process':
       backend = new InProcessBackend({
         platform: options.platform,
+        platformRoot: options.platformRoot,
         uiProvider: options.uiProvider,
         pluginInvoker: options.pluginInvoker,
       });
@@ -80,6 +81,7 @@ export function createExecutionBackend(options: BackendOptions): ExecutionBacken
     case 'subprocess':
       backend = new SubprocessBackend({
         platform: options.platform,
+        platformRoot: options.platformRoot,
         runner: new SubprocessRunnerAdapter(),
         uiProvider: options.uiProvider,
       });
@@ -89,6 +91,7 @@ export function createExecutionBackend(options: BackendOptions): ExecutionBacken
     case 'worker-pool':
       backend = new WorkerPoolBackend({
         platform: options.platform,
+        platformRoot: options.platformRoot,
         platformTransport: options.platformTransport,
         uiProvider: options.uiProvider,
         min: options.workerPool?.min ?? 2,

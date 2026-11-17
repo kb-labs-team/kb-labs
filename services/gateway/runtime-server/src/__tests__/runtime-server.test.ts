@@ -70,6 +70,7 @@ describe('RuntimeServer', () => {
     return new RuntimeServer({
       gatewayUrl: 'http://localhost:4000',
       getAccessToken: () => 'token-abc',
+      platformRoot: process.cwd(),
     });
   }
 
@@ -107,6 +108,7 @@ describe('RuntimeServer', () => {
       expect(callArgs['handlerPath']).toBe('/workspace/dist/handler.js');
       expect(callArgs['pluginRoot' as keyof typeof callArgs] ?? callArgs['cwd']).toBeTruthy();
       expect(callArgs['input']).toEqual({ x: 1 });
+      expect(callArgs['platformRoot']).toBe(process.cwd());
 
       expect(result).toEqual({ result: 'ok' });
     });

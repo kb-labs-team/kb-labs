@@ -16,6 +16,20 @@ describe('platform serialized execution errors', () => {
     });
   });
 
+  it('extracts the missing package from Node module-resolution errors without a specifier property', () => {
+    const error = Object.assign(
+      new Error("Cannot find package '@kb-labs/sdk' imported from /workspace/plugins/release/dist/cli.js"),
+      { code: 'ERR_MODULE_NOT_FOUND' },
+    );
+
+    expect(serializeError(error)).toMatchObject({
+      moduleResolution: {
+        code: 'ERR_MODULE_NOT_FOUND',
+        specifier: '@kb-labs/sdk',
+      },
+    });
+  });
+
   it('preserves an Error stack and serializes its cause through the owner', () => {
     const cause = new Error('root cause');
     cause.stack = 'root cause stack';

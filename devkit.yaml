@@ -9,6 +9,23 @@ workspace:
     - plugins/fixtures/*   # test fixtures — not real packages, no build/lint/test tasks
     - templates/*          # scaffold templates — not compiled, only copied to new projects
     - e2e/tests            # legacy monolithic e2e bundle — superseded by per-domain packages
+  zones:
+    platform:
+      match: ["core/**", "sdk/**", "shared/**", "cli/**"]
+    plugins:
+      match: ["plugins/**"]
+    adapters:
+      match: ["adapters/**"]
+    sites:
+      match: ["sites/**"]
+    services:
+      match: ["services/**"]
+    studio:
+      match: ["studio/**"]
+    e2e:
+      match: ["e2e/**"]
+    tools:
+      match: ["tools/**", "infra/**"]
   categories:
     # Plugin E2E suites — the per-plugin test matrix. Each domain's SUBJECT is a
     # specific plugin (it depends on that plugin's workspace:* packages), so

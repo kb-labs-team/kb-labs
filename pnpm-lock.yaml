@@ -1811,6 +1811,9 @@ importers:
       '@kb-labs/core-resource-broker':
         specifier: workspace:*
         version: link:../resource-broker
+      '@kb-labs/core-workspace':
+        specifier: workspace:*
+        version: link:../workspace
       '@kb-labs/llm-router':
         specifier: workspace:*
         version: link:../llm-router

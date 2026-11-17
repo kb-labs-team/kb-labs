@@ -987,6 +987,13 @@ def selectors_from_coverage(results: list[dict]) -> list[str]:
     return sorted(selected)
 
 
+def artifact_name_for_selector(selector: str) -> str:
+    """Return a GitHub Actions artifact-safe token for a registered selector."""
+    if selector not in RUNNERS:
+        raise ValueError(f"unknown registered journey runner {selector!r}")
+    return selector.replace(":", "-")
+
+
 def selection_from_coverage(results: list[dict], requested: str, *, mode: str | None = None,
                             requested_runners: str | None = None) -> dict:
     """Resolve requested cases/steps against the QA coverage claim registry."""
@@ -1106,6 +1113,9 @@ def runners_for_case_selection(results: list[dict], requested: str, mode: str) -
 
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "--artifact-name-for-selector":
+        print_report_text(artifact_name_for_selector(sys.argv[2]), flush=True)
+        return 0
     if sys.argv[1:] == ["--write-plan-baseline"]:
         root = resource_root()
         print_report_text(str(write_full_runner_plan_baseline(root)), flush=True)

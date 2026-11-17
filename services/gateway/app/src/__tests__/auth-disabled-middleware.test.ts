@@ -23,12 +23,15 @@ function makeCache(): ICache {
 
 const jwtConfig: JwtConfig = { secret: 'test-secret' };
 
-async function buildApp(authEnabled: boolean): Promise<FastifyInstance> {
+async function buildApp(authEnabled: boolean, internalSecret?: string): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
-  app.addHook('preHandler', createAuthMiddleware(makeCache(), jwtConfig, { authEnabled }));
+  app.addHook('preHandler', createAuthMiddleware(makeCache(), jwtConfig, { authEnabled, internalSecret }));
   app.get('/protected', async (request) => ({
     ok: true,
     userId: request.authContext?.userId ?? null,
+    forwardedUserId: request.headers['x-kb-auth-user-id'] ?? null,
+    forwardedNamespaceId: request.headers['x-kb-auth-namespace-id'] ?? null,
+    forwardedInternalSecret: request.headers['x-internal-secret'] ?? null,
   }));
   await app.ready();
   return app;
@@ -45,6 +48,27 @@ describe('auth middleware — disabled mode (B-023)', () => {
     const body = res.json() as { ok: boolean; userId: string };
     expect(body.ok).toBe(true);
     expect(body.userId).toBe(LOCAL_ADMIN_CONTEXT.userId);
+    await app.close();
+  });
+
+  it('local identity forwarding replaces caller-supplied trust headers', async () => {
+    app = await buildApp(false, 'gateway-internal-fixture');
+    const res = await app.inject({
+      method: 'GET',
+      url: '/protected',
+      headers: {
+        'x-internal-secret': 'caller-forgery',
+        'x-kb-auth-user-id': 'caller-forgery',
+        'x-kb-auth-namespace-id': 'caller-forgery',
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      userId: 'local-admin',
+      forwardedUserId: 'local-admin',
+      forwardedNamespaceId: 'local',
+      forwardedInternalSecret: 'gateway-internal-fixture',
+    });
     await app.close();
   });
 

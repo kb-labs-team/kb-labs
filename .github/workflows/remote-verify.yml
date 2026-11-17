@@ -22,7 +22,7 @@ on:
         description: Verification profile
         required: true
         type: choice
-        options: [stream, candidate]
+        options: [stream, candidate, benchmark]
         default: candidate
       base_ref:
         description: Optional diff base selected by the local candidate verifier
@@ -40,7 +40,7 @@ env:
 
 jobs:
   prepare:
-    if: github.event_name != 'schedule'
+    if: github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -107,7 +107,7 @@ jobs:
 
   build:
     needs: prepare
-    if: needs.prepare.result == 'success'
+    if: needs.prepare.result == 'success' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     outputs:
@@ -138,6 +138,8 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: ${{ (inputs.profile || github.event.inputs.profile || 'stream') == 'candidate' && 'off' || 'read-write' }}
       - name: Download prepared kb-devkit binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -187,7 +189,7 @@ jobs:
 
   independent-test-shards:
     needs: prepare
-    if: needs.prepare.result == 'success'
+    if: needs.prepare.result == 'success' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}
     name: Independent test ${{ matrix.stage }}
@@ -221,6 +223,8 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: ${{ (inputs.profile || github.event.inputs.profile || 'stream') == 'candidate' && 'off' || 'read-write' }}
       - name: Download prepared kb-devkit binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -244,7 +248,7 @@ jobs:
 
   build-dependent-test-shards:
     needs: build
-    if: needs.build.result == 'success'
+    if: needs.build.result == 'success' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.build.outputs.shard_timeout_minutes) }}
     name: Build-dependent test ${{ matrix.shard || matrix.stage }}
@@ -280,6 +284,8 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: ${{ (inputs.profile || github.event.inputs.profile || 'stream') == 'candidate' && 'off' || 'read-write' }}
       - name: Download producer build outputs and kb-devkit
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -305,7 +311,7 @@ jobs:
 
   internal-tool-test-shards:
     needs: prepare
-    if: needs.prepare.result == 'success' && needs.prepare.outputs.internal_tool_packages != ''
+    if: needs.prepare.result == 'success' && needs.prepare.outputs.internal_tool_packages != '' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}
@@ -342,6 +348,8 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: ${{ (inputs.profile || github.event.inputs.profile || 'stream') == 'candidate' && 'off' || 'read-write' }}
       - name: Download prepared kb-devkit binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -364,7 +372,7 @@ jobs:
           retention-days: 1
 
   verdict:
-    if: always() && github.event_name != 'schedule'
+    if: always() && github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark')
     needs: [prepare, build, independent-test-shards, build-dependent-test-shards, internal-tool-test-shards]
     runs-on: ubuntu-latest
     permissions:
@@ -410,6 +418,66 @@ jobs:
           path: remote-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  registry-roots-benchmark:
+    name: Registry roots benchmark / ${{ matrix.strategy }} / ${{ matrix.cache }} / repeat ${{ matrix.repeat }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'benchmark'
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        strategy: [affected, registry-roots]
+        cache: [cold, warm]
+        repeat: [1, 2, 3]
+    env:
+      GOTOOLCHAIN: local
+      BENCH_STRATEGY: ${{ matrix.strategy }}
+      BENCH_CACHE_MODE: ${{ matrix.cache }}
+      BENCH_REPEAT: ${{ matrix.repeat }}
+      BENCH_OUTPUT: .benchmark/registry-roots-benchmark/${{ matrix.strategy }}-${{ matrix.cache }}-${{ matrix.repeat }}.json
+      BENCH_SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - name: Validate immutable source SHA
+        shell: bash
+        run: '[[ "$BENCH_SOURCE_SHA" =~ ^[a-fA-F0-9]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-devkit/go.sum
+      - name: Install frozen workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Build current DevKit binary outside the timed interval
+        run: cd tools/kb-devkit && go build -o "$RUNNER_TEMP/kb-devkit-bench" .
+      - name: Verify immutable source and report toolchain
+        run: |
+          test "$(git rev-parse HEAD)" = "$BENCH_SOURCE_SHA"
+          node --version
+          go version
+          printf 'source_sha=%s\nstrategy=%s\ncache=%s\nrepeat=%s\n' "$BENCH_SOURCE_SHA" "$BENCH_STRATEGY" "$BENCH_CACHE_MODE" "$BENCH_REPEAT"
+      - name: Measure selected build
+        run: node scripts/ci/registry-roots-benchmark/measure.mjs
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: registry-roots-benchmark-${{ matrix.strategy }}-${{ matrix.cache }}-${{ matrix.repeat }}
+          path: ${{ env.BENCH_OUTPUT }}
+          if-no-files-found: warn
+          retention-days: 30
 
   sweep-verify-refs:
     if: github.event_name == 'schedule'

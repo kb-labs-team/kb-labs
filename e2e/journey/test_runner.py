@@ -10,16 +10,18 @@ import shutil
 import sys
 import tempfile
 import unittest
-from contextlib import ExitStack, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 import jsonl
 from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint, catalogued_error_message
+from journey_resources import host_log_paths
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import commit_marketplace_install_record
 import runner
+from entrypoint import load_gateway_internal_secret
 from runner import REGISTRY, marketplace_install_flags
 
 
@@ -72,16 +74,48 @@ class WorkflowHostStateBoundaryTests(unittest.TestCase):
 
 
 class MarketplaceInstallFlagTests(unittest.TestCase):
+    def test_runner_loads_internal_secret_from_private_mount_without_logging(self):
+        with tempfile.TemporaryDirectory(prefix="journey-gateway-secret-") as directory:
+            secret_file = Path(directory) / "gateway-secret"
+            secret_file.write_text("fixture-secret-value")
+            env = {"KB_JOURNEY_GATEWAY_INTERNAL_SECRET_FILE": str(secret_file)}
+            load_gateway_internal_secret(env)
+            self.assertEqual(env["GATEWAY_INTERNAL_SECRET"], "fixture-secret-value")
+            self.assertNotIn("KB_JOURNEY_GATEWAY_INTERNAL_SECRET_FILE", env)
+
+class MarketplaceInstallFlagTests(unittest.TestCase):
     def test_default_lane_passes_npm_mirror_without_registry_credentials(self):
         env = {"HOME": "/tmp/kb-journey-test-home"}
 
         self.assertEqual(marketplace_install_flags(env), ["--marketplace-npm-url", REGISTRY])
 
+    def test_registry_journey_maps_shared_secret_by_reference_only(self):
+        flags = marketplace_install_flags({
+            "HOME": "/tmp/kb-journey-test-home",
+            "GATEWAY_INTERNAL_SECRET": "never-serialize-this-value",
+        })
+        self.assertIn("--secret-env", flags)
+        index = flags.index("--secret-env")
+        self.assertEqual(flags[index + 1], "gateway.internalSecret=GATEWAY_INTERNAL_SECRET")
+        self.assertNotIn("never-serialize-this-value", " ".join(flags))
+
     def test_clean_install_requires_the_marketplace_commit_receipt(self):
-        self.assertIsNotNone(commit_marketplace_install_record({"marketplaceInstalls": [
-            {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
-        ]}))
-        self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": []}))
+        self.assertIsNotNone(commit_marketplace_install_record({
+            "plan": {"request": {"marketplaceInstallSpecs": ["@kb-labs/commit"]}},
+            "marketplaceInstalls": [
+                {"spec": "@kb-labs/commit", "id": "@kb-labs/commit", "version": "1.2.3", "source": "npm"},
+            ],
+        }))
+        self.assertIsNotNone(commit_marketplace_install_record({
+            "plan": {"request": {"marketplaceInstallSpecs": ["@kb-labs/commit@1.2.3"]}},
+            "marketplaceInstalls": [
+                {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+            ],
+        }))
+        self.assertIsNone(commit_marketplace_install_record({
+            "plan": {"request": {"marketplaceInstallSpecs": ["@kb-labs/commit"]}},
+            "marketplaceInstalls": [],
+        }))
         self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": [
             {"spec": "@kb-labs/commit", "id": "@kb-labs/other", "primaryKind": "plugin"},
         ]}))
@@ -479,6 +513,7 @@ thread.join()
         self.assertEqual(setup["installer"], "custom")
         self.assertEqual(setup["marketplace_packages"], ("@kb-labs/commit",))
         self.assertEqual(setup["command_help_paths"], (("commit", "commit", "--help"),))
+        self.assertTrue(setup["commit_first_value_check"])
 
     def test_local_commit_scenario_uses_commit_installer_scenario(self):
         runner = importlib.import_module("runner")
@@ -486,6 +521,37 @@ thread.join()
         self.assertEqual(setup["installer"], "commit")
         self.assertEqual(setup["marketplace_packages"], ())
         self.assertEqual(setup["command_help_paths"], (("commit", "commit", "--help"),))
+        self.assertTrue(setup["commit_first_value_check"])
+
+    def test_marketplace_registry_scenario_bootstraps_platform_without_marketplace_plugins(self):
+        runner = importlib.import_module("runner")
+        for secured in (False, True):
+            with self.subTest(secured=secured):
+                setup = runner.runner_scenario("marketplace-registry", secured=secured)
+                self.assertEqual(setup["installer"], "custom")
+                self.assertEqual(setup["marketplace_packages"], ())
+                self.assertEqual(setup["command_help_paths"], (("hub", "publish", "--help"),))
+                self.assertFalse(setup["commit_first_value_check"])
+
+    def test_marketplace_registry_installs_author_tools_from_npm_before_registry_config(self):
+        runner = importlib.import_module("runner")
+        for secured in (False, True):
+            with self.subTest(secured=secured):
+                setup = runner.runner_scenario("marketplace-registry", secured=secured)
+                self.assertEqual(setup["marketplace_bootstrap_packages"],
+                                 ("@kb-labs/marketplace-registry",))
+                self.assertEqual(setup["command_help_paths"], (("hub", "publish", "--help"),))
+        env = {"KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://registry.example.test",
+               "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64": "cHVibGljLWtleQ=="}
+        self.assertEqual(runner.marketplace_install_flags(env, include_registry=False),
+                         ["--marketplace-npm-url", runner.REGISTRY])
+
+    def test_local_marketplace_registry_scenario_runs_service_journey(self):
+        runner = importlib.import_module("runner")
+        self.assertTrue(runner.runs_local_service_journey("agent", "marketplace-registry", "default"))
+        self.assertTrue(runner.runs_local_service_journey("agent", "explore", "default"))
+        self.assertFalse(runner.runs_local_service_journey("human", "marketplace-registry", "default"))
+        self.assertFalse(runner.runs_local_service_journey("agent", "marketplace-registry", "secured"))
 
     def test_secured_project_state_is_probed_only_after_initial_login(self):
         runner = importlib.import_module("runner")
@@ -663,10 +729,15 @@ thread.join()
         receipt_path.parent.mkdir(parents=True)
         install_receipt = {
             "id": "receipt-main",
-            "plan": {"request": {"scenarioId": "commit"},
-                     "serviceGraph": {"platformVersion": "2.120.1"},
-                     "artifacts": [{"id": "fixture-package", "kind": "plugin",
-                                    "package": "@kb-labs/fixture-package", "version": "1.0.0"}]},
+            "plan": {
+                "request": {
+                    "scenarioId": "commit",
+                    "marketplaceInstallSpecs": ["@kb-labs/commit@1.0.0"],
+                },
+                "serviceGraph": {"platformVersion": "2.120.1"},
+                "artifacts": [{"id": "fixture-package", "kind": "plugin",
+                               "package": "@kb-labs/fixture-package", "version": "1.0.0"}],
+            },
             "marketplaceInstalls": [{"id": "@kb-labs/commit", "spec": "@kb-labs/commit@1.0.0",
                                      "version": "1.0.0", "source": "registry"}],
         }
@@ -694,6 +765,11 @@ thread.join()
             if len(argv) > 1 and argv[1] in {"stop", "start"} and "--foreground" not in argv:
                 host_cycle.append(argv[1])
                 events.append(f"host:{argv[1]}")
+                if argv[1] == "start":
+                    structured_log = host_log_paths(platform)["structured"]
+                    structured_log.parent.mkdir(parents=True, exist_ok=True)
+                    with structured_log.open("a", encoding="utf-8") as stream:
+                        stream.write(json.dumps({"level": "info", "msg": "host started"}) + "\n")
             output = ""
             returncode = 0
             if argv[0].endswith("install.sh"):
@@ -1556,6 +1632,34 @@ thread.join()
         self.assertIn(envelope["cause"], report.first_failure["message"])
         self.assertIn(envelope["hint"], report.first_failure["message"])
         self.assertEqual(first_failure, f"kb-create install --json: {envelope['code']}: {envelope['message']}; cause={envelope['cause']}; hint={envelope['hint']}")
+
+    def test_json_install_unparseable_failure_reports_bounded_redacted_output(self):
+        runner = importlib.import_module("runner")
+        secret = "journey-registry-token-value"
+        with tempfile.TemporaryDirectory(prefix="journey-install-unparseable-") as directory:
+            summary = Path(directory) / "journey-summary.md"
+            env = {"KB_JOURNEY_MARKETPLACE_TOKEN": secret}
+            process = subprocess.CompletedProcess(
+                ["kb-create", "install", "--json"], 1,
+                stdout=f"registry refused request with credential {secret}\n", stderr="raw transport failure\n",
+            )
+            stderr = io.StringIO()
+            with patch.object(runner, "LAST_COMMAND_ENV", env), \
+                    patch.object(runner, "FIRST_FAILURE", ""), \
+                    patch.object(runner, "journey_value",
+                                 side_effect=lambda name, default=None: str(summary) if name == "KB_JOURNEY_SUMMARY" else default), \
+                    redirect_stderr(stderr):
+                handled = runner.handle_json_install_failure("install", process)
+
+            diagnostic = summary.with_name("journey-diagnostics.log").read_text(encoding="utf-8")
+            self.assertTrue(handled)
+            self.assertIn("registry refused request", diagnostic)
+            self.assertIn("raw transport failure", diagnostic)
+            self.assertIn("[REDACTED]", diagnostic)
+            self.assertNotIn(secret, diagnostic)
+            self.assertIn("stdout tail", stderr.getvalue())
+            self.assertIn("[REDACTED]", stderr.getvalue())
+            self.assertNotIn(secret, stderr.getvalue())
 
 class ProjectRegistrationContractTests(unittest.TestCase):
     def test_project_registration_accessor_returns_a_typed_value_or_state_failure(self):

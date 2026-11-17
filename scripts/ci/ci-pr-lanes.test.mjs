@@ -28,6 +28,33 @@ test('test (full) gates the shipped lane only', () => {
   for (const step of steps) assert.match(step.run, /--lane shipped\b/, `${step.name} must be limited to the shipped lane`);
 });
 
+test('full PR tests restore only shared CAS and keep the full build and cold release gate', () => {
+  const full = ciPr.jobs['full-unit-tests'];
+  const steps = full.steps ?? [];
+  const restore = steps.find((step) => step.name === 'Restore kb-devkit shared CAS');
+  const build = steps.find((step) => step.name === 'Build complete workspace for unit resolution');
+  assert.ok(restore, 'full PR unit tests should restore the shared output CAS');
+  assert.equal(restore.uses, './.github/actions/devkit-cas');
+  assert.equal(restore.with.mode, 'read-write');
+  assert.ok(steps.indexOf(restore) < steps.indexOf(build), 'CAS must be restored before the existing full build');
+  assert.equal(runs(full).filter((step) => /kb-devkit run build/.test(step.run)).length, 1,
+    'the PR job keeps one full build and does not add a second zone build');
+  assert.match(build.run, /run build --json/);
+  assert.doesNotMatch(build.run, /--affected|--diff-only|--zone|--zones|--no-cache/,
+    'the full unit prerequisite build remains complete and cache-enabled');
+  assert.match(build.run, /elapsed_seconds/);
+  assert.match(build.run, /summary\.cached/);
+  assert.match(build.run, /summary\.scheduled/);
+  for (const step of devkitTestRuns(full)) assert.match(step.run, /--no-cache/);
+
+  const release = ciPr.jobs['release-build-preflight'];
+  assert.ok(!(release.steps ?? []).some((step) => step.uses === './.github/actions/devkit-cas'),
+    'the authoritative cold release preflight must not restore PR CAS');
+  const releaseAction = load(readFileSync(join(root, '.github/actions/release-build-preflight/action.yml'), 'utf8'));
+  const goSetup = releaseAction.runs.steps.find((step) => step.uses?.startsWith('actions/setup-go@'));
+  assert.equal(goSetup.with.cache, false, 'the release toolchain stays cold too');
+});
+
 test('internal tools run in their own visible job on their own affected inputs', () => {
   const lane = jobs.filter(([, job]) => devkitTestRuns(job).some((step) => step.run.includes(`--lane ${internalLane[0]}`)));
   assert.equal(lane.length, 1, 'exactly one job runs the internal-tool lane');
@@ -49,4 +76,13 @@ test('every devkit test job uploads its task logs when it fails', () => {
     assert.equal(upload.with.path, '.kb/devkit/logs/');
     assert.match(upload.with.name, new RegExp(id));
   }
+});
+
+test('workflow lint registers the checkout in an isolated project registry first', () => {
+  const step = (ciPr.jobs['devkit-checks'].steps ?? []).find((s) => s.name === 'Lint workflow definitions');
+  assert.ok(step, 'the workflow-definition lint step must exist');
+  assert.equal(step.env?.KB_HOME, '${{ runner.temp }}/kb-home');
+  const commands = step.run.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  assert.match(commands[0], /^pnpm kb project add "\$GITHUB_WORKSPACE"$/);
+  assert.match(commands[1], /^pnpm kb workflow lint --path \.kb\/workflows --strict$/);
 });
