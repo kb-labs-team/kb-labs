@@ -16,8 +16,8 @@ A developer installs a Marketplace entity by the install spec they would type at
 
 ## Prerequisites
 
-- [ ] A platform install configured with the Registry URL, its Ed25519 public key and optional auth token through environment references, plus an optional npm fallback URL.
-- [ ] A published Commit plugin, a Registry-owned identity, an npm-only fixture identity, and a deliberately tampered Registry mirror response.
+- [ ] Bootstrap the author tools before enabling Registry ownership: install a platform with the npm-only Marketplace source, run `kb marketplace install @kb-labs/marketplace-registry --scope platform`, and verify `kb hub publish --help` through the installed platform `kb` command. Then update that platform with the Registry URL, Ed25519 public-key reference, optional auth-token reference, and optional npm fallback URL; Registry fixtures are published through that same installed `kb` identity.
+- [ ] From each fixture package root, publish Commit and the supporting fixtures to the journey Registry with the installed platform command `kb hub publish --json`; provide a Registry-owned identity, an npm-only fixture identity, and a deliberately tampered Registry mirror response.
 - [ ] The installed journey Registry service, its State dependency, and Verdaccio are reachable through their configured service addresses.
 
 ## Steps
@@ -42,3 +42,5 @@ A developer installs a Marketplace entity by the install spec they would type at
 | S-268.15 | Pack each plugin and adapter and inspect its package manifest | No extension declares an `@kb-labs/*` runtime dependency; platform-provided packages are peers. The category check rejects violations. |
 | S-268.16 | Install an extension tarball whose manifest declares an `@kb-labs/*` runtime dependency | The store rejects the package with a named error before pnpm fetches dependencies. |
 | S-268.17 | Install Commit into a fresh local root with a selected project, repeat the install, then update that root | Each operation completes; the initial receipt records the project and Commit, and the `kb` shim is available. No link in the install container resolves outside that root; paths outside it remain unchanged. A container-layout violation reports `KB_INSTALL_LAYOUT_UNSUPPORTED`, identifies the path and gives the catalogued recovery. |
+| S-268.18 | Install `@kb-labs/marketplace-registry` at platform scope, then run `kb hub publish --json` with the working directory set to a plugin package root | The installed publisher loads its handler and SDK imports from the selected platform, publishes the package, and reports the Registry response. It does not fail with a missing `@kb-labs/sdk` module, and the platform root is not exposed through the publisher's granted environment variables. |
+| S-268.19 | Publish a Registry-owned fixture in local and secured platform modes using the installed `kb hub publish --json` command | The publisher sends Registry requests through the configured Gateway upstream. Local mode forwards the platform's `local-admin` identity; secured mode forwards the authenticated user's identity. Registry records the expected author handle and package version in both modes. The runner does not contact the Registry service directly or supply Gateway trust headers. |

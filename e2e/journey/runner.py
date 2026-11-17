@@ -106,10 +106,10 @@ LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
 LAST_COMMAND_CWD: str | None = None
 
 
-def marketplace_install_flags(env: dict[str, str]) -> list[str]:
+def marketplace_install_flags(env: dict[str, str], *, include_registry: bool = True) -> list[str]:
     """Configure the journey npm mirror and translate Registry secrets to env references."""
-    registry_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
-    encoded_key = env.get("KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64", "")
+    registry_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "") if include_registry else ""
+    encoded_key = env.get("KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64", "") if include_registry else ""
     if bool(registry_url) != bool(encoded_key):
         raise ValueError("journey Marketplace Registry URL and generated public key must be configured together")
     flags = []
@@ -125,6 +125,8 @@ def marketplace_install_flags(env: dict[str, str]) -> list[str]:
                       "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
                       "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN"])
     flags.extend(["--marketplace-npm-url", REGISTRY])
+    if env.get("GATEWAY_INTERNAL_SECRET"):
+        flags.extend(["--secret-env", "gateway.internalSecret=GATEWAY_INTERNAL_SECRET"])
     return flags
 
 
@@ -135,12 +137,25 @@ RUNNER_SCENARIOS = {
         "secured_installer": "custom",
         "secured_marketplace_packages": ("@kb-labs/commit",),
         "command_help_paths": (("commit", "commit", "--help"),),
+        "commit_first_value_check": True,
     },
     "explore": {
         "installer": "explore",
         "secured_installer": "custom",
         "secured_marketplace_packages": (),
         "command_help_paths": (),
+        "commit_first_value_check": False,
+    },
+    # S-268 begins with an already installed platform and publishes Commit as
+    # a separate Marketplace artifact. Its runner must not preinstall Commit
+    # through the platform release-index `explore` scenario.
+    "marketplace-registry": {
+        "installer": "custom",
+        "secured_installer": "custom",
+        "secured_marketplace_packages": (),
+        "marketplace_bootstrap_packages": ("@kb-labs/marketplace-registry",),
+        "command_help_paths": (("hub", "publish", "--help"),),
+        "commit_first_value_check": False,
     },
 }
 
@@ -153,8 +168,15 @@ def runner_scenario(name: str, *, secured: bool) -> dict:
     return {
         "installer": description["secured_installer"] if secured else description["installer"],
         "marketplace_packages": description["secured_marketplace_packages"] if secured else (),
+        "marketplace_bootstrap_packages": description.get("marketplace_bootstrap_packages", ()),
         "command_help_paths": description["command_help_paths"],
+        "commit_first_value_check": description["commit_first_value_check"],
     }
+
+
+def runs_local_service_journey(front_door: str, scenario: str, variant: str) -> bool:
+    """Whether the local agent flow should invoke the service journey runner."""
+    return front_door == "agent" and scenario in {"explore", "marketplace-registry"} and variant == "default"
 OUTER_GROUP_DEPENDENCIES = {
     "install": (),
     "host": ("platform-installed",),
@@ -1193,13 +1215,15 @@ def _main(*, update_variant_runner=None):
     env["KB_JOURNEY_INVOCATIONS"] = str(Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).resolve().parent)
     os.environ["KB_JOURNEY_INVOCATIONS"] = env["KB_JOURNEY_INVOCATIONS"]
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
-    marketplace_flags = marketplace_install_flags(env)
     (HOME / ".profile").write_text("if [ -f ~/.bashrc ]; then . ~/.bashrc; fi\n")
     (HOME / ".bash_profile").write_text("if [ -f ~/.profile ]; then . ~/.profile; fi\n")
     (HOME / ".npmrc").write_text(f"registry={REGISTRY}\n")
     env["KB_CREATE_DOWNLOAD_BASE_URL"] = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"]
     mode = "secured" if VARIANT.endswith("secured") else "local"
     scenario_setup = runner_scenario(SCENARIO, secured=mode == "secured")
+    marketplace_flags = marketplace_install_flags(env)
+    initial_marketplace_flags = (marketplace_install_flags(env, include_registry=False)
+                                 if scenario_setup["marketplace_bootstrap_packages"] else marketplace_flags)
     CASE_JOURNEY = Journey(mode, f"installer-{mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}")
     diagnostics = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
         "journey-diagnostics.log")
@@ -1323,7 +1347,7 @@ def _main(*, update_variant_runner=None):
             store_report_secret(env, "KB_JOURNEY_JWT_SECRET",
                                 "JourneySessionSigningSecret-0123456789-abcdef",
                                 "secured human wizard fixture session signing secret")
-        install_command = [launcher, "install", "--registry", REGISTRY, *marketplace_flags]
+        install_command = [launcher, "install", "--registry", REGISTRY, *initial_marketplace_flags]
         if VARIANT == "human-default":
             # Keep the release-index profile allowlist check deterministic.
             install_command.extend(["--scenario", "explore"])
@@ -1411,7 +1435,7 @@ def _main(*, update_variant_runner=None):
         install_scenario = scenario_setup["installer"]
         args = [launcher, operation, "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
                 "--platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", install_scenario,
-                "--registry", REGISTRY, *marketplace_flags, "--project-root", str(PROJECT)]
+                "--registry", REGISTRY, *initial_marketplace_flags, "--project-root", str(PROJECT)]
         if VARIANT.endswith("secured"):
             answers = json.dumps({
                 "access.mode": "secured",
@@ -1633,16 +1657,29 @@ def _main(*, update_variant_runner=None):
 
     # New shell with the installed profile proves user-facing PATH and runtime isolation.
     PROJECT.mkdir(exist_ok=True)
-    for package in scenario_setup["marketplace_packages"]:
-        login, _ = run(kb_login_shell(["auth", "login", "--gateway-url", "http://127.0.0.1:4000",
-                                      "--email", env["KB_JOURNEY_ADMIN_EMAIL"], "--password-stdin"]),
-                       env=env, cwd=PROJECT, timeout=90,
-                       input_text=env["KB_JOURNEY_ADMIN_PASSWORD"] + "\n")
-        if not require(login, step="secured runner administrator login"):
-            return finalize_run(False)
+    for package in (*scenario_setup["marketplace_bootstrap_packages"],
+                    *scenario_setup["marketplace_packages"]):
+        if mode == "secured":
+            login, _ = run(kb_login_shell(["auth", "login", "--gateway-url", "http://127.0.0.1:4000",
+                                          "--email", env["KB_JOURNEY_ADMIN_EMAIL"], "--password-stdin"]),
+                           env=env, cwd=PROJECT, timeout=90,
+                           input_text=env["KB_JOURNEY_ADMIN_PASSWORD"] + "\n")
+            if not require(login, step="secured runner administrator login"):
+                return finalize_run(False)
         install, _ = run(kb_login_shell(["marketplace", "install", package, "--scope", "platform", "--json"]),
                          env=env, cwd=PROJECT, timeout=300)
-        if not require(install, step=f"marketplace install {package} for secured runner scenario"):
+        if not require(install, step=f"marketplace install {package} for runner scenario"):
+            return finalize_run(False)
+    if scenario_setup["marketplace_bootstrap_packages"]:
+        bootstrap_help, _ = run(kb_login_shell(["hub", "publish", "--help"]),
+                                 env=env, cwd=PROJECT, timeout=90)
+        if not require(bootstrap_help, step="author plugin hub publish discovery"):
+            return finalize_run(False)
+        update_args = [launcher, "update", "--json", "--index",
+                       str(HOME / ".local/share/kb-create/release-index.json"),
+                       "--platform-root", str(PLATFORM), "--registry", REGISTRY, *marketplace_flags]
+        registry_configured, _ = run(update_args, env=env, cwd=PROJECT, timeout=1200)
+        if not require(registry_configured, step="enable Registry source after npm author bootstrap"):
             return finalize_run(False)
     run(["git", "init", "-q"], env=env, cwd=PROJECT)
     (PROJECT / "note.txt").write_text("journey first value\n")
@@ -1655,7 +1692,7 @@ def _main(*, update_variant_runner=None):
     if not require(result, step="new login shell kb --help"):
         write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: first-command-output ==\n{result.stdout[-5000:]}\n", env=env)
     else:
-        if FRONT == "agent" and scenario_setup["command_help_paths"]:
+        if FRONT == "agent" and scenario_setup["commit_first_value_check"]:
             result, elapsed = run(kb_login_shell(["commit", "commit", "--dry-run", "--json"]),
                                   env=env, cwd=PROJECT, timeout=300)
             TIMES["first command"] += elapsed
@@ -2036,7 +2073,7 @@ def _main(*, update_variant_runner=None):
                              cases=outer_graph.groups[key].get("cases", ()),
                              record_empty_success=False)
 
-    local_service_journey = FRONT == "agent" and SCENARIO == "explore" and VARIANT == "default"
+    local_service_journey = runs_local_service_journey(FRONT, SCENARIO, VARIANT)
     secured_service_journey = FRONT == "human" and VARIANT.endswith("secured")
     if BASE_ENV.get("KB_JOURNEY_SERVICE_PROFILE") == "nightly" and (local_service_journey or secured_service_journey):
         mode = "secured" if secured_service_journey else "local"
