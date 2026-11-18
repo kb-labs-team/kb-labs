@@ -422,6 +422,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             {claim["claimId"]: (claim["kind"], claim["status"])
              for claim in result.case_run["claims"]},
             {f"S-003.{step}": ("journey", "PASS") for step in range(1, 9)}
+            | {"S-003.9": ("journey", "PASS")}
             | {"S-041.10": ("journey", "PASS"), "S-210.1": ("journey", "PASS")},
         )
         self.assertEqual(json.loads((self.project / ".kb/marketplace.lock").read_text())["plugins"], {})
