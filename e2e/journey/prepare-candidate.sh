@@ -24,8 +24,11 @@ node "$ROOT/e2e/platform/validate-package-outputs.mjs" --build-outputs "$ROOT"
 # The Registry image is built from the same production dependency tree used by
 # platform image publishing. Keep it in the producer artifact so installed
 # local and secured stages (and candidate reuse) build from the exact candidate.
-pnpm deploy --filter @kb-labs/marketplace-registry-app --prod --legacy .kb/deploy/marketplace-registry-app
+pnpm --config.inject-workspace-packages=true deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app
 node "$ROOT/tools/release/generate-platform-image-default.mjs"
+test -s "$ROOT/.kb/deploy/marketplace-registry-app/dist/bootstrap.js"
+test -d "$ROOT/.kb/deploy/marketplace-registry-app/node_modules"
+test -s "$ROOT/.kb/deploy/image-default/kb.config.json"
 
 bash "$ROOT/e2e/journey/stage-runner-inputs.sh"
 
