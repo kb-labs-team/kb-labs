@@ -9,7 +9,7 @@ const pass = { schemaVersion: 1, sha, profile: 'stream', status: 'pass', jobs: [
 const candidatePass = { ...pass, profile: 'candidate', internalToolResults: { status: 'pass', jobs: [] } };
 const run = (overrides = {}) => { const head_branch = overrides.head_branch ?? 'verify/stream/20261025T120000Z-' + sha; return { id: 17, event: 'push', head_branch, head_sha: sha, path: '.github/workflows/remote-verify.yml', display_title: `Remote agent verification (stream) for ${head_branch}`, status: 'completed', conclusion: 'success', ...overrides }; };
 
-function harness({ listRuns, getRun, currentBranch = 'agent/x231-test-strategy', downloadVerdict = async () => pass, pushRef = async () => {}, deleteRef = async () => {}, resolveRef = async () => sha, remoteUrl = 'https://github.com/kb-labs-team/kb-labs.git', remoteUrlError, failureJobs = async () => ({ jobs: [] }), failureLogs = async () => '', failureArtifacts = async () => [] } = {}) {
+function harness({ listRuns, getRun, downloadVerdict = async () => pass, pushRef = async () => {}, deleteRef = async () => {}, resolveRef = async () => sha, remoteUrl = 'https://github.com/kb-labs-team/kb-labs.git', remoteUrlError, failureJobs = async () => ({ jobs: [] }), failureLogs = async () => '', failureArtifacts = async () => [] } = {}) {
   let time = 0;
   const calls = { pushes: [], resolves: [], deletes: [], remoteUrls: [], repositories: [], lists: 0, gets: 0, ghTimes: [], remoteTimes: [], artifacts: 0 };
   const recordGh = () => { calls.ghTimes.push(time); calls.remoteTimes.push(time); };
@@ -25,7 +25,6 @@ function harness({ listRuns, getRun, currentBranch = 'agent/x231-test-strategy',
   };
   const git = {
     headSha: async () => sha,
-    currentBranch: async () => currentBranch,
     remoteUrl: async (remoteName) => { calls.remoteUrls.push(remoteName); if (remoteUrlError) throw remoteUrlError; return remoteUrl; },
     pushRef: async (remoteName, ref, pushedSha) => { recordGitRemote(); calls.pushes.push({ remote: remoteName, ref, sha: pushedSha }); return pushRef(remoteName, ref, pushedSha); },
     resolveRef: async (remoteName, ref) => { recordGitRemote(); calls.resolves.push({ remote: remoteName, ref }); return resolveRef(remoteName, ref); },
@@ -204,7 +203,7 @@ test('candidate requests one dispatch run on its isolated ref and records the pr
     downloadVerdict: async () => candidatePass,
     listRuns: async (_repo, branch, event) => { assert.equal(event, 'workflow_dispatch'); return [candidateRun(branch)]; },
   });
-  h.executors.gh.dispatchRun = async (_repo, ref, profile, baseRef) => { dispatched += 1; assert.match(ref, /^verify-candidate\//); assert.equal(profile, 'candidate'); assert.equal(baseRef, 'origin/agent/j90-integration'); };
+  h.executors.gh.dispatchRun = async (_repo, ref, profile, baseRef) => { dispatched += 1; assert.match(ref, /^verify-candidate\//); assert.equal(profile, 'candidate'); assert.equal(baseRef, undefined); };
   const verdict = await runRemoteVerification({ stream: 'release', profile: 'candidate', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
   assert.equal(verdict.status, 'pass');
   assert.equal(verdict.profile, 'candidate');
@@ -213,10 +212,9 @@ test('candidate requests one dispatch run on its isolated ref and records the pr
   assert.equal(h.calls.deletes.length, 1);
 });
 
-test('candidate dispatch from a short trunk branch passes origin/master through the CLI client', async () => {
+test('candidate dispatch from a short trunk branch does not select an affected base', async () => {
   const candidateRun = (branch) => run({ event: 'workflow_dispatch', head_branch: branch, display_title: `Remote agent verification (candidate) for ${branch}` });
   const h = harness({
-    currentBranch: 'batch/cases/S-010.1',
     downloadVerdict: async () => candidatePass,
     listRuns: async (_repo, branch, event) => { assert.equal(event, 'workflow_dispatch'); return [candidateRun(branch)]; },
   });
@@ -225,7 +223,7 @@ test('candidate dispatch from a short trunk branch passes origin/master through 
     dispatched += 1;
     assert.match(ref, /^verify-candidate\//);
     assert.equal(profile, 'candidate');
-    assert.equal(baseRef, 'origin/master');
+    assert.equal(baseRef, undefined);
   };
   const verdict = await runRemoteVerification({ stream: 'release', profile: 'candidate', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
   assert.equal(verdict.status, 'pass');
