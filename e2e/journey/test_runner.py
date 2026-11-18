@@ -507,6 +507,29 @@ thread.join()
                         start_new_session=True,
                     )
 
+    def test_pty_zombie_is_not_a_terminal_reader(self):
+        module = importlib.import_module("invocations")
+        terminal_stat = type("TerminalStat", (), {"st_rdev": 0})()
+        with patch.object(module.sys, "platform", "linux"), \
+                patch.object(module.platform, "machine", return_value="x86_64"), \
+                patch.object(module, "_pty_reader_pids", return_value=[123]), \
+                patch.object(module, "_proc_stat", return_value=(1, 123, 0, "Z")), \
+                patch.object(module.os, "stat", return_value=terminal_stat), \
+                patch.object(module.os, "readlink", side_effect=PermissionError) as readlink:
+            self.assertFalse(module.pty_terminal_read_ready(123, "/dev/pts/0"))
+            readlink.assert_not_called()
+
+    def test_pty_exit_during_fd_inspection_is_not_permission_failure(self):
+        module = importlib.import_module("invocations")
+        terminal_stat = type("TerminalStat", (), {"st_rdev": 0})()
+        with patch.object(module.sys, "platform", "linux"), \
+                patch.object(module.platform, "machine", return_value="x86_64"), \
+                patch.object(module, "_pty_reader_pids", return_value=[123]), \
+                patch.object(module, "_proc_stat", side_effect=[(1, 123, 0, "S"), (1, 123, 0, "Z")]), \
+                patch.object(module.os, "stat", return_value=terminal_stat), \
+                patch.object(module.os, "readlink", side_effect=PermissionError):
+            self.assertFalse(module.pty_terminal_read_ready(123, "/dev/pts/0"))
+
     def test_pty_permission_denial_reports_process_and_fails_closed(self):
         module = importlib.import_module("invocations")
         terminal = "/dev/pts/4"

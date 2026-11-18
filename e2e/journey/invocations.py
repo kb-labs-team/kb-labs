@@ -271,7 +271,9 @@ def _linux_terminal_reader(pid: int, terminal_path: str) -> tuple[int, int, str]
         details = _proc_stat(child_pid)
         if details is None:
             continue
-        _, session_id, controlling_tty, _ = details
+        _, session_id, controlling_tty, state = details
+        if state == "Z":
+            continue
         if (session_id != pid
                 or _decode_linux_device_number(controlling_tty) != terminal_device):
             continue
@@ -295,6 +297,9 @@ def _linux_terminal_reader(pid: int, terminal_path: str) -> tuple[int, int, str]
         except FileNotFoundError:
             continue
         except PermissionError as error:
+            current = _proc_stat(child_pid)
+            if current is None or current[3] == "Z":
+                continue
             raise PtyReadinessUnsupported(
                 f"Linux procfs PTY reader state is not readable: root pid {pid}, "
                 f"child pid {child_pid}, session {session_id}, state {details[3]}, "
