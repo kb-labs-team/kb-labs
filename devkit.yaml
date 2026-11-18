@@ -756,6 +756,24 @@ tasks:
       deps:
         - "build"
 
+    # Plugin entry packages own their test runner configuration and test layout.
+    # Run the declared package script so general suites are included; test:cli is
+    # a narrower, separate lane for command-handler checks.
+    - categories: [plugin-entry]
+      command: pnpm run test
+      inputs:
+        - "src/**"
+        - "tests/**"
+        - "test/**"
+        - "package.json"
+        - "vitest.config.*"
+        - "vitest.*.config.*"
+        - "^dist/**"
+      outputs:
+        - "coverage/**"
+      deps:
+        - "build"
+
     - categories: [go-binary, internal-tool]
       command: make test
       inputs:

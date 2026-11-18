@@ -147,7 +147,7 @@ export async function runStage({
   if (isBuild) captureResourceSample();
   const finishedAt = now();
   const log = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join('\n');
-  const taskFailures = devkitTaskFailures(stage, result);
+  const taskFailures = devkitTaskFailures(stage, result, stage === profile.buildStage ? packages : packageNames);
   const taskLogOutput = taskFailures.map((failure) => {
     const label = [failure.package, failure.task].filter(Boolean).join(':');
     return [label, failure.logPath, failure.logTail || failure.error].filter(Boolean).join('\n');
@@ -195,7 +195,7 @@ function packageNameFromManifest(stage, definition) {
   return manifest.name;
 }
 
-function devkitTaskFailures(stage, result) {
+function devkitTaskFailures(stage, result, selectedPackages = []) {
   const taskStage = stage === profile.buildStage || stage === profile.packageTestStage
     || stageDefinitions.find((entry) => entry.id === stage)?.runner === 'kb-devkit-test-package';
   if (!taskStage) return [];
@@ -207,6 +207,13 @@ function devkitTaskFailures(stage, result) {
   }
   const results = envelope?.data?.results;
   if (!Array.isArray(results)) {
+    if (envelope?.ok === true && envelope?.data?.summary?.scheduled === 0) {
+      const packageList = selectedPackages.length > 0 ? `: ${selectedPackages.join(', ')}` : '';
+      const taskKind = stage === profile.packageTestStage || stageDefinitions.find((entry) => entry.id === stage)?.runner === 'kb-devkit-test-package'
+        ? 'test tasks'
+        : 'tasks';
+      return [{ error: `kb-devkit scheduled no ${taskKind} for the selected package${selectedPackages.length === 1 ? '' : 's'}${packageList}.` }];
+    }
     return [{ error: 'kb-devkit run --json returned no structured task results.' }];
   }
   if (result.status === 0 && envelope?.ok !== true) {
