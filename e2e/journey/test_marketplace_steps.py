@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
+                               _assert_registry_doctor_provenance,
                                configured_marketplace_source_kinds,
                                commit_publish_command,
                                _publish_workspace_fixture,
@@ -53,6 +54,21 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_s268_owner_assertion_requires_registry_provenance_from_doctor(self):
+        report = {"provenance": [{
+            "packageId": "@kb-labs/commit", "source": "registry",
+            "integrity": "sha512-commit", "signatureStatus": "verified",
+        }]}
+        _assert_registry_doctor_provenance(report, "sha512-commit")
+        for field, value in (("packageId", "commit"), ("source", "npm"),
+                             ("integrity", "sha512-other"), ("signatureStatus", "unsigned")):
+            with self.subTest(field=field):
+                invalid = {"provenance": [{**report["provenance"][0], field: value}]}
+                with self.assertRaisesRegex(RuntimeError, "doctor did not report"):
+                    _assert_registry_doctor_provenance(invalid, "sha512-commit")
+        with self.assertRaisesRegex(RuntimeError, "doctor did not report"):
+            _assert_registry_doctor_provenance({}, "sha512-commit")
+
     def _write_analytics_fixture_build_context(self, root, workspace):
         report_root = root / "summary"
         report_root.mkdir(parents=True, exist_ok=True)
@@ -547,6 +563,13 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({
                         "ok": True, "data": {"version": "2.120.1"},
                     }), "")
+                if command[1:] == ["marketplace", "plugins", "doctor", "--json"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
+                        "total": 1, "issues": [], "provenance": [{
+                            "packageId": "@kb-labs/commit", "source": "registry",
+                            "integrity": "sha512-registry", "signatureStatus": "verified",
+                        }],
+                    }}), "")
                 if command[0] == "kb":
                     lock = {"schema": "kb.marketplace/3", "plugins": {
                         "@kb-labs/commit": {"version": "2.120.1", "package": "@kb-labs/commit",
@@ -584,6 +607,9 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertIn("S-268.18", publish_step.cases)
             self.assertIn("S-268.19", publish_step.cases)
             self.assertEqual(journey.result().status, "PASS")
+            doctor_calls = [call for call in calls
+                            if call[0][1:] == ("marketplace", "plugins", "doctor", "--json")]
+            self.assertEqual(len(doctor_calls), 1, "S-268.1 must execute Marketplace doctor")
             resolved_workspace = workspace.resolve()
             publish_calls = [(call[0], Path(call[1])) for call in calls
                              if call[0][1:] == ("hub", "publish", "--json")]

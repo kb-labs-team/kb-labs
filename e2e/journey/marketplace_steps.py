@@ -450,6 +450,18 @@ def _json(result: CompletedProcess[str], command: list[str]) -> dict:
     return data
 
 
+def _assert_registry_doctor_provenance(report: dict, expected_integrity: str) -> None:
+    provenance = report.get("provenance")
+    expected = {
+        "packageId": "@kb-labs/commit",
+        "source": "registry",
+        "integrity": expected_integrity,
+        "signatureStatus": "verified",
+    }
+    if not isinstance(provenance, list) or expected not in provenance:
+        raise RuntimeError("marketplace doctor did not report Commit Registry provenance")
+
+
 def validate_commit_status_response(status: int, payload: object) -> None:
     data = payload.get("data") if isinstance(payload, dict) else None
     if status != 200 or not isinstance(data, dict) or data.get("scope") != "root":
@@ -838,6 +850,9 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
         if (not isinstance(entry, dict) or entry.get("marketplaceSource") != "registry"
                 or entry.get("signatureStatus") != "verified" or not entry.get("integrity")):
             raise RuntimeError("Commit lock entry does not prove Registry provenance and signature verification")
+        command = ["marketplace", "plugins", "doctor", "--json"]
+        report = _json(_run(kb_command(command), cwd=project, env=base_env, runner=runner), command)
+        _assert_registry_doctor_provenance(report, entry["integrity"])
 
     journey.step("verify Commit Registry signature and provenance", "marketplace-registry",
                  assert_registry_provenance, cases=["S-268.1"],
