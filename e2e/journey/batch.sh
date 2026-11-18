@@ -69,12 +69,12 @@ run_prepare() {
   trap 'prepare_interrupted=1; exit 143' TERM
   reset_started=$(date +%s)
   reset_rc=0
-  "$SCRIPT_DIR/run.sh" --down > "$shared/reset.log" 2>&1 || reset_rc=$?
+  python3 "$SCRIPT_DIR/preflight_stage.py" run --stage reset --log "$shared/reset.log" -- "$SCRIPT_DIR/run.sh" --down || reset_rc=$?
   reset_seconds=$(($(date +%s) - reset_started))
   if [ "$reset_rc" -ne 0 ]; then
     printf '\n- Failed stage: `reset`\n- Stage log: `reset.log`\n- Result: FAIL\n' >> "$shared/summary.md"
     result=FAIL
-    echo "journey stack reset failed; see $shared/reset.log; next: e2e/journey/run.sh --down" >&2
+    echo "journey stack reset failed; see reset.log" >&2
     total_seconds=$(($(date +%s) - batch_started)); build_seconds=0; unit_seconds=0; candidate_seconds=0; local_seconds=0; secured_seconds=0
     write_metadata "$shared/batch-metadata.json" shared "$result" "$commit" "$BASELINE" "$BUILD_BASE"
     trap - EXIT HUP INT TERM
@@ -96,36 +96,36 @@ run_prepare() {
     write_metadata "$shared/batch-metadata.json" shared "$result" "$commit" "$BASELINE" "$BUILD_BASE"
     printf '\n- Result: FAIL\n' >> "$shared/summary.md"
     trap - EXIT HUP INT TERM
-    echo "journey shared $failed_stage stage failed; see $shared/$failed_stage.log; next: e2e/journey/$([ "$failed_stage" = candidate ] && echo prepare-candidate.sh || echo preflight.sh)" >&2
+    echo "journey shared $failed_stage stage failed; see $failed_stage.log" >&2
     return "$preflight_rc"
   fi
   archive="$shared/build-candidate.tar"
   pack_started=$(date +%s)
-  if ! (
-    cd "$ROOT" &&
-    pnpm -r list --depth -1 --parseable > "$shared/workspace-packages.txt" &&
-    {
+  if ! env ROOT="$ROOT" shared="$shared" archive="$archive" python3 "$SCRIPT_DIR/preflight_stage.py" run \
+    --stage artifact-package --log "$shared/candidate-package.log" -- bash -c '
+      set -e
+      cd "$ROOT"
+      pnpm -r list --depth -1 --parseable > "$shared/workspace-packages.txt"
       while IFS= read -r package_dir; do
         case "$package_dir" in
           "$ROOT") continue ;;
           "$ROOT"/*) package_path=${package_dir#"$ROOT"/} ;;
-          *) echo "workspace package path is outside the checkout: $package_dir" >&2; exit 1 ;;
+          *) echo "workspace package path is outside the checkout" >&2; exit 1 ;;
         esac
-        [ ! -d "$package_path/dist" ] || printf './%s/dist\n' "$package_path" >> "$shared/archive-files.txt"
+        [ ! -d "$package_path/dist" ] || printf "./%s/dist\\n" "$package_path" >> "$shared/archive-files.txt"
       done < "$shared/workspace-packages.txt"
       for item in .journey/runner-inputs .journey/release .journey/kb-create-release-index e2e/packages; do
-        [ ! -e "$item" ] || printf '%s\n' "./$item" >> "$shared/archive-files.txt"
+        [ ! -e "$item" ] || printf "%s\\n" "./$item" >> "$shared/archive-files.txt"
       done
-    } &&
-    tar -cf "$archive" -T "$shared/archive-files.txt"
-  ) > "$shared/candidate-package.log" 2>&1; then
+      tar -cf "$archive" -T "$shared/archive-files.txt"
+    '; then
     pack_elapsed=$(($(date +%s) - pack_started))
     candidate_seconds=$((candidate_seconds + pack_elapsed))
     printf '\n- Failed stage: `candidate`\n- Stage log: `candidate-package.log`\n- Result: FAIL\n' >> "$shared/summary.md"
     total_seconds=$(($(date +%s) - batch_started)); local_seconds=0; secured_seconds=0
     write_metadata "$shared/batch-metadata.json" shared FAIL "$commit" "$BASELINE" "$BUILD_BASE"
     trap - EXIT HUP INT TERM
-    echo "journey candidate artifact packaging failed; see $shared/candidate-package.log; next: tar -cf \"$archive\" -T \"$shared/archive-files.txt\"" >&2
+    echo "journey candidate artifact packaging failed; see candidate-package.log" >&2
     return 1
   fi
   pack_elapsed=$(($(date +%s) - pack_started))
@@ -165,7 +165,7 @@ run_mode() {
     echo "journey producer build-candidate.tar could not be extracted; see $mode_dir/archive-extract.log; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
     return 1
   fi
-  for log in reset build unit candidate release-build-output-check; do
+  for log in reset lockfile build unit candidate release-build-output-check; do
     if [ ! -f "$shared/$log.log" ]; then
       echo "journey producer artifact is missing shared/$log.log; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
       return 1
