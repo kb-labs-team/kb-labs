@@ -10,7 +10,7 @@ an explicitly configured local plugin execution backend. `in-process`,
 execution backend after the secured authentication gate. Other execution modes
 retain Gateway routing. This preserves the local backend's registered-project
 working directory and platform context without requiring a Gateway execution
-host. Case: S-298.1.
+host. Case: S-307.1.
 
 ## 2026-10-31
 

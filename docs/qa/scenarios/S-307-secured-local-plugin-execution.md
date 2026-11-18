@@ -1,5 +1,5 @@
 ---
-id: S-298
+id: S-307
 title: Secured CLI — publish with an explicitly configured local execution backend
 persona: solo-developer
 area: plugin-execution
@@ -27,4 +27,4 @@ package working directory while CLI authentication remains enforced.
 
 | # | Action | Expected |
 |---|---|---|
-| S-298.1 | Confirm `kb workspace list --json` has no online execution-capable agent; set `platform.execution.mode` to `subprocess` and then `worker-pool`; from a package root inside the registered project, run installed `kb hub publish --json` for each mode | Both commands publish the package and report its version. The publisher reads `package.json` and its compiled manifest from the command's current package directory, and the authenticated user's Registry package list contains each published version. No Gateway execution host is required; the secured CLI authentication gate remains active. |
+| S-307.1 | Run `kb workspace list --json`; set `platform.execution.mode` with `kb config set --scope platform platform.execution.mode subprocess --json`, then `worker-pool`; from a package root inside the registered project, run installed `kb hub publish --json` for each mode | The workspace list has no online execution-capable agent. Both publish commands succeed and report their package versions. The publisher reads `package.json` and its compiled manifest from the command's current package directory, and the authenticated user's Registry package list contains each published version. No Gateway execution host is required; the secured CLI authentication gate remains active. |
