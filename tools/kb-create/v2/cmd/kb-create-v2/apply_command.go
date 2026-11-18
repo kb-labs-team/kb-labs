@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
 	"syscall"
@@ -18,6 +17,7 @@ import (
 	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/diagnostics"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
@@ -46,6 +46,21 @@ type applyCommandInput struct {
 	TelemetryEndpoint          string
 	TelemetryConsent           bool
 	AllowBootstrapRegistration bool
+}
+
+type marketplaceAuthPreflightState struct {
+	PreviousReceiptExists bool
+	InitialInstall        bool
+	SecuredAdmin          bool
+	BootstrapCompleted    bool
+	BootstrapDisclosed    bool
+	HasMarketplaceSpecs   bool
+	CanReconcile          bool
+}
+
+func marketplaceAuthPreflightRequired(state marketplaceAuthPreflightState) bool {
+	return state.PreviousReceiptExists && !state.InitialInstall && state.SecuredAdmin &&
+		state.BootstrapDisclosed && state.HasMarketplaceSpecs && !state.CanReconcile
 }
 
 func secretRedactionValues(store secrets.Store, plan contracts.ResolvedInstallPlan, mappings string) ([]string, error) {
@@ -245,6 +260,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	}
 	adminEmail, securedAdmin := configuredFirstAdmin(planned.Request)
 	bootstrapCompleted := false
+	bootstrapDisclosed := false
 	if securedAdmin {
 		var existsErr error
 		bootstrapCompleted, existsErr = store.BootstrapCompleted()
@@ -253,6 +269,13 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 				return applyCommandResult{}, asDiag(existsErr)
 			}
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator password could not be read from the secret store", "check that the platform root is writable, then rerun `kb-create install`", existsErr)
+		}
+		bootstrapDisclosed, existsErr = store.BootstrapDisclosed()
+		if existsErr != nil {
+			if errors.Is(existsErr, secrets.ErrUnsupportedSecretStoreFormat) {
+				return applyCommandResult{}, asDiag(existsErr)
+			}
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator disclosure state could not be read from the secret store", "check that the platform root is writable, then rerun `kb-create install`", existsErr)
 		}
 	}
 	if err := secrets.EnsureGenerated(&planned, store); err != nil {
@@ -280,6 +303,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		return applyCommandResult{}, contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "the release index could not be verified", "rerun the installation with a valid release index", err)
 	}
 	previousReceipt, previousErr := receipt.Read(installRoot)
+	reconcilePreviousMarketplace := previousErr == nil && marketplaceReceiptMatches(planned, previousReceipt)
 	var previousRelease *catalog.Verified
 	marketplaceRoot := ""
 	if previousErr == nil {
@@ -291,6 +315,21 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		marketplaceRoot = installRoot
 	} else if !os.IsNotExist(previousErr) {
 		return applyCommandResult{}, asDiag(previousErr)
+	}
+	if marketplaceAuthPreflightRequired(marketplaceAuthPreflightState{
+		PreviousReceiptExists: previousErr == nil,
+		InitialInstall:        initialInstall,
+		SecuredAdmin:          securedAdmin,
+		BootstrapCompleted:    bootstrapCompleted,
+		BootstrapDisclosed:    bootstrapDisclosed,
+		HasMarketplaceSpecs:   len(planned.Request.MarketplaceInstallSpecs) > 0,
+		CanReconcile:          reconcilePreviousMarketplace,
+	}) {
+		origin, originErr := gateway.OriginFromHealthURL(previousReceipt.Verification.HostHealthURL)
+		if originErr != nil {
+			return applyCommandResult{}, contracts.HostSpecDiagnostic("the installed Gateway address could not be used for Marketplace authorization", "run `kb-create doctor --json` to inspect the installed host", originErr.Error(), originErr)
+		}
+		return applyCommandResult{}, contracts.MarketplaceAuthRequired(origin)
 	}
 	artifactExecutor, err := newArtifactExecutor(layout, operationRoot, planned.Registry, offline, transcript, deps.ArtifactRunner,
 		verifiedRelease, previousRelease, marketplaceRoot)
@@ -320,7 +359,11 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	}
 	if runtimeDeps.Host == nil && planned.Host != nil {
 		if !initialInstall && reusedHost == nil {
-			runtimeDeps.Host = prober
+			if reconcilePreviousMarketplace {
+				runtimeDeps.Host = installedHostStarter{root: installRoot, executable: input.Executable}
+			} else {
+				runtimeDeps.Host = prober
+			}
 		}
 	}
 	postInstallStarter := runtimeDeps.Host
@@ -346,13 +389,30 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 		return applyCommandResult{}, diagnostic
 	}
+	restoreReceiptOnMarketplaceFailure := func(failure *diag.Diag) *diag.Diag {
+		if !reconcilePreviousMarketplace {
+			return failure
+		}
+		if err := receipt.Write(installRoot, previousReceipt); err != nil {
+			return contracts.NewDiag(contracts.CodeReceiptUnavailable,
+				"Marketplace reconciliation failed and the prior install receipt could not be restored.",
+				"run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying.", errors.Join(failure, err))
+		}
+		return failure
+	}
 	if reusedHost != nil {
 		applied.ID = reusedHost.ID
 		applied.CreatedAt = reusedHost.CreatedAt
 		applied.InstallationID = reusedHost.InstallationID
+	} else if reconcilePreviousMarketplace {
+		applied.ID = previousReceipt.ID
+		applied.CreatedAt = previousReceipt.CreatedAt
+		applied.InstallationID = previousReceipt.InstallationID
+	}
+	if reusedHost != nil || reconcilePreviousMarketplace {
 		if err := receipt.Write(operationRoot, applied); err != nil {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeReceiptUnavailable,
-				"the running host identity could not be preserved in the active receipt.",
+				"the existing installation identity could not be preserved in the active receipt.",
 				"run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` and repair the active receipt before retrying.", err)
 		}
 	}
@@ -396,13 +456,58 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	} else {
 		applied.Plan.Request.PlatformRoot = platformRoot
 	}
+	var firstAdminAccessToken string
 	if specs := applied.Plan.Request.MarketplaceInstallSpecs; len(specs) > 0 {
-		installer := deps.Marketplace
-		if installer == nil {
-			installer = marketplace.GatewayInstallClient{}
-		}
-		if marketplaceFailure := installMarketplaceScenarioPlugins(applyCtx, platformRoot, &applied, installer); marketplaceFailure != nil {
-			return applyCommandResult{}, marketplaceFailure
+		if reconcilePreviousMarketplace {
+			if previousReceipt.InstallationID == "" || applied.InstallationID != previousReceipt.InstallationID {
+				failure := contracts.MarketplaceStateUnavailable(previousReceipt.MarketplaceInstalls[0].ID, installRoot, errors.New("the active installation identity changed during repeat install"))
+				return applyCommandResult{}, restoreReceiptOnMarketplaceFailure(failure)
+			}
+			client, connectErr := control.Connect(state)
+			if connectErr != nil {
+				failure := contracts.MarketplaceStateUnavailable(previousReceipt.MarketplaceInstalls[0].ID, installRoot, connectErr)
+				return applyCommandResult{}, restoreReceiptOnMarketplaceFailure(failure)
+			}
+			reconciled, reconcileErr := client.ReconcileMarketplace(applyCtx, contracts.MarketplaceInstallReconciliationRequest{
+				InstallationID: applied.InstallationID,
+				Scope:          "platform",
+				Expected:       previousReceipt.MarketplaceInstalls,
+			})
+			if reconcileErr != nil {
+				var diagnostic *diag.Diag
+				if errors.As(reconcileErr, &diagnostic) && (diagnostic.Code == "KB_MARKETPLACE_STATE_DRIFT" || diagnostic.Code == "KB_MARKETPLACE_STATE_UNAVAILABLE") {
+					return applyCommandResult{}, restoreReceiptOnMarketplaceFailure(diagnostic)
+				}
+				failure := contracts.MarketplaceStateUnavailable(previousReceipt.MarketplaceInstalls[0].ID, installRoot, reconcileErr)
+				return applyCommandResult{}, restoreReceiptOnMarketplaceFailure(failure)
+			}
+			if !reconciled.OK || len(reconciled.Matched) != len(previousReceipt.MarketplaceInstalls) {
+				failure := contracts.MarketplaceStateUnavailable(previousReceipt.MarketplaceInstalls[0].ID, installRoot, errors.New("the Marketplace owner returned incomplete reconciliation evidence"))
+				return applyCommandResult{}, restoreReceiptOnMarketplaceFailure(failure)
+			}
+			applied.MarketplaceInstalls = append([]contracts.MarketplaceInstallRecord(nil), previousReceipt.MarketplaceInstalls...)
+			if err := receipt.Write(platformRoot, applied); err != nil {
+				return applyCommandResult{}, contracts.NewDiag(contracts.CodeReceiptUnavailable,
+					"Marketplace state matched, but its receipt could not be preserved.",
+					"run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` and repair the receipt before retrying.", err)
+			}
+		} else {
+			origin, originErr := gateway.OriginFromHealthURL(applied.Verification.HostHealthURL)
+			if originErr != nil {
+				return applyCommandResult{}, contracts.HostSpecDiagnostic("the applied Gateway address could not be used for Marketplace installation", "run `kb-create doctor --json` to inspect the installed host", originErr.Error(), originErr)
+			}
+			var authFailure *diag.Diag
+			firstAdminAccessToken, authFailure = scenarioMarketplaceAccessToken(applyCtx, store, origin, applied.Plan.Request)
+			if authFailure != nil {
+				return applyCommandResult{}, authFailure
+			}
+			installer := deps.Marketplace
+			if installer == nil {
+				installer = marketplace.GatewayInstallClient{}
+			}
+			if marketplaceFailure := installMarketplaceScenarioPlugins(applyCtx, platformRoot, &applied, firstAdminAccessToken, installer); marketplaceFailure != nil {
+				return applyCommandResult{}, marketplaceFailure
+			}
 		}
 	}
 	if failure := validateAppliedContainer(root, layout); failure != nil {
@@ -474,7 +579,8 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	return applyCommandResult{OK: true, Operation: "apply", Receipt: applied, LogPath: logPath,
 		Profile: applied.Plan.ServiceGraph.Profile, Services: applied.Plan.ServiceGraph.Services,
 		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin, ProjectRegistrationNotice: registrationNotice,
-		disclosureStoreRoot: store.PlatformRoot}, nil
+		registrationAccessToken: firstAdminAccessToken,
+		disclosureStoreRoot:     store.PlatformRoot}, nil
 }
 
 func installHostFailure(root string, cause error) *diag.Diag {
@@ -485,7 +591,49 @@ func installHostFailure(root string, cause error) *diag.Diag {
 	return contracts.NewDiag(contracts.CodeApplyFailed, "the installed host did not become healthy", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` to inspect the installation, then rerun `"+contracts.ShellCommand("kb-create", "start", "--platform-root", root)+"`", cause)
 }
 
-func installMarketplaceScenarioPlugins(ctx context.Context, platformRoot string, applied *contracts.InstallReceipt, installer marketplace.InstallClient) *diag.Diag {
+func scenarioMarketplaceAccessToken(ctx context.Context, store secrets.Store, gatewayOrigin string, request contracts.InstallRequest) (string, *diag.Diag) {
+	if len(request.MarketplaceInstallSpecs) == 0 {
+		return "", nil
+	}
+	adminEmail, secured := configuredFirstAdmin(request)
+	if !secured {
+		return "", nil
+	}
+	disclosed, err := store.BootstrapDisclosed()
+	if err != nil {
+		return "", contracts.NewDiag("KB_INSTALL_SECRET_INPUT_INVALID",
+			"The first-administrator bootstrap credential is unavailable for the secured Marketplace install.",
+			"Complete the secured first-administrator setup before retrying the Marketplace install.", err)
+	}
+	if disclosed {
+		return "", contracts.MarketplaceAuthRequired(gatewayOrigin)
+	}
+	password, present, err := store.Get(secrets.BootstrapPassword)
+	if err != nil || !present || password == "" {
+		return "", contracts.NewDiag("KB_INSTALL_SECRET_INPUT_INVALID",
+			"The first-administrator password is unavailable for the secured Marketplace install.",
+			"Rerun `kb-create install` with the secured first-administrator credentials before the password is disclosed.", err)
+	}
+	tenantID := unquoteRequestValue(request.Values["gateway.bootstrap.tenantId"])
+	tokens, err := loginForFirstAdmin(ctx, gatewayOrigin, adminEmail, password, tenantID)
+	if err != nil {
+		var diagnostic *diag.Diag
+		if errors.As(err, &diagnostic) {
+			return "", diagnostic
+		}
+		return "", contracts.NewDiag("KB_AUTH_GATEWAY_UNREACHABLE",
+			"The first administrator could not authenticate to the installed Gateway for the Marketplace install.",
+			"Check that the Gateway is reachable, then rerun `kb-create install`.", err)
+	}
+	if tokens.AccessToken == "" {
+		return "", contracts.NewDiag("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE",
+			"The Gateway login did not return an access token for the secured Marketplace install.",
+			"Inspect the Gateway authentication health, then rerun `kb-create install`.", nil)
+	}
+	return tokens.AccessToken, nil
+}
+
+func installMarketplaceScenarioPlugins(ctx context.Context, platformRoot string, applied *contracts.InstallReceipt, accessToken string, installer marketplace.InstallClient) *diag.Diag {
 	specs := applied.Plan.Request.MarketplaceInstallSpecs
 	if len(specs) == 0 {
 		return nil
@@ -499,7 +647,7 @@ func installMarketplaceScenarioPlugins(ctx context.Context, platformRoot string,
 	if err != nil {
 		return contracts.HostSpecDiagnostic("the applied Gateway address could not be used for Marketplace installation", "run `kb-create doctor --json` to inspect the installed host", err.Error(), err)
 	}
-	installs, err := installer.Install(ctx, origin, specs)
+	installs, err := installer.Install(ctx, origin, specs, accessToken)
 	if err != nil {
 		var failure *marketplace.InstallFailure
 		if errors.As(err, &failure) {
@@ -599,7 +747,7 @@ func (starter installedHostStarter) Start(ctx context.Context, spec contracts.Ho
 	if err != nil {
 		return nil, err
 	}
-	if installed.Plan.Host == nil || !reflect.DeepEqual(*installed.Plan.Host, spec) {
+	if !installedHostSpecMatches(installed.Plan.Host, spec, installed.InstallationID) {
 		return nil, fmt.Errorf("host starter does not match the active receipt")
 	}
 	runner, err := host.NewRunner(starter.root)

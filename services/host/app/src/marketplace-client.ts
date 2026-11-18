@@ -46,6 +46,19 @@ export interface UninstallPackagesParams {
   projectRoot?: string;
 }
 
+export interface ReconcileMarketplaceRequest {
+  scope: "platform";
+  expected: Array<{
+    spec: string;
+    id: string;
+    version: string;
+    source: "npm" | "registry";
+    primaryKind: "plugin";
+    signatureStatus: "verified" | "unsigned";
+    integrity?: string;
+  }>;
+}
+
 /** Thrown when the marketplace responds with a non-2xx status. */
 export class MarketplaceClientError extends Error {
   constructor(
@@ -102,6 +115,15 @@ export class MarketplaceClient {
   async uninstallPackages(params: UninstallPackagesParams): Promise<void> {
     const url = new URL("/packages/uninstall", this.baseUrl);
     await this.request<unknown>(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+  }
+
+  async reconcileMarketplace(params: ReconcileMarketplaceRequest): Promise<unknown> {
+    const url = new URL("/api/v1/marketplace/packages/reconcile", this.baseUrl);
+    return this.request<unknown>(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),

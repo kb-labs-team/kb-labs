@@ -74,6 +74,31 @@ type MarketplaceInstallRecord struct {
 	PrimaryKind     string `json:"primaryKind"`
 	Source          string `json:"source"`
 	SignatureStatus string `json:"signatureStatus"`
+	Integrity       string `json:"integrity,omitempty"`
+}
+
+// MarketplaceInstallReconciliationRequest is an install-root-local request to
+// the supervised host's Marketplace owner. It carries only receipt identity,
+// never Gateway user credentials or store paths.
+type MarketplaceInstallReconciliationRequest struct {
+	InstallationID string                     `json:"installationId"`
+	Scope          string                     `json:"scope"`
+	Expected       []MarketplaceInstallRecord `json:"expected"`
+}
+
+// MarketplaceInstallReconciliationResponse confirms the owner checked every
+// expected package against its platform inventory and installed extension.
+type MarketplaceInstallReconciliationResponse struct {
+	OK             bool                          `json:"ok"`
+	InstallationID string                        `json:"installationId"`
+	Matched        []MarketplaceReconciledRecord `json:"matched"`
+}
+
+// MarketplaceReconciledRecord includes the current owner-reported enabled
+// state, which is not a durable install receipt field.
+type MarketplaceReconciledRecord struct {
+	MarketplaceInstallRecord
+	Enabled bool `json:"enabled"`
 }
 
 // InstallRequest is deliberately transport-neutral. Wizard answers, CI flags,

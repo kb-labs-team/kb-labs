@@ -432,9 +432,19 @@ export async function createHostConfig(
           registryWrites.add(write);
         },
       });
+      const marketplaceBaseUrl = isSelected(settings, "marketplace")
+        ? internalBaseUrl(ctx, "marketplace")
+        : undefined;
+      const marketplaceClient = marketplaceBaseUrl ? new MarketplaceClient(marketplaceBaseUrl) : undefined;
       const hostControlCredential = process.env[catalogEnvironmentVariables.KB_HOST_CONTROL_TOKEN];
       const activeWorkControl = hostControlCredential
-        ? await startHostActiveWorkControl(hostControlCredential, ctx.activeWork, manager)
+        ? await startHostActiveWorkControl(
+          hostControlCredential,
+          ctx.activeWork,
+          manager,
+          process.env.KB_INSTALLATION_ID,
+          marketplaceClient,
+        )
         : undefined;
       const refreshScheduledProjects = async (): Promise<void> => {
         const scheduled = await findScheduledProjects(registry);
@@ -454,11 +464,8 @@ export async function createHostConfig(
       // (internal modules run before "gateway" in `modules`); reach it on its
       // internal loopback address so `/api/v1/plugins` never opens a second
       // writer of `.kb/marketplace.lock`.
-      const marketplaceBaseUrl = isSelected(settings, "marketplace")
-        ? internalBaseUrl(ctx, "marketplace")
-        : undefined;
-      const pluginsRoutes = marketplaceBaseUrl
-        ? [createPluginsRoutes({ registry, marketplace: new MarketplaceClient(marketplaceBaseUrl) })]
+      const pluginsRoutes = marketplaceBaseUrl && marketplaceClient
+        ? [createPluginsRoutes({ registry, marketplace: marketplaceClient })]
         : [];
       if (isSelected(settings, "marketplace") && !marketplaceBaseUrl) {
         ctx.logger.warn(

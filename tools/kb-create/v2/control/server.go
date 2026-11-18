@@ -22,14 +22,18 @@ import (
 )
 
 const maxBodyBytes = 4096
+const maxMarketplaceReconciliationBytes = 1 << 20
 
 // Server is the launcher control channel. It binds 127.0.0.1 on a random port,
 // requires a bearer token on every request, and sets no CORS headers.
 type Server struct {
-	Runner  host.Runner
-	State   host.State
-	Version string
-	Restart func(context.Context, bool) (RestartResponse, error)
+	Runner host.Runner
+	// RunnerProvider returns the supervisor's current child after restart. When
+	// nil, Runner is used for standalone control-server callers and tests.
+	RunnerProvider func() host.Runner
+	State          host.State
+	Version        string
+	Restart        func(context.Context, bool) (RestartResponse, error)
 
 	token     string
 	address   string
@@ -39,6 +43,15 @@ type Server struct {
 	startedAt time.Time
 	restartMu sync.Mutex
 	done      chan struct{}
+}
+
+func (s *Server) currentRunner() host.Runner {
+	if s.RunnerProvider != nil {
+		if runner := s.RunnerProvider(); runner != nil {
+			return runner
+		}
+	}
+	return s.Runner
 }
 
 // Start binds the listener, writes control.json (0600) and begins serving.
@@ -106,10 +119,49 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/status", s.status)
 	mux.HandleFunc("POST /v1/host/restart", s.restart)
 	mux.HandleFunc("POST /v1/update-request", s.updateRequest)
+	mux.HandleFunc("POST /v1/marketplace/reconcile", s.marketplaceReconcile)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		s.fail(w, http.StatusNotFound, contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request.", nil))
+		s.fail(w, http.StatusNotFound, contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", "Use GET /v1/status, POST /v1/host/restart, POST /v1/update-request, or POST /v1/marketplace/reconcile.", nil))
 	})
 	return s.guard(mux)
+}
+
+func (s *Server) marketplaceReconcile(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxMarketplaceReconciliationBytes))
+	decoder.DisallowUnknownFields()
+	var input contracts.MarketplaceInstallReconciliationRequest
+	if err := decoder.Decode(&input); err != nil || input.InstallationID == "" || input.Scope != "platform" || len(input.Expected) == 0 {
+		s.fail(w, http.StatusBadRequest, contracts.NewDiag("KB_RUNTIME_INPUT_INVALID",
+			"The Marketplace reconciliation request is invalid.",
+			"Retry `kb-create install` with the Marketplace records in the active receipt.", err))
+		return
+	}
+	reconciler, ok := s.currentRunner().(interface {
+		ReconcileMarketplace(context.Context, contracts.MarketplaceInstallReconciliationRequest) (contracts.MarketplaceInstallReconciliationResponse, error)
+	})
+	if !ok {
+		s.fail(w, http.StatusServiceUnavailable, contracts.MarketplaceStateUnavailable(input.Expected[0].ID, "<platform-root>", errors.New("the running host has no Marketplace reconciliation capability")))
+		return
+	}
+	response, err := reconciler.ReconcileMarketplace(r.Context(), input)
+	if err != nil {
+		var typed *diag.Diag
+		if errors.As(err, &typed) && typed.Code == "KB_MARKETPLACE_STATE_DRIFT" {
+			s.fail(w, http.StatusConflict, typed)
+		} else if errors.As(err, &typed) && typed.Code == "KB_MARKETPLACE_STATE_UNAVAILABLE" {
+			s.fail(w, http.StatusServiceUnavailable, typed)
+		} else {
+			s.failWith(w, err)
+		}
+		return
+	}
+	if !response.OK || response.InstallationID != input.InstallationID || len(response.Matched) != len(input.Expected) {
+		s.fail(w, http.StatusServiceUnavailable, contracts.NewDiag("KB_MARKETPLACE_STATE_UNAVAILABLE",
+			"The running host returned incomplete Marketplace reconciliation evidence.",
+			"Start the supervised host, then rerun `kb-create install`.", nil))
+		return
+	}
+	s.write(w, http.StatusOK, response)
 }
 
 // guard authenticates every request before routing, so an unauthenticated
@@ -145,7 +197,7 @@ func (s *Server) authorized(r *http.Request) bool {
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
-	hostStatus, err := s.Runner.Status(r.Context())
+	hostStatus, err := s.currentRunner().Status(r.Context())
 	if err != nil {
 		s.failWith(w, err)
 		return
@@ -172,12 +224,13 @@ func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
 		s.write(w, http.StatusOK, response)
 		return
 	}
-	stopped, err := s.Runner.Stop(r.Context())
+	runner := s.currentRunner()
+	stopped, err := runner.Stop(r.Context())
 	if err != nil {
 		s.failWith(w, err)
 		return
 	}
-	info, err := s.Runner.Start(r.Context())
+	info, err := runner.Start(r.Context())
 	if err != nil {
 		s.failWith(w, err)
 		return

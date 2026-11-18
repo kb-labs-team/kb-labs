@@ -49,6 +49,7 @@ type applyCommandResult struct {
 	Shim                      *shim.EnsureResult       `json:"shim,omitempty"`
 	FirstAdmin                *firstAdminCredential    `json:"firstAdmin,omitempty"`
 	ProjectRegistrationNotice string                   `json:"projectRegistrationNotice,omitempty"`
+	registrationAccessToken   string
 	disclosureStoreRoot       string
 }
 
@@ -113,15 +114,16 @@ type directRequest struct {
 }
 
 type commandDependencies struct {
-	Runtime          *runtime.Dependencies
-	ArtifactRunner   artifacts.Runner
-	NodeCheck        func() error
-	InstallInput     io.Reader
-	InstallOutput    io.Writer
-	ProjectRegistrar func(string, string) (projectRegistrationResult, error)
-	Marketplace      marketplace.InstallClient
-	Command          *cobra.Command
-	Executable       string
+	Runtime                   *runtime.Dependencies
+	ArtifactRunner            artifacts.Runner
+	NodeCheck                 func() error
+	InstallInput              io.Reader
+	InstallOutput             io.Writer
+	ProjectRegistrar          func(string, string) (projectRegistrationResult, error)
+	ProjectRegistrarWithToken func(string, string, string) (projectRegistrationResult, error)
+	Marketplace               marketplace.InstallClient
+	Command                   *cobra.Command
+	Executable                string
 }
 
 func productionCommandDependencies(command *cobra.Command) commandDependencies {
@@ -135,6 +137,7 @@ func productionCommandDependencies(command *cobra.Command) commandDependencies {
 		ProjectRegistrar: func(platformRoot, projectRoot string) (projectRegistrationResult, error) {
 			return registerInstalledProject(platformRoot, projectRoot, nil)
 		},
+		ProjectRegistrarWithToken: registerInstalledProjectWithToken,
 	}
 }
 

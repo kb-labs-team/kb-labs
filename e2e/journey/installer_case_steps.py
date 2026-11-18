@@ -126,6 +126,21 @@ def commit_marketplace_install_record(receipt: dict) -> dict | None:
                  and entry.get("version") and entry.get("source")), None)
 
 
+def scenario_marketplace_install_record(receipt: dict, requested_spec: str) -> dict | None:
+    """Return a verified scenario Marketplace record without requiring a release pin."""
+    installs = receipt.get("marketplaceInstalls", [])
+    if not isinstance(installs, list):
+        return None
+    return next((entry for entry in installs
+                 if isinstance(entry, dict)
+                 and entry.get("spec") in {requested_spec, f"{requested_spec}@{entry.get('version')}"}
+                 and entry.get("id") == requested_spec
+                 and isinstance(entry.get("version"), str) and entry.get("version")
+                 and isinstance(entry.get("source"), str) and entry.get("source")
+                 and isinstance(entry.get("signatureStatus"), str) and entry.get("signatureStatus")
+                 and isinstance(entry.get("integrity"), str) and entry.get("integrity")), None)
+
+
 def assert_commit_marketplace_receipt(receipt: dict) -> None:
     """Require the built-in Commit scenario result to come from Marketplace."""
     request = receipt.get("plan", {}).get("request", {})
@@ -649,7 +664,8 @@ def _data(result: CompletedProcess, label: str) -> dict:
 
 
 def _assert_repeat_install_applied(result: CompletedProcess, *, launcher: str, root: Path,
-                                   run_command: CommandRunner, expected_identity: dict, label: str) -> None:
+                                   run_command: CommandRunner, expected_identity: dict, label: str,
+                                   expected_marketplace_records: list[dict] | None = None) -> None:
     data = _data(result, label)
     if data.get("operation") != "apply":
         raise RuntimeError(f"{label}: expected an ordinary apply result")
@@ -659,12 +675,22 @@ def _assert_repeat_install_applied(result: CompletedProcess, *, launcher: str, r
         raise RuntimeError(f"{label}: repeat install changed the recorded project identity")
     if "first administrator credentials" in result.stdout.lower() or "password:" in result.stdout.lower():
         raise RuntimeError(f"{label}: repeat install disclosed or prompted for credentials")
+    if expected_marketplace_records is not None and receipt.get("marketplaceInstalls") != expected_marketplace_records:
+        raise RuntimeError(f"{label}: repeat install changed the recorded Marketplace package identity")
     status = _json_command(run_command, [launcher, "status", "--platform-root", str(root), "--json"],
                            f"host status after {label}")
     host = status.get("host", {})
     if (not isinstance(host, dict) or host.get(layout_value('sharedStateDirectory')) != "running"
             or status.get("running") is not True or status.get("reachable") is not True):
         raise RuntimeError(f"{label}: host is not running and reachable after apply")
+    if receipt.get("id") and host.get("receiptId") != receipt["id"]:
+        raise RuntimeError(f"{label}: supervised host receipt identity does not match the active receipt")
+
+
+def _stop_host_for_repeat_install(*, launcher: str, root: Path, run_command: CommandRunner, label: str) -> None:
+    stopped = _data(run_command([launcher, "stop", "--json", "--platform-root", str(root)]), label)
+    if stopped.get("operation") != "stop":
+        raise RuntimeError(f"{label}: host stop did not complete through the supervisor")
 
 
 def _payload(result: CompletedProcess, label: str) -> tuple[dict, dict]:
@@ -1377,9 +1403,10 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
 
 def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Path,
                                   platform_root: Path, project_root: Path,
-                                  run_command: CommandRunner) -> Journey:
+                                  run_command: CommandRunner, registry_url: str = "") -> Journey:
     """Install a custom scenario in JSON mode and verify its project registry entry."""
     journey = Journey(mode, f"json-install-project-{mode}")
+    registry = registry_url
     installed = False
 
     def install_and_show() -> None:
@@ -1471,32 +1498,43 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
         try:
             initial = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                    "--platform-root", str(root), "--service-profile", "default",
-                                   "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
-                                   "--gateway-url", unused_loopback_gateway_url(),
+                                   "--scenario", "commit", "--marketplace-npm-url", registry,
                                    "--project-root", str(selected_alias)])
             initial_data = _data(initial, "initial install for repeated project selection")
             recorded_identity = {field: initial_data.get("receipt", {}).get(field)
                                  for field in ("projectSelectedPath", "projectId", "projectCanonicalPath")}
+            marketplace_records = initial_data.get("receipt", {}).get("marketplaceInstalls", [])
+            if not scenario_marketplace_install_record(initial_data.get("receipt", {}), "@kb-labs/commit"):
+                raise RuntimeError("initial local scenario install did not record @kb-labs/commit from Marketplace")
             before = registry_path.read_bytes()
+            _stop_host_for_repeat_install(launcher=launcher, root=root, run_command=run_command,
+                                          label="stop host before selected-path repeat")
             repeated = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                     "--platform-root", str(root), "--service-profile", "default",
-                                    "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
+                                    "--scenario", "commit", "--marketplace-npm-url", registry,
                                     "--project-root", str(selected_alias)])
             _assert_repeat_install_applied(repeated, launcher=launcher, root=root, run_command=run_command,
                                            expected_identity=recorded_identity,
+                                           expected_marketplace_records=marketplace_records,
                                            label="repeat install with the recorded selected spelling")
+            _stop_host_for_repeat_install(launcher=launcher, root=root, run_command=run_command,
+                                          label="stop host before canonical-path repeat")
             canonical_repeat = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                             "--platform-root", str(root), "--service-profile", "default",
-                                            "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
+                                            "--scenario", "commit", "--marketplace-npm-url", registry,
                                             "--project-root", str(selected_project.resolve())])
             _assert_repeat_install_applied(canonical_repeat, launcher=launcher, root=root, run_command=run_command,
                                            expected_identity=recorded_identity,
+                                           expected_marketplace_records=marketplace_records,
                                            label="repeat install with the recorded canonical spelling")
+            _stop_host_for_repeat_install(launcher=launcher, root=root, run_command=run_command,
+                                          label="stop host before omitted-project repeat")
             omitted = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                    "--platform-root", str(root), "--service-profile", "default",
-                                   "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}'])
+                                   "--scenario", "commit", "--marketplace-npm-url", registry])
             _assert_repeat_install_applied(omitted, launcher=launcher, root=root, run_command=run_command,
                                            expected_identity=recorded_identity,
+                                           expected_marketplace_records=marketplace_records,
                                            label="repeat install with no selected project")
             after = registry_path.read_bytes()
             if (initial.returncode != 0 or repeated.returncode != 0 or canonical_repeat.returncode != 0 or omitted.returncode != 0
@@ -1524,7 +1562,7 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
         try:
             result = run_command([launcher, "install", "--index", str(stable_index),
                                   "--platform-root", str(root), "--service-profile", "default",
-                                  "--scenario", "custom", "--scenario-answers",
+                                  "--scenario", "commit", "--marketplace-npm-url", registry, "--scenario-answers",
                                   '{"access.mode":"secured","admin.email":"x18-admin@example.test","admin.tenant":"default"}',
                                   "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD",
                                   "--project-root", str(project_alias)])
@@ -1533,8 +1571,8 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
             if not _hint_has_argv(result.stdout, kb_command([ "project", "show", canonical_path])):
                 raise RuntimeError("secured install omitted its project verification command")
             registry_path = Path.home() / ".kb/projects.json"
-            registry = json.loads(registry_path.read_text())
-            registered = [entry for entry in registry.get("projects", [])
+            projects_registry = json.loads(registry_path.read_text())
+            registered = [entry for entry in projects_registry.get("projects", [])
                           if entry.get("path") == str(project.resolve())]
             if len(registered) != 1 or (Path.home() / ".kb/session.json").exists():
                 raise RuntimeError("secured install did not register once or left a CLI session")
@@ -1549,6 +1587,9 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                 raise RuntimeError("secured install did not report the registry-owned project identity")
             recorded_identity = {field: receipt.get(field)
                                  for field in ("projectSelectedPath", "projectId", "projectCanonicalPath")}
+            marketplace_records = receipt.get("marketplaceInstalls", [])
+            if not scenario_marketplace_install_record(receipt, "@kb-labs/commit"):
+                raise RuntimeError("initial secured scenario install did not record @kb-labs/commit from Marketplace")
             gateway_url = receipt.get("verification", {}).get("hostHealthUrl", "")
             gateway_origin = urlsplit(gateway_url)
             gateway_url = f"{gateway_origin.scheme}://{gateway_origin.netloc}"
@@ -1563,28 +1604,37 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                 raise RuntimeError("the printed project verification command did not show the registered project")
             (Path.home() / ".kb/session.json").unlink(missing_ok=True)
             registry_before_repeat = registry_path.read_bytes()
+            _stop_host_for_repeat_install(launcher=launcher, root=root, run_command=run_command,
+                                          label="stop secured host before selected-path repeat")
             repeat = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                   "--platform-root", str(root), "--service-profile", "default",
-                                  "--scenario", "custom", "--scenario-answers",
+                                  "--scenario", "commit", "--marketplace-npm-url", registry, "--scenario-answers",
                                   '{"access.mode":"secured","admin.email":"x18-admin@example.test","admin.tenant":"default"}',
                                   "--project-root", str(project_alias)])
             _assert_repeat_install_applied(repeat, launcher=launcher, root=root, run_command=run_command,
                                            expected_identity=recorded_identity,
+                                           expected_marketplace_records=marketplace_records,
                                            label="repeat secured install with its recorded project")
+            _stop_host_for_repeat_install(launcher=launcher, root=root, run_command=run_command,
+                                          label="stop secured host before canonical-path repeat")
             canonical_repeat = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                             "--platform-root", str(root), "--service-profile", "default",
-                                            "--scenario", "custom", "--scenario-answers",
+                                            "--scenario", "commit", "--marketplace-npm-url", registry, "--scenario-answers",
                                             '{"access.mode":"secured","admin.email":"x18-admin@example.test","admin.tenant":"default"}',
                                             "--project-root", str(project.resolve())])
             _assert_repeat_install_applied(canonical_repeat, launcher=launcher, root=root, run_command=run_command,
                                            expected_identity=recorded_identity,
+                                           expected_marketplace_records=marketplace_records,
                                            label="repeat secured install with recorded canonical path")
+            _stop_host_for_repeat_install(launcher=launcher, root=root, run_command=run_command,
+                                          label="stop secured host before omitted-project repeat")
             omitted = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                    "--platform-root", str(root), "--service-profile", "default",
-                                   "--scenario", "custom", "--scenario-answers",
+                                   "--scenario", "commit", "--marketplace-npm-url", registry, "--scenario-answers",
                                    '{"access.mode":"secured","admin.email":"x18-admin@example.test","admin.tenant":"default"}'])
             _assert_repeat_install_applied(omitted, launcher=launcher, root=root, run_command=run_command,
                                            expected_identity=recorded_identity,
+                                           expected_marketplace_records=marketplace_records,
                                            label="repeat secured install without a project selection")
             if repeat.returncode != 0 or canonical_repeat.returncode != 0 or omitted.returncode != 0 or registry_path.read_bytes() != registry_before_repeat:
                 raise RuntimeError("secured existing project selections unexpectedly required login")
@@ -1613,6 +1663,50 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                     or not _hint_has_argv(apply_failure.get("hint", ""), kb_command([ "project", "show"]))
                     or receipt_path.read_bytes() != before or snapshot_tree(root) != before_root):
                 raise RuntimeError("secured apply changed the active receipt instead of refusing the selection")
+
+            # S-187.13: remove the installed package through the authenticated
+            # Marketplace CLI, then require the repeat installer to reconcile
+            # owner state instead of trusting its receipt.
+            active_root = active_platform_root(root)
+            gateway_health = receipt.get("verification", {}).get("hostHealthUrl", "")
+            gateway_parts = urlsplit(gateway_health)
+            gateway_origin = f"{gateway_parts.scheme}://{gateway_parts.netloc}"
+            marketplace_login = run_platform_cli(
+                root,
+                ["auth", "login", "--gateway-url", gateway_origin,
+                 "--email", "x18-admin@example.test", "--password-stdin"],
+                run_command, input_text=admin_password + "\n")
+            if marketplace_login.returncode != 0:
+                raise RuntimeError("could not authenticate the user-owned Marketplace uninstall fixture")
+            removed = _data(run_platform_cli(
+                root, ["marketplace", "uninstall", "@kb-labs/commit", "--scope", "platform", "--json"], run_command),
+                "remove Commit from the secured platform Marketplace")
+            if removed.get("removed") != ["@kb-labs/commit"]:
+                raise RuntimeError(f"Marketplace fixture did not remove Commit: {removed}")
+            (Path.home() / ".kb/session.json").unlink(missing_ok=True)
+            receipt_before_drift = receipt_path.read_bytes()
+            registry_before_drift = registry_path.read_bytes()
+            _stop_host_for_repeat_install(launcher=launcher, root=root, run_command=run_command,
+                                          label="stop host before Marketplace drift check")
+            drift = run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                 "--platform-root", str(root), "--service-profile", "default",
+                                 "--scenario", "commit", "--marketplace-npm-url", registry, "--scenario-answers",
+                                 '{"access.mode":"secured","admin.email":"x18-admin@example.test","admin.tenant":"default"}',
+                                 "--project-root", str(project_alias)])
+            _, drift_failure = _diagnostic(drift, "repeat secured install after Marketplace package removal")
+            if (drift_failure.get("code") != "KB_MARKETPLACE_STATE_DRIFT"
+                    or "kb auth login" not in drift_failure.get("hint", "")
+                    or "kb marketplace install" not in drift_failure.get("hint", "")
+                    or receipt_path.read_bytes() != receipt_before_drift
+                    or registry_path.read_bytes() != registry_before_drift):
+                raise RuntimeError("Marketplace drift was not rejected with the prior receipt and project registry intact")
+            after_drift_status = _json_command(run_command,
+                                               [launcher, "status", "--platform-root", str(root), "--json"],
+                                               "status after Marketplace drift rejection")
+            host = after_drift_status.get("host", {})
+            if (after_drift_status.get("running") is not True or after_drift_status.get("reachable") is not True
+                    or host.get("receiptId") != receipt.get("id")):
+                raise RuntimeError("Marketplace drift rejection did not leave the supervised host matched to the prior receipt")
         finally:
             (Path.home() / ".kb/session.json").unlink(missing_ok=True)
             cleanup_installer_fixture_root(root, launcher, run_command)
@@ -1626,13 +1720,13 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                      "platform.install", reject_changed_project_selection, cases=["S-187.11"],
                      runners=("agent:commit", "service-local:explore"))
     if mode == "local":
-        journey.step("accept the recorded or omitted project selection without registering again",
+        journey.step("restart stopped host through supervised Marketplace reconciliation on repeat install",
                      "platform.install", accept_existing_project_selections, cases=["S-187.12"],
                      runners=("agent:commit", "service-local:explore"))
     if mode == "secured":
-        journey.step("register the selected project during secured first install without saving a session",
+        journey.step("repeat secured install through supervised Marketplace reconciliation and reject package drift",
                      "platform.install", install_secured_project_without_session,
-                     cases=["S-187.10", "S-187.11", "S-187.12"],
+                     cases=["S-187.10", "S-187.11", "S-187.12", "S-187.13"],
                      runners=("agent-secured:commit", "service-secured:explore"))
     journey.step("update after the registered project directory was removed",
                  "platform.update", update_after_project_removed, cases=["S-187.9"])
@@ -2701,7 +2795,8 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
     json_install_journey = run_json_install_project_step(
         mode=mode, launcher=launcher, stable_index=stable_index,
         platform_root=scratch / "s187-json-with-project",
-        project_root=scratch / "s187-json-project", run_command=run_command)
+        project_root=scratch / "s187-json-project", run_command=run_command,
+        registry_url=journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873"))
     journey.steps.extend(json_install_journey.steps)
 
     shutil.rmtree(scratch, ignore_errors=True)

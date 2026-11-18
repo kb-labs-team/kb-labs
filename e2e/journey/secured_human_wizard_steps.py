@@ -4,8 +4,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 
-def register_secured_human_wizard_install(journey, wizard_passed: bool, host_reachable: bool):
-    if not wizard_passed:
+def register_secured_human_wizard_install(
+        journey, wizard_passed: bool, host_reachable: bool, marketplace_installed: bool):
+    if not marketplace_installed:
+        failure = "secured TTY wizard did not record the scenario plugin from an authenticated Marketplace install"
+    elif not wizard_passed:
         failure = "secured TTY wizard did not apply the selected plan safely"
     elif not host_reachable:
         failure = "secured TTY wizard applied the plan but the installed host was not running and reachable"

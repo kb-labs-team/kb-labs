@@ -190,7 +190,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		}
 		return result, nil
 	}
-	registered, err := deps.ProjectRegistrar(root, plan.Request.ProjectRoot)
+	registered, err := registerProjectForInstall(deps, result, root, plan.Request.ProjectRoot)
 	if err != nil {
 		return applyCommandResult{}, projectRegistrationFailure(root, plan.Request.ProjectRoot, err)
 	}
@@ -301,7 +301,7 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 	}
 	request := result.Receipt.Plan.Request
 	if projectRegistrationRequired(request.ProjectRoot, existingSelection) && result.ProjectRegistrationNotice == "" {
-		registered, err := deps.ProjectRegistrar(request.PlatformRoot, request.ProjectRoot)
+		registered, err := registerProjectForInstall(deps, result, request.PlatformRoot, request.ProjectRoot)
 		if err != nil {
 			failure := projectRegistrationFailure(request.PlatformRoot, request.ProjectRoot, err)
 			if writeErr := writer.Fail(failure); writeErr != nil {
@@ -397,6 +397,28 @@ func registerInstalledProject(platformRoot, projectRoot string, registrar func(s
 		return registrar(abs)
 	}
 	return registerProject(platformRoot, abs)
+}
+
+func registerInstalledProjectWithToken(platformRoot, projectRoot, accessToken string) (projectRegistrationResult, error) {
+	abs, err := contracts.ValidateProjectSelection(projectRoot)
+	if err != nil {
+		var validation *contracts.RequestValidationError
+		if errors.As(err, &validation) && errors.Is(err, os.ErrNotExist) {
+			return projectRegistrationResult{}, diag.New("KB_PROJECT_PATH_NOT_FOUND", fmt.Sprintf("The project path %q does not exist.", projectRoot), diag.WithCauseAndReason(validation.Message))
+		}
+		return projectRegistrationResult{}, diag.Wrap(err, "KB_RUNTIME_INPUT_INVALID", "The selected project path could not be resolved.")
+	}
+	return registerProjectWithAccessToken(platformRoot, abs, accessToken)
+}
+
+func registerProjectForInstall(deps commandDependencies, result applyCommandResult, platformRoot, projectRoot string) (projectRegistrationResult, error) {
+	if result.registrationAccessToken != "" && deps.ProjectRegistrarWithToken != nil {
+		return deps.ProjectRegistrarWithToken(platformRoot, projectRoot, result.registrationAccessToken)
+	}
+	if deps.ProjectRegistrar != nil {
+		return deps.ProjectRegistrar(platformRoot, projectRoot)
+	}
+	return registerInstalledProject(platformRoot, projectRoot, nil)
 }
 
 func renderInstall(value any) string { return renderApply(value) }

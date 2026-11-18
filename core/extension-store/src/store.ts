@@ -44,11 +44,10 @@ export interface IExtensionStore {
   readonly entriesDir: string;
 
   /**
-   * Read-only lookup: returns the entry if it is already in the store, never
-   * installs. Verifies integrity against `expectedIntegrity` when given (a
-   * project's pin) and throws `IntegrityMismatchError` on mismatch.
+   * Look up an installed entry and compare its integrity to the supplied pin.
+   * Set recordUsage to false for inspection that must leave the .used marker untouched.
    */
-  lookup(ref: StoreEntryRef & { expectedIntegrity?: string }): Promise<ResolvedStoreEntry | undefined>;
+  lookup(ref: StoreEntryRef & { expectedIntegrity?: string; recordUsage?: boolean }): Promise<ResolvedStoreEntry | undefined>;
 
   /**
    * Version resolution (ADR-0048 D4 step 3-4): returns the on-disk path for
@@ -99,12 +98,12 @@ export function createExtensionStore(options: ExtensionStoreOptions = {}): IExte
     await fs.writeFile(markerPath, '').catch(() => undefined); // best-effort: never fails a resolution
   };
 
-  const lookup: IExtensionStore['lookup'] = async ({ name, version, expectedIntegrity }) => {
+  const lookup: IExtensionStore['lookup'] = async ({ name, version, expectedIntegrity, recordUsage = true }) => {
     const { entryDir, entryJsonPath: file } = entryJsonPath(name, version);
     const entry = await readStoreEntry(file);
     if (!entry) {return undefined;}
     verifyIntegrity(name, entry, expectedIntegrity);
-    await touchUsed(entryDir);
+    if (recordUsage) {await touchUsed(entryDir);}
     return toResolved(entry, entryDir);
   };
 

@@ -85,6 +85,55 @@ func reusableApplyHost(plan contracts.ResolvedInstallPlan, platformRoot string) 
 	return &active, nil
 }
 
+func marketplaceReceiptMatches(plan contracts.ResolvedInstallPlan, previous contracts.InstallReceipt) bool {
+	requested := plan.Request.MarketplaceInstallSpecs
+	if len(requested) == 0 || len(requested) != len(previous.MarketplaceInstalls) || plan.Host == nil || previous.Plan.Host == nil {
+		return false
+	}
+	currentRequest := plan.Request
+	previousRequest := previous.Plan.Request
+	// Existing-project selection validates the permitted selected/canonical
+	// spelling aliases before this point. Normalize only those path fields;
+	// every other request value, including Marketplace source configuration,
+	// must remain identical before receipt evidence can be reused.
+	currentRequest.ProjectRoot = previousRequest.ProjectRoot
+	currentRequest.PlatformRoot = previousRequest.PlatformRoot
+	if !reflect.DeepEqual(currentRequest, previousRequest) {
+		return false
+	}
+	if !reflect.DeepEqual(plan.Host, previous.Plan.Host) || !reflect.DeepEqual(plan.ServiceGraph, previous.Plan.ServiceGraph) ||
+		plan.ReleaseDigest != previous.Plan.ReleaseDigest || !reflect.DeepEqual(plan.Artifacts, previous.Plan.Artifacts) {
+		return false
+	}
+	for index, record := range previous.MarketplaceInstalls {
+		if record.Spec != requested[index] || record.ID == "" || record.Version == "" || record.Source == "" || record.PrimaryKind == "" || record.SignatureStatus == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func installedHostSpecMatches(receiptHost *contracts.HostSpec, runtimeSpec contracts.HostSpec, installationID string) bool {
+	if receiptHost == nil || installationID == "" {
+		return false
+	}
+	declarative := runtimeSpec
+	declarative.Env = make(map[string]string, len(runtimeSpec.Env))
+	for key, value := range runtimeSpec.Env {
+		if key == "KB_INSTALLATION_ID" {
+			if value != installationID {
+				return false
+			}
+			continue
+		}
+		declarative.Env[key] = value
+	}
+	if len(declarative.Env) == 0 {
+		declarative.Env = nil
+	}
+	return reflect.DeepEqual(*receiptHost, declarative)
+}
+
 func refuseForeignHost(platformRoot string) *diag.Diag {
 	layout, err := versionroot.ForPlatformPath(platformRoot)
 	if err != nil {

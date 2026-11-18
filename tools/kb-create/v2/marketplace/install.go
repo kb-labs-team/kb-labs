@@ -15,7 +15,7 @@ import (
 const installEndpoint = "/api/v1/marketplace/packages/install"
 
 type InstallClient interface {
-	Install(ctx context.Context, gatewayOrigin string, specs []string) ([]contracts.MarketplaceInstallRecord, error)
+	Install(ctx context.Context, gatewayOrigin string, specs []string, accessToken string) ([]contracts.MarketplaceInstallRecord, error)
 }
 
 type GatewayInstallClient struct {
@@ -42,7 +42,7 @@ func (failure *InstallFailure) Error() string {
 
 func (failure *InstallFailure) Unwrap() error { return failure.Cause }
 
-func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin string, specs []string) ([]contracts.MarketplaceInstallRecord, error) {
+func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin string, specs []string, accessToken string) ([]contracts.MarketplaceInstallRecord, error) {
 	if gatewayOrigin == "" || len(specs) == 0 {
 		return nil, fmt.Errorf("Gateway origin and Marketplace install specs are required")
 	}
@@ -58,6 +58,9 @@ func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin st
 		return nil, fmt.Errorf("create Marketplace install request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
+	if accessToken != "" {
+		request.Header.Set("Authorization", "Bearer "+accessToken)
+	}
 	httpClient := client.HTTP
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -92,26 +95,26 @@ func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin st
 		for _, details := range []map[string]any{failure.Error.Details, failure.Error.Meta} {
 			for _, key := range []string{"plugin", "package"} {
 				if value, ok := details[key].(string); ok && value != "" {
-					spec = value
+					spec = redactAccessToken(value, accessToken)
 					break
 				}
 			}
 			if value, ok := details["source"].(string); ok {
-				source = value
+				source = redactAccessToken(value, accessToken)
 			}
 		}
 		if source == "" {
 			source = "configured Marketplace sources"
 		}
-		message := failure.Error.Message
+		message := redactAccessToken(failure.Error.Message, accessToken)
 		if message == "" {
 			message = fmt.Sprintf("Marketplace returned HTTP %d", response.StatusCode)
 		}
 		var cause error
 		if failure.Error.Cause != "" {
-			cause = fmt.Errorf("%s", failure.Error.Cause)
+			cause = fmt.Errorf("%s", redactAccessToken(failure.Error.Cause, accessToken))
 		}
-		return nil, &InstallFailure{Spec: spec, Source: source, Code: failure.Error.Code, Message: message, Cause: cause}
+		return nil, &InstallFailure{Spec: spec, Source: source, Code: redactAccessToken(failure.Error.Code, accessToken), Message: message, Cause: cause}
 	}
 	var result struct {
 		Installed []contracts.MarketplaceInstallRecord `json:"installed"`
@@ -128,4 +131,11 @@ func (client GatewayInstallClient) Install(ctx context.Context, gatewayOrigin st
 		}
 	}
 	return result.Installed, nil
+}
+
+func redactAccessToken(value, accessToken string) string {
+	if accessToken == "" {
+		return value
+	}
+	return strings.ReplaceAll(value, accessToken, "[redacted]")
 }

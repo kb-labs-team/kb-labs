@@ -108,7 +108,11 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	s.mu.Lock()
 	s.recordStart(started.PID)
 	s.mu.Unlock()
-	server := &control.Server{Runner: s.Runner, State: s.State, Version: s.Version, Restart: s.restart}
+	server := &control.Server{Runner: s.Runner, RunnerProvider: func() host.Runner {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.Runner
+	}, State: s.State, Version: s.Version, Restart: s.restart}
 	if err := server.Start(); err != nil {
 		_, _ = s.Runner.Stop(context.Background())
 		return contracts.NewDiag("KB_HOST_CONTROL_UNAVAILABLE", "The launcher control channel is unavailable.", "Start the launcher or the desktop shell.", err)

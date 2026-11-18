@@ -58,11 +58,23 @@ func registerProject(platformRoot, projectRoot string) (projectRegistrationResul
 			return projectRegistrationResult{}, registrationBoundaryFailure("KB_INSTALL_SECRET_INPUT_INVALID", "The first administrator password is unavailable.", "login", 0)
 		}
 		tenantID := unquoteRequestValue(active.Plan.Request.Values["gateway.bootstrap.tenantId"])
-		tokens, loginErr := loginForProjectRegistration(origin, adminEmail, password, tenantID)
+		tokens, loginErr := loginForFirstAdmin(context.Background(), origin, adminEmail, password, tenantID)
 		if loginErr != nil {
 			return projectRegistrationResult{}, loginErr
 		}
 		accessToken = tokens.AccessToken
+	}
+	return addProjectThroughGateway(origin, projectRoot, accessToken)
+}
+
+func registerProjectWithAccessToken(platformRoot, projectRoot, accessToken string) (projectRegistrationResult, error) {
+	active, err := receipt.Read(projectReceiptRoot(platformRoot))
+	if err != nil {
+		return projectRegistrationResult{}, registrationBoundaryFailure("KB_INSTALL_RECEIPT_UNAVAILABLE", "The installed receipt could not be read.", "register", 0)
+	}
+	origin, err := gateway.OriginFromHealthURL(active.Verification.HostHealthURL)
+	if err != nil {
+		return projectRegistrationResult{}, registrationBoundaryFailure("KB_HOST_SPEC_INVALID", "The Gateway address in the receipt is invalid.", "register", 0)
 	}
 	return addProjectThroughGateway(origin, projectRoot, accessToken)
 }
@@ -159,7 +171,7 @@ func unquoteRequestValue(value string) string {
 	return ""
 }
 
-func loginForProjectRegistration(origin, email, password, tenantID string) (loginTokens, error) {
+func loginForFirstAdmin(ctx context.Context, origin, email, password, tenantID string) (loginTokens, error) {
 	credentials := map[string]string{"email": email, "password": password}
 	if tenantID != "" {
 		credentials["tenantId"] = tenantID
@@ -168,7 +180,7 @@ func loginForProjectRegistration(origin, email, password, tenantID string) (logi
 	if err != nil {
 		return loginTokens{}, registrationBoundaryFailure("KB_RUNTIME_UNEXPECTED", "The Gateway login request could not be encoded.", "login", 0)
 	}
-	responseBody, status, err := postRegistrationRequest(origin+"/auth/login/cli", body, "")
+	responseBody, status, err := postRegistrationRequest(ctx, origin+"/auth/login/cli", body, "")
 	if err != nil {
 		return loginTokens{}, registrationBoundaryFailure("KB_AUTH_GATEWAY_UNREACHABLE", "The Gateway login request could not be completed.", "login", status)
 	}
@@ -197,7 +209,7 @@ func addProjectThroughGateway(origin, projectRoot, accessToken string) (projectR
 	if err != nil {
 		return projectRegistrationResult{}, registrationBoundaryFailure("KB_RUNTIME_UNEXPECTED", "The project registration request could not be encoded.", "register", 0)
 	}
-	responseBody, status, err := postRegistrationRequest(origin+"/api/v1/projects", body, accessToken)
+	responseBody, status, err := postRegistrationRequest(context.Background(), origin+"/api/v1/projects", body, accessToken)
 	if err != nil {
 		return projectRegistrationResult{}, registrationBoundaryFailure("KB_HOST_UNREACHABLE", "The Gateway project registration request could not be completed.", "register", status)
 	}
@@ -224,14 +236,14 @@ func validProjectID(value string) bool {
 	return true
 }
 
-func postRegistrationRequest(target string, body []byte, accessToken string) ([]byte, int, error) {
+func postRegistrationRequest(ctx context.Context, target string, body []byte, accessToken string) ([]byte, int, error) {
 	parsed, err := url.Parse(target)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return nil, 0, fmt.Errorf("the applied Gateway URL is invalid")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	requestContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(requestContext, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("the Gateway request could not be created")
 	}

@@ -277,7 +277,26 @@ export interface ManifestCache {
 // Install / Doctor results
 // ---------------------------------------------------------------------------
 
+/** The historical scenario spec is correlated with the current request by the installer. */
+export interface ScenarioPackageExpectation {
+  spec: string;
+  id: string;
+  version: string;
+  primaryKind: 'plugin';
+  source: 'npm' | 'registry';
+  signatureStatus: 'unsigned' | 'verified';
+  integrity?: string;
+}
+
+export type MatchedScenarioPackage = ScenarioPackageExpectation & { enabled: true; integrity: string };
+
+export type ScenarioReconciliation =
+  | { ok: true; matched: MatchedScenarioPackage[] }
+  | { ok: false; code: 'KB_MARKETPLACE_STATE_DRIFT' | 'KB_MARKETPLACE_STATE_UNAVAILABLE'; package: string };
+
 export interface InstallResultEntry {
+  /** Tarball pin recorded at installation, when the source supports it. */
+  integrity?: string;
   /** Exact Marketplace install spec supplied for this entry. */
   spec?: string;
   id: string;

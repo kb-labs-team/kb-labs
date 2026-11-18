@@ -39,6 +39,7 @@ from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_apply_scenario_step,
                                   run_uninstall_decline_step, run_missing_project_request_steps,
                                   commit_marketplace_install_record,
+                                  scenario_marketplace_install_record,
                                   add_installed_host_stop_case_step)
 from installer_case_steps import parse_install_refusal
 from journey_resources import host_structured_log_problem, case_catalog_root, journey_module, parse_shell_commands, resource_root, workspace_resource
@@ -1364,6 +1365,14 @@ def _main(*, update_variant_runner=None):
                             and re.search(r"(?i)next|success|installed|ready", output) is not None
                             and scenario_profile_choices_ok)
         if VARIANT == "human-secured":
+            try:
+                wizard_receipt = json.loads((PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json").read_text())
+                install_marketplace_ok = scenario_marketplace_install_record(
+                    wizard_receipt, "@kb-labs/commit") is not None
+            except (OSError, json.JSONDecodeError, AttributeError):
+                install_marketplace_ok = False
+            if not install_marketplace_ok:
+                fail("secured wizard receipt omitted the authenticated @kb-labs/commit Marketplace install")
             password = env["KB_JOURNEY_ADMIN_PASSWORD"]
             secured_prompts_ok = (
                 "Studio access" in human_transcript
@@ -1381,7 +1390,7 @@ def _main(*, update_variant_runner=None):
                 fail("secured wizard did not collect administrator inputs without echoing the password")
             env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
             first_admin_ready = human_install_ok
-            secured_human_wizard_install_ok = human_install_ok
+            secured_human_wizard_install_ok = human_install_ok and install_marketplace_ok
         if FRONT == "human" and not VARIANT.endswith("secured"):
             record_case("human interactive install",
                        human_install_ok, "interactive install did not show a plan and success result",
@@ -1560,7 +1569,8 @@ def _main(*, update_variant_runner=None):
                     "successful install did not leave a running, reachable host", cases=["S-039.2"],
                     runners=("agent:commit", "agent-secured:commit"))
     elif VARIANT == "human-secured":
-        register_secured_human_wizard_install(CASE_JOURNEY, secured_human_wizard_install_ok, install_running)
+        register_secured_human_wizard_install(CASE_JOURNEY, secured_human_wizard_install_ok,
+                                               install_running, install_marketplace_ok)
         register_secured_human_wizard_status(CASE_JOURNEY, install_running)
     else:
         record_case("post-install running status", install_running,

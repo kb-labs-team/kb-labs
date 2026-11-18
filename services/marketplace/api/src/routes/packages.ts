@@ -21,6 +21,8 @@
 
 import '../types.js';
 import type { FastifyInstance } from 'fastify';
+import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import type { ScenarioPackageExpectation } from '@kb-labs/marketplace-contracts';
 import type { EntityKind } from '@kb-labs/plugin-contracts';
 import {
   parseMutatingScope,
@@ -52,6 +54,46 @@ export function registerPackagesRoutes(app: FastifyInstance): void {
       () => app.marketplace.list(ctx, kind ? { kind } : undefined),
     );
     return reply.send({ entries, total: entries.length });
+  });
+
+  // The supervised host invokes this read through the composed Marketplace module.
+  app.post<{ Body: { scope: 'platform'; expected: ScenarioPackageExpectation[] } }>('/packages/reconcile', {
+    schema: {
+      body: {
+        type: 'object', required: ['scope', 'expected'], additionalProperties: false,
+        properties: {
+          scope: { const: 'platform' },
+          expected: {
+            type: 'array', minItems: 1, maxItems: 256,
+            items: {
+              type: 'object', additionalProperties: false,
+              required: ['spec', 'id', 'version', 'source', 'primaryKind', 'signatureStatus'],
+              properties: {
+                spec: { type: 'string', minLength: 1, maxLength: 512 },
+                id: { type: 'string', pattern: '^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$', maxLength: 214 },
+                version: { type: 'string', minLength: 1, maxLength: 256 },
+                source: { enum: ['npm', 'registry'] },
+                primaryKind: { const: 'plugin' },
+                signatureStatus: { enum: ['verified', 'unsigned'] },
+                integrity: { type: 'string', minLength: 1, maxLength: 512 },
+              },
+            },
+          },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const result = await app.marketplace.reconcilePackages(request.body.expected);
+    if (result.ok) {return reply.send(result);}
+    const details = { package: result.package, scope: 'platform' };
+    const drift = result.code === 'KB_MARKETPLACE_STATE_DRIFT';
+    const error = createErrorEnvelope(result.code, {
+      correlationId: request.id, details,
+      hint: drift
+        ? 'Sign in to the installed Gateway and reinstall the requested scenario package in platform scope.'
+        : 'Check that the installed host is running and its Marketplace service is available, then retry.',
+    });
+    return reply.code(drift ? 409 : 503).send({ ok: false, error });
   });
 
   // POST /packages/install — install one or more packages

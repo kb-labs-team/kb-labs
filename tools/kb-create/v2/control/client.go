@@ -66,6 +66,13 @@ func (c *Client) RequestUpdate(ctx context.Context, input UpdateRequestInput) (U
 	return out, c.do(ctx, http.MethodPost, "/v1/update-request", input, &out)
 }
 
+// ReconcileMarketplace asks the supervised host's local Marketplace owner to
+// verify receipt records without reading Gateway user credentials.
+func (c *Client) ReconcileMarketplace(ctx context.Context, input contracts.MarketplaceInstallReconciliationRequest) (contracts.MarketplaceInstallReconciliationResponse, error) {
+	var out contracts.MarketplaceInstallReconciliationResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/marketplace/reconcile", input, &out)
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	var reader io.Reader
 	if body != nil {

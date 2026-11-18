@@ -168,6 +168,61 @@ func MarketplaceInstallDiagnostic(spec, source string, cause error) *diag.Diag {
 	return failure
 }
 
+// MarketplaceStateUnavailable reports that the installed Marketplace owner
+// could not provide authoritative state for an exact repeat install.
+func MarketplaceStateUnavailable(packageID, platformRoot string, cause error) *diag.Diag {
+	if packageID == "" {
+		packageID = "unknown"
+	}
+	start := ShellCommand("kb-create", "start", "--platform-root", platformRoot)
+	status := ShellCommand("kb-create", "status", "--platform-root", platformRoot)
+	failure, err := diag.FromCatalog("KB_MARKETPLACE_STATE_UNAVAILABLE", map[string]string{
+		"startCommand": start, "statusCommand": status,
+	}, diag.WithMeta(map[string]any{"package": packageID, "scope": "platform"}), diag.WithCauseAndReason(errorText(cause)))
+	if err != nil {
+		panic(err)
+	}
+	return failure
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return "The local Marketplace state check failed."
+	}
+	return err.Error()
+}
+
+// MarketplaceStateDrift reports missing or changed authoritative installed
+// state and gives the user the authenticated recovery path.
+func MarketplaceStateDrift(packageID, spec, gatewayURL string) *diag.Diag {
+	if packageID == "" {
+		packageID = "unknown"
+	}
+	if spec == "" {
+		spec = packageID
+	}
+	login := ShellCommand("kb", "auth", "login", "--gateway-url", gatewayURL)
+	install := ShellCommand("kb", "marketplace", "install", spec, "--scope", "platform")
+	failure, err := diag.FromCatalog("KB_MARKETPLACE_STATE_DRIFT", map[string]string{
+		"loginCommand": login, "installCommand": install,
+	}, diag.WithMeta(map[string]any{"package": packageID, "scope": "platform"}))
+	if err != nil {
+		panic(err)
+	}
+	return failure
+}
+
+// MarketplaceAuthRequired refuses an authenticated Marketplace operation
+// without reading or reusing the disclosed bootstrap credential.
+func MarketplaceAuthRequired(gatewayURL string) *diag.Diag {
+	failure, err := diag.FromCatalog("KB_AUTH_REQUIRED", map[string]string{"gatewayUrl": gatewayURL},
+		diag.WithMeta(map[string]any{"reason": "marketplace-install"}))
+	if err != nil {
+		panic(err)
+	}
+	return failure
+}
+
 func causeRequired(code string) bool {
 	switch code {
 	case CodeProjectRegistrationFailed, CodeReleaseIndexInvalid, CodeReleaseIndexUnreadable, CodeReleaseIndexSealFailed:

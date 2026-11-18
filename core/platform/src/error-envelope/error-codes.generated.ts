@@ -141,6 +141,8 @@ export type CatalogErrorCode =
   | "KB_MARKETPLACE_REGISTRY_INTEGRITY"
   | "KB_MARKETPLACE_RESOLUTION_FAILED"
   | "KB_MARKETPLACE_SIGNATURE_INVALID"
+  | "KB_MARKETPLACE_STATE_DRIFT"
+  | "KB_MARKETPLACE_STATE_UNAVAILABLE"
   | "KB_MARKETPLACE_TRANSPORT_FAILED"
   | "KB_MARKETPLACE_VERSION_IMMUTABLE"
   | "KB_MARKETPLACE_VERSION_NOT_HIGHER"
@@ -431,6 +433,8 @@ export interface CatalogTemplateParameters {
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": Record<never, never>;
   "KB_MARKETPLACE_RESOLUTION_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_SIGNATURE_INVALID": { "package": string; "scope": string };
+  "KB_MARKETPLACE_STATE_DRIFT": { "installCommand": string; "loginCommand": string };
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": { "startCommand": string; "statusCommand": string };
   "KB_MARKETPLACE_TRANSPORT_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_VERSION_IMMUTABLE": { "installedVersion": string; "package": string; "scope": string };
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": { "installedVersion": string; "package": string; "scope": string };
@@ -721,6 +725,8 @@ export interface CatalogProducerInputFor {
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": CatalogProducerCommon & ({ details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_MARKETPLACE_RESOLUTION_FAILED": CatalogProducerCommon & ({ details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_MARKETPLACE_SIGNATURE_INVALID": CatalogProducerCommon & ({ details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
+  "KB_MARKETPLACE_STATE_DRIFT": CatalogProducerCommon & ({ details?: { "package"?: string; "scope"?: string }; templateValues: { "loginCommand": string; "installCommand": string }; message?: never; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: { "loginCommand"?: string; "installCommand"?: string }; message?: never; hint: string } | { details?: { "package"?: string; "scope"?: string }; templateValues: { "loginCommand": string; "installCommand": string }; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: { "loginCommand"?: string; "installCommand"?: string }; message: string; hint: string });
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": CatalogProducerCommon & ({ details?: { "package"?: string; "scope"?: string }; templateValues: { "startCommand": string; "statusCommand": string }; message?: never; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: { "startCommand"?: string; "statusCommand"?: string }; message?: never; hint: string } | { details?: { "package"?: string; "scope"?: string }; templateValues: { "startCommand": string; "statusCommand": string }; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: { "startCommand"?: string; "statusCommand"?: string }; message: string; hint: string });
   "KB_MARKETPLACE_TRANSPORT_FAILED": CatalogProducerCommon & ({ details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "package": string; "scope": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "package"?: string; "scope"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_MARKETPLACE_VERSION_IMMUTABLE": CatalogProducerCommon & ({ details: { "installedVersion": string; "package": string; "scope": string; "requestedVersion"?: string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "installedVersion": string; "package"?: string; "scope"?: string; "requestedVersion"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "installedVersion"?: string; "package": string; "scope": string; "requestedVersion"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "installedVersion"?: string; "package"?: string; "scope"?: string; "requestedVersion"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": CatalogProducerCommon & ({ details: { "installedVersion": string; "package": string; "scope": string; "requestedVersion"?: string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "installedVersion": string; "package"?: string; "scope"?: string; "requestedVersion"?: string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "installedVersion": string; "package": string; "scope": string; "requestedVersion"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "installedVersion"?: string; "package"?: string; "scope"?: string; "requestedVersion"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
@@ -1013,6 +1019,8 @@ export interface CatalogDetailsFor {
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": Record<string, never>;
   "KB_MARKETPLACE_RESOLUTION_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_SIGNATURE_INVALID": { "package": string; "scope": string };
+  "KB_MARKETPLACE_STATE_DRIFT": { "package"?: string; "scope"?: string };
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": { "package"?: string; "scope"?: string };
   "KB_MARKETPLACE_TRANSPORT_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_VERSION_IMMUTABLE": { "installedVersion": string; "package": string; "scope": string; "requestedVersion"?: string };
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": { "installedVersion": string; "package": string; "scope": string; "requestedVersion"?: string };
@@ -1331,6 +1339,8 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
   "KB_MARKETPLACE_RESOLUTION_FAILED": ["package","scope"],
   "KB_MARKETPLACE_SIGNATURE_INVALID": ["package","scope"],
+  "KB_MARKETPLACE_STATE_DRIFT": ["installCommand","loginCommand"],
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": ["startCommand","statusCommand"],
   "KB_MARKETPLACE_TRANSPORT_FAILED": ["package","scope"],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["installedVersion","package","scope"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion","package","scope"],
@@ -1621,6 +1631,8 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
   "KB_MARKETPLACE_RESOLUTION_FAILED": [],
   "KB_MARKETPLACE_SIGNATURE_INVALID": [],
+  "KB_MARKETPLACE_STATE_DRIFT": [],
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": [],
   "KB_MARKETPLACE_TRANSPORT_FAILED": [],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["installedVersion"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion"],
@@ -1911,6 +1923,8 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
   "KB_MARKETPLACE_RESOLUTION_FAILED": ["package","scope"],
   "KB_MARKETPLACE_SIGNATURE_INVALID": ["package","scope"],
+  "KB_MARKETPLACE_STATE_DRIFT": ["installCommand","loginCommand"],
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": ["startCommand","statusCommand"],
   "KB_MARKETPLACE_TRANSPORT_FAILED": ["package","scope"],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["package","scope"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion","package","scope"],
@@ -2201,6 +2215,8 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
   "KB_MARKETPLACE_RESOLUTION_FAILED": ["package","scope"],
   "KB_MARKETPLACE_SIGNATURE_INVALID": ["package","scope"],
+  "KB_MARKETPLACE_STATE_DRIFT": ["installCommand","loginCommand"],
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": ["startCommand","statusCommand"],
   "KB_MARKETPLACE_TRANSPORT_FAILED": ["package","scope"],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["installedVersion","package","scope"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion","package","scope"],
@@ -2491,6 +2507,8 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
   "KB_MARKETPLACE_RESOLUTION_FAILED": [],
   "KB_MARKETPLACE_SIGNATURE_INVALID": [],
+  "KB_MARKETPLACE_STATE_DRIFT": [],
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": [],
   "KB_MARKETPLACE_TRANSPORT_FAILED": [],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["installedVersion"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion"],
@@ -2781,6 +2799,8 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
   "KB_MARKETPLACE_RESOLUTION_FAILED": ["package","scope"],
   "KB_MARKETPLACE_SIGNATURE_INVALID": ["package","scope"],
+  "KB_MARKETPLACE_STATE_DRIFT": ["installCommand","loginCommand"],
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": ["startCommand","statusCommand"],
   "KB_MARKETPLACE_TRANSPORT_FAILED": ["package","scope"],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["package","scope"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion","package","scope"],
@@ -3071,6 +3091,8 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
   "KB_MARKETPLACE_RESOLUTION_FAILED": [],
   "KB_MARKETPLACE_SIGNATURE_INVALID": [],
+  "KB_MARKETPLACE_STATE_DRIFT": ["package","scope"],
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": ["package","scope"],
   "KB_MARKETPLACE_TRANSPORT_FAILED": [],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["requestedVersion"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["requestedVersion"],
@@ -3361,6 +3383,8 @@ export interface CatalogMessageTemplateParameters {
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": Record<never, never>;
   "KB_MARKETPLACE_RESOLUTION_FAILED": Record<never, never>;
   "KB_MARKETPLACE_SIGNATURE_INVALID": Record<never, never>;
+  "KB_MARKETPLACE_STATE_DRIFT": Record<never, never>;
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": Record<never, never>;
   "KB_MARKETPLACE_TRANSPORT_FAILED": Record<never, never>;
   "KB_MARKETPLACE_VERSION_IMMUTABLE": { "installedVersion": string };
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": { "installedVersion": string };
@@ -3651,6 +3675,8 @@ export interface CatalogHintTemplateParameters {
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": Record<never, never>;
   "KB_MARKETPLACE_RESOLUTION_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_SIGNATURE_INVALID": { "package": string; "scope": string };
+  "KB_MARKETPLACE_STATE_DRIFT": Record<never, never>;
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": Record<never, never>;
   "KB_MARKETPLACE_TRANSPORT_FAILED": { "package": string; "scope": string };
   "KB_MARKETPLACE_VERSION_IMMUTABLE": { "package": string; "scope": string };
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": { "installedVersion": string; "package": string; "scope": string };
@@ -3941,6 +3967,8 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": Record<never, never>;
   "KB_MARKETPLACE_RESOLUTION_FAILED": Record<never, never>;
   "KB_MARKETPLACE_SIGNATURE_INVALID": Record<never, never>;
+  "KB_MARKETPLACE_STATE_DRIFT": { "loginCommand": string; "installCommand": string };
+  "KB_MARKETPLACE_STATE_UNAVAILABLE": { "startCommand": string; "statusCommand": string };
   "KB_MARKETPLACE_TRANSPORT_FAILED": Record<never, never>;
   "KB_MARKETPLACE_VERSION_IMMUTABLE": Record<never, never>;
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": Record<never, never>;

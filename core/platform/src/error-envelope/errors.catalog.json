@@ -1920,6 +1920,44 @@
       "hint": "Check the configured Registry signing key and publication, then run `kb marketplace install {package} --scope {scope}`."
     },
     {
+      "code": "KB_MARKETPLACE_STATE_DRIFT",
+      "httpStatus": 409,
+      "area": "plugin",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "The requested Marketplace install is missing or no longer matches the installed package state.",
+      "hint": "Run {loginCommand}, then {installCommand}.",
+      "runtimeTemplateParameters": {
+        "loginCommand": "required",
+        "installCommand": "required"
+      },
+      "structuredDetailFields": [
+        "package",
+        "scope"
+      ]
+    },
+    {
+      "code": "KB_MARKETPLACE_STATE_UNAVAILABLE",
+      "httpStatus": 503,
+      "area": "plugin",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "message": "The local Marketplace inventory could not be reconciled.",
+      "hint": "Run {startCommand}, then {statusCommand} and retry the install.",
+      "runtimeTemplateParameters": {
+        "startCommand": "required",
+        "statusCommand": "required"
+      },
+      "structuredDetailFields": [
+        "package",
+        "scope"
+      ]
+    },
+    {
       "code": "KB_MARKETPLACE_TRANSPORT_FAILED",
       "httpStatus": 502,
       "area": "plugin",

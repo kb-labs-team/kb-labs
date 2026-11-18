@@ -50,6 +50,9 @@ import type {
   MarketplaceDiagnostic,
   InstallResult,
   InstallResultEntry,
+  MatchedScenarioPackage,
+  ScenarioPackageExpectation,
+  ScenarioReconciliation,
   InstalledPackage,
   SyncResult,
   DoctorReport,
@@ -335,6 +338,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
       installed.push({
         spec,
+        integrity: result.integrity,
         id: canonicalId,
         version: result.version,
         primaryKind,
@@ -592,6 +596,52 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   // -------------------------------------------------------------------------
   // List / GetEntry (MarketplaceServiceAPI)
   // -------------------------------------------------------------------------
+
+  /** Inspect the current platform pin and static plugin manifest under the Marketplace mutation queue. */
+  async reconcilePackages(expected: readonly ScenarioPackageExpectation[]): Promise<ScenarioReconciliation> {
+    const root = this.roots.platformRoot;
+    return this.withScopeMutation(root, async () => {
+      const diagnostics = new DiagnosticCollector();
+      const lock = await readMarketplaceLock(root, diagnostics, 'platform');
+      const matched: MatchedScenarioPackage[] = [];
+      for (const record of expected) {
+        const drift = { ok: false, code: 'KB_MARKETPLACE_STATE_DRIFT', package: record.id } as const;
+        const unavailable = { ok: false, code: 'KB_MARKETPLACE_STATE_UNAVAILABLE', package: record.id } as const;
+        if (!lock && diagnostics.getEvents().some(event => event.code === 'LOCK_PARSE_ERROR')) {return unavailable;}
+        const pin = lock?.plugins[record.id];
+        if (pin?.source !== 'marketplace' || pin.resolvedPath !== undefined || pin.package !== record.id || pin.enabled === false ||
+            pin.version !== record.version || pin.marketplaceSource !== record.source ||
+            pin.signatureStatus !== record.signatureStatus || (pin.primaryKind && pin.primaryKind !== record.primaryKind) ||
+            !pin.integrity || (record.integrity !== undefined && pin.integrity !== record.integrity)) {return drift;}
+        if (!this.extensionStore) {return unavailable;}
+        try {
+          const stored = await this.extensionStore.lookup({ name: pin.package, version: pin.version, expectedIntegrity: pin.integrity, recordUsage: false });
+          if (!stored || stored.entry.name !== pin.package || stored.entry.version !== pin.version ||
+              stored.entry.kind !== record.primaryKind || stored.entry.integrity !== pin.integrity) {return drift;}
+          const pkg: unknown = JSON.parse(await fs.readFile(path.join(stored.packageRoot, 'package.json'), 'utf8'));
+          if (!pkg || typeof pkg !== 'object' || !('name' in pkg) || pkg.name !== pin.package ||
+              !('version' in pkg) || pkg.version !== pin.version) {return drift;}
+          const manifest = await loadManifestFile(stored.packageRoot, new DiagnosticCollector());
+          if (manifest.kind !== 'manifest' || manifest.loaded.manifest.id !== record.id) {return drift;}
+        } catch (error) {
+          if (error instanceof IntegrityMismatchError || error instanceof SyntaxError ||
+              (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) {return drift;}
+          return unavailable;
+        }
+        matched.push({
+          spec: record.spec,
+          id: pin.package,
+          version: pin.version,
+          source: pin.marketplaceSource,
+          primaryKind: 'plugin',
+          signatureStatus: pin.signatureStatus,
+          integrity: pin.integrity,
+          enabled: true,
+        });
+      }
+      return { ok: true, matched };
+    });
+  }
 
   async list(
     ctx: QueryScopeContext,
