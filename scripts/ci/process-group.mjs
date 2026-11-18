@@ -55,13 +55,13 @@ export function runProcessGroup(command, args, {
     let childError;
     let cleanupStarted = false;
     let escalationTimer;
-    let escalationDeadline;
+    let cleanupDeadline;
     let killDeadline;
     let escalationSent = false;
     const handlers = new Map();
 
     const ensureEscalation = () => {
-      if (!escalationDeadline || escalationTimer) return;
+      if (!cleanupDeadline || escalationTimer || !child.pid) return;
       const delay = Math.max(0, killDeadline - Date.now());
       escalationTimer = setTimeout(() => {
         escalationTimer = undefined;
@@ -74,20 +74,24 @@ export function runProcessGroup(command, args, {
 
     const forward = (signal) => {
       requestedSignal ??= signal;
-      escalationDeadline ??= Date.now() + graceMs;
-      killDeadline ??= escalationDeadline + reapGraceMs;
+      beginCleanupDeadline();
+      if (child.pid) signalGroup(child.pid, requestedSignal);
+      ensureEscalation();
+    };
+
+    const beginCleanupDeadline = () => {
+      cleanupDeadline ??= Date.now() + graceMs;
+      killDeadline ??= cleanupDeadline + reapGraceMs;
       if (cancellationDeadlineFile) {
         const temporary = `${cancellationDeadlineFile}.${process.pid}.tmp`;
         try {
           mkdirSync(dirname(cancellationDeadlineFile), { recursive: true, mode: 0o700 });
-          writeFileSync(temporary, `${Math.trunc(escalationDeadline)}\n`, { mode: 0o600 });
+          writeFileSync(temporary, `${Math.trunc(cleanupDeadline)}\n`, { mode: 0o600 });
           renameSync(temporary, cancellationDeadlineFile);
         } catch (error) {
           childError ??= error;
         }
       }
-      if (child.pid) signalGroup(child.pid, requestedSignal);
-      ensureEscalation();
     };
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
       const handler = () => forward(signal);
@@ -104,12 +108,11 @@ export function runProcessGroup(command, args, {
     const finish = async () => {
       if (cleanupStarted || !childResult) return;
       cleanupStarted = true;
+      beginCleanupDeadline();
+      ensureEscalation();
       if (child.pid) {
         try {
-          const deadline = requestedSignal
-            ? killDeadline
-            : Date.now() + graceMs;
-          await settleGroup(child.pid, escalationSent ? 'SIGKILL' : requestedSignal ?? 'SIGTERM', deadline);
+          await settleGroup(child.pid, escalationSent ? 'SIGKILL' : requestedSignal ?? 'SIGTERM', killDeadline);
         } catch (error) {
           childError ??= error;
         }

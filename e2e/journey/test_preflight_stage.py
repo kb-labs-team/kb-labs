@@ -5,9 +5,10 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
-from invocations import run_logged_stage as invocation_run_logged_stage
+from invocations import _stage_cleanup_deadline, run_logged_stage as invocation_run_logged_stage
 from preflight_stage import run_logged_stage
 
 
@@ -49,6 +50,33 @@ class PreflightStageTests(unittest.TestCase):
             self.assertIn("event=end status=fail exit_code=7", events[-1])
             self.assertIn(secret_and_large_output, log.read_text())
             self.assertNotIn("private-token-abc", "\n".join(events))
+
+    def test_cleanup_deadline_path_is_not_forwarded_to_the_stage_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = Path(temporary) / "private-deadline"
+            marker.write_text("1234567890\n")
+            log = Path(temporary) / "unit.log"
+            with patch.dict(os.environ, {"JOURNEY_CLEANUP_DEADLINE_FILE": str(marker)}):
+                status = run_logged_stage(
+                    "unit", log,
+                    [sys.executable, "-c", "import os; print(os.getenv('JOURNEY_CLEANUP_DEADLINE_FILE'))"],
+                )
+
+            self.assertEqual(status, 0)
+            self.assertIn("None", log.read_text())
+            self.assertNotIn(str(marker), log.read_text())
+
+    def test_non_regular_cleanup_marker_is_rejected_without_blocking(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = Path(temporary) / "deadline-fifo"
+            os.mkfifo(marker)
+            received_at = time.monotonic()
+            started = time.monotonic()
+            with patch.dict(os.environ, {"JOURNEY_CLEANUP_DEADLINE_FILE": str(marker)}):
+                deadline = _stage_cleanup_deadline(received_at, .1)
+
+            self.assertLess(time.monotonic() - started, .2)
+            self.assertEqual(deadline, received_at + .1)
 
     def test_child_signaled_by_itself_uses_shell_compatible_exit_code(self):
         with tempfile.TemporaryDirectory() as temporary:

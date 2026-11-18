@@ -1016,7 +1016,7 @@ exec "$REAL_TAR" "$@"
         survived = self.root / "nested-stage-survived"
         group_file = self.root / "nested-stage-group"
         wrapper_file = self.root / "stage-wrapper-pid"
-        outer_group_file = self.root / "outer-child-group"
+        leader_exit_file = self.root / "batch-leader-exited"
         stage_log = self.root / "unit.log"
         child_code = (
             "import os,pathlib,signal,sys,time; "
@@ -1027,18 +1027,12 @@ exec "$REAL_TAR" "$@"
         fake_bash = (
             "#!/usr/bin/env python3\n"
             "import os,pathlib,signal,subprocess,sys,time\n"
-            f"pathlib.Path({str(outer_group_file)!r}).write_text(str(os.getpgrp()))\n"
             f"stage=subprocess.Popen([sys.executable, {str(REPO / 'e2e/journey/preflight_stage.py')!r}, 'run', '--stage', 'unit', '--log', {str(stage_log)!r}, '--', sys.executable, '-c', {child_code!r}, {str(group_file)!r}, {str(ready)!r}, {str(survived)!r}])\n"
             f"pathlib.Path({str(wrapper_file)!r}).write_text(str(stage.pid))\n"
             f"deadline=time.monotonic()+5; exec(\"while not pathlib.Path({str(ready)!r}).exists() and time.monotonic()<deadline: time.sleep(.01)\")\n"
             "os.kill(stage.pid, signal.SIGSTOP)\n"
-            "def resume_stage(*_):\n"
-            "  time.sleep(2.4)\n"
-            "  os.kill(stage.pid, signal.SIGCONT)\n"
-            "  stage.wait()\n"
-            "  sys.exit(143)\n"
-            "signal.signal(signal.SIGTERM, resume_stage)\n"
-            "stage.wait()\n"
+            f"pathlib.Path({str(leader_exit_file)!r}).touch()\n"
+            "sys.exit(0)\n"
         )
         self._script(fake_bin / "bash", fake_bash)
         env = {"PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", "")}
@@ -1049,17 +1043,20 @@ exec "$REAL_TAR" "$@"
         )
         try:
             deadline = time.monotonic() + 5
-            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+            while not leader_exit_file.exists() and process.poll() is None and time.monotonic() < deadline:
                 time.sleep(.01)
-            self.assertTrue(ready.exists(), "nested stage group did not start")
+            self.assertTrue(ready.exists() and leader_exit_file.exists(), "batch leader did not exit with a live nested stage group")
+            time.sleep(.6)
             os.kill(process.pid, signal.SIGTERM)  # Signal only the outer Node PID.
+            time.sleep(1.8)
+            os.kill(int(wrapper_file.read_text()), signal.SIGCONT)
             output, _ = process.communicate(timeout=8)
             self.assertEqual(process.returncode, 128 + signal.SIGTERM, output)
             time.sleep(3.6)
             self.assertFalse(survived.exists(), "nested stage group outlived its cleanup grace")
             self.assertIn("stage-child-log-line", stage_log.read_text())
         finally:
-            for group_path in (group_file, outer_group_file):
+            for group_path in (group_file,):
                 if group_path.exists():
                     try:
                         os.killpg(int(group_path.read_text()), signal.SIGKILL)

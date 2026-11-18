@@ -18,7 +18,7 @@ if (process.argv[2] === '--journey-batch-prepare') {
       'bash', ['e2e/journey/batch.sh', 'prepare', output, ...(baseline ? [baseline] : [])],
       {
         cwd: process.cwd(),
-        env: { ...process.env, JOURNEY_CANCEL_DEADLINE_FILE: cancellationDeadlineFile },
+        env: { ...process.env, JOURNEY_CLEANUP_DEADLINE_FILE: cancellationDeadlineFile },
         stdio: 'inherit',
         cancellationDeadlineFile,
       },

@@ -18,6 +18,7 @@ import shlex
 import select
 import signal
 import shutil
+import stat
 import struct
 import subprocess
 from subprocess import CalledProcessError, CompletedProcess, PIPE, STDOUT, TimeoutExpired
@@ -64,14 +65,25 @@ def _signal_stage_group(group_id: int, signum: int) -> None:
 
 def _stage_cleanup_deadline(signal_received_at: float, grace_seconds: float) -> float:
     """Use the outer producer's absolute deadline when this stage is nested in it."""
-    deadline_file = os.environ.get("JOURNEY_CANCEL_DEADLINE_FILE")
+    deadline_file = os.environ.get("JOURNEY_CLEANUP_DEADLINE_FILE")
     if deadline_file:
+        deadline_fd = None
         try:
-            with open(deadline_file, "r", encoding="ascii") as source:
-                deadline_ms = int(source.read(64).strip())
-            return time.monotonic() + max(0.0, deadline_ms / 1000 - time.time())
-        except (OSError, ValueError):
+            flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+            deadline_fd = os.open(deadline_file, flags)
+            info = os.fstat(deadline_fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 64:
+                raise ValueError("invalid cleanup deadline file")
+            deadline_ms = int(os.read(deadline_fd, 65).decode("ascii").strip())
+            now = time.time()
+            if deadline_ms < 0 or deadline_ms > (now + 30) * 1000:
+                raise ValueError("cleanup deadline is out of range")
+            return time.monotonic() + max(0.0, deadline_ms / 1000 - now)
+        except (OSError, UnicodeDecodeError, ValueError):
             pass
+        finally:
+            if deadline_fd is not None:
+                os.close(deadline_fd)
     return signal_received_at + grace_seconds
 
 
@@ -115,9 +127,11 @@ def run_logged_stage(stage: str, log_path: str | Path, command: list[str], *,
     try:
         with open(log_path, "w", encoding="utf-8", errors="replace") as log_file:
             try:
+                stage_env = os.environ.copy()
+                stage_env.pop("JOURNEY_CLEANUP_DEADLINE_FILE", None)
                 process = subprocess.Popen(
                     command, cwd=str(cwd) if cwd else None,
-                    stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True,
+                    env=stage_env, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True,
                 )
             except OSError:
                 emit(f"journey stage={stage} event=end status=fail exit_code=127 at={_stage_timestamp()} elapsed_seconds=0")
