@@ -5,6 +5,7 @@ import hashlib
 import io
 import os
 import subprocess
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -20,7 +21,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                configured_marketplace_source_kinds,
                                commit_publish_command,
                                _publish_workspace_fixture,
-                               _ensure_analytics_emitter_fixture_built,
+                               _staged_analytics_emitter_fixture,
                                _publish_fixture_command,
                                _assert_catalogued_marketplace_failure,
                                prepare_commit_project_fixture,
@@ -52,6 +53,30 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def _write_analytics_fixture_build_context(self, root, workspace):
+        report_root = root / "summary"
+        report_root.mkdir(parents=True, exist_ok=True)
+        support_files = {
+            "e2e/journey/fixtures/build-manifest.mjs": "// manifest builder stub\n",
+            "infra/devkit/tsup/emit-manifest-json.mjs": "// metadata builder stub\n",
+        }
+        for relative, content in support_files.items():
+            path = workspace / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+        subprocess.run(["git", "config", "user.email", "journey@example.test"], cwd=workspace, check=True)
+        subprocess.run(["git", "config", "user.name", "Journey Fixture"], cwd=workspace, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=workspace, check=True)
+        subprocess.run(["git", "commit", "-qm", "fixture source"], cwd=workspace, check=True)
+        from registry_candidate import source_identity
+        identity = source_identity(workspace)
+        (report_root / "source-identity.json").write_text(json.dumps(identity))
+        return {
+            "KB_JOURNEY_SUMMARY": str(report_root / "journey-summary.md"),
+            "KB_JOURNEY_GIT_REVISION": identity["gitHead"],
+        }
+
     def test_registry_fixture_proxy_attaches_only_its_mounted_internal_secret(self):
         headers = registry_upstream_headers({
             "host": "untrusted.example.test",
@@ -494,6 +519,7 @@ class MarketplaceStepTests(unittest.TestCase):
                                            "./dist/commands/*.js"]},
             }))
             (analytics_fixture / "build.mjs").write_text("// fixture build stub\n")
+            (analytics_fixture / "manifest.js").write_text("export const manifest = {};")
             calls = []
 
             def runner(command, *, cwd, env, timeout, capture_output=True, text=True, **_kwargs):
@@ -506,16 +532,18 @@ class MarketplaceStepTests(unittest.TestCase):
                 if command[:2] == ["kb-create", "restart"]:
                     return subprocess.CompletedProcess(command, 0, "restarted", "")
                 if command == ["node", "./build.mjs"]:
-                    self.assertEqual(Path(cwd), analytics_fixture.resolve())
-                    output = analytics_fixture / "dist"
+                    self.assertNotEqual(Path(cwd), analytics_fixture.resolve())
+                    self.assertTrue(Path(cwd).is_relative_to((root / "summary").resolve()))
+                    output = Path(cwd) / "dist"
                     (output / "commands").mkdir(parents=True, exist_ok=True)
                     (output / "manifest.js").write_text("export const manifest = {};")
                     (output / "manifest.json").write_text("{}")
                     (output / "commands/emit.js").write_text("export default {};")
                     return subprocess.CompletedProcess(command, 0, "", "")
                 if command[0] == "/platform/kb" and command[1:] == ["hub", "publish", "--json"]:
-                    if Path(cwd) == analytics_fixture.resolve():
-                        self.assertTrue((analytics_fixture / "dist/manifest.js").is_file())
+                    if Path(cwd).name == "analytics-emitter":
+                        self.assertNotEqual(Path(cwd), analytics_fixture.resolve())
+                        self.assertTrue((Path(cwd) / "dist/manifest.js").is_file())
                     return subprocess.CompletedProcess(command, 0, json.dumps({
                         "ok": True, "data": {"version": "2.120.1"},
                     }), "")
@@ -541,6 +569,7 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_MARKETPLACE_SERVICE_URL": "http://registry.test",
                    "KB_JOURNEY_MARKETPLACE_SOURCE_URL": "http://registry-source.test",
                    "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey"}
+            env.update(self._write_analytics_fixture_build_context(root, workspace))
             with patch("marketplace_steps.wait_for_marketplace_ready"), \
                     patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
                 journey = Journey("local", "registry-commit-fixture")
@@ -556,23 +585,34 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertIn("S-268.19", publish_step.cases)
             self.assertEqual(journey.result().status, "PASS")
             resolved_workspace = workspace.resolve()
-            self.assertEqual([(call[0], call[1]) for call in calls if call[0][1:] == ("hub", "publish", "--json")], [
-                (("/platform/kb", "hub", "publish", "--json"), resolved_workspace / "plugins/commit"),
-                (("/platform/kb", "hub", "publish", "--json"), resolved_workspace / "e2e/journey/fixtures/analytics-emitter"),
-                (("/platform/kb", "hub", "publish", "--json"), resolved_workspace / "plugins/qa"),
-            ])
+            publish_calls = [(call[0], Path(call[1])) for call in calls
+                             if call[0][1:] == ("hub", "publish", "--json")]
+            self.assertEqual(publish_calls[0], (
+                ("/platform/kb", "hub", "publish", "--json"), resolved_workspace / "plugins/commit"))
+            self.assertTrue(publish_calls[1][1].is_relative_to((root / "summary").resolve()))
+            self.assertNotEqual(publish_calls[1][1], analytics_fixture.resolve())
+            self.assertEqual(publish_calls[2], (
+                ("/platform/kb", "hub", "publish", "--json"), resolved_workspace / "plugins/qa"))
             analytics_publish = next(
                 index for index, call in enumerate(calls)
                 if call[0][1:] == ("hub", "publish", "--json")
-                and call[1] == analytics_fixture.resolve())
+                and Path(call[1]) == publish_calls[1][1])
             analytics_build = next(
                 index for index, call in enumerate(calls) if call[0] == ("node", "./build.mjs"))
             self.assertLess(analytics_build, analytics_publish)
+            self.assertFalse(publish_calls[1][1].exists(), "run-owned fixture copy should be cleaned after publish")
+            build_record = json.loads((root / "summary/registry-analytics-fixture-build.json").read_text())
+            source_identity_record = json.loads((root / "summary/source-identity.json").read_text())
+            self.assertEqual(build_record["gitHead"], source_identity_record["gitHead"])
+            self.assertEqual(build_record["sourceTreeSha256"], source_identity_record["sourceTreeSha256"])
+            self.assertTrue(build_record["fixtureSourceSha256"])
+            self.assertIn("dist/manifest.js", build_record["outputs"])
 
     # case: S-268.18
     def test_registry_analytics_fixture_build_fails_closed_when_outputs_are_missing(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-analytics-build-") as directory:
-            workspace = Path(directory)
+            root = Path(directory)
+            workspace = root / "workspace"
             package_root = workspace / "e2e/journey/fixtures/analytics-emitter"
             package_root.mkdir(parents=True)
             (package_root / "package.json").write_text(json.dumps({
@@ -580,23 +620,28 @@ class MarketplaceStepTests(unittest.TestCase):
                 "kb": {"requiredOutputs": ["./dist/manifest.js"]},
             }))
             (package_root / "build.mjs").write_text("// fixture build stub\n")
+            (package_root / "manifest.js").write_text("export const manifest = {};")
+            env = self._write_analytics_fixture_build_context(root, workspace)
             calls = []
 
             def runner(command, **kwargs):
                 calls.append((command, kwargs))
                 return subprocess.CompletedProcess(command, 0, "", "")
 
-            with self.assertRaisesRegex(RuntimeError, "without required outputs"):
-                _ensure_analytics_emitter_fixture_built(workspace, {}, runner)
+            with self.assertRaisesRegex(RuntimeError, "without required output"):
+                with _staged_analytics_emitter_fixture(workspace, env, runner):
+                    self.fail("fixture publication copy should not be yielded without required outputs")
 
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][0], ["node", "./build.mjs"])
-            self.assertEqual(Path(calls[0][1]["cwd"]), package_root.resolve())
+            self.assertNotEqual(Path(calls[0][1]["cwd"]), package_root.resolve())
+            self.assertTrue(Path(calls[0][1]["cwd"]).is_relative_to((root / "summary").resolve()))
 
     # case: S-268.18
     def test_registry_analytics_fixture_build_failure_stops_before_publication(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-analytics-build-failure-") as directory:
-            workspace = Path(directory)
+            root = Path(directory)
+            workspace = root / "workspace"
             package_root = workspace / "e2e/journey/fixtures/analytics-emitter"
             package_root.mkdir(parents=True)
             (package_root / "package.json").write_text(json.dumps({
@@ -604,6 +649,8 @@ class MarketplaceStepTests(unittest.TestCase):
                 "kb": {"requiredOutputs": ["./dist/manifest.js"]},
             }))
             (package_root / "build.mjs").write_text("// fixture build stub\n")
+            (package_root / "manifest.js").write_text("export const manifest = {};")
+            env = self._write_analytics_fixture_build_context(root, workspace)
             calls = []
 
             def runner(command, **kwargs):
@@ -611,10 +658,93 @@ class MarketplaceStepTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 1, "", "fixture build failed")
 
             with self.assertRaisesRegex(RuntimeError, "node ./build.mjs.*fixture build failed"):
-                _ensure_analytics_emitter_fixture_built(workspace, {}, runner)
+                with _staged_analytics_emitter_fixture(workspace, env, runner):
+                    self.fail("fixture build failure must stop before publication")
 
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][0], ["node", "./build.mjs"])
+
+    # case: S-268.18
+    def test_registry_analytics_fixture_build_refuses_a_different_source_revision(self):
+        with tempfile.TemporaryDirectory(prefix="kb-marketplace-analytics-wrong-sha-") as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            package_root = workspace / "e2e/journey/fixtures/analytics-emitter"
+            package_root.mkdir(parents=True)
+            (package_root / "package.json").write_text(json.dumps({
+                "scripts": {"build": "node ./build.mjs"},
+                "kb": {"requiredOutputs": ["./dist/manifest.js"]},
+            }))
+            (package_root / "build.mjs").write_text("// fixture build stub\n")
+            (package_root / "manifest.js").write_text("export const manifest = {};")
+            env = self._write_analytics_fixture_build_context(root, workspace)
+            env["KB_JOURNEY_GIT_REVISION"] = "different-sha"
+            calls = []
+
+            def runner(command, **kwargs):
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with self.assertRaisesRegex(RuntimeError, "source identity does not match"):
+                with _staged_analytics_emitter_fixture(workspace, env, runner):
+                    self.fail("a source revision mismatch must stop before building")
+
+            self.assertEqual(calls, [])
+
+    # case: S-268.18
+    def test_registry_analytics_fixture_build_refuses_source_bytes_outside_recorded_tree(self):
+        with tempfile.TemporaryDirectory(prefix="kb-marketplace-analytics-source-drift-") as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            package_root = workspace / "e2e/journey/fixtures/analytics-emitter"
+            package_root.mkdir(parents=True)
+            (package_root / "package.json").write_text(json.dumps({
+                "scripts": {"build": "node ./build.mjs"},
+                "kb": {"requiredOutputs": ["./dist/manifest.js"]},
+            }))
+            (package_root / "build.mjs").write_text("// fixture build stub\n")
+            (package_root / "manifest.js").write_text("export const manifest = {};\n")
+            env = self._write_analytics_fixture_build_context(root, workspace)
+            (package_root / "manifest.js").write_text("export const manifest = { changed: true };\n")
+            calls = []
+
+            def runner(command, **kwargs):
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with self.assertRaisesRegex(RuntimeError, "actual source tree"):
+                with _staged_analytics_emitter_fixture(workspace, env, runner):
+                    self.fail("changed fixture bytes must not be staged under the recorded source digest")
+            self.assertEqual(calls, [])
+
+    # case: S-268.18
+    def test_registry_analytics_fixture_build_rejects_symlinked_source_ancestor(self):
+        with tempfile.TemporaryDirectory(prefix="kb-marketplace-analytics-symlink-") as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            package_root = workspace / "e2e/journey/fixtures/analytics-emitter"
+            package_root.mkdir(parents=True)
+            (package_root / "package.json").write_text(json.dumps({
+                "scripts": {"build": "node ./build.mjs"},
+                "kb": {"requiredOutputs": ["./dist/manifest.js"]},
+            }))
+            (package_root / "build.mjs").write_text("// fixture build stub\n")
+            (package_root / "manifest.js").write_text("export const manifest = {};\n")
+            env = self._write_analytics_fixture_build_context(root, workspace)
+            external = root / "external"
+            shutil.copytree(workspace / "e2e", external / "e2e")
+            shutil.rmtree(workspace / "e2e")
+            (workspace / "e2e").symlink_to(external / "e2e", target_is_directory=True)
+            calls = []
+
+            def runner(command, **kwargs):
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with self.assertRaisesRegex(RuntimeError, "path contains a symlink"):
+                with _staged_analytics_emitter_fixture(workspace, env, runner):
+                    self.fail("a symlinked source ancestor must not be followed")
+            self.assertEqual(calls, [])
 
     def test_policy_diagnostic_step_restores_config_and_proves_blocked_fixture_and_first_party_cli(self):
         with tempfile.TemporaryDirectory(prefix="kb-policy-journey-unit-") as directory:

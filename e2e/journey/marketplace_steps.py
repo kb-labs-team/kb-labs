@@ -10,13 +10,17 @@ import hashlib
 import base64
 import io
 import os
+import shutil
 import shlex
+import stat
 import tarfile
 import tempfile
 import time
 import urllib.request
+from contextlib import contextmanager
 from urllib.parse import urlencode, urlsplit
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Callable
 
 from journey_resources import active_platform_root, workspace_resource
@@ -33,10 +37,13 @@ from invocations import (
     read_ux_cli_result,
     read_ux_http_result,
     run_command,
+    run_harness_command,
     run_with_runner,
+    write_report_json,
 )
 from plugin_author_steps import preflight_installed_plugin_command, run_commit_case_steps
 from commit_fixture import commit_fixture_source_version
+from registry_candidate import source_identity
 
 
 CommandRunner = Callable[..., CompletedProcess[str]]
@@ -56,12 +63,38 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     return _publish_package_fixture(package_root, env, runner)
 
 
-def _ensure_analytics_emitter_fixture_built(workspace_root: Path, env: dict[str, str],
-                                            runner: CommandRunner) -> None:
-    """Build the non-workspace Analytics fixture before its Registry publish."""
-    package_root = (workspace_root / "e2e/journey/fixtures/analytics-emitter").resolve()
+@contextmanager
+def _staged_analytics_emitter_fixture(workspace_root: Path, env: dict[str, str],
+                                      runner: CommandRunner):
+    """Build an identity-checked Analytics fixture copy on the writable run report mount."""
+    workspace_root = Path(workspace_root)
+    source_package = workspace_root / "e2e/journey/fixtures/analytics-emitter"
+
+    def require_real_path(root: Path, relative: PurePosixPath, *, directory: bool = False) -> Path:
+        current = root
+        for index, part in enumerate(relative.parts):
+            current = current / part
+            try:
+                info = current.lstat()
+            except OSError as error:
+                raise RuntimeError(f"Registry Analytics fixture source is unavailable: {relative}") from error
+            if stat.S_ISLNK(info.st_mode):
+                raise RuntimeError(f"Registry Analytics fixture source path contains a symlink: {relative}")
+            if index < len(relative.parts) - 1 and not stat.S_ISDIR(info.st_mode):
+                raise RuntimeError(f"Registry Analytics fixture source path has a non-directory ancestor: {relative}")
+        expected_type = stat.S_ISDIR if directory else stat.S_ISREG
+        if not expected_type(current.lstat().st_mode):
+            raise RuntimeError(f"Registry Analytics fixture source has an invalid file type: {relative}")
+        return current
+
+    if workspace_root.is_symlink() or not workspace_root.is_dir():
+        raise RuntimeError("Registry Analytics fixture workspace root is not a real directory")
+    source_package = require_real_path(
+        workspace_root, PurePosixPath("e2e/journey/fixtures/analytics-emitter"), directory=True)
     try:
-        package = json.loads((package_root / "package.json").read_text(encoding="utf-8"))
+        package_file = require_real_path(
+            workspace_root, PurePosixPath("e2e/journey/fixtures/analytics-emitter/package.json"))
+        package = json.loads(package_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError(f"Registry Analytics fixture manifest is unavailable: {error}") from error
     if not isinstance(package, dict):
@@ -70,24 +103,162 @@ def _ensure_analytics_emitter_fixture_built(workspace_root: Path, env: dict[str,
     required = kb_manifest.get("requiredOutputs") if isinstance(kb_manifest, dict) else None
     if not isinstance(required, list) or not required or any(not isinstance(item, str) for item in required):
         raise RuntimeError("Registry Analytics fixture has no valid required build outputs")
-
-    def output_exists(pattern: str) -> bool:
-        return any(package_root.glob(pattern)) if "*" in pattern else (package_root / pattern).is_file()
-
-    missing = [pattern for pattern in required if not output_exists(pattern)]
-    if not missing:
-        return
     scripts = package.get("scripts")
     build_script = scripts.get("build") if isinstance(scripts, dict) else None
-    if build_script != "node ./build.mjs" or not (package_root / "build.mjs").is_file():
+    build_file = require_real_path(
+        workspace_root, PurePosixPath("e2e/journey/fixtures/analytics-emitter/build.mjs"))
+    if build_script != "node ./build.mjs":
         raise RuntimeError(
-            "Registry Analytics fixture outputs are missing and its repository build contract is unsupported")
-    command = ["node", "./build.mjs"]
-    _output(run_with_runner(runner, command, cwd=package_root, env=env, timeout=300), command)
-    missing = [pattern for pattern in required if not output_exists(pattern)]
-    if missing:
-        raise RuntimeError(
-            "Registry Analytics fixture build completed without required outputs: " + ", ".join(missing))
+            "Registry Analytics fixture build contract is unsupported")
+    for pattern in required:
+        relative = PurePosixPath(pattern)
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+            raise RuntimeError(f"Registry Analytics fixture declares an unsafe build output: {pattern}")
+
+    summary_file = env.get("KB_JOURNEY_SUMMARY")
+    expected_revision = env.get("KB_JOURNEY_GIT_REVISION")
+    if not summary_file or not expected_revision:
+        raise RuntimeError("Registry Analytics fixture staging needs the run summary and exact Git revision")
+    report_root = Path(summary_file).parent
+    if report_root.is_symlink() or not report_root.is_dir():
+        raise RuntimeError("Registry Analytics fixture report root is not a writable run-owned directory")
+    report_root = report_root.resolve(strict=True)
+    identity_path = report_root / "source-identity.json"
+    if identity_path.is_symlink():
+        raise RuntimeError("Registry Analytics fixture source identity cannot be a symlink")
+    try:
+        recorded_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Registry Analytics fixture source identity is unavailable: {error}") from error
+    source_tree = recorded_identity.get("sourceTreeSha256") if isinstance(recorded_identity, dict) else None
+    if (not isinstance(recorded_identity, dict)
+            or recorded_identity.get("gitHead") != expected_revision
+            or recorded_identity.get("dirty") is not False):
+        raise RuntimeError("Registry Analytics fixture source identity does not match the run Git revision")
+    if (not isinstance(source_tree, str) or len(source_tree) != 64
+            or any(character not in "0123456789abcdef" for character in source_tree.lower())):
+        raise RuntimeError("Registry Analytics fixture source identity has an invalid source tree digest")
+
+    fixture_helpers = (
+        PurePosixPath("e2e/journey/fixtures/build-manifest.mjs"),
+        PurePosixPath("infra/devkit/tsup/emit-manifest-json.mjs"),
+    )
+    fixture_files: list[PurePosixPath] = []
+    for current, directories, filenames in os.walk(source_package, topdown=True, followlinks=False):
+        current_path = Path(current)
+        for directory in list(directories):
+            item = current_path / directory
+            if item.is_symlink():
+                raise RuntimeError(f"Registry Analytics fixture source contains a symlink: {item.name}")
+            if directory == "dist" and current_path == source_package:
+                directories.remove(directory)
+        for filename in filenames:
+            item = current_path / filename
+            if item.is_symlink():
+                raise RuntimeError(f"Registry Analytics fixture source contains a symlink: {item.name}")
+            fixture_files.append(PurePosixPath(item.relative_to(workspace_root).as_posix()))
+    if PurePosixPath(build_file.relative_to(workspace_root).as_posix()) not in fixture_files:
+        raise RuntimeError("Registry Analytics fixture build script is excluded from the source copy")
+    fixture_files.sort(key=lambda path: path.as_posix())
+    tracked = run_harness_command(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=workspace_root)
+    if tracked.returncode != 0:
+        raise RuntimeError("Registry Analytics fixture cannot verify source file membership")
+    identity_paths = {PurePosixPath(os.fsdecode(raw)) for raw in tracked.stdout.encode().split(b"\0") if raw}
+    selected_paths = set(fixture_files) | set(fixture_helpers)
+    if not selected_paths.issubset(identity_paths):
+        missing_from_identity = sorted(path.as_posix() for path in selected_paths - identity_paths)
+        raise RuntimeError("Registry Analytics fixture contains files outside source identity: "
+                           + ", ".join(missing_from_identity))
+    try:
+        initial_identity = source_identity(workspace_root)
+    except Exception as error:
+        raise RuntimeError(f"Registry Analytics fixture cannot verify the current source tree: {error}") from error
+    if (initial_identity.get("gitHead") != expected_revision
+            or initial_identity.get("sourceTreeSha256") != source_tree
+            or initial_identity.get("dirty") is not False):
+        raise RuntimeError("Registry Analytics fixture source identity does not match the actual source tree")
+    with tempfile.TemporaryDirectory(prefix="registry-analytics-fixture-", dir=report_root) as temporary:
+        staged_workspace = Path(temporary)
+        staged_package = staged_workspace / "e2e/journey/fixtures/analytics-emitter"
+        digest = hashlib.sha256()
+        copied: list[tuple[str, Path, Path]] = []
+
+        def copy_source(source: Path, relative: PurePosixPath) -> None:
+            try:
+                info = source.lstat()
+            except OSError as error:
+                raise RuntimeError(f"Registry Analytics fixture source is unavailable: {relative}") from error
+            if not stat.S_ISREG(info.st_mode):
+                raise RuntimeError(f"Registry Analytics fixture source is not a regular file: {relative}")
+            destination = staged_workspace.joinpath(*relative.parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+            copied.append((relative.as_posix(), source, destination))
+
+        for relative in fixture_files:
+            copy_source(require_real_path(workspace_root, relative), relative)
+        for relative in sorted(fixture_helpers, key=lambda path: path.as_posix()):
+            copy_source(require_real_path(workspace_root, relative), relative)
+
+        for name, source, destination in copied:
+            source_bytes = source.read_bytes()
+            if destination.read_bytes() != source_bytes:
+                raise RuntimeError(f"Registry Analytics fixture copy differs from its source: {name}")
+            digest.update(name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(source_bytes)
+            digest.update(b"\0")
+
+        try:
+            final_identity = source_identity(workspace_root)
+        except Exception as error:
+            raise RuntimeError(f"Registry Analytics fixture cannot reverify the source tree: {error}") from error
+        if final_identity != initial_identity:
+            raise RuntimeError("Registry Analytics fixture source tree changed while staging the publication copy")
+        if any(destination.read_bytes() != source.read_bytes() for _, source, destination in copied):
+            raise RuntimeError("Registry Analytics fixture copy changed while staging the publication copy")
+
+        command = ["node", "./build.mjs"]
+        _output(run_with_runner(runner, command, cwd=staged_package, env=env, timeout=300), command)
+
+        outputs: dict[str, str] = {}
+        for pattern in required:
+            matches = sorted(staged_package.glob(pattern))
+            if not matches:
+                raise RuntimeError(
+                    "Registry Analytics fixture build completed without required output: " + pattern)
+            for output in matches:
+                relative_output = output.relative_to(staged_package)
+                current = staged_package
+                safe_output = True
+                for index, part in enumerate(relative_output.parts):
+                    current = current / part
+                    try:
+                        info = current.lstat()
+                    except OSError:
+                        safe_output = False
+                        break
+                    if stat.S_ISLNK(info.st_mode):
+                        safe_output = False
+                        break
+                    if index < len(relative_output.parts) - 1 and not stat.S_ISDIR(info.st_mode):
+                        safe_output = False
+                        break
+                    if index == len(relative_output.parts) - 1 and not stat.S_ISREG(info.st_mode):
+                        safe_output = False
+                        break
+                if not safe_output:
+                    raise RuntimeError(f"Registry Analytics fixture build output is not a regular file: {pattern}")
+                outputs[relative_output.as_posix()] = hashlib.sha256(output.read_bytes()).hexdigest()
+        write_report_json(report_root / "registry-analytics-fixture-build.json", {
+            "schema": "kb.journey.registry-analytics-fixture-build/v1",
+            "gitHead": expected_revision,
+            "sourceTreeSha256": source_tree,
+            "fixtureSourceSha256": digest.hexdigest(),
+            "outputs": outputs,
+        }, env=env)
+        yield staged_package
 
 
 def _publish_package_fixture(package_root: Path, env: dict[str, str],
@@ -632,8 +803,12 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
         version = published.get("version")
         if not isinstance(version, str) or not version:
             raise RuntimeError("kb hub publish did not return the published Commit version")
-        _ensure_analytics_emitter_fixture_built(workspace, base_env, runner)
-        for fixture_path in ("e2e/journey/fixtures/analytics-emitter", "plugins/qa"):
+        with _staged_analytics_emitter_fixture(workspace, base_env, runner) as analytics_fixture:
+            analytics_publication = _json(
+                _publish_package_fixture(analytics_fixture, base_env, runner), _publish_fixture_command())
+        if not isinstance(analytics_publication.get("version"), str) or not analytics_publication.get("version"):
+            raise RuntimeError("kb hub publish did not return a version for the Analytics fixture")
+        for fixture_path in ("plugins/qa",):
             publication = _json(_publish_workspace_fixture(workspace, fixture_path, base_env, runner),
                                 _publish_fixture_command())
             if not isinstance(publication.get("version"), str) or not publication.get("version"):
