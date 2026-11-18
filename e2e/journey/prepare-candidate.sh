@@ -21,6 +21,12 @@ COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
 node "$ROOT/e2e/scripts/build-pack-extras.mjs" "$ROOT"
 node "$ROOT/e2e/platform/validate-package-outputs.mjs" --build-outputs "$ROOT"
 
+# The Registry image is built from the same production dependency tree used by
+# platform image publishing. Keep it in the producer artifact so installed
+# local and secured stages (and candidate reuse) build from the exact candidate.
+pnpm deploy --filter @kb-labs/marketplace-registry-app --prod --legacy .kb/deploy/marketplace-registry-app
+node "$ROOT/tools/release/generate-platform-image-default.mjs"
+
 bash "$ROOT/e2e/journey/stage-runner-inputs.sh"
 
 mkdir -p "$PACKAGES" "$TARGET"

@@ -211,7 +211,6 @@ find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf 
 journey_toolchain_ensure "$ROOT"
 journey_compose build publisher runner idp-stub
 if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
-  node tools/release/generate-platform-image-default.mjs
   journey_compose build marketplace-state marketplace-registry
 fi
 journey_start_container_services

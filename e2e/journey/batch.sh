@@ -114,7 +114,7 @@ run_prepare() {
         esac
         [ ! -d "$package_path/dist" ] || printf "./%s/dist\\n" "$package_path" >> "$shared/archive-files.txt"
       done < "$shared/workspace-packages.txt"
-      for item in .journey/runner-inputs .journey/release .journey/kb-create-release-index e2e/packages; do
+      for item in .journey/runner-inputs .journey/release .journey/kb-create-release-index e2e/packages .kb/deploy/marketplace-registry-app .kb/deploy/image-default; do
         [ ! -e "$item" ] || printf "%s\\n" "./$item" >> "$shared/archive-files.txt"
       done
       tar -cf "$archive" -T "$shared/archive-files.txt"
