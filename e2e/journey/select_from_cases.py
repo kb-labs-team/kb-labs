@@ -972,6 +972,7 @@ def read_coverage_result(result: CompletedProcess[str]) -> dict:
 
 def selectors_from_coverage(results: list[dict]) -> list[str]:
     selected: set[str] = set()
+    root = resource_root()
     for coverage in results:
         mode = coverage.get("mode")
         if mode not in {"local", "secured"}:
@@ -983,7 +984,11 @@ def selectors_from_coverage(results: list[dict]) -> list[str]:
                 for claim in step.get("claims", []):
                     if claim.get("kind") not in {"journey", "e2e"}:
                         continue
-                    selected.update(runners_for_source(str(claim.get("source", "")), mode))
+                    source = str(claim.get("source", ""))
+                    declaration = _step_declaration(source, int(claim.get("line", 0)), root)
+                    routes = declaration.get("runners") or runners_for_source(source, mode)
+                    selected.update(selector for selector in routes
+                                    if selector in RUNNERS and RUNNERS[selector].mode == mode)
     return sorted(selected)
 
 

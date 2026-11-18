@@ -1381,7 +1381,8 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         if payload.get("hasPlan") is not False:
             raise RuntimeError(f"`kb commit plan show --json` did not return its documented empty-plan result: {payload!r}")
     journey.step("load installed Commit handler with platform SDK and invoke its documented command", "marketplace", assert_commit_command,
-                 cases=["S-010.4"], requires=("step:install Commit into the project for the route lifecycle",))
+                 cases=["S-010.4"], requires=("step:install Commit into the project for the route lifecycle",),
+                 runners=("service-local:explore", "service-secured:explore"))
 
     gateway_doctor = ["marketplace", "plugins", "doctor", "--scope", "project", "--json"]
     def assert_cli_plugin_gateway() -> None:

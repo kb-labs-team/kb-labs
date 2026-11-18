@@ -60,6 +60,9 @@ class CaseJourneySelectionTests(unittest.TestCase):
             }],
         } for mode in ("local", "secured")]
 
+        self.assertEqual(selectors_from_coverage(results),
+                         ["service-local:explore", "service-secured:explore"])
+
         for mode, selector in (("local", "service-local:explore"),
                                ("secured", "service-secured:explore")):
             with self.subTest(mode=mode):
@@ -69,7 +72,8 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 self.assertEqual(resolved["owners"], {selector: ["S-010.4"]})
                 self.assertIn("install Commit into the project for the route lifecycle",
                               resolved["prerequisiteSteps"])
-                self.assertIn("e2e/journey/service_runner.py", resolved["stepSources"])
+                from dispatch_registry import RUNNERS
+                self.assertIn("e2e/journey/service_runner.py", RUNNERS[selector].journey_sources)
 
                 from service_runner import service_selection_groups
                 groups = service_selection_groups(root, selector)
