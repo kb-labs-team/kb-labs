@@ -296,7 +296,10 @@ def _linux_terminal_reader(pid: int, terminal_path: str) -> tuple[int, int, str]
             continue
         except PermissionError as error:
             raise PtyReadinessUnsupported(
-                "Linux procfs syscall state is not readable with this user's permissions"
+                f"Linux procfs PTY reader state is not readable: root pid {pid}, "
+                f"child pid {child_pid}, session {session_id}, state {details[3]}, "
+                f"controlling tty {terminal_device}, denied path {error.filename}, "
+                f"errno {error.errno}; check runner process permissions"
             ) from error
         except OSError:
             continue

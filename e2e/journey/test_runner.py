@@ -507,6 +507,21 @@ thread.join()
                         start_new_session=True,
                     )
 
+    def test_pty_permission_denial_reports_process_and_fails_closed(self):
+        module = importlib.import_module("invocations")
+        terminal = "/dev/pts/4"
+        stat = type("TerminalStat", (), {"st_rdev": 0})()
+        denied = PermissionError(13, "Permission denied", "/proc/136/fd/0")
+        with patch.object(module.sys, "platform", "linux"), \
+                patch.object(module.platform, "machine", return_value="x86_64"), \
+                patch.object(module, "_pty_reader_pids", return_value=[136]), \
+                patch.object(module, "_proc_stat", return_value=(100, 100, 0, "S")), \
+                patch.object(module.os, "stat", return_value=stat), \
+                patch.object(module.os, "readlink", side_effect=denied):
+            with self.assertRaisesRegex(module.PtyReadinessUnsupported,
+                    r"root pid 100, child pid 136, session 100, state S.*denied path /proc/136/fd/0, errno 13"):
+                module.pty_terminal_read_ready(100, terminal)
+
     @unittest.skipUnless(not sys.platform.startswith("linux"), "non-Linux unsupported-platform contract")
     def test_pty_readiness_reports_unsupported_platform_truthfully(self):
         from invocations import PtyReadinessUnsupported
