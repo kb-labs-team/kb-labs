@@ -35,6 +35,7 @@ contract.
 - D55: “one execution mode, honored by every plane.” The planes are CLI, REST routes, REST WebSocket handlers, the workflow daemon, Gateway webhooks, and MCP. “A plane may not force its own backend.”
 - D55: “The resolved mode must be visible, not `auto`.” Each plane-local backend choice is a failing claim.
 - D46: “An unsupported mode is rejected at config validation.” Remote mode is specified in S-245.
+- The secured installed CLI check for `subprocess` and `worker-pool` is in S-306.1, outside the local release gate.
 
 ## Source
 

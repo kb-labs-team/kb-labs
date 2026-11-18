@@ -1,5 +1,17 @@
 # Product decisions log
 
+## 2026-11-18
+
+### Secured CLI uses the configured execution backend
+
+Secured access authenticates the CLI request before a plugin command starts. It
+does not choose a different execution plane: `subprocess` and `worker-pool`
+remain the supported local platform backends in an installed secured platform,
+including when no host agent is connected. Secured CLI dispatch uses the
+configured platform executor; it does not implicitly call Gateway. Remote mode
+remains rejected in this release by S-245. In-process execution is for
+development, not the installed secured default. Cases: S-240, S-306.1.
+
 ## 2026-10-31
 
 ### SQLite vector search breaks equal-score ties by record ID
