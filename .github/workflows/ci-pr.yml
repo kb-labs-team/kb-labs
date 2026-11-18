@@ -601,13 +601,13 @@ jobs:
 
   # Optional PR feedback only. Release workflows repeat the trusted snapshot gate.
   candidate-verification:
-    name: Full candidate verification
+    name: Full candidate verification (${{ github.event.pull_request.head.sha }})
     if: contains(github.event.pull_request.labels.*.name, 'candidate')
-    needs: preflight
     uses: ./.github/workflows/remote-verify.yml
     with:
       profile: candidate
       target_sha: ${{ github.event.pull_request.head.sha }}
+      job_prefix: 'Full candidate verification (${{ github.event.pull_request.head.sha }}) / '
     permissions:
       contents: read
       actions: read

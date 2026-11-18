@@ -10,6 +10,10 @@ on:
       target_sha:
         type: string
         required: true
+      job_prefix:
+        type: string
+        required: false
+        default: ''
   push:
     branches: ['verify/**']
   workflow_dispatch:
@@ -20,8 +24,6 @@ on:
         type: choice
         options: [stream, candidate]
         default: candidate
-  schedule:
-    - cron: '17 4 * * *'
 
 permissions:
   contents: read
@@ -32,7 +34,6 @@ env:
 
 jobs:
   prepare:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -357,7 +358,7 @@ jobs:
           retention-days: 1
 
   verdict:
-    if: always() && github.event_name != 'schedule'
+    if: always()
     needs: [prepare, build, independent-test-shards, build-dependent-test-shards, internal-tool-test-shards]
     runs-on: ubuntu-latest
     permissions:
@@ -380,6 +381,7 @@ jobs:
           REMOTE_TEST_MATRIX: ${{ needs.prepare.outputs.test_matrix }}
           REMOTE_INTERNAL_TOOL_MATRIX: ${{ needs.prepare.outputs.internal_tool_matrix }}
           REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count || '0' }}
+          REMOTE_JOB_PREFIX: ${{ inputs.job_prefix || '' }}
           PREPARE_JOB_RESULT: ${{ needs.prepare.result }}
           BUILD_JOB_RESULT: ${{ needs.build.result }}
           VERIFICATION_SHA: ${{ inputs.target_sha || github.sha }}
@@ -403,29 +405,3 @@ jobs:
           path: remote-results/
           if-no-files-found: ignore
           retention-days: 7
-
-  sweep-verify-refs:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      actions: read
-    steps:
-      - name: Delete verification refs older than three days
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          cutoff=$(date -u -d '3 days ago' +%s)
-          gh api --paginate "repos/$GH_REPO/git/matching-refs/heads/verify/" --jq '.[].ref' |
-          while IFS= read -r full_ref; do
-            branch=${full_ref#refs/heads/}
-            suffix=${branch##*/}
-            created=${suffix%%-*}
-            [[ "$created" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || continue
-            created_epoch=$(date -u -d "${created:0:8} ${created:9:6} UTC" +%s)
-            if [ "$created_epoch" -lt "$cutoff" ]; then
-              encoded=$(printf '%s' "$branch" | sed 's#/#%2F#g')
-              gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$encoded"
-            fi
-          done
