@@ -296,10 +296,10 @@ class RunnerInstallFailureTests(unittest.TestCase):
         default = runner.human_install_prompt_expectations()
         self.assertEqual([pattern for pattern, _ in default], [
             r"Project directory", r"Scenario \[", r"Platform channel",
-            r"Service profile", r"Plugins \[", r"Adapters \[", r"Studio access",
+            r"Service profile", r"Studio access",
         ])
         self.assertEqual([answer for _, answer in default], [
-            str(runner.PROJECT), "explore", "stable", "default", "", "", "local",
+            str(runner.PROJECT), "explore", "stable", "default", "local",
         ])
         responder = runner.OrderedPromptResponder(default)
         transcript = "Project directory (press Enter to install without a project): "
@@ -310,10 +310,6 @@ class RunnerInstallFailureTests(unittest.TestCase):
         self.assertEqual(responder(transcript), "stable\n")
         transcript += "\nService profile [default] (default default): "
         self.assertEqual(responder(transcript), "default\n")
-        transcript += "\nPlugins [@kb-labs/commit]: "
-        self.assertEqual(responder(transcript), "\n")
-        transcript += "\nAdapters []: "
-        self.assertEqual(responder(transcript), "\n")
         transcript += "\nStudio access [local, secured] (default local): "
         self.assertEqual(responder(transcript), "local\n")
         responder.finish(transcript)
@@ -321,16 +317,16 @@ class RunnerInstallFailureTests(unittest.TestCase):
         nondefault = runner.human_install_prompt_expectations("commit")
         self.assertEqual([pattern for pattern, _ in nondefault], [
             r"Project directory", r"Scenario \[", r"Platform channel",
-            r"Service profile", r"Plugins \[", r"Adapters \[", r"Studio access",
+            r"Service profile", r"Studio access",
         ])
         self.assertEqual([answer for _, answer in nondefault], [
-            str(runner.PROJECT), "commit", "stable", "default", "", "", "local",
+            str(runner.PROJECT), "commit", "stable", "default", "local",
         ])
 
         secured = runner.human_install_prompt_expectations("", "secured")
         self.assertEqual([pattern for pattern, _ in secured], [
             r"Project directory", r"Scenario \[", r"Platform channel",
-            r"Service profile", r"Plugins \[", r"Adapters \[", r"Studio access",
+            r"Service profile", r"Studio access",
             r"Admin email", r"Admin tenant", r"Admin password",
             r"Confirm admin password", r"Session signing secret",
         ])
