@@ -814,14 +814,20 @@ def human_install_prompt_expectations(choice: str = "", access_mode: str = "loca
         (r"Project directory", str(PROJECT)),
         (r"Scenario \[", scenario),
         (r"Platform channel", "stable"),
+        (r"Service profile", "default"),
+        # The human wizard always gathers the package selections before it
+        # begins the scenario's question flow. Blank means automatic/default.
+        (r"Plugins \[", ""),
+        (r"Adapters \[", ""),
+        (r"Studio access", "secured" if access_mode == "secured" else "local"),
     ]
     if access_mode == "secured":
         expectations.extend([
-            (r"Studio access", "secured"),
             (r"Admin email", "journey-admin@example.test"),
             (r"Admin tenant", "journey"),
             (r"Admin password", "JourneyPassw0rd!"),
             (r"Confirm admin password", "JourneyPassw0rd!"),
+            (r"Session signing secret", ""),
         ])
     return expectations
 
