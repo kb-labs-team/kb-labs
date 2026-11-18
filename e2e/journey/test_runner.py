@@ -290,6 +290,33 @@ class RunnerInstallFailureTests(unittest.TestCase):
         self.assertEqual(responder(transcript), "stable\n")
         responder.finish(transcript)
 
+    def test_human_install_selects_scenario_before_platform_channel(self):
+        runner = importlib.import_module("runner")
+
+        default = runner.human_install_prompt_expectations()
+        self.assertEqual([pattern for pattern, _ in default], [
+            r"Project directory", r"Scenario \[", r"Platform channel",
+        ])
+        self.assertEqual([answer for _, answer in default], [
+            str(runner.PROJECT), "explore", "stable",
+        ])
+        responder = runner.OrderedPromptResponder(default)
+        transcript = "Project directory (press Enter to install without a project): "
+        self.assertEqual(responder(transcript), f"{runner.PROJECT}\n")
+        transcript += "\nScenario [commit, custom, explore, plugin-author, release] (default explore): "
+        self.assertEqual(responder(transcript), "explore\n")
+        transcript += "\nPlatform channel [stable] (default stable): "
+        self.assertEqual(responder(transcript), "stable\n")
+        responder.finish(transcript)
+
+        nondefault = runner.human_install_prompt_expectations("commit")
+        self.assertEqual([pattern for pattern, _ in nondefault], [
+            r"Project directory", r"Scenario \[", r"Platform channel",
+        ])
+        self.assertEqual([answer for _, answer in nondefault], [
+            str(runner.PROJECT), "commit", "stable",
+        ])
+
     def test_ordered_prompt_responder_reports_expected_prompt_never_shown(self):
         runner = importlib.import_module("runner")
         responder = runner.OrderedPromptResponder([

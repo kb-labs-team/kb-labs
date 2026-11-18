@@ -807,11 +807,14 @@ def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: fr
         fail(f"project MCP journey: {error}")
 
 
-def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local"):
-    global MAX_PNPM_RSS_MIB
-    expectations = [(r"Project directory", str(PROJECT)), (r"Platform channel", "stable")]
-    if choice:
-        expectations.append((r"(?:scenario|journey|setup)", choice))
+def human_install_prompt_expectations(choice: str = "", access_mode: str = "local"):
+    """Return the current human wizard prompt sequence and explicit answers."""
+    scenario = choice or "explore"
+    expectations = [
+        (r"Project directory", str(PROJECT)),
+        (r"Scenario \[", scenario),
+        (r"Platform channel", "stable"),
+    ]
     if access_mode == "secured":
         expectations.extend([
             (r"Studio access", "secured"),
@@ -820,6 +823,12 @@ def pty_install(command: list[str], env: dict[str, str], choice: str = "", acces
             (r"Admin password", "JourneyPassw0rd!"),
             (r"Confirm admin password", "JourneyPassw0rd!"),
         ])
+    return expectations
+
+
+def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local"):
+    global MAX_PNPM_RSS_MIB
+    expectations = human_install_prompt_expectations(choice, access_mode)
     prompt_responder = OrderedPromptResponder(expectations)
     apply_started = None
     started = time.monotonic()
