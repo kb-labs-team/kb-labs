@@ -834,7 +834,8 @@ exec "$REAL_TAR" "$@"
         self.assertFalse(any(row.startswith("journey service-") for row in calls))
         self.assertIn("candidate failure fixture", (self.root / "out/shared/candidate.log").read_text())
         self.assertIn("- Failed stage: `candidate`", (self.root / "out/shared/summary.md").read_text())
-        self.assertIn("next: e2e/journey/prepare-candidate.sh", result.stderr)
+        self.assertIn("see candidate.log", result.stderr)
+        self.assertNotIn("candidate failure fixture", result.stdout + result.stderr)
 
     # case: S-262.1
     def test_reset_failure_summary_has_one_final_result(self):
@@ -861,7 +862,7 @@ exec "$REAL_TAR" "$@"
         summary = (self.root / "out/shared/summary.md").read_text()
         self.assertIn("- Failed stage: `candidate`", summary)
         self.assertIn("- Stage log: `candidate-package.log`", summary)
-        self.assertIn('next: tar -cf "', result.stderr)
+        self.assertIn("see candidate-package.log", result.stderr)
         import json
         metadata = json.loads((self.root / "out/shared/batch-metadata.json").read_text())
         self.assertEqual(metadata["result"], "FAIL")
