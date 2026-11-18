@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import { test } from 'node:test';
 import { batchArguments, resolveSelection } from './journey-batch-selection.mjs';
+import { validateJourneyCaseDeclarations } from './journey-case-claims-preflight.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const workflow = load(readFileSync(resolve(root, '.github/workflows/journey-batch.yml'), 'utf8'));
@@ -56,10 +58,58 @@ test('consumer jobs take the selection only from the producer-owned output', () 
 
 test('batch producer runs the dist-free journey preflight before producing build artifacts', () => {
   const steps = workflow.jobs.producer.steps;
+  const dependencies = steps.findIndex((step) => step.name === 'Install workspace dependencies');
   const preflight = steps.findIndex((step) => step.name === 'Run journey static preflight');
   const producerBuild = steps.findIndex((step) => step.name === 'Produce shared build and candidate');
 
+  assert.ok(dependencies >= 0, 'the batch producer installs workspace dependencies');
   assert.ok(preflight >= 0, 'the batch producer runs the journey preflight');
+  assert.ok(dependencies < preflight, 'the preflight can use the installed workspace toolchain');
   assert.ok(preflight < producerBuild, 'the preflight runs before the producer build stage');
   assert.equal(steps[preflight].run, 'bash e2e/journey/static-preflight.sh');
+});
+
+test('journey case preflight uses the QA scanner to reject dynamic cases declarations', () => {
+  const fixture = mkdtempSync(resolve(tmpdir(), 'journey-case-preflight-'));
+  try {
+    const scenarios = resolve(fixture, 'docs/qa/scenarios');
+    const journey = resolve(fixture, 'e2e/journey');
+    mkdirSync(scenarios, { recursive: true });
+    mkdirSync(journey, { recursive: true });
+    writeFileSync(resolve(scenarios, 'S-001-fixture.md'), [
+      '---',
+      'id: S-001',
+      'title: Fixture',
+      'persona: solo-developer',
+      'area: journey',
+      'priority: P1',
+      'status: active',
+      'release: false',
+      'modes: [local]',
+      'surfaces: [cli]',
+      '---',
+      '',
+      '## Goal',
+      'Exercise the journey declaration scanner.',
+      '',
+      '## Steps',
+      '| # | Action | Expected |',
+      '|---|---|---|',
+      '| S-001.1 | Run the check | The declaration is reported |',
+      '',
+    ].join('\n'));
+    writeFileSync(resolve(journey, 'secured_execution_steps.py'), [
+      'case_ids = ["S-001.1"]',
+      'journey.step("dynamic claim", "auth", check, cases=case_ids)',
+      '',
+    ].join('\n'));
+
+    const result = validateJourneyCaseDeclarations(fixture);
+    assert.equal(result.diagnostics.length, 1);
+    assert.match(result.diagnostics[0].file, /secured_execution_steps\.py$/);
+    assert.equal(result.diagnostics[0].message,
+      'case claim outside a literal cases=[...]; the validator cannot see it');
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
 });
