@@ -57,6 +57,32 @@ test('workspace package shard uses kb-devkit and records a stage result with ela
   assert.equal(result.selectedPackageCount, 2);
 });
 
+// case: S-262.7
+test('workspace package shard fails with the selected package when DevKit schedules no test task', async () => {
+  const packageName = '@kb-labs/marketplace-registry';
+  const result = await runStage({
+    stage: profile.packageTestStage,
+    packageNames: [packageName],
+    selectedPackageCount: 1,
+    shard: 1,
+    runCommand: async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        ok: true,
+        data: {
+          elapsed: '3.2s',
+          results: null,
+          summary: { scheduled: 0, passed: 0, failed: 0, cached: 0, blocked: 0, notAffected: 0, blockedTasks: [] },
+        },
+      }),
+      stderr: '',
+    }),
+  });
+
+  assert.equal(result.status, 'fail');
+  assert.match(result.failures.join('\n'), /scheduled no test tasks.*@kb-labs\/marketplace-registry/i);
+});
+
 test('manifest-backed Go suite preserves the planner shard identity and executed task result', async () => {
   let invocation;
   const result = await runStage({
