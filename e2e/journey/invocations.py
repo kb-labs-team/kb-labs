@@ -3,6 +3,7 @@ from __future__ import annotations
 from journey_values import journey_value
 
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from functools import lru_cache
 import json
 import inspect
@@ -38,6 +39,128 @@ class PtyReadinessUnsupported(RuntimeError):
 
 _LINUX_READ_SYSCALLS = {"x86_64": 0, "amd64": 0, "aarch64": 63, "arm64": 63}
 MAX_ERROR_LOG_BYTES = 1024 * 1024
+
+
+def _stage_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _stage_group_exists(group_id: int) -> bool:
+    try:
+        os.killpg(group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _signal_stage_group(group_id: int, signum: int) -> None:
+    try:
+        os.killpg(group_id, signum)
+    except ProcessLookupError:
+        pass
+
+
+def run_logged_stage(stage: str, log_path: str | Path, command: list[str], *,
+                     heartbeat_seconds: float = 60, termination_grace_seconds: float = 2,
+                     emit: Callable[[str], None] | None = None, cwd: str | Path | None = None) -> int:
+    """Run a CI stage as a process group, writing raw output only to its artifact log.
+
+    This lives in the invocation module because it owns all journey process creation.
+    Stage output is deliberately not recorded as an invocation: it may contain secrets,
+    and the caller preserves it in the bounded-access CI artifact instead.
+    """
+    emit = emit or (lambda line: print(line, flush=True))
+    if heartbeat_seconds <= 0:
+        raise ValueError("heartbeat_seconds must be positive")
+    if termination_grace_seconds < 0:
+        raise ValueError("termination_grace_seconds cannot be negative")
+    started = time.monotonic()
+    emit(f"journey stage={stage} event=start at={_stage_timestamp()}")
+    stop = threading.Event()
+
+    def heartbeat() -> None:
+        while not stop.wait(heartbeat_seconds):
+            elapsed = int(time.monotonic() - started)
+            emit(f"journey stage={stage} event=heartbeat at={_stage_timestamp()} elapsed_seconds={elapsed}")
+
+    Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+    watcher = threading.Thread(target=heartbeat, daemon=True)
+    received_signals: list[int] = []
+    signal_time: list[float] = []
+    previous_handlers = {}
+
+    def record_signal(signum: int, _frame: Any) -> None:
+        if not received_signals:
+            received_signals.append(signum)
+            signal_time.append(time.monotonic())
+
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        previous_handlers[signum] = signal.signal(signum, record_signal)
+
+    try:
+        with open(log_path, "w", encoding="utf-8", errors="replace") as log_file:
+            try:
+                process = subprocess.Popen(
+                    command, cwd=str(cwd) if cwd else None,
+                    stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True,
+                )
+            except OSError:
+                emit(f"journey stage={stage} event=end status=fail exit_code=127 at={_stage_timestamp()} elapsed_seconds=0")
+                return 127
+            group_id = process.pid
+            watcher.start()
+            status = None
+            try:
+                while status is None and not received_signals:
+                    try:
+                        status = process.wait(timeout=0.1)
+                    except subprocess.TimeoutExpired:
+                        continue
+
+                if received_signals:
+                    _signal_stage_group(group_id, received_signals[0])
+                    deadline = signal_time[0] + termination_grace_seconds
+                    while time.monotonic() < deadline and _stage_group_exists(group_id):
+                        if status is None:
+                            try:
+                                status = process.wait(timeout=min(0.05, max(0.001, deadline - time.monotonic())))
+                            except subprocess.TimeoutExpired:
+                                pass
+                        else:
+                            time.sleep(min(0.05, max(0.001, deadline - time.monotonic())))
+
+                    if _stage_group_exists(group_id):
+                        _signal_stage_group(group_id, signal.SIGKILL)
+
+                    if status is None:
+                        try:
+                            status = process.wait(timeout=max(termination_grace_seconds, 0.1))
+                        except subprocess.TimeoutExpired:
+                            # Keep cleanup bounded; a daemon reaper collects the leader if the OS
+                            # delays SIGKILL delivery (for example, while it is in uninterruptible IO).
+                            _signal_stage_group(group_id, signal.SIGKILL)
+                            reaper = threading.Thread(target=process.wait, daemon=True)
+                            reaper.start()
+                            status = 128 + received_signals[0]
+            finally:
+                stop.set()
+                if watcher.is_alive():
+                    watcher.join()
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+    if status is None:
+        status = process.wait(timeout=0)
+    if received_signals:
+        status = 128 + received_signals[-1]
+    elif status < 0:
+        status = 128 + -status
+    elapsed = int(time.monotonic() - started)
+    result = "pass" if status == 0 else "fail"
+    emit(f"journey stage={stage} event=end status={result} exit_code={status} at={_stage_timestamp()} elapsed_seconds={elapsed}")
+    return status
 
 
 def _parse_proc_stat(stat: str) -> tuple[int, int, int, str] | None:

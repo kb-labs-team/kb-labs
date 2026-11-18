@@ -7,6 +7,7 @@ import time
 import unittest
 from pathlib import Path
 
+from invocations import run_logged_stage as invocation_run_logged_stage
 from preflight_stage import run_logged_stage
 
 
@@ -14,6 +15,9 @@ STAGE_RUNNER = Path(__file__).with_name("preflight_stage.py")
 
 
 class PreflightStageTests(unittest.TestCase):
+    def test_stage_runner_uses_the_shared_process_creation_owner(self):
+        self.assertIs(run_logged_stage, invocation_run_logged_stage)
+
     def test_success_emits_bounded_lifecycle_and_periodic_heartbeat(self):
         with tempfile.TemporaryDirectory() as temporary:
             log = Path(temporary) / "build.log"
