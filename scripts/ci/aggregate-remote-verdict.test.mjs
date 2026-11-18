@@ -455,7 +455,7 @@ test('GitHub job evidence fetch reads job steps and annotations from the Actions
     plannedJobs: [{ stage: profile.buildDependentTestStages.candidate[0] }],
     runCommand: (endpoint) => {
       calls.push(endpoint);
-      if (endpoint.endsWith('/jobs?per_page=100')) return JSON.stringify({ jobs: [{
+      if (endpoint.endsWith('/jobs?per_page=100&page=1')) return JSON.stringify({ total_count: 1, jobs: [{
         name: githubJobName({ stage: profile.buildDependentTestStages.candidate[0] }), conclusion: 'failure', steps: [{ name: 'test', conclusion: 'in_progress' }],
         check_run_url: 'https://api.github.com/repos/kb-labs/workspace/check-runs/123',
       }] });
@@ -468,6 +468,42 @@ test('GitHub job evidence fetch reads job steps and annotations from the Actions
   assert.match(calls[1], /check-runs\/123\/annotations/);
   assert.equal(evidence[0].steps[0].conclusion, 'in_progress');
   assert.equal(evidence[0].annotations[0].message, 'hosted runner lost communication');
+});
+
+// case: S-262.15
+test('nested reusable workflow job evidence uses an exact caller prefix', () => {
+  const prefix = 'Full candidate verification (0123456789abcdef0123456789abcdef01234567) / ';
+  const evidence = fetchGitHubJobEvidence({
+    repository: 'kb-labs/workspace', runId: '43', plannedJobs: [{ job: 'prepare' }, { job: 'build' }], jobPrefix: prefix,
+    runCommand: (endpoint) => {
+      if (endpoint.endsWith('/jobs?per_page=100&page=1')) return JSON.stringify({ total_count: 3, jobs: [
+        { name: `${prefix}prepare`, conclusion: 'success', steps: [] },
+        { name: `${prefix}build`, conclusion: 'success', steps: [] },
+        { name: 'Unrelated workflow / prepare', conclusion: 'failure', steps: [] },
+      ] });
+      throw new Error(`unexpected endpoint ${endpoint}`);
+    },
+  });
+  assert.deepEqual(evidence.map((job) => job.name), [`${prefix}prepare`, `${prefix}build`]);
+});
+
+// case: S-262.15
+test('GitHub job evidence follows all pages when a workflow has more than one hundred jobs', () => {
+  const planned = [{ job: 'prepare' }];
+  const calls = [];
+  const evidence = fetchGitHubJobEvidence({
+    repository: 'kb-labs/workspace', runId: '44', plannedJobs: planned,
+    runCommand: (endpoint) => {
+      calls.push(endpoint);
+      if (endpoint.endsWith('/jobs?per_page=100&page=1')) {
+        return JSON.stringify({ total_count: 101, jobs: Array.from({ length: 100 }, (_, index) => ({ name: `unrelated-${index}`, conclusion: 'success' })) });
+      }
+      if (endpoint.endsWith('/jobs?per_page=100&page=2')) return JSON.stringify({ total_count: 101, jobs: [{ name: 'prepare', conclusion: 'success', steps: [] }] });
+      throw new Error(`unexpected endpoint ${endpoint}`);
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(evidence[0].name, 'prepare');
 });
 
 // case: S-262.7

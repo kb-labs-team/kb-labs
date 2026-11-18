@@ -102,9 +102,12 @@ test('candidate PR label runs full verification for the exact head without secre
   assert.equal(pr.concurrency['cancel-in-progress'], true);
   assert.equal(pr.concurrency.group, 'ci-pr-${{ github.event.pull_request.number }}');
   assert.equal(candidate.if, "contains(github.event.pull_request.labels.*.name, 'candidate')");
+  assert.equal(candidate.needs, undefined);
+  assert.equal(candidate.name, 'Full candidate verification (${{ github.event.pull_request.head.sha }})');
   assert.equal(candidate.uses, './.github/workflows/remote-verify.yml');
   assert.equal(candidate.with.profile, 'candidate');
   assert.equal(candidate.with.target_sha, '${{ github.event.pull_request.head.sha }}');
+  assert.equal(candidate.with.job_prefix, 'Full candidate verification (${{ github.event.pull_request.head.sha }}) / ');
   assert.deepEqual(candidate.permissions, { contents: 'read', actions: 'read', checks: 'read' });
   assert.equal(Object.hasOwn(candidate, 'secrets'), false);
   assert.ok(!Object.values(pr.jobs).some((job) => job.permissions?.contents === 'write' && job.uses === './.github/workflows/remote-verify.yml'));
@@ -116,6 +119,11 @@ test('candidate PR label runs full verification for the exact head without secre
       if (step.uses?.startsWith('actions/checkout@')) assert.equal(step.with.ref, '${{ inputs.target_sha || github.sha }}');
     }
   }
+  assert.equal(Object.hasOwn(remote.on, 'schedule'), false);
+  assert.ok(Object.values(remote.jobs).every((job) => job.permissions?.contents !== 'write'));
+  const cleanup = readYaml('.github/workflows/sweep-verify-refs.yml');
+  assert.ok(Object.hasOwn(cleanup.on, 'schedule'));
+  assert.equal(cleanup.permissions.contents, 'write');
 });
 
 test('journey batch and candidate route builds through the same runner entry', () => {
