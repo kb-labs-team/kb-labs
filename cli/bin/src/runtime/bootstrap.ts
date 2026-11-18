@@ -32,7 +32,7 @@ import {
 import { handleLimitFlag } from "./limits";
 import { getDefaultMiddlewares } from "./middlewares";
 import { executePlugin, createSystemCommandContext } from "./plugin-executor";
-import { tryResolveGateway, executeViaGateway, pluginCommandUnavailable } from "./gateway-executor";
+import { pluginCommandUnavailable } from "./gateway-executor";
 import { loadEnvFile } from "./env-loader";
 import { initializePlatform, loadPlatformConfiguration, resolveProjectConfig } from "./platform-init";
 import { shouldShowLimits } from "./helpers/flags";
@@ -688,11 +688,6 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
   const commandPath = p.manifestCmd.manifest.segments.join(" ");
   const commandId = p.manifestCmd.manifest.segments.join(":");
 
-  const rawConfig = globalThis.__KB_RAW_CONFIG__;
-  const executionMode = (
-    rawConfig?.execution as Record<string, unknown> | undefined
-  )?.mode;
-  const accessMode = resolveCliAccessMode();
   const { gatewayUrl: _gatewayUrl, ...commandGlobalFlags } = p.global;
   const commandFlags: Record<string, unknown> = { ...commandGlobalFlags, ...p.flagsObj };
   if (p.global.gatewayUrl) {
@@ -718,19 +713,6 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
   }
 
   return p.runWithMiddleware(async () => {
-    if (executionMode !== "in-process" && accessMode !== 'local') {
-      const gatewayClient = await tryResolveGateway(p.env.KB_GATEWAY_URL);
-      if (gatewayClient) {
-        return executeViaGateway(gatewayClient, {
-          commandId,
-          argv: p.actualRest,
-          flags: commandFlags,
-          manifestCmd: p.manifestCmd,
-          resultWriter: p.resultWriter,
-        });
-      }
-    }
-
     const pluginExitCode = await executePlugin({
       context: p.cliContext,
       env: p.env,

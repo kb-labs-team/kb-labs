@@ -1,8 +1,9 @@
 /**
  * Gateway Executor — thin client execution path.
  *
- * When Gateway is available (Host Agent IPC or HTTP credentials),
- * plugin commands execute remotely instead of locally.
+ * Explicit remote topologies can use this transport for plugin commands.
+ * Normal CLI dispatch uses the platform execution backend, including in
+ * secured access mode.
  *
  * CLI → resolveTransport() → IGatewayClient.execute() → stream events → render
  *
@@ -32,8 +33,7 @@ export function pluginCommandUnavailable(commandPath: string): ErrorEnvelopeErro
 }
 
 /**
- * Try to resolve a Gateway transport.
- * Returns null if no Gateway is available (fall back to local execution).
+ * Resolve a Gateway transport for an explicitly selected remote topology.
  */
 export async function tryResolveGateway(gatewayUrl: string): Promise<IGatewayClient> {
   return resolveTransport(gatewayUrl);

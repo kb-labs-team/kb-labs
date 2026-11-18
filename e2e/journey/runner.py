@@ -1669,6 +1669,35 @@ def _main(*, update_variant_runner=None):
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
 
     if FRONT == "agent" and SCENARIO == "commit":
+        if mode == "secured":
+            from secured_execution_steps import (check_secured_cli_execution_modes,
+                                                 run_selected_secured_cli_execution_check)
+            def invoke_without_session(args):
+                with tempfile.TemporaryDirectory(prefix="kb-journey-unauthenticated-") as anonymous_home:
+                    anonymous_env = {
+                        key: value for key, value in env.items()
+                        if not re.search(r"TOKEN|PASSWORD|SECRET|AUTH|CREDENTIAL|SESSION|COOKIE|API_KEY", key, re.I)
+                    }
+                    anonymous_env["HOME"] = anonymous_home
+                    anonymous_env["KB_HOME"] = str(Path(anonymous_home) / ".kb")
+                    return run(kb_command(args, executable=str(BIN / "kb")),
+                               env=anonymous_env, cwd=PROJECT, timeout=90)[0]
+            backend_check_selected, backend_failure = run_selected_secured_cli_execution_check(
+                mode=mode,
+                selection_active=outer_graph.selection_active,
+                selected_claims=CASE_JOURNEY.selected_claims,
+                check=lambda: check_secured_cli_execution_modes(
+                    lambda args: run(kb_login_shell(args), env=env, cwd=PROJECT, timeout=300)[0],
+                    invoke_without_session,
+                ),
+            )
+            if backend_check_selected:
+                record_case("secured CLI uses configured local isolated execution backends",
+                            backend_failure is None,
+                            backend_failure or "both secured CLI execution modes succeeded",
+                            cases=["S-306.1"], runners=("agent-secured:commit",))
+                if backend_failure:
+                    fail(backend_failure)
         verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local", DEFAULT_ENABLED_SERVICES)
 
     update_group_selected = outer_graph.group_selected("update")
