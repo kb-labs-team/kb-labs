@@ -133,7 +133,7 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
 
         self.assertEqual(outcomes[0][3], "PASS")
         self.assertEqual(outcomes[1][3], "FAIL")
-        self.assertIn("Marketplace receipt", outcomes[1][4])
+        self.assertIn("authenticated Marketplace install", outcomes[1][4])
         self.assertEqual(outcomes[2][3], "FAIL")
         self.assertIn("not running and reachable", outcomes[2][4])
         self.assertEqual(outcomes[3][3], "FAIL")
