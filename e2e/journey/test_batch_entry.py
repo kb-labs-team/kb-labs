@@ -965,12 +965,13 @@ exec "$REAL_TAR" "$@"
         group_file = self.root / "producer-child-group"
         child_code = (
             "import pathlib,signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-            "pathlib.Path(sys.argv[1]).touch(); time.sleep(3); "
+            "pathlib.Path(sys.argv[1]).touch(); time.sleep(6); "
             "pathlib.Path(sys.argv[2]).touch()"
         )
         fake_bash = (
             "#!/usr/bin/env python3\n"
-            "import os,pathlib,subprocess,sys\n"
+            "import os,pathlib,signal,subprocess,sys\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
             f"child=subprocess.Popen([sys.executable, '-c', {child_code!r}, {str(ready)!r}, {str(survived)!r}])\n"
             f"pathlib.Path({str(group_file)!r}).write_text(str(os.getpgrp()))\n"
             "child.wait()\n"
@@ -988,10 +989,69 @@ exec "$REAL_TAR" "$@"
                 time.sleep(.01)
             self.assertTrue(ready.exists(), "remote producer did not launch its child group")
             os.kill(process.pid, signal.SIGTERM)  # Signal only the outer Node PID.
-            output, _ = process.communicate(timeout=5)
+            output, _ = process.communicate(timeout=8)
             self.assertEqual(process.returncode, 128 + signal.SIGTERM, output)
             time.sleep(2.3)
             self.assertFalse(survived.exists(), "a descendant survived outer producer cancellation")
+        finally:
+            if group_file.exists():
+                try:
+                    os.killpg(int(group_file.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=2)
+
+    # case: S-262.17
+    def test_outer_node_grace_allows_nested_stage_group_cleanup(self):
+        import signal
+        import time
+
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node.js is required for the remote producer entrypoint")
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        ready = self.root / "nested-stage-ready"
+        survived = self.root / "nested-stage-survived"
+        group_file = self.root / "nested-stage-group"
+        child_code = (
+            "import pathlib,signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "pathlib.Path(sys.argv[1]).touch(); time.sleep(6); pathlib.Path(sys.argv[2]).touch()"
+        )
+        fake_bash = (
+            "#!/usr/bin/env python3\n"
+            "import os,pathlib,signal,subprocess,sys,time\n"
+            f"child=subprocess.Popen([sys.executable, '-c', {child_code!r}, {str(ready)!r}, {str(survived)!r}], start_new_session=True)\n"
+            f"pathlib.Path({str(group_file)!r}).write_text(str(child.pid))\n"
+            "def cleanup(*_):\n"
+            "  time.sleep(.5)\n"
+            "  os.killpg(child.pid, signal.SIGTERM)\n"
+            "  deadline=time.monotonic()+2\n"
+            "  while child.poll() is None and time.monotonic()<deadline: time.sleep(.02)\n"
+            "  if child.poll() is None: os.killpg(child.pid, signal.SIGKILL)\n"
+            "  child.wait(timeout=1)\n"
+            "  sys.exit(143)\n"
+            "signal.signal(signal.SIGTERM, cleanup)\n"
+            "child.wait()\n"
+        )
+        self._script(fake_bin / "bash", fake_bash)
+        env = {"PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", "")}
+        process = subprocess.Popen(
+            [node, str(REPO / "scripts/ci/run-remote-stage.mjs"), "--journey-batch-prepare", str(self.root / "out")],
+            cwd=REPO, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(ready.exists(), "nested stage group did not start")
+            os.kill(process.pid, signal.SIGTERM)  # Signal only the outer Node PID.
+            output, _ = process.communicate(timeout=8)
+            self.assertEqual(process.returncode, 128 + signal.SIGTERM, output)
+            time.sleep(3.6)
+            self.assertFalse(survived.exists(), "nested stage group outlived its cleanup grace")
         finally:
             if group_file.exists():
                 try:

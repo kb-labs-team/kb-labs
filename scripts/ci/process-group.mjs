@@ -44,18 +44,35 @@ async function settleGroup(groupId, initialSignal, graceMs) {
 }
 
 /** Run a command in its own process group and reap that group on exit or cancellation. */
-export function runProcessGroup(command, args, { cwd, env, stdio = 'inherit', graceMs = 2000 } = {}) {
+export function runProcessGroup(command, args, { cwd, env, stdio = 'inherit', graceMs = 4000 } = {}) {
   return new Promise((resolve) => {
     const child = spawn(command, args, { cwd, env, stdio, detached: true });
     let requestedSignal;
     let childResult;
     let childError;
     let cleanupStarted = false;
+    let escalationTimer;
+    let escalationDeadline;
+    let escalationSent = false;
     const handlers = new Map();
+
+    const ensureEscalation = () => {
+      if (!escalationDeadline || escalationTimer) return;
+      const delay = Math.max(0, escalationDeadline - Date.now());
+      escalationTimer = setTimeout(() => {
+        escalationTimer = undefined;
+        if (child.pid) {
+          escalationSent = true;
+          signalGroup(child.pid, 'SIGKILL');
+        }
+      }, delay);
+    };
 
     const forward = (signal) => {
       requestedSignal ??= signal;
+      escalationDeadline ??= Date.now() + graceMs;
       if (child.pid) signalGroup(child.pid, requestedSignal);
+      ensureEscalation();
     };
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
       const handler = () => forward(signal);
@@ -63,20 +80,25 @@ export function runProcessGroup(command, args, { cwd, env, stdio = 'inherit', gr
       process.on(signal, handler);
     }
     child.once('spawn', () => {
-      if (requestedSignal) signalGroup(child.pid, requestedSignal);
+      if (requestedSignal) {
+        signalGroup(child.pid, requestedSignal);
+        ensureEscalation();
+      }
     });
 
     const finish = async () => {
       if (cleanupStarted || !childResult) return;
       cleanupStarted = true;
-      for (const [signal, handler] of handlers) process.off(signal, handler);
       if (child.pid) {
         try {
-          await settleGroup(child.pid, requestedSignal ?? 'SIGTERM', graceMs);
+          await settleGroup(child.pid, escalationSent ? 'SIGKILL' : requestedSignal ?? 'SIGTERM',
+            escalationSent ? 0 : graceMs);
         } catch (error) {
           childError ??= error;
         }
       }
+      if (escalationTimer) clearTimeout(escalationTimer);
+      for (const [signal, handler] of handlers) process.off(signal, handler);
       const status = requestedSignal
         ? signalStatus(requestedSignal)
         : childResult.code ?? signalStatus(childResult.signal);
