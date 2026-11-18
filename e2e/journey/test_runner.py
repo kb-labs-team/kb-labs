@@ -317,10 +317,10 @@ class RunnerInstallFailureTests(unittest.TestCase):
         nondefault = runner.human_install_prompt_expectations("commit")
         self.assertEqual([pattern for pattern, _ in nondefault], [
             r"Project directory", r"Scenario \[", r"Platform channel",
-            r"Service profile", r"Studio access",
+            r"Service profile",
         ])
         self.assertEqual([answer for _, answer in nondefault], [
-            str(runner.PROJECT), "commit", "stable", "default", "local",
+            str(runner.PROJECT), "commit", "stable", "default",
         ])
 
         secured = runner.human_install_prompt_expectations("", "secured")

@@ -815,9 +815,10 @@ def human_install_prompt_expectations(choice: str = "", access_mode: str = "loca
         (r"Scenario \[", scenario),
         (r"Platform channel", "stable"),
         (r"Service profile", "default"),
-        (r"Studio access", "secured" if access_mode == "secured" else "local"),
     ]
-    if access_mode == "secured":
+    if scenario == "explore":
+        expectations.append((r"Studio access", "secured" if access_mode == "secured" else "local"))
+    if scenario == "explore" and access_mode == "secured":
         expectations.extend([
             (r"Admin email", "journey-admin@example.test"),
             (r"Admin tenant", "journey"),
