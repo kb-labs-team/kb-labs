@@ -105,8 +105,11 @@ describe.each(modes)('%s platform peer resolution', (mode) => {
         pluginEnvRoot: null,
       });
     } finally {
-      await backend.shutdown();
-      resolverHook?.deregister();
+      try {
+        await backend.shutdown();
+      } finally {
+        resolverHook?.deregister();
+      }
     }
   }, 30_000);
 });
