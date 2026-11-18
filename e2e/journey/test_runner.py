@@ -696,6 +696,12 @@ thread.join()
                 events.append(f"host:{argv[1]}")
             output = ""
             returncode = 0
+            if len(argv) > 1 and argv[1] == "start" and "--foreground" not in argv:
+                from journey_resources import host_log_paths
+                structured_log = host_log_paths(platform)["structured"]
+                structured_log.parent.mkdir(parents=True, exist_ok=True)
+                structured_log.write_text('{"level":30,"time":1,"msg":"host started"}\n',
+                                          encoding="utf-8")
             if argv[0].endswith("install.sh"):
                 output = "installer ready"
             elif argv[:2] == ["node", "--version"]:
