@@ -114,6 +114,7 @@ class AdapterDefaultsProbeTests(unittest.TestCase):
         self.assertNotIn("marketplace-available", graph.needed_states)
         self.assertNotIn("fixtures-installed", graph.needed_states)
         self.assertIn("host-running", graph.needed_states)
+        self.assertIn("platform-installed", graph.needed_states)
         self.assertIn("project-registered", graph.needed_states)
         self.assertEqual(flow, "SKIPPED")
         self.assertEqual(calls, [])
