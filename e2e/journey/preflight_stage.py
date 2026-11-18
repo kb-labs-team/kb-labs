@@ -54,51 +54,71 @@ def run_logged_stage(stage, log_path, command, *, heartbeat_seconds=60, terminat
 
     Path(log_path).parent.mkdir(parents=True, exist_ok=True)
     watcher = threading.Thread(target=heartbeat, daemon=True)
-    with open(log_path, "w", encoding="utf-8", errors="replace") as log_file:
-        try:
-            process = subprocess.Popen(
-                command, cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True,
-            )
-        except OSError:
-            emit(f"journey stage={stage} event=end status=fail exit_code=127 at={_timestamp()} elapsed_seconds=0")
-            return 127
-        received_signals = []
-        signal_time = []
-        previous_handlers = {}
+    received_signals = []
+    signal_time = []
+    previous_handlers = {}
 
-        def forward_signal(signum, _frame):
-            if not received_signals:
-                received_signals.append(signum)
-                signal_time.append(time.monotonic())
-                _signal_group(process.pid, signum)
+    def record_signal(signum, _frame):
+        if not received_signals:
+            received_signals.append(signum)
+            signal_time.append(time.monotonic())
 
-        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-            previous_handlers[signum] = signal.signal(signum, forward_signal)
-        watcher.start()
-        try:
-            while True:
-                try:
-                    status = process.wait(timeout=0.1)
-                    break
-                except subprocess.TimeoutExpired:
-                    if not received_signals:
-                        continue
-                    deadline = signal_time[0] + termination_grace_seconds
-                    while time.monotonic() < deadline and _group_exists(process.pid):
-                        time.sleep(min(0.05, max(0, deadline - time.monotonic())))
-                    if _group_exists(process.pid):
-                        _signal_group(process.pid, signal.SIGKILL)
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        previous_handlers[signum] = signal.signal(signum, record_signal)
+
+    try:
+        with open(log_path, "w", encoding="utf-8", errors="replace") as log_file:
+            try:
+                process = subprocess.Popen(
+                    command, cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True,
+                )
+            except OSError:
+                emit(f"journey stage={stage} event=end status=fail exit_code=127 at={_timestamp()} elapsed_seconds=0")
+                return 127
+            group_id = process.pid
+            watcher.start()
+            status = None
+            try:
+                while status is None and not received_signals:
                     try:
-                        status = process.wait(timeout=max(termination_grace_seconds, 0.1))
+                        status = process.wait(timeout=0.1)
                     except subprocess.TimeoutExpired:
-                        # SIGKILL makes the stage leader reapable; wait() collects its status.
-                        status = process.wait()
-                    break
-        finally:
-            stop.set()
-            watcher.join()
-            for signum, handler in previous_handlers.items():
-                signal.signal(signum, handler)
+                        continue
+
+                if received_signals:
+                    _signal_group(group_id, received_signals[0])
+                    deadline = signal_time[0] + termination_grace_seconds
+                    while time.monotonic() < deadline and _group_exists(group_id):
+                        if status is None:
+                            try:
+                                status = process.wait(timeout=min(0.05, max(0.001, deadline - time.monotonic())))
+                            except subprocess.TimeoutExpired:
+                                pass
+                        else:
+                            time.sleep(min(0.05, max(0.001, deadline - time.monotonic())))
+
+                    if _group_exists(group_id):
+                        _signal_group(group_id, signal.SIGKILL)
+
+                    if status is None:
+                        try:
+                            status = process.wait(timeout=max(termination_grace_seconds, 0.1))
+                        except subprocess.TimeoutExpired:
+                            # Keep cleanup bounded; a daemon reaper collects the leader if the OS
+                            # delays SIGKILL delivery (for example, while it is in uninterruptible IO).
+                            _signal_group(group_id, signal.SIGKILL)
+                            reaper = threading.Thread(target=process.wait, daemon=True)
+                            reaper.start()
+                            status = 128 + received_signals[0]
+            finally:
+                stop.set()
+                if watcher.is_alive():
+                    watcher.join()
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+    if status is None:
+        status = process.wait(timeout=0)
     if received_signals:
         status = 128 + received_signals[-1]
     elif status < 0:
