@@ -258,6 +258,19 @@ test('reusable installer workflow runs a native macOS install from the candidate
   assert.equal(native['timeout-minutes'] > 0, true);
 });
 
+test('reusable installer workflow runs the dist-free journey preflight before producer builds', () => {
+  const workflow = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
+  const steps = workflow.jobs.prepare.steps;
+  const preflight = steps.findIndex((step) => step.name === 'Run journey static preflight');
+  const producerBuild = steps.findIndex((step) => step.name === 'Build kb-devkit');
+  const fullCaseValidation = steps.findIndex((step) => step.name === 'Validate QA cases and test claims');
+
+  assert.ok(preflight >= 0, 'the journey preflight is present');
+  assert.ok(preflight < producerBuild, 'static failures are found before producer builds');
+  assert.ok(fullCaseValidation > producerBuild, 'the full built-CLI QA validation remains after the build');
+  assert.equal(steps[preflight].run, 'bash e2e/journey/static-preflight.sh');
+});
+
 // case: S-261.2
 test('native macOS smoke entry installs the candidate and runs the installed CLI', () => {
   const commands = nativeInstallCommands({ workspace: '/workspace', tempRoot: '/tmp/native', platformRoot: '/tmp/platform', registryUrl: 'http://127.0.0.1:49183' });
