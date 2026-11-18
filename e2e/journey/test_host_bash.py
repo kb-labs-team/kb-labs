@@ -63,7 +63,7 @@ class HostBashTests(unittest.TestCase):
 
             environment = isolated_environment(
                 sandbox, bin_dir,
-                required_tools=("bash", "git", "python3", "dirname", "id", "mkdir", "rm", "find", "date"),
+                required_tools=("bash", "git", "python3", "dirname", "id", "mkdir", "rm", "find", "date", "awk"),
                 overrides={
                 "FAKE_DOCKER_CALLS": str(calls_path),
                 "KB_JOURNEY_ONLY": "service-local:explore",
@@ -121,6 +121,9 @@ class HostBashTests(unittest.TestCase):
             "args = sys.argv[1:]\n"
             "write_jsonl(os.environ['FAKE_DOCKER_CALLS'], [args], append=True)\n"
             "action = next((item for item in args if item in {'version', 'ps', 'run', 'exec', 'down', 'build', 'up', 'stop', 'rm', 'logs', 'port'}), None)\n"
+            "if args[:2] == ['buildx', 'inspect']:\n"
+            "    print('Name: default\\nDriver: docker')\n"
+            "    raise SystemExit(0)\n"
             "if action in {'version', 'ps', 'down', 'build', 'up', 'stop', 'rm'}: raise SystemExit(0)\n"
             "if action == 'run':\n    print('publisher-container-id')\n    raise SystemExit(0)\n"
             "if action == 'exec': raise SystemExit(1)\n"
