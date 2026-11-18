@@ -87,6 +87,10 @@ jobs:
         with:
           node-version-file: package.json
           cache: pnpm
+      - name: Validate selected journey cases before the producer build
+        env:
+          BATCH_SELECTION: ${{ steps.selection.outputs.selection }}
+        run: node scripts/ci/journey-case-claims-preflight.mjs selection "$BATCH_SELECTION"
       - id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:

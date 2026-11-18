@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import { test } from 'node:test';
 import { batchArguments, resolveSelection } from './journey-batch-selection.mjs';
-import { validateJourneyCaseDeclarations } from './journey-case-claims-preflight.mjs';
+import { validateJourneyCaseDeclarations, validateSelectedJourneyCases } from './journey-case-claims-preflight.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const workflow = load(readFileSync(resolve(root, '.github/workflows/journey-batch.yml'), 'utf8'));
@@ -138,6 +138,23 @@ test('batch producer runs the dist-free journey preflight before producing build
   assert.ok(dependencies < preflight, 'the preflight can use the installed workspace toolchain');
   assert.ok(preflight < producerBuild, 'the preflight runs before the producer build stage');
   assert.equal(steps[preflight].run, 'bash e2e/journey/static-preflight.sh');
+});
+
+// case: S-262.8
+test('selected cases are checked for active journey claims before the expensive producer build', () => {
+  assert.doesNotThrow(() => validateSelectedJourneyCases(root, 'S-307.1'));
+  assert.throws(() => validateSelectedJourneyCases(root, 'S-243'), /S-243 is planned/);
+
+  const steps = workflow.jobs.producer.steps;
+  const selectedPreflight = steps.findIndex((step) => step.name === 'Validate selected journey cases before the producer build');
+  const nodeSetup = steps.findIndex((step) => step.id === 'node');
+  const goSetup = steps.findIndex((step) => step.id === 'go');
+  const producerBuild = steps.findIndex((step) => step.name === 'Produce shared build and candidate');
+  assert.ok(nodeSetup >= 0 && nodeSetup < selectedPreflight);
+  assert.ok(selectedPreflight < goSetup && selectedPreflight < producerBuild);
+  assert.match(steps[selectedPreflight].run, /journey-case-claims-preflight\.mjs selection/);
+  assert.deepEqual(steps[selectedPreflight].env,
+    { BATCH_SELECTION: '${{ steps.selection.outputs.selection }}' });
 });
 
 test('journey case preflight uses the QA scanner to reject dynamic cases declarations', () => {

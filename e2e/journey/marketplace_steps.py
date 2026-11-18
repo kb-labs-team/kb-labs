@@ -641,7 +641,7 @@ def run_secured_local_execution_backend_step(journey: Journey, project_root: str
                         "KB_JOURNEY_MARKETPLACE_GATEWAY_URL", base_env.get("KB_JOURNEY_BASE_URL", ""))
                     publish_env["KB_REGISTRY_AUTHOR_HANDLE"] = base_env.get(
                         "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE", "journey")
-                    with invocation_context(step_id="S-243.10"):
+                    with invocation_context(step_id="S-307.1"):
                         result = _json(_run(publish, cwd=package_root, env=publish_env, runner=runner), publish)
                     if result.get("version") != version:
                         raise RuntimeError(f"{mode} publisher returned unexpected package version {result.get('version')!r}")
@@ -676,7 +676,7 @@ def run_secured_local_execution_backend_step(journey: Journey, project_root: str
             set_mode(original_mode)
 
     journey.step("secured installed plugin keeps local backend, cwd, and user identity",
-                 "plugin-execution", exercise_backends, cases=["S-243.10"],
+                 "plugin-execution", exercise_backends, cases=["S-307.1"],
                  runners=("service-marketplace-registry:secured",))
 
 def _set_marketplace_proxy_faults(project: Path, env: dict[str, str], runner: CommandRunner,

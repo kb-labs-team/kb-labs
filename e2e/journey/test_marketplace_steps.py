@@ -102,14 +102,14 @@ class MarketplaceStepTests(unittest.TestCase):
                 }]).encode(), {}
 
             with patch.dict(os.environ, {
-                "KB_JOURNEY_CASES": "S-243.10",
+                "KB_JOURNEY_CASES": "S-307.1",
                 "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured",
             }), patch("marketplace_steps.open_http", side_effect=registry_request):
                 journey = Journey("secured", "secured-execution-routing")
                 run_secured_local_execution_backend_step(journey, project, env, runner)
 
             self.assertEqual(journey.steps[-1].status, "PASS", journey.steps[-1].message)
-            self.assertEqual(journey.steps[-1].cases, ["S-243.10"])
+            self.assertEqual(journey.steps[-1].cases, ["S-307.1"])
             self.assertEqual(len(published_versions), 2)
             self.assertEqual([command[-2] for command, _kwargs in calls if command[1:3] == ["config", "set"]],
                              ["subprocess", "worker-pool", "subprocess"])
