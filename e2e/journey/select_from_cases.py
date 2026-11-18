@@ -220,16 +220,23 @@ def _imported_journey_sources(sources: set[str], root: Path) -> set[str]:
 
 
 def journey_source_group_declaration(source: str, root: Path,
-                                     selector: str = "") -> dict[str, tuple[str, ...]]:
+                                     selector: str = "",
+                                     excluded_sources: set[str] | None = None) -> dict[str, tuple[str, ...]]:
     """Resolve every step and claim registered by a journey module and its local imports."""
-    sources = _imported_journey_sources({source}, root)
-    registrations = _source_step_declarations(sources, root)
+    sources = _imported_journey_sources({source}, root) - (excluded_sources or set())
+    registrations = _source_step_declarations_cached(tuple(sorted(sources)), root)
     cases: set[str] = set()
     steps: set[str] = set()
     mode = RUNNERS[selector].mode if selector else ""
     for declaration in registrations.values():
         name = declaration.get("name")
         if name is None:
+            continue
+        has_claim = any(
+            bool(_case_declarations(registered_source, root).get(line, {}).get("cases"))
+            for registered_source, line, _ in declaration.get("locations", ())
+        )
+        if not (has_claim or declaration.get("requires")):
             continue
         declared_runners = declaration.get("runners", ())
         if selector:

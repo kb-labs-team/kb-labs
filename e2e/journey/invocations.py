@@ -243,6 +243,36 @@ def _pty_reader_pids(root_pid: int) -> list[int]:
     return sorted(pids)
 
 
+def _linux_terminal_read_tasks(pid: int, read_syscall: int) -> list[tuple[int, str]]:
+    """Find task threads blocked in read(0) before inspecting protected fd links."""
+    try:
+        tasks = list(Path(f"/proc/{pid}/task").iterdir())
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        return []
+    readers: list[tuple[int, str]] = []
+    for task in tasks:
+        try:
+            task_state = _parse_proc_stat(Path(task, "stat").read_text(encoding="ascii"))
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        if task_state is None or task_state[3] not in {"S", "D"}:
+            continue
+        try:
+            syscall = Path(task, "syscall").read_text(encoding="ascii").split()
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        if len(syscall) < 2:
+            continue
+        try:
+            is_terminal_read = (int(syscall[0], 10) == read_syscall
+                                and int(syscall[1], 16) == 0)
+        except ValueError:
+            continue
+        if is_terminal_read:
+            readers.append((int(task.name), " ".join(syscall)))
+    return readers
+
+
 def _decode_linux_device_number(encoded: int) -> tuple[int, int]:
     major = ((encoded >> 8) & 0xFFF) | ((encoded >> 32) & ~0xFFF)
     minor = (encoded & 0xFF) | ((encoded >> 12) & ~0xFF)
@@ -277,23 +307,13 @@ def _linux_terminal_reader(pid: int, terminal_path: str) -> tuple[int, int, str]
         if (session_id != pid
                 or _decode_linux_device_number(controlling_tty) != terminal_device):
             continue
+        read_tasks = _linux_terminal_read_tasks(child_pid, read_syscall)
+        if not read_tasks:
+            continue
         try:
             if os.readlink(f"/proc/{child_pid}/fd/0") != terminal_path:
                 continue
-            tasks = Path(f"/proc/{child_pid}/task").iterdir()
-            for task in tasks:
-                task_state = _parse_proc_stat(Path(task, "stat").read_text(encoding="ascii"))
-                if task_state is None or task_state[3] not in {"S", "D"}:
-                    continue
-                syscall = Path(task, "syscall").read_text(encoding="ascii").split()
-                if len(syscall) >= 2:
-                    try:
-                        is_terminal_read = (int(syscall[0], 10) == read_syscall
-                                            and int(syscall[1], 16) == 0)
-                    except ValueError:
-                        continue
-                    if is_terminal_read:
-                        return child_pid, int(task.name), " ".join(syscall)
+            return child_pid, read_tasks[0][0], read_tasks[0][1]
         except FileNotFoundError:
             continue
         except PermissionError as error:

@@ -24,6 +24,78 @@ from runner import REGISTRY, marketplace_install_flags
 
 
 class WorkflowHostStateBoundaryTests(unittest.TestCase):
+    # case: S-262.8
+    def test_selected_claim_step_names_do_not_select_unrelated_outer_groups(self):
+        def graph_for(selection, owners, capabilities="", prerequisites=("candidate provenance",)):
+            environment = {
+                "KB_JOURNEY_CASES": selection,
+                "KB_JOURNEY_SELECTED_STEPS": selection,
+                "KB_JOURNEY_SELECTED_CAPABILITIES": capabilities,
+                "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps(owners),
+                "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps(list(prerequisites)),
+                "KB_JOURNEY_PREREQUISITE_FLOWS": "[]",
+                "KB_JOURNEY_RUNNER_SELECTOR": "human:nondefault" if selection == "S-040.1" else "agent:commit",
+                "KB_JOURNEY_ONLY": "human:nondefault" if selection == "S-040.1" else "agent:commit",
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                selection_data = importlib.import_module("journey_selection").read_journey_selection(
+                    os.environ, strict=True)
+                journey = Journey("local", f"selected-{selection}", selection=selection_data)
+                groups = runner.outer_selection_groups()
+                return FlowGraph(journey, runner.OUTER_GROUP_DEPENDENCIES, groups=groups)
+
+        wizard_graph = graph_for("S-040.1", {
+            "candidate provenance": ["S-040.1"],
+            "human interactive install": ["S-040.1"],
+        })
+        self.assertFalse(wizard_graph.group_selected("update"))
+        self.assertFalse(wizard_graph.group_selected("update-variants"))
+        self.assertFalse(wizard_graph.group_selected("marketplace-lifecycle"))
+        self.assertNotIn("fixtures-installed", wizard_graph.needed_states)
+
+        update_graph = graph_for("S-023.3", {
+            "candidate provenance": ["S-023.3"],
+            "plan the newer sealed release": ["S-023.3"],
+            "verify state after update/rollback/channel": ["S-023.3"],
+        }, capabilities="update", prerequisites=(
+            "candidate provenance", "plan the newer sealed release"))
+        self.assertTrue(update_graph.group_selected("update"))
+        self.assertFalse(update_graph.group_selected("update-variants"))
+
+    # case: S-262.8
+    def test_group_source_exclusions_preserve_marketplace_update_studio_and_full_selection(self):
+        from journey_selection import JourneySelection
+
+        def graph_for(case, selector, capabilities=()):
+            selection = JourneySelection(
+                (case,), frozenset({case}), {}, frozenset(), frozenset(),
+                frozenset(capabilities), selector, selector)
+            journey = Journey("local", f"representative-{case}", selection=selection)
+            groups = runner.outer_selection_groups()
+            return FlowGraph(journey, runner.OUTER_GROUP_DEPENDENCIES, groups=groups)
+
+        marketplace = graph_for("S-010.1", "agent:commit")
+        self.assertTrue(marketplace.group_selected("marketplace-lifecycle"))
+        self.assertFalse(marketplace.group_selected("update-variants"))
+
+        update_variant = graph_for("S-023.13", "agent:commit")
+        self.assertTrue(update_variant.group_selected("update-variants"))
+
+        studio = graph_for("S-106.1", "service-local:explore", ("studio",))
+        self.assertTrue(studio.group_selected("studio"))
+        self.assertIn("host-running", studio.needed_states)
+        self.assertIn("fixtures-installed", studio.needed_states)
+
+        full = JourneySelection((), frozenset(), {}, frozenset(), frozenset(),
+                                frozenset(), "", "")
+        full_graph = FlowGraph(
+            Journey("local", "representative-full", selection=full),
+            runner.OUTER_GROUP_DEPENDENCIES,
+            groups=runner.outer_selection_groups(),
+        )
+        self.assertFalse(full_graph.selection_active)
+        self.assertTrue(all(full_graph.group_selected(name) for name in full_graph.groups))
+
     # case: S-262.9
     def test_host_state_is_reprobed_after_a_workflow_failure(self):
         journey = Journey("local", "workflow-boundary-test")
@@ -519,6 +591,34 @@ thread.join()
             self.assertFalse(module.pty_terminal_read_ready(123, "/dev/pts/0"))
             readlink.assert_not_called()
 
+    def test_pty_running_descendant_is_not_inspected_as_a_terminal_reader(self):
+        module = importlib.import_module("invocations")
+        terminal_stat = type("TerminalStat", (), {"st_rdev": 0})()
+        denied = PermissionError(13, "Permission denied", "/proc/123/fd/0")
+        with patch.object(module.sys, "platform", "linux"), \
+                patch.object(module.platform, "machine", return_value="x86_64"), \
+                patch.object(module, "_pty_reader_pids", return_value=[123]), \
+                patch.object(module, "_proc_stat", return_value=(1, 123, 0, "R")), \
+                patch.object(module.os, "stat", return_value=terminal_stat), \
+                patch.object(module, "_linux_terminal_read_tasks", return_value=[]), \
+                patch.object(module.os, "readlink", side_effect=denied) as readlink:
+            self.assertFalse(module.pty_terminal_read_ready(123, "/dev/pts/0"))
+            readlink.assert_not_called()
+
+    def test_pty_secondary_task_can_be_the_confirmed_terminal_reader(self):
+        module = importlib.import_module("invocations")
+        terminal = "/dev/pts/4"
+        terminal_stat = type("TerminalStat", (), {"st_rdev": 0})()
+        read = "0 0 0 0 0 0 0"
+        with patch.object(module.sys, "platform", "linux"), \
+                patch.object(module.platform, "machine", return_value="x86_64"), \
+                patch.object(module, "_pty_reader_pids", return_value=[123]), \
+                patch.object(module, "_proc_stat", return_value=(1, 123, 0, "R")), \
+                patch.object(module.os, "stat", return_value=terminal_stat), \
+                patch.object(module, "_linux_terminal_read_tasks", return_value=[(456, read)]), \
+                patch.object(module.os, "readlink", return_value=terminal):
+            self.assertTrue(module.pty_terminal_read_ready(123, terminal))
+
     def test_pty_exit_during_fd_inspection_is_not_permission_failure(self):
         module = importlib.import_module("invocations")
         terminal_stat = type("TerminalStat", (), {"st_rdev": 0})()
@@ -527,8 +627,19 @@ thread.join()
                 patch.object(module, "_pty_reader_pids", return_value=[123]), \
                 patch.object(module, "_proc_stat", side_effect=[(1, 123, 0, "S"), (1, 123, 0, "Z")]), \
                 patch.object(module.os, "stat", return_value=terminal_stat), \
+                patch.object(module, "_linux_terminal_read_tasks", return_value=[(123, "0 0 0")]), \
                 patch.object(module.os, "readlink", side_effect=PermissionError):
             self.assertFalse(module.pty_terminal_read_ready(123, "/dev/pts/0"))
+
+    def test_pty_task_disappearing_during_syscall_inspection_is_not_fatal(self):
+        module = importlib.import_module("invocations")
+        task = Path("/proc/123/task/456")
+        with patch.object(module.Path, "iterdir", return_value=[task]), \
+                patch.object(module.Path, "read_text", side_effect=[
+                    "456 (runner) S 1 1 123 0 0", ProcessLookupError(3, "No such process")
+                ]) as read_text:
+            self.assertEqual(module._linux_terminal_read_tasks(123, 0), [])
+            self.assertEqual(read_text.call_count, 2)
 
     def test_pty_permission_denial_reports_process_and_fails_closed(self):
         module = importlib.import_module("invocations")
@@ -540,6 +651,7 @@ thread.join()
                 patch.object(module, "_pty_reader_pids", return_value=[136]), \
                 patch.object(module, "_proc_stat", return_value=(100, 100, 0, "S")), \
                 patch.object(module.os, "stat", return_value=stat), \
+                patch.object(module, "_linux_terminal_read_tasks", return_value=[(136, "0 0 0")]), \
                 patch.object(module.os, "readlink", side_effect=denied):
             with self.assertRaisesRegex(module.PtyReadinessUnsupported,
                     r"root pid 100, child pid 136, session 100, state S.*denied path /proc/136/fd/0, errno 13"):
@@ -978,6 +1090,7 @@ thread.join()
             "events": events,
         }
 
+    # case: S-262.8
     def test_main_smoke_selection_completes_in_both_modes(self):
         runner = importlib.import_module("runner")
         isolated_groups = [group.__name__ for group in runner.ISOLATED_FIXTURE_GROUPS]
@@ -989,7 +1102,7 @@ thread.join()
                 service_claims = {claim for step in service["steps"] for claim in step.get("cases", [])}
                 self.assertTrue({"PC-002.3", "PC-002.8"}.issubset(service_claims))
                 self.assertIn("SKIPPED workflow execution journey: not selected", summary)
-                self.assertNotIn("SKIPPED platform update journey: not selected", summary)
+                self.assertIn("SKIPPED platform update journey: not selected", summary)
                 self.assertIn("SKIPPED installed platform bootstrap: not selected; the install operation ran earlier; this flow is only a selection marker", summary)
                 self.assertEqual(observed["fixture_calls"], [])
                 self.assertEqual(observed["host_cycle"], ["stop", "start"])

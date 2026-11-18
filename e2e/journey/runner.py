@@ -214,11 +214,15 @@ def outer_selection_groups() -> dict[str, dict]:
         spec = dict(groups.get(group, {}))
         spec["produces"] = produced_states
         groups[group] = spec
-    for group, source in (
-            ("marketplace-lifecycle", "e2e/journey/marketplace_steps.py"),
-            ("update", "e2e/journey/platform_update_steps.py"),
-            ("update-variants", "e2e/journey/platform_update_variant_steps.py")):
-        resolved = journey_source_group_declaration(source, resource_root())
+    group_sources = (
+        ("marketplace-lifecycle", "e2e/journey/marketplace_steps.py"),
+        ("update", "e2e/journey/platform_update_steps.py"),
+        ("update-variants", "e2e/journey/platform_update_variant_steps.py"),
+    )
+    registered_group_sources = {source for _, source in group_sources}
+    for group, source in group_sources:
+        resolved = journey_source_group_declaration(
+            source, resource_root(), excluded_sources=registered_group_sources - {source})
         spec = dict(groups.get(group, {}))
         spec["cases"] = tuple(sorted(set(spec.get("cases", ())) | set(resolved["cases"])))
         spec["steps"] = tuple(sorted(set(spec.get("steps", ())) | set(resolved["steps"])))
