@@ -255,6 +255,11 @@ class MarketplaceStepTests(unittest.TestCase):
         ])
 
     def test_registry_commit_fixture_builds_analytics_copy_and_installs_in_lane_project(self):
+        for source_dist_exists in (False, True):
+            with self.subTest(source_dist_exists=source_dist_exists):
+                self._assert_registry_commit_fixture_builds_analytics_copy(source_dist_exists)
+
+    def _assert_registry_commit_fixture_builds_analytics_copy(self, source_dist_exists):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-registry-fixture-") as directory:
             root = Path(directory)
             project = root / "project"
@@ -266,6 +271,15 @@ class MarketplaceStepTests(unittest.TestCase):
             emitter_package.parent.mkdir(parents=True)
             shutil.copytree(emitter_source, emitter_package)
             shutil.copy2(emitter_source.parent / "build-manifest.mjs", emitter_package.parent)
+            source_dist = emitter_package / "dist"
+            if source_dist.exists():
+                shutil.rmtree(source_dist)
+            if source_dist_exists:
+                source_dist.mkdir()
+                (source_dist / "preserved-output.js").write_text("existing build output\n")
+            source_dist_before = ({path.relative_to(emitter_package): path.read_bytes()
+                                   for path in source_dist.rglob("*") if path.is_file()}
+                                  if source_dist.exists() else None)
             manifest_tool_source = (Path(__file__).resolve().parents[2]
                                     / "infra" / "devkit" / "tsup" / "emit-manifest-json.mjs")
             manifest_tool = workspace / "infra" / "devkit" / "tsup" / "emit-manifest-json.mjs"
@@ -328,7 +342,10 @@ class MarketplaceStepTests(unittest.TestCase):
             ])
             staged_package = Path(publish_calls[1][0][5])
             self.assertNotEqual(staged_package, emitter_package)
-            self.assertFalse((emitter_package / "dist").exists())
+            source_dist_after = ({path.relative_to(emitter_package): path.read_bytes()
+                                  for path in source_dist.rglob("*") if path.is_file()}
+                                 if source_dist.exists() else None)
+            self.assertEqual(source_dist_after, source_dist_before)
             self.assertFalse(staged_package.exists())
             build_call = next(call for call in calls if call[0] == ("node", "./build.mjs"))
             self.assertEqual(Path(build_call[1]).resolve(), staged_package)
