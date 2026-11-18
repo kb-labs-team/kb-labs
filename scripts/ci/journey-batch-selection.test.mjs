@@ -10,6 +10,7 @@ import { validateJourneyCaseDeclarations } from './journey-case-claims-preflight
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const workflow = load(readFileSync(resolve(root, '.github/workflows/journey-batch.yml'), 'utf8'));
+const reuseVerdict = readFileSync(resolve(root, 'e2e/journey/reuse_case_verdict.py'), 'utf8');
 const encode = (ids) => Buffer.from(ids).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
 
 // case: S-262.8
@@ -54,6 +55,52 @@ test('consumer jobs take the selection only from the producer-owned output', () 
     assert.doesNotMatch(run, /--cases|base64/);
   }
   assert.match(JSON.stringify(workflow.jobs.producer.steps), /journey-batch-selection\.mjs resolve/);
+});
+
+// case: S-262.18
+test('the selected-case reuse dispatch skips producer and gating summary jobs', () => {
+  assert.equal(workflow.on.workflow_dispatch.inputs.run_mode.default, 'full');
+  assert.deepEqual(workflow.on.workflow_dispatch.inputs.run_mode.options, ['full', 'reuse_candidate']);
+  for (const job of ['producer', 'local', 'secured', 'summary']) {
+    assert.match(workflow.jobs[job].if, /run_mode != 'reuse_candidate'/);
+  }
+  const reuse = workflow.jobs['reuse-candidate'];
+  assert.match(reuse.if, /run_mode == 'reuse_candidate'/);
+  assert.deepEqual(reuse.needs ?? [], [], 'reuse can only consume the explicitly selected prior run');
+  assert.deepEqual(reuse.permissions, { contents: 'read', actions: 'read' });
+  const checkout = reuse.steps.find((step) => step.uses?.includes('actions/checkout'));
+  assert.equal(checkout.with['persist-credentials'], false);
+  const compatibility = reuse.steps.find((step) => step.name === 'Require a candidate SHA with reuse-verdict support');
+  assert.match(compatibility.run, /test -f e2e\/journey\/reuse_case_verdict\.py/);
+  assert.ok(reuse.steps.indexOf(compatibility) < reuse.steps.findIndex((step) => step.name === 'Run the selected case against the reused candidate'));
+  const sourceRun = reuse.steps.find((step) => step.name === 'Verify source run identity and result');
+  assert.deepEqual(sourceRun.env, { GH_TOKEN: '${{ github.token }}' });
+  assert.match(sourceRun.run, /Shared build and candidate/);
+  assert.match(sourceRun.run, /candidate-artifacts/);
+  const download = reuse.steps.find((step) => step.name === 'Download and verify the exact candidate artifact');
+  assert.deepEqual(download.env, { GH_TOKEN: '${{ github.token }}' });
+  assert.match(download.run, /actions\/artifacts\/\$artifact_id\/zip/);
+  assert.match(download.run, /sha256sum/);
+  assert.match(download.run, /candidate-artifact\.zip/);
+  const allocation = reuse.steps.findIndex((step) => step.name === 'Allocate candidate input outside the checkout');
+  assert.ok(allocation >= 0 && allocation < reuse.steps.indexOf(download));
+  assert.match(reuse.steps[allocation].run, /mktemp -d "\$RUNNER_TEMP/);
+  assert.match(download.run, /normalized = path\.parts/);
+  assert.ok(reuse.steps.indexOf(download) < reuse.steps.findIndex((step) => step.name === 'Install workspace dependencies'),
+    'candidate bytes and their API digest are checked before dependency installation');
+  const verify = reuse.steps.findIndex((step) => step.name === 'Verify producer metadata');
+  const run = reuse.steps.findIndex((step) => step.name === 'Run the selected case against the reused candidate');
+  assert.ok(verify >= 0 && verify < run, 'identity validation precedes extraction and journey execution');
+  assert.match(reuse.steps[verify].run, /candidateArchiveSha256/);
+  assert.match(reuse.steps[run].run, /--cases "\$CASE_ID"/);
+  assert.match(reuse.steps[run].run, /reuse_case_verdict\.py "\$JOURNEY_MODE" "\$CASE_ID"/);
+  assert.match(reuseVerdict, /selection_from_coverage\(coverage_results\(\), requested, mode=mode/);
+  assert.match(reuseVerdict, /set\(case_run\.get\("selection", \[\]\)\) != selection/);
+  assert.match(reuseVerdict, /expected = set\(selected\.get\("steps", \[\]\)\)/);
+  assert.match(reuseVerdict, /metadata\.get\("result"\) != "PASS"/);
+  assert.match(reuse.steps[run].run, /candidate_reused = pathlib\.Path\(extracted_run_path\)\.is_file\(\)/);
+  assert.match(reuse.steps[run].run, /candidateReused=\{str\(candidate_reused\)\.lower\(\)\}/);
+  assert.match(reuse.steps[run].run, /"platformReused": False/);
 });
 
 test('batch producer runs the dist-free journey preflight before producing build artifacts', () => {
