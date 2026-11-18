@@ -47,6 +47,7 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(internalTools.needs, 'prepare');
   assert.equal(internalTools['continue-on-error'], true);
   assert.equal(internalTools.strategy.matrix, '${{ fromJSON(needs.prepare.outputs.internal_tool_matrix) }}');
+  assert.equal(internalTools.steps.find((step) => step.uses?.startsWith('actions/checkout@')).with.ref, '${{ inputs.target_sha || github.sha }}');
   assert.equal(internalTools['timeout-minutes'], '${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}');
   assert.equal(dependent.strategy.matrix, '${{ fromJSON(needs.build.outputs.build_dependent_matrix) }}');
   assert.equal(dependentSteps.find((step) => step.name === 'Run build-dependent test').env.REMOTE_STAGE_RESULT, 'stage-result-dependent-${{ matrix.stage }}-${{ matrix.shard || strategy.job-index }}.json');
@@ -90,6 +91,31 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.ok(finalize.needs.includes('internal-tool-test-shards'));
   assert.equal(aggregateStep.env.REMOTE_INTERNAL_TOOL_MATRIX, '${{ needs.prepare.outputs.internal_tool_matrix }}');
   assert.equal(buildSteps.filter((step) => step.name === 'Build selected workspace packages once').length, 1);
+});
+
+// case: S-262.15
+test('candidate PR label runs full verification for the exact head without secrets or write permissions', () => {
+  const pr = readYaml('.github/workflows/ci-pr.yml');
+  const remote = readYaml('.github/workflows/remote-verify.yml');
+  const candidate = pr.jobs['candidate-verification'];
+  assert.deepEqual(pr.on.pull_request.types, ['opened', 'synchronize', 'reopened', 'labeled', 'unlabeled']);
+  assert.equal(pr.concurrency['cancel-in-progress'], true);
+  assert.equal(pr.concurrency.group, 'ci-pr-${{ github.event.pull_request.number }}');
+  assert.equal(candidate.if, "contains(github.event.pull_request.labels.*.name, 'candidate')");
+  assert.equal(candidate.uses, './.github/workflows/remote-verify.yml');
+  assert.equal(candidate.with.profile, 'candidate');
+  assert.equal(candidate.with.target_sha, '${{ github.event.pull_request.head.sha }}');
+  assert.deepEqual(candidate.permissions, { contents: 'read', actions: 'read', checks: 'read' });
+  assert.equal(Object.hasOwn(candidate, 'secrets'), false);
+  assert.ok(!Object.values(pr.jobs).some((job) => job.permissions?.contents === 'write' && job.uses === './.github/workflows/remote-verify.yml'));
+
+  const internalCheckout = remote.jobs['internal-tool-test-shards'].steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+  assert.equal(internalCheckout.with.ref, '${{ inputs.target_sha || github.sha }}');
+  for (const job of Object.values(remote.jobs)) {
+    for (const step of job.steps ?? []) {
+      if (step.uses?.startsWith('actions/checkout@')) assert.equal(step.with.ref, '${{ inputs.target_sha || github.sha }}');
+    }
+  }
 });
 
 test('journey batch and candidate route builds through the same runner entry', () => {
