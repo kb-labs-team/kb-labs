@@ -84,7 +84,9 @@ test('candidate lock check refuses stale manifests without rewriting the lockfil
   const workspace = join(root, 'workspace');
   mkdirSync(home, { recursive: true });
   mkdirSync(workspace, { recursive: true });
-  writeFileSync(join(workspace, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
+  // Corepack already selects the exact packageManager version for this fixture.
+  // Do not let pnpm download a second copy from the fixture's offline registry.
+  writeFileSync(join(workspace, 'pnpm-workspace.yaml'), 'pmOnFail: ignore\npackages:\n  - packages/*\n');
   writeJson(join(workspace, 'package.json'), {
     name: 'frozen-lockfile-fixture',
     private: true,
@@ -153,7 +155,7 @@ test('candidate lock check refuses stale manifests without rewriting the lockfil
   assert.ok(result, 'stale workspace manifests must fail the frozen-lockfile check');
   const staleMessage = `${result.stderr}${result.stdout}`;
   assert.match(staleMessage, /ERR_PNPM_OUTDATED_LOCKFILE/);
-  assert.match(staleMessage, /pnpm install --no-frozen-lockfile/);
+  assert.match(staleMessage, /pnpm install --lockfile-only/);
   assert.doesNotMatch(staleMessage, /ECONNREFUSED|ERR_PNPM_NO_OFFLINE_META|ENOTFOUND/);
   assert.equal(hash(lockPath), staleHash, 'frozen validation must not rewrite pnpm-lock.yaml');
   assert.equal(treeSnapshot(nodeModulesPath), currentNodeModules,
