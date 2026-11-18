@@ -60,6 +60,8 @@ export interface RunInProcessOptions {
   pluginInvoker?: PluginInvokerFn;
   eventEmitter?: EventEmitterFn;
   handlerPath: string;
+  /** Trusted host platform root for resolving platform peers outside the platform tree. */
+  platformRoot?: string;
   input: unknown;
   signal?: AbortSignal;
   cwd: string;
@@ -73,6 +75,8 @@ export interface RunInSubprocessOptions {
   descriptor: PluginContextDescriptor;
   platform: IPlatformAdapters;
   handlerPath: string;
+  /** Trusted host platform root for resolving platform peers outside the platform tree. */
+  platformRoot?: string;
   input: unknown;
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -142,7 +146,7 @@ export async function runInProcess<T = unknown>(
     // Plugin code can be outside the installed platform tree (for example, a
     // Marketplace store entry). Resolve its platform packages from the one
     // platform copy in this process before importing the handler.
-    const platformRoot = process.env.KB_PLATFORM_ROOT;
+    const platformRoot = options.platformRoot ?? process.env.KB_PLATFORM_ROOT;
     if (platformRoot) {
       installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
     }
@@ -329,6 +333,7 @@ export async function runInSubprocess<T = unknown>(
       requestId,
       descriptor,
       handlerPath,
+      platformRoot: options.platformRoot,
       input,
       cwd: options.cwd,
       strictFilesystemPermissions: false,

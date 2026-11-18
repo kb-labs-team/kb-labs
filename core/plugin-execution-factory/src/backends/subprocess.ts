@@ -188,6 +188,7 @@ export class SubprocessBackend implements RawExecutionBackend {
           pluginVersion: requestToExecute.descriptor.pluginVersion,
           handlerRef: requestToExecute.handlerRef,
           handlerPath,
+          platformRoot: requestToExecute.platformRoot,
           evidence: {
             executionId: requestToExecute.executionId,
             pluginRoot: lease.pluginRoot,

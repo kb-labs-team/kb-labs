@@ -107,9 +107,11 @@ export class RemoteBackend implements RemoteExecutionBackend {
    * No-op if workspaceRootOnHost is not set.
    */
   private remapRequest(request: ExecutionRequest): ExecutionRequest {
-    if (!this.workspaceRootOnHost) {
-      return request;
-    }
+    // A local platform root is trusted host metadata. The remote runtime must
+    // resolve peers from its own installed platform, never this machine's path.
+    const remoteRequest = { ...request };
+    delete remoteRequest.platformRoot;
+    if (!this.workspaceRootOnHost) { return remoteRequest; }
 
     const wsRoot = this.workspaceRootOnHost.replace(/\/$/, '');
 
@@ -117,9 +119,9 @@ export class RemoteBackend implements RemoteExecutionBackend {
       p.startsWith(wsRoot) ? '/workspace' + p.slice(wsRoot.length) : p;
 
     return {
-      ...request,
-      handlerRef: remap(request.handlerRef),
-      pluginRoot: remap(request.pluginRoot),
+      ...remoteRequest,
+      handlerRef: remap(remoteRequest.handlerRef),
+      pluginRoot: remap(remoteRequest.pluginRoot),
     };
   }
 

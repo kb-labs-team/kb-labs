@@ -24,6 +24,9 @@ export interface SubprocessRunOptions {
   /** Handler file path */
   handlerPath: string;
 
+  /** Trusted host platform root for internal package resolution; never exposed through plugin environment. */
+  platformRoot?: string;
+
   /** Handler export name (default: "default") */
   exportName?: string;
 

@@ -35,6 +35,8 @@ import { missingCliResultWriter, type CliResultWriter } from './result-serialize
 export interface PluginExecutionOptions {
   context: SystemContext;
   env: NodeJS.ProcessEnv;
+  /** Trusted local platform root; passed through internal execution metadata only. */
+  platformRoot?: string;
   commandId: string;
   argv: string[];
   flags: Record<string, unknown>;
@@ -142,6 +144,7 @@ export async function executePlugin(
           ui,
           platform: platformServices,
           platformContainer: platform,
+          platformRoot: options.platformRoot,
           cwd: context.cwd || process.cwd(),
           devMode: process.env.NODE_ENV === "development",
           permissions,
