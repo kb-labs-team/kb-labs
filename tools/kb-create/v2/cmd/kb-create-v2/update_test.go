@@ -1711,7 +1711,7 @@ func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	pnpmShim := filepath.Join(binDir, "pnpm")
-	if err := os.WriteFile(pnpmShim, []byte("#!/bin/sh\nexec \"$COREPACK_PATH\" pnpm@11.4.0 \"$@\"\n"), 0o700); err != nil {
+	if err := os.WriteFile(pnpmShim, []byte("#!/bin/sh\nexec \"$COREPACK_PATH\" pnpm@12.21.0 \"$@\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))

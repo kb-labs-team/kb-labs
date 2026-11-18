@@ -86,8 +86,8 @@ func TestV2ToolchainFailureIsActionableForNodeAndPnpm(t *testing.T) {
 		versions map[string]string
 		want     string
 	}{
-		{name: "node", versions: map[string]string{"node": "v20.18.0", "pnpm": "11.4.0"}, want: "Node.js 20.18.0 is unsupported"},
-		{name: "pnpm", versions: map[string]string{"node": fmt.Sprintf("v%d.18.0", sharedtoolchain.SupportedNodeMajor), "pnpm": "10.9.0"}, want: "pnpm 11.x"},
+		{name: "node", versions: map[string]string{"node": "v20.18.0", "pnpm": "12.21.0"}, want: "Node.js 20.18.0 is unsupported"},
+		{name: "pnpm", versions: map[string]string{"node": fmt.Sprintf("v%d.18.0", sharedtoolchain.SupportedNodeMajor), "pnpm": "10.9.0"}, want: "pnpm 12.x"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

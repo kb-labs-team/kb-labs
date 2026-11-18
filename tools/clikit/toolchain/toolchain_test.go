@@ -232,7 +232,7 @@ func TestPnpmResolutionUsesCapturedOuterCorepackCacheAndFailsWithoutDownload(t *
 	if failure.Hint == "" || !strings.Contains(failure.Hint, "corepack install") {
 		t.Fatalf("missing exact cache remediation: %q", failure.Hint)
 	}
-	script := filepath.Join(cache, "v1", "pnpm", SupportedPnpm, "bin", "pnpm.cjs")
+	script := filepath.Join(cache, "v1", "pnpm", SupportedPnpm, "bin", "pnpm.mjs")
 	if err := os.MkdirAll(filepath.Dir(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -242,6 +242,25 @@ func TestPnpmResolutionUsesCapturedOuterCorepackCacheAndFailsWithoutDownload(t *
 	_, got, err := resolvePnpmAt(cache)
 	if err != nil || got != script {
 		t.Fatalf("cached pnpm = %q, %v; want %q", got, err, script)
+	}
+}
+
+// case: S-308.2
+func TestPnpm12IsAcceptedByInstallerPolicy(t *testing.T) {
+	if err := ValidatePnpm("12.21.0"); err != nil {
+		t.Fatalf("supported pnpm 12 rejected: %v", err)
+	}
+}
+
+// case: S-308.3
+func TestPnpm11IsRejectedWithPinnedPnpm12Remediation(t *testing.T) {
+	err := ValidatePnpm("11.28.12")
+	var failure *ValidationError
+	if !errors.As(err, &failure) {
+		t.Fatalf("pnpm 11 validation = %v, want ValidationError", err)
+	}
+	if failure.Requirement != "pnpm 12.x" || failure.Remediation != "Install pnpm@12.21.0 and retry" {
+		t.Fatalf("pnpm 11 remediation = %#v", failure)
 	}
 }
 

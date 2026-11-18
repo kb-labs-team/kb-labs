@@ -11,7 +11,7 @@ import (
 )
 
 func TestEnsureWithAcceptsSupportedRuntime(t *testing.T) {
-	versions := map[string]string{"node": fmt.Sprintf("v%d.18.0", sharedtoolchain.SupportedNodeMajor), "pnpm": "11.4.0"}
+	versions := map[string]string{"node": fmt.Sprintf("v%d.18.0", sharedtoolchain.SupportedNodeMajor), "pnpm": "12.21.0"}
 	var output strings.Builder
 	if err := EnsureWith(func(binary string) (string, error) { return versions[binary], nil }, &output); err != nil {
 		t.Fatal(err)
@@ -22,7 +22,7 @@ func TestEnsureWithAcceptsSupportedRuntime(t *testing.T) {
 }
 
 func TestEnsureWithFailsFastOnUnsupportedNode(t *testing.T) {
-	versions := map[string]string{"node": "v20.18.0", "pnpm": "11.4.0"}
+	versions := map[string]string{"node": "v20.18.0", "pnpm": "12.21.0"}
 	if err := EnsureWith(func(binary string) (string, error) { return versions[binary], nil }, nil); err == nil || !strings.Contains(err.Error(), "Node.js 20.18.0 is unsupported") {
 		t.Fatalf("error = %v", err)
 	}
@@ -39,7 +39,7 @@ func TestInstallerPreflightMatchesRuntimeCatalogForOlderAndNewerMajors(t *testin
 			if binary == "node" {
 				return version, nil
 			}
-			return "v11.4.0", nil
+			return "v12.21.0", nil
 		}, nil)
 		var failure *diag.Diag
 		if !errors.As(err, &failure) {
@@ -83,7 +83,7 @@ func TestEnsureWithKeepsMissingNodeSeparateFromUnsupportedVersion(t *testing.T) 
 		if binary == "node" {
 			return "", errors.New("node executable missing")
 		}
-		return "v11.4.0", nil
+		return "v12.21.0", nil
 	}, nil)
 	var failure *diag.Diag
 	if !errors.As(err, &failure) {

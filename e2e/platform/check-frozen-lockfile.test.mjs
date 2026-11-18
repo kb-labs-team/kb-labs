@@ -88,7 +88,7 @@ test('candidate lock check refuses stale manifests without rewriting the lockfil
   writeJson(join(workspace, 'package.json'), {
     name: 'frozen-lockfile-fixture',
     private: true,
-    packageManager: 'pnpm@11.4.0',
+    packageManager: 'pnpm@12.21.0',
   });
   writeJson(join(workspace, 'packages/core/package.json'), {
     name: '@fixture/core',

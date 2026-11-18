@@ -55,7 +55,7 @@
       "manifest": "./dist/manifest.js"
     }
   },
-  "packageManager": "pnpm@11.4.0",
+  "packageManager": "pnpm@12.21.0",
   "sideEffects": false,
   "peerDependencies": {
     "@kb-labs/sdk": "workspace:*"

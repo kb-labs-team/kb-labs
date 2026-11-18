@@ -230,7 +230,7 @@ func TestPnpmMinimumReleaseAgeExemptsOnlySealedExactVersions(t *testing.T) {
 	packageManagerRoot := filepath.Join(home, "package-manager")
 	t.Setenv("COREPACK_HOME", filepath.Join(packageManagerRoot, "corepack"))
 	if _, err := exec.LookPath("node"); err != nil {
-		t.Skipf("pnpm 11.4.0 integration requires Node.js; node is unavailable: %v", err)
+		t.Skipf("pnpm 12.21.0 integration requires Node.js; node is unavailable: %v", err)
 	}
 	node, pnpmScript, err := toolchain.PnpmExecutable()
 	if err != nil {
@@ -581,7 +581,7 @@ func (run runnerFunc) Run(ctx context.Context, output io.Writer, name string, ar
 }
 
 // Regression coverage for the mechanism, not just its absence from the pnpm
-// invocation: pnpm 11.4.0 mis-parses a comma-joined --allow-build value as a
+// invocation: pnpm 12.21.0 mis-parses a comma-joined --allow-build value as a
 // single "name@version-union" spec (pnpm's invalid version-union error) the
 // moment the list mixes scoped packages with others
 // — confirmed directly against that pnpm version. The fix moves the

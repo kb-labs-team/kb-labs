@@ -46,7 +46,7 @@
     "node": "24.x",
     "pnpm": ">=9.0.0"
   },
-  "packageManager": "pnpm@11.4.0",
+  "packageManager": "pnpm@12.21.0",
   "peerDependencies": {
     "@fastify/cors": "^10.0.0",
     "@fastify/swagger": ">=9.5.1",

@@ -23,7 +23,7 @@ RUN test -n "$NODE_MAJOR" || { echo "NODE_MAJOR is required; derive it from root
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/* \
  && corepack enable \
- && corepack prepare pnpm@11.4.0 --activate
+ && corepack prepare pnpm@12.21.0 --activate
 
 # Non-root platform user (ADR-0014 §D16).
 RUN useradd -m -s /bin/bash kb \

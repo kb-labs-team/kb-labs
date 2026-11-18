@@ -59,7 +59,7 @@ FROM node:24-bookworm
 
 RUN apt-get update -qq && \
     apt-get install -y -qq curl ca-certificates git jq && \
-    npm install -g pnpm@11.4.0 && \
+    npm install -g pnpm@12.21.0 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN git config --global user.email "e2e@kblabs.test" && \

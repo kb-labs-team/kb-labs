@@ -1758,7 +1758,7 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Runtime preflight failed: the installed toolchain is not supported.",
-      "hint": "Use the supported Node.js major and pnpm 11.x, or update the runtime and retry.",
+      "hint": "Use the supported Node.js major and pnpm 12.x, or update the runtime and retry.",
       "httpStatus": 500
     },
     {

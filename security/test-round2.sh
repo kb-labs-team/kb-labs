@@ -5,7 +5,7 @@ readonly security_dir="$(cd "$(dirname "$0")" && pwd)"
 readonly test_root="$(mktemp -d "${TMPDIR:-/tmp}/x233-security-round6.XXXXXX")"
 readonly original_home="$HOME"
 readonly node_bin="$(command -v node)"
-readonly pnpm_cli="$original_home/.cache/node/corepack/v1/pnpm/11.4.0/bin/pnpm.cjs"
+readonly pnpm_cli="$original_home/.cache/node/corepack/v1/pnpm/12.21.0/bin/pnpm.mjs"
 readonly test_home="$(cd "$(mktemp -d "$security_dir/../.x233-security-home-round6.XXXXXX")" && pwd -P)"
 readonly nvm_node_dir="$test_home/.nvm/versions/node/v24.18.1/bin"
 readonly shim_dir="$test_root/shims"
@@ -36,7 +36,7 @@ printf '%s\n' "$*" >> "$HOME/launchctl.calls"
 SH
 cat > "$shim_dir/pnpm" <<'SH'
 #!/bin/bash
-exec corepack pnpm@11.4.0 "$@"
+exec corepack pnpm@12.21.0 "$@"
 SH
 cat > "$shim_dir/osascript" <<'SH'
 #!/bin/bash

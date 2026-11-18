@@ -78,7 +78,7 @@ class RunnerToolchainTagTests(unittest.TestCase):
         root = Path(temporary.name)
         self.studio_manifest = root / "studio-package.json"
         self.package_manifest = root / "workspace-package.json"
-        self.package_manifest.write_text(json.dumps({"packageManager": "pnpm@11.4.0"}), encoding="utf-8")
+        self.package_manifest.write_text(json.dumps({"packageManager": "pnpm@12.21.0"}), encoding="utf-8")
         self.studio_manifest.write_text(json.dumps({"devDependencies": {
             "@playwright/test": STUDIO_PLAYWRIGHT_DECLARATION,
         }}), encoding="utf-8")

@@ -108,7 +108,7 @@ describe('NpmPackageSource', () => {
     await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
       name: 'marketplace-fixture',
       version: '1.0.0',
-      packageManager: 'pnpm@11.4.0',
+      packageManager: 'pnpm@12.21.0',
     }));
     await fs.writeFile(path.join(root, 'pnpm-workspace.yaml'), [
       'minimumReleaseAge: 10080',
@@ -122,7 +122,7 @@ describe('NpmPackageSource', () => {
 
   async function isolatePnpmEnvironment(home: string, registryUrl: string, store: string): Promise<void> {
     const binDirectory = path.join(path.dirname(home), 'bin');
-    const pnpmManager = path.join(os.homedir(), '.cache', 'node', 'corepack', 'v1', 'pnpm', '11.4.0', 'bin', 'pnpm.cjs');
+    const pnpmManager = path.join(os.homedir(), '.cache', 'node', 'corepack', 'v1', 'pnpm', '12.21.0', 'bin', 'pnpm.mjs');
     await fs.mkdir(binDirectory, { recursive: true });
     await fs.access(pnpmManager);
     const pnpmShim = path.join(binDirectory, 'pnpm');
@@ -403,7 +403,7 @@ describe('NpmPackageSource', () => {
       const packageId = '@kb-labs/postinstall-mismatch';
       await registry.publish(unrelatedId);
       await registry.publish(packageId);
-      const pnpmManager = path.join(os.homedir(), '.cache', 'node', 'corepack', 'v1', 'pnpm', '11.4.0', 'bin', 'pnpm.cjs');
+      const pnpmManager = path.join(os.homedir(), '.cache', 'node', 'corepack', 'v1', 'pnpm', '12.21.0', 'bin', 'pnpm.mjs');
       await isolatePnpmEnvironment(home, registry.url, path.join(root, 'pnpm-store'));
       const source = new NpmPackageSource({ registryUrl: registry.url });
       const unrelated = await source.resolve(unrelatedId);

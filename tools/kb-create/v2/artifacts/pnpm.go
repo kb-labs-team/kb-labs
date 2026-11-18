@@ -193,12 +193,12 @@ func NewPnpm(config PnpmConfig) (Pnpm, error) {
 //
 // This is written into pnpm-workspace.yaml's `allowBuilds` map (the format
 // `pnpm approve-builds --all` itself writes) rather than passed as a CLI
-// `--allow-build=` flag: pnpm 11.4.0 (pinned in the E2E image and this
+// `--allow-build=` flag: pnpm 12.21.0 (pinned in the E2E image and this
 // repo's own packageManager field) mis-parses a comma-joined value as a
 // single "name@version-union" spec — and therefore fails with pnpm's invalid
 // version-union error — the moment the list has more than one
 // entry and includes a scoped package (contains "@"). Confirmed directly
-// against pnpm 11.4.0:
+// against pnpm 12.21.0:
 // the CLI flag breaks on this exact list (comma-joined or repeated), while
 // this config file's `allowBuilds` map handles it cleanly.
 var approvedNativeBuilds = []string{"better-sqlite3", "esbuild", "unrs-resolver"}
@@ -484,10 +484,10 @@ func (p Pnpm) preparePackageJSON() error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	// The launcher preflight deliberately supports the pnpm 11.x line, not one
+	// The launcher preflight deliberately supports the pnpm 12.x line, not one
 	// particular patch release. Do not pin packageManager here: Corepack rejects
 	// a supported newer pnpm when a generated project claims it must be exactly
-	// 11.4.0, which made a later V2 update (and its rollback) impossible.
+	// 12.21.0, which made a later V2 update (and its rollback) impossible.
 	data, _ := json.MarshalIndent(map[string]any{"name": "kb-platform", "private": true}, "", "  ")
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }

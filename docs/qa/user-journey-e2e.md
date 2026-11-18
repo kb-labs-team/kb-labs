@@ -60,8 +60,8 @@ index, and serves the launcher binary, checksum file, and index from a local
 HTTP origin. The runner sets `KB_CREATE_DOWNLOAD_BASE_URL` to that origin; the
 installer uses the normal GitHub Releases URL whenever this variable is unset.
 
-Each journey is a fresh Node.js Linux container with git and pnpm 12.8.1, while
-the platform pins pnpm 11.4.0. The container starts with an empty temporary
+Each journey is a fresh Node.js Linux container with git and the workspace-pinned
+pnpm 12.21.0. The container starts with an empty temporary
 HOME. The matrix covers direct agent apply for every built-in scenario, the
 human `install` path through a PTY (defaults and a non-default scenario), and
 the Node, port, and relative-path failures. A fresh git project then checks the

@@ -192,7 +192,9 @@ func PnpmExecutableAt(cacheRoot string) (node, pnpmScript string, err error) {
 }
 
 func resolvePnpmAt(cacheRoot string) (node, script string, err error) {
-	script = filepath.Join(cacheRoot, "v1", "pnpm", SupportedPnpm, "bin", "pnpm.cjs")
+	// pnpm 12 is a native executable launched through this Node entry point in
+	// Corepack's cache. It resolves the installed binary from its package root.
+	script = filepath.Join(cacheRoot, "v1", "pnpm", SupportedPnpm, "bin", "pnpm.mjs")
 	if _, err = os.Stat(script); err != nil {
 		diagnostic, diagErr := diag.FromCatalog("KB_TOOLCHAIN_PNPM_UNAVAILABLE", map[string]string{"version": SupportedPnpm, "nextCommand": "corepack install"})
 		if diagErr != nil {

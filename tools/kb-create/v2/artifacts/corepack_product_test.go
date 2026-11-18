@@ -22,7 +22,7 @@ set -eu
 [ "$COREPACK_NPM_REGISTRY" = "http://127.0.0.1:4874" ]
 [ "$1" = install ] && [ "$2" = -g ] && [ "$3" = "pnpm@` + toolchain.SupportedPnpm + `" ]
 mkdir -p "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin"
-printf 'process.stdout.write("product-pnpm-ok")' > "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin/pnpm.cjs"
+printf 'process.stdout.write("product-pnpm-ok")' > "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin/pnpm.mjs"
 `
 	if err := os.WriteFile(filepath.Join(bin, "corepack"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ printf 'process.stdout.write("product-pnpm-ok")' > "$COREPACK_HOME/v1/pnpm/` + t
 	if !strings.Contains(output.String(), "product-pnpm-ok") {
 		t.Fatalf("output %q", output.String())
 	}
-	if _, err := os.Stat(filepath.Join(root, "corepack", "v1", "pnpm", toolchain.SupportedPnpm, "bin", "pnpm.cjs")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "corepack", "v1", "pnpm", toolchain.SupportedPnpm, "bin", "pnpm.mjs")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -64,7 +64,7 @@ func TestProductCorepackHomeAndRegistryAreShared(t *testing.T) {
 	if !strings.Contains(env, "COREPACK_HOME="+p.corepackHome()) || strings.Contains(env, "COREPACK_NPM_REGISTRY=") {
 		t.Fatalf("Corepack environment = %s", env)
 	}
-	script := filepath.Join(p.corepackHome(), "v1", "pnpm", toolchain.SupportedPnpm, "bin", "pnpm.cjs")
+	script := filepath.Join(p.corepackHome(), "v1", "pnpm", toolchain.SupportedPnpm, "bin", "pnpm.mjs")
 	if err := os.MkdirAll(filepath.Dir(script), 0755); err != nil {
 		t.Fatal(err)
 	}
