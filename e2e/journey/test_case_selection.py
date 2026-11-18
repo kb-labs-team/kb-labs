@@ -36,6 +36,47 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
 
 
 class CaseJourneySelectionTests(unittest.TestCase):
+    # case: S-010.4
+    def test_installed_commit_sdk_claim_is_owned_by_service_runner_in_both_modes(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/marketplace_steps.py"
+        line, declaration = next(
+            (line, item) for line, item in _case_declarations(source, root).items()
+            if "S-010.4" in (item.get("cases") or ())
+        )
+        self.assertEqual(
+            declaration.get("requires"),
+            ["step:install Commit into the project for the route lifecycle"],
+        )
+        results = [{
+            "mode": mode,
+            "cases": [{
+                "id": "S-010",
+                "status": "active",
+                "release": True,
+                "steps": [{"stepId": "S-010.4", "claims": [{
+                    "kind": "journey", "source": source, "line": line,
+                }]}],
+            }],
+        } for mode in ("local", "secured")]
+
+        for mode, selector in (("local", "service-local:explore"),
+                               ("secured", "service-secured:explore")):
+            with self.subTest(mode=mode):
+                resolved = selection_from_coverage(results, "S-010.4", mode=mode,
+                                                   requested_runners="")
+                self.assertEqual(resolved["runners"], [selector])
+                self.assertEqual(resolved["owners"], {selector: ["S-010.4"]})
+                self.assertIn("install Commit into the project for the route lifecycle",
+                              resolved["prerequisiteSteps"])
+                self.assertIn("e2e/journey/service_runner.py", resolved["stepSources"])
+
+                from service_runner import service_selection_groups
+                groups = service_selection_groups(root, selector)
+                self.assertIn("S-010.4", groups["marketplace-lifecycle"]["cases"])
+                self.assertIn("install Commit into the project for the route lifecycle",
+                              groups["marketplace-lifecycle"]["steps"])
+
     # case: S-262.14
     def test_explicit_planned_case_and_step_selection_does_not_change_full_release_selection(self):
         source = "e2e/journey/secured_human_wizard_steps.py"
