@@ -746,7 +746,7 @@ thread.join()
                      "serviceGraph": {"platformVersion": "2.120.1"},
                      "artifacts": [{"id": "fixture-package", "kind": "plugin",
                                     "package": "@kb-labs/fixture-package", "version": "1.0.0"}]},
-            "marketplaceInstalls": [{"id": "@kb-labs/commit", "spec": "@kb-labs/commit@1.0.0",
+            "marketplaceInstalls": [{"id": "@kb-labs/commit", "spec": "@kb-labs/commit",
                                      "version": "1.0.0", "source": "registry"}],
         }
         receipt_path.write_text(json.dumps(install_receipt), encoding="utf-8")
