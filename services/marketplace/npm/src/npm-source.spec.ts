@@ -111,6 +111,9 @@ describe('NpmPackageSource', () => {
       packageManager: 'pnpm@12.21.0',
     }));
     await fs.writeFile(path.join(root, 'pnpm-workspace.yaml'), [
+      // Tests invoke the exact Corepack-provisioned pnpm binary via a shim. Keep
+      // pnpm from trying to download a second copy through each fake registry.
+      'pmOnFail: ignore',
       'minimumReleaseAge: 10080',
       'minimumReleaseAgeExclude: []',
       'overrides:',
