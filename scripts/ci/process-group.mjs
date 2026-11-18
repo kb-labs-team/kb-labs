@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { dirname } from 'node:path';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 
 const SIGNAL_STATUS = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
@@ -28,9 +30,8 @@ function groupExists(groupId) {
   }
 }
 
-async function settleGroup(groupId, initialSignal, graceMs) {
+async function settleGroup(groupId, initialSignal, deadline) {
   signalGroup(groupId, initialSignal);
-  const deadline = Date.now() + graceMs;
   while (Date.now() < deadline && groupExists(groupId)) {
     await new Promise((resolve) => setTimeout(resolve, Math.min(25, deadline - Date.now())));
   }
@@ -44,7 +45,9 @@ async function settleGroup(groupId, initialSignal, graceMs) {
 }
 
 /** Run a command in its own process group and reap that group on exit or cancellation. */
-export function runProcessGroup(command, args, { cwd, env, stdio = 'inherit', graceMs = 4000 } = {}) {
+export function runProcessGroup(command, args, {
+  cwd, env, stdio = 'inherit', graceMs = 4000, reapGraceMs = 1000, cancellationDeadlineFile,
+} = {}) {
   return new Promise((resolve) => {
     const child = spawn(command, args, { cwd, env, stdio, detached: true });
     let requestedSignal;
@@ -53,12 +56,13 @@ export function runProcessGroup(command, args, { cwd, env, stdio = 'inherit', gr
     let cleanupStarted = false;
     let escalationTimer;
     let escalationDeadline;
+    let killDeadline;
     let escalationSent = false;
     const handlers = new Map();
 
     const ensureEscalation = () => {
       if (!escalationDeadline || escalationTimer) return;
-      const delay = Math.max(0, escalationDeadline - Date.now());
+      const delay = Math.max(0, killDeadline - Date.now());
       escalationTimer = setTimeout(() => {
         escalationTimer = undefined;
         if (child.pid) {
@@ -71,6 +75,17 @@ export function runProcessGroup(command, args, { cwd, env, stdio = 'inherit', gr
     const forward = (signal) => {
       requestedSignal ??= signal;
       escalationDeadline ??= Date.now() + graceMs;
+      killDeadline ??= escalationDeadline + reapGraceMs;
+      if (cancellationDeadlineFile) {
+        const temporary = `${cancellationDeadlineFile}.${process.pid}.tmp`;
+        try {
+          mkdirSync(dirname(cancellationDeadlineFile), { recursive: true, mode: 0o700 });
+          writeFileSync(temporary, `${Math.trunc(escalationDeadline)}\n`, { mode: 0o600 });
+          renameSync(temporary, cancellationDeadlineFile);
+        } catch (error) {
+          childError ??= error;
+        }
+      }
       if (child.pid) signalGroup(child.pid, requestedSignal);
       ensureEscalation();
     };
@@ -91,8 +106,10 @@ export function runProcessGroup(command, args, { cwd, env, stdio = 'inherit', gr
       cleanupStarted = true;
       if (child.pid) {
         try {
-          await settleGroup(child.pid, escalationSent ? 'SIGKILL' : requestedSignal ?? 'SIGTERM',
-            escalationSent ? 0 : graceMs);
+          const deadline = requestedSignal
+            ? killDeadline
+            : Date.now() + graceMs;
+          await settleGroup(child.pid, escalationSent ? 'SIGKILL' : requestedSignal ?? 'SIGTERM', deadline);
         } catch (error) {
           childError ??= error;
         }

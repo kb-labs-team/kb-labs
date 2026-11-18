@@ -62,6 +62,19 @@ def _signal_stage_group(group_id: int, signum: int) -> None:
         pass
 
 
+def _stage_cleanup_deadline(signal_received_at: float, grace_seconds: float) -> float:
+    """Use the outer producer's absolute deadline when this stage is nested in it."""
+    deadline_file = os.environ.get("JOURNEY_CANCEL_DEADLINE_FILE")
+    if deadline_file:
+        try:
+            with open(deadline_file, "r", encoding="ascii") as source:
+                deadline_ms = int(source.read(64).strip())
+            return time.monotonic() + max(0.0, deadline_ms / 1000 - time.time())
+        except (OSError, ValueError):
+            pass
+    return signal_received_at + grace_seconds
+
+
 def run_logged_stage(stage: str, log_path: str | Path, command: list[str], *,
                      heartbeat_seconds: float = 60, termination_grace_seconds: float = 2,
                      emit: Callable[[str], None] | None = None, cwd: str | Path | None = None) -> int:
@@ -122,7 +135,10 @@ def run_logged_stage(stage: str, log_path: str | Path, command: list[str], *,
                 cleanup_signal = received_signals[0] if received_signals else signal.SIGTERM
                 if received_signals or _stage_group_exists(group_id):
                     _signal_stage_group(group_id, cleanup_signal)
-                    deadline = time.monotonic() + termination_grace_seconds
+                    deadline = (
+                        _stage_cleanup_deadline(signal_time[0], termination_grace_seconds)
+                        if received_signals else time.monotonic() + termination_grace_seconds
+                    )
                     while time.monotonic() < deadline and _stage_group_exists(group_id):
                         if status is None:
                             try:

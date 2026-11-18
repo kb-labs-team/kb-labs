@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { runStage } from './remote-verify-stage.mjs';
 import { mirrorStreamsToFile } from './remote-stage-output.mjs';
@@ -8,12 +10,25 @@ import { runProcessGroup } from './process-group.mjs';
 if (process.argv[2] === '--journey-batch-prepare') {
   const [output, baseline] = process.argv.slice(3);
   if (!output) throw new Error('Usage: node scripts/ci/run-remote-stage.mjs --journey-batch-prepare <output-dir> [baseline]');
-  const result = await runProcessGroup(
-    'bash', ['e2e/journey/batch.sh', 'prepare', output, ...(baseline ? [baseline] : [])],
-    { cwd: process.cwd(), env: process.env, stdio: 'inherit' },
-  );
-  if (result.error) throw result.error;
-  process.exit(result.status);
+  const cancellationDirectory = mkdtempSync(join(tmpdir(), 'journey-cancel-'));
+  const cancellationDeadlineFile = join(cancellationDirectory, 'deadline-ms');
+  let status;
+  try {
+    const result = await runProcessGroup(
+      'bash', ['e2e/journey/batch.sh', 'prepare', output, ...(baseline ? [baseline] : [])],
+      {
+        cwd: process.cwd(),
+        env: { ...process.env, JOURNEY_CANCEL_DEADLINE_FILE: cancellationDeadlineFile },
+        stdio: 'inherit',
+        cancellationDeadlineFile,
+      },
+    );
+    if (result.error) throw result.error;
+    status = result.status;
+  } finally {
+    rmSync(cancellationDirectory, { recursive: true, force: true });
+  }
+  process.exit(status);
 }
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));

@@ -1015,25 +1015,30 @@ exec "$REAL_TAR" "$@"
         ready = self.root / "nested-stage-ready"
         survived = self.root / "nested-stage-survived"
         group_file = self.root / "nested-stage-group"
+        wrapper_file = self.root / "stage-wrapper-pid"
+        outer_group_file = self.root / "outer-child-group"
+        stage_log = self.root / "unit.log"
         child_code = (
-            "import pathlib,signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-            "pathlib.Path(sys.argv[1]).touch(); time.sleep(6); pathlib.Path(sys.argv[2]).touch()"
+            "import os,pathlib,signal,sys,time; "
+            "pathlib.Path(sys.argv[1]).write_text(str(os.getpgrp())); "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); pathlib.Path(sys.argv[2]).touch(); "
+            "print('stage-child-log-line', flush=True); time.sleep(6); pathlib.Path(sys.argv[3]).touch()"
         )
         fake_bash = (
             "#!/usr/bin/env python3\n"
             "import os,pathlib,signal,subprocess,sys,time\n"
-            f"child=subprocess.Popen([sys.executable, '-c', {child_code!r}, {str(ready)!r}, {str(survived)!r}], start_new_session=True)\n"
-            f"pathlib.Path({str(group_file)!r}).write_text(str(child.pid))\n"
-            "def cleanup(*_):\n"
-            "  time.sleep(.5)\n"
-            "  os.killpg(child.pid, signal.SIGTERM)\n"
-            "  deadline=time.monotonic()+2\n"
-            "  while child.poll() is None and time.monotonic()<deadline: time.sleep(.02)\n"
-            "  if child.poll() is None: os.killpg(child.pid, signal.SIGKILL)\n"
-            "  child.wait(timeout=1)\n"
+            f"pathlib.Path({str(outer_group_file)!r}).write_text(str(os.getpgrp()))\n"
+            f"stage=subprocess.Popen([sys.executable, {str(REPO / 'e2e/journey/preflight_stage.py')!r}, 'run', '--stage', 'unit', '--log', {str(stage_log)!r}, '--', sys.executable, '-c', {child_code!r}, {str(group_file)!r}, {str(ready)!r}, {str(survived)!r}])\n"
+            f"pathlib.Path({str(wrapper_file)!r}).write_text(str(stage.pid))\n"
+            f"deadline=time.monotonic()+5; exec(\"while not pathlib.Path({str(ready)!r}).exists() and time.monotonic()<deadline: time.sleep(.01)\")\n"
+            "os.kill(stage.pid, signal.SIGSTOP)\n"
+            "def resume_stage(*_):\n"
+            "  time.sleep(2.4)\n"
+            "  os.kill(stage.pid, signal.SIGCONT)\n"
+            "  stage.wait()\n"
             "  sys.exit(143)\n"
-            "signal.signal(signal.SIGTERM, cleanup)\n"
-            "child.wait()\n"
+            "signal.signal(signal.SIGTERM, resume_stage)\n"
+            "stage.wait()\n"
         )
         self._script(fake_bin / "bash", fake_bash)
         env = {"PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", "")}
@@ -1052,10 +1057,17 @@ exec "$REAL_TAR" "$@"
             self.assertEqual(process.returncode, 128 + signal.SIGTERM, output)
             time.sleep(3.6)
             self.assertFalse(survived.exists(), "nested stage group outlived its cleanup grace")
+            self.assertIn("stage-child-log-line", stage_log.read_text())
         finally:
-            if group_file.exists():
+            for group_path in (group_file, outer_group_file):
+                if group_path.exists():
+                    try:
+                        os.killpg(int(group_path.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            if wrapper_file.exists():
                 try:
-                    os.killpg(int(group_file.read_text()), signal.SIGKILL)
+                    os.kill(int(wrapper_file.read_text()), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
             if process.poll() is None:
