@@ -4581,6 +4581,7 @@
     "produce Commit project fixture",
     "publish and install Commit through Registry",
     "verify Commit Registry signature and provenance",
+    "secured installed plugin keeps local backend, cwd, and user identity",
     "fallback to configured npm only for an unowned identity",
     "source auth and transport errors never fall through to npm",
     "signature and integrity failures never fall through or commit a lock",
