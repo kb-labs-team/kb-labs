@@ -1061,6 +1061,13 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 		cancel()
 		t.Fatal(err)
 	}
+	// The completed marker is appended just before the startup sweep releases
+	// its lease. Wait for that release so the scheduled sweep below is the one
+	// whose lease this test observes.
+	if err := waitForHygieneLeaseAvailable(t, hygieneLeasePath(f.state)); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
 	eventsFile, err = os.OpenFile(filepath.Join(first.WorktreeRoot, "logs", "events.log"), os.O_RDWR, 0)
 	if err != nil {
 		cancel()
@@ -1144,6 +1151,22 @@ func waitForHygieneLeaseBusy(t *testing.T, path string) bool {
 		runtime.Gosched()
 	}
 	return false
+}
+
+func waitForHygieneLeaseAvailable(t *testing.T, path string) error {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		lease, acquired, err := proc.AcquireFileLease(path, proc.LeaseExclusiveTry)
+		if err != nil {
+			return fmt.Errorf("probe hygiene lease: %w", err)
+		}
+		if acquired {
+			return lease.Close()
+		}
+		runtime.Gosched()
+	}
+	return fmt.Errorf("hygiene lease %s did not become available", path)
 }
 
 func waitForHygieneEvent(path, event string) error {
