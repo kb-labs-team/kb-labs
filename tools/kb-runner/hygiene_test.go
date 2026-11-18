@@ -854,7 +854,10 @@ func (clock *controlledSchedulerClock) Now() time.Time {
 	return clock.now
 }
 func (clock *controlledSchedulerClock) NewTicker(time.Duration) schedulerTicker {
-	clock.ticker = &controlledSchedulerTicker{ticks: make(chan time.Time, 4)}
+	// Advance waits until the scheduler receives each injected tick, avoiding a
+	// race with the test's lease polling. Receiving the tick does not guarantee
+	// the sweep acquired its lease; the test probes that separately.
+	clock.ticker = &controlledSchedulerTicker{ticks: make(chan time.Time)}
 	return clock.ticker
 }
 func (ticker *controlledSchedulerTicker) C() <-chan time.Time { return ticker.ticks }
