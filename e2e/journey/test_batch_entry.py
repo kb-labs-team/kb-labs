@@ -37,6 +37,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         shutil.copy2(REPO / "e2e/journey/jsonl.py", self.root / "e2e/journey/jsonl.py")
         shutil.copy2(REPO / "e2e/journey/scoreboard_contract.py", self.root / "e2e/journey/scoreboard_contract.py")
         shutil.copy2(REPO / "e2e/journey/preflight.sh", self.root / "e2e/journey/preflight.sh")
+        shutil.copy2(REPO / "e2e/journey/preflight_stage.py", self.root / "e2e/journey/preflight_stage.py")
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         shutil.copy2(
             REPO / "e2e/scripts/check-frozen-lockfile.sh",
@@ -62,7 +63,7 @@ if [ "$*" = "--down" ] && [ "${FAIL_RESET:-}" = 1 ]; then
   exit 8
 fi
 if [ "$*" = "--down" ] && [ "${BLOCK_RESET:-}" = 1 ]; then
-  printf 'ready\\n' >&"$READY_FD"
+  printf 'ready\\n' > "$READY_FILE"
   cat "$BLOCK_FIFO"
 fi
 mode="${KB_JOURNEY_SELECTION_MODE:-}"
@@ -101,6 +102,7 @@ exit 0
 ''')
         self._script(self.root / "e2e/journey/prepare-candidate.sh", '''#!/bin/sh
 printf 'candidate\\n' >> "$CALLS"
+printf 'candidate diagnostic fixture\\n'
 if [ "${FAIL_CANDIDATE:-}" = 1 ]; then printf 'candidate failure fixture\\n'; exit 9; fi
 mkdir -p "$ROOT/.journey/runner-inputs" "$ROOT/e2e/packages" "$ROOT/core/fixture/dist"
 printf 'built artifact\\n' > "$ROOT/core/fixture/dist/index.js"
@@ -133,13 +135,20 @@ esac
 exit 2
 ''')
         self._script(self.bin / "corepack", '''#!/bin/sh
+if [ "${FAIL_LOCKFILE:-}" = 1 ]; then
+  printf 'private-lockfile-token\n'
+  exit "${LOCKFILE_EXIT_CODE:-9}"
+fi
 exit 0
 ''')
         self._script(self.bin / "python3", '''#!/bin/sh
+case "$1" in
+  *preflight_stage.py*) exec "$REAL_PYTHON" "$@" ;;
+esac
 printf 'unit\\n' >> "$CALLS"
 if [ "${FAIL_UNIT:-}" = 1 ]; then
-  printf 'unit failure fixture\\n'
-  exit 1
+  printf 'FAIL: test_fixture_failure (test_example.Case)\\nTraceback (most recent call last):\\nprivate-token-abc\\nRan 1 test in 0.1s\\nFAILED (failures=1, errors=0)\\n'
+  exit "${UNIT_EXIT_CODE:-1}"
 fi
 exit 0
 ''')
@@ -216,9 +225,11 @@ exec "$REAL_TAR" "$@"
             "REPORTS": str(self.root / ".journey/reports"),
             "ATTEMPT_MARKER": str(self.root / "first-attempt"),
             "BLOCK_FIFO": str(self.root / "reset.fifo"),
+            "READY_FILE": str(self.root / "reset.ready"),
             "KB_DEVKIT_BASE_REF": "origin/master",
             "ROOT": str(self.root),
             "BATCH_PYTHON": str(self.bin / "batch-python"),
+            "REAL_PYTHON": sys.executable,
             "REAL_TAR": real_tar,
             "SCOREBOARD_LOCAL": str(self.scoreboard_fixtures["local"]),
             "SCOREBOARD_SECURED": str(self.scoreboard_fixtures["secured"]),
@@ -431,11 +442,20 @@ exec "$REAL_TAR" "$@"
                       summary.stderr + summary.stdout + rendered)
         self.assertIn("Partial evidence is iteration-only and cannot produce a gate verdict.", rendered)
 
-    # case: S-262.1
+    # case: S-262.1, S-262.16
     def test_entry_runs_product_steps_in_order_and_exports_both_modes(self):
         result = self._run()
-        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        package_log = self.root / "out/shared/candidate-package.log"
+        diagnostic = package_log.read_text() if package_log.exists() else ""
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout + diagnostic)
         self.assertNotIn("not found", result.stderr)
+        for stage in ("reset", "lockfile", "build", "candidate", "unit", "artifact-package"):
+            self.assertIn(f"journey stage={stage} event=start", result.stdout)
+            self.assertIn(f"journey stage={stage} event=end status=pass", result.stdout)
+        for stage_log in ("reset.log", "lockfile.log", "build.log", "candidate.log", "unit.log", "candidate-package.log"):
+            self.assertTrue((self.root / "out/shared" / stage_log).is_file(), stage_log)
+        self.assertIn("candidate diagnostic fixture", (self.root / "out/shared/candidate.log").read_text())
+        self.assertNotIn("candidate diagnostic fixture", result.stdout)
         calls = self.calls.read_text().splitlines()
         self.assertEqual(calls, [
             "journey  --down",
@@ -450,7 +470,7 @@ exec "$REAL_TAR" "$@"
         self.assertIn("- Result: PASS", (self.root / "out/shared/summary.md").read_text())
         self.assertTrue((self.root / "out/local/local.json").is_file())
         self.assertTrue((self.root / "out/secured/secured.json").is_file())
-        for stage_log in ("reset.log", "build.log", "release-build-output-check.log", "unit.log", "candidate.log"):
+        for stage_log in ("reset.log", "lockfile.log", "build.log", "release-build-output-check.log", "unit.log", "candidate.log"):
             self.assertTrue((self.root / "out/shared" / stage_log).is_file(), stage_log)
         for mode in ("local", "secured"):
             self.assertTrue((self.root / f"out/{mode}/batch.log").is_file())
@@ -762,6 +782,7 @@ exec "$REAL_TAR" "$@"
         (producer / "shared/batch-metadata.json").write_text('{"result":"PASS","stageDurationsSeconds":{}}\n')
         (producer / "shared/run.json").write_text('{"commit":"deadbeef"}\n')
         (producer / "shared/build.log").write_text("build evidence\n")
+        (producer / "shared/lockfile.log").write_text("lockfile evidence\n")
         (producer / "shared/unit.log").write_text("unit evidence\n")
         (producer / "shared/candidate.log").write_text("candidate evidence\n")
         (local / "local/batch.log").write_text("local evidence\n")
@@ -777,7 +798,7 @@ exec "$REAL_TAR" "$@"
 
         self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
         for relative in (
-            "shared/batch-metadata.json", "shared/run.json", "shared/build.log",
+            "shared/batch-metadata.json", "shared/run.json", "shared/build.log", "shared/lockfile.log",
             "shared/unit.log", "shared/candidate.log", "local/batch-metadata.json",
             "local/batch.log", "secured/batch.log",
         ):
@@ -885,7 +906,7 @@ exec "$REAL_TAR" "$@"
         self.assertFalse((self.root / "out/secured/local.json").exists())
         self.assertTrue((self.root / "out/secured/batch.log").is_file())
         for mode in ("local", "secured"):
-            for stage_log in ("reset.log", "build.log", "unit.log", "candidate.log"):
+            for stage_log in ("reset.log", "lockfile.log", "build.log", "unit.log", "candidate.log"):
                 self.assertTrue((self.root / f"out/{mode}/{stage_log}").is_file())
             import json
             mode_metadata = json.loads((self.root / f"out/{mode}/batch-metadata.json").read_text())
@@ -895,13 +916,11 @@ exec "$REAL_TAR" "$@"
 
     # case: S-262.1
     def test_interrupted_entry_finalizes_one_result_and_timing_metadata(self):
-        import select
         import signal
 
         fifo = Path(self.env["BLOCK_FIFO"])
         os.mkfifo(fifo)
-        ready_read, ready_write = os.pipe()
-        env = {**self.env, "BLOCK_RESET": "1", "READY_FD": str(ready_write)}
+        env = {**self.env, "BLOCK_RESET": "1"}
         process = subprocess.Popen(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
             cwd=self.root,
@@ -910,13 +929,13 @@ exec "$REAL_TAR" "$@"
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
-            pass_fds=(ready_write,),
         )
-        os.close(ready_write)
         try:
-            ready, _, _ = select.select([ready_read], [], [], 10)
-            self.assertTrue(ready, "batch did not reach the blocking reset fixture")
-            self.assertEqual(os.read(ready_read, 6), b"ready\n")
+            import time
+            deadline = time.monotonic() + 10
+            while not Path(self.env["READY_FILE"]).exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(Path(self.env["READY_FILE"]).exists(), "batch did not reach the blocking reset fixture")
             os.killpg(process.pid, signal.SIGTERM)
             _, stderr = process.communicate(timeout=10)
             self.assertEqual(process.returncode, 143, stderr)
@@ -924,7 +943,6 @@ exec "$REAL_TAR" "$@"
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.communicate(timeout=10)
-            os.close(ready_read)
         summary = (self.root / "out/shared/summary.md").read_text()
         self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")], ["- Result: INTERRUPTED"])
         import json
@@ -946,21 +964,45 @@ exec "$REAL_TAR" "$@"
 
     # case: S-262.2
     def test_unit_failure_summary_points_to_relative_stage_log(self):
-        env = {**self.env, "FAIL_UNIT": "1"}
+        env = {**self.env, "FAIL_UNIT": "1", "UNIT_EXIT_CODE": "7"}
         result = subprocess.run(
-            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(self.root / "out")],
             cwd=self.root,
             env=env,
             text=True,
             capture_output=True,
             check=False,
         )
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
         summary = (self.root / "out/shared/summary.md").read_text()
         self.assertIn("- Failed stage: `unit`", summary)
         self.assertIn("- Stage log: `unit.log`", summary)
         self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")], ["- Result: FAIL"])
-        self.assertEqual((self.root / "out/shared/unit.log").read_text(), "unit failure fixture\n")
+        unit_log = (self.root / "out/shared/unit.log").read_text()
+        self.assertIn("private-token-abc", unit_log)
+        self.assertNotIn("private-token-abc", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("journey stage=unit event=start", result.stdout)
+        self.assertIn("journey stage=unit event=end status=fail exit_code=7", result.stdout)
+
+    # case: S-262.16
+    def test_lockfile_failure_is_logged_without_forwarding_stage_output(self):
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(self.root / "out")],
+            cwd=self.root,
+            env={**self.env, "FAIL_LOCKFILE": "1", "LOCKFILE_EXIT_CODE": "9"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 9, result.stdout + result.stderr)
+        self.assertIn("journey stage=lockfile event=end status=fail exit_code=9", result.stdout)
+        self.assertIn("see lockfile.log", result.stderr)
+        self.assertNotIn("private-lockfile-token", result.stdout + result.stderr)
+        self.assertIn("private-lockfile-token", (self.root / "out/shared/lockfile.log").read_text())
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertIn("- Failed stage: `lockfile`", summary)
 
     # case: S-262.1
     def test_entry_declares_shared_artifacts_before_build_failure(self):
@@ -974,7 +1016,8 @@ exec "$REAL_TAR" "$@"
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("devkit affected build failed", result.stderr)
+        self.assertIn("journey shared build failed; see build.log", result.stderr)
+        self.assertIn("journey stage=build event=end status=fail exit_code=42", result.stdout)
         self.assertNotIn("not found", result.stderr)
         shared = self.root / "out/shared"
         self.assertTrue((shared / "summary.md").is_file())
@@ -1096,7 +1139,7 @@ exit 1
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("preflight fixture failed", result.stdout)
-        self.assertEqual(compose_source.read_text(), str(self.root))
+        self.assertEqual(Path(compose_source.read_text()).resolve(), self.root.resolve())
         self.assertFalse((self.root / "e2e/packages").exists())
 
 
