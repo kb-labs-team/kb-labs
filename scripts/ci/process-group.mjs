@@ -88,8 +88,8 @@ export function runProcessGroup(command, args, {
           mkdirSync(dirname(cancellationDeadlineFile), { recursive: true, mode: 0o700 });
           writeFileSync(temporary, `${Math.trunc(cleanupDeadline)}\n`, { mode: 0o600 });
           renameSync(temporary, cancellationDeadlineFile);
-        } catch (error) {
-          childError ??= error;
+        } catch {
+          childError ??= new Error('producer cleanup deadline could not be published');
         }
       }
     };
@@ -113,8 +113,8 @@ export function runProcessGroup(command, args, {
       if (child.pid) {
         try {
           await settleGroup(child.pid, escalationSent ? 'SIGKILL' : requestedSignal ?? 'SIGTERM', killDeadline);
-        } catch (error) {
-          childError ??= error;
+        } catch {
+          childError ??= new Error('producer process group could not be settled');
         }
       }
       if (escalationTimer) clearTimeout(escalationTimer);

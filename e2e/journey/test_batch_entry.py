@@ -1071,6 +1071,50 @@ exec "$REAL_TAR" "$@"
                 process.kill()
                 process.communicate(timeout=2)
 
+    # case: S-262.17
+    def test_cleanup_marker_write_failure_keeps_signal_status_without_path_leak(self):
+        import signal
+        import time
+
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node.js is required for process-group cancellation")
+        blocked_parent = self.root / "not-a-directory"
+        blocked_parent.write_text("fixture")
+        marker_path = blocked_parent / "deadline"
+        ready = self.root / "cleanup-helper-ready"
+        child_code = (
+            "process.on('SIGTERM', () => {}); "
+            f"require('node:fs').writeFileSync({str(ready)!r}, 'ready'); "
+            "setInterval(() => {}, 1000)"
+        )
+        helper = (REPO / "scripts/ci/process-group.mjs").as_uri()
+        node_script = (
+            f"import {{ runProcessGroup }} from {helper!r}; "
+            f"const result = await runProcessGroup(process.execPath, ['-e', {child_code!r}], "
+            f"{{ cancellationDeadlineFile: {str(marker_path)!r}, graceMs: 100, reapGraceMs: 50 }}); "
+            "if (result.error) console.error(result.error.message); process.exit(result.status);"
+        )
+        env = {"PATH": os.environ.get("PATH", "")}
+        process = subprocess.Popen(
+            [node, "--input-type=module", "--eval", node_script],
+            cwd=REPO, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(ready.exists(), "process-group helper did not start its child")
+            os.kill(process.pid, signal.SIGTERM)
+            output, _ = process.communicate(timeout=4)
+            self.assertEqual(process.returncode, 128 + signal.SIGTERM, output)
+            self.assertIn("producer cleanup deadline could not be published", output)
+            self.assertNotIn(str(blocked_parent), output)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=2)
+
     # case: S-262.1
     def test_entry_names_missing_base_ref_before_affected_build(self):
         result = self._run(missing_base_ref="origin/master")

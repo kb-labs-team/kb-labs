@@ -23,8 +23,12 @@ if (process.argv[2] === '--journey-batch-prepare') {
         cancellationDeadlineFile,
       },
     );
-    if (result.error) throw result.error;
-    status = result.status;
+    if (result.error) {
+      process.stderr.write(`journey producer cleanup issue: ${result.error.message}\n`);
+      status = result.status === 0 ? 1 : result.status;
+    } else {
+      status = result.status;
+    }
   } finally {
     rmSync(cancellationDirectory, { recursive: true, force: true });
   }
