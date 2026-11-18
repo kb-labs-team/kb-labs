@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { runStage } from './remote-verify-stage.mjs';
 import { mirrorStreamsToFile } from './remote-stage-output.mjs';
+import { runProcessGroup } from './process-group.mjs';
 
 if (process.argv[2] === '--journey-batch-prepare') {
   const [output, baseline] = process.argv.slice(3);
   if (!output) throw new Error('Usage: node scripts/ci/run-remote-stage.mjs --journey-batch-prepare <output-dir> [baseline]');
-  const result = spawnSync('bash', ['e2e/journey/batch.sh', 'prepare', output, ...(baseline ? [baseline] : [])], {
-    cwd: process.cwd(), env: process.env, stdio: 'inherit',
-  });
+  const result = await runProcessGroup(
+    'bash', ['e2e/journey/batch.sh', 'prepare', output, ...(baseline ? [baseline] : [])],
+    { cwd: process.cwd(), env: process.env, stdio: 'inherit' },
+  );
   if (result.error) throw result.error;
-  process.exit(result.status ?? 1);
+  process.exit(result.status);
 }
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));

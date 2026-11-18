@@ -951,6 +951,57 @@ exec "$REAL_TAR" "$@"
         self.assertGreaterEqual(metadata["stageDurationsSeconds"]["reset"], 0)
         self.assertEqual(metadata["result"], "INTERRUPTED")
 
+    # case: S-262.17
+    def test_node_producer_forwards_signal_and_escalates_its_child_group(self):
+        import signal
+        import time
+
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node.js is required for the remote producer entrypoint")
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        ready = self.root / "producer-grandchild-ready"
+        survived = self.root / "producer-grandchild-survived"
+        group_file = self.root / "producer-child-group"
+        child_code = (
+            "import pathlib,signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "pathlib.Path(sys.argv[1]).touch(); time.sleep(3); "
+            "pathlib.Path(sys.argv[2]).touch()"
+        )
+        fake_bash = (
+            "#!/usr/bin/env python3\n"
+            "import os,pathlib,subprocess,sys\n"
+            f"child=subprocess.Popen([sys.executable, '-c', {child_code!r}, {str(ready)!r}, {str(survived)!r}])\n"
+            f"pathlib.Path({str(group_file)!r}).write_text(str(os.getpgrp()))\n"
+            "child.wait()\n"
+        )
+        self._script(fake_bin / "bash", fake_bash)
+        env = {"PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", "")}
+        process = subprocess.Popen(
+            [node, str(REPO / "scripts/ci/run-remote-stage.mjs"), "--journey-batch-prepare", str(self.root / "out")],
+            cwd=REPO, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(ready.exists(), "remote producer did not launch its child group")
+            os.kill(process.pid, signal.SIGTERM)  # Signal only the outer Node PID.
+            output, _ = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 128 + signal.SIGTERM, output)
+            time.sleep(2.3)
+            self.assertFalse(survived.exists(), "a descendant survived outer producer cancellation")
+        finally:
+            if group_file.exists():
+                try:
+                    os.killpg(int(group_file.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=2)
+
     # case: S-262.1
     def test_entry_names_missing_base_ref_before_affected_build(self):
         result = self._run(missing_base_ref="origin/master")

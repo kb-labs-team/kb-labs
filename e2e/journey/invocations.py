@@ -119,9 +119,10 @@ def run_logged_stage(stage: str, log_path: str | Path, command: list[str], *,
                     except subprocess.TimeoutExpired:
                         continue
 
-                if received_signals:
-                    _signal_stage_group(group_id, received_signals[0])
-                    deadline = signal_time[0] + termination_grace_seconds
+                cleanup_signal = received_signals[0] if received_signals else signal.SIGTERM
+                if received_signals or _stage_group_exists(group_id):
+                    _signal_stage_group(group_id, cleanup_signal)
+                    deadline = time.monotonic() + termination_grace_seconds
                     while time.monotonic() < deadline and _stage_group_exists(group_id):
                         if status is None:
                             try:
@@ -133,6 +134,9 @@ def run_logged_stage(stage: str, log_path: str | Path, command: list[str], *,
 
                     if _stage_group_exists(group_id):
                         _signal_stage_group(group_id, signal.SIGKILL)
+                        reap_deadline = time.monotonic() + 0.5
+                        while time.monotonic() < reap_deadline and _stage_group_exists(group_id):
+                            time.sleep(0.05)
 
                     if status is None:
                         try:
@@ -143,7 +147,7 @@ def run_logged_stage(stage: str, log_path: str | Path, command: list[str], *,
                             _signal_stage_group(group_id, signal.SIGKILL)
                             reaper = threading.Thread(target=process.wait, daemon=True)
                             reaper.start()
-                            status = 128 + received_signals[0]
+                            status = 128 + (received_signals[0] if received_signals else signal.SIGTERM)
             finally:
                 stop.set()
                 if watcher.is_alive():
