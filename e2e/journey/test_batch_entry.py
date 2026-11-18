@@ -778,10 +778,14 @@ exec "$REAL_TAR" "$@"
         deploy_root = self.root / ".kb/deploy"
         registry_dist = deploy_root / "marketplace-registry-app/dist/bootstrap.js"
         registry_modules = deploy_root / "marketplace-registry-app/node_modules/.modules.yaml"
+        state_dist = deploy_root / "state-daemon/dist/index.js"
+        state_modules = deploy_root / "state-daemon/node_modules/.modules.yaml"
         image_config = deploy_root / "image-default/kb.config.json"
         for path, contents in (
             (registry_dist, "candidate registry dist\n"),
             (registry_modules, "candidate production dependencies\n"),
+            (state_dist, "candidate state daemon dist\n"),
+            (state_modules, "candidate state daemon dependencies\n"),
             (image_config, '{"platform":{"deployment":{"topology":"cloud"}}}\n'),
         ):
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -794,6 +798,8 @@ exec "$REAL_TAR" "$@"
             names = set(archive.getnames())
         self.assertIn("./.kb/deploy/marketplace-registry-app/dist/bootstrap.js", names)
         self.assertIn("./.kb/deploy/marketplace-registry-app/node_modules/.modules.yaml", names)
+        self.assertIn("./.kb/deploy/state-daemon/dist/index.js", names)
+        self.assertIn("./.kb/deploy/state-daemon/node_modules/.modules.yaml", names)
         self.assertIn("./.kb/deploy/image-default/kb.config.json", names)
 
         shutil.rmtree(deploy_root)
@@ -806,6 +812,8 @@ exec "$REAL_TAR" "$@"
         self.assertEqual(reused.returncode, 0, reused.stderr + reused.stdout)
         self.assertEqual(registry_dist.read_text(), "candidate registry dist\n")
         self.assertEqual(registry_modules.read_text(), "candidate production dependencies\n")
+        self.assertEqual(state_dist.read_text(), "candidate state daemon dist\n")
+        self.assertEqual(state_modules.read_text(), "candidate state daemon dependencies\n")
         self.assertTrue(image_config.is_file())
 
     # case: S-262.2

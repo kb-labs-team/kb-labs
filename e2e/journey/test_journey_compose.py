@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -368,6 +369,51 @@ if (!configResult.ok || !lockResult.valid) {
                     "plugins/marketplace-registry/dist/commands/publish.js",
                     ):
                 self.assertTrue((workspace_source / relative).exists(), relative)
+
+    # case: S-307.1
+    def test_registry_profile_images_have_real_deploy_inputs_in_the_candidate_archive(self):
+        rendered = self._config(hosted=False)
+        candidate = (ROOT / "e2e/journey/prepare-candidate.sh").read_text(encoding="utf-8")
+        batch = (ROOT / "e2e/journey/batch.sh").read_text(encoding="utf-8")
+        image_services = {
+            name: service for name, service in rendered["services"].items()
+            if name in {"marketplace-registry", "marketplace-state"}
+        }
+        self.assertEqual(set(image_services), {"marketplace-registry", "marketplace-state"})
+
+        deploy_targets = set()
+        for service in image_services.values():
+            dockerfile_path = ROOT / service["build"]["dockerfile"]
+            dockerfile = dockerfile_path.read_text(encoding="utf-8")
+            copied_paths = re.findall(
+                r"(?m)^\s*COPY(?:\s+--[^\s]+)*\s+(.kb/deploy/\S+)\s+", dockerfile
+            )
+            target_dirs = {
+                Path(*Path(source).parts[:3]).as_posix()
+                for source in copied_paths if not source.startswith(".kb/deploy/image-default/")
+            }
+            self.assertEqual(len(target_dirs), 1, dockerfile_path)
+            target = target_dirs.pop()
+            package = json.loads((dockerfile_path.parent / "package.json").read_text(encoding="utf-8"))
+            deploy = (
+                f"pnpm --config.inject-workspace-packages=true deploy --filter {package['name']} "
+                f"--prod {target}"
+            )
+            self.assertIn(deploy, candidate)
+            self.assertIn(target, batch)
+            self.assertIn(f'test -d "$ROOT/{target}/node_modules"', candidate)
+            main = package["main"].removeprefix("./")
+            self.assertIn(f'test -s "$ROOT/{target}/{main}"', candidate)
+            deploy_targets.add(target)
+
+            self.assertIn(".kb/deploy/image-default/kb.config.json", copied_paths)
+
+        self.assertEqual(deploy_targets, {
+            ".kb/deploy/marketplace-registry-app",
+            ".kb/deploy/state-daemon",
+        })
+        self.assertIn('node "$ROOT/tools/release/generate-platform-image-default.mjs"', candidate)
+        self.assertIn(".kb/deploy/image-default", batch)
 
     # case: S-262.1
     def test_local_and_hosted_journey_use_the_same_compose_file_list(self):

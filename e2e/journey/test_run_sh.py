@@ -15,12 +15,16 @@ class RunShellOptionTests(unittest.TestCase):
         batch = (root / "e2e/journey/batch.sh").read_text(encoding="utf-8")
 
         deploy = "pnpm --config.inject-workspace-packages=true deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app"
+        state_deploy = "pnpm --config.inject-workspace-packages=true deploy --filter @kb-labs/core-state-daemon --prod .kb/deploy/state-daemon"
         self.assertIn(deploy, candidate)
+        self.assertIn(state_deploy, candidate)
         self.assertIn("node \"$ROOT/tools/release/generate-platform-image-default.mjs\"", candidate)
         self.assertIn('test -s "$ROOT/.kb/deploy/marketplace-registry-app/dist/bootstrap.js"', candidate)
         self.assertIn('test -d "$ROOT/.kb/deploy/marketplace-registry-app/node_modules"', candidate)
+        self.assertIn('test -s "$ROOT/.kb/deploy/state-daemon/dist/index.js"', candidate)
+        self.assertIn('test -d "$ROOT/.kb/deploy/state-daemon/node_modules"', candidate)
         self.assertIn('test -s "$ROOT/.kb/deploy/image-default/kb.config.json"', candidate)
-        self.assertIn(".kb/deploy/marketplace-registry-app .kb/deploy/image-default", batch)
+        self.assertIn(".kb/deploy/marketplace-registry-app .kb/deploy/state-daemon .kb/deploy/image-default", batch)
 
     def test_resolve_only_and_no_build_are_order_independent_and_do_not_start_compose(self):
         root = Path(__file__).resolve().parents[2]
