@@ -78,7 +78,7 @@ const composeOverlay = `services:
       KB_REGISTRY_URL: http://marketplace-tamper:8081
       GATEWAY_INTERNAL_SECRET: journey-marketplace-internal-secret
     volumes:
-      - ${JSON.stringify(`${path.join(kbRoot, 'kb.config.jsonc')}:/app/.kb/kb.config.jsonc:ro`)}
+      - ${JSON.stringify(`${path.join(kbRoot, 'kb.config.jsonc')}:/app/.kb/kb.config.override.json:ro`)}
       - ${JSON.stringify(`${path.join(kbRoot, 'marketplace.lock')}:/app/.kb/marketplace.lock:ro`)}
     networks: [journey]
 

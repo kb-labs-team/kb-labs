@@ -190,6 +190,9 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             self.assertTrue((composition / ".kb" / "kb.config.jsonc").is_file())
             self.assertTrue((composition / ".kb" / "marketplace.lock").is_file())
             self.assertTrue(overlay.is_file())
+            generated_overlay = json.loads((composition / ".kb" / "kb.config.jsonc").read_text(encoding="utf-8"))
+            self.assertIn("marketplace", generated_overlay)
+            self.assertNotIn("platform", generated_overlay)
             validation = subprocess.run(
                 ["node", "--input-type=module", "-e", """
 import fs from 'node:fs';
@@ -226,8 +229,8 @@ if (!configResult.ok || !lockResult.valid) {
             for mount in rendered["services"]["marketplace-registry"].get("volumes", [])
             if mount.get("type") == "bind"
         }
-        self.assertEqual(set(mounts), {"/app/.kb/kb.config.jsonc", "/app/.kb/marketplace.lock"})
-        config_source = Path(mounts["/app/.kb/kb.config.jsonc"]["source"])
+        self.assertEqual(set(mounts), {"/app/.kb/kb.config.override.json", "/app/.kb/marketplace.lock"})
+        config_source = Path(mounts["/app/.kb/kb.config.override.json"]["source"])
         lock_source = Path(mounts["/app/.kb/marketplace.lock"]["source"])
         self.assertEqual(config_source.name, "kb.config.jsonc")
         self.assertEqual(lock_source.name, "marketplace.lock")
