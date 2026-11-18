@@ -53,3 +53,13 @@ test('consumer jobs take the selection only from the producer-owned output', () 
   }
   assert.match(JSON.stringify(workflow.jobs.producer.steps), /journey-batch-selection\.mjs resolve/);
 });
+
+test('batch producer runs the dist-free journey preflight before producing build artifacts', () => {
+  const steps = workflow.jobs.producer.steps;
+  const preflight = steps.findIndex((step) => step.name === 'Run journey static preflight');
+  const producerBuild = steps.findIndex((step) => step.name === 'Produce shared build and candidate');
+
+  assert.ok(preflight >= 0, 'the batch producer runs the journey preflight');
+  assert.ok(preflight < producerBuild, 'the preflight runs before the producer build stage');
+  assert.equal(steps[preflight].run, 'bash e2e/journey/static-preflight.sh');
+});
