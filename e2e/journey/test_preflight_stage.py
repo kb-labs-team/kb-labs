@@ -62,13 +62,19 @@ class PreflightStageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             log = directory / "unit.log"
-            grandchild_pid = directory / "grandchild.pid"
-            grandchild_code = "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+            group_file = directory / "stage-group.txt"
+            term_seen = directory / "grandchild-term-seen"
+            survived = directory / "grandchild-survived"
+            grandchild_code = (
+                "import pathlib,signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "pathlib.Path(sys.argv[1]).touch(); time.sleep(.7); pathlib.Path(sys.argv[2]).touch()"
+            )
             parent_code = (
-                "import signal,subprocess,sys; "
-                f"child=subprocess.Popen([sys.executable, '-c', {grandchild_code!r}]); "
-                f"open({str(grandchild_pid)!r}, 'w').write(str(child.pid)); "
-                "signal.signal(signal.SIGTERM, signal.SIG_IGN); child.wait()"
+                "import os,pathlib,signal,subprocess,sys; "
+                "signal.signal(signal.SIGTERM, lambda *_: sys.exit(0)); "
+                f"child=subprocess.Popen([sys.executable, '-c', {grandchild_code!r}, {str(term_seen)!r}, {str(survived)!r}]); "
+                f"pathlib.Path({str(group_file)!r}).write_text(str(os.getpgrp())); "
+                "child.wait()"
             )
             runner = subprocess.Popen(
                 [
@@ -80,9 +86,9 @@ class PreflightStageTests(unittest.TestCase):
             )
             try:
                 deadline = time.monotonic() + 5
-                while not grandchild_pid.exists() and runner.poll() is None and time.monotonic() < deadline:
+                while (not group_file.exists() or not term_seen.exists()) and runner.poll() is None and time.monotonic() < deadline:
                     time.sleep(.01)
-                self.assertTrue(grandchild_pid.exists(), "stage did not start its grandchild")
+                self.assertTrue(group_file.exists() and term_seen.exists(), "stage did not start its grandchild")
                 started = time.monotonic()
                 os.kill(runner.pid, signal.SIGTERM)  # Signal only the wrapper PID.
                 output, _ = runner.communicate(timeout=5)
@@ -90,15 +96,19 @@ class PreflightStageTests(unittest.TestCase):
 
                 self.assertEqual(runner.returncode, 128 + signal.SIGTERM, output)
                 self.assertIn("event=end status=fail exit_code=143", output)
+                self.assertGreaterEqual(elapsed, .15, "cleanup skipped the grace period after the leader exited")
                 self.assertLess(elapsed, 3, "stage group was not escalated after the grace period")
+                time.sleep(.8)
+                self.assertFalse(survived.exists(), "grandchild survived the stage group escalation")
             finally:
+                if group_file.exists():
+                    try:
+                        os.killpg(int(group_file.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                 if runner.poll() is None:
                     runner.kill()
                     runner.communicate(timeout=2)
-                try:
-                    os.killpg(runner.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
 
 
 if __name__ == "__main__":
