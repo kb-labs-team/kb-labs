@@ -237,6 +237,37 @@ test('nightly journey workflow syncs the scoreboard through the GitHub issue own
     && step.with?.name === 'nightly-user-journey-${{ github.run_id }}'));
 });
 
+// case: S-284.22
+test('reusable installer journey checks out the exact candidate SHA in every job', () => {
+  const reusable = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
+  const expectedRef = '${{ inputs.ref || github.sha }}';
+  const checkouts = Object.values(reusable.jobs).flatMap((job) => job.steps ?? [])
+    .filter((step) => step.uses?.startsWith('actions/checkout@'));
+
+  assert.equal(checkouts.length, 4, 'prepare, journey, native macOS, and coverage each check out source');
+  assert.ok(checkouts.every((step) => step.with?.ref === expectedRef),
+    'every job uses the candidate ref when supplied and the caller workflow SHA otherwise');
+
+  const releaseCaller = load(readFileSync(path.join(root, '.github/workflows/release-build-candidate.yml'), 'utf8'));
+  assert.equal(releaseCaller.jobs['journey-gate'].with.ref, '${{ inputs.commit_sha }}');
+  const ordinaryCallers = [
+    '.github/workflows/installer-journey.yml',
+    '.github/workflows/nightly-user-journey.yml',
+  ].map((file) => load(readFileSync(path.join(root, file), 'utf8')));
+  for (const caller of ordinaryCallers) {
+    const job = Object.values(caller.jobs).find((candidate) => candidate.uses === './.github/workflows/reusable-installer-journey.yml');
+    assert.ok(job, 'ordinary caller invokes the reusable installer journey');
+    assert.equal(job.with?.ref, undefined, 'ordinary callers retain the workflow run SHA default');
+  }
+
+  // Distinct values model a candidate dispatched from a different run context.
+  const candidateSha = 'a'.repeat(40);
+  const workflowSha = 'b'.repeat(40);
+  assert.notEqual(candidateSha, workflowSha);
+  assert.equal(candidateSha || workflowSha, candidateSha);
+  assert.equal('' || workflowSha, workflowSha);
+});
+
 // case: S-261.2
 test('reusable installer workflow runs a native macOS install from the candidate artifact', () => {
   const workflow = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
