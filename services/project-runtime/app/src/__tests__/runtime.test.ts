@@ -16,7 +16,7 @@ import {
   createProjectRegistry,
   deriveProjectId,
 } from "@kb-labs/core-project-registry";
-import { reserveLoopbackPorts, runHost } from "@kb-labs/shared-daemon";
+import { runHost } from "@kb-labs/shared-daemon";
 import { buildServiceTools, mcpToolName } from "@kb-labs/mcp-app/project-module";
 import {
   createProjectRuntimeConfig,
@@ -123,6 +123,11 @@ describe("project MCP calls over the HTTP service transport", () => {
           server.once("error", reject);
           server.listen(ctx.port, ctx.host, resolve);
         });
+        const address = server.address();
+        if (!address || typeof address === "string") {
+          throw new Error("Catalog test service did not bind a TCP address");
+        }
+        await ctx.publishListenAddress({ host: ctx.host, port: address.port });
         return () => new Promise<void>((resolve) => {
           server.closeAllConnections();
           server.close(() => resolve());
@@ -164,7 +169,7 @@ describe("project MCP calls over the HTTP service transport", () => {
 });
 
 /** A module that answers with what it was given: its port, host and project root. */
-function echoModule(id: string): ProjectRuntimeModule {
+function echoModule(id: string, observedPorts: number[] = []): ProjectRuntimeModule {
   return {
     manifest: {
       schema: "kb.service/1",
@@ -175,13 +180,15 @@ function echoModule(id: string): ProjectRuntimeModule {
       projectApi: { serviceId: id, rewritePrefix: "/api/v1" },
     },
     setup: async (ctx) => {
+      observedPorts.push(ctx.port);
+      let actualPort = ctx.port;
       const server: Server = createServer((req, res) => {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({
             module: id,
             projectRoot: ctx.projectRoot,
-            port: ctx.port,
+            port: actualPort,
             host: ctx.host,
             url: req.url,
             projectHeader: req.headers["x-kb-project-id"] ?? null,
@@ -192,6 +199,12 @@ function echoModule(id: string): ProjectRuntimeModule {
         server.once("error", reject);
         server.listen(ctx.port, ctx.host, resolve);
       });
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Echo module did not bind a TCP address");
+      }
+      actualPort = address.port;
+      await ctx.publishListenAddress({ host: ctx.host, port: actualPort });
       return () =>
         new Promise<void>((resolve) => {
           server.closeAllConnections();
@@ -217,7 +230,7 @@ async function startRuntime(options: {
 } = {}): Promise<Running> {
   const dir = await mkdtemp(join(tmpdir(), "kb-runtime-config-"));
   await mkdir(join(dir, ".kb"), { recursive: true });
-  const [guardPort] = await reserveLoopbackPorts(1);
+  let guardPort: number | undefined;
   await writeFile(
     join(dir, ".kb", "kb.config.json"),
     JSON.stringify({
@@ -282,14 +295,22 @@ async function startRuntime(options: {
       await createProjectRuntimeConfig({
         projectRoot: root,
         projectId: deriveProjectId(root),
-        listen: { host: "127.0.0.1", port: guardPort! },
+        listen: { host: "127.0.0.1", port: 0 },
         token: TOKEN,
         modules: options.modules ?? [echoModule("rest"), echoModule("workflow")],
+        onReady: (address) => {
+          guardPort = address.port;
+        },
       }),
     );
   } catch (error) {
     await cleanup();
     throw error;
+  }
+
+  if (!guardPort) {
+    await cleanup();
+    throw new Error("project runtime did not publish its bound guard address");
   }
 
   const handlers = process.listeners("SIGTERM").filter((l) => !termBefore.has(l));
@@ -367,6 +388,22 @@ describe("project runtime composition (real runHost, minimal modules)", () => {
       projectId: running.projectId,
       modules: { rest: "up", workflow: "up" },
     });
+  });
+
+  it("lets each module choose and publish its own ephemeral loopback port", async () => {
+    const observedPorts: number[] = [];
+    const running = await startRuntime({ modules: [echoModule("rest", observedPorts)] });
+
+    try {
+      expect(observedPorts).toEqual([0]);
+      const response = await fetch(`${running.base}${RUNTIME_HEALTH_PATH}`, {
+        headers: { [RUNTIME_TOKEN_HEADER]: TOKEN },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ modules: { rest: "up" } });
+    } finally {
+      await running.stop();
+    }
   });
 
   it("starts the real workflow module with the registered project identity", async () => {

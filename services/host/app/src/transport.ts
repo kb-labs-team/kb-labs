@@ -3,9 +3,9 @@
  *
  * In-process service topology for modules the host runs itself.
  *
- * The host picks a loopback port for every internal module, builds the
- * `serviceTransport` services map from that, and installs it on the platform,
- * so nobody has to write `adapterOptions.serviceTransport.services` by hand.
+ * The host publishes each internal module's bound loopback address into its
+ * generated `serviceTransport`, so nobody has to write
+ * `adapterOptions.serviceTransport.services` by hand.
  * A transport already configured (explicit routes in kb.config) stays
  * authoritative for the service ids it knows.
  */
@@ -23,7 +23,7 @@ import { LOOPBACK_HOST } from "@kb-labs/shared-daemon";
 
 export const INTERNAL_BIND_HOST = LOOPBACK_HOST;
 
-/** Builds the transport for the host-owned services: `serviceId -> loopback port`. */
+/** Builds the initially empty transport for host-owned services. */
 export function createGeneratedTransport(
   ports: Readonly<Record<string, number>>,
 ): HttpServiceTransport {

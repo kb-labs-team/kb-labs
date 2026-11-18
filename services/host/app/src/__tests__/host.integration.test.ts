@@ -1,4 +1,5 @@
 import * as marketplaceApp from "@kb-labs/marketplace-app";
+import { createServer } from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,24 @@ interface HealthBody {
 function portOf(url: string | undefined): number {
   if (!url) {throw new Error("missing internal url");}
   return Number(new URL(url).port);
+}
+
+async function bindMarketplaceTestServer(
+  context: Parameters<typeof marketplaceApp.setup>[0],
+): Promise<() => Promise<void>> {
+  const server = createServer((_request, response) => response.end());
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Marketplace test server did not bind a TCP address");
+  }
+  await context.publishListenAddress({ host: "127.0.0.1", port: address.port });
+  return () => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
 }
 
 describe("kb-host (one process, real launchPlatform, in-memory adapters)", () => {
@@ -146,9 +165,13 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
       unblockTeardown = resolve;
     });
     const setup = vi.mocked(marketplaceApp.setup).mockImplementationOnce(
-      async () => async () => {
-        markTeardownStarted();
-        await blockedTeardown;
+      async (context) => {
+        const close = await bindMarketplaceTestServer(context);
+        return async () => {
+          markTeardownStarted();
+          await blockedTeardown;
+          await close();
+        };
       },
     );
 
@@ -174,7 +197,13 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
       throw new Error("injected marketplace teardown failure");
     });
     const setup = vi.mocked(marketplaceApp.setup).mockImplementationOnce(
-      async () => failingTeardown,
+      async (context) => {
+        const close = await bindMarketplaceTestServer(context);
+        return async () => {
+          await close();
+          await failingTeardown();
+        };
+      },
     );
 
     const first = await startTestHost();
@@ -202,10 +231,8 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
     );
     expect(marketplace.status).toBe(404);
 
-    // The disabled module never bound its reserved port.
-    expect(await isPortListening(portOf(running.internalUrl("marketplace")))).toBe(
-      false,
-    );
+    // Disabled modules bind no port and therefore have no published address.
+    expect(running.internalUrl("marketplace")).toBeUndefined();
   });
 
   it("does not open the external port when the gateway is not selected", async () => {

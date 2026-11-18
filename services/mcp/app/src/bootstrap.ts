@@ -32,7 +32,9 @@ export async function setupProjectMcp(ctx: ServiceContext, serviceManifests: rea
     serviceManifests,
     serviceTransport: ctx.platform.getAdapter<IServiceTransport>("serviceTransport"),
   });
-  await server.start();
+  const boundUrl = await server.start();
+  const boundAddress = new URL(boundUrl);
+  await ctx.publishListenAddress({ host: boundAddress.hostname, port: Number(boundAddress.port) });
   return async () => server.stop();
 }
 
@@ -72,6 +74,7 @@ export async function bootstrap(): Promise<void> {
       host,
       projectRoot,
       platformRoot,
+      publishListenAddress,
     }) {
       const logger = serviceLogger
         .forComponent("mcp-bootstrap")
@@ -94,7 +97,9 @@ export async function bootstrap(): Promise<void> {
         policy,
       });
 
-      await server.start();
+      const boundUrl = await server.start();
+      const boundAddress = new URL(boundUrl);
+      await publishListenAddress({ host: boundAddress.hostname, port: Number(boundAddress.port) });
 
       return async () => {
         await server.stop();

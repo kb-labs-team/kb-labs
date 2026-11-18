@@ -62,6 +62,7 @@ export async function setup({
   platformRoot,
   activeWork,
   logger: serviceLogger,
+  publishListenAddress,
 }: ServiceContext): Promise<() => Promise<void>> {
   const projectId = requireWorkflowProjectId(contextProjectId);
   // KB_PROJECT_ROOT is injected by kb-dev when invoked from a project dir with separate platform.
@@ -241,6 +242,11 @@ export async function setup({
   });
 
   await server.listen(getListenOptions(port, host));
+  const bound = server.server.address();
+  if (!bound || typeof bound === "string") {
+    throw new Error("Workflow daemon did not bind a TCP address.");
+  }
+  await publishListenAddress({ host, port: bound.port });
   bootstrapLogger.info("HTTP API listening", { port });
 
   bootstrapLogger.info("Creating WorkflowWorker");

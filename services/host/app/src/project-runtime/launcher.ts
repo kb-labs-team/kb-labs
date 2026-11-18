@@ -3,8 +3,8 @@
  *
  * Starts a project runtime as a child process of the host.
  *
- * - Address: a loopback ephemeral port chosen here; nothing is written in
- *   config and no `KB_NET_OFFSET` is involved.
+ * - Address: the runtime binds an ephemeral loopback port and publishes the
+ *   result over child IPC; no port is reserved here and no `KB_NET_OFFSET` is involved.
  * - Secret: a fresh random token per process, passed through the environment
  *   (argv is visible to every local user) and demanded by the runtime on
  *   every request.
@@ -17,12 +17,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { request as httpRequest } from "node:http";
-import { LOOPBACK_HOST, reserveLoopbackPorts } from "@kb-labs/shared-daemon";
+import { LOOPBACK_HOST } from "@kb-labs/shared-daemon";
 import {
   RUNTIME_ARGS,
   RUNTIME_HEALTH_PATH,
   RUNTIME_TOKEN_ENV,
   RUNTIME_TOKEN_HEADER,
+  type RuntimeReadyMessage,
 } from "@kb-labs/project-runtime-app/protocol";
 import type {
   RuntimeExit,
@@ -74,13 +75,15 @@ class ChildRuntime implements RuntimeProcess {
   private healthStatus = "";
   private done = false;
   private stopping: Promise<void> | undefined;
+  private currentAddress: { host: string; port: number };
 
   constructor(
     private readonly child: ChildProcess,
-    readonly address: { host: string; port: number },
+    address: { host: string; port: number },
     readonly token: string,
     private readonly stopTimeoutMs: number,
   ) {
+    this.currentAddress = address;
     const collect = (chunk: Buffer): void => {
       this.output = (this.output + chunk.toString("utf8")).slice(-OUTPUT_TAIL_BYTES);
     };
@@ -99,6 +102,14 @@ class ChildRuntime implements RuntimeProcess {
         resolve({ code, signal });
       });
     });
+  }
+
+  get address(): { host: string; port: number } {
+    return this.currentAddress;
+  }
+
+  setAddress(address: { host: string; port: number }): void {
+    this.currentAddress = address;
   }
 
   get pid(): number | undefined {
@@ -262,7 +273,6 @@ export function createChildProcessLauncher(
   const stopTimeoutMs = options.stopTimeoutMs ?? 10_000;
   return {
     async launch(project: RuntimeProject, previousExitCause?: string): Promise<RuntimeProcess> {
-      const [port] = await reserveLoopbackPorts(1);
       const token = randomBytes(32).toString("hex");
       const env: NodeJS.ProcessEnv = { ...(options.baseEnv ?? process.env) };
       for (const name of STRIPPED_ENV) {
@@ -284,14 +294,14 @@ export function createChildProcessLauncher(
           RUNTIME_ARGS.projectId,
           project.id,
           RUNTIME_ARGS.listen,
-          `${LOOPBACK_HOST}:${port}`,
+          `${LOOPBACK_HOST}:0`,
           RUNTIME_ARGS.parentPid,
           String(options.hostPid ?? process.pid),
         ],
         {
           cwd: project.root,
           env,
-          stdio: ["ignore", "pipe", "pipe"],
+          stdio: ["ignore", "pipe", "pipe", "ipc"],
           detached: !isWindows(),
           windowsHide: true,
         },
@@ -302,12 +312,26 @@ export function createChildProcessLauncher(
       });
       // After a successful spawn, later errors (a failed kill) are not fatal.
       child.on("error", () => undefined);
-      return new ChildRuntime(
+      const runtime = new ChildRuntime(
         child,
-        { host: LOOPBACK_HOST, port: port! },
+        { host: LOOPBACK_HOST, port: 0 },
         token,
         stopTimeoutMs,
       );
+      child.once("message", (message: RuntimeReadyMessage) => {
+        if (
+          message?.type !== "kb-project-runtime-ready" ||
+          message.address?.host !== LOOPBACK_HOST ||
+          !Number.isInteger(message.address.port) ||
+          message.address.port < 1 ||
+          message.address.port > 65535
+        ) {
+          child.kill("SIGTERM");
+          return;
+        }
+        runtime.setAddress(message.address);
+      });
+      return runtime;
     },
     probe: probeRuntime,
   };
