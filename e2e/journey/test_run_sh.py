@@ -9,6 +9,18 @@ from test_environment import isolated_environment
 
 
 class RunShellOptionTests(unittest.TestCase):
+    def test_registry_image_config_is_generated_outside_the_optional_build_path(self):
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "e2e/journey/run.sh").read_text(encoding="utf-8")
+        build_only_start = source.index("if (( ! no_build )); then")
+        build_only_end = source.index("\nfi\n", build_only_start)
+        config_generation = source.index("node tools/release/generate-platform-image-default.mjs")
+        registry_images_build = source.index("journey_compose build marketplace-state marketplace-registry")
+
+        self.assertGreater(config_generation, build_only_end)
+        self.assertLess(config_generation, registry_images_build)
+        self.assertIn("tools/release/generate-platform-image-default.mjs", source)
+
     def test_resolve_only_and_no_build_are_order_independent_and_do_not_start_compose(self):
         root = Path(__file__).resolve().parents[2]
         script = root / "e2e/journey/run.sh"
