@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { validateManifest, type ManifestV3 } from '@kb-labs/plugin-contracts';
-import { createErrorEnvelope, createProductErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import { SessionManager } from '@kb-labs/sdk/gateway';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
@@ -132,56 +132,30 @@ describe('CLI result descriptor boundary', () => {
     expect(output.stdout).toContain('fixture human result');
   });
 
-  // case: S-203.1
-  it('serializes Gateway stdout events as diagnostics and the remote result once', async () => {
-    fixture = await createCliFixture('secured');
-    await saveSession(fixture);
-    fixture.gatewayEvents = [
-      {
-        type: 'execution:output', requestId: 'req-fixture', executionId: 'exec-fixture',
-        stream: 'stdout', data: 'fixture Gateway stdout diagnostic\n', timestamp: Date.now(),
-      },
-      {
-        type: 'execution:done', requestId: 'req-fixture', executionId: 'exec-fixture',
-        exitCode: 0, durationMs: 1, metadata: { result: { complete: true, remote: true } },
-      },
-    ];
+  // case: S-306.1
+  for (const executionMode of ['subprocess', 'worker-pool'] as const) {
+    it(`executes secured ${executionMode} through the configured platform backend without a Gateway execution host`, async () => {
+      fixture = await createCliFixture('secured', executionMode);
+      await saveSession(fixture);
 
-    const result = await runCli(fixture, ['stdout', 'fixture', 'run', '--json']);
+      const result = await runCli(fixture, ['stdout', 'fixture', 'descriptor', '--json']);
 
-    expect(result.status, result.stderr || result.stdout).toBe(0);
-    expectOneJsonEnvelope(result.stdout, { ok: true, data: { complete: true, remote: true } });
-    expect(result.stderr).toContain('fixture Gateway stdout diagnostic');
-    expect(fixture.gatewayRequest).toMatchObject({ pluginId, handlerRef: './handler.js' });
-  });
-
-  // case: S-203.1
-  it('serializes Gateway failures as one JSON failure envelope', async () => {
-    fixture = await createCliFixture('secured');
-    await saveSession(fixture);
-    const gatewayFailure = createProductErrorEnvelope({
-      code: 'X243_FIXTURE_FAILED', message: 'Fixture Gateway failure', hint: 'Retry the command.', retryable: false,
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expectOneJsonEnvelope(result.stdout, { ok: true, data: { resultDescriptorUnavailable: true } });
+      expect(fixture.gatewayRequest).toBeUndefined();
     });
-    fixture.gatewayEvents = [
-      {
-        type: 'execution:error', requestId: 'req-fixture', executionId: 'exec-fixture',
-        error: gatewayFailure,
-      },
-      {
-        type: 'execution:done', requestId: 'req-fixture', executionId: 'exec-fixture',
-        exitCode: 1, durationMs: 1,
-      },
-    ];
 
-    const result = await runCli(fixture, ['stdout', 'fixture', 'run', '--json']);
+    it(`rejects an unauthenticated secured ${executionMode} command before plugin execution`, async () => {
+      fixture = await createCliFixture('secured', executionMode);
 
-    expect(result.status).not.toBe(0);
-    expectOneJsonEnvelope(result.stdout, {
-      ok: false,
-      error: { code: 'X243_FIXTURE_FAILED', message: 'Fixture Gateway failure' },
+      const result = await runCli(fixture, ['stdout', 'fixture', 'run', '--json']);
+
+      expect(result.status).not.toBe(0);
+      expectOneJsonEnvelope(result.stdout, { ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
+      expect(fixture.gatewayRequest).toBeUndefined();
+      expect(result.stderr).not.toContain('fixture direct progress');
     });
-    expect(result.stderr).toContain('Fixture Gateway failure');
-  });
+  }
 
   // case: S-203.1
   it('refuses handler ctx.ui.json and emits only the catalogued command failure', async () => {
