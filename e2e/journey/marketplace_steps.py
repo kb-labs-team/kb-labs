@@ -8,11 +8,13 @@ from project_service_path import project_service_path
 import json
 import hashlib
 import os
+import shutil
 import tempfile
 import time
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 from journey_resources import active_platform_root, workspace_resource
 from hermetic_cli import run_hermetic_cli
@@ -48,12 +50,19 @@ def _publish_fixture_command(workspace_root: str | Path, package_path: str) -> l
 
 def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dict[str, str],
                                runner: CommandRunner) -> CompletedProcess[str]:
+    return _publish_package_fixture(
+        workspace_root, workspace_root / package_path, env, runner,
+    )
+
+
+def _publish_package_fixture(workspace_root: Path, package_root: Path, env: dict[str, str],
+                             runner: CommandRunner) -> CompletedProcess[str]:
     registry_url = env.get("KB_JOURNEY_MARKETPLACE_PUBLISH_URL")
     author_handle = env.get("KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE")
     if not registry_url or not author_handle:
         raise RuntimeError("journey Registry publish configuration is missing; enable the marketplace-registry lane")
     workspace_cli = workspace_root / "cli" / "bin" / "dist" / "bin.js"
-    publish = _publish_fixture_command(workspace_root, package_path)
+    publish = ["hub", "publish", "--path", str(package_root.resolve()), "--json"]
     command = ["node", str(workspace_cli), *publish]
     publish_env = dict(env)
     publish_env["KB_REGISTRY_URL"] = registry_url
@@ -61,6 +70,55 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     return run_hermetic_cli(
         command, cwd=workspace_root, env=publish_env, runner=runner,
     )
+
+
+@contextmanager
+def _built_analytics_emitter_fixture(workspace_root: Path, env: dict[str, str],
+                                     runner: CommandRunner) -> Iterator[Path]:
+    """Build a writable copy of the Registry fixture without touching the mounted workspace."""
+    source_package = workspace_root / "e2e" / "journey" / "fixtures" / "analytics-emitter"
+    try:
+        package = json.loads((source_package / "package.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Registry Analytics fixture manifest is unavailable: {error}") from error
+    kb_package = package.get("kb") if isinstance(package, dict) else None
+    outputs = kb_package.get("requiredOutputs") if isinstance(kb_package, dict) else None
+    if not isinstance(outputs, list) or not outputs or any(not isinstance(item, str) for item in outputs):
+        raise RuntimeError("Registry Analytics fixture has no valid required build outputs")
+
+    scripts = package.get("scripts")
+    if (not isinstance(scripts, dict) or scripts.get("build") != "node ./build.mjs"
+            or not (source_package / "build.mjs").is_file()):
+        raise RuntimeError("Registry Analytics fixture build contract is unsupported")
+
+    workspace_manifest_tool = workspace_root / "infra" / "devkit" / "tsup" / "emit-manifest-json.mjs"
+    if not workspace_manifest_tool.is_file():
+        raise RuntimeError(f"Registry Analytics fixture manifest builder is unavailable: {workspace_manifest_tool}")
+
+    with tempfile.TemporaryDirectory(prefix="kb-registry-analytics-fixture-") as directory:
+        staged_workspace = Path(directory)
+        staged_package = staged_workspace / "e2e" / "journey" / "fixtures" / "analytics-emitter"
+        staged_package.parent.mkdir(parents=True)
+        shutil.copytree(source_package, staged_package)
+        shutil.copy2(source_package.parent / "build-manifest.mjs",
+                     staged_package.parent / "build-manifest.mjs")
+        staged_manifest_tool = staged_workspace / "infra" / "devkit" / "tsup" / "emit-manifest-json.mjs"
+        staged_manifest_tool.parent.mkdir(parents=True)
+        shutil.copy2(workspace_manifest_tool, staged_manifest_tool)
+
+        command = ["node", "./build.mjs"]
+        build_env = dict(env)
+        _output(run_with_runner(runner, command, cwd=staged_package, env=build_env, timeout=300), command)
+
+        missing = [pattern for pattern in outputs if not _fixture_output_exists(staged_package, pattern)]
+        if missing:
+            raise RuntimeError("Registry Analytics fixture build completed without required outputs: "
+                               + ", ".join(missing))
+        yield staged_package
+
+
+def _fixture_output_exists(package_root: Path, pattern: str) -> bool:
+    return any(package_root.glob(pattern)) if "*" in pattern else (package_root / pattern).is_file()
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandRunner,
@@ -463,11 +521,19 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
         version = published.get("version")
         if not isinstance(version, str) or not version:
             raise RuntimeError("kb hub publish did not return the published Commit version")
-        for fixture_path in ("e2e/journey/fixtures/analytics-emitter", "plugins/qa"):
-            publication = _json(_publish_workspace_fixture(workspace, fixture_path, base_env, runner),
-                                _publish_fixture_command(workspace, fixture_path))
+        with _built_analytics_emitter_fixture(workspace, base_env, runner) as staged_analytics_package:
+            publication = _json(
+                _publish_package_fixture(workspace, staged_analytics_package, base_env, runner),
+                ["hub", "publish", "--path", str(staged_analytics_package), "--json"],
+            )
             if not isinstance(publication.get("version"), str) or not publication.get("version"):
-                raise RuntimeError(f"kb hub publish did not return a version for {fixture_path}")
+                raise RuntimeError("kb hub publish did not return a version for the Analytics fixture")
+
+        fixture_path = "plugins/qa"
+        publication = _json(_publish_workspace_fixture(workspace, fixture_path, base_env, runner),
+                            _publish_fixture_command(workspace, fixture_path))
+        if not isinstance(publication.get("version"), str) or not publication.get("version"):
+            raise RuntimeError(f"kb hub publish did not return a version for {fixture_path}")
         command = ["marketplace", "install", "@kb-labs/commit", "--json"]
         result = _json(_run(kb_command(command), cwd=project, env=base_env, runner=runner), command)
         installed = result.get("installed")

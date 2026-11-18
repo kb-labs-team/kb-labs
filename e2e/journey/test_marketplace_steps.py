@@ -1,6 +1,7 @@
 import json
 import ast
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
                                configured_marketplace_source_kinds,
+                               _built_analytics_emitter_fixture,
                                commit_publish_command,
                                _publish_fixture_command,
                                _assert_catalogued_marketplace_failure,
@@ -43,6 +45,27 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_registry_analytics_fixture_builds_in_temporary_copy(self):
+        workspace = Path(__file__).resolve().parents[2]
+        source_package = workspace / "e2e" / "journey" / "fixtures" / "analytics-emitter"
+        source_dist = source_package / "dist"
+        before = ({path.relative_to(source_package): path.read_bytes()
+                   for path in source_dist.rglob("*") if path.is_file()}
+                  if source_dist.exists() else None)
+
+        with _built_analytics_emitter_fixture(workspace, dict(os.environ), subprocess.run) as staged_package:
+            self.assertNotEqual(staged_package.resolve(), source_package.resolve())
+            self.assertTrue((staged_package / "dist" / "manifest.json").is_file())
+            self.assertTrue((staged_package / "dist" / "commands" / "emit.js").is_file())
+            self.assertTrue((staged_package / "dist" / "commands" / "complete.js").is_file())
+            self.assertTrue(staged_package.resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()))
+
+        self.assertFalse(staged_package.exists())
+        after = ({path.relative_to(source_package): path.read_bytes()
+                  for path in source_dist.rglob("*") if path.is_file()}
+                 if source_dist.exists() else None)
+        self.assertEqual(after, before)
+
     def test_not_found_source_expectations_come_from_kb_create_status(self):
         self.assertEqual(configured_marketplace_source_kinds({"marketplaceSources": [
             {"kind": "registry", "url": "https://registry.example"}, {"kind": "npm"},
@@ -231,17 +254,39 @@ class MarketplaceStepTests(unittest.TestCase):
             "hub", "publish", "--path", "/workspace/plugins/qa", "--json",
         ])
 
-    def test_registry_commit_fixture_publishes_in_workspace_and_installs_in_lane_project(self):
+    def test_registry_commit_fixture_builds_analytics_copy_and_installs_in_lane_project(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-registry-fixture-") as directory:
             root = Path(directory)
             project = root / "project"
             (project / ".kb").mkdir(parents=True)
             (project / ".kb" / "kb.config.json").write_text("{}\n")
             workspace = root / "workspace"
+            emitter_source = Path(__file__).resolve().parent / "fixtures" / "analytics-emitter"
+            emitter_package = workspace / "e2e" / "journey" / "fixtures" / "analytics-emitter"
+            emitter_package.parent.mkdir(parents=True)
+            shutil.copytree(emitter_source, emitter_package)
+            shutil.copy2(emitter_source.parent / "build-manifest.mjs", emitter_package.parent)
+            manifest_tool_source = (Path(__file__).resolve().parents[2]
+                                    / "infra" / "devkit" / "tsup" / "emit-manifest-json.mjs")
+            manifest_tool = workspace / "infra" / "devkit" / "tsup" / "emit-manifest-json.mjs"
+            manifest_tool.parent.mkdir(parents=True)
+            shutil.copy2(manifest_tool_source, manifest_tool)
+            (workspace / "plugins" / "commit").mkdir(parents=True)
+            (workspace / "plugins" / "qa").mkdir(parents=True)
             calls = []
 
-            def runner(command, *, cwd, env, capture_output, text, timeout):
+            def runner(command, *, cwd, env, capture_output, text, timeout, **_kwargs):
                 calls.append((tuple(command), cwd, env.copy()))
+                if command == ["node", "./build.mjs"]:
+                    staged_package = Path(cwd)
+                    self.assertNotEqual(staged_package, emitter_package)
+                    self.assertTrue(staged_package.is_absolute())
+                    output = staged_package / "dist"
+                    shutil.copytree(staged_package / "src", output, dirs_exist_ok=True)
+                    output.mkdir(exist_ok=True)
+                    shutil.copy2(staged_package / "manifest.js", output / "manifest.js")
+                    (output / "manifest.json").write_text("{}\n")
+                    return subprocess.CompletedProcess(command, 0, "", "")
                 if command[0] == "node":
                     return subprocess.CompletedProcess(command, 0, json.dumps({
                         "ok": True, "data": {"version": "2.120.1"},
@@ -268,14 +313,26 @@ class MarketplaceStepTests(unittest.TestCase):
                 entry = prepare_registry_commit_project_fixture(journey, project, "http://verdaccio.test",
                                                                  env, runner)
 
+            self.assertIsNotNone(entry, journey.result())
             self.assertEqual(entry["marketplaceSource"], "registry")
             self.assertEqual(entry["signatureStatus"], "verified")
             workspace_cli = str(workspace / "cli" / "bin" / "dist" / "bin.js")
-            self.assertEqual([call[0] for call in calls if call[0][0] == "node"], [
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/commit"), "--json"),
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"),
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"),
+            publish_calls = [call for call in calls if call[0][0] == "node" and "hub" in call[0]]
+            self.assertEqual([call[0] for call in publish_calls], [
+                ("node", workspace_cli, "hub", "publish", "--path",
+                 str((workspace / "plugins/commit").resolve()), "--json"),
+                ("node", workspace_cli, "hub", "publish", "--path",
+                 publish_calls[1][0][5], "--json"),
+                ("node", workspace_cli, "hub", "publish", "--path",
+                 str((workspace / "plugins/qa").resolve()), "--json"),
             ])
+            staged_package = Path(publish_calls[1][0][5])
+            self.assertNotEqual(staged_package, emitter_package)
+            self.assertFalse((emitter_package / "dist").exists())
+            self.assertFalse(staged_package.exists())
+            build_call = next(call for call in calls if call[0] == ("node", "./build.mjs"))
+            self.assertEqual(Path(build_call[1]).resolve(), staged_package)
+            self.assertNotEqual(Path(build_call[1]).resolve(), emitter_package.resolve())
             self.assertEqual(journey.result().status, "PASS")
 
     def test_policy_diagnostic_step_restores_config_and_proves_blocked_fixture_and_first_party_cli(self):
