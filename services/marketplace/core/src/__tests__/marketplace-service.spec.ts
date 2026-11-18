@@ -12,7 +12,7 @@ import * as crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { PackageSource, MarketplaceSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
 import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
-import { IntegrityMismatchError } from '@kb-labs/core-extension-store';
+import { createExtensionStore, resolveEntryDir, IntegrityMismatchError } from '@kb-labs/core-extension-store';
 import { readMarketplaceLock, DiagnosticCollector, createMarketplaceEntry } from '@kb-labs/core-discovery';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
 import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
@@ -983,6 +983,55 @@ describe('MarketplaceService', () => {
       const missing = await service.getEntry({ scope: "platform" }, '@kb-labs/ghost');
       expect(missing).toBeNull();
     });
+  });
+
+  // case: S-187.12, S-187.13
+  it('checks installed scenario identity and provenance against the real package without touching usage markers', async () => {
+    const id = '@kb-labs/sample';
+    const version = '2.0.0';
+    const integrity = 'sha512-YQ==';
+    const store = createExtensionStore({ root: tmpDir });
+    const service = makeMarketplaceService({ platformRoot: tmpDir, source: createMockSource(new Map()), extensionStore: store });
+    const dir = resolveEntryDir(store.root, id, version);
+    const pkg = path.join(dir, 'node_modules', id);
+    await fs.mkdir(pkg, { recursive: true });
+    const { dir: fixture } = await createPluginDir(tmpDir, 'sample', id, '0.1.0');
+    await fs.copyFile(path.join(fixture, 'kb.plugin.json'), path.join(pkg, 'kb.plugin.json'));
+    await fs.writeFile(path.join(pkg, 'package.json'), JSON.stringify({ name: id, version }));
+    const metadata = { schema: 'kb.store-entry/1', name: id, version, integrity, kind: 'plugin', installedAt: new Date().toISOString() };
+    await fs.writeFile(path.join(dir, 'entry.json'), JSON.stringify(metadata));
+    const entry = { source: 'marketplace', package: id, version, integrity, marketplaceSource: 'npm', signatureStatus: 'unsigned', enabled: true };
+    const lock = path.join(tmpDir, '.kb', 'marketplace.lock');
+    await fs.mkdir(path.dirname(lock), { recursive: true });
+    const writeLock = (values: Record<string, unknown>) => fs.writeFile(lock, JSON.stringify({ schema: 'kb.marketplace/3', plugins: { [id]: values } }));
+    await writeLock(entry);
+    const expected = { id, version, spec: id + '@^2', integrity, source: 'npm', signatureStatus: 'unsigned', primaryKind: 'plugin' } as const;
+    const reconcile = () => service.reconcilePackages([expected]);
+    expect(await reconcile()).toEqual({ ok: true, matched: [{ ...expected, enabled: true }] });
+    const { integrity: previousPin, ...legacyRecord } = expected;
+    expect((await service.reconcilePackages([legacyRecord]))).toEqual({ ok: true, matched: [{ ...legacyRecord, enabled: true, integrity: previousPin }] });
+    await expect(fs.stat(path.join(dir, '.used'))).rejects.toMatchObject({ code: 'ENOENT' });
+    const drift = { ok: false, code: 'KB_MARKETPLACE_STATE_DRIFT', package: id };
+    for (const delta of [{ enabled: false }, { marketplaceSource: 'registry' }, { version: '3.0.0' }, { integrity: 'sha512-Yg==' }, { package: '@kb-labs/other' }, { resolvedPath: 'other/package' }, { primaryKind: 'adapter' }, { signatureStatus: 'verified' }]) {
+      await writeLock({ ...entry, ...delta });
+      expect(await reconcile()).toEqual(drift);
+    }
+    await writeLock(entry);
+    for (const delta of [{ integrity: 'sha512-Yg==' }, { name: 'other-package' }, { kind: 'adapter' }]) {
+      await fs.writeFile(path.join(dir, 'entry.json'), JSON.stringify({ ...metadata, ...delta }));
+      expect(await reconcile()).toEqual(drift);
+    }
+    await fs.writeFile(path.join(dir, 'entry.json'), JSON.stringify(metadata));
+    await fs.writeFile(path.join(pkg, 'package.json'), JSON.stringify({ name: id, version: '3.0.0' }));
+    expect(await reconcile()).toEqual(drift);
+    await fs.writeFile(path.join(pkg, 'package.json'), JSON.stringify({ name: id, version }));
+    const manifest = JSON.parse(await fs.readFile(path.join(pkg, 'kb.plugin.json'), 'utf8'));
+    await fs.writeFile(path.join(pkg, 'kb.plugin.json'), JSON.stringify({ ...manifest, id: 'different-package' }));
+    expect(await reconcile()).toEqual(drift);
+    await fs.rm(path.join(pkg, 'kb.plugin.json'));
+    expect(await reconcile()).toEqual(drift);
+    await fs.rm(pkg, { recursive: true });
+    expect(await reconcile()).toEqual(drift);
   });
 
   // ── doctor ───────────────────────────────────────────────────────────

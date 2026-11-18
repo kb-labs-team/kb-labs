@@ -28,9 +28,12 @@ import (
 const fixturesDir = "../../../../core/platform/src/launcher-control/fixtures/v1"
 
 type fakeRunner struct {
-	mu      sync.Mutex
-	calls   []string
-	startEr error
+	mu                sync.Mutex
+	calls             []string
+	startEr           error
+	reconcileRequest  contracts.MarketplaceInstallReconciliationRequest
+	reconcileResponse contracts.MarketplaceInstallReconciliationResponse
+	reconcileErr      error
 }
 
 func (f *fakeRunner) Name() string { return "process" }
@@ -50,6 +53,11 @@ func (f *fakeRunner) Stop(context.Context) (host.StopResult, error) {
 func (f *fakeRunner) Status(context.Context) (host.Status, error) {
 	started := time.Now().UTC()
 	return host.Status{Runner: "process", State: host.StateRunning, PID: 4242, Healthy: true, HealthURL: "http://127.0.0.1:1/health", StartedAt: &started}, nil
+}
+func (f *fakeRunner) ReconcileMarketplace(_ context.Context, request contracts.MarketplaceInstallReconciliationRequest) (contracts.MarketplaceInstallReconciliationResponse, error) {
+	f.record("marketplace-reconcile")
+	f.reconcileRequest = request
+	return f.reconcileResponse, f.reconcileErr
 }
 
 func startServer(t *testing.T) (*Server, *fakeRunner, host.State) {
@@ -154,7 +162,7 @@ func TestTokenRejection(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			for _, endpoint := range []struct{ method, path string }{{"GET", "/v1/status"}, {"POST", "/v1/host/restart"}, {"POST", "/v1/update-request"}, {"GET", "/nope"}} {
+			for _, endpoint := range []struct{ method, path string }{{"GET", "/v1/status"}, {"POST", "/v1/host/restart"}, {"POST", "/v1/update-request"}, {"POST", "/v1/marketplace/reconcile"}, {"GET", "/nope"}} {
 				status, body, _ := call(t, server, endpoint.method, endpoint.path, tc.token, nil, tc.headers)
 				if status != http.StatusUnauthorized || !strings.Contains(string(body), "KB_HOST_CONTROL_UNAUTHORIZED") {
 					t.Fatalf("%s %s: status %d body %s", endpoint.method, endpoint.path, status, body)
@@ -164,6 +172,64 @@ func TestTokenRejection(t *testing.T) {
 	}
 	if len(runner.calls) != 0 {
 		t.Fatalf("rejected requests must not reach the runner: %v", runner.calls)
+	}
+}
+
+func TestMarketplaceReconciliationUsesAuthenticatedLocalControlChannel(t *testing.T) {
+	server, runner, state := startServer(t)
+	expected := []contracts.MarketplaceInstallRecord{{
+		ID: "@kb-labs/commit", Spec: "@kb-labs/commit", Version: "2.120.1", PrimaryKind: "plugin",
+		Source: "registry", SignatureStatus: "verified", Integrity: "sha512-receipt-value",
+	}}
+	matched := []contracts.MarketplaceReconciledRecord{{MarketplaceInstallRecord: expected[0], Enabled: true}}
+	runner.reconcileResponse = contracts.MarketplaceInstallReconciliationResponse{
+		OK: true, InstallationID: "install-123", Matched: matched,
+	}
+	request := contracts.MarketplaceInstallReconciliationRequest{InstallationID: "install-123", Scope: "platform", Expected: expected}
+	if status, data, _ := call(t, server, http.MethodPost, "/v1/marketplace/reconcile", "", request, nil); status != http.StatusUnauthorized || !strings.Contains(string(data), "KB_HOST_CONTROL_UNAUTHORIZED") {
+		t.Fatalf("unauthenticated local reconcile = %d/%s", status, data)
+	}
+	client, err := Connect(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.ReconcileMarketplace(context.Background(), request)
+	if err != nil {
+		t.Fatalf("authenticated local Marketplace reconciliation failed: %v", err)
+	}
+	if !response.OK || response.InstallationID != request.InstallationID || !reflect.DeepEqual(response.Matched, matched) {
+		t.Fatalf("reconcile response = %#v", response)
+	}
+	if !reflect.DeepEqual(runner.reconcileRequest, request) || !reflect.DeepEqual(runner.calls, []string{"marketplace-reconcile"}) {
+		t.Fatalf("reconciliation request/calls = %#v / %v", runner.reconcileRequest, runner.calls)
+	}
+}
+
+func TestMarketplaceReconciliationUsesCurrentRunnerAfterRestart(t *testing.T) {
+	server, first, _ := startServer(t)
+	second := &fakeRunner{reconcileResponse: contracts.MarketplaceInstallReconciliationResponse{
+		OK: true, InstallationID: "installation-1",
+		Matched: []contracts.MarketplaceReconciledRecord{{MarketplaceInstallRecord: contracts.MarketplaceInstallRecord{
+			Spec: "@kb-labs/commit", ID: "@kb-labs/commit", Version: "2.0.0", Source: "registry", PrimaryKind: "plugin", SignatureStatus: "verified", Integrity: "sha512-current",
+		}, Enabled: true}},
+	}}
+	var current host.Runner = first
+	server.RunnerProvider = func() host.Runner { return current }
+	// A successful supervisor restart replaces its child runner while the
+	// control server and its authenticated endpoint remain alive.
+	current = second
+	client := &Client{File: File{Address: server.Address(), Token: server.Token()}}
+	_, err := client.ReconcileMarketplace(context.Background(), contracts.MarketplaceInstallReconciliationRequest{
+		InstallationID: "installation-1", Scope: "platform",
+		Expected: []contracts.MarketplaceInstallRecord{{
+			Spec: "@kb-labs/commit", ID: "@kb-labs/commit", Version: "2.0.0", Source: "registry", PrimaryKind: "plugin", SignatureStatus: "verified", Integrity: "sha512-current",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("reconcile after supervisor restart: %v", err)
+	}
+	if len(first.calls) != 0 || !reflect.DeepEqual(second.calls, []string{"marketplace-reconcile"}) {
+		t.Fatalf("stale/current runner calls = %#v/%#v", first.calls, second.calls)
 	}
 }
 

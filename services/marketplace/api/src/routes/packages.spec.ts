@@ -92,6 +92,29 @@ describe('Marketplace API error boundary', () => {
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
   });
 
+  // case: S-187.12, S-187.13
+  it('reconciles only platform plugins and reports missing entries without exposing the store', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-reconcile-'));
+    roots.push(root);
+    const { logger } = makeContextLogger();
+    const service = makeMarketplaceService({ platformRoot: root, logger, source: createFailingSource(new Error('unexpected resolve'), true) });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+    const expected = [{ id: '@kb-labs/commit', spec: '@kb-labs/commit@1.0.0', version: '1.0.0', source: 'npm', primaryKind: 'plugin', signatureStatus: 'unsigned' }];
+    const route = '/api/v1/marketplace/packages/reconcile';
+    const missing = await server.inject({ method: 'POST', url: route, payload: { scope: 'platform', expected } });
+    expect(missing.statusCode).toBe(409);
+    expect(missing.json()).toMatchObject({ ok: false, error: { code: 'KB_MARKETPLACE_STATE_DRIFT', details: { package: '@kb-labs/commit' } } });
+    expect(missing.body).not.toContain(root);
+    const project = await server.inject({ method: 'POST', url: route, payload: { scope: 'project', expected } });
+    expect(project.statusCode).toBe(400);
+    vi.spyOn(service, 'reconcilePackages').mockResolvedValueOnce({ ok: false, package: '@kb-labs/commit', code: 'KB_MARKETPLACE_STATE_UNAVAILABLE' });
+    const unavailable = await server.inject({ method: 'POST', url: route, payload: { scope: 'platform', expected } });
+    expect(unavailable.statusCode).toBe(503);
+    expect(unavailable.json()).toMatchObject({ ok: false, error: { code: 'KB_MARKETPLACE_STATE_UNAVAILABLE', details: { package: '@kb-labs/commit' } } });
+    expect(unavailable.body).not.toContain(root);
+  });
+
   // case: S-051.2
   it('keeps Marketplace plugin-not-found and logs source outcomes', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'marketplace-not-found-'));

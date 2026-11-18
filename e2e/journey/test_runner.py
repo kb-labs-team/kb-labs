@@ -19,7 +19,7 @@ import jsonl
 from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
-from installer_case_steps import commit_marketplace_install_record
+from installer_case_steps import commit_marketplace_install_record, scenario_marketplace_install_record
 from secured_human_wizard_steps import register_secured_human_wizard_install
 import runner
 from runner import REGISTRY, marketplace_install_flags
@@ -122,17 +122,38 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
     def test_secured_wizard_install_claim_requires_host_reachability(self):
         outcomes = []
         with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "human-secured:default"}, clear=False):
-            for wizard_passed, host_reachable in ((True, True), (True, False), (False, True)):
+            for wizard_passed, host_reachable, marketplace_installed in (
+                    (True, True, True), (True, True, False), (True, False, True), (False, True, True)):
                 journey = Journey("secured", "secured-wizard-install-verdict")
                 journey.step("candidate provenance", "platform.install", lambda: None)
                 result = register_secured_human_wizard_install(
-                    journey, wizard_passed, host_reachable)
-                outcomes.append((wizard_passed, host_reachable, result.status, result.message))
+                    journey, wizard_passed, host_reachable, marketplace_installed)
+                outcomes.append((wizard_passed, host_reachable, marketplace_installed,
+                                 result.status, result.message))
 
-        self.assertEqual(outcomes[0][2], "PASS")
-        self.assertEqual(outcomes[1][2], "FAIL")
-        self.assertIn("not running and reachable", outcomes[1][3])
-        self.assertEqual(outcomes[2][2], "FAIL")
+        self.assertEqual(outcomes[0][3], "PASS")
+        self.assertEqual(outcomes[1][3], "FAIL")
+        self.assertIn("Marketplace receipt", outcomes[1][4])
+        self.assertEqual(outcomes[2][3], "FAIL")
+        self.assertIn("not running and reachable", outcomes[2][4])
+        self.assertEqual(outcomes[3][3], "FAIL")
+
+    # case: S-305.1
+    def test_secured_wizard_marketplace_receipt_accepts_original_or_pinned_spec(self):
+        for spec in ("@kb-labs/commit", "@kb-labs/commit@2.1.0"):
+            with self.subTest(spec=spec):
+                receipt = {"marketplaceInstalls": [{
+                    "spec": spec, "id": "@kb-labs/commit", "version": "2.1.0", "source": "registry",
+                    "signatureStatus": "verified", "integrity": "sha512-test",
+                }]}
+                self.assertIsNotNone(scenario_marketplace_install_record(receipt, "@kb-labs/commit"))
+                for field in ("signatureStatus", "integrity"):
+                    incomplete = {"marketplaceInstalls": [{key: value for key, value in receipt["marketplaceInstalls"][0].items()
+                                                             if key != field}]}
+                    self.assertIsNone(scenario_marketplace_install_record(incomplete, "@kb-labs/commit"))
+        self.assertIsNone(scenario_marketplace_install_record(
+            {"marketplaceInstalls": [{"spec": "@kb-labs/commit", "id": "@kb-labs/commit", "version": "2.1.0"}]},
+            "@kb-labs/commit"))
 
     def test_first_failure_redacts_secured_wizard_fixture_secrets_immediately(self):
         admin_password = "JourneyPassw0rd!"

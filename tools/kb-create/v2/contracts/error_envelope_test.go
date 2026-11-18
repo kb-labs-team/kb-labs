@@ -59,6 +59,21 @@ func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
 	}
 }
 
+func TestMarketplaceReconciliationDiagnosticsUseCatalogTemplates(t *testing.T) {
+	for _, failure := range []*diag.Diag{
+		MarketplaceStateUnavailable("@kb-labs/commit", "/platform", errors.New("owner unavailable")),
+		MarketplaceStateDrift("@kb-labs/commit", "@kb-labs/commit@2", "https://gateway.example.test"),
+	} {
+		envelope, err := diag.ToEnvelope(failure)
+		if err != nil {
+			t.Fatalf("encode %s: %v", failure.Code, err)
+		}
+		if envelope.Details["package"] != "@kb-labs/commit" || envelope.Details["scope"] != "platform" || envelope.Hint == "" {
+			t.Fatalf("incomplete reconciliation diagnostic %s: %+v", failure.Code, envelope)
+		}
+	}
+}
+
 func TestNewDiagRejectsMissingCauseForCauseRequiredInstallCodes(t *testing.T) {
 	for _, code := range []string{
 		CodeProjectRegistrationFailed,

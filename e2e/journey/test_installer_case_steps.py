@@ -980,10 +980,19 @@ class InstallerCaseStepsTest(unittest.TestCase):
             index = root / "index.json"
             index.write_text("{}")
             calls = []
+            marketplace_removed = False
 
             def run_command(args, **kwargs):
+                nonlocal marketplace_removed
                 calls.append(args)
                 if args[1] == "install":
+                    if marketplace_removed and "--json" in args:
+                        failure = {"ok": False, "error": {"code": "KB_MARKETPLACE_STATE_DRIFT",
+                                   "area": "marketplace", "stage": "reconcile", "severity": "error",
+                                   "retryable": False, "message": "Marketplace package state differs from the receipt.",
+                                   "hint": "Run `kb auth login --gateway-url URL`, then `kb marketplace install @kb-labs/commit --scope platform`.",
+                                   "correlationId": "fixture"}}
+                        return subprocess.CompletedProcess(args, 2, kb_create_stream(failure, 2), "")
                     install_root = Path(args[args.index("--platform-root") + 1])
                     self.assertTrue(install_root.is_dir(), "JSON installer fixture root must exist before install")
                     try:
@@ -1013,7 +1022,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     selected = args[args.index("--project-root") + 1] if "--project-root" in args else ""
                     selected_path = str(Path(selected).absolute()) if selected else ""
                     canonical_path = str(Path(selected).resolve()) if selected else ""
-                    receipt_data = {"schema": "kb.create.receipt/v3", "projectSelectedPath": selected_path,
+                    receipt_data = {"schema": "kb.create.receipt/v3", "id": "receipt-fixture",
+                                    "marketplaceInstalls": [{"spec": "@kb-labs/commit", "id": "@kb-labs/commit",
+                                        "version": "2.120.1", "source": "registry", "signatureStatus": "verified",
+                                        "integrity": "sha512-fixture"}],
+                                    "projectSelectedPath": selected_path,
                                     "projectCanonicalPath": canonical_path,
                                     "projectId": "prj_0123456789abcdef" if selected else "",
                                     "plan": {"request": {
@@ -1084,7 +1097,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         "alreadyExisted": True}}), "")
                 if args[1] == "status":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
-                        "host": {"state": "running"}, "running": True, "reachable": True}}), "")
+                        "host": {"state": "running", "receiptId": "receipt-fixture"},
+                        "running": True, "reachable": True}}), "")
+                if args[1] == "stop":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"operation": "stop"}}), "")
+                if args[1] == "marketplace":
+                    marketplace_removed = True
+                    return subprocess.CompletedProcess(args, 0,
+                        json.dumps({"ok": True, "data": {"removed": ["@kb-labs/commit"]}}), "")
                 if args[1] == "auth":
                     if kwargs.get("input") != "x18-journey-first-admin\n":
                         return subprocess.CompletedProcess(args, 1, "", "missing password stdin")
@@ -1099,7 +1119,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                         "KB_JOURNEY_RUNNER_SELECTOR": "agent:commit"}):
                 journey = run_json_install_project_step(mode="local", launcher="kb-create", stable_index=index,
                                                         platform_root=platform, project_root=project,
-                                                        run_command=run_command)
+                                                        run_command=run_command, registry_url="http://verdaccio.test")
             self.assertEqual(journey.steps[0].cases, ["S-187.6"])
             self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
             self.assertEqual(journey.steps[1].cases, ["S-124.14"])
@@ -1112,7 +1132,10 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(journey.steps[4].status, "PASS", journey.steps[4].message)
             install_args = calls[0]
             self.assertIn("--json", install_args)
-            self.assertEqual(install_args[install_args.index("--scenario") + 1], "custom")
+            marketplace_install_args = next(call for call in calls if "--marketplace-npm-url" in call)
+            self.assertEqual(marketplace_install_args[marketplace_install_args.index("--scenario") + 1], "commit")
+            self.assertEqual(marketplace_install_args[marketplace_install_args.index("--marketplace-npm-url") + 1],
+                             "http://verdaccio.test")
             self.assertEqual(install_args[install_args.index("--project-root") + 1], str(project))
             self.assertIn("update", [call[1] for call in calls])
             update_args = next(call for call in calls if call[1] == "update")
@@ -1124,9 +1147,10 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     patch.object(installer_case_steps, "evidence_run_command", run_command):
                 secured_journey = run_json_install_project_step(mode="secured", launcher="kb-create", stable_index=index,
                                                                 platform_root=platform, project_root=project,
-                                                                run_command=run_command)
-            secured_step = next(step for step in secured_journey.steps if "secured first install" in step.name)
-            self.assertEqual(secured_step.cases, ["S-187.10", "S-187.11", "S-187.12"])
+                                                                run_command=run_command,
+                                                                registry_url="http://verdaccio.test")
+            secured_step = next(step for step in secured_journey.steps if "repeat secured install" in step.name)
+            self.assertEqual(secured_step.cases, ["S-187.10", "S-187.11", "S-187.12", "S-187.13"])
             self.assertEqual(secured_step.status, "PASS", secured_step.message)
             self.assertFalse((isolated_home / ".kb/session.json").exists())
 

@@ -744,6 +744,87 @@ func TestApplyRefusesOnlyTheRunningInstallationRoot(t *testing.T) {
 	}
 }
 
+func TestMarketplaceRepeatRequiresExactRecordedPlatformRequest(t *testing.T) {
+	plan := contracts.ResolvedInstallPlan{
+		Host:         &contracts.HostSpec{Command: "node", Args: []string{"host.js"}, HealthURL: "http://127.0.0.1:4000/health"},
+		ServiceGraph: contracts.ServiceGraph{Profile: "default", PlatformVersion: "2.0.0"},
+		Request: contracts.InstallRequest{
+			Platform: contracts.VersionSelector{Version: "2.0.0"}, MarketplaceInstallSpecs: []string{"@kb-labs/commit"},
+			MarketplaceSources: &contracts.MarketplaceSources{RegistryURL: "https://registry.example.test", SigningPublicKeyEnv: "KB_REGISTRY_KEY", NpmURL: "https://npm.example.test"},
+		},
+	}
+	previous := contracts.InstallReceipt{
+		InstallationID: "installation-1",
+		Plan: contracts.ResolvedInstallPlan{
+			Host:         plan.Host,
+			ServiceGraph: plan.ServiceGraph,
+			Request: contracts.InstallRequest{
+				Platform: contracts.VersionSelector{Version: "2.0.0"}, MarketplaceInstallSpecs: []string{"@kb-labs/commit"},
+				MarketplaceSources: &contracts.MarketplaceSources{RegistryURL: "https://registry.example.test", SigningPublicKeyEnv: "KB_REGISTRY_KEY", NpmURL: "https://npm.example.test"},
+			},
+		},
+		MarketplaceInstalls: []contracts.MarketplaceInstallRecord{{
+			Spec: "@kb-labs/commit", ID: "@kb-labs/commit", Version: "2.1.0", Source: "registry", PrimaryKind: "plugin", SignatureStatus: "verified",
+		}},
+	}
+	if !marketplaceReceiptMatches(plan, previous) {
+		t.Fatal("exact existing Marketplace request was not eligible for owner reconciliation")
+	}
+	changed := plan
+	changed.Request.MarketplaceInstallSpecs = []string{"@kb-labs/other"}
+	if marketplaceReceiptMatches(changed, previous) {
+		t.Fatal("changed package spec must not reuse prior owner evidence")
+	}
+	changed = plan
+	changed.ServiceGraph.PlatformVersion = "2.1.0"
+	if marketplaceReceiptMatches(changed, previous) {
+		t.Fatal("different installed platform graph must not reuse prior owner evidence")
+	}
+	changed = plan
+	changed.ReleaseDigest = "different-release"
+	if marketplaceReceiptMatches(changed, previous) {
+		t.Fatal("different resolved release must not reuse prior owner evidence")
+	}
+	changed = plan
+	changed.Request.MarketplaceSources = &contracts.MarketplaceSources{RegistryURL: "https://registry.other.test", SigningPublicKeyEnv: "KB_REGISTRY_KEY", NpmURL: "https://npm.example.test"}
+	if marketplaceReceiptMatches(changed, previous) {
+		t.Fatal("changed Marketplace registry URL must not reuse prior owner evidence")
+	}
+	changed = plan
+	changed.Request.MarketplaceSources = &contracts.MarketplaceSources{RegistryURL: "https://registry.example.test", SigningPublicKeyEnv: "KB_OTHER_KEY", NpmURL: "https://npm.example.test"}
+	if marketplaceReceiptMatches(changed, previous) {
+		t.Fatal("changed Marketplace signing-key reference must not reuse prior owner evidence")
+	}
+	changed = plan
+	changed.Request.Values = map[string]string{"gateway.access.mode": `"local"`}
+	if marketplaceReceiptMatches(changed, previous) {
+		t.Fatal("changed install request values must not reuse prior owner evidence")
+	}
+	previous.MarketplaceInstalls[0].Integrity = ""
+	previous.MarketplaceInstalls[0].SignatureStatus = ""
+	if marketplaceReceiptMatches(plan, previous) {
+		t.Fatal("incomplete prior Marketplace identity must not enter reconciliation path")
+	}
+}
+
+func TestInstalledHostStarterAcceptsOnlyRuntimeAddedInstallationIdentity(t *testing.T) {
+	receiptHost := &contracts.HostSpec{Command: "node", Args: []string{"host.js"}, HealthURL: "http://127.0.0.1:4000/health"}
+	runtimeSpec := *receiptHost
+	runtimeSpec.Env = map[string]string{"KB_INSTALLATION_ID": "installation-1"}
+	if !installedHostSpecMatches(receiptHost, runtimeSpec, "installation-1") {
+		t.Fatal("runtime-added installation identity should preserve the declarative host spec")
+	}
+	runtimeSpec.Env["KB_INSTALLATION_ID"] = "other-installation"
+	if installedHostSpecMatches(receiptHost, runtimeSpec, "installation-1") {
+		t.Fatal("different runtime installation identity must be refused")
+	}
+	runtimeSpec.Env["KB_INSTALLATION_ID"] = "installation-1"
+	runtimeSpec.Env["NODE_ENV"] = "changed"
+	if installedHostSpecMatches(receiptHost, runtimeSpec, "installation-1") {
+		t.Fatal("runtime host changes beyond the launcher identity must be refused")
+	}
+}
+
 // case: S-005.7
 func TestClientApplyIsAllowedBesideASupervisedHost(t *testing.T) {
 	inst := newInstallation(t)

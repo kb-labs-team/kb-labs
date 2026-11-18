@@ -130,6 +130,16 @@ async function run(): Promise<void> {
   const manager = { status: () => ({ limit: 4, active: 0, runtimes: [] }) } as unknown as ProjectRuntimeManager;
   const projectRoutes = createProjectsRoutes({ registry, manager });
   await app.register(projectRoutes);
+  app.post('/api/v1/marketplace/packages/install', { config: { ux: 'raw' } }, async request => {
+    const body = request.body as { specs?: unknown };
+    const specs = Array.isArray(body?.specs) ? body.specs.filter((spec): spec is string => typeof spec === 'string') : [];
+    return {
+      installed: specs.map(spec => ({
+        id: '@kb-labs/commit', spec, version: '2.1.0', primaryKind: 'plugin', source: 'registry', signatureStatus: 'verified',
+      })),
+      scope: 'platform',
+    };
+  });
   await app.listen({ host: '127.0.0.1', port: 0 });
   const address = app.server.address();
   if (!address || typeof address === 'string') { throw new Error('secured Gateway fixture did not bind a TCP port'); }
