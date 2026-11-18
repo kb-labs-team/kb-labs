@@ -11,18 +11,24 @@ test('stream verification requires its configured default-branch base', () => {
   assert.throws(() => candidateBaseRef({ profile: 'stream', baseRef: '', emptyTreeRef: 'EMPTY' }), /default-branch/);
 });
 
-test('only agent work branches select the integration base', () => {
+test('agent work branches select the integration base and trunk work branches require master', () => {
   assert.equal(candidateIntegrationBase('agent/x231-test-strategy'), 'origin/agent/j90-integration');
   assert.equal(candidateIntegrationBase('agent/j90-integration'), '');
   assert.equal(candidateIntegrationBase('master'), '');
   assert.equal(candidateIntegrationBase('release/1.0'), '');
+  for (const branch of ['batch/cases/S-010.1', 'verify/short-lived-fix']) {
+    assert.deepEqual(candidateSelectionBase({ branch, requestedBaseRef: 'origin/master', emptyTreeRef: 'EMPTY' }), {
+      baseRef: 'origin/master', fullReason: '',
+    });
+    assert.match(candidateSelectionBase({ branch, requestedBaseRef: 'origin/other', emptyTreeRef: 'EMPTY' }).fullReason, /requires base origin\/master/);
+  }
 });
 
 test('candidate ref eligibility rejects protected and non-agent refs regardless of a supplied base', () => {
   for (const branch of ['agent/j90-integration', 'master', 'release/1.0', 'feature/other']) {
     const decision = candidateSelectionBase({ branch, requestedBaseRef: 'origin/agent/j90-integration', emptyTreeRef: 'EMPTY' });
     assert.equal(decision.baseRef, 'EMPTY', branch);
-    assert.match(decision.fullReason, /full: ref .* is not an eligible agent stream ref/, branch);
+    assert.match(decision.fullReason, /full: ref .* is not an eligible stream ref/, branch);
   }
   assert.deepEqual(candidateSelectionBase({
     branch: 'agent/x231-test-strategy', requestedBaseRef: 'origin/agent/j90-integration', emptyTreeRef: 'EMPTY',

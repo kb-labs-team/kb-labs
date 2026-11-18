@@ -272,6 +272,54 @@ test('eligible agent stream can select affected packages against the integration
   }
 });
 
+test('batch and verify candidates select affected packages only against origin/master', () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-trunk-stream-'));
+  const selectionPath = path.join(temporaryRoot, 'selection.json');
+  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  const gitShim = path.join(temporaryRoot, 'git-shim');
+  try {
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    mkdirSync(gitShim);
+    writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$2" = "origin/master" ]; then\n  case "$1" in\n    rev-parse) exec '${realGit}' rev-parse HEAD^ ;;\n    cat-file) exec '${realGit}' cat-file -t HEAD^ ;;\n    merge-base) exec '${realGit}' merge-base HEAD^ "$3" ;;\n  esac\nfi\nexec '${realGit}' "$@"\n`);
+    chmodSync(path.join(gitShim, 'git'), 0o755);
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    chmodSync(fakeDevkit, 0o755);
+    for (const branch of ['batch/cases/S-010.1', 'verify/short-lived-fix']) {
+      const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: branch, REMOTE_BASE_REF: 'origin/master' },
+      });
+      assert.equal(producer.status, 0, `${branch} selection failed: ${producer.stderr}`);
+      const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
+      assert.equal(selection.mode, 'affected', branch);
+      assert.equal(selection.selectionReason, 'affected', branch);
+      assert.equal(selection.changedPathCount > 0, true, branch);
+      assert.deepEqual(selection.packages, ['@kb-labs/core-platform'], branch);
+    }
+    const wrongBase = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: 'batch/cases/S-010.1', REMOTE_BASE_REF: 'origin/agent/j90-integration' },
+    });
+    assert.equal(wrongBase.status, 0, `wrong-base selection did not safely fall back: ${wrongBase.stderr}`);
+    assert.equal(JSON.parse(readFileSync(selectionPath, 'utf8')).data.mode, 'full');
+
+    writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$2" = "origin/master" ]; then\n  case "$1" in\n    rev-parse) exec '${realGit}' rev-parse HEAD^ ;;\n    cat-file) exec '${realGit}' cat-file -t HEAD^ ;;\n    merge-base) exec '${realGit}' merge-base HEAD^^ "$3" ;;\n  esac\nfi\nexec '${realGit}' "$@"\n`);
+    const divergentBase = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: 'verify/divergent', REMOTE_BASE_REF: 'origin/master' },
+    });
+    assert.equal(divergentBase.status, 0, `divergent base did not safely fall back: ${divergentBase.stderr}`);
+    const fallback = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
+    assert.equal(fallback.mode, 'full');
+    assert.match(fallback.selectionReason, /base is not an ancestor of HEAD/);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test('candidate selector converts an empty diff to a full selection with a reason', () => {
   const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-empty-diff-'));
   const selectionPath = path.join(temporaryRoot, 'selection.json');
@@ -366,7 +414,7 @@ test('stream profile cannot run affected checks on a protected ref with a suppli
     assert.equal(producer.status, 0, `protected stream selection failed: ${producer.stderr}`);
     const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
     assert.equal(selection.mode, 'full');
-    assert.match(selection.selectionReason, /full: ref master is not an eligible agent stream ref/);
+    assert.match(selection.selectionReason, /full: ref master is not an eligible stream ref/);
     assert.deepEqual(selection.packages, ['@kb-labs/core-platform']);
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });

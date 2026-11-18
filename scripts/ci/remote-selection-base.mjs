@@ -11,15 +11,19 @@ export function candidateIntegrationBase(branch) {
   return branch.startsWith('agent/') && branch !== 'agent/j90-integration' ? 'origin/agent/j90-integration' : '';
 }
 
+function candidateTrunkBase(branch) {
+  return /^(?:batch|verify)\/.+/.test(branch) ? 'origin/master' : '';
+}
+
 export function candidateSelectionBase({ branch, requestedBaseRef, emptyTreeRef }) {
-  const integrationBase = candidateIntegrationBase(branch);
-  if (!integrationBase) {
-    return { baseRef: emptyTreeRef, fullReason: `full: ref ${branch || '(unknown)'} is not an eligible agent stream ref` };
+  const expectedBase = candidateIntegrationBase(branch) || candidateTrunkBase(branch);
+  if (!expectedBase) {
+    return { baseRef: emptyTreeRef, fullReason: `full: ref ${branch || '(unknown)'} is not an eligible stream ref` };
   }
-  if (requestedBaseRef !== integrationBase) {
-    return { baseRef: emptyTreeRef, fullReason: `full: affected selection requires base ${integrationBase}; selected the complete workspace` };
+  if (requestedBaseRef !== expectedBase) {
+    return { baseRef: emptyTreeRef, fullReason: `full: affected selection requires base ${expectedBase}; selected the complete workspace` };
   }
-  return { baseRef: integrationBase, fullReason: '' };
+  return { baseRef: expectedBase, fullReason: '' };
 }
 
 export function candidateFullFallbackReason({ baseSha, headSha, changedPathCount, packages }) {

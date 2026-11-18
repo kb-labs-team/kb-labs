@@ -48,6 +48,10 @@ if (!fullSelection) {
     fullSelection = true;
     forcedFullReason ||= 'full: candidate base could not be merged with HEAD; selected the complete workspace';
   }
+  if (mergeBase && !mergeBase.error && mergeBase.status === 0 && mergeBase.stdout.trim() !== resolvedBaseSha) {
+    fullSelection = true;
+    forcedFullReason ||= 'full: candidate base is not an ancestor of HEAD; selected the complete workspace';
+  }
   selectionBaseSha = fullSelection ? emptyTreeSha : mergeBase.stdout.trim();
 } else {
   selectionBaseSha = emptyTreeSha;
