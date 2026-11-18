@@ -5,10 +5,34 @@ on:
     branches: ['batch/**']
   workflow_dispatch:
     inputs:
+      run_mode:
+        description: Run the full producer batch or reuse a completed candidate for one selected case
+        required: true
+        type: choice
+        options: [full, reuse_candidate]
+        default: full
       baseline:
         description: Optional baseline label recorded in batch metadata; the build compares against the default branch
         required: false
         type: string
+      candidate_run_id:
+        description: Successful journey-batch producer run ID (reuse_candidate only)
+        required: false
+        type: string
+      candidate_sha:
+        description: Exact 40-character commit SHA used by that producer run (reuse_candidate only)
+        required: false
+        type: string
+      case_id:
+        description: One case or step ID, for example S-056.2 (reuse_candidate only)
+        required: false
+        type: string
+      mode:
+        description: Installed journey mode for the selected case (reuse_candidate only)
+        required: false
+        type: choice
+        options: [local, secured]
+        default: local
   pull_request:
     paths:
       - '.github/workflows/journey-batch.yml'
@@ -34,6 +58,7 @@ permissions:
 
 jobs:
   producer:
+    if: github.event_name != 'workflow_dispatch' || inputs.run_mode != 'reuse_candidate'
     name: Shared build and candidate
     runs-on: ubuntu-latest
     outputs:
@@ -85,6 +110,7 @@ jobs:
           retention-days: 90
 
   local:
+    if: github.event_name != 'workflow_dispatch' || inputs.run_mode != 'reuse_candidate'
     name: Installed local journey
     runs-on: ubuntu-latest
     needs: producer
@@ -128,6 +154,7 @@ jobs:
           retention-days: 90
 
   secured:
+    if: github.event_name != 'workflow_dispatch' || inputs.run_mode != 'reuse_candidate'
     name: Installed secured journey
     runs-on: ubuntu-latest
     needs: producer
@@ -174,7 +201,7 @@ jobs:
     name: Assemble journey artifacts and summary
     runs-on: ubuntu-latest
     needs: [producer, local, secured]
-    if: always()
+    if: always() && (github.event_name != 'workflow_dispatch' || inputs.run_mode != 'reuse_candidate')
     timeout-minutes: 10
     env:
       BATCH_OUTPUT: .journey/batch/${{ github.run_id }}/summary
@@ -217,6 +244,197 @@ jobs:
         if: always()
         with:
           name: journey-shared
+          path: ${{ env.BATCH_OUTPUT }}
+          if-no-files-found: warn
+          retention-days: 90
+
+  reuse-candidate:
+    name: Reuse candidate for selected installed case
+    if: github.event_name == 'workflow_dispatch' && inputs.run_mode == 'reuse_candidate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GOTOOLCHAIN: local
+      CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      CASE_ID: ${{ inputs.case_id }}
+      JOURNEY_MODE: ${{ inputs.mode }}
+      BATCH_OUTPUT: .journey/batch/${{ github.run_id }}/reuse
+      COMPOSE_PROJECT_NAME: kb-journey-reuse-${{ github.run_id }}-${{ github.run_attempt }}
+      KB_JOURNEY_NETWORK: kb-journey-reuse-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Validate selected candidate inputs
+        shell: bash
+        run: |
+          [[ "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'candidate_run_id must be a numeric GitHub Actions run ID' >&2; exit 2; }
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'candidate_sha must be a full 40-character commit SHA' >&2; exit 2; }
+          [[ "$CASE_ID" =~ ^(S|PC)-[0-9]{3}(\.[0-9]+)?$ ]] || { echo 'case_id must name one case or step, such as S-056.2' >&2; exit 2; }
+          [[ "$JOURNEY_MODE" == local || "$JOURNEY_MODE" == secured ]] || { echo 'mode must be local or secured' >&2; exit 2; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a candidate SHA with reuse-verdict support
+        run: |
+          test -f e2e/journey/reuse_case_verdict.py || {
+            echo 'candidate SHA predates selected-case reuse support; produce a candidate from a commit containing e2e/journey/reuse_case_verdict.py' >&2
+            exit 1
+          }
+      - name: Verify source run identity and result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" > "$RUNNER_TEMP/candidate-run.json"
+          jq -e --arg sha "$CANDIDATE_SHA" --arg repo "$GITHUB_REPOSITORY" \
+            '.head_sha == $sha and .status == "completed" and .path == ".github/workflows/journey-batch.yml" and .head_repository.full_name == $repo and (.event == "push" or .event == "workflow_dispatch")' \
+            "$RUNNER_TEMP/candidate-run.json" >/dev/null || {
+              echo 'candidate run must be a completed journey-batch push or dispatch for this repository and exact SHA' >&2
+              exit 1
+            }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100" > "$RUNNER_TEMP/candidate-jobs.json"
+          jq -e '[.jobs[] | select(.name == "Shared build and candidate" and .status == "completed" and .conclusion == "success")] | length == 1' \
+            "$RUNNER_TEMP/candidate-jobs.json" >/dev/null || {
+              echo 'candidate run has no successful Shared build and candidate job' >&2
+              exit 1
+            }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/candidate-artifacts.json"
+          jq -ce '[.artifacts[] | select(.name == "journey-build-candidate" and .expired == false)] | if length == 1 and (.[0].digest | type == "string") then .[0] else error("expected exactly one unexpired candidate artifact with a digest") end' \
+            "$RUNNER_TEMP/candidate-artifacts.json" > "$RUNNER_TEMP/candidate-artifact.json"
+      - name: Allocate candidate input outside the checkout
+        shell: bash
+        run: |
+          producer_input=$(mktemp -d "$RUNNER_TEMP/journey-producer-input.XXXXXX")
+          printf 'BATCH_PRODUCER_INPUT=%s\n' "$producer_input" >> "$GITHUB_ENV"
+      - name: Download and verify the exact candidate artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          artifact_id=$(jq -r '.id' "$RUNNER_TEMP/candidate-artifact.json")
+          expected_digest=$(jq -r '.digest | sub("^sha256:"; "")' "$RUNNER_TEMP/candidate-artifact.json")
+          download_started=$(date +%s%N)
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/candidate-artifact.zip"
+          actual_digest=$(sha256sum "$RUNNER_TEMP/candidate-artifact.zip" | cut -d ' ' -f 1)
+          [[ "$actual_digest" == "$expected_digest" ]] || {
+            echo 'candidate artifact ZIP SHA-256 does not match the GitHub artifact digest' >&2
+            exit 1
+          }
+          mkdir -p "$BATCH_PRODUCER_INPUT"
+          python3 - "$RUNNER_TEMP/candidate-artifact.zip" "$BATCH_PRODUCER_INPUT" <<'PY'
+          import shutil, stat, sys, zipfile
+          from pathlib import Path, PurePosixPath
+          archive = zipfile.ZipFile(sys.argv[1])
+          root = Path(sys.argv[2]).resolve()
+          seen = set()
+          for info in archive.infolist():
+              name = info.filename
+              path = PurePosixPath(name)
+              if path.is_absolute() or ".." in path.parts or "\\" in name or not path.parts or path.parts[0] != "shared":
+                  raise SystemExit(f"candidate artifact contains an unsafe path: {name}")
+              normalized = path.parts
+              if normalized in seen:
+                  raise SystemExit(f"candidate artifact contains a duplicate path: {name}")
+              seen.add(normalized)
+              if stat.S_ISLNK(info.external_attr >> 16):
+                  raise SystemExit(f"candidate artifact contains a symbolic link: {name}")
+              destination = root.joinpath(*path.parts)
+              if destination != root and root not in destination.parents:
+                  raise SystemExit(f"candidate artifact path escapes its destination: {name}")
+              if info.is_dir():
+                  destination.mkdir(parents=True, exist_ok=True)
+              else:
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  with archive.open(info) as source, destination.open("wb") as target:
+                      shutil.copyfileobj(source, target)
+          PY
+          download_ended=$(date +%s%N)
+          python3 - "$download_started" "$download_ended" > "$RUNNER_TEMP/reuse-timings.json" <<'PY'
+          import json, sys
+          start, end = (int(value) for value in sys.argv[1:])
+          print(json.dumps({"artifactDownloadVerifyAndExtract": round(max(0, end - start) / 1_000_000_000, 3)}))
+          PY
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-devkit/go.sum
+      - name: Install workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Verify producer metadata
+        run: |
+          verification_start=$(date +%s%N)
+          jq -e --arg sha "$CANDIDATE_SHA" '.commit == $sha and .result == "PASS" and (.candidateArchiveSha256 | type == "string")' \
+            "$BATCH_PRODUCER_INPUT/shared/batch-metadata.json" >/dev/null || {
+              echo 'candidate metadata must record the requested SHA, a passing producer result, and its archive digest' >&2
+              exit 1
+            }
+          verification_end=$(date +%s%N)
+          python3 - "$RUNNER_TEMP/reuse-timings.json" "$verification_start" "$verification_end" <<'PY'
+          import json, sys
+          path, start, end = sys.argv[1], *(int(value) for value in sys.argv[2:])
+          value = json.load(open(path, encoding="utf-8"))
+          value["producerMetadataCheck"] = round(max(0, end - start) / 1_000_000_000, 3)
+          open(path, "w", encoding="utf-8").write(json.dumps(value) + "\n")
+          PY
+      - name: Run the selected case against the reused candidate
+        shell: bash
+        run: |
+          mode_output="$BATCH_OUTPUT/$JOURNEY_MODE"
+          mkdir -p "$mode_output"
+          batch_started=$(date +%s%N)
+          set +e
+          e2e/journey/batch.sh mode "$JOURNEY_MODE" "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$CASE_ID"
+          batch_status=$?
+          set -e
+          batch_ended=$(date +%s%N)
+          selected_case_status=FAIL
+          if [[ -s "$mode_output/batch-metadata.json" ]]; then
+            set +e
+            python3 e2e/journey/reuse_case_verdict.py "$JOURNEY_MODE" "$CASE_ID" "$mode_output"
+            if [[ "$?" -eq 0 ]]; then selected_case_status=PASS; else batch_status=1; fi
+            set -e
+          else
+            batch_status=1
+          fi
+          [[ "$batch_status" -eq 0 && "$selected_case_status" == PASS ]] || batch_status=1
+          python3 - "$RUNNER_TEMP/candidate-artifact.json" "$RUNNER_TEMP/reuse-timings.json" "$mode_output/candidate-source.json" "$mode_output/batch-metadata.json" "$BATCH_PRODUCER_INPUT/shared/batch-metadata.json" "$mode_output/batch.log" "$mode_output/run.json" "$CANDIDATE_RUN_ID" "$CANDIDATE_SHA" "$JOURNEY_MODE" "$CASE_ID" "$batch_status" "$selected_case_status" "$batch_started" "$batch_ended" <<'PY'
+          import json, pathlib, sys
+          artifact_path, timing_path, source_path, mode_metadata_path, shared_metadata_path, log_path, extracted_run_path, run_id, sha, mode, case_id, status, case_status, started, ended = sys.argv[1:]
+          timing = json.load(open(timing_path, encoding="utf-8"))
+          timing["candidateVerifyAndJourney"] = round(max(0, int(ended) - int(started)) / 1_000_000_000, 3)
+          timing["measuredCandidateAndCaseSeconds"] = round(sum(timing.values()), 3)
+          artifact = json.load(open(artifact_path, encoding="utf-8"))
+          metadata = json.load(open(shared_metadata_path, encoding="utf-8"))
+          candidate_reused = pathlib.Path(extracted_run_path).is_file()
+          result = "PASS" if status == "0" and case_status == "PASS" and candidate_reused else "FAIL"
+          source = {"candidateRunId": run_id, "candidateSha": sha, "buildInputIdentity": {"kind": "git-commit", "sha": sha}, "candidateArchiveSha256": metadata.get("candidateArchiveSha256"), "artifactId": artifact["id"], "artifactDigest": artifact["digest"], "mode": mode, "caseId": case_id, "candidateReused": candidate_reused, "platformReused": False, "evidenceKind": "iteration", "selectedCaseResult": case_status, "result": result, "reuseTimingsSeconds": timing}
+          pathlib.Path(source_path).write_text(json.dumps(source, indent=2) + "\n", encoding="utf-8")
+          try:
+              mode_metadata = json.load(open(mode_metadata_path, encoding="utf-8"))
+              mode_metadata.update({"result": result, "candidateReused": candidate_reused, "platformReused": False, "evidenceKind": "iteration", "reuseTimingsSeconds": timing})
+              pathlib.Path(mode_metadata_path).write_text(json.dumps(mode_metadata, indent=2) + "\n", encoding="utf-8")
+          except FileNotFoundError:
+              pass
+          with open(log_path, "a", encoding="utf-8") as log:
+              log.write(f"candidateReused={str(candidate_reused).lower()} platformReused=false evidenceKind=iteration\n")
+              log.write("reuseTimingsSeconds=" + json.dumps(timing, sort_keys=True) + "\n")
+          PY
+          exit "$batch_status"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: journey-reused-candidate
           path: ${{ env.BATCH_OUTPUT }}
           if-no-files-found: warn
           retention-days: 90
