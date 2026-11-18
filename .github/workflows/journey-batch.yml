@@ -451,6 +451,16 @@ jobs:
           value["producerMetadataCheck"] = round(max(0, end - start) / 1_000_000_000, 3)
           open(path, "w", encoding="utf-8").write(json.dumps(value) + "\n")
           PY
+      - name: Extract and validate candidate build prerequisites
+        run: |
+          tar -xf "$BATCH_PRODUCER_INPUT/shared/build-candidate.tar" -C "$CANDIDATE_CHECKOUT"
+          for required in core/config/dist/index.js cli/bin/dist/bin.js; do
+            if [[ ! -f "$CANDIDATE_CHECKOUT/$required" ]]; then
+              echo "reused candidate is missing required build output: $required" >&2
+              echo 'produce a candidate after `kb-devkit run build --affected` and rerun this journey' >&2
+              exit 1
+            fi
+          done
       - name: Apply the reviewed harness overlay after candidate identity checks
         run: |
           overlay_started=$(date +%s%N)
@@ -480,7 +490,7 @@ jobs:
           selected_case_status=FAIL
           if [[ -s "$mode_output/batch-metadata.json" ]]; then
             set +e
-            (cd "$CANDIDATE_CHECKOUT" && python3 "$CASE_VERDICT_HELPER" "$JOURNEY_MODE" "$CASE_ID" "$mode_output")
+            (cd "$CANDIDATE_CHECKOUT" && python3 "$CASE_VERDICT_HELPER" "$JOURNEY_MODE" "$CASE_ID" "$mode_output" "$CANDIDATE_CHECKOUT")
             if [[ "$?" -eq 0 ]]; then selected_case_status=PASS; else batch_status=1; fi
             set -e
           else

@@ -1378,6 +1378,7 @@ exec "$REAL_TAR" "$@"
         run = next(step["run"] for step in reuse["steps"]
                    if step.get("name") == "Run the selected case against the reused candidate")
         self.assertIn('batch.sh mode "$JOURNEY_MODE"', run)
+        self.assertIn('"$mode_output" "$CANDIDATE_CHECKOUT")', run)
         self.assertIn('"candidateSha": sha, "harnessSha": harness_sha', run)
         self.assertIn('"workflowSha": workflow_sha', run)
         self.assertIn('"$EFFECTIVE_HARNESS_SHA" "$HARNESS_SHA"', run)
@@ -1403,11 +1404,18 @@ exec "$REAL_TAR" "$@"
         )
         verify = next(i for i, step in enumerate(steps)
                       if step.get("name") == "Verify producer metadata")
+        prerequisites = next(i for i, step in enumerate(steps)
+                             if step.get("name") == "Extract and validate candidate build prerequisites")
         apply_overlay = next(i for i, step in enumerate(steps)
                              if step.get("name") == "Apply the reviewed harness overlay after candidate identity checks")
         execute_case = next(i for i, step in enumerate(steps)
                             if step.get("name") == "Run the selected case against the reused candidate")
         self.assertLess(verify, apply_overlay)
+        self.assertLess(verify, prerequisites)
+        self.assertLess(prerequisites, execute_case)
+        prerequisite_script = steps[prerequisites]["run"]
+        self.assertIn("core/config/dist/index.js", prerequisite_script)
+        self.assertIn("cli/bin/dist/bin.js", prerequisite_script)
         self.assertLess(apply_overlay, execute_case)
         verification_script = steps[verify]["run"]
         self.assertIn("verify-run", verification_script)
