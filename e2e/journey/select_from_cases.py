@@ -236,7 +236,7 @@ def journey_source_group_declaration(source: str, root: Path,
             bool(_case_declarations(registered_source, root).get(line, {}).get("cases"))
             for registered_source, line, _ in declaration.get("locations", ())
         )
-        if not (has_claim or declaration.get("requires")):
+        if not (has_claim or declaration.get("requires") or declaration.get("runners")):
             continue
         declared_runners = declaration.get("runners", ())
         if selector:
