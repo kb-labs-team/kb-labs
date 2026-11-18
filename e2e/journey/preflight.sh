@@ -78,9 +78,9 @@ PATH="$ROOT/tools/kb-devkit:$PATH" \
   KB_DEVKIT_BASE_REF="$BUILD_BASE" \
   node scripts/ci/run-remote-stage.mjs || exit 42
 if node "$ROOT/e2e/platform/validate-package-outputs.mjs" --build-outputs "$ROOT" > "$OUT/release-build-output-check.log" 2>&1; then
-  cat "$OUT/release-build-output-check.log" >> "$OUT/build.log"
+  cat "$OUT/release-build-output-check.log"
 else
-  cat "$OUT/release-build-output-check.log" >> "$OUT/build.log"
+  cat "$OUT/release-build-output-check.log"
   exit 43
 fi
 ' || build_rc=$?
