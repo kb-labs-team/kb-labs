@@ -506,6 +506,19 @@ test('GitHub job evidence follows all pages when a workflow has more than one hu
   assert.equal(evidence[0].name, 'prepare');
 });
 
+// case: S-262.15
+test('GitHub job evidence fails closed on an empty page even when the reported total is stale', () => {
+  let calls = 0;
+  assert.throws(() => fetchGitHubJobEvidence({
+    repository: 'kb-labs/workspace', runId: '45', plannedJobs: [{ job: 'prepare' }],
+    runCommand: () => {
+      calls += 1;
+      return JSON.stringify({ total_count: 101, jobs: [] });
+    },
+  }), /missing for planned job\(s\): prepare/);
+  assert.equal(calls, 1);
+});
+
 // case: S-262.7
 test('a passing build stage artifact cannot override a failed enclosing build job', () => {
   const verdict = aggregateVerdict({

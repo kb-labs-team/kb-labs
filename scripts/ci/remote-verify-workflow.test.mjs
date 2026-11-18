@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -97,6 +97,7 @@ test('remote verification builds once and fans out independent and artifact-depe
 test('candidate PR label runs full verification for the exact head without secrets or write permissions', () => {
   const pr = readYaml('.github/workflows/ci-pr.yml');
   const remote = readYaml('.github/workflows/remote-verify.yml');
+  const release = readYaml('.github/workflows/release-build-candidate.yml');
   const candidate = pr.jobs['candidate-verification'];
   assert.deepEqual(pr.on.pull_request.types, ['opened', 'synchronize', 'reopened', 'labeled', 'unlabeled']);
   assert.equal(pr.concurrency['cancel-in-progress'], true);
@@ -127,6 +128,19 @@ test('candidate PR label runs full verification for the exact head without secre
   assert.equal(cleanup.jobs['sweep-verify-refs'].permissions.contents, 'write');
   assert.equal(remote.on.workflow_call.inputs.job_prefix.required, false);
   assert.equal(remote.on.workflow_call.inputs.job_prefix.default, '');
+  assert.equal(release.jobs['unit-test-gate'].uses, './.github/workflows/remote-verify.yml');
+  assert.equal(release.jobs['unit-test-gate'].name, 'Workspace unit verification');
+  assert.equal(release.jobs['unit-test-gate'].with.job_prefix, 'Workspace unit verification / ');
+  const workflowDir = path.join(root, '.github/workflows');
+  const remoteCallers = readdirSync(workflowDir).filter((file) => file.endsWith('.yml')).flatMap((file) => {
+    const workflow = readYaml(path.join('.github/workflows', file));
+    return Object.entries(workflow.jobs ?? {}).filter(([, job]) => job.uses === './.github/workflows/remote-verify.yml')
+      .map(([jobId, job]) => ({ caller: `${file}#${jobId}`, prefix: job.with?.job_prefix }));
+  }).sort((a, b) => a.caller.localeCompare(b.caller));
+  assert.deepEqual(remoteCallers, [
+    { caller: 'ci-pr.yml#candidate-verification', prefix: 'Full candidate verification (${{ github.event.pull_request.head.sha }}) / ' },
+    { caller: 'release-build-candidate.yml#unit-test-gate', prefix: 'Workspace unit verification / ' },
+  ]);
 });
 
 test('journey batch and candidate route builds through the same runner entry', () => {
