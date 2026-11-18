@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 import unittest
 from pathlib import Path
 
@@ -771,6 +772,41 @@ exec "$REAL_TAR" "$@"
             self.assertEqual(set(metadata["stageDurationsSeconds"]), {
                 "reset", "build", "unit", "candidate", "local", "secured", "total",
             })
+
+    # case: S-307.1
+    def test_registry_deploy_tree_is_in_producer_archive_and_restored_for_reuse(self):
+        deploy_root = self.root / ".kb/deploy"
+        registry_dist = deploy_root / "marketplace-registry-app/dist/bootstrap.js"
+        registry_modules = deploy_root / "marketplace-registry-app/node_modules/.modules.yaml"
+        image_config = deploy_root / "image-default/kb.config.json"
+        for path, contents in (
+            (registry_dist, "candidate registry dist\n"),
+            (registry_modules, "candidate production dependencies\n"),
+            (image_config, '{"platform":{"deployment":{"topology":"cloud"}}}\n'),
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(contents)
+
+        prepared = self._run()
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        archive_path = self.root / "out/shared/build-candidate.tar"
+        with tarfile.open(archive_path) as archive:
+            names = set(archive.getnames())
+        self.assertIn("./.kb/deploy/marketplace-registry-app/dist/bootstrap.js", names)
+        self.assertIn("./.kb/deploy/marketplace-registry-app/node_modules/.modules.yaml", names)
+        self.assertIn("./.kb/deploy/image-default/kb.config.json", names)
+
+        shutil.rmtree(deploy_root)
+        reused_output = self.root / "secured-reuse"
+        reused = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "secured",
+             str(self.root / "out"), str(reused_output)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(reused.returncode, 0, reused.stderr + reused.stdout)
+        self.assertEqual(registry_dist.read_text(), "candidate registry dist\n")
+        self.assertEqual(registry_modules.read_text(), "candidate production dependencies\n")
+        self.assertTrue(image_config.is_file())
 
     # case: S-262.2
     def test_summary_preserves_available_evidence_when_mode_metadata_is_missing(self):
