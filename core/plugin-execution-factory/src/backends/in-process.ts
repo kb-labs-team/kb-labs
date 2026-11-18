@@ -260,6 +260,7 @@ export class InProcessBackend implements RawExecutionBackend {
         pluginInvoker,
         eventEmitter,
         handlerPath: `${handlerPath}${exportSelector}`,
+        platformRoot: requestToExecute.platformRoot,
         input: requestToExecute.input,
         environment: requestToExecute.env,
         signal: executionSignal,

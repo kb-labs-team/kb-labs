@@ -143,7 +143,10 @@ export interface HandlerSchema {
  * Note: descriptor.requestId is for request correlation in distributed tracing.
  * executionId is for this specific execution attempt (may retry same requestId).
  */
-export type ExecutionRequest = CoreExecutionRequest<PluginContextDescriptor>;
+export type ExecutionRequest = CoreExecutionRequest<PluginContextDescriptor> & {
+  /** Trusted host root used only by platform package resolution; never added to plugin context/env. */
+  platformRoot?: string;
+};
 
 // ============================================================================
 // Workspace Configuration

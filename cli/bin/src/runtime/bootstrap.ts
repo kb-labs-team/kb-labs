@@ -653,6 +653,7 @@ export async function executeCli(
           manifestCmd,
           actualRest,
           env: commandEnv,
+          platformRoot,
           global,
           flagsObj,
           cliContext,
@@ -675,6 +676,7 @@ interface DispatchPluginParams {
   manifestCmd: RegisteredCommand;
   actualRest: string[];
   env: CliCommandEnv;
+  platformRoot?: string;
   global: ReturnType<typeof parseArgs>["global"];
   flagsObj: ReturnType<typeof parseArgs>["flagsObj"];
   cliContext: CliExecutionContext;
@@ -716,6 +718,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
     const pluginExitCode = await executePlugin({
       context: p.cliContext,
       env: p.env,
+      platformRoot: p.platformRoot,
       commandId,
       argv: p.actualRest,
       flags: commandFlags,

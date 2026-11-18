@@ -128,7 +128,7 @@ async function execute(requestId: string, message: ExecuteMessage): Promise<void
     if (descriptor.pluginId && descriptor.pluginVersion && platform.analytics) {
       platform.analytics.setSource?.({ product: descriptor.pluginId, version: descriptor.pluginVersion });
     }
-    const platformRoot = process.env.KB_PLATFORM_ROOT;
+    const platformRoot = message.platformRoot ?? process.env.KB_PLATFORM_ROOT;
     if (platformRoot) {
       installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
     }

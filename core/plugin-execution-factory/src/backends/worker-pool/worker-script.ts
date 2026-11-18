@@ -298,6 +298,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
         ui,
         eventEmitter,
         handlerPath,
+        platformRoot: request.platformRoot,
         cwd,
         input: request.input,
         environment: request.env,

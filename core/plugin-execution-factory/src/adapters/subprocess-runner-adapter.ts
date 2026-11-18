@@ -59,6 +59,7 @@ export class SubprocessRunnerAdapter implements ISubprocessRunner {
       descriptor: options.descriptor as PluginContextDescriptor,
       platform: options.platform,
       handlerPath: options.handlerPath,
+      platformRoot: options.platformRoot,
       input: options.input,
       environment: options.environment,
       timeoutMs: options.timeoutMs,
