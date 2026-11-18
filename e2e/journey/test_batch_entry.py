@@ -1167,6 +1167,23 @@ exec "$REAL_TAR" "$@"
                     os.chmod(marker_directory, 0o700)
                     shutil.rmtree(marker_directory, ignore_errors=True)
 
+    # case: S-262.17
+    def test_entrypoint_tmpdir_failure_does_not_echo_environment_path(self):
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node.js is required for the remote producer entrypoint")
+        blocked_tmp = self.root / "tmp-is-a-file"
+        blocked_tmp.write_text("fixture")
+        env = {"PATH": os.environ.get("PATH", ""), "TMPDIR": str(blocked_tmp)}
+        result = subprocess.run(
+            [node, str(REPO / "scripts/ci/run-remote-stage.mjs"),
+             "--journey-batch-prepare", str(self.root / "out")],
+            cwd=REPO, env=env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, "journey producer cleanup state could not be initialized\n")
+        self.assertNotIn(str(blocked_tmp), result.stdout + result.stderr)
+
     # case: S-262.1
     def test_entry_names_missing_base_ref_before_affected_build(self):
         result = self._run(missing_base_ref="origin/master")

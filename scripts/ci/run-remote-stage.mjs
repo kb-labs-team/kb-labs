@@ -10,7 +10,13 @@ import { runProcessGroup } from './process-group.mjs';
 if (process.argv[2] === '--journey-batch-prepare') {
   const [output, baseline] = process.argv.slice(3);
   if (!output) throw new Error('Usage: node scripts/ci/run-remote-stage.mjs --journey-batch-prepare <output-dir> [baseline]');
-  const cancellationDirectory = mkdtempSync(join(tmpdir(), 'journey-cancel-'));
+  let cancellationDirectory;
+  try {
+    cancellationDirectory = mkdtempSync(join(tmpdir(), 'journey-cancel-'));
+  } catch {
+    process.stderr.write('journey producer cleanup state could not be initialized\n');
+    process.exit(1);
+  }
   const cancellationDeadlineFile = join(cancellationDirectory, 'deadline-ms');
   let status;
   let cleanupFailed = false;
