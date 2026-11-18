@@ -79,7 +79,7 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
 
     def test_clean_install_requires_the_marketplace_commit_receipt(self):
         self.assertIsNotNone(commit_marketplace_install_record({"marketplaceInstalls": [
-            {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+            {"spec": "@kb-labs/commit", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
         ]}))
         self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": []}))
         self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": [

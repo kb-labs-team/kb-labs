@@ -1340,9 +1340,17 @@ def _main(*, update_variant_runner=None):
                             and not (PROJECT / ".kb").exists()
                             and "Verification: platform installed" in output
                             and re.search(r"(?i)next|success|installed|ready", output) is not None)
+        if human_install_ok:
+            try:
+                human_receipt = json.loads((PLATFORM_CURRENT / ".kb/v2/receipt.json").read_text())
+                human_install_ok = (commit_marketplace_install_record(human_receipt) is not None
+                                    and not any(artifact.get("id") == "@kb-labs/commit"
+                                                for artifact in human_receipt.get("plan", {}).get("artifacts", [])))
+            except (OSError, ValueError, TypeError):
+                human_install_ok = False
         if FRONT == "human" and not VARIANT.endswith("secured"):
             record_case("human interactive install",
-                       human_install_ok, "interactive install did not show a plan and success result",
+                       human_install_ok, "interactive install omitted its plan, success result, or Marketplace receipt",
                        cases=["S-040.1", "S-040.2", "S-187.1", "S-187.2", "S-187.3", "S-203.10"],
                        requires=("step:candidate provenance",),
                        runners=("human:default", "human:nondefault"))

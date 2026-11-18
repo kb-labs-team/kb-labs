@@ -936,48 +936,26 @@ func TestSecretInputIDsMustBelongToSelectedSecretRequirements(t *testing.T) {
 	}
 }
 
-// case: PC-001.4
-func TestScenarioMarketplaceUsesReleaseIndexPin(t *testing.T) {
+// case: S-039.1, S-040.2
+func TestScenarioMarketplaceSpecDoesNotRequireReleaseIndexPlugin(t *testing.T) {
 	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{"@kb-labs/commit"}}, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, plugin := range source.Plugins {
-		if plugin.Package == "@kb-labs/commit" {
-			if plan.Request.MarketplaceInstallSpecs[0] != plugin.ID+"@"+plugin.Version {
-				t.Fatalf("spec = %q, want release-index pin %s@%s", plan.Request.MarketplaceInstallSpecs[0], plugin.ID, plugin.Version)
-			}
-			return
-		}
-	}
-	t.Fatal("fixture missing commit")
-}
-
-func TestScenarioMarketplacePreservesReleaseIndexIdentityWhenPackageDiffers(t *testing.T) {
-	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var plugin catalog.Component
-	for index := range source.Plugins {
-		if source.Plugins[index].ID == "@kb-labs/commit" {
-			source.Plugins[index].Package = "@kb/commit"
-			plugin = source.Plugins[index]
-		}
-	}
+	source.Plugins = nil
 	source, err = catalog.Seal(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{plugin.ID}}, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := plan.Request.MarketplaceInstallSpecs[0], plugin.ID+"@"+plugin.Version; got != want {
-		t.Fatalf("pinned request = %q, want release-index identity %q (package %q is not the requested identity)", got, want, plugin.Package)
+	for _, spec := range []string{"@kb-labs/commit", "@kb-labs/commit@1.2.3"} {
+		t.Run(spec, func(t *testing.T) {
+			plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{spec}}, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := plan.Request.MarketplaceInstallSpecs[0]; got != spec {
+				t.Fatalf("spec = %q, want %q", got, spec)
+			}
+		})
 	}
 }
