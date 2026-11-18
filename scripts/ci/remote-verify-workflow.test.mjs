@@ -123,7 +123,10 @@ test('candidate PR label runs full verification for the exact head without secre
   assert.ok(Object.values(remote.jobs).every((job) => job.permissions?.contents !== 'write'));
   const cleanup = readYaml('.github/workflows/sweep-verify-refs.yml');
   assert.ok(Object.hasOwn(cleanup.on, 'schedule'));
-  assert.equal(cleanup.permissions.contents, 'write');
+  assert.equal(cleanup.permissions.contents, 'read');
+  assert.equal(cleanup.jobs['sweep-verify-refs'].permissions.contents, 'write');
+  assert.equal(remote.on.workflow_call.inputs.job_prefix.required, false);
+  assert.equal(remote.on.workflow_call.inputs.job_prefix.default, '');
 });
 
 test('journey batch and candidate route builds through the same runner entry', () => {

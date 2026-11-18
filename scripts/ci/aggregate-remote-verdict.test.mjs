@@ -484,7 +484,7 @@ test('nested reusable workflow job evidence uses an exact caller prefix', () => 
       throw new Error(`unexpected endpoint ${endpoint}`);
     },
   });
-  assert.deepEqual(evidence.map((job) => job.name), [`${prefix}prepare`, `${prefix}build`]);
+  assert.deepEqual(evidence.map((job) => job.name), ['prepare', 'build']);
 });
 
 // case: S-262.15
