@@ -23,6 +23,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                prepare_registry_commit_project_fixture,
                                publish_commit_update_fixture,
                                run_ordered_source_journey_steps,
+                               run_secured_local_execution_backend_step,
                                run_plugin_policy_diagnostic_step,
                                run_marketplace_steps, validate_commit_status_response,
                                validate_shared_failure, validate_unmounted_commit_response,
@@ -45,6 +46,78 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_secured_local_backend_journey_publishes_from_project_cwd_with_user_identity(self):
+        published_versions = []
+        calls = []
+
+        with tempfile.TemporaryDirectory(prefix="journey-secured-execution-routing-") as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            project = project.resolve()
+            workspace = root / "workspace"
+            source_package = workspace / "plugins" / "commit"
+            (source_package / "dist").mkdir(parents=True)
+            (source_package / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/commit", "version": "2.120.1",
+            }))
+            (source_package / "dist" / "manifest.js").write_text("export default {};\n")
+            platform = root / "platform"
+            active = create_test_install_container(platform)
+            (active / "node_modules").mkdir(parents=True)
+            env = {
+                "HOME": str(root / "home"),
+                "KB_JOURNEY_CLI_PATH": "kb",
+                "KB_JOURNEY_PLATFORM_ROOT": str(platform),
+                "KB_JOURNEY_WORKSPACE_ROOT": str(workspace),
+                "KB_JOURNEY_MARKETPLACE_GATEWAY_URL": "http://gateway.test",
+                "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey",
+                "KB_JOURNEY_SERVICE_TOKEN": "secured-session-token",
+            }
+            Path(env["HOME"]).mkdir()
+
+            def runner(command, **kwargs):
+                calls.append((command, kwargs))
+                if command[1:3] == ["workspace", "list"]:
+                    data = {"hosts": []}
+                elif command[1:3] == ["config", "get"]:
+                    data = {"key": "platform.execution.mode", "value": "subprocess"}
+                elif command[1:3] == ["config", "set"]:
+                    data = {}
+                elif command[1:3] == ["hub", "publish"]:
+                    package = json.loads((Path(kwargs["cwd"]) / "package.json").read_text())
+                    published_versions.append(package["version"])
+                    data = {"handle": "journey", "name": package["name"], "version": package["version"]}
+                else:
+                    raise AssertionError(f"unexpected CLI command: {command}")
+                return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": data}), "")
+
+            def registry_request(_opener, request, *, timeout, env=None):
+                self.assertEqual(request.full_url, "http://gateway.test/api/v1/registry/my/packages")
+                self.assertEqual(request.get_header("Authorization"), "Bearer secured-session-token")
+                self.assertGreater(timeout, 0)
+                return 200, json.dumps([{
+                    "meta": {"name": "@kb-labs/commit"},
+                    "versions": [{"version": version} for version in published_versions],
+                }]).encode(), {}
+
+            with patch.dict(os.environ, {
+                "KB_JOURNEY_CASES": "S-243.10",
+                "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured",
+            }), patch("marketplace_steps.open_http", side_effect=registry_request):
+                journey = Journey("secured", "secured-execution-routing")
+                run_secured_local_execution_backend_step(journey, project, env, runner)
+
+            self.assertEqual(journey.steps[-1].status, "PASS", journey.steps[-1].message)
+            self.assertEqual(journey.steps[-1].cases, ["S-243.10"])
+            self.assertEqual(len(published_versions), 2)
+            self.assertEqual([command[-2] for command, _kwargs in calls if command[1:3] == ["config", "set"]],
+                             ["subprocess", "worker-pool", "subprocess"])
+            publish_calls = [(command, options) for command, options in calls if command[1:3] == ["hub", "publish"]]
+            self.assertEqual(len(publish_calls), 2)
+            self.assertTrue(all(Path(options["cwd"]).is_relative_to(project) for _command, options in publish_calls),
+                            [str(options["cwd"]) for _command, options in publish_calls])
+
     def test_registry_analytics_fixture_builds_in_temporary_copy(self):
         workspace = Path(__file__).resolve().parents[2]
         source_package = workspace / "e2e" / "journey" / "fixtures" / "analytics-emitter"

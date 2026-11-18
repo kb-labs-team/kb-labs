@@ -33,6 +33,7 @@ import { handleLimitFlag } from "./limits";
 import { getDefaultMiddlewares } from "./middlewares";
 import { executePlugin, createSystemCommandContext } from "./plugin-executor";
 import { tryResolveGateway, executeViaGateway, pluginCommandUnavailable } from "./gateway-executor";
+import { shouldExecutePluginViaGateway } from "./plugin-execution-routing.js";
 import { loadEnvFile } from "./env-loader";
 import { initializePlatform, loadPlatformConfiguration, resolveProjectConfig } from "./platform-init";
 import { shouldShowLimits } from "./helpers/flags";
@@ -718,7 +719,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
   }
 
   return p.runWithMiddleware(async () => {
-    if (executionMode !== "in-process" && accessMode !== 'local') {
+    if (shouldExecutePluginViaGateway(accessMode, executionMode)) {
       const gatewayClient = await tryResolveGateway(p.env.KB_GATEWAY_URL);
       if (gatewayClient) {
         return executeViaGateway(gatewayClient, {

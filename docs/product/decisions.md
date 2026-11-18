@@ -1,5 +1,17 @@
 # Product decisions log
 
+## 2026-11-18
+
+### Explicit local plugin backends stay local in secured access mode
+
+Secured mode controls authentication and Gateway access; it does not override
+an explicitly configured local plugin execution backend. `in-process`,
+`subprocess`, and `worker-pool` execute through the installed platform's local
+execution backend after the secured authentication gate. Other execution modes
+retain Gateway routing. This preserves the local backend's registered-project
+working directory and platform context without requiring a Gateway execution
+host. Cases: S-243.10, S-268.19.
+
 ## 2026-10-31
 
 ### SQLite vector search breaks equal-score ties by record ID

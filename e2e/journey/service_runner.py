@@ -48,7 +48,8 @@ from invocations import (
 )
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import (prepare_commit_project_fixture, prepare_registry_commit_project_fixture,
-                               run_marketplace_steps, run_ordered_source_journey_steps)
+                               run_marketplace_steps, run_ordered_source_journey_steps,
+                               run_secured_local_execution_backend_step)
 from marketplace_steps import _registry_version, _output
 from dispatch_registry import MARKETPLACE_REGISTRY_LANE, lane_for_runner
 from adapter_defaults_steps import _config_difference_keys, run_adapter_default_steps
@@ -1350,6 +1351,7 @@ def main() -> int:
             if entry is None:
                 return "Registry lane did not capture the verified Commit provenance entry"
             run_ordered_source_journey_steps(journey, project_root, flow_env, run_command)
+            run_secured_local_execution_backend_step(journey, project_root, flow_env, run_command)
             return None
 
         graph.flow("Registry ordered-source Marketplace assertions", "marketplace-registry",

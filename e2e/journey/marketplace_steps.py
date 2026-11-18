@@ -8,6 +8,7 @@ from project_service_path import project_service_path
 import json
 import hashlib
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -565,6 +566,118 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
                  runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
     return captured.get("entry")
 
+
+def run_secured_local_execution_backend_step(journey: Journey, project_root: str | Path,
+                                             env: dict[str, str] | None = None,
+                                             runner: CommandRunner = run_command) -> None:
+    """Prove installed plugin execution keeps its local backend, cwd, and user identity in secured mode."""
+    if journey.mode != "secured":
+        return
+    project = Path(project_root).resolve()
+    base_env = dict(os.environ if env is None else env)
+    export_project_identity_to_child_environment(base_env, project_root=str(project))
+    cli_path = base_env.get("KB_JOURNEY_CLI_PATH")
+    if not cli_path:
+        raise RuntimeError("secured plugin execution routing needs the installed platform CLI path")
+    platform_root_value = base_env.get("KB_JOURNEY_PLATFORM_ROOT")
+    if not platform_root_value:
+        raise RuntimeError("secured plugin execution routing needs the installed platform root")
+    platform_root = active_platform_root(Path(platform_root_value))
+    workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+    source_package = workspace / "plugins" / "commit"
+    if not (source_package / "dist" / "manifest.js").is_file():
+        raise RuntimeError("built Commit fixture is missing its compiled manifest")
+
+    def exercise_backends() -> None:
+        host_command = kb_command(["workspace", "list", "--json"], executable=cli_path)
+        hosts_result = _json(_run(host_command, cwd=project, env=base_env, runner=runner), host_command)
+        hosts = hosts_result.get("hosts")
+        if not isinstance(hosts, list):
+            raise RuntimeError("authenticated workspace list did not return a host list")
+        online_execution_hosts = [host for host in hosts if isinstance(host, dict)
+                                  and host.get("status") in {"online", "reconnecting"}
+                                  and "execution" in host.get("capabilities", [])]
+        if online_execution_hosts:
+            raise RuntimeError("secured routing fixture unexpectedly has an online execution-capable host")
+
+        config_get = kb_command(["config", "get", "platform.execution.mode", "--scope", "platform", "--json"],
+                                executable=cli_path)
+        config = _json(_run(config_get, cwd=project, env=base_env, runner=runner), config_get)
+        original_mode = config.get("value")
+        if not isinstance(original_mode, str) or not original_mode:
+            raise RuntimeError("installed platform has no explicit execution mode to restore")
+
+        match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?",
+                             json.loads((source_package / "package.json").read_text(encoding="utf-8")).get("version", ""))
+        if not match:
+            raise RuntimeError("Commit fixture version is not a supported semantic version")
+        major, minor, patch = (int(part) for part in match.groups())
+
+        def set_mode(mode: str) -> None:
+            command = kb_command(["config", "set", "--scope", "platform", "platform.execution.mode", mode, "--json"],
+                                 executable=cli_path)
+            _json(_run(command, cwd=project, env=base_env, runner=runner), command)
+
+        try:
+            for offset, mode in enumerate(("subprocess", "worker-pool"), start=1):
+                set_mode(mode)
+                package_root = Path(tempfile.mkdtemp(prefix=f".journey-{mode}-", dir=project))
+                try:
+                    shutil.rmtree(package_root)
+                    shutil.copytree(source_package, package_root,
+                                    ignore=shutil.ignore_patterns("node_modules", ".turbo", "coverage"))
+                    package_node_modules = package_root / "node_modules"
+                    package_node_modules.symlink_to(platform_root / "node_modules", target_is_directory=True)
+                    manifest_path = package_root / "package.json"
+                    package_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    version = f"{major}.{minor}.{patch + offset}"
+                    package_manifest["version"] = version
+                    manifest_path.write_text(json.dumps(package_manifest, indent=2) + "\n", encoding="utf-8")
+
+                    publish = kb_command(["hub", "publish", "--json"], executable=cli_path)
+                    publish_env = dict(base_env)
+                    publish_env.pop("KB_REGISTRY_URL", None)
+                    publish_env["KB_GATEWAY_URL"] = base_env.get(
+                        "KB_JOURNEY_MARKETPLACE_GATEWAY_URL", base_env.get("KB_JOURNEY_BASE_URL", ""))
+                    publish_env["KB_REGISTRY_AUTHOR_HANDLE"] = base_env.get(
+                        "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE", "journey")
+                    with invocation_context(step_id="S-243.10"):
+                        result = _json(_run(publish, cwd=package_root, env=publish_env, runner=runner), publish)
+                    if result.get("version") != version:
+                        raise RuntimeError(f"{mode} publisher returned unexpected package version {result.get('version')!r}")
+                    if not package_root.is_relative_to(project):
+                        raise RuntimeError("plugin execution package directory escaped its registered project")
+
+                    token = base_env.get("KB_JOURNEY_SERVICE_TOKEN")
+                    if not token:
+                        raise RuntimeError("secured Registry identity check has no authenticated Gateway session")
+                    gateway_url = base_env.get("KB_JOURNEY_MARKETPLACE_GATEWAY_URL") or base_env.get("KB_JOURNEY_BASE_URL")
+                    if not gateway_url:
+                        raise RuntimeError("secured Registry identity check has no configured Gateway URL")
+                    registry_url = f"{gateway_url.rstrip('/')}/api/v1/registry/my/packages"
+                    request = urllib.request.Request(registry_url, headers={"Authorization": f"Bearer {token}"})
+                    status, body, _ = open_http(urllib.request.urlopen, request, timeout=30, env=base_env)
+                    try:
+                        authored = json.loads(body)
+                    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                        raise RuntimeError(f"authenticated Registry package list returned invalid JSON: {error}") from error
+                    if (status != 200 or not isinstance(authored, list)
+                            or not any(isinstance(entry, dict)
+                                       and isinstance(entry.get("meta"), dict)
+                                       and entry["meta"].get("name") == package_manifest.get("name")
+                                       and any(isinstance(item, dict) and item.get("version") == version
+                                               for item in entry.get("versions", []))
+                                       for entry in authored)):
+                        raise RuntimeError(
+                            f"{mode} publish is not visible in the authenticated user's Registry package list")
+                finally:
+                    shutil.rmtree(package_root, ignore_errors=True)
+        finally:
+            set_mode(original_mode)
+
+    journey.step("secured installed plugin keeps local backend, cwd, and user identity",
+                 "plugin-execution", exercise_backends, cases=["S-243.10"],
+                 runners=("service-marketplace-registry:secured",))
 
 def _set_marketplace_proxy_faults(project: Path, env: dict[str, str], runner: CommandRunner,
                                   faults: dict[str, str]) -> None:
