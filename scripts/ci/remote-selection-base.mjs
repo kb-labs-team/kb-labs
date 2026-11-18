@@ -11,8 +11,8 @@ export function candidateIntegrationBase(branch) {
   return branch.startsWith('agent/') && branch !== 'agent/j90-integration' ? 'origin/agent/j90-integration' : '';
 }
 
-function candidateTrunkBase(branch) {
-  return /^(?:batch|verify)\/.+/.test(branch) ? 'origin/master' : '';
+export function candidateTrunkBase(branch) {
+  return /^(?:batch|verify|verify-candidate)\/.+/.test(branch) ? 'origin/master' : '';
 }
 
 export function candidateSelectionBase({ branch, requestedBaseRef, emptyTreeRef }) {

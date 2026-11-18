@@ -16,7 +16,7 @@ test('agent work branches select the integration base and trunk work branches re
   assert.equal(candidateIntegrationBase('agent/j90-integration'), '');
   assert.equal(candidateIntegrationBase('master'), '');
   assert.equal(candidateIntegrationBase('release/1.0'), '');
-  for (const branch of ['batch/cases/S-010.1', 'verify/short-lived-fix']) {
+  for (const branch of ['batch/cases/S-010.1', 'verify/short-lived-fix', 'verify-candidate/release/20261118T120000Z-abc']) {
     assert.deepEqual(candidateSelectionBase({ branch, requestedBaseRef: 'origin/master', emptyTreeRef: 'EMPTY' }), {
       baseRef: 'origin/master', fullReason: '',
     });

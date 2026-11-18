@@ -32,6 +32,7 @@ test('remote verification builds once and fans out independent and artifact-depe
   const dependentResultUpload = dependentSteps.find((step) => step.name === 'Upload build-dependent test result');
 
   assert.ok(prepare.steps.some((step) => step.run === 'node scripts/ci/run-remote-prepare.mjs'));
+  assert.equal(prepare.env.REMOTE_BASE_REF, "${{ inputs.base_ref || github.event.inputs.base_ref || (github.event_name == 'push' && format('origin/{0}', github.event.repository.default_branch)) || '' }}");
   assert.equal(prepareResultUpload.if, 'always()');
   assert.equal(prepareResultUpload.with.name, 'remote-result-prepare');
   assert.equal(prepareResultUpload.with.path, 'stage-result-prepare.json');
@@ -93,6 +94,7 @@ test('journey batch and candidate route builds through the same runner entry', (
   const candidate = readYaml('.github/workflows/remote-verify.yml');
   const batchBuild = batch.jobs.producer.steps.find((step) => step.name === 'Produce shared build and candidate');
   const candidateBuild = candidate.jobs.build.steps.find((step) => step.name === 'Build selected workspace packages once');
+  assert.equal(batch.jobs.producer.env.KB_DEVKIT_BASE_REF, "${{ github.event.pull_request.base.sha || format('origin/{0}', github.event.repository.default_branch) }}");
   assert.equal(batchBuild.run, 'node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"');
   assert.equal(candidateBuild.run, 'node scripts/ci/run-remote-stage.mjs');
 });
@@ -135,7 +137,7 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
     assert.equal(prepare.steps.find((step) => step.uses?.startsWith('actions/checkout@')).with['fetch-depth'], 0);
     assert.equal(workflow.env.DEFAULT_BRANCH, '${{ github.event.repository.default_branch }}');
     assert.equal(prepare.env.VERIFICATION_PROFILE, "${{ inputs.profile || github.event.inputs.profile || 'stream' }}");
-    assert.equal(prepare.env.REMOTE_BASE_REF, "${{ inputs.base_ref || github.event.inputs.base_ref || '' }}");
+    assert.equal(prepare.env.REMOTE_BASE_REF, "${{ inputs.base_ref || github.event.inputs.base_ref || (github.event_name == 'push' && format('origin/{0}', github.event.repository.default_branch)) || '' }}");
     assert.equal(prepare.env.REMOTE_REF_NAME, '${{ github.ref_name }}');
     mkdirSync(home);
     const goPaths = execFileSync('go', ['env', 'GOPATH', 'GOMODCACHE', 'GOCACHE'], { encoding: 'utf8' }).trim().split('\n');
@@ -199,7 +201,7 @@ test('candidate selector forces full package checks for every non-stream ref des
     const prepareEnv = workflow.jobs.prepare.env;
     assert.equal(prepareEnv.REMOTE_REF_NAME, '${{ github.ref_name }}');
     let fullPackages;
-    for (const branch of ['agent/j90-integration', 'master', 'release/1.0', 'feature/other']) {
+    for (const branch of ['agent/j90-integration', 'master', 'release/1.0', 'feature/other', 'verify-candidate/release/20261118T120000Z-abc']) {
       const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
         cwd: root,
         encoding: 'utf8',
@@ -208,7 +210,7 @@ test('candidate selector forces full package checks for every non-stream ref des
       assert.equal(producer.status, 0, `${branch} selector failed: ${producer.stderr}`);
       const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
       assert.equal(selection.mode, 'full', `${branch} must run full regardless of base_ref`);
-      assert.match(selection.selectionReason, /full:.*(ref|branch)/i);
+      assert.match(selection.selectionReason, /^full:/i);
       assert.ok(selection.packages.length > 0, `${branch} must not return an empty workspace selection`);
       if (!fullPackages) fullPackages = selection.packages;
       assert.deepEqual(selection.packages, fullPackages, `${branch} must select the complete workspace package set`);
@@ -284,11 +286,16 @@ test('batch and verify candidates select affected packages only against origin/m
     chmodSync(path.join(gitShim, 'git'), 0o755);
     writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
     chmodSync(fakeDevkit, 0o755);
-    for (const branch of ['batch/cases/S-010.1', 'verify/short-lived-fix']) {
-      const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
+    for (const [branch, verificationProfile] of [
+      ['batch/cases/S-010.1', 'candidate'],
+      ['verify/short-lived-fix', 'candidate'],
+      ['verify-candidate/release/20261118T120000Z-abc', 'candidate'],
+      ['verify/stream/20261118T120000Z-abc', 'stream'],
+    ]) {
+      const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', verificationProfile, selectionPath, fakeDevkit], {
         cwd: root,
         encoding: 'utf8',
-        env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: branch, REMOTE_BASE_REF: 'origin/master' },
+        env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: verificationProfile, DEFAULT_BRANCH: 'master', REMOTE_REF_NAME: branch, REMOTE_BASE_REF: 'origin/master' },
       });
       assert.equal(producer.status, 0, `${branch} selection failed: ${producer.stderr}`);
       const selection = JSON.parse(readFileSync(selectionPath, 'utf8')).data;
@@ -383,7 +390,7 @@ test('candidate workflow dispatch cannot use a forged base on a protected ref', 
     const workflow = readYaml('.github/workflows/remote-verify.yml');
     const prepareEnv = workflow.jobs.prepare.env;
     assert.equal(prepareEnv.REMOTE_REF_NAME, '${{ github.ref_name }}');
-    assert.equal(prepareEnv.REMOTE_BASE_REF, "${{ inputs.base_ref || github.event.inputs.base_ref || '' }}");
+    assert.equal(prepareEnv.REMOTE_BASE_REF, "${{ inputs.base_ref || github.event.inputs.base_ref || (github.event_name == 'push' && format('origin/{0}', github.event.repository.default_branch)) || '' }}");
     writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
     chmodSync(fakeDevkit, 0o755);
     const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
