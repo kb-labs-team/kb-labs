@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export PYTHONPATH="$ROOT/e2e/journey${PYTHONPATH:+:$PYTHONPATH}"
 
+node scripts/ci/journey-case-claims-preflight.mjs
+
 python3 -m unittest \
   test_dispatch_registry.DispatchRegistryTests.test_full_unselected_plan_matches_checked_in_golden \
   test_case_selection.CaseJourneySelectionTests.test_commit_default_and_registry_lane_step_graphs_are_disjoint \
