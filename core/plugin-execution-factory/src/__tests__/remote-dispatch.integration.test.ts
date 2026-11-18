@@ -141,11 +141,13 @@ describe('RemoteBackend + GatewayDispatchTransport integration', () => {
     await backend.execute(makeRequest({
       handlerRef: '/host/repo/packages/my-plugin/dist/handler.js',
       pluginRoot: '/host/repo',
+      platformRoot: '/host/repo/installed-platform',
     }));
 
     const remoteReq = (receivedArgs?.[0]) as Record<string, unknown>;
     expect(remoteReq?.['handlerRef']).toBe('/workspace/packages/my-plugin/dist/handler.js');
     expect(remoteReq?.['pluginRoot']).toBe('/workspace');
+    expect(remoteReq?.['platformRoot']).toBeUndefined();
   });
 
   it('returns ok:false on 403 (wrong secret)', async () => {

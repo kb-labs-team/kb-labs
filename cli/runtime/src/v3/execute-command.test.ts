@@ -37,6 +37,37 @@ describe('executeCommandV3 environment', () => {
     expect(execute).toHaveBeenCalledOnce();
     expect(process.env.KB_GATEWAY_URL).toBe(previousGatewayUrl);
   });
+
+  // case: S-010.4
+  it('passes the trusted platform root as internal execution metadata, not plugin environment', async () => {
+    let requestSeen: ExecutionRequest | undefined;
+    const execute = vi.fn(async (request: ExecutionRequest) => {
+      requestSeen = request;
+      return { ok: true as const, data: { hasPlan: false }, executionTimeMs: 0 };
+    });
+    const platformContainer = {
+      executionBackend: { execute },
+    } as unknown as PlatformContainer;
+
+    await executeCommandV3({
+      binaryName: 'kb',
+      pluginId: '@kb-labs/fixture',
+      pluginVersion: '1.0.0',
+      commandPath: 'fixture check',
+      pluginRoot: '/isolated/store/entries/fixture/node_modules/@kb-labs/fixture',
+      handlerPath: 'dist/handler.mjs',
+      argv: [],
+      flags: {},
+      env: {},
+      platformRoot: '/installed-platform/versions/2.120.1',
+      ui: noopUI,
+      platform: {} as unknown as PlatformServices,
+      platformContainer,
+    });
+
+    expect(requestSeen?.platformRoot).toBe('/installed-platform/versions/2.120.1');
+    expect(requestSeen?.env).toEqual({});
+  });
 });
 
 describe('executeCommandV3 plugin command result output', () => {
