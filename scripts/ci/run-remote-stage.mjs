@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -13,6 +13,7 @@ if (process.argv[2] === '--journey-batch-prepare') {
   const cancellationDirectory = mkdtempSync(join(tmpdir(), 'journey-cancel-'));
   const cancellationDeadlineFile = join(cancellationDirectory, 'deadline-ms');
   let status;
+  let cleanupFailed = false;
   try {
     const result = await runProcessGroup(
       'bash', ['e2e/journey/batch.sh', 'prepare', output, ...(baseline ? [baseline] : [])],
@@ -30,7 +31,20 @@ if (process.argv[2] === '--journey-batch-prepare') {
       status = result.status;
     }
   } finally {
-    rmSync(cancellationDirectory, { recursive: true, force: true });
+    try {
+      rmSync(cancellationDirectory, { recursive: true, force: true });
+    } catch {
+      try {
+        chmodSync(cancellationDirectory, 0o700);
+        rmSync(cancellationDirectory, { recursive: true, force: true });
+      } catch {
+        cleanupFailed = true;
+      }
+    }
+  }
+  if (cleanupFailed) {
+    process.stderr.write('journey producer cleanup state could not be removed\n');
+    if (status === 0) status = 1;
   }
   process.exit(status);
 }

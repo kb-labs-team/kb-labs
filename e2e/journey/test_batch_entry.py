@@ -1115,6 +1115,58 @@ exec "$REAL_TAR" "$@"
                 process.kill()
                 process.communicate(timeout=2)
 
+    # case: S-262.17
+    def test_entrypoint_cleanup_permission_error_keeps_143_and_removes_private_directory(self):
+        import signal
+        import time
+
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node.js is required for the remote producer entrypoint")
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        ready = self.root / "cleanup-permission-ready"
+        marker_directory_record = self.root / "private-marker-directory"
+        fake_bash = (
+            "#!/usr/bin/env python3\n"
+            "import os,pathlib,signal,time\n"
+            "marker_directory=pathlib.Path(os.environ['JOURNEY_CLEANUP_DEADLINE_FILE']).parent\n"
+            f"pathlib.Path({str(marker_directory_record)!r}).write_text(str(marker_directory))\n"
+            "(marker_directory / 'fixture').write_text('preserve status')\n"
+            "os.chmod(marker_directory, 0o500)\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            f"pathlib.Path({str(ready)!r}).touch()\n"
+            "while True: time.sleep(1)\n"
+        )
+        self._script(fake_bin / "bash", fake_bash)
+        env = {"PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", "")}
+        process = subprocess.Popen(
+            [node, str(REPO / "scripts/ci/run-remote-stage.mjs"),
+             "--journey-batch-prepare", str(self.root / "out")],
+            cwd=REPO, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(ready.exists(), "producer fixture did not restrict its private marker directory")
+            marker_directory = Path(marker_directory_record.read_text())
+            os.kill(process.pid, signal.SIGTERM)
+            output, _ = process.communicate(timeout=8)
+            self.assertEqual(process.returncode, 128 + signal.SIGTERM, output)
+            self.assertIn("producer cleanup deadline could not be published", output)
+            self.assertNotIn(str(marker_directory), output)
+            self.assertFalse(marker_directory.exists(), "private cleanup directory was not removed after restoring its mode")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=2)
+            if marker_directory_record.exists():
+                marker_directory = Path(marker_directory_record.read_text())
+                if marker_directory.exists():
+                    os.chmod(marker_directory, 0o700)
+                    shutil.rmtree(marker_directory, ignore_errors=True)
+
     # case: S-262.1
     def test_entry_names_missing_base_ref_before_affected_build(self):
         result = self._run(missing_base_ref="origin/master")
