@@ -282,7 +282,7 @@ export function fetchGitHubJobEvidence({ repository, runId, plannedJobs, jobPref
     const pageJobs = response.jobs ?? [];
     jobs.push(...pageJobs);
     const totalCount = response.total_count;
-    if (Number.isSafeInteger(totalCount) ? jobs.length >= totalCount : pageJobs.length < 100) break;
+    if (pageJobs.length === 0 || (Number.isSafeInteger(totalCount) ? jobs.length >= totalCount : pageJobs.length < 100)) break;
     page += 1;
   }
   const missingNames = new Set(plannedJobs.map((job) => `${jobPrefix}${githubJobName(job)}`));
