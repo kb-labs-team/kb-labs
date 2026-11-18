@@ -176,6 +176,12 @@ case "$1" in
       *) exit 2 ;;
     esac
     ;;
+  *registry_candidate.py)
+    [ "$2" = stage-batch ] || exit 2
+    printf 'registry-stage %s\\n' "$*" >> "$CALLS"
+    [ "${{FAIL_REGISTRY_STAGE:-}}" = 1 ] && exit 7
+    printf '%s\\n' "$ROOT/.journey/registry-candidates/fixture"
+    ;;
   *) exec "{sys.executable}" "$@" ;;
 esac
 ''')
@@ -354,8 +360,10 @@ exec "{real_sleep}" "$@"
         cleanup_marker = self.root / "mode-cleanup-finished"
         real_cp = shutil.which("cp")
         self._script(self.bin / "cp", f'''#!/bin/sh
-if [ "${{FAIL_REPORT_COPY:-}}" = 1 ] && [ "$1" = "-R" ] && [ "$2" = ".journey/reports/." ]; then
-  exit 9
+if [ "${{FAIL_REPORT_COPY:-}}" = 1 ] && [ "$1" = "-R" ]; then
+  case "$2" in
+    .journey/reports/.|*/runner-reports.*/.) exit 9 ;;
+  esac
 fi
 exec "{real_cp}" "$@"
 ''')
@@ -1396,7 +1404,7 @@ exit 1
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("preflight fixture failed", result.stdout)
-        self.assertEqual(compose_source.read_text(), str(self.root))
+        self.assertEqual(Path(compose_source.read_text()).resolve(), self.root.resolve())
         self.assertFalse((self.root / "e2e/packages").exists())
 
 

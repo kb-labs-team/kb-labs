@@ -321,10 +321,8 @@ run_mode() {
   esac
   printf 'exit=%s\n' "$rc" >> "$mode_dir/batch.log"
   if [ -L "$report_root" ] || [ ! -d "$report_root" ] || ! cp -R "$report_root/." "$mode_dir/"; then
-    echo "journey $mode mode reports could not be collected from its owned root $report_root; next: $(next_runner_command)" >&2
+    echo "journey $mode mode reports could not be copied from its owned root $report_root; next: $(next_runner_command)" >&2
     case "$rc" in 129|130|143) return "$rc" ;; esac
-    return 1
-  fi
     return 1
   fi
   remove_report_root || return 1
