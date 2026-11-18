@@ -7,7 +7,9 @@ repository_root="$(cd -- "$delivery_directory/../.." && pwd)"
 policy_cli="$repository_root/core/plugin-runtime/src/platform-resolve/node-engine.mjs"
 source "$repository_root/e2e/compose-owner.sh"
 node_major="$(node "$policy_cli" --required-major "$repository_root/package.json")"
+pnpm_version="$(node -e 'const pin=require(process.argv[1]).packageManager; if (typeof pin !== "string" || !pin.startsWith("pnpm@")) process.exit(2); process.stdout.write(pin.slice(5).split("+")[0])' "$repository_root/package.json")"
 export KB_NODE_MAJOR="$node_major"
+export KB_PNPM_VERSION="$pnpm_version"
 compose_owner_init
 KB_DELIVERY_COMPOSE_COMMAND="$(compose_owner_json)"
 export KB_DELIVERY_COMPOSE_COMMAND
@@ -26,4 +28,4 @@ if [[ "$mode" != "run" ]]; then
   exit 2
 fi
 
-exec env DELIVERY_E2E=1 KB_NODE_MAJOR="$node_major" go test -v -timeout 10m "$@"
+exec env DELIVERY_E2E=1 KB_NODE_MAJOR="$node_major" KB_PNPM_VERSION="$pnpm_version" go test -v -timeout 10m "$@"

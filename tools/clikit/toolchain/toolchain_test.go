@@ -229,7 +229,7 @@ func TestPnpmResolutionUsesCapturedOuterCorepackCacheAndFailsWithoutDownload(t *
 	if !errors.As(err, &failure) || failure.Code != "KB_TOOLCHAIN_PNPM_UNAVAILABLE" {
 		t.Fatalf("missing cached pnpm = %v", err)
 	}
-	if failure.Hint == "" || !strings.Contains(failure.Hint, "corepack install") {
+	if failure.Hint == "" || !strings.Contains(failure.Hint, "corepack pnpm --version") {
 		t.Fatalf("missing exact cache remediation: %q", failure.Hint)
 	}
 	script := filepath.Join(cache, "v1", "pnpm", SupportedPnpm, "bin", "pnpm.mjs")
@@ -237,6 +237,13 @@ func TestPnpmResolutionUsesCapturedOuterCorepackCacheAndFailsWithoutDownload(t *
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(script, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := resolvePnpmAt(cache); err == nil {
+		t.Fatal("Corepack wrapper without its native executable was accepted")
+	}
+	binary := filepath.Join(filepath.Dir(filepath.Dir(script)), "pnpm-native")
+	if err := os.WriteFile(binary, []byte("fixture"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, got, err := resolvePnpmAt(cache)

@@ -66,6 +66,10 @@ jobs:
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
 
+      - name: Capture workspace pnpm pin
+        id: pnpm-pin
+        run: echo "version=$(pnpm --version)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
@@ -161,10 +165,12 @@ jobs:
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
+          PNPM_VERSION: ${{ steps.pnpm-pin.outputs.version }}
         run: |
           SSHOPTS="-i $HOME/.ssh/deploy.key -o StrictHostKeyChecking=accept-new"
-          scp $SSHOPTS tools/kb-create/kb-create tools/kb-dev/kb-dev "$SSH_USER@$SSH_HOST:/tmp/"
-          ssh $SSHOPTS "$SSH_USER@$SSH_HOST" 'bash -s' <<'REMOTE'
+          [[ "$PNPM_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::invalid pnpm pin: $PNPM_VERSION"; exit 1; }
+          scp $SSHOPTS tools/kb-create/kb-create tools/kb-dev/kb-dev scripts/ensure-pnpm-version.sh "$SSH_USER@$SSH_HOST:/tmp/"
+          ssh $SSHOPTS "$SSH_USER@$SSH_HOST" "PNPM_VERSION='$PNPM_VERSION' bash -s" <<'REMOTE'
           set -euo pipefail
           sudo install -m 0755 /tmp/kb-create /usr/local/bin/kb-create
           sudo install -m 0755 /tmp/kb-dev    /usr/local/bin/kb-dev
@@ -173,16 +179,8 @@ jobs:
           # pnpm is required for the shared-store install path (kb-create falls
           # back to npm without it, which copies node_modules per release and
           # fills the disk). Provision it via corepack.
-          # Keep the deployment host on the same supported toolchain as the
-          # platform installer.
-          if ! command -v pnpm >/dev/null; then
-            echo "pnpm missing — provisioning pnpm@12 via corepack"
-            sudo corepack enable pnpm 2>/dev/null || true
-            corepack prepare pnpm@12.21.0 --activate 2>/dev/null \
-              || sudo npm install -g pnpm@12.21.0 2>/dev/null \
-              || { echo "::error::failed to install pnpm on host"; exit 1; }
-          fi
-          echo "pnpm: $(pnpm --version 2>&1 | head -1)"
+          bash /tmp/ensure-pnpm-version.sh "${PNPM_VERSION:?workspace pnpm pin was not captured}"
+          rm -f /tmp/ensure-pnpm-version.sh
           # Verdaccio config: htpasswd lives under the writable storage volume
           # (the image's default /verdaccio/conf is not writable by uid 10001, which
           # makes adduser fail with HTTP 500). @kb-labs/* is local-only; everything

@@ -193,20 +193,33 @@ func PnpmExecutableAt(cacheRoot string) (node, pnpmScript string, err error) {
 
 func resolvePnpmAt(cacheRoot string) (node, script string, err error) {
 	// pnpm 12 is a native executable launched through this Node entry point in
-	// Corepack's cache. It resolves the installed binary from its package root.
+	// Corepack's cache. Corepack installs only the wrapper; pnpm downloads its
+	// native executable on first use, so the wrapper alone is not runnable.
 	script = filepath.Join(cacheRoot, "v1", "pnpm", SupportedPnpm, "bin", "pnpm.mjs")
 	if _, err = os.Stat(script); err != nil {
-		diagnostic, diagErr := diag.FromCatalog("KB_TOOLCHAIN_PNPM_UNAVAILABLE", map[string]string{"version": SupportedPnpm, "nextCommand": "corepack install"})
-		if diagErr != nil {
-			return "", "", diagErr
-		}
-		return "", "", diagnostic
+		return pnpmUnavailableDiagnostic()
+	}
+	binary := filepath.Join(filepath.Dir(filepath.Dir(script)), "pnpm-native")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	if info, statErr := os.Stat(binary); statErr != nil || !info.Mode().IsRegular() ||
+		(runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
+		return pnpmUnavailableDiagnostic()
 	}
 	node, err = exec.LookPath("node")
 	if err != nil {
 		return "", "", fmt.Errorf("locate Node.js to run cached pnpm: %w", err)
 	}
 	return node, script, nil
+}
+
+func pnpmUnavailableDiagnostic() (string, string, error) {
+	diagnostic, diagErr := diag.FromCatalog("KB_TOOLCHAIN_PNPM_UNAVAILABLE", map[string]string{"version": SupportedPnpm, "nextCommand": "corepack pnpm --version"})
+	if diagErr != nil {
+		return "", "", diagErr
+	}
+	return "", "", diagnostic
 }
 
 // Run executes an external tool with the operation's shared timeout and emits

@@ -27,6 +27,7 @@ services:
       dockerfile: Dockerfile.target
       args:
         NODE_MAJOR: "${KB_NODE_MAJOR:?Set by e2e/delivery/scripts/run.sh from root package.json engines.node}"
+        PNPM_VERSION: "${KB_PNPM_VERSION:?Set by e2e/delivery/scripts/run.sh from root package.json packageManager}"
     ports:
       - "127.0.0.1:2201:22"
     depends_on: [verdaccio]
@@ -38,6 +39,7 @@ services:
       dockerfile: Dockerfile.target
       args:
         NODE_MAJOR: "${KB_NODE_MAJOR:?Set by e2e/delivery/scripts/run.sh from root package.json engines.node}"
+        PNPM_VERSION: "${KB_PNPM_VERSION:?Set by e2e/delivery/scripts/run.sh from root package.json packageManager}"
     ports:
       - "127.0.0.1:2202:22"
     depends_on: [verdaccio]

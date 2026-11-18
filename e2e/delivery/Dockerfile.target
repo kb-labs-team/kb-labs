@@ -8,6 +8,8 @@ FROM ubuntu:22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG NODE_MAJOR
+ARG PNPM_VERSION
+ENV COREPACK_HOME=/opt/kb-corepack
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -17,13 +19,17 @@ RUN apt-get update \
       sudo \
  && rm -rf /var/lib/apt/lists/*
 
-# Derive the NodeSource package from the platform policy provided by Compose.
+# Derive Node and pnpm versions from the workspace policies provided by Compose.
 RUN test -n "$NODE_MAJOR" || { echo "NODE_MAJOR is required; derive it from root package.json engines.node with e2e/delivery/scripts/run.sh." >&2; exit 1; } \
+ && test -n "$PNPM_VERSION" || { echo "PNPM_VERSION is required; derive it from root package.json packageManager with e2e/delivery/scripts/run.sh." >&2; exit 1; } \
  && curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/* \
  && corepack enable \
- && corepack prepare pnpm@12.21.0 --activate
+ && corepack prepare "pnpm@${PNPM_VERSION}" --activate \
+ && test "$(pnpm --version)" = "$PNPM_VERSION" \
+ && test -x "$COREPACK_HOME/v1/pnpm/$PNPM_VERSION/pnpm-native" \
+ && chmod -R a+rX "$COREPACK_HOME"
 
 # Non-root platform user (ADR-0014 §D16).
 RUN useradd -m -s /bin/bash kb \

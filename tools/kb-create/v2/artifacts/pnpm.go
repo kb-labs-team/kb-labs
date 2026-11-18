@@ -79,11 +79,25 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 					_, _ = io.WriteString(output, provision.Stderr)
 				}
 				if err == nil {
-					node, script, err = toolchain.PnpmExecutableAt(r.corepackHome)
+					// Corepack downloads pnpm's Node entrypoint, but that wrapper
+					// fetches the native executable only on first invocation.
+					// Warm it now so later offline installs fail before any workspace
+					// mutation if the executable could not be provisioned.
+					warm, warmErr := toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"pnpm", "--version"}, Env: env, Operation: toolchain.OperationPackageManager})
+					if warm.Stderr != "" {
+						_, _ = io.WriteString(output, warm.Stderr)
+					}
+					err = warmErr
+					if err == nil && strings.TrimSpace(warm.Stdout) != toolchain.SupportedPnpm {
+						err = fmt.Errorf("Corepack selected pnpm %q, expected %s", strings.TrimSpace(warm.Stdout), toolchain.SupportedPnpm)
+					}
+					if err == nil {
+						node, script, err = toolchain.PnpmExecutableAt(r.corepackHome)
+					}
 				}
 			}
 			if err != nil {
-				return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s.", toolchain.SupportedPnpm, source), "Check the default npm registry and rerun the install command.", err)
+				return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision the pnpm %s native executable from %s.", toolchain.SupportedPnpm, source), "Run `corepack pnpm --version` from the workspace root while connected to the configured registry, then rerun the install command.", err)
 			}
 		}
 		executable = node

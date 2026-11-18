@@ -1134,8 +1134,8 @@
       "severity": "error",
       "retryable": false,
       "processExitClass": "operation-failure",
-      "message": "The workspace-pinned pnpm {version} is not present in the Corepack cache.",
-      "hint": "Run `{nextCommand}` from the workspace root to populate the pinned toolchain cache, then rerun the command.",
+      "message": "The workspace-pinned pnpm {version} wrapper or native executable is not present in the Corepack cache.",
+      "hint": "Run `{nextCommand}` from the workspace root while connected to the configured npm registry to download and validate the pinned native executable, then rerun the command.",
       "structuredDetailFields": ["diagnosticPath", "logPath"],
       "httpStatus": 500
     },

@@ -19,10 +19,16 @@ func TestProductCorepackProvisionUsesInstallHomeAndRegistry(t *testing.T) {
 	bin := t.TempDir()
 	script := `#!/bin/sh
 set -eu
-[ "$COREPACK_NPM_REGISTRY" = "http://127.0.0.1:4874" ]
-[ "$1" = install ] && [ "$2" = -g ] && [ "$3" = "pnpm@` + toolchain.SupportedPnpm + `" ]
-mkdir -p "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin"
-printf 'process.stdout.write("product-pnpm-ok")' > "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin/pnpm.mjs"
+if [ "$1" = install ]; then
+  [ "$COREPACK_NPM_REGISTRY" = "http://127.0.0.1:4874" ]
+  [ "$2" = -g ] && [ "$3" = "pnpm@` + toolchain.SupportedPnpm + `" ]
+  mkdir -p "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin"
+  printf 'import fs from "node:fs"; import path from "node:path"; import { fileURLToPath } from "node:url"; fs.writeFileSync(path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), "pnpm-native"), "fixture", { mode: 0o700 }); process.stdout.write("` + toolchain.SupportedPnpm + `")' > "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin/pnpm.mjs"
+elif [ "$1" = pnpm ] && [ "$2" = --version ]; then
+  node "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin/pnpm.mjs" --version
+else
+  exit 1
+fi
 `
 	if err := os.WriteFile(filepath.Join(bin, "corepack"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
@@ -35,7 +41,7 @@ printf 'process.stdout.write("product-pnpm-ok")' > "$COREPACK_HOME/v1/pnpm/` + t
 	if err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry}).Run(context.Background(), &output, "pnpm", "--version"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "product-pnpm-ok") {
+	if !strings.Contains(output.String(), toolchain.SupportedPnpm) {
 		t.Fatalf("output %q", output.String())
 	}
 	if _, err := os.Stat(filepath.Join(root, "corepack", "v1", "pnpm", toolchain.SupportedPnpm, "bin", "pnpm.mjs")); err != nil {
@@ -58,6 +64,52 @@ func TestProductCorepackProvisionFailureNamesSource(t *testing.T) {
 	}
 }
 
+func TestProductCorepackWrapperWithoutNativeBinaryFailsClearlyWhenOffline(t *testing.T) {
+	root, bin := t.TempDir(), t.TempDir()
+	marker := filepath.Join(t.TempDir(), "corepack-invoked")
+	if err := os.WriteFile(filepath.Join(bin, "corepack"), []byte("#!/bin/sh\ntouch '"+marker+"'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	p := mustPnpm(t, PnpmConfig{
+		Root: filepath.Join(root, "platform"), CacheRoot: filepath.Join(root, "cache"),
+		PackageManagerRoot: filepath.Join(root, "package-manager"), Registry: "http://127.0.0.1:1", Offline: true,
+	})
+	script := filepath.Join(p.corepackHome(), "v1", "pnpm", toolchain.SupportedPnpm, "bin", "pnpm.mjs")
+	if err := os.MkdirAll(filepath.Dir(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, []byte("process.exit(0)"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.prepare(); err != nil {
+		t.Fatal(err)
+	}
+	packageJSONBefore, err := os.ReadFile(filepath.Join(p.config.Root, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceBefore, err := os.ReadFile(filepath.Join(p.config.Root, "pnpm-workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = p.run("install")
+	var diagnostic *diag.Diag
+	if !errors.As(err, &diagnostic) || !strings.Contains(diagnostic.Message, toolchain.SupportedPnpm) || !strings.Contains(diagnostic.Hint, "corepack pnpm --version") {
+		t.Fatalf("offline missing-native diagnostic = %v", err)
+	}
+	if packageJSONAfter, readErr := os.ReadFile(filepath.Join(p.config.Root, "package.json")); readErr != nil || !bytes.Equal(packageJSONAfter, packageJSONBefore) {
+		t.Fatalf("offline package operation changed package.json: err=%v", readErr)
+	}
+	if workspaceAfter, readErr := os.ReadFile(filepath.Join(p.config.Root, "pnpm-workspace.yaml")); readErr != nil || !bytes.Equal(workspaceAfter, workspaceBefore) {
+		t.Fatalf("offline package operation changed pnpm-workspace.yaml: err=%v", readErr)
+	}
+	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+		t.Fatalf("offline probe invoked Corepack: stat marker err = %v", statErr)
+	}
+}
+
 func TestProductCorepackHomeAndRegistryAreShared(t *testing.T) {
 	p := mustPnpm(t, PnpmConfig{PackageManagerRoot: t.TempDir(), Registry: "http://127.0.0.1:4873"})
 	env := strings.Join(p.packageManagerEnvironment(), "\n")
@@ -69,6 +121,12 @@ func TestProductCorepackHomeAndRegistryAreShared(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(script, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := toolchain.PnpmExecutableAt(p.corepackHome()); err == nil {
+		t.Fatal("Corepack wrapper without native executable was accepted")
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(filepath.Dir(script)), "pnpm-native"), []byte("fixture"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	_, resolved, err := toolchain.PnpmExecutableAt(p.corepackHome())
