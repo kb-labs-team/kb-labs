@@ -9,7 +9,7 @@ on:
         description: Run the full producer batch or reuse a completed candidate for one selected case
         required: true
         type: choice
-        options: [full, reuse_candidate]
+        options: [full, reuse_candidate, reuse_candidate_overlay]
         default: full
       baseline:
         description: Optional baseline label recorded in batch metadata; the build compares against the default branch
@@ -20,7 +20,7 @@ on:
         required: false
         type: string
       candidate_sha:
-        description: Exact 40-character commit SHA used by that producer run (reuse_candidate only)
+        description: Exact 40-character source SHA used by that producer run (reuse modes only)
         required: false
         type: string
       case_id:
@@ -58,7 +58,7 @@ permissions:
 
 jobs:
   producer:
-    if: github.event_name != 'workflow_dispatch' || inputs.run_mode != 'reuse_candidate'
+    if: github.event_name != 'workflow_dispatch' || (inputs.run_mode != 'reuse_candidate' && inputs.run_mode != 'reuse_candidate_overlay')
     name: Shared build and candidate
     runs-on: ubuntu-latest
     outputs:
@@ -110,7 +110,7 @@ jobs:
           retention-days: 90
 
   local:
-    if: github.event_name != 'workflow_dispatch' || inputs.run_mode != 'reuse_candidate'
+    if: github.event_name != 'workflow_dispatch' || (inputs.run_mode != 'reuse_candidate' && inputs.run_mode != 'reuse_candidate_overlay')
     name: Installed local journey
     runs-on: ubuntu-latest
     needs: producer
@@ -154,7 +154,7 @@ jobs:
           retention-days: 90
 
   secured:
-    if: github.event_name != 'workflow_dispatch' || inputs.run_mode != 'reuse_candidate'
+    if: github.event_name != 'workflow_dispatch' || (inputs.run_mode != 'reuse_candidate' && inputs.run_mode != 'reuse_candidate_overlay')
     name: Installed secured journey
     runs-on: ubuntu-latest
     needs: producer
@@ -201,7 +201,7 @@ jobs:
     name: Assemble journey artifacts and summary
     runs-on: ubuntu-latest
     needs: [producer, local, secured]
-    if: always() && (github.event_name != 'workflow_dispatch' || inputs.run_mode != 'reuse_candidate')
+    if: always() && (github.event_name != 'workflow_dispatch' || (inputs.run_mode != 'reuse_candidate' && inputs.run_mode != 'reuse_candidate_overlay'))
     timeout-minutes: 10
     env:
       BATCH_OUTPUT: .journey/batch/${{ github.run_id }}/summary
@@ -250,7 +250,7 @@ jobs:
 
   reuse-candidate:
     name: Reuse candidate for selected installed case
-    if: github.event_name == 'workflow_dispatch' && inputs.run_mode == 'reuse_candidate'
+    if: github.event_name == 'workflow_dispatch' && (inputs.run_mode == 'reuse_candidate' || inputs.run_mode == 'reuse_candidate_overlay')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -260,9 +260,10 @@ jobs:
       GOTOOLCHAIN: local
       CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      HARNESS_SHA: ${{ github.sha }}
+      RUN_MODE: ${{ inputs.run_mode }}
       CASE_ID: ${{ inputs.case_id }}
       JOURNEY_MODE: ${{ inputs.mode }}
-      BATCH_OUTPUT: .journey/batch/${{ github.run_id }}/reuse
       COMPOSE_PROJECT_NAME: kb-journey-reuse-${{ github.run_id }}-${{ github.run_attempt }}
       KB_JOURNEY_NETWORK: kb-journey-reuse-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -271,19 +272,19 @@ jobs:
         run: |
           [[ "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]] || { echo 'candidate_run_id must be a numeric GitHub Actions run ID' >&2; exit 2; }
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'candidate_sha must be a full 40-character commit SHA' >&2; exit 2; }
+          [[ "$HARNESS_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'workflow harness SHA is not a full commit SHA' >&2; exit 2; }
           [[ "$CASE_ID" =~ ^(S|PC)-[0-9]{3}(\.[0-9]+)?$ ]] || { echo 'case_id must name one case or step, such as S-056.2' >&2; exit 2; }
           [[ "$JOURNEY_MODE" == local || "$JOURNEY_MODE" == secured ]] || { echo 'mode must be local or secured' >&2; exit 2; }
+          [[ "$RUN_MODE" == reuse_candidate || "$RUN_MODE" == reuse_candidate_overlay ]] || { echo 'unsupported candidate reuse mode' >&2; exit 2; }
+          if [[ "$RUN_MODE" == reuse_candidate_overlay && "$CANDIDATE_SHA" == "$HARNESS_SHA" ]]; then
+            echo 'reuse_candidate_overlay requires distinct source and harness SHAs' >&2
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.candidate_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Require a candidate SHA with reuse-verdict support
-        run: |
-          test -f e2e/journey/reuse_case_verdict.py || {
-            echo 'candidate SHA predates selected-case reuse support; produce a candidate from a commit containing e2e/journey/reuse_case_verdict.py' >&2
-            exit 1
-          }
       - name: Verify source run identity and result
         env:
           GH_TOKEN: ${{ github.token }}
@@ -305,6 +306,53 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/candidate-artifacts.json"
           jq -ce '[.artifacts[] | select(.name == "journey-build-candidate" and .expired == false)] | if length == 1 and (.[0].digest | type == "string") then .[0] else error("expected exactly one unexpired candidate artifact with a digest") end' \
             "$RUNNER_TEMP/candidate-artifacts.json" > "$RUNNER_TEMP/candidate-artifact.json"
+      - name: Create candidate source checkout and validate harness identity
+        run: |
+          overlay_started=$(date +%s%N)
+          [[ "$(git rev-parse HEAD)" == "$HARNESS_SHA" ]] || { echo 'checked out workflow harness does not match its dispatch SHA' >&2; exit 1; }
+          source_root="$RUNNER_TEMP/journey-candidate-source"
+          BATCH_OUTPUT="$RUNNER_TEMP/journey-batch/$GITHUB_RUN_ID/reuse"
+          if [[ "$RUN_MODE" == reuse_candidate_overlay ]]; then
+            python3 e2e/journey/reuse_candidate_overlay.py prepare "$GITHUB_WORKSPACE" "$CANDIDATE_SHA" "$HARNESS_SHA" \
+              "$source_root" "$RUNNER_TEMP/harness-overlay.json"
+            CASE_VERDICT_HELPER="$GITHUB_WORKSPACE/e2e/journey/reuse_case_verdict.py"
+            EFFECTIVE_HARNESS_SHA="$HARNESS_SHA"
+          else
+            mkdir -p "$(dirname "$source_root")"
+            git worktree add --detach "$source_root" "$CANDIDATE_SHA"
+            test -f "$source_root/e2e/journey/reuse_case_verdict.py" || {
+              echo 'candidate SHA predates selected-case reuse support; choose a source SHA containing e2e/journey/reuse_case_verdict.py' >&2
+              exit 1
+            }
+            CASE_VERDICT_HELPER="$source_root/e2e/journey/reuse_case_verdict.py"
+            EFFECTIVE_HARNESS_SHA="$CANDIDATE_SHA"
+            python3 - "$CANDIDATE_SHA" "$HARNESS_SHA" "$RUNNER_TEMP/harness-overlay.json" <<'PY'
+          import json, sys
+          source, workflow, path = sys.argv[1:]
+          with open(path, "w", encoding="utf-8") as output:
+              json.dump({"candidateSourceSha": source, "harnessSha": source,
+                         "workflowSha": workflow, "overlayPaths": []}, output)
+              output.write("\n")
+          PY
+          fi
+          python3 - "$RUNNER_TEMP/harness-overlay.json" "$HARNESS_SHA" <<'PY'
+          import json, sys
+          path, workflow_sha = sys.argv[1:]
+          with open(path, encoding="utf-8") as source:
+              manifest = json.load(source)
+          manifest["workflowSha"] = workflow_sha
+          with open(path, "w", encoding="utf-8") as output:
+              json.dump(manifest, output, indent=2)
+              output.write("\n")
+          PY
+          printf 'CANDIDATE_CHECKOUT=%s\nBATCH_OUTPUT=%s\nCASE_VERDICT_HELPER=%s\nEFFECTIVE_HARNESS_SHA=%s\n' \
+            "$source_root" "$BATCH_OUTPUT" "$CASE_VERDICT_HELPER" "$EFFECTIVE_HARNESS_SHA" >> "$GITHUB_ENV"
+          overlay_ended=$(date +%s%N)
+          python3 - "$overlay_started" "$overlay_ended" > "$RUNNER_TEMP/harness-overlay-seconds.txt" <<'PY'
+          import sys
+          start, end = (int(value) for value in sys.argv[1:])
+          print(round(max(0, end - start) / 1_000_000_000, 3))
+          PY
       - name: Allocate candidate input outside the checkout
         shell: bash
         run: |
@@ -353,10 +401,13 @@ jobs:
                       shutil.copyfileobj(source, target)
           PY
           download_ended=$(date +%s%N)
-          python3 - "$download_started" "$download_ended" > "$RUNNER_TEMP/reuse-timings.json" <<'PY'
+          python3 - "$download_started" "$download_ended" "$RUNNER_TEMP/harness-overlay-seconds.txt" > "$RUNNER_TEMP/reuse-timings.json" <<'PY'
           import json, sys
-          start, end = (int(value) for value in sys.argv[1:])
-          print(json.dumps({"artifactDownloadVerifyAndExtract": round(max(0, end - start) / 1_000_000_000, 3)}))
+          start, end = (int(value) for value in sys.argv[1:3])
+          overlay_seconds = float(open(sys.argv[3], encoding="utf-8").read())
+          print(json.dumps({"harnessCompatibilityPreparation": overlay_seconds,
+                            "harnessOverlayApplication": 0,
+                            "artifactDownloadVerifyAndExtract": round(max(0, end - start) / 1_000_000_000, 3)}))
           PY
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with:
@@ -370,7 +421,17 @@ jobs:
           go-version: '1.26.8'
           cache-dependency-path: tools/kb-devkit/go.sum
       - name: Install workspace dependencies
-        run: corepack pnpm install --frozen-lockfile
+        run: |
+          install_started=$(date +%s%N)
+          (cd "$CANDIDATE_CHECKOUT" && corepack pnpm install --frozen-lockfile)
+          install_ended=$(date +%s%N)
+          python3 - "$RUNNER_TEMP/reuse-timings.json" "$install_started" "$install_ended" <<'PY'
+          import json, sys
+          path, start, end = sys.argv[1], *(int(value) for value in sys.argv[2:])
+          value = json.load(open(path, encoding="utf-8"))
+          value["workspaceDependencyInstall"] = round(max(0, end - start) / 1_000_000_000, 3)
+          open(path, "w", encoding="utf-8").write(json.dumps(value) + "\n")
+          PY
       - name: Verify producer metadata
         run: |
           verification_start=$(date +%s%N)
@@ -379,12 +440,30 @@ jobs:
               echo 'candidate metadata must record the requested SHA, a passing producer result, and its archive digest' >&2
               exit 1
             }
+          (cd "$CANDIDATE_CHECKOUT" && \
+            python3 e2e/journey/batch_summary.py verify-run "$BATCH_PRODUCER_INPUT/shared/run.json" "$CANDIDATE_SHA" && \
+            python3 e2e/journey/batch_summary.py verify-candidate "$BATCH_PRODUCER_INPUT/shared/batch-metadata.json" "$BATCH_PRODUCER_INPUT/shared/build-candidate.tar") || exit 1
           verification_end=$(date +%s%N)
           python3 - "$RUNNER_TEMP/reuse-timings.json" "$verification_start" "$verification_end" <<'PY'
           import json, sys
           path, start, end = sys.argv[1], *(int(value) for value in sys.argv[2:])
           value = json.load(open(path, encoding="utf-8"))
           value["producerMetadataCheck"] = round(max(0, end - start) / 1_000_000_000, 3)
+          open(path, "w", encoding="utf-8").write(json.dumps(value) + "\n")
+          PY
+      - name: Apply the reviewed harness overlay after candidate identity checks
+        run: |
+          overlay_started=$(date +%s%N)
+          if [[ "$RUN_MODE" == reuse_candidate_overlay ]]; then
+            python3 e2e/journey/reuse_candidate_overlay.py overlay "$GITHUB_WORKSPACE" \
+              "$CANDIDATE_CHECKOUT" "$RUNNER_TEMP/harness-overlay.json"
+          fi
+          overlay_ended=$(date +%s%N)
+          python3 - "$RUNNER_TEMP/reuse-timings.json" "$overlay_started" "$overlay_ended" <<'PY'
+          import json, sys
+          path, start, end = sys.argv[1], *(int(value) for value in sys.argv[2:])
+          value = json.load(open(path, encoding="utf-8"))
+          value["harnessOverlayApplication"] = round(max(0, end - start) / 1_000_000_000, 3)
           open(path, "w", encoding="utf-8").write(json.dumps(value) + "\n")
           PY
       - name: Run the selected case against the reused candidate
@@ -394,31 +473,44 @@ jobs:
           mkdir -p "$mode_output"
           batch_started=$(date +%s%N)
           set +e
-          e2e/journey/batch.sh mode "$JOURNEY_MODE" "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$CASE_ID"
+          (cd "$CANDIDATE_CHECKOUT" && e2e/journey/batch.sh mode "$JOURNEY_MODE" "$BATCH_PRODUCER_INPUT" "$BATCH_OUTPUT" --cases "$CASE_ID")
           batch_status=$?
           set -e
           batch_ended=$(date +%s%N)
           selected_case_status=FAIL
           if [[ -s "$mode_output/batch-metadata.json" ]]; then
             set +e
-            python3 e2e/journey/reuse_case_verdict.py "$JOURNEY_MODE" "$CASE_ID" "$mode_output"
+            (cd "$CANDIDATE_CHECKOUT" && python3 "$CASE_VERDICT_HELPER" "$JOURNEY_MODE" "$CASE_ID" "$mode_output")
             if [[ "$?" -eq 0 ]]; then selected_case_status=PASS; else batch_status=1; fi
             set -e
           else
             batch_status=1
           fi
           [[ "$batch_status" -eq 0 && "$selected_case_status" == PASS ]] || batch_status=1
-          python3 - "$RUNNER_TEMP/candidate-artifact.json" "$RUNNER_TEMP/reuse-timings.json" "$mode_output/candidate-source.json" "$mode_output/batch-metadata.json" "$BATCH_PRODUCER_INPUT/shared/batch-metadata.json" "$mode_output/batch.log" "$mode_output/run.json" "$CANDIDATE_RUN_ID" "$CANDIDATE_SHA" "$JOURNEY_MODE" "$CASE_ID" "$batch_status" "$selected_case_status" "$batch_started" "$batch_ended" <<'PY'
+          python3 - "$RUNNER_TEMP/candidate-artifact.json" "$RUNNER_TEMP/reuse-timings.json" "$mode_output/candidate-source.json" "$mode_output/batch-metadata.json" "$BATCH_PRODUCER_INPUT/shared/batch-metadata.json" "$mode_output/batch.log" "$mode_output/run.json" "$CANDIDATE_RUN_ID" "$CANDIDATE_SHA" "$EFFECTIVE_HARNESS_SHA" "$HARNESS_SHA" "$RUN_MODE" "$RUNNER_TEMP/harness-overlay.json" "$JOURNEY_MODE" "$CASE_ID" "$batch_status" "$selected_case_status" "$batch_started" "$batch_ended" <<'PY'
           import json, pathlib, sys
-          artifact_path, timing_path, source_path, mode_metadata_path, shared_metadata_path, log_path, extracted_run_path, run_id, sha, mode, case_id, status, case_status, started, ended = sys.argv[1:]
+          artifact_path, timing_path, source_path, mode_metadata_path, shared_metadata_path, log_path, extracted_run_path, run_id, sha, harness_sha, workflow_sha, reuse_mode, overlay_path, mode, case_id, status, case_status, started, ended = sys.argv[1:]
           timing = json.load(open(timing_path, encoding="utf-8"))
           timing["candidateVerifyAndJourney"] = round(max(0, int(ended) - int(started)) / 1_000_000_000, 3)
-          timing["measuredCandidateAndCaseSeconds"] = round(sum(timing.values()), 3)
+          timing["measuredCandidateAndCaseSeconds"] = round(sum(timing[key] for key in (
+              "artifactDownloadVerifyAndExtract", "producerMetadataCheck", "candidateVerifyAndJourney")), 3)
+          timing["measuredReusePreparationSeconds"] = round(sum(timing[key] for key in (
+              "harnessCompatibilityPreparation", "harnessOverlayApplication", "workspaceDependencyInstall")), 3)
+          timing["measuredReusePathSeconds"] = round(sum(timing[key] for key in (
+              "measuredCandidateAndCaseSeconds", "measuredReusePreparationSeconds")), 3)
           artifact = json.load(open(artifact_path, encoding="utf-8"))
           metadata = json.load(open(shared_metadata_path, encoding="utf-8"))
+          overlay = json.load(open(overlay_path, encoding="utf-8"))
           candidate_reused = pathlib.Path(extracted_run_path).is_file()
           result = "PASS" if status == "0" and case_status == "PASS" and candidate_reused else "FAIL"
-          source = {"candidateRunId": run_id, "candidateSha": sha, "buildInputIdentity": {"kind": "git-commit", "sha": sha}, "candidateArchiveSha256": metadata.get("candidateArchiveSha256"), "artifactId": artifact["id"], "artifactDigest": artifact["digest"], "mode": mode, "caseId": case_id, "candidateReused": candidate_reused, "platformReused": False, "evidenceKind": "iteration", "selectedCaseResult": case_status, "result": result, "reuseTimingsSeconds": timing}
+          source = {"candidateRunId": run_id, "candidateSha": sha, "harnessSha": harness_sha,
+                    "workflowSha": workflow_sha,
+                    "reuseContract": "source-with-reviewed-harness-overlay" if reuse_mode == "reuse_candidate_overlay" else "candidate-source-checkout",
+                    "harnessOverlay": overlay, "buildInputIdentity": {"kind": "candidate-source-git-commit", "sha": sha},
+                    "candidateArchiveSha256": metadata.get("candidateArchiveSha256"), "artifactId": artifact["id"],
+                    "artifactDigest": artifact["digest"], "mode": mode, "caseId": case_id,
+                    "candidateReused": candidate_reused, "platformReused": False, "evidenceKind": "iteration",
+                    "selectedCaseResult": case_status, "result": result, "reuseTimingsSeconds": timing}
           pathlib.Path(source_path).write_text(json.dumps(source, indent=2) + "\n", encoding="utf-8")
           try:
               mode_metadata = json.load(open(mode_metadata_path, encoding="utf-8"))

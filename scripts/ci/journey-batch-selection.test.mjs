@@ -11,6 +11,7 @@ import { validateJourneyCaseDeclarations } from './journey-case-claims-preflight
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const workflow = load(readFileSync(resolve(root, '.github/workflows/journey-batch.yml'), 'utf8'));
 const reuseVerdict = readFileSync(resolve(root, 'e2e/journey/reuse_case_verdict.py'), 'utf8');
+const reuseOverlay = readFileSync(resolve(root, 'e2e/journey/reuse_candidate_overlay.py'), 'utf8');
 const encode = (ids) => Buffer.from(ids).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
 
 // case: S-262.8
@@ -58,21 +59,37 @@ test('consumer jobs take the selection only from the producer-owned output', () 
 });
 
 // case: S-262.18
-test('the selected-case reuse dispatch skips producer and gating summary jobs', () => {
+test('selected-case reuse dispatches skip producer and gating summary jobs', () => {
   assert.equal(workflow.on.workflow_dispatch.inputs.run_mode.default, 'full');
-  assert.deepEqual(workflow.on.workflow_dispatch.inputs.run_mode.options, ['full', 'reuse_candidate']);
+  assert.deepEqual(workflow.on.workflow_dispatch.inputs.run_mode.options,
+    ['full', 'reuse_candidate', 'reuse_candidate_overlay']);
   for (const job of ['producer', 'local', 'secured', 'summary']) {
     assert.match(workflow.jobs[job].if, /run_mode != 'reuse_candidate'/);
+    assert.match(workflow.jobs[job].if, /run_mode != 'reuse_candidate_overlay'/);
   }
   const reuse = workflow.jobs['reuse-candidate'];
   assert.match(reuse.if, /run_mode == 'reuse_candidate'/);
+  assert.match(reuse.if, /run_mode == 'reuse_candidate_overlay'/);
   assert.deepEqual(reuse.needs ?? [], [], 'reuse can only consume the explicitly selected prior run');
   assert.deepEqual(reuse.permissions, { contents: 'read', actions: 'read' });
   const checkout = reuse.steps.find((step) => step.uses?.includes('actions/checkout'));
+  assert.equal(checkout.with.ref, '${{ github.sha }}');
   assert.equal(checkout.with['persist-credentials'], false);
-  const compatibility = reuse.steps.find((step) => step.name === 'Require a candidate SHA with reuse-verdict support');
-  assert.match(compatibility.run, /test -f e2e\/journey\/reuse_case_verdict\.py/);
-  assert.ok(reuse.steps.indexOf(compatibility) < reuse.steps.findIndex((step) => step.name === 'Run the selected case against the reused candidate'));
+  const inputValidation = reuse.steps.find((step) => step.name === 'Validate selected candidate inputs');
+  assert.match(inputValidation.run, /reuse_candidate_overlay requires distinct source and harness SHAs/);
+  const checkoutTree = reuse.steps.find((step) => step.name === 'Create candidate source checkout and validate harness identity');
+  assert.match(checkoutTree.run, /reuse_candidate_overlay/);
+  assert.match(checkoutTree.run, /reuse_candidate_overlay\.py/);
+  assert.match(checkoutTree.run, /reuse_case_verdict\.py/);
+  assert.doesNotMatch(inputValidation.run, /candidate source SHA to equal the workflow harness SHA/);
+  assert.ok(reuse.steps.indexOf(checkoutTree) < reuse.steps.findIndex((step) => step.name === 'Download and verify the exact candidate artifact'));
+  assert.match(reuseOverlay, /merge-base/);
+  assert.match(reuseOverlay, /--is-ancestor/);
+  assert.match(reuseOverlay, /"diff", "--no-renames", "--raw", "-z"/);
+  assert.match(reuseOverlay, /EXPECTED_DIFF/);
+  assert.match(reuseOverlay, /OVERLAY_PATHS/);
+  assert.match(reuseOverlay, /hash-object.*--no-filters/);
+  assert.match(reuseOverlay, /binary_output=binary/);
   const sourceRun = reuse.steps.find((step) => step.name === 'Verify source run identity and result');
   assert.deepEqual(sourceRun.env, { GH_TOKEN: '${{ github.token }}' });
   assert.match(sourceRun.run, /Shared build and candidate/);
@@ -89,11 +106,17 @@ test('the selected-case reuse dispatch skips producer and gating summary jobs', 
   assert.ok(reuse.steps.indexOf(download) < reuse.steps.findIndex((step) => step.name === 'Install workspace dependencies'),
     'candidate bytes and their API digest are checked before dependency installation');
   const verify = reuse.steps.findIndex((step) => step.name === 'Verify producer metadata');
+  const overlay = reuse.steps.findIndex((step) => step.name === 'Apply the reviewed harness overlay after candidate identity checks');
   const run = reuse.steps.findIndex((step) => step.name === 'Run the selected case against the reused candidate');
-  assert.ok(verify >= 0 && verify < run, 'identity validation precedes extraction and journey execution');
+  assert.ok(verify >= 0 && verify < overlay && overlay < run,
+    'producer metadata, run SHA and archive digest are verified before overlay and journey execution');
   assert.match(reuse.steps[verify].run, /candidateArchiveSha256/);
+  assert.match(reuse.steps[verify].run, /verify-run/);
+  assert.match(reuse.steps[verify].run, /verify-candidate/);
+  assert.match(reuse.steps[overlay].run, /reuse_candidate_overlay\.py overlay/);
+  assert.match(reuse.steps[overlay].run, /harnessOverlayApplication/);
   assert.match(reuse.steps[run].run, /--cases "\$CASE_ID"/);
-  assert.match(reuse.steps[run].run, /reuse_case_verdict\.py "\$JOURNEY_MODE" "\$CASE_ID"/);
+  assert.match(reuse.steps[run].run, /python3 "\$CASE_VERDICT_HELPER" "\$JOURNEY_MODE" "\$CASE_ID"/);
   assert.match(reuseVerdict, /selection_from_coverage\(coverage_results\(\), requested, mode=mode/);
   assert.match(reuseVerdict, /set\(case_run\.get\("selection", \[\]\)\) != selection/);
   assert.match(reuseVerdict, /expected = set\(selected\.get\("steps", \[\]\)\)/);
@@ -101,6 +124,7 @@ test('the selected-case reuse dispatch skips producer and gating summary jobs', 
   assert.match(reuse.steps[run].run, /candidate_reused = pathlib\.Path\(extracted_run_path\)\.is_file\(\)/);
   assert.match(reuse.steps[run].run, /candidateReused=\{str\(candidate_reused\)\.lower\(\)\}/);
   assert.match(reuse.steps[run].run, /"platformReused": False/);
+  assert.match(reuse.steps[run].run, /"candidateSha": sha, "harnessSha": harness_sha/);
 });
 
 test('batch producer runs the dist-free journey preflight before producing build artifacts', () => {

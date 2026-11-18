@@ -1295,7 +1295,7 @@ exec "$REAL_TAR" "$@"
         self.assertNotIn("docs/**", spec["on"]["pull_request"]["paths"])
         self.assertEqual(spec["concurrency"]["group"], "journey-batch")
         jobs = spec["jobs"]
-        self.assertEqual(set(jobs), {"producer", "local", "secured", "summary"})
+        self.assertEqual(set(jobs), {"producer", "local", "secured", "summary", "reuse-candidate"})
         producer_steps = jobs["producer"]["steps"]
         selection_step = next(step for step in producer_steps if step.get("id") == "selection")
         self.assertIn('journey-batch-selection.mjs resolve "$GITHUB_EVENT_NAME" "$GITHUB_REF_NAME"', selection_step["run"])
@@ -1339,6 +1339,83 @@ exec "$REAL_TAR" "$@"
         self.assertEqual(jobs["secured"]["strategy"]["fail-fast"], False)
         node_setup = next(step for step in producer_steps if step.get("uses", "").startswith("actions/setup-node@"))
         self.assertEqual(node_setup["with"]["node-version-file"], "package.json")
+
+    # case: S-262.18
+    def test_candidate_reuse_is_opt_in_and_leaves_full_batch_as_the_only_gate(self):
+        workflow = REPO / ".github/workflows/journey-batch.yml"
+        parsed = subprocess.run(
+            ["node", "-e", "const fs=require('fs');const y=require('js-yaml').load(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(JSON.stringify(y))", str(workflow)],
+            cwd=REPO, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(parsed.returncode, 0, parsed.stderr)
+        import json
+        spec = json.loads(parsed.stdout)
+        options = spec["on"]["workflow_dispatch"]["inputs"]["run_mode"]
+        self.assertEqual(options["default"], "full")
+        self.assertEqual(options["options"], ["full", "reuse_candidate", "reuse_candidate_overlay"])
+        jobs = spec["jobs"]
+        for job_name in ("producer", "local", "secured", "summary"):
+            condition = jobs[job_name]["if"]
+            self.assertIn("inputs.run_mode != 'reuse_candidate'", condition)
+            self.assertIn("inputs.run_mode != 'reuse_candidate_overlay'", condition)
+        self.assertEqual(jobs["local"]["needs"], "producer")
+        self.assertEqual(jobs["secured"]["needs"], "producer")
+        self.assertEqual(jobs["summary"]["needs"], ["producer", "local", "secured"])
+        reuse = jobs["reuse-candidate"]
+        self.assertEqual(reuse["permissions"], {"contents": "read", "actions": "read"})
+        self.assertNotIn("needs", reuse)
+        self.assertIn("github.event_name == 'workflow_dispatch'", reuse["if"])
+        validate = next(step["run"] for step in reuse["steps"]
+                        if step.get("name") == "Validate selected candidate inputs")
+        self.assertIn("reuse_candidate_overlay requires distinct source and harness SHAs", validate)
+        source_checkout = next(step["run"] for step in reuse["steps"]
+                               if step.get("name") == "Create candidate source checkout and validate harness identity")
+        self.assertIn("reuse_case_verdict.py", source_checkout)
+        self.assertIn('EFFECTIVE_HARNESS_SHA="$CANDIDATE_SHA"', source_checkout)
+        self.assertIn('EFFECTIVE_HARNESS_SHA="$HARNESS_SHA"', source_checkout)
+        self.assertIn('manifest["workflowSha"] = workflow_sha', source_checkout)
+        self.assertNotIn("reuse_candidate requires the producer source SHA to equal the workflow harness SHA", validate)
+        run = next(step["run"] for step in reuse["steps"]
+                   if step.get("name") == "Run the selected case against the reused candidate")
+        self.assertIn('batch.sh mode "$JOURNEY_MODE"', run)
+        self.assertIn('"candidateSha": sha, "harnessSha": harness_sha', run)
+        self.assertIn('"workflowSha": workflow_sha', run)
+        self.assertIn('"$EFFECTIVE_HARNESS_SHA" "$HARNESS_SHA"', run)
+        self.assertIn('"platformReused": False', run)
+
+    # case: S-262.19
+    def test_harness_overlay_is_explicit_and_keeps_candidate_source_identity(self):
+        workflow = REPO / ".github/workflows/journey-batch.yml"
+        parsed = subprocess.run(
+            ["node", "-e", "const fs=require('fs');const y=require('js-yaml').load(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(JSON.stringify(y))", str(workflow)],
+            cwd=REPO, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(parsed.returncode, 0, parsed.stderr)
+        import json
+        reuse = json.loads(parsed.stdout)["jobs"]["reuse-candidate"]
+        steps = reuse["steps"]
+        overlay = next(step["run"] for step in steps
+                       if step.get("name") == "Create candidate source checkout and validate harness identity")
+        self.assertIn("reuse_candidate_overlay.py", overlay)
+        self.assertLess(
+            next(i for i, step in enumerate(steps) if step.get("name") == "Verify source run identity and result"),
+            next(i for i, step in enumerate(steps) if step.get("name") == "Create candidate source checkout and validate harness identity"),
+        )
+        verify = next(i for i, step in enumerate(steps)
+                      if step.get("name") == "Verify producer metadata")
+        apply_overlay = next(i for i, step in enumerate(steps)
+                             if step.get("name") == "Apply the reviewed harness overlay after candidate identity checks")
+        execute_case = next(i for i, step in enumerate(steps)
+                            if step.get("name") == "Run the selected case against the reused candidate")
+        self.assertLess(verify, apply_overlay)
+        self.assertLess(apply_overlay, execute_case)
+        verification_script = steps[verify]["run"]
+        self.assertIn("verify-run", verification_script)
+        self.assertIn("verify-candidate", verification_script)
+        self.assertIn("reuse_candidate_overlay.py overlay", steps[apply_overlay]["run"])
+        self.assertNotIn("reuse_candidate_overlay.py overlay", overlay)
+        report = steps[execute_case]["run"]
+        self.assertIn('"candidateSha": sha, "harnessSha": harness_sha', report)
 
     # case: S-262.1
     def test_missing_release_output_fails_build_stage_before_candidate(self):

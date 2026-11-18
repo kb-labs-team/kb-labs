@@ -1119,9 +1119,10 @@ def run_command(argv: list[str], *, cwd: str | Path | None = None,
     return result
 
 
-def run_harness_command(argv: list[str], *, timeout: float = 300) -> subprocess.CompletedProcess[str]:
+def run_harness_command(argv: list[str], *, timeout: float = 300,
+                        binary_output: bool = False) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
     """Run harness infrastructure commands through the shared process owner."""
-    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+    return subprocess.run(argv, capture_output=True, text=not binary_output, timeout=timeout, check=False)
 
 
 def run_with_runner(runner: Callable[..., subprocess.CompletedProcess[str]], argv: list[str],
