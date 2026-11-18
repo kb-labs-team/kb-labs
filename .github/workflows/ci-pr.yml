@@ -598,3 +598,17 @@ jobs:
       # entire run to fail at startup (0 jobs) before anything executes.
       contents: write
       actions: read
+
+  # Optional PR feedback only. Release workflows repeat the trusted snapshot gate.
+  candidate-verification:
+    name: Full candidate verification
+    if: contains(github.event.pull_request.labels.*.name, 'candidate')
+    needs: preflight
+    uses: ./.github/workflows/remote-verify.yml
+    with:
+      profile: candidate
+      target_sha: ${{ github.event.pull_request.head.sha }}
+    permissions:
+      contents: read
+      actions: read
+      checks: read
