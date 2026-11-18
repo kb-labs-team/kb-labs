@@ -375,7 +375,6 @@ jobs:
           pattern: remote-result-*
           path: remote-results
           merge-multiple: true
-          if-no-files-found: ignore
       - name: Aggregate commit-bound verdict
         env:
           REMOTE_TEST_MATRIX: ${{ needs.prepare.outputs.test_matrix }}

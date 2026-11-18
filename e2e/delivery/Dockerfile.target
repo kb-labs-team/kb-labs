@@ -58,7 +58,8 @@ RUN mkdir -p /var/run/sshd
 
 # Disable password auth — key-only.
 RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config \
- && sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+ && sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+ && echo 'SetEnv COREPACK_HOME=/opt/kb-corepack' >> /etc/ssh/sshd_config
 
 EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D", "-e"]

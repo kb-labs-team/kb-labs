@@ -83,7 +83,8 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 					// fetches the native executable only on first invocation.
 					// Warm it now so later offline installs fail before any workspace
 					// mutation if the executable could not be provisioned.
-					warm, warmErr := toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"pnpm", "--version"}, Env: env, Operation: toolchain.OperationPackageManager})
+					warmEnv := packageManagerEnvironment(env, []string{"COREPACK_ENABLE_PROJECT_SPEC=0", "PNPM_CONFIG_PM_ON_FAIL=ignore"})
+					warm, warmErr := toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"pnpm@" + toolchain.SupportedPnpm, "--version"}, Env: warmEnv, Dir: os.TempDir(), Operation: toolchain.OperationPackageManager})
 					if warm.Stderr != "" {
 						_, _ = io.WriteString(output, warm.Stderr)
 					}
@@ -97,7 +98,7 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 				}
 			}
 			if err != nil {
-				return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision the pnpm %s native executable from %s.", toolchain.SupportedPnpm, source), "Run `corepack pnpm --version` from the workspace root while connected to the configured registry, then rerun the install command.", err)
+				return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision the pnpm %s native executable from %s.", toolchain.SupportedPnpm, source), fmt.Sprintf("Run COREPACK_HOME=%s COREPACK_ENABLE_PROJECT_SPEC=0 PNPM_CONFIG_PM_ON_FAIL=ignore corepack pnpm@%s --version while connected to the configured registry, then rerun the install command.", contracts.ShellQuote(r.corepackHome), toolchain.SupportedPnpm), err)
 			}
 		}
 		executable = node
@@ -218,6 +219,9 @@ func NewPnpm(config PnpmConfig) (Pnpm, error) {
 var approvedNativeBuilds = []string{"better-sqlite3", "esbuild", "unrs-resolver"}
 
 func (p Pnpm) Install(items []contracts.Artifact) error {
+	if err := p.checkOfflinePnpmReady(); err != nil {
+		return err
+	}
 	verified, err := p.verifyTarballs(items)
 	if err != nil {
 		return err
@@ -319,6 +323,9 @@ func (p Pnpm) materializeManifests(items []contracts.Artifact) error {
 	return nil
 }
 func (p Pnpm) Restore(items []contracts.Artifact) error {
+	if err := p.checkOfflinePnpmReady(); err != nil {
+		return err
+	}
 	if err := p.prepare(); err != nil {
 		return err
 	}
@@ -335,6 +342,28 @@ func (p Pnpm) Restore(items []contracts.Artifact) error {
 		return err
 	}
 	return p.verifyAndRecord(items)
+}
+
+func (p Pnpm) checkOfflinePnpmReady() error {
+	if !p.config.Offline || p.config.Runner != nil {
+		return nil
+	}
+	var err error
+	if p.config.PackageManagerRoot == "" {
+		_, _, err = toolchain.PnpmExecutable()
+	} else {
+		_, _, err = toolchain.PnpmExecutableAt(p.corepackHome())
+	}
+	if err != nil {
+		homeHint := ""
+		if p.config.PackageManagerRoot != "" {
+			homeHint = "COREPACK_HOME=" + contracts.ShellQuote(p.corepackHome()) + " "
+		}
+		return contracts.NewDiag(contracts.CodeApplyFailed,
+			fmt.Sprintf("Could not use pnpm %s offline because its Corepack native executable is unavailable.", toolchain.SupportedPnpm),
+			fmt.Sprintf("Run %sCOREPACK_ENABLE_PROJECT_SPEC=0 PNPM_CONFIG_PM_ON_FAIL=ignore corepack pnpm@%s --version while connected to the configured registry, then rerun the install command.", homeHint, toolchain.SupportedPnpm), err)
+	}
+	return nil
 }
 
 func (p Pnpm) verifyAndRecord(items []contracts.Artifact) error {

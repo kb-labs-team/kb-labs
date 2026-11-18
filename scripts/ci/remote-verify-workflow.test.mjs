@@ -25,6 +25,7 @@ test('remote verification builds once and fans out independent and artifact-depe
   const finalize = workflow.jobs.verdict;
   const prepareResultUpload = prepare.steps.find((step) => step.name === 'Upload prepare stage result');
   const aggregateStep = finalize.steps.find((step) => step.name === 'Aggregate commit-bound verdict');
+  const finalArtifactDownload = finalize.steps.find((step) => step.name === 'Download build and test shard results');
   const prepareSteps = prepare.steps;
   const buildSteps = build.steps;
   const independentSteps = independent.steps;
@@ -40,6 +41,8 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(prepareResultUpload.with.name, 'remote-result-prepare');
   assert.equal(prepareResultUpload.with.path, 'stage-result-prepare.json');
   assert.equal(aggregateStep.env.PREPARE_JOB_RESULT, '${{ needs.prepare.result }}');
+  assert.ok(finalArtifactDownload.uses.startsWith('actions/download-artifact@'));
+  assert.equal(Object.hasOwn(finalArtifactDownload.with, 'if-no-files-found'), false);
   assert.equal(build.needs, 'prepare');
   assert.equal(independent.needs, 'prepare');
   assert.equal(independent.strategy.matrix, '${{ fromJSON(needs.prepare.outputs.independent_matrix) }}');

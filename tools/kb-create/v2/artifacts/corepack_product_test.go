@@ -11,6 +11,7 @@ import (
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/toolchain"
+	"github.com/kb-labs/create/v2/contracts"
 )
 
 // case: S-285.9, S-284.20
@@ -24,7 +25,10 @@ if [ "$1" = install ]; then
   [ "$2" = -g ] && [ "$3" = "pnpm@` + toolchain.SupportedPnpm + `" ]
   mkdir -p "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin"
   printf 'import fs from "node:fs"; import path from "node:path"; import { fileURLToPath } from "node:url"; fs.writeFileSync(path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), "pnpm-native"), "fixture", { mode: 0o700 }); process.stdout.write("` + toolchain.SupportedPnpm + `")' > "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin/pnpm.mjs"
-elif [ "$1" = pnpm ] && [ "$2" = --version ]; then
+elif [ "$1" = "pnpm@` + toolchain.SupportedPnpm + `" ] && [ "$2" = --version ]; then
+  [ "$COREPACK_ENABLE_PROJECT_SPEC" = 0 ]
+  [ "$PNPM_CONFIG_PM_ON_FAIL" = ignore ]
+  [ ! -e package.json ]
   node "$COREPACK_HOME/v1/pnpm/` + toolchain.SupportedPnpm + `/bin/pnpm.mjs" --version
 else
   exit 1
@@ -64,6 +68,7 @@ func TestProductCorepackProvisionFailureNamesSource(t *testing.T) {
 	}
 }
 
+// case: S-308.3
 func TestProductCorepackWrapperWithoutNativeBinaryFailsClearlyWhenOffline(t *testing.T) {
 	root, bin := t.TempDir(), t.TempDir()
 	marker := filepath.Join(t.TempDir(), "corepack-invoked")
@@ -74,7 +79,7 @@ func TestProductCorepackWrapperWithoutNativeBinaryFailsClearlyWhenOffline(t *tes
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	p := mustPnpm(t, PnpmConfig{
 		Root: filepath.Join(root, "platform"), CacheRoot: filepath.Join(root, "cache"),
-		PackageManagerRoot: filepath.Join(root, "package-manager"), Registry: "http://127.0.0.1:1", Offline: true,
+		PackageManagerRoot: filepath.Join(root, "package manager $'`"), Registry: "http://127.0.0.1:1", Offline: true,
 	})
 	script := filepath.Join(p.corepackHome(), "v1", "pnpm", toolchain.SupportedPnpm, "bin", "pnpm.mjs")
 	if err := os.MkdirAll(filepath.Dir(script), 0755); err != nil {
@@ -83,7 +88,13 @@ func TestProductCorepackWrapperWithoutNativeBinaryFailsClearlyWhenOffline(t *tes
 	if err := os.WriteFile(script, []byte("process.exit(0)"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.prepare(); err != nil {
+	if err := os.MkdirAll(p.config.Root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.config.Root, "package.json"), []byte("{\"name\":\"before\"}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.config.Root, "pnpm-workspace.yaml"), []byte("packages: []\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	packageJSONBefore, err := os.ReadFile(filepath.Join(p.config.Root, "package.json"))
@@ -94,9 +105,9 @@ func TestProductCorepackWrapperWithoutNativeBinaryFailsClearlyWhenOffline(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = p.run("install")
+	err = p.Install(nil)
 	var diagnostic *diag.Diag
-	if !errors.As(err, &diagnostic) || !strings.Contains(diagnostic.Message, toolchain.SupportedPnpm) || !strings.Contains(diagnostic.Hint, "corepack pnpm --version") {
+	if !errors.As(err, &diagnostic) || !strings.Contains(diagnostic.Message, toolchain.SupportedPnpm) || !strings.Contains(diagnostic.Hint, contracts.ShellQuote(p.corepackHome())) || !strings.Contains(diagnostic.Hint, "pnpm@"+toolchain.SupportedPnpm) || !strings.Contains(diagnostic.Hint, "PNPM_CONFIG_PM_ON_FAIL=ignore") {
 		t.Fatalf("offline missing-native diagnostic = %v", err)
 	}
 	if packageJSONAfter, readErr := os.ReadFile(filepath.Join(p.config.Root, "package.json")); readErr != nil || !bytes.Equal(packageJSONAfter, packageJSONBefore) {
@@ -107,6 +118,20 @@ func TestProductCorepackWrapperWithoutNativeBinaryFailsClearlyWhenOffline(t *tes
 	}
 	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
 		t.Fatalf("offline probe invoked Corepack: stat marker err = %v", statErr)
+	}
+	commands, parseErr := contracts.ParseShellCommands(diagnostic.Hint)
+	if parseErr != nil || len(commands) != 1 || len(commands[0]) < 3 || commands[0][0] != "Run" || commands[0][1] != "COREPACK_HOME="+p.corepackHome() || commands[0][2] != "COREPACK_ENABLE_PROJECT_SPEC=0" {
+		t.Fatalf("offline hint does not safely quote product Corepack path: argv=%v err=%v hint=%q", commands, parseErr, diagnostic.Hint)
+	}
+	composite := Composite{Packages: p, Binaries: Binaries{Root: p.config.Root, CacheRoot: p.config.CacheRoot}}
+	if _, err := composite.Prepare(nil); err == nil {
+		t.Fatal("Composite.Prepare accepted wrapper-only Corepack cache while offline")
+	}
+	if err := composite.InstallWithProgress(nil, nil); err == nil {
+		t.Fatal("Composite.InstallWithProgress accepted wrapper-only Corepack cache while offline")
+	}
+	if _, statErr := os.Stat(filepath.Join(p.config.Root, "versions")); !os.IsNotExist(statErr) {
+		t.Fatalf("composite offline refusal created artifact staging: stat err = %v", statErr)
 	}
 }
 

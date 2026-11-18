@@ -130,6 +130,9 @@ type stagedComposite struct {
 }
 
 func (c Composite) Prepare(items []contracts.Artifact) (contracts.PreparedArtifacts, error) {
+	if err := c.Packages.checkOfflinePnpmReady(); err != nil {
+		return nil, err
+	}
 	layout, err := versionroot.ForPlatformPath(c.Binaries.Root)
 	if err != nil {
 		return nil, fmt.Errorf("resolve install-root artifact staging owner: %w", err)
@@ -206,6 +209,9 @@ func (c Composite) Install(items []contracts.Artifact) error {
 // InstallWithProgress exposes the real download/verification and package
 // installation boundaries to the shared apply engine's frontends.
 func (c Composite) InstallWithProgress(items []contracts.Artifact, progress func(string, bool) error) error {
+	if err := c.Packages.checkOfflinePnpmReady(); err != nil {
+		return err
+	}
 	verifiedBinaries, err := c.Binaries.verify(items)
 	if err != nil {
 		return err
@@ -219,6 +225,9 @@ func (c Composite) InstallWithProgress(items []contracts.Artifact, progress func
 
 func (c Composite) installVerified(items []contracts.Artifact, verifiedBinaries []verifiedBinary,
 	verifiedPackages map[string][]byte, progress func(string, bool) error) error {
+	if err := c.Packages.checkOfflinePnpmReady(); err != nil {
+		return err
+	}
 	if progress != nil {
 		if err := progress("Download and verify artifacts", true); err != nil {
 			return fmt.Errorf("report artifact progress: %w", err)

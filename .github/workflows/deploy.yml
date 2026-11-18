@@ -48,6 +48,14 @@ jobs:
         with:
           fetch-depth: 0  # full history for multi-commit push diff
 
+      # Rollback checkouts may not contain this helper. Keep the current
+      # trusted compatibility script outside the repository before checkout.
+      - name: Preserve pnpm deploy compatibility helper
+        run: |
+          helper="$RUNNER_TEMP/pnpm-deploy-compatible-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.sh"
+          install -m 0700 scripts/pnpm-deploy-compatible.sh "$helper"
+          echo "PNPM_DEPLOY_COMPAT_HELPER=$helper" >> "$GITHUB_ENV"
+
       - name: Pin to rollback SHA
         if: inputs.rollback-sha != ''
         run: git checkout ${{ inputs.rollback-sha }}
@@ -93,10 +101,12 @@ jobs:
         run: ./tools/kb-devkit/kb-devkit run build
 
       - name: Deploy gateway-app (pnpm deploy)
-        run: scripts/pnpm-deploy-compatible.sh --filter @kb-labs/gateway-app --prod .kb/deploy/gateway-app
+        run: >-
+          "$PNPM_DEPLOY_COMPAT_HELPER" --filter @kb-labs/gateway-app --prod .kb/deploy/gateway-app
 
       - name: Deploy marketplace-registry-app (pnpm deploy)
-        run: scripts/pnpm-deploy-compatible.sh --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app
+        run: >-
+          "$PNPM_DEPLOY_COMPAT_HELPER" --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app
 
       - name: Capture pre-deploy images (for rollback)
         id: pre_deploy
