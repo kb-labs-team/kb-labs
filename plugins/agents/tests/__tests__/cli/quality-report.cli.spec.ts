@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk';
 import { manifest } from '../../../src/manifest.js';
 import { getHandlerPermissions } from '../../../../../core/plugin-contracts/src/manifest.js';
 
@@ -59,8 +60,8 @@ describe('agents:quality:report governed analytics fallback', () => {
 
   // case: S-309.2
   it('reads SQLite fallback rows through the governed shell API', async () => {
-    const analyticsDir = path.join(cwd, '.test-state', 'analytics');
-    const bufferDir = path.join(analyticsDir, 'buffer');
+    const analyticsDir = path.dirname(resolveRuntimeStatePath(cwd, ['analytics', 'analytics.sqlite']));
+    const bufferDir = resolveRuntimeStatePath(cwd, ['analytics', 'buffer']);
     await mkdir(bufferDir, { recursive: true });
     const day = new Date().toISOString().slice(0, 10).replaceAll('-', '');
     await writeFile(path.join(bufferDir, `events-${day}.jsonl`), `${JSON.stringify({
@@ -113,7 +114,7 @@ describe('agents:quality:report governed analytics fallback', () => {
 
   // case: S-309.4
   it('reads SQLite events when no JSONL analytics file exists', async () => {
-    const analyticsDir = path.join(cwd, '.test-state', 'analytics');
+    const analyticsDir = path.dirname(resolveRuntimeStatePath(cwd, ['analytics', 'analytics.sqlite']));
     await mkdir(analyticsDir, { recursive: true });
     await writeFile(path.join(analyticsDir, 'analytics.sqlite'), 'fixture database marker');
 
@@ -138,8 +139,8 @@ describe('agents:quality:report governed analytics fallback', () => {
 
   // case: S-309.3
   it('returns an empty report when the governed sqlite3 process is unavailable', async () => {
-    const analyticsDir = path.join(cwd, '.test-state', 'analytics');
-    const bufferDir = path.join(analyticsDir, 'buffer');
+    const analyticsDir = path.dirname(resolveRuntimeStatePath(cwd, ['analytics', 'analytics.sqlite']));
+    const bufferDir = resolveRuntimeStatePath(cwd, ['analytics', 'buffer']);
     await mkdir(bufferDir, { recursive: true });
     const day = new Date().toISOString().slice(0, 10).replaceAll('-', '');
     await writeFile(path.join(bufferDir, `events-${day}.jsonl`), `${JSON.stringify({
