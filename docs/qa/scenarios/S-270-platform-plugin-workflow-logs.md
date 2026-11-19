@@ -20,7 +20,7 @@ entries related to a failing plugin command, without exposing secrets.
 | # | Action | Expected |
 |---|---|---|
 | S-270.1 | Run `kb logs query --json` after platform and plugin activity | The command returns recent platform and plugin log entries, including each entry's level, source, message, and time. |
-| S-270.2 | Run `kb logs query --plugin-id <plugin-id> --trace-id <workflow-run-id> --level error --json` | The result contains only matching plugin, workflow trace, and error-level entries. Matching records retain their workflow `runId` and carry the same `traceId`; a step's distinct `executionId` remains unchanged. |
+| S-270.2 | Run `kb logs query --trace-id <workflow-run-id> --level error --json` | The result contains only matching workflow-trace and error-level entries. Matching records retain their workflow `runId` and carry the same `traceId`; a step's distinct `executionId` remains unchanged. |
 | S-270.3 | Run a failing plugin command and query logs with the correlation ID shown in its error | The query returns the log entry for that failing command with the same correlation ID. |
 | S-270.4 | Open Studio's Logs view after the same activity and apply the plugin, workflow run, and level filters | Studio shows the same matching log entries as the CLI query. |
 | S-270.5 | Cause log output to include a secret value, then query that entry | The stored and displayed log entry contains no secrets. |
