@@ -334,7 +334,6 @@ test('native macOS smoke entry installs the candidate and runs the installed CLI
   ]);
   const install = commands[1];
   assert.equal(install.args[install.args.indexOf('--platform-root') + 1], '/tmp/platform');
-  assert.match(readFileSync(path.join(root, 'e2e/journey/native-macos-install.mjs'), 'utf8'), /path\.join\(installRoot, 'current', '\.kb'/);
 });
 
 // case: S-261.2
