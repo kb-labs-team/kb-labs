@@ -110,6 +110,10 @@ exit 0
 ''')
         self._script(self.bin / "node", '''#!/bin/sh
 case "$*" in
+  *journey-batch-selection.mjs\ decode*) printf '%s\\n' "${DECODED_CASES:-}"; exit 0 ;;
+  *registry-build-roots.mjs*) printf '%s\\n' "${REGISTRY_BUILD_ROOTS:-}"; exit 0 ;;
+esac
+case "$*" in
   *scripts/ci/run-remote-stage.mjs*)
     "$REMOTE_DEVKIT_EXECUTABLE" > "$REMOTE_STAGE_LOG" 2>&1
     result=$?
@@ -168,7 +172,11 @@ while [ "$#" -gt 0 ]; do
     shift
     cat > "$1" <<'SCRIPT'
 #!/bin/sh
-printf 'build\\n' >> "$CALLS"
+if [ "${REMOTE_AFFECTED_BUILD:-}" = 0 ]; then
+  printf 'build packages=%s selected=%s\\n' "$AFFECTED_PACKAGES" "$REMOTE_SELECTED_PACKAGE_COUNT" >> "$CALLS"
+else
+  printf 'build\\n' >> "$CALLS"
+fi
 if [ "${FAIL_AFFECTED_BUILD:-}" = 1 ]; then
   printf 'affected build fixture failure\\n'
   exit 1
@@ -251,6 +259,19 @@ exec "$REAL_TAR" "$@"
             capture_output=True,
             check=False,
         )
+
+    def test_registry_case_selection_builds_declared_roots_in_the_shared_producer(self):
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(self.root / "producer")],
+            cwd=self.root,
+            env={**self.env,
+                 "BATCH_SELECTION": "cases:encoded",
+                 "DECODED_CASES": "S-268.18,S-268.19",
+                 "REGISTRY_BUILD_ROOTS": "@fixture/publisher,@fixture/registry-app"},
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("build packages=@fixture/publisher,@fixture/registry-app selected=2", self.calls.read_text())
 
     def test_mode_without_scoreboard_fails_with_entry_cause(self):
         env = dict(self.env, OMIT_SCOREBOARD="local")
@@ -1027,6 +1048,7 @@ exec "$REAL_TAR" "$@"
             producer_entry["run"],
             'node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"',
         )
+        self.assertEqual(producer_entry["env"]["BATCH_SELECTION"], "${{ steps.selection.outputs.selection }}")
         self.assertEqual(jobs["producer"]["timeout-minutes"], 60)
         self.assertEqual(jobs["local"]["needs"], "producer")
         self.assertEqual(jobs["secured"]["needs"], "producer")

@@ -46,6 +46,19 @@ cd "$ROOT"
 
 bash e2e/scripts/check-frozen-lockfile.sh
 
+registry_build_packages=""
+registry_selected_package_count=0
+registry_affected_build=1
+if [ -n "${BATCH_SELECTION:-}" ]; then
+  selected_cases=$(node scripts/ci/journey-batch-selection.mjs decode "$BATCH_SELECTION")
+  if [[ ",$selected_cases," =~ (^|,)S-268\.[0-9]+(,|$) ]]; then
+    registry_build_packages=$(node e2e/journey/registry-build-roots.mjs)
+    IFS=, read -r -a registry_package_names <<< "$registry_build_packages"
+    registry_selected_package_count=${#registry_package_names[@]}
+    registry_affected_build=0
+  fi
+fi
+
 stage_started=$(date +%s)
 if ! (cd tools/kb-devkit && go build -trimpath -o "$work/kb-devkit" .) > "$OUT/build.log" 2>&1; then
   build_seconds=$(( $(date +%s) - stage_started ))
@@ -59,8 +72,9 @@ if ! (
     REMOTE_STAGE_RESULT="$OUT/workspace-build-stage.json" \
     REMOTE_RESOURCE_SAMPLES="$OUT/resource-samples.jsonl" \
     REMOTE_STAGE_LOG="$OUT/build.log" \
-    REMOTE_SELECTED_PACKAGE_COUNT=0 \
-    REMOTE_AFFECTED_BUILD=1 \
+    REMOTE_SELECTED_PACKAGE_COUNT="$registry_selected_package_count" \
+    REMOTE_AFFECTED_BUILD="$registry_affected_build" \
+    AFFECTED_PACKAGES="$registry_build_packages" \
     REMOTE_DEVKIT_EXECUTABLE="$work/kb-devkit" \
     KB_DEVKIT_BASE_REF="$BUILD_BASE" \
     node scripts/ci/run-remote-stage.mjs

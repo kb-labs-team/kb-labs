@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import { test } from 'node:test';
-import { batchArguments, resolveSelection } from './journey-batch-selection.mjs';
+import { batchArguments, resolveSelection, selectedCases } from './journey-batch-selection.mjs';
 import { validateJourneyCaseDeclarations } from './journey-case-claims-preflight.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -28,6 +28,8 @@ test('a pushed cases ref yields its decoded non-empty case list; other batch ref
   const ids = 'S-010,S-027.1';
   const selection = resolveSelection('push', `batch/t1/cases/${encode(ids)}`);
   assert.deepEqual(batchArguments(selection), ['--cases', ids]);
+  assert.equal(selectedCases(selection), ids);
+  assert.equal(selectedCases('full'), '');
   assert.deepEqual(batchArguments(resolveSelection('push', 'batch/plain')), []);
 });
 

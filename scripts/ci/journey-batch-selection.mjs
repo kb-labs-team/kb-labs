@@ -8,6 +8,7 @@
 // declared selection is an error, never an implicit full or empty run.
 //
 //   resolve <event> <ref>        -> prints `selection=full|cases:<b64>` (GITHUB_OUTPUT line)
+//   decode <selection>           -> prints selected case IDs, or an empty line for `full`
 //   run <selection> -- <cmd...>  -> runs cmd with `--cases <ids>` appended for a `cases:` selection
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -48,10 +49,18 @@ export function batchArguments(selection) {
   throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
 }
 
+export function selectedCases(selection) {
+  return batchArguments(selection)[1] ?? '';
+}
+
 function main(argv) {
   const [command, ...rest] = argv;
   if (command === 'resolve' && rest.length === 2) {
     process.stdout.write(`selection=${resolveSelection(rest[0], rest[1])}\n`);
+    return 0;
+  }
+  if (command === 'decode' && rest.length === 1) {
+    process.stdout.write(`${selectedCases(rest[0])}\n`);
     return 0;
   }
   if (command === 'run' && rest[1] === '--' && rest.length > 2) {
@@ -59,7 +68,7 @@ function main(argv) {
     const result = spawnSync(executable, [...args, ...batchArguments(selection)], { stdio: 'inherit' });
     return result.status ?? 1;
   }
-  process.stderr.write('usage: journey-batch-selection.mjs resolve <event> <ref> | run <selection> -- <command...>\n');
+  process.stderr.write('usage: journey-batch-selection.mjs resolve <event> <ref> | decode <selection> | run <selection> -- <command...>\n');
   return 2;
 }
 
