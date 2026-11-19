@@ -284,7 +284,7 @@ test('verify stream detects a trusted base that resolves to HEAD and explains th
     mkdirSync(gitShim);
     writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$1" = "show-ref" ] && [ "$4" = "refs/remotes/origin/master" ]; then exec '${realGit}' rev-parse HEAD; fi\nexec '${realGit}' "$@"\n`);
     chmodSync(path.join(gitShim, 'git'), 0o755);
-    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"testPackages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
     chmodSync(fakeDevkit, 0o755);
     const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'stream', selectionPath, fakeDevkit], {
       cwd: root, encoding: 'utf8', env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: 'stream', DEFAULT_BRANCH: 'master', REMOTE_TARGET_SHA: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), REMOTE_REF_NAME: 'verify/stream/head-base', REMOTE_BASE_REF: 'origin/master' },
@@ -309,7 +309,7 @@ test('verify stream selects affected packages against the pinned master SHA', ()
     mkdirSync(gitShim);
     writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$1" = "show-ref" ] && [ "$4" = "refs/remotes/origin/master" ]; then exec '${realGit}' rev-parse HEAD^; fi\nif [ "$1" = "diff" ]; then printf '%s\\n' 'core/plugin-contracts/src/color-policy.mjs'; exit 0; fi\nexec '${realGit}' "$@"\n`);
     chmodSync(path.join(gitShim, 'git'), 0o755);
-    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"testPackages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
     chmodSync(fakeDevkit, 0o755);
     const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'stream', selectionPath, fakeDevkit], {
       cwd: root,
@@ -433,7 +433,7 @@ test('candidate remains full and verify stream uses the pinned master commit', (
     mkdirSync(gitShim);
     writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$1" = "show-ref" ] && [ "$4" = "refs/remotes/origin/master" ]; then exec '${realGit}' rev-parse HEAD^; fi\nif [ "$1" = "diff" ]; then printf '%s\\n' 'core/platform/src/index.ts'; exit 0; fi\nexec '${realGit}' "$@"\n`);
     chmodSync(path.join(gitShim, 'git'), 0o755);
-    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"testPackages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
     chmodSync(fakeDevkit, 0o755);
     for (const branch of ['batch/cases/S-010.1', 'verify/short-lived-fix', 'verify-candidate/release/sha']) {
       const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
@@ -471,7 +471,7 @@ test('verify stream converts an empty diff to a full selection with a reason', (
     mkdirSync(gitShim);
     writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$1" = "show-ref" ] && [ "$4" = "refs/remotes/origin/master" ]; then exec '${realGit}' rev-parse HEAD^; fi\nif [ "$1" = "diff" ]; then exit 0; fi\nexec '${realGit}' "$@"\n`);
     chmodSync(path.join(gitShim, 'git'), 0o755);
-    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"testPackages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
     chmodSync(fakeDevkit, 0o755);
     const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'stream', selectionPath, fakeDevkit], {
       cwd: root, encoding: 'utf8', env: { ...process.env, PATH: `${gitShim}:${process.env.PATH}`, VERIFICATION_PROFILE: 'stream', DEFAULT_BRANCH: 'master', REMOTE_TARGET_SHA: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), REMOTE_REF_NAME: 'verify/stream/empty', REMOTE_BASE_REF: 'origin/master' },
@@ -498,7 +498,7 @@ test('verify stream retries an empty result for a non-empty diff using the compl
     mkdirSync(gitShim);
     writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$1" = "show-ref" ] && [ "$4" = "refs/remotes/origin/master" ]; then exec '${realGit}' rev-parse HEAD^; fi\nif [ "$1" = "diff" ]; then printf '%s\\n' 'core/platform/src/index.ts'; exit 0; fi\nexec '${realGit}' "$@"\n`);
     chmodSync(path.join(gitShim, 'git'), 0o755);
-    writeFileSync(fakeDevkit, `#!/bin/sh\ncalls=0\n[ ! -f "$REMOTE_SELECTION_CALLS" ] || calls=$(cat "$REMOTE_SELECTION_CALLS")\ncalls=$((calls + 1))\nprintf '%s' "$calls" > "$REMOTE_SELECTION_CALLS"\nif [ "$calls" -eq 1 ]; then printf '%s\\n' '{"ok":true,"data":{"packages":[],"internalToolPackages":[],"selectionReason":"affected"}}'; else printf '%s\\n' '{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"full: complete workspace"}}'; fi\n`);
+    writeFileSync(fakeDevkit, `#!/bin/sh\ncalls=0\n[ ! -f "$REMOTE_SELECTION_CALLS" ] || calls=$(cat "$REMOTE_SELECTION_CALLS")\ncalls=$((calls + 1))\nprintf '%s' "$calls" > "$REMOTE_SELECTION_CALLS"\nif [ "$calls" -eq 1 ]; then printf '%s\\n' '{"ok":true,"data":{"packages":[],"testPackages":[],"internalToolPackages":[],"selectionReason":"affected"}}'; else printf '%s\\n' '{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"testPackages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"full: complete workspace"}}'; fi\n`);
     chmodSync(fakeDevkit, 0o755);
     const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'stream', selectionPath, fakeDevkit], {
       cwd: root,
@@ -527,7 +527,7 @@ test('candidate workflow dispatch has no affected-base input and always selects 
     assert.equal(prepareEnv.REMOTE_BASE_REF, "${{ github.event_name == 'push' && format('origin/{0}', github.event.repository.default_branch) || '' }}");
     assert.equal(workflow.on.workflow_dispatch.inputs.base_ref, undefined);
     assert.equal(workflow.on.workflow_call.inputs.base_ref, undefined);
-    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"testPackages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
     chmodSync(fakeDevkit, 0o755);
     const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], {
       cwd: root, encoding: 'utf8', env: { ...process.env, VERIFICATION_PROFILE: 'candidate', REMOTE_REF_NAME: 'verify-candidate/release/sha', REMOTE_BASE_REF: 'origin/master' },
@@ -547,7 +547,7 @@ test('stream profile cannot run affected checks on a protected ref with supplied
   const selectionPath = path.join(temporaryRoot, 'selection.json');
   const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
   try {
-    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"testPackages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');
     chmodSync(fakeDevkit, 0o755);
     const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'stream', selectionPath, fakeDevkit], {
       cwd: root,
@@ -575,7 +575,7 @@ test('verify stream retries a malformed affected selection against the full work
     mkdirSync(gitShim);
     writeFileSync(path.join(gitShim, 'git'), `#!/bin/sh\nif [ "$1" = "show-ref" ] && [ "$4" = "refs/remotes/origin/master" ]; then exec '${realGit}' rev-parse HEAD^; fi\nif [ "$1" = "diff" ]; then printf '%s\\n' 'core/platform/src/index.ts'; exit 0; fi\nexec '${realGit}' "$@"\n`);
     chmodSync(path.join(gitShim, 'git'), 0o755);
-    writeFileSync(fakeDevkit, `#!/bin/sh\ncalls=0\n[ ! -f "$REMOTE_SELECTION_CALLS" ] || calls=$(cat "$REMOTE_SELECTION_CALLS")\ncalls=$((calls + 1))\nprintf '%s' "$calls" > "$REMOTE_SELECTION_CALLS"\nif [ "$calls" -eq 1 ]; then printf 'not-json\n'; else printf '%s\n' '{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}'; fi\n`);
+    writeFileSync(fakeDevkit, `#!/bin/sh\ncalls=0\n[ ! -f "$REMOTE_SELECTION_CALLS" ] || calls=$(cat "$REMOTE_SELECTION_CALLS")\ncalls=$((calls + 1))\nprintf '%s' "$calls" > "$REMOTE_SELECTION_CALLS"\nif [ "$calls" -eq 1 ]; then printf 'not-json\n'; else printf '%s\n' '{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"testPackages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}'; fi\n`);
     chmodSync(fakeDevkit, 0o755);
     const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'stream', selectionPath, fakeDevkit], {
       cwd: root,
@@ -599,7 +599,7 @@ test('candidate producer, plan, stage, and aggregate preserve the manifest stage
   const githubOutput = path.join(temporaryRoot, 'github-output');
   const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
   try {
-    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform","github.com/kb-labs/kb-runner"],"internalToolPackages":["github.com/kb-labs/kb-runner"],"selectionReason":"fixture"}}\'\n');
+    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform","github.com/kb-labs/kb-runner"],"testPackages":["@kb-labs/core-platform","github.com/kb-labs/kb-runner"],"internalToolPackages":["github.com/kb-labs/kb-runner"],"selectionReason":"fixture"}}\'\n');
     chmodSync(fakeDevkit, 0o755);
     const env = { ...process.env, VERIFICATION_PROFILE: 'candidate' };
     const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], { cwd: root, encoding: 'utf8', env });
