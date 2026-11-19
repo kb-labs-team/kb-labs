@@ -51,7 +51,7 @@ export function isPlatformPublicRoute(method: string, routePath: string): boolea
 
 function isRegistryPublicReadRoute(routePath: string): boolean {
   const path = routePath.replace(/\/+$/, '') || '/';
-  const reads = '(?:api/v1/packages|api/v1/packages/[^/]+/[^/]+(?:/stats)?)';
+  const reads = '(?:api/v1/resolve|api/v1/packages|api/v1/packages/[^/]+/[^/]+(?:/stats|/[^/]+/tarball)?)';
   return new RegExp(`^/api/v1/marketplace-registry/${reads}$`).test(path) ||
     new RegExp(`^/api/v1/projects/[^/]+/marketplace-registry/${reads}$`).test(path);
 }
@@ -154,7 +154,10 @@ export function createAuthMiddleware(
     if (!token && request.userAuthContext) { return; }
     if (request.userAuthContext?.source === 'bearer' || request.userAuthContext?.source === 'api-token') { return; }
     if (!token) {
-      if (registryPublicRead) { return; }
+      if (registryPublicRead) {
+        Object.assign(request.headers, forwardedIdentityHeaders(request.authContext, options.internalSecret));
+        return;
+      }
       return unauthorized();
     }
     const verification = await resolveToken(token, cache, jwtConfig);

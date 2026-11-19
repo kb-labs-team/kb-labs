@@ -936,48 +936,43 @@ func TestSecretInputIDsMustBelongToSelectedSecretRequirements(t *testing.T) {
 	}
 }
 
-// case: PC-001.4
-func TestScenarioMarketplaceUsesReleaseIndexPin(t *testing.T) {
+// case: PC-001.3, PC-001.4, S-268.9
+func TestScenarioMarketplaceSpecDoesNotRequireReleaseIndexPlugin(t *testing.T) {
 	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{"@kb-labs/commit"}}, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, plugin := range source.Plugins {
-		if plugin.Package == "@kb-labs/commit" {
-			if plan.Request.MarketplaceInstallSpecs[0] != plugin.ID+"@"+plugin.Version {
-				t.Fatalf("spec = %q, want release-index pin %s@%s", plan.Request.MarketplaceInstallSpecs[0], plugin.ID, plugin.Version)
-			}
-			return
-		}
-	}
-	t.Fatal("fixture missing commit")
-}
-
-func TestScenarioMarketplacePreservesReleaseIndexIdentityWhenPackageDiffers(t *testing.T) {
-	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var plugin catalog.Component
-	for index := range source.Plugins {
-		if source.Plugins[index].ID == "@kb-labs/commit" {
-			source.Plugins[index].Package = "@kb/commit"
-			plugin = source.Plugins[index]
-		}
-	}
+	source.Plugins = nil // Candidate platform indexes intentionally exclude separately published Marketplace plugins.
 	source, err = catalog.Seal(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{plugin.ID}}, source)
+	request := contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{"@kb-labs/commit"}}
+	plan, err := Plan(request, source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := plan.Request.MarketplaceInstallSpecs[0], plugin.ID+"@"+plugin.Version; got != want {
-		t.Fatalf("pinned request = %q, want release-index identity %q (package %q is not the requested identity)", got, want, plugin.Package)
+	if len(plan.Request.MarketplaceInstallSpecs) != 1 || plan.Request.MarketplaceInstallSpecs[0] != "@kb-labs/commit" {
+		t.Fatalf("Marketplace specs = %#v, want unchanged install spec", plan.Request.MarketplaceInstallSpecs)
+	}
+}
+
+func TestScenarioMarketplaceExactVersionDoesNotRequireReleaseIndexPlugin(t *testing.T) {
+	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Plugins = nil
+	source, err = catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const spec = "@kb-labs/commit@2.0.0"
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{spec}}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Request.MarketplaceInstallSpecs) != 1 || plan.Request.MarketplaceInstallSpecs[0] != spec {
+		t.Fatalf("Marketplace specs = %#v, want unchanged exact install spec %q", plan.Request.MarketplaceInstallSpecs, spec)
 	}
 }

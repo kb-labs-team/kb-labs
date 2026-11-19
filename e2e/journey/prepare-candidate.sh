@@ -27,12 +27,7 @@ mkdir -p "$PACKAGES" "$TARGET"
 node "$ROOT/e2e/platform/release-index-package-stage.mjs" --packages-dir "$PACKAGES" --output-dir "$TARGET"
 rm -rf "$TARGET"
 mkdir -p "$TARGET"
-if [[ "${KB_JOURNEY_PACKAGES_READY:-0}" != "1" ]]; then
-  rm -f "$PACKAGES"/*.tgz
-  "$ROOT/e2e/scripts/pack-all.sh" "$PACKAGES"
-fi
-
-node "$ROOT/e2e/platform/validate-package-outputs.mjs" "$PACKAGES" "$ROOT"
+"$ROOT/e2e/journey/prepare-candidate-packages.sh" "$ROOT" "$PACKAGES" "${KB_JOURNEY_PACKAGES_READY:-0}"
 
 # The sealer is a host tool; distributable binaries come from GoReleaser.
 (cd "$ROOT/tools/kb-create" && CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "$OUT/kb-create-release-index" ./v2/cmd/kb-create-release-index)
