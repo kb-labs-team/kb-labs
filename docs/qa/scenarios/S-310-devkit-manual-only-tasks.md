@@ -4,7 +4,7 @@ title: DevKit reports manually scheduled tasks in affected runs
 persona: developer
 area: devkit
 priority: P1
-status: planned
+status: active
 release: false
 modes: [local]
 surfaces: [cli]

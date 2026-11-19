@@ -237,7 +237,9 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
     assert.ok(!selection.unitTestPackages.includes(pluginE2ePackage), 'plugin E2E package has an e2e task, not a unit-test task');
     assert.ok(selection.packages.includes(webPackage), 'candidate build selection must retain the web package');
     assert.ok(!selection.unitTestPackages.includes(webPackage), 'web package has no unit-test task');
-    assert.ok(selection.internalToolPackages.includes(kbRunnerModule));
+    assert.ok(!selection.internalToolPackages.includes(kbRunnerModule), 'frozen kb-runner tests are absent from automatic internal-tool shards');
+    assert.ok(selection.skippedManualTasks.some((task) => task.package === kbRunnerModule && task.task === 'test'), 'prepare evidence reports the frozen task as manually skipped');
+    assert.match(outputs, /skipped_manual_tasks=.*kb-labs\/kb-runner/);
     assert.ok(!gatedPackages.includes(kbRunnerModule));
     for (const name of ['@kb-labs/commit', '@kb-labs/e2e-delivery', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', '@kb-labs/core-platform']) {
       assert.ok(gatedPackages.includes(name), `candidate plan omitted ${name}`);
