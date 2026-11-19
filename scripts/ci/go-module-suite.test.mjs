@@ -287,6 +287,17 @@ test('reusable installer workflow runs a native macOS install from the candidate
   assert.equal(native['timeout-minutes'] > 0, true);
 });
 
+test('installer journey artifacts use safe names and preserve redacted command logs', () => {
+  const workflow = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
+  const upload = workflow.jobs.journey.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
+  const sanitizer = workflow.jobs.journey.steps.find((step) => step.id === 'artifact-name');
+  assert.equal(sanitizer.env.MATRIX_OS, '${{ matrix.os }}');
+  assert.equal(sanitizer.env.MATRIX_CASE, '${{ matrix.case }}');
+  assert.equal(upload.with.name, '${{ steps.artifact-name.outputs.name }}');
+  assert.match(upload.with.path, /\.journey\/reports\/invocations\/\*\*/);
+  assert.doesNotMatch(upload.with.path, /container-outcomes\.json|containers\/\*\*/);
+});
+
 test('reusable installer workflow runs the dist-free journey preflight before producer builds', () => {
   const workflow = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
   const steps = workflow.jobs.prepare.steps;

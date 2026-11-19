@@ -99,11 +99,20 @@ jobs:
       - name: Add journey report to job summary
         if: always()
         run: if [ -f .journey/reports/journey-summary.md ]; then cat .journey/reports/journey-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - id: artifact-name
+        name: Sanitize journey artifact name
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_CASE: ${{ matrix.case }}
+        run: printf 'name=%s\n' "$(node scripts/ci/sanitize-artifact-name.mjs "$MATRIX_OS" "$MATRIX_CASE")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: service-journey-results-${{ matrix.os }}-${{ matrix.case }}
-          path: .journey/reports/service-*.json
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: |
+            .journey/reports/service-*.json
+            .journey/reports/invocations/**
+            .journey/reports/journey-summary.md
           if-no-files-found: ignore
           retention-days: 90
 
