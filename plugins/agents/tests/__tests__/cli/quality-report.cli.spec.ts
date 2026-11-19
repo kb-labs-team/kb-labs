@@ -5,8 +5,24 @@ import path from 'node:path';
 import { manifest } from '../../../src/manifest.js';
 import { getHandlerPermissions } from '../../../../../core/plugin-contracts/src/manifest.js';
 
-vi.mock('node:child_process', () => {
-  throw new Error('quality report must use the governed shell API');
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const forbidden = () => {
+    throw new Error('quality report must use the governed shell API');
+  };
+
+  // The SDK has unrelated transitive imports from child_process. Preserve the
+  // module shape, but fail if this command actually tries to spawn a process.
+  return {
+    ...actual,
+    exec: forbidden,
+    execFile: forbidden,
+    execSync: forbidden,
+    execFileSync: forbidden,
+    fork: forbidden,
+    spawn: forbidden,
+    spawnSync: forbidden,
+  };
 });
 
 import qualityReportCommand from '../../../src/cli/commands/quality-report.js';
