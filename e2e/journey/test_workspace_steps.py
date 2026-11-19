@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -8,10 +9,57 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from service_steps import Journey
-from workspace_steps import run_workspace_cli_steps
+from installed_fixture import layout_value
+from workspace_steps import run_workspace_cli_steps, workspace_checkout_problem
+
+
+def workspace_root_with_empty_marketplace_lock(source_root: Path, fixture_root: Path) -> Path:
+    fixture_root.mkdir()
+    for entry in source_root.iterdir():
+        if entry.name in {".git", ".kb", "node_modules"}:
+            continue
+        (fixture_root / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+    kb_dir = fixture_root / ".kb"
+    kb_dir.mkdir()
+    (kb_dir / "marketplace.lock").write_text(json.dumps({"plugins": {}}), encoding="utf-8")
+    config = source_root / ".kb" / "kb.config.jsonc"
+    if config.is_file():
+        (kb_dir / "kb.config.jsonc").symlink_to(config)
+    else:
+        (kb_dir / "kb.config.jsonc").write_text("{}\n", encoding="utf-8")
+    return fixture_root
 
 
 class WorkspaceCliStepsTest(unittest.TestCase):
+    def test_workspace_precheck_still_requires_manifests_for_explicitly_linked_plugins(self):
+        with tempfile.TemporaryDirectory(prefix="kb-workspace-linked-plugin-") as directory:
+            root = Path(directory)
+            for relative in (
+                "cli/bin/dist/bin.js",
+                "core/project-registry/dist/index.js",
+                "plugins/marketplace-registry/dist/manifest.js",
+                "plugins/marketplace-registry/dist/commands/publish.js",
+                "plugins",
+            ):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if relative == "plugins":
+                    continue
+                path.write_text("", encoding="utf-8")
+            (root / "plugins/example/package.json").parent.mkdir(parents=True)
+            (root / "plugins/example/package.json").write_text(
+                json.dumps({"kb": {"manifest": "dist/manifest.js"}}), encoding="utf-8")
+            lock_path = root / layout_value("versionStatePaths.kb_marketplace_lock")
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path.write_text(json.dumps({"plugins": {
+                "@kb-labs/example": {"link": "plugins/example"},
+            }}), encoding="utf-8")
+
+            problem = workspace_checkout_problem(root)
+
+        self.assertIsNotNone(problem)
+        self.assertIn("plugins/example/dist/manifest.js", problem)
+
     def test_missing_workspace_checkout_fails_once_with_all_workspace_claims(self):
         with tempfile.TemporaryDirectory(prefix="kb-workspace-missing-") as directory:
             journey = Journey("local", "workspace-cli-missing")
@@ -28,9 +76,11 @@ class WorkspaceCliStepsTest(unittest.TestCase):
         })
 
     def test_workspace_cli_loads_plugins_and_validates_cases(self):
-        repo_root = Path(__file__).resolve().parents[2]
-        journey = Journey("local", "workspace-cli")
-        run_workspace_cli_steps(journey, repo_root)
+        source_root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory(prefix="kb-workspace-cli-source-") as directory:
+            repo_root = workspace_root_with_empty_marketplace_lock(source_root, Path(directory) / "workspace")
+            journey = Journey("local", "workspace-cli")
+            run_workspace_cli_steps(journey, repo_root)
 
         result = journey.result()
         claims = {claim["claimId"] for claim in result.case_run["claims"]}
@@ -41,9 +91,11 @@ class WorkspaceCliStepsTest(unittest.TestCase):
         })
 
     def test_workspace_cli_reports_project_scope_config_recovery_command(self):
-        repo_root = Path(__file__).resolve().parents[2]
-        journey = Journey("local", "workspace-cli-project-config-scope")
-        run_workspace_cli_steps(journey, repo_root)
+        source_root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory(prefix="kb-workspace-cli-config-") as directory:
+            repo_root = workspace_root_with_empty_marketplace_lock(source_root, Path(directory) / "workspace")
+            journey = Journey("local", "workspace-cli-project-config-scope")
+            run_workspace_cli_steps(journey, repo_root)
 
         result = journey.result()
         self.assertEqual(result.status, "PASS", result.first_failure)

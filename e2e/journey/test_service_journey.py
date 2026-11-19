@@ -832,6 +832,7 @@ raise SystemExit(1)
                     with ExitStack() as stack:
                         workspace_cli_steps = stack.enter_context(patch("service_runner.run_workspace_cli_steps"))
                         for manager in (
+                            patch("service_runner.workspace_checkout_problem", return_value=None),
                             patch("service_runner.checks", side_effect=declare_checks),
                             patch("service_runner.run_service_steps", side_effect=execute_declared_steps),
                             patch("service_runner.prepare_service_api_session",
