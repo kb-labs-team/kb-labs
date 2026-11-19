@@ -57,3 +57,14 @@ test('selects only the push run for the exact branch, workflow, and SHA', () => 
   ];
   assert.equal(selectVerificationRun(runs, { branch: 'verify/stream', sha: 'abc123', workflowPath: '.github/workflows/remote-verify.yml' }).id, 5);
 });
+
+test('platform push selection distinguishes its long ref from the short stream named platform', () => {
+  const sha = 'abc123';
+  const longRef = `verify/platform/ui/20261119T120000Z-${'a'.repeat(40)}`;
+  const runs = [
+    { id: 1, event: 'push', head_branch: 'verify/platform/20261119T120000Z-' + 'a'.repeat(40), head_sha: sha, path: '.github/workflows/remote-verify.yml', display_title: 'Remote agent verification (stream) for verify/platform/20261119T120000Z-' + 'a'.repeat(40) },
+    { id: 2, event: 'push', head_branch: longRef, head_sha: sha, path: '.github/workflows/platform-verify.yml', display_title: `Platform verification (partial) for ${longRef}` },
+  ];
+  assert.equal(selectVerificationRun(runs, { branch: longRef, sha, profile: 'platform', event: 'push' }).id, 2);
+  assert.equal(selectVerificationRun(runs, { branch: `verify/platform/20261119T120000Z-${'a'.repeat(40)}`, sha, profile: 'platform', event: 'push' }), undefined);
+});

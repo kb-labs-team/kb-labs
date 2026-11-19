@@ -1,7 +1,6 @@
-import { parseVerdict, repositoryFromRemote, selectVerificationRun, VerificationRemoteError } from './remote-verdict.mjs';
+import { parseVerdict, repositoryFromRemote, selectVerificationRun, verificationRunTitle, verificationWorkflowPath, VerificationRemoteError } from './remote-verdict.mjs';
 import { isPlatformVerificationRef } from './remote-selection-base.mjs';
 
-const WORKFLOW_PATH = '.github/workflows/remote-verify.yml';
 const MAX_RETRY_DELAY_MS = 60_000;
 
 export class RemoteOperationError extends Error {
@@ -115,15 +114,15 @@ async function waitForRun(lookup, { deadlineAt, policy, clock, callRemote, initi
 }
 
 function validateRun(run, expectedBranch, profile = 'stream') {
-  const dispatched = profile === 'candidate' || profile === 'platform';
+  const dispatched = profile === 'candidate';
   const event = dispatched ? 'workflow_dispatch' : 'push';
   const namespaceMatches = profile === 'candidate'
     ? /^verify-candidate\//.test(run?.head_branch ?? '')
     : profile === 'platform'
       ? isPlatformVerificationRef(run?.head_branch)
       : /^verify\//.test(run?.head_branch ?? '');
-  const title = `Remote agent verification (${profile}) for ${run?.head_branch}`;
-  if (!run || run.event !== event || run.path !== WORKFLOW_PATH || !namespaceMatches || run.display_title !== title || !/^[0-9a-f]{40}$/.test(run.head_sha ?? '')) {
+  const title = verificationRunTitle(profile, run?.head_branch);
+  if (!run || run.event !== event || run.path !== verificationWorkflowPath(profile) || !namespaceMatches || run.display_title !== title || !/^[0-9a-f]{40}$/.test(run.head_sha ?? '')) {
     throw new Error(`Attached run is not a valid remote verification ${profile} run`);
   }
   if (expectedBranch && run.head_branch !== expectedBranch) throw new Error('Attached run branch does not match the requested verification ref');
@@ -210,7 +209,7 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
         });
         if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('Attached verification ref did not resolve to a full commit SHA');
         if (sha !== namedSha) throw new Error(`Attached ref SHA mismatch: ref names ${namedSha}, remote ref resolves to ${sha}`);
-        run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref, ['candidate', 'platform'].includes(options.profile) ? 'workflow_dispatch' : 'push'), { branch: ref, sha, workflowPath: WORKFLOW_PATH, event: ['candidate', 'platform'].includes(options.profile) ? 'workflow_dispatch' : 'push', profile: options.profile }), { deadlineAt, policy, clock, callRemote });
+        run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref, options.profile === 'candidate' ? 'workflow_dispatch' : 'push'), { branch: ref, sha, workflowPath: verificationWorkflowPath(options.profile), event: options.profile === 'candidate' ? 'workflow_dispatch' : 'push', profile: options.profile }), { deadlineAt, policy, clock, callRemote });
         validateRun(run, ref, options.profile);
       }
     } else {
@@ -223,10 +222,10 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
         deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
         callRemote, cadenceMs: policy.pollMs,
       });
-      if (['candidate', 'platform'].includes(options.profile)) {
-        await callRemote(() => gh.dispatchRun(repo, ref, options.profile), deadlineAt);
+      if (options.profile === 'candidate') {
+        await callRemote(() => gh.dispatchRun(repo, ref, 'candidate'), deadlineAt);
       }
-      run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref, ['candidate', 'platform'].includes(options.profile) ? 'workflow_dispatch' : 'push'), { branch: ref, sha, workflowPath: WORKFLOW_PATH, event: ['candidate', 'platform'].includes(options.profile) ? 'workflow_dispatch' : 'push', profile: options.profile }), { deadlineAt, policy, clock, callRemote });
+      run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref, options.profile === 'candidate' ? 'workflow_dispatch' : 'push'), { branch: ref, sha, workflowPath: verificationWorkflowPath(options.profile), event: options.profile === 'candidate' ? 'workflow_dispatch' : 'push', profile: options.profile }), { deadlineAt, policy, clock, callRemote });
       validateRun(run, ref, options.profile);
     }
 

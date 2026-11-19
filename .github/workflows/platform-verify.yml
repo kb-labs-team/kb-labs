@@ -1,0 +1,23 @@
+name: Platform verification
+run-name: Platform verification (partial) for ${{ github.ref_name }}
+
+on:
+  push:
+    branches: ['verify/platform/*/*']
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    name: Platform verification (partial)
+    uses: ./.github/workflows/remote-verify.yml
+    with:
+      profile: platform
+      target_sha: ${{ github.sha }}
+      job_prefix: 'Platform verification (partial) / '
+    permissions:
+      contents: read
+      actions: read
+      checks: read

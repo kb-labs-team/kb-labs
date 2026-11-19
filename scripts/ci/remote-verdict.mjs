@@ -54,6 +54,16 @@ export function parseVerdict(value, expectedSha) {
   return value;
 }
 
+export function verificationWorkflowPath(profile = 'stream') {
+  return profile === 'platform' ? '.github/workflows/platform-verify.yml' : '.github/workflows/remote-verify.yml';
+}
+
+export function verificationRunTitle(profile, branch) {
+  return profile === 'platform'
+    ? `Platform verification (partial) for ${branch}`
+    : `Remote agent verification (${profile}) for ${branch}`;
+}
+
 export function terminalVerdict(sha, status, message) {
   if (!['timeout', 'outage'].includes(status)) throw new Error(`Invalid terminal verdict status: ${status}`);
   return { schemaVersion: 1, sha, status, jobs: [], diagnostics: [message] };
@@ -77,6 +87,6 @@ export function repositoryFromRemote(url, remoteName = 'origin') {
 }
 
 export function selectVerificationRun(runs, { branch, sha, workflowPath, event = 'push', profile = 'stream' }) {
-  const title = `Remote agent verification (${profile}) for ${branch}`;
-  return runs.find((item) => item.event === event && item.head_branch === branch && item.head_sha === sha && item.path === workflowPath && item.display_title === title);
+  const title = verificationRunTitle(profile, branch);
+  return runs.find((item) => item.event === event && item.head_branch === branch && item.head_sha === sha && item.path === (workflowPath ?? verificationWorkflowPath(profile)) && item.display_title === title);
 }

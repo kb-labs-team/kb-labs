@@ -22,7 +22,7 @@ on:
         description: Verification profile
         required: true
         type: choice
-        options: [stream, candidate, platform]
+        options: [stream, candidate]
         default: candidate
 
 permissions:

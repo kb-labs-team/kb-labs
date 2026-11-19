@@ -213,19 +213,19 @@ test('candidate requests one dispatch run on its isolated ref and records the pr
 });
 
 // case: S-262.16
-test('platform verification dispatches on its own ref and preserves a successful partial verdict', async () => {
-  let dispatched;
+test('platform verification push starts its dedicated workflow and preserves a successful partial verdict', async () => {
+  let dispatches = 0;
   const scope = { name: 'platform', status: 'partial', excludedPackages: ['kb-runner'], excludedChecks: ['internal-tool build', 'internal-tool test', 'internal-tool package checks'], warning: 'Scope is partial.' };
   const branch = `verify/platform/ui/19700101T000000Z-${sha}`;
   const h = harness({
     downloadVerdict: async () => ({ ...pass, profile: 'platform', status: 'partial', scope, selection: { packages: ['@kb-labs/core'] }, internalToolResults: { status: 'pass', jobs: [] }, jobs: [
       { name: 'ci-script-suite', status: 'pass', failures: [], logTail: '' },
     ] }),
-    listRuns: async () => [{ ...run(), event: 'workflow_dispatch', head_branch: branch, display_title: `Remote agent verification (platform) for ${branch}` }],
+    listRuns: async () => [{ ...run(), event: 'push', head_branch: branch, path: '.github/workflows/platform-verify.yml', display_title: `Platform verification (partial) for ${branch}` }],
   });
-  h.executors.gh.dispatchRun = async (_repo, ref, profile) => { dispatched = { ref, profile }; };
+  h.executors.gh.dispatchRun = async () => { dispatches += 1; };
   const verdict = await runRemoteVerification({ stream: 'ui', profile: 'platform', out: '/tmp/platform-verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
-  assert.deepEqual(dispatched, { ref: branch, profile: 'platform' });
+  assert.equal(dispatches, 0, 'the platform ref push starts its dedicated workflow exactly once');
   assert.equal(verdict.status, 'partial', JSON.stringify(verdict));
   assert.deepEqual(verdict.scope, scope);
   assert.ok(h.calls.pushes.every(({ ref }) => ref.startsWith('verify/platform/')));

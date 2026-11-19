@@ -17,6 +17,7 @@ const readYaml = (file) => load(readFileSync(path.join(root, file), 'utf8'));
 // case: S-262.7
 test('remote verification builds once and fans out independent and artifact-dependent test matrices', () => {
   const workflow = readYaml('.github/workflows/remote-verify.yml');
+  const platformWorkflow = readYaml('.github/workflows/platform-verify.yml');
   const prepare = workflow.jobs.prepare;
   const build = workflow.jobs.build;
   const independent = workflow.jobs['independent-test-shards'];
@@ -24,6 +25,10 @@ test('remote verification builds once and fans out independent and artifact-depe
   const internalTools = workflow.jobs['internal-tool-test-shards'];
   const finalize = workflow.jobs.verdict;
   assert.deepEqual(workflow.on.push.branches, ['verify/**', '!verify/platform/*/*']);
+  assert.deepEqual(platformWorkflow.on.push.branches, ['verify/platform/*/*']);
+  assert.equal(platformWorkflow.jobs.verify.uses, './.github/workflows/remote-verify.yml');
+  assert.equal(platformWorkflow.jobs.verify.with.profile, 'platform');
+  assert.equal(platformWorkflow.jobs.verify.with.job_prefix, 'Platform verification (partial) / ');
   assert.equal(dependent.if, "needs.build.result == 'success' && ((inputs.profile || github.event.inputs.profile) != 'platform' || needs.build.outputs.build_dependent_matrix != '{\"include\":[]}')");
   assert.equal(prepare.name, "${{ (inputs.profile || github.event.inputs.profile) == 'platform' && 'Platform verification (partial) · ' || '' }}prepare");
   assert.equal(build.name, "${{ (inputs.profile || github.event.inputs.profile) == 'platform' && 'Platform verification (partial) · ' || '' }}build");
@@ -101,7 +106,7 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.equal(aggregateStep.env.REMOTE_SCOPE_MANIFEST, '${{ needs.prepare.outputs.scope_manifest }}');
   assert.match(finalize.name, /Platform verification \(partial\)/);
   assert.equal(prepare.outputs.scope_manifest, '${{ steps.plan.outputs.scope_manifest }}');
-  assert.ok(workflow.on.workflow_dispatch.inputs.profile.options.includes('platform'));
+  assert.deepEqual(workflow.on.workflow_dispatch.inputs.profile.options, ['stream', 'candidate']);
   assert.equal(buildSteps.filter((step) => step.name === 'Build selected workspace packages once').length, 1);
 });
 
@@ -151,6 +156,7 @@ test('candidate PR label runs full verification for the exact head without secre
   }).sort((a, b) => a.caller.localeCompare(b.caller));
   assert.deepEqual(remoteCallers, [
     { caller: 'ci-pr.yml#candidate-verification', prefix: 'Full candidate verification (${{ github.event.pull_request.head.sha }}) / ' },
+    { caller: 'platform-verify.yml#verify', prefix: 'Platform verification (partial) / ' },
     { caller: 'release-build-candidate.yml#unit-test-gate', prefix: 'Workspace unit verification / ' },
   ]);
 });
