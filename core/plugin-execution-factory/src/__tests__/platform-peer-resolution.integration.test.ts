@@ -5,7 +5,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ILogger } from '@kb-labs/core-platform';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
-import { installPlatformResolveHook } from '@kb-labs/plugin-runtime';
 import { createExecutionBackend, createNormalizedExecutionBackend } from '../factory.js';
 import { WorkerPoolBackend } from '../backends/worker-pool/backend.js';
 import type { ExecutionRequest } from '../types.js';
@@ -63,17 +62,15 @@ describe.each(modes)('%s platform peer resolution', (mode) => {
       trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, flush: async () => {}, child() { return this; },
     } as unknown as ILogger;
     const platform = { logger, getAdapter: () => undefined } as unknown as PlatformServices;
-    const resolverHook = mode === 'in-process'
-      ? installPlatformResolveHook({ platformRoot })
-      : undefined;
     const backend = mode === 'worker-pool'
       ? createNormalizedExecutionBackend(new WorkerPoolBackend({
           platform,
+          platformRoot,
           min: 1,
           max: 1,
           workerScript: fileURLToPath(new URL('../../dist/backends/worker-pool/worker-script.js', import.meta.url)),
         }), logger, mode)
-      : createExecutionBackend({ platform, mode, workerPool: { min: 1, max: 1 } });
+      : createExecutionBackend({ platform, platformRoot, mode, workerPool: { min: 1, max: 1 } });
 
     const request: ExecutionRequest = {
       executionId: `sdk-peer-${mode}`,
@@ -90,7 +87,6 @@ describe.each(modes)('%s platform peer resolution', (mode) => {
       handlerRef: './dist/handler.mjs',
       input: {},
       env: {},
-      platformRoot,
       context: { commandPath: 'fixture check' },
     };
 
@@ -105,11 +101,7 @@ describe.each(modes)('%s platform peer resolution', (mode) => {
         pluginEnvRoot: null,
       });
     } finally {
-      try {
-        await backend.shutdown();
-      } finally {
-        resolverHook?.deregister();
-      }
+      await backend.shutdown();
     }
   }, 30_000);
 });
