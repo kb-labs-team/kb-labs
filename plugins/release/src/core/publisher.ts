@@ -342,7 +342,7 @@ export async function commitAndTagRelease(options: {
   tagPattern?: string;
 }): Promise<{ committed: boolean; tagged: string[]; pushed: boolean }> {
   const { cwd, plan, dryRun, noVerify = false, repoRoot, checkpointGitRoots, changelogOutputPath, flowName = 'release', tagPattern } = options;
-  const simpleGit = (await import('simple-git')).default;
+  const { simpleGit } = await import('simple-git');
 
   const result = {
     committed: false,
