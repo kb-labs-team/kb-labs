@@ -77,6 +77,27 @@ describe('registry gateway identity', () => {
     expect(protectedHandler).not.toHaveBeenCalled();
   });
 
+  it('rejects direct public Registry reads without the Gateway secret', async () => {
+    app = Fastify();
+    app.addHook('onRequest', createRegistryAuthMiddleware('registry-internal-secret'));
+    const handler = vi.fn(async () => ({ ok: true }));
+    app.get('/api/v1/packages/:handle/:name/:version/tarball', { config: { registryAccess: 'public' } }, handler);
+    await app.ready();
+
+    for (const headers of [
+      {},
+      { 'x-internal-secret': 'wrong' },
+      { 'x-kb-auth-type': 'user', 'x-kb-auth-user-id': 'forged-user' },
+    ]) {
+      const response = await app.inject({
+        method: 'GET', url: '/api/v1/packages/acme/widget/1.0.0/tarball', headers,
+      });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
+    }
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('declares an access class for every registered marketplace route', async () => {
     app = Fastify();
     const routes: Array<{ method: string | undefined; url: string | undefined; access: unknown }> = [];
