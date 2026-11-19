@@ -19,6 +19,7 @@ export function runPrepareStage({ env = process.env, runCommand = defaultRunComm
   let selectionMode = 'full';
   let selectionBaseSha = '';
   let selectedPackages = [];
+  let scopeManifest;
   const operations = [];
   const failures = [];
 
@@ -66,6 +67,10 @@ export function runPrepareStage({ env = process.env, runCommand = defaultRunComm
         selectionMode = selection.data.mode;
         selectionBaseSha = selection.data.baseSha;
         selectedPackages = selection.data.packages;
+        scopeManifest = selection.data.scope;
+        if (profile === 'platform' && (!scopeManifest || scopeManifest.name !== 'platform' || scopeManifest.status !== 'partial' || !Array.isArray(scopeManifest.excludedPackages) || !Array.isArray(scopeManifest.excludedChecks) || typeof scopeManifest.warning !== 'string' || !scopeManifest.warning)) {
+          throw new Error('platform selection is missing its partial-scope exclusion manifest');
+        }
       } catch (error) {
         operation.status = 'fail';
         operation.logTail = error.message;
@@ -89,6 +94,7 @@ export function runPrepareStage({ env = process.env, runCommand = defaultRunComm
     selectionMode,
     selectionBaseSha,
     selectedPackages,
+    ...(scopeManifest ? { scope: scopeManifest } : {}),
     failures,
     logTail: boundedTail(operations.map((operation) => operation.logTail).filter(Boolean).join('\n')),
     operations,

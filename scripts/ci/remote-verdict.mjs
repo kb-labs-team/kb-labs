@@ -1,10 +1,30 @@
 export function parseVerdict(value, expectedSha) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Remote verdict must be a JSON object');
   if (value.sha !== expectedSha) throw new Error(`Remote verdict SHA mismatch: expected ${expectedSha}, received ${String(value.sha)}`);
-  if (!['pass', 'fail', 'timeout', 'outage'].includes(value.status)) throw new Error(`Invalid remote verdict status: ${String(value.status)}`);
+  if (!['pass', 'partial', 'fail', 'timeout', 'outage'].includes(value.status)) throw new Error(`Invalid remote verdict status: ${String(value.status)}`);
   if (!Array.isArray(value.jobs)) throw new Error('Remote verdict jobs must be an array');
   if (value.profile === 'candidate' && value.internalToolResults === undefined) {
     throw new Error('Remote verdict internal-tool results are required for candidate verification');
+  }
+  if (value.profile === 'platform') {
+    const scope = value.scope;
+    if (value.status === 'pass') throw new Error('Platform remote verdict cannot be labeled as a full pass');
+    if (scope) {
+      const expectedChecks = ['internal-tool build', 'internal-tool test', 'internal-tool package checks'];
+      const selected = value.selection?.packages;
+      if (scope.name !== 'platform' || scope.status !== 'partial' || !Array.isArray(scope.excludedPackages) || scope.excludedPackages.some((name) => typeof name !== 'string' || !name) || new Set(scope.excludedPackages).size !== scope.excludedPackages.length || JSON.stringify(scope.excludedChecks) !== JSON.stringify(expectedChecks) || typeof scope.warning !== 'string' || !scope.warning || !Array.isArray(selected) || selected.some((name) => typeof name !== 'string' || !name) || new Set(selected).size !== selected.length || scope.excludedPackages.some((name) => selected.includes(name))) {
+        throw new Error('Platform remote verdict contains an invalid partial-scope exclusion manifest');
+      }
+    } else if (value.status !== 'fail' || !value.diagnostics?.some((item) => /^platform /i.test(item)) || !value.jobs.some((job) => job.name === 'platform-scope-manifest' && job.status === 'fail')) {
+      throw new Error('Platform remote verdict must retain its partial-scope exclusion manifest or a named manifest failure');
+    }
+    if (value.status === 'partial') {
+      if (!scope || !value.jobs.some((job) => job.name === 'ci-script-suite' && job.status === 'pass') || !value.internalToolResults || value.internalToolResults.status !== 'pass' || !Array.isArray(value.internalToolResults.jobs) || value.internalToolResults.jobs.length > 0) {
+        throw new Error('A partial platform verdict requires its exclusion manifest, selected suite evidence, and no internal-tool jobs');
+      }
+    }
+  } else if (value.status === 'partial') {
+    throw new Error('Only the platform verification profile may return a partial verdict');
   }
   if (value.internalToolResults !== undefined) {
     if (!value.internalToolResults || !['pass', 'fail'].includes(value.internalToolResults.status) || !Array.isArray(value.internalToolResults.jobs)) {
@@ -30,6 +50,7 @@ export function parseVerdict(value, expectedSha) {
     if (!Array.isArray(job.failures) || typeof job.logTail !== 'string') throw new Error(`Remote verdict job ${job.name} is missing diagnostics`);
   }
   if (value.status === 'pass' && value.jobs.some((job) => job.status !== 'pass')) throw new Error('A passing verdict cannot contain a non-passing job');
+  if (value.status === 'partial' && value.jobs.some((job) => job.status !== 'pass')) throw new Error('A partial verdict requires every selected job to pass');
   return value;
 }
 

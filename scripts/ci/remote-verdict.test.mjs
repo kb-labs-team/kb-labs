@@ -13,6 +13,17 @@ test('rejects pass when any job failed', () => {
   assert.throws(() => parseVerdict({ ...good, jobs: [{ name: 'build', status: 'fail', failures: ['TS failed'], logTail: 'TS failed' }] }, 'abc123'), /non-passing job/);
 });
 
+test('platform partial requires a complete exclusion manifest and cannot be labeled pass', () => {
+  const scope = { name: 'platform', status: 'partial', excludedPackages: ['kb-runner'], excludedChecks: ['internal-tool build', 'internal-tool test', 'internal-tool package checks'], warning: 'Scope is partial.' };
+  const platform = { ...good, profile: 'platform', status: 'partial', scope, selection: { packages: ['@kb-labs/core'] }, internalToolResults: { status: 'pass', jobs: [] }, jobs: [
+    { name: 'ci-script-suite', status: 'pass', failures: [], logTail: '' },
+  ] };
+  assert.equal(parseVerdict(platform, 'abc123').status, 'partial');
+  assert.throws(() => parseVerdict({ ...platform, scope: undefined }, 'abc123'), /exclusion manifest/);
+  assert.throws(() => parseVerdict({ ...platform, status: 'pass' }, 'abc123'), /full pass/);
+  assert.throws(() => parseVerdict({ ...good, status: 'partial' }, 'abc123'), /Only the platform/);
+});
+
 test('candidate verdict requires internal-tool results', () => {
   const { internalToolResults, ...omitted } = good;
   assert.throws(() => parseVerdict(omitted, 'abc123'), /internal-tool results are required/);

@@ -76,7 +76,7 @@ async function main() {
     mkdirSync(outDir, { recursive: true });
     writeFileSync(options.out, `${JSON.stringify(verdict, null, 2)}\n`);
     process.stdout.write(`Remote verification ${verdict.status} for ${verdict.sha}; verdict: ${options.out}\n`);
-    return verdict.status === 'pass' ? 0 : 1;
+    return verdict.status === 'pass' || verdict.status === 'partial' ? 0 : 1;
   } catch (error) {
     process.stderr.write(`Remote verification could not write ${options.out}: ${error.message}\n`);
     return 1;

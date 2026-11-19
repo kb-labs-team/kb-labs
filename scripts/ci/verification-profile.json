@@ -15,10 +15,12 @@
   },
   "independentTestStages": {
     "stream": ["ci-script-suite"],
-    "candidate": ["ci-script-suite"]
+    "candidate": ["ci-script-suite"],
+    "platform": ["ci-script-suite"]
   },
   "buildDependentTestStages": {
     "stream": [],
-    "candidate": ["kb-devkit-check", "kb-create-go-suite", "journey-unit-suite"]
+    "candidate": ["kb-devkit-check", "kb-create-go-suite", "journey-unit-suite"],
+    "platform": []
   }
 }

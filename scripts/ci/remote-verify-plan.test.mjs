@@ -62,6 +62,37 @@ test('candidate plan keeps all previous gating packages except internal tools', 
   assert.ok(matrix.dependent.include.some((entry) => entry.stage === 'kb-create-go-suite' && entry.shard === 1 && entry.packages[0] === 'kb-create'));
 });
 
+// case: S-262.16
+test('platform plan requires a partial exclusion manifest and launches no internal-tool shard', () => {
+  const scope = {
+    name: 'platform', status: 'partial', excludedPackages: ['github.com/kb-labs/kb-runner'],
+    excludedChecks: ['internal-tool build', 'internal-tool test', 'internal-tool package checks'],
+    warning: 'Partial platform verification: excluded internal-tool packages and checks are not verified.',
+  };
+  const selection = parseAffectedSelection(JSON.stringify({
+    ok: true,
+    data: {
+      packages: ['@kb-labs/core-platform'], internalToolPackages: [], stagePackages: {}, changedPathCount: 1,
+      selectionReason: 'changed platform package', scope,
+    },
+  }), 'platform');
+  const matrix = createTestMatrix(selection, profile.independentTestStages.platform, profile.buildDependentTestStages.platform, profile.packageTestStage, profile.maxParallel);
+  assert.deepEqual(matrix.internalTool.include, []);
+  assert.deepEqual(selection.scope, scope);
+  assert.throws(() => parseAffectedSelection(JSON.stringify({ ok: true, data: {
+    packages: ['@kb-labs/core-platform'], internalToolPackages: [], stagePackages: {}, changedPathCount: 1,
+    selectionReason: 'changed platform package',
+  } }), 'platform'), /missing its partial-scope exclusion manifest/);
+  assert.throws(() => parseAffectedSelection(JSON.stringify({ ok: true, data: {
+    packages: ['github.com/kb-labs/kb-runner'], internalToolPackages: ['github.com/kb-labs/kb-runner'], stagePackages: {}, changedPathCount: 1,
+    selectionReason: 'runner change', scope,
+  } }), 'platform'), /internal-tool package in its selected plan/);
+  assert.throws(() => parseAffectedSelection(JSON.stringify({ ok: true, data: {
+    packages: ['github.com/kb-labs/kb-runner'], internalToolPackages: [], stagePackages: {}, changedPathCount: 1,
+    selectionReason: 'runner change', scope,
+  } }), 'platform'), /internal-tool package in its selected plan/);
+});
+
 // case: S-277.2
 test('stream plan gates an internal-tool change in its ordinary package test shard', () => {
   const selection = parseAffectedSelection(JSON.stringify({

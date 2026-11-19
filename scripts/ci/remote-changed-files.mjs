@@ -6,7 +6,7 @@ const baseRef = process.env.KB_DEVKIT_BASE_REF;
 const targetSha = process.env.KB_REMOTE_TARGET_SHA;
 const profile = process.env.VERIFICATION_PROFILE;
 const manifestPath = process.env.KB_REMOTE_CHANGED_FILES_PATH;
-if (!baseRef || !manifestPath || !['stream', 'candidate'].includes(profile)) throw new Error('VERIFICATION_PROFILE, KB_DEVKIT_BASE_REF, and KB_REMOTE_CHANGED_FILES_PATH are required by remote verification selection.');
+if (!baseRef || !manifestPath || !['stream', 'candidate', 'platform'].includes(profile)) throw new Error('VERIFICATION_PROFILE, KB_DEVKIT_BASE_REF, and KB_REMOTE_CHANGED_FILES_PATH are required by remote verification selection.');
 
 let candidateBase = baseRef;
 if (profile === 'candidate') {
@@ -15,7 +15,7 @@ if (profile === 'candidate') {
     candidateBase = execFileSync('git', ['merge-base', baseRef, 'HEAD'], { encoding: 'utf8' }).trim();
   }
 }
-const args = profile === 'stream'
+const args = profile === 'stream' || profile === 'platform'
   ? ['diff', '--name-only', '--no-renames', '--diff-filter=ACDMRTUXB', baseRef, ...(targetSha ? [targetSha] : []), '--']
   : ['diff', '--name-only', '--no-renames', '--diff-filter=ACDMRTUXB', candidateBase, targetSha || 'HEAD', '--'];
 const paths = execFileSync('git', args, { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean);

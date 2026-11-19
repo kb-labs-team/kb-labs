@@ -23,6 +23,11 @@ test('remote verification builds once and fans out independent and artifact-depe
   const dependent = workflow.jobs['build-dependent-test-shards'];
   const internalTools = workflow.jobs['internal-tool-test-shards'];
   const finalize = workflow.jobs.verdict;
+  assert.deepEqual(workflow.on.push.branches, ['verify/**', '!verify/platform/*/*']);
+  assert.equal(dependent.if, "needs.build.result == 'success' && ((inputs.profile || github.event.inputs.profile) != 'platform' || needs.build.outputs.build_dependent_matrix != '{\"include\":[]}')");
+  assert.equal(prepare.name, "${{ (inputs.profile || github.event.inputs.profile) == 'platform' && 'Platform verification (partial) · ' || '' }}prepare");
+  assert.equal(build.name, "${{ (inputs.profile || github.event.inputs.profile) == 'platform' && 'Platform verification (partial) · ' || '' }}build");
+  assert.equal(finalize.name, "${{ (inputs.profile || github.event.inputs.profile) == 'platform' && 'Platform verification (partial)' || 'verdict' }}");
   const prepareResultUpload = prepare.steps.find((step) => step.name === 'Upload prepare stage result');
   const aggregateStep = finalize.steps.find((step) => step.name === 'Aggregate commit-bound verdict');
   const finalArtifactDownload = finalize.steps.find((step) => step.name === 'Download build and test shard results');
@@ -33,7 +38,7 @@ test('remote verification builds once and fans out independent and artifact-depe
   const dependentResultUpload = dependentSteps.find((step) => step.name === 'Upload build-dependent test result');
 
   assert.ok(prepare.steps.some((step) => step.run === 'node scripts/ci/run-remote-prepare.mjs'));
-  assert.equal(prepare.env.REMOTE_BASE_REF, "${{ github.event_name == 'push' && format('origin/{0}', github.event.repository.default_branch) || '' }}");
+  assert.equal(prepare.env.REMOTE_BASE_REF, "${{ (github.event_name == 'push' || (inputs.profile || github.event.inputs.profile) == 'platform') && format('origin/{0}', github.event.repository.default_branch) || '' }}");
   assert.equal(prepare.env.REMOTE_TARGET_SHA, '${{ inputs.target_sha || github.sha }}');
   assert.equal(workflow.on.workflow_dispatch.inputs.base_ref, undefined);
   assert.equal(workflow.on.workflow_call.inputs.base_ref, undefined);
@@ -93,6 +98,10 @@ test('remote verification builds once and fans out independent and artifact-depe
   assert.ok(finalize.needs.includes('build-dependent-test-shards'));
   assert.ok(finalize.needs.includes('internal-tool-test-shards'));
   assert.equal(aggregateStep.env.REMOTE_INTERNAL_TOOL_MATRIX, '${{ needs.prepare.outputs.internal_tool_matrix }}');
+  assert.equal(aggregateStep.env.REMOTE_SCOPE_MANIFEST, '${{ needs.prepare.outputs.scope_manifest }}');
+  assert.match(finalize.name, /Platform verification \(partial\)/);
+  assert.equal(prepare.outputs.scope_manifest, '${{ steps.plan.outputs.scope_manifest }}');
+  assert.ok(workflow.on.workflow_dispatch.inputs.profile.options.includes('platform'));
   assert.equal(buildSteps.filter((step) => step.name === 'Build selected workspace packages once').length, 1);
 });
 
@@ -194,7 +203,7 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
     assert.equal(prepare.steps.find((step) => step.uses?.startsWith('actions/checkout@')).with['fetch-depth'], 0);
     assert.equal(workflow.env.DEFAULT_BRANCH, '${{ github.event.repository.default_branch }}');
     assert.equal(prepare.env.VERIFICATION_PROFILE, "${{ inputs.profile || github.event.inputs.profile || 'stream' }}");
-    assert.equal(prepare.env.REMOTE_BASE_REF, "${{ github.event_name == 'push' && format('origin/{0}', github.event.repository.default_branch) || '' }}");
+    assert.equal(prepare.env.REMOTE_BASE_REF, "${{ (github.event_name == 'push' || (inputs.profile || github.event.inputs.profile) == 'platform') && format('origin/{0}', github.event.repository.default_branch) || '' }}");
     assert.equal(prepare.env.REMOTE_REF_NAME, '${{ github.ref_name }}');
     mkdirSync(home);
     const goPaths = execFileSync('go', ['env', 'GOPATH', 'GOMODCACHE', 'GOCACHE'], { encoding: 'utf8' }).trim().split('\n');
@@ -519,6 +528,39 @@ test('verify stream retries an empty result for a non-empty diff using the compl
   }
 });
 
+// case: S-262.16
+test('platform selector asks DevKit for its scope and preserves the exclusion manifest', () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-platform-selection-'));
+  const selectionPath = path.join(temporaryRoot, 'selection.json');
+  const argsPath = path.join(temporaryRoot, 'args.txt');
+  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
+  const scope = {
+    name: 'platform', status: 'partial', excludedPackages: ['github.com/kb-labs/kb-runner'],
+    excludedChecks: ['internal-tool build', 'internal-tool test', 'internal-tool package checks'],
+    warning: 'Partial platform verification: excluded internal-tool packages and checks are not verified.',
+  };
+  const selection = { ok: true, data: {
+    packages: ['@kb-labs/core-platform'], internalToolPackages: [], stagePackages: {},
+    selectionReason: 'full: platform profile', scope,
+  }, selectedPackageCount: 1 };
+  try {
+    writeFileSync(fakeDevkit, `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify(selection)}'\nprintf '%s\\n' "$@" > '${argsPath}'\n`);
+    chmodSync(fakeDevkit, 0o755);
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+    const result = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'platform', selectionPath, fakeDevkit], {
+      cwd: root, encoding: 'utf8',
+      env: { ...process.env, VERIFICATION_PROFILE: 'platform', REMOTE_REF_NAME: `verify/platform/test/20261119T120000Z-${sha}`, REMOTE_TARGET_SHA: sha, REMOTE_BASE_REF: '' },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(JSON.parse(selectionPath && readFileSync(selectionPath, 'utf8')).data.scope, scope);
+    const args = readFileSync(argsPath, 'utf8').trim().split('\n');
+    assert.ok(args.includes('--scope'));
+    assert.ok(args.includes('platform'));
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test('candidate workflow dispatch has no affected-base input and always selects full', () => {
   const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-selection-forged-dispatch-'));
   const selectionPath = path.join(temporaryRoot, 'selection.json');
@@ -527,7 +569,7 @@ test('candidate workflow dispatch has no affected-base input and always selects 
     const workflow = readYaml('.github/workflows/remote-verify.yml');
     const prepareEnv = workflow.jobs.prepare.env;
     assert.equal(prepareEnv.REMOTE_REF_NAME, '${{ github.ref_name }}');
-    assert.equal(prepareEnv.REMOTE_BASE_REF, "${{ github.event_name == 'push' && format('origin/{0}', github.event.repository.default_branch) || '' }}");
+    assert.equal(prepareEnv.REMOTE_BASE_REF, "${{ (github.event_name == 'push' || (inputs.profile || github.event.inputs.profile) == 'platform') && format('origin/{0}', github.event.repository.default_branch) || '' }}");
     assert.equal(workflow.on.workflow_dispatch.inputs.base_ref, undefined);
     assert.equal(workflow.on.workflow_call.inputs.base_ref, undefined);
     writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform"],"internalToolPackages":[],"selectionReason":"affected"}}\'\n');

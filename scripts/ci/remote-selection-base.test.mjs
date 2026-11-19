@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canonicalRemoteBaseRef, candidateBaseRef, candidateFullFallbackReason, candidateSelectionBase } from './remote-selection-base.mjs';
+import { accountedEmptyPlatformSelection, canonicalRemoteBaseRef, candidateBaseRef, candidateFullFallbackReason, candidateSelectionBase, isPlatformVerificationRef } from './remote-selection-base.mjs';
 
 test('candidate verification always selects the complete workspace', () => {
   assert.equal(candidateBaseRef({ profile: 'candidate', baseRef: 'origin/master', emptyTreeRef: 'EMPTY' }), 'EMPTY');
@@ -25,6 +25,26 @@ test('stream verification requires a base but only push verify refs can use mast
   ]) {
     assert.equal(candidateSelectionBase({ profile: 'stream', branch, requestedBaseRef, emptyTreeRef: 'EMPTY' }).baseRef, 'EMPTY', `${branch} ${requestedBaseRef}`);
   }
+});
+
+test('platform verification uses its isolated namespace and the default-branch base', () => {
+  assert.equal(candidateBaseRef({ profile: 'platform', baseRef: 'origin/master', emptyTreeRef: 'EMPTY' }), 'origin/master');
+  const branch = `verify/platform/ui/20261119T120000Z-${'a'.repeat(40)}`;
+  assert.equal(isPlatformVerificationRef(branch), true);
+  assert.deepEqual(candidateSelectionBase({ profile: 'platform', branch, requestedBaseRef: 'origin/master', emptyTreeRef: 'EMPTY' }), {
+    baseRef: 'origin/master', fullReason: '',
+  });
+  assert.equal(candidateSelectionBase({ profile: 'stream', branch: `verify/platform/20261119T120000Z-${'a'.repeat(40)}`, requestedBaseRef: 'origin/master', emptyTreeRef: 'EMPTY' }).baseRef, 'origin/master');
+  for (const ref of ['verify/platform/20261119T120000Z-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'verify/platform/ui/not-a-sha']) {
+    assert.equal(isPlatformVerificationRef(ref), false, ref);
+    assert.throws(() => candidateSelectionBase({ profile: 'platform', branch: ref, requestedBaseRef: 'origin/master', emptyTreeRef: 'EMPTY' }), /requires a verify\/platform/);
+  }
+});
+
+test('only a platform selection accounted for by excluded internal tools may remain empty', () => {
+  assert.equal(accountedEmptyPlatformSelection({ profile: 'platform', packages: [], scope: { excludedPackages: ['kb-runner'] } }), true);
+  assert.equal(accountedEmptyPlatformSelection({ profile: 'platform', packages: [], scope: { excludedPackages: [] } }), false);
+  assert.equal(accountedEmptyPlatformSelection({ profile: 'stream', packages: [], scope: { excludedPackages: ['kb-runner'] } }), false);
 });
 
 test('canonical remote base resolution accepts only exact origin/master', () => {

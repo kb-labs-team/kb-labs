@@ -15,14 +15,14 @@ on:
         required: false
         default: ''
   push:
-    branches: ['verify/**']
+    branches: ['verify/**', '!verify/platform/*/*']
   workflow_dispatch:
     inputs:
       profile:
         description: Verification profile
         required: true
         type: choice
-        options: [stream, candidate]
+        options: [stream, candidate, platform]
         default: candidate
 
 permissions:
@@ -34,6 +34,7 @@ env:
 
 jobs:
   prepare:
+    name: ${{ (inputs.profile || github.event.inputs.profile) == 'platform' && 'Platform verification (partial) · ' || '' }}prepare
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -42,6 +43,7 @@ jobs:
       build_dependent_matrix: ${{ steps.plan.outputs.build_dependent_matrix }}
       internal_tool_matrix: ${{ steps.plan.outputs.internal_tool_matrix }}
       internal_tool_packages: ${{ steps.plan.outputs.internal_tool_packages }}
+      scope_manifest: ${{ steps.plan.outputs.scope_manifest }}
       build_stage: ${{ steps.plan.outputs.build_stage }}
       packages: ${{ steps.plan.outputs.packages }}
       selected_package_count: ${{ steps.plan.outputs.selected_package_count }}
@@ -51,7 +53,7 @@ jobs:
       GOTOOLCHAIN: local
       VERIFICATION_PROFILE: ${{ inputs.profile || github.event.inputs.profile || 'stream' }}
       REMOTE_REF_NAME: ${{ github.ref_name }}
-      REMOTE_BASE_REF: ${{ github.event_name == 'push' && format('origin/{0}', github.event.repository.default_branch) || '' }}
+      REMOTE_BASE_REF: ${{ (github.event_name == 'push' || (inputs.profile || github.event.inputs.profile) == 'platform') && format('origin/{0}', github.event.repository.default_branch) || '' }}
       REMOTE_TARGET_SHA: ${{ inputs.target_sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -100,6 +102,7 @@ jobs:
           retention-days: 1
 
   build:
+    name: ${{ (inputs.profile || github.event.inputs.profile) == 'platform' && 'Platform verification (partial) · ' || '' }}build
     needs: prepare
     if: needs.prepare.result == 'success'
     runs-on: ubuntu-latest
@@ -184,7 +187,7 @@ jobs:
     if: needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}
-    name: Independent test ${{ matrix.stage }}
+    name: ${{ (inputs.profile || github.event.inputs.profile) == 'platform' && 'Platform verification (partial) · ' || '' }}Independent test ${{ matrix.stage }}
     strategy:
       fail-fast: ${{ inputs.profile != 'candidate' }}
       max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
@@ -238,10 +241,10 @@ jobs:
 
   build-dependent-test-shards:
     needs: build
-    if: needs.build.result == 'success'
+    if: needs.build.result == 'success' && ((inputs.profile || github.event.inputs.profile) != 'platform' || needs.build.outputs.build_dependent_matrix != '{"include":[]}')
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.build.outputs.shard_timeout_minutes) }}
-    name: Build-dependent test ${{ matrix.shard || matrix.stage }}
+    name: ${{ (inputs.profile || github.event.inputs.profile) == 'platform' && 'Platform verification (partial) · ' || '' }}Build-dependent test ${{ matrix.shard || matrix.stage }}
     strategy:
       fail-fast: ${{ inputs.profile != 'candidate' }}
       max-parallel: ${{ fromJSON(needs.build.outputs.max_parallel) }}
@@ -303,7 +306,7 @@ jobs:
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.prepare.outputs.shard_timeout_minutes) }}
-    name: Internal tool test ${{ matrix.shard }}
+    name: ${{ (inputs.profile || github.event.inputs.profile) == 'platform' && 'Platform verification (partial) · ' || '' }}Internal tool test ${{ matrix.shard }}
     strategy:
       fail-fast: false
       max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
@@ -358,6 +361,7 @@ jobs:
           retention-days: 1
 
   verdict:
+    name: ${{ (inputs.profile || github.event.inputs.profile) == 'platform' && 'Platform verification (partial)' || 'verdict' }}
     if: always()
     needs: [prepare, build, independent-test-shards, build-dependent-test-shards, internal-tool-test-shards]
     runs-on: ubuntu-latest
@@ -379,6 +383,7 @@ jobs:
         env:
           REMOTE_TEST_MATRIX: ${{ needs.prepare.outputs.test_matrix }}
           REMOTE_INTERNAL_TOOL_MATRIX: ${{ needs.prepare.outputs.internal_tool_matrix }}
+          REMOTE_SCOPE_MANIFEST: ${{ needs.prepare.outputs.scope_manifest }}
           REMOTE_SELECTED_PACKAGE_COUNT: ${{ needs.prepare.outputs.selected_package_count || '0' }}
           REMOTE_JOB_PREFIX: ${{ inputs.job_prefix || '' }}
           PREPARE_JOB_RESULT: ${{ needs.prepare.result }}

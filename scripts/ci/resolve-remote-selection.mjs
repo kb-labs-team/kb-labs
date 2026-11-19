@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { canonicalRemoteBaseRef, candidateBaseRef, candidateFullFallbackReason, candidateSelectionBase } from './remote-selection-base.mjs';
+import { accountedEmptyPlatformSelection, canonicalRemoteBaseRef, candidateBaseRef, candidateFullFallbackReason, candidateSelectionBase } from './remote-selection-base.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const verificationProfile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
@@ -12,7 +12,7 @@ const profile = process.argv[2];
 const outputPath = process.argv[3];
 const executable = process.argv[4];
 const defaultBranch = process.env.DEFAULT_BRANCH;
-if (!['stream', 'candidate'].includes(profile) || !outputPath || !executable || (profile === 'stream' && !defaultBranch)) {
+if (!['stream', 'candidate', 'platform'].includes(profile) || !outputPath || !executable || (profile === 'stream' && !defaultBranch)) {
   throw new Error('A supported profile, output path, and kb-devkit executable are required; stream selection also requires DEFAULT_BRANCH.');
 }
 let baseRef;
@@ -90,7 +90,7 @@ const runChangedFiles = () => spawnSync(process.execPath, ['scripts/ci/remote-ch
   encoding: 'utf8',
   env: { ...process.env, VERIFICATION_PROFILE: profile, KB_DEVKIT_BASE_REF: baseRef, KB_REMOTE_TARGET_SHA: headSha, KB_REMOTE_CHANGED_FILES_PATH: changedFilesPath },
 });
-const runAffected = () => spawnSync(executable, ['--config', path.join(root, 'devkit.yaml'), 'affected', '--changed-files-file', changedFilesPath, '--json'], {
+const runAffected = () => spawnSync(executable, ['--config', path.join(root, 'devkit.yaml'), 'affected', '--changed-files-file', changedFilesPath, ...(profile === 'platform' ? ['--scope', 'platform'] : []), '--json'], {
   cwd: root,
   encoding: 'utf8',
   env: { ...process.env, VERIFICATION_PROFILE: profile, KB_DEVKIT_BASE_REF: baseRef, KB_REMOTE_CHANGED_FILES_PATH: changedFilesPath },
@@ -107,12 +107,18 @@ const readAffectedSelection = (result) => {
   const packages = envelope?.data?.packages;
   const internalToolPackages = envelope?.data?.internalToolPackages;
   const selectionReason = envelope?.data?.selectionReason;
+  const scope = envelope?.data?.scope;
   if (envelope?.ok !== true || !Array.isArray(packages) || packages.some((name) => typeof name !== 'string' || !name)) {
     throw new Error('kb-devkit affected --json returned an invalid package selection. Rerun the remote verification prepare job.');
   }
   if (typeof selectionReason !== 'string') throw new Error('kb-devkit affected --json returned an invalid selection reason. Rerun the remote verification prepare job.');
   if (!Array.isArray(internalToolPackages)) throw new Error('kb-devkit affected --json returned no internal-tool package selection. Rerun the remote verification prepare job.');
-  return { packages, internalToolPackages, selectionReason };
+  if (profile === 'platform') {
+    const checks = ['internal-tool build', 'internal-tool test', 'internal-tool package checks'];
+    if (!scope || scope.name !== 'platform' || scope.status !== 'partial' || !Array.isArray(scope.excludedPackages) || scope.excludedPackages.some((name) => typeof name !== 'string' || !name) || new Set(scope.excludedPackages).size !== scope.excludedPackages.length || JSON.stringify(scope.excludedChecks) !== JSON.stringify(checks) || typeof scope.warning !== 'string' || !scope.warning) throw new Error('kb-devkit platform selection returned no valid partial-scope exclusion manifest.');
+    if (internalToolPackages.length > 0 || scope.excludedPackages.some((name) => packages.includes(name))) throw new Error('kb-devkit platform selection included excluded internal-tool packages in the selected package list.');
+  }
+  return { packages, internalToolPackages, selectionReason, scope };
 };
 try {
   let changed = runChangedFiles();
@@ -152,7 +158,8 @@ try {
     selection = readAffectedSelection(result);
   }
   let { packages, internalToolPackages, selectionReason } = selection;
-  const emptyAffectedReason = candidateFullFallbackReason({ changedPathCount: changedPaths.length, packages });
+  const accountedEmptyPlatformScope = accountedEmptyPlatformSelection({ profile, packages, scope: selection.scope });
+  const emptyAffectedReason = accountedEmptyPlatformScope ? '' : candidateFullFallbackReason({ changedPathCount: changedPaths.length, packages });
   if (emptyAffectedReason && !fullSelection) {
     forcedFullReason = emptyAffectedReason;
     fullSelection = true;
@@ -164,7 +171,7 @@ try {
     selection = readAffectedSelection(result);
     ({ packages, internalToolPackages, selectionReason } = selection);
   }
-  if (fullSelection && packages.length === 0) {
+  if (fullSelection && packages.length === 0 && !accountedEmptyPlatformSelection({ profile, packages, scope: selection.scope })) {
     throw new Error(`${forcedFullReason || 'full: full selection'}; no workspace packages were returned.`);
   }
   const stages = [...verificationProfile.independentTestStages[profile], ...verificationProfile.buildDependentTestStages[profile]];
@@ -180,7 +187,7 @@ try {
   const finalChangedPaths = JSON.parse(readFileSync(changedFilesPath, 'utf8'));
   const mode = fullSelection || selectionReason.startsWith('full:') ? 'full' : 'affected';
   const reason = forcedFullReason || (mode === 'full' && !selectionReason ? 'full: candidate has no integration base ref' : selectionReason);
-  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, internalToolPackages, stagePackages, changedPathCount: finalChangedPaths.length, selectionReason: reason, mode, baseSha: selectionBaseSha }, selectedPackageCount: packages.length })}\n`);
+  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, internalToolPackages, stagePackages, changedPathCount: finalChangedPaths.length, selectionReason: reason, mode, baseSha: selectionBaseSha, ...(profile === 'platform' ? { scope: selection.scope } : {}) }, selectedPackageCount: packages.length })}\n`);
   process.stdout.write(`Resolved ${packages.length} package(s) from ${finalChangedPaths.length} path(s) using kb-devkit (${reason}).\n`);
 } catch (error) {
   process.stderr.write(`${error.message}\n`);

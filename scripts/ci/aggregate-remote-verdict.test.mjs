@@ -46,6 +46,42 @@ test('aggregates every shard with the existing verdict shape and per-stage timin
   assert.deepEqual(verdict.jobs.map(({ selectedPackageCount }) => selectedPackageCount), [41, 41, 41, 1]);
 });
 
+// case: S-262.16
+test('platform verdict remains partial and requires the unchanged exclusion manifest', () => {
+  const scope = {
+    name: 'platform', status: 'partial', excludedPackages: ['github.com/kb-labs/kb-runner'],
+    excludedChecks: ['internal-tool build', 'internal-tool test', 'internal-tool package checks'],
+    warning: 'Partial platform verification: excluded internal-tool packages and checks are not verified.',
+  };
+  const prepare = { ...passingPrepare(), selectedPackages: ['@kb-labs/core'], scope };
+  const base = {
+    sha: 'a'.repeat(40), prepare,
+    build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 10 },
+    matrix: { include: [
+      { stage: 'ci-script-suite' },
+      { stage: profile.packageTestStage, shard: 1, packages: ['@kb-labs/core'] },
+    ], internalTool: { include: [] } },
+    results: [
+      { name: 'ci-script-suite', status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 2 },
+      { name: `${profile.packageTestStage}:shard-1`, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '', durationMs: 3 },
+    ], selectedPackageCount: 1,
+    prepareJobResult: 'success', buildJobResult: 'success', verificationProfile: 'platform', scopeManifest: scope,
+    githubJobs: [
+      { name: 'Platform verification (partial) · prepare', conclusion: 'success', steps: [], annotations: [] },
+      { name: 'Platform verification (partial) · build', conclusion: 'success', steps: [], annotations: [] },
+      { name: 'Platform verification (partial) · Independent test ci-script-suite', conclusion: 'success', steps: [], annotations: [] },
+      { name: 'Platform verification (partial) · Build-dependent test 1', conclusion: 'success', steps: [], annotations: [] },
+    ],
+  };
+  const verdict = aggregateVerdict(base);
+  assert.equal(verdict.status, 'partial');
+  assert.deepEqual(verdict.scope, scope);
+  assert.equal(aggregateVerdict({ ...base, scopeManifest: undefined, prepare: { ...passingPrepare(), selectedPackages: ['@kb-labs/core'] } }).status, 'fail');
+  const invalid = aggregateVerdict({ ...base, scopeManifest: { ...scope, excludedPackages: [] } });
+  assert.equal(invalid.status, 'fail');
+  assert.ok(invalid.diagnostics.some((item) => /manifest/i.test(item)));
+});
+
 // case: S-277.1
 test('candidate verdict reports internal-tool failures without using them for the candidate status', () => {
   const verdict = aggregateVerdict({

@@ -1,4 +1,5 @@
 import { parseVerdict, repositoryFromRemote, selectVerificationRun, VerificationRemoteError } from './remote-verdict.mjs';
+import { isPlatformVerificationRef } from './remote-selection-base.mjs';
 
 const WORKFLOW_PATH = '.github/workflows/remote-verify.yml';
 const MAX_RETRY_DELAY_MS = 60_000;
@@ -114,10 +115,15 @@ async function waitForRun(lookup, { deadlineAt, policy, clock, callRemote, initi
 }
 
 function validateRun(run, expectedBranch, profile = 'stream') {
-  const event = profile === 'candidate' ? 'workflow_dispatch' : 'push';
-  const namespace = profile === 'candidate' ? /^verify-candidate\// : /^verify\//;
+  const dispatched = profile === 'candidate' || profile === 'platform';
+  const event = dispatched ? 'workflow_dispatch' : 'push';
+  const namespaceMatches = profile === 'candidate'
+    ? /^verify-candidate\//.test(run?.head_branch ?? '')
+    : profile === 'platform'
+      ? isPlatformVerificationRef(run?.head_branch)
+      : /^verify\//.test(run?.head_branch ?? '');
   const title = `Remote agent verification (${profile}) for ${run?.head_branch}`;
-  if (!run || run.event !== event || run.path !== WORKFLOW_PATH || !namespace.test(run.head_branch ?? '') || run.display_title !== title || !/^[0-9a-f]{40}$/.test(run.head_sha ?? '')) {
+  if (!run || run.event !== event || run.path !== WORKFLOW_PATH || !namespaceMatches || run.display_title !== title || !/^[0-9a-f]{40}$/.test(run.head_sha ?? '')) {
     throw new Error(`Attached run is not a valid remote verification ${profile} run`);
   }
   if (expectedBranch && run.head_branch !== expectedBranch) throw new Error('Attached run branch does not match the requested verification ref');
@@ -194,7 +200,8 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
         validateRun(run, ref, options.profile);
       } else {
         ref = options.attach;
-        if (!ref.startsWith(options.profile === 'candidate' ? 'verify-candidate/' : 'verify/')) throw new Error(`An attached ref must be under ${options.profile === 'candidate' ? 'verify-candidate/' : 'verify/'}`);
+        const prefix = options.profile === 'candidate' ? 'verify-candidate' : options.profile === 'platform' ? 'verify/platform' : 'verify';
+        if (options.profile === 'platform' ? !isPlatformVerificationRef(ref) : !ref.startsWith(`${prefix}/`)) throw new Error(`An attached ref must be a valid ${prefix}/ verification ref`);
         const namedSha = ref.match(/\/(?:[0-9]{8}T[0-9]{6}Z)-([0-9a-f]{40})$/)?.[1];
         if (!namedSha) throw new Error('Attached verification ref must include its timestamp and commit SHA');
         sha = await retryOperation(() => git.resolveRef(remoteName, ref), {
@@ -203,22 +210,23 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
         });
         if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('Attached verification ref did not resolve to a full commit SHA');
         if (sha !== namedSha) throw new Error(`Attached ref SHA mismatch: ref names ${namedSha}, remote ref resolves to ${sha}`);
-        run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref, options.profile === 'candidate' ? 'workflow_dispatch' : 'push'), { branch: ref, sha, workflowPath: WORKFLOW_PATH, event: options.profile === 'candidate' ? 'workflow_dispatch' : 'push', profile: options.profile }), { deadlineAt, policy, clock, callRemote });
+        run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref, ['candidate', 'platform'].includes(options.profile) ? 'workflow_dispatch' : 'push'), { branch: ref, sha, workflowPath: WORKFLOW_PATH, event: ['candidate', 'platform'].includes(options.profile) ? 'workflow_dispatch' : 'push', profile: options.profile }), { deadlineAt, policy, clock, callRemote });
         validateRun(run, ref, options.profile);
       }
     } else {
       sha = await git.headSha();
       if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('Current HEAD did not resolve to a full commit SHA');
       const created = new Date(clock.now()).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-      ref = `${options.profile === 'candidate' ? 'verify-candidate' : 'verify'}/${options.stream}/${created}-${sha}`;
+      const prefix = options.profile === 'candidate' ? 'verify-candidate' : options.profile === 'platform' ? 'verify/platform' : 'verify';
+      ref = `${prefix}/${options.stream}/${created}-${sha}`;
       await retryOperation(() => git.pushRef(remoteName, ref, sha), {
         deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,
         callRemote, cadenceMs: policy.pollMs,
       });
-      if (options.profile === 'candidate') {
-        await callRemote(() => gh.dispatchRun(repo, ref, 'candidate'), deadlineAt);
+      if (['candidate', 'platform'].includes(options.profile)) {
+        await callRemote(() => gh.dispatchRun(repo, ref, options.profile), deadlineAt);
       }
-      run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref, options.profile === 'candidate' ? 'workflow_dispatch' : 'push'), { branch: ref, sha, workflowPath: WORKFLOW_PATH, event: options.profile === 'candidate' ? 'workflow_dispatch' : 'push', profile: options.profile }), { deadlineAt, policy, clock, callRemote });
+      run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref, ['candidate', 'platform'].includes(options.profile) ? 'workflow_dispatch' : 'push'), { branch: ref, sha, workflowPath: WORKFLOW_PATH, event: ['candidate', 'platform'].includes(options.profile) ? 'workflow_dispatch' : 'push', profile: options.profile }), { deadlineAt, policy, clock, callRemote });
       validateRun(run, ref, options.profile);
     }
 
@@ -263,10 +271,15 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
           verdict = failureVerdict(sha, [`Could not retrieve a valid verdict artifact once: ${error.message}`], { jobs: [] }, options.profile);
         }
       }
-      if (run.conclusion !== 'success' && verdict.status === 'pass') {
-        verdict = failureVerdict(sha, [`GitHub Actions concluded ${run.conclusion}; a passing artifact cannot override that result`], { jobs: verdict.jobs }, options.profile);
+      if (run.conclusion !== 'success' && ['pass', 'partial'].includes(verdict.status)) {
+        verdict = {
+          ...failureVerdict(sha, [`GitHub Actions concluded ${run.conclusion}; a passing artifact cannot override that result`], { jobs: verdict.jobs }, options.profile),
+          ...(verdict.scope ? { scope: verdict.scope } : {}),
+          ...(verdict.selection ? { selection: verdict.selection } : {}),
+          ...(verdict.internalToolResults ? { internalToolResults: verdict.internalToolResults } : {}),
+        };
       }
-      if (verdict?.status !== 'pass' && verdict?.status !== 'timeout' && verdict?.status !== 'outage') {
+      if (verdict?.status !== 'pass' && verdict?.status !== 'partial' && verdict?.status !== 'timeout' && verdict?.status !== 'outage') {
         try {
           const jobsResponse = await retryOperation(() => gh.failureJobs(repo, run.id), {
             deadlineAt, outageBudgetMs: policy.outageBudgetMs, now: clock.now, sleep: clock.sleep,

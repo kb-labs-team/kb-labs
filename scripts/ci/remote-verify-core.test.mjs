@@ -212,6 +212,33 @@ test('candidate requests one dispatch run on its isolated ref and records the pr
   assert.equal(h.calls.deletes.length, 1);
 });
 
+// case: S-262.16
+test('platform verification dispatches on its own ref and preserves a successful partial verdict', async () => {
+  let dispatched;
+  const scope = { name: 'platform', status: 'partial', excludedPackages: ['kb-runner'], excludedChecks: ['internal-tool build', 'internal-tool test', 'internal-tool package checks'], warning: 'Scope is partial.' };
+  const branch = `verify/platform/ui/19700101T000000Z-${sha}`;
+  const h = harness({
+    downloadVerdict: async () => ({ ...pass, profile: 'platform', status: 'partial', scope, selection: { packages: ['@kb-labs/core'] }, internalToolResults: { status: 'pass', jobs: [] }, jobs: [
+      { name: 'ci-script-suite', status: 'pass', failures: [], logTail: '' },
+    ] }),
+    listRuns: async () => [{ ...run(), event: 'workflow_dispatch', head_branch: branch, display_title: `Remote agent verification (platform) for ${branch}` }],
+  });
+  h.executors.gh.dispatchRun = async (_repo, ref, profile) => { dispatched = { ref, profile }; };
+  const verdict = await runRemoteVerification({ stream: 'ui', profile: 'platform', out: '/tmp/platform-verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.deepEqual(dispatched, { ref: branch, profile: 'platform' });
+  assert.equal(verdict.status, 'partial', JSON.stringify(verdict));
+  assert.deepEqual(verdict.scope, scope);
+  assert.ok(h.calls.pushes.every(({ ref }) => ref.startsWith('verify/platform/')));
+});
+
+test('platform CLI refuses the short stream ref named platform', async () => {
+  const h = harness();
+  const verdict = await runRemoteVerification({ attach: `verify/platform/20261119T120000Z-${sha}`, profile: 'platform', out: '/tmp/invalid-platform-ref.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'fail');
+  assert.match(verdict.diagnostics.join('\n'), /valid verify\/platform\//);
+  assert.equal(h.calls.resolves.length, 0);
+});
+
 test('candidate dispatch from a short trunk branch does not select an affected base', async () => {
   const candidateRun = (branch) => run({ event: 'workflow_dispatch', head_branch: branch, display_title: `Remote agent verification (candidate) for ${branch}` });
   const h = harness({

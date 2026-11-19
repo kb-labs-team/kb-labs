@@ -7,16 +7,43 @@ import { resourcePeaks } from './remote-build-resources.mjs';
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const MISSING_SHARD_LOG = 'Shard did not produce a result artifact.';
+const PLATFORM_EXCLUDED_CHECKS = ['internal-tool build', 'internal-tool test', 'internal-tool package checks'];
+
+function scopeManifestError(manifest, selectedPackages = []) {
+  if (!manifest || manifest.name !== 'platform' || manifest.status !== 'partial') return 'platform scope manifest is missing or has the wrong identity';
+  if (!Array.isArray(manifest.excludedPackages) || manifest.excludedPackages.some((name) => typeof name !== 'string' || !name) || new Set(manifest.excludedPackages).size !== manifest.excludedPackages.length) return 'platform scope manifest has invalid excluded package names';
+  if (JSON.stringify(manifest.excludedChecks) !== JSON.stringify(PLATFORM_EXCLUDED_CHECKS)) return 'platform scope manifest has an invalid excluded-check list';
+  if (typeof manifest.warning !== 'string' || !manifest.warning) return 'platform scope manifest has no warning';
+  if (manifest.excludedPackages.some((name) => selectedPackages.includes(name))) return 'platform scope manifest overlaps the selected package plan';
+  return '';
+}
+
+function platformPlanError(matrix, prepare) {
+  if (!Array.isArray(matrix?.include)) return 'platform test plan is missing its matrix';
+  const suites = matrix.include.filter((item) => item.stage === 'ci-script-suite');
+  if (suites.length !== 1 || matrix.include.some((item) => !['ci-script-suite', profile.packageTestStage].includes(item.stage))) return 'platform test plan is missing its required suite or contains an unregistered stage';
+  const packages = prepare.selectedPackages;
+  if (!Array.isArray(packages) || packages.some((name) => typeof name !== 'string' || !name) || new Set(packages).size !== packages.length) return 'platform prepare result has no valid selected package plan';
+  const shards = matrix.include.filter((item) => item.stage === profile.packageTestStage);
+  if (shards.some((item) => !Number.isSafeInteger(item.shard) || item.shard < 1 || !Array.isArray(item.packages) || item.packages.length === 0 || item.packages.some((name) => typeof name !== 'string' || !name))) return 'platform package test matrix contains an invalid shard';
+  const plannedPackages = shards.flatMap((item) => item.packages);
+  if (new Set(plannedPackages).size !== plannedPackages.length || [...plannedPackages].sort().join('\n') !== [...packages].sort().join('\n')) return 'platform package test matrix does not cover the selected package plan exactly once';
+  return '';
+}
 
 function readJSON(file) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
 
-export function githubJobName(job) {
-  if (job.job === 'prepare' || job.job === 'build') return job.job;
-  if (job.stage === 'internal-tool-tests') return `Internal tool test ${job.shard ?? job.stage}`;
-  const independent = Object.values(profile.independentTestStages).some((stages) => stages.includes(job.stage));
-  return `${independent ? 'Independent' : 'Build-dependent'} test ${job.shard ?? job.stage}`;
+export function githubJobName(job, verificationProfile = 'stream') {
+  let name;
+  if (job.job === 'prepare' || job.job === 'build') name = job.job;
+  else if (job.stage === 'internal-tool-tests') name = `Internal tool test ${job.shard ?? job.stage}`;
+  else {
+    const independent = Object.values(profile.independentTestStages).some((stages) => stages.includes(job.stage));
+    name = `${independent ? 'Independent' : 'Build-dependent'} test ${job.shard ?? job.stage}`;
+  }
+  return verificationProfile === 'platform' ? `Platform verification (partial) · ${name}` : name;
 }
 
 function failureAnnotations(evidence) {
@@ -33,14 +60,14 @@ function failFastMatrix(shard) {
 }
 
 function failFastReason(shard, matrix, resultsByName, evidenceByName, verificationProfile) {
-  if (verificationProfile !== 'stream' || !shard.packages || evidenceByName.get(githubJobName(shard))?.conclusion !== 'cancelled') return undefined;
+  if (verificationProfile !== 'stream' || !shard.packages || evidenceByName.get(githubJobName(shard, verificationProfile))?.conclusion !== 'cancelled') return undefined;
   const group = failFastMatrix(shard);
   if (!group) return undefined;
   const failedPeer = matrix.include.some((peer) => {
     if (peer === shard || failFastMatrix(peer) !== group) return false;
     const peerName = peer.packages ? `${peer.stage}:shard-${peer.shard}` : peer.stage;
     const peerArtifact = resultsByName.get(peerName);
-    const peerConclusion = evidenceByName.get(githubJobName(peer))?.conclusion;
+    const peerConclusion = evidenceByName.get(githubJobName(peer, verificationProfile))?.conclusion;
     return peerArtifact?.status === 'fail' || peerConclusion === 'failure';
   });
   return failedPeer ? 'cancelled by fail-fast after a peer in the same test matrix failed' : undefined;
@@ -124,9 +151,9 @@ function missingShard(shard, selectedPackageCount, githubJobs, githubJobsError, 
   if (githubJobsError) {
     return { name, status: 'fail', selectedPackageCount: count, failures: [`GitHub job evidence API read failed: ${githubJobsError}`], logTail: '' };
   }
-  const evidence = githubJobs.find((job) => job.name === githubJobName(shard));
+  const evidence = githubJobs.find((job) => job.name === githubJobName(shard, verificationProfile));
   if (!evidence) {
-    return { name, status: 'fail', selectedPackageCount: count, failures: [`GitHub job evidence is missing for planned job ${githubJobName(shard)}.`], logTail: '' };
+    return { name, status: 'fail', selectedPackageCount: count, failures: [`GitHub job evidence is missing for planned job ${githubJobName(shard, verificationProfile)}.`], logTail: '' };
   }
   const steps = (evidence.steps ?? []).map(({ name: stepName, conclusion, status }) => ({ name: stepName, ...(conclusion === undefined ? {} : { conclusion }), ...(status === undefined ? {} : { status }) }));
   const annotations = failureAnnotations(evidence);
@@ -150,8 +177,8 @@ function missingShard(shard, selectedPackageCount, githubJobs, githubJobsError, 
   const timedOut = conclusion === 'timed_out';
   const status = timedOut ? 'timeout' : 'fail';
   const failures = [...annotations];
-  if (timedOut) failures.unshift(`GitHub job ${githubJobName(shard)} timed out.`);
-  else if (!failures.length) failures.push(`GitHub job ${githubJobName(shard)} concluded ${conclusion} without a result artifact.`);
+  if (timedOut) failures.unshift(`GitHub job ${githubJobName(shard, verificationProfile)} timed out.`);
+  else if (!failures.length) failures.push(`GitHub job ${githubJobName(shard, verificationProfile)} concluded ${conclusion} without a result artifact.`);
   return {
     name, status, selectedPackageCount: count, failures,
     logTail: `GitHub conclusion: ${conclusion}; steps: ${JSON.stringify(steps)}`,
@@ -161,7 +188,7 @@ function missingShard(shard, selectedPackageCount, githubJobs, githubJobsError, 
 
 export function aggregateVerdict({
   sha, prepare, prepareJobResult = 'unknown', build, buildJobResult = 'unknown', buildResourceSamples = [],
-  matrix, results, selectedPackageCount, verificationProfile = 'stream', githubJobs = [], githubJobsError,
+  matrix, results, selectedPackageCount, verificationProfile = 'stream', scopeManifest, githubJobs = [], githubJobsError,
 }) {
   if (!Number.isSafeInteger(selectedPackageCount) || selectedPackageCount < 0) throw new Error('Remote verdict requires the selected package count from the prepare job.');
   const prepareStageResult = prepare ?? {
@@ -171,6 +198,15 @@ export function aggregateVerdict({
     failures: [`Prepare job concluded ${prepareJobResult} without a prepare stage result artifact.`],
     logTail: MISSING_SHARD_LOG,
   };
+  let scopeError = '';
+  if (verificationProfile === 'platform') {
+    scopeError = scopeManifestError(scopeManifest, prepareStageResult.selectedPackages ?? []);
+    if (!scopeError && !prepareStageResult.scope) scopeError = 'platform prepare result is missing the planned exclusion manifest';
+    if (!scopeError && JSON.stringify(scopeManifest) !== JSON.stringify(prepareStageResult.scope)) scopeError = 'platform scope manifest changed between plan and prepare result';
+    if (!scopeError && (matrix.internalTool?.include?.length ?? 0) > 0) scopeError = 'platform plan contains an internal-tool job';
+    if (!scopeError) scopeError = platformPlanError(matrix, prepareStageResult);
+    if (scopeError) scopeManifest = undefined;
+  }
   let buildStage = build;
   if (!buildStage || buildStage.status === 'running') {
     const samples = [...(buildStage?.resourceSamples ?? []), ...buildResourceSamples];
@@ -196,8 +232,8 @@ export function aggregateVerdict({
     buildStage = { ...buildStage, resourceSamples: samples, resourcePeaks: resourcePeaks(samples), lastResourceSample: samples.at(-1) };
   }
   const evidenceByName = new Map(githubJobs.map((job) => [job.name, job]));
-  const prepareName = githubJobName({ job: 'prepare' });
-  const buildName = githubJobName({ job: 'build' });
+  const prepareName = githubJobName({ job: 'prepare' }, verificationProfile);
+  const buildName = githubJobName({ job: 'build' }, verificationProfile);
   const jobs = [
     reconcileJobResult(prepareStageResult, prepareName, prepareJobResult, evidenceByName.get(prepareName), githubJobsError),
     reconcileJobResult(buildStage ?? { name: profile.buildStage, status: 'fail', selectedPackageCount, failures: ['build-result-missing: no build stage result artifact.'], logTail: MISSING_SHARD_LOG }, buildName, buildJobResult, evidenceByName.get(buildName), githubJobsError),
@@ -209,7 +245,7 @@ export function aggregateVerdict({
   }
   for (const shard of matrix.include) {
     const name = shard.packages ? `${shard.stage}:shard-${shard.shard}` : shard.stage;
-    const jobName = githubJobName(shard);
+    const jobName = githubJobName(shard, verificationProfile);
     const result = byName.get(name);
     const cancellationReason = failFastReason(shard, matrix, byName, evidenceByName, verificationProfile);
     if (cancellationReason) {
@@ -240,7 +276,7 @@ export function aggregateVerdict({
   for (const shard of matrix.internalTool?.include ?? []) {
     const name = `${shard.stage}:shard-${shard.shard}`;
     const result = byName.get(name);
-    const jobName = githubJobName(shard);
+    const jobName = githubJobName(shard, verificationProfile);
     const reconciled = result
       ? reconcileJobResult(devkitFailureEvidence(result), jobName, undefined, evidenceByName.get(jobName), githubJobsError)
       : missingShard(shard, shard.packages.length, githubJobs, githubJobsError, internalToolJobs, verificationProfile);
@@ -252,6 +288,8 @@ export function aggregateVerdict({
   for (const job of jobs) {
     if (!Number.isSafeInteger(job.selectedPackageCount) || job.selectedPackageCount < 0) throw new Error(`Remote verdict stage ${job.name} is missing its selected package count.`);
   }
+  if (scopeError) jobs.push({ name: 'platform-scope-manifest', status: 'fail', selectedPackageCount: 0, failures: [scopeError], logTail: scopeError });
+  const selectedJobsPass = jobs.every((job) => job.status === 'pass');
   const verdict = {
     schemaVersion: 1,
     sha,
@@ -262,18 +300,19 @@ export function aggregateVerdict({
       reason: prepareStageResult.selectionReason ?? 'full: package selection did not complete',
       packages: prepareStageResult.selectedPackages ?? [],
     },
-    status: jobs.every((job) => job.status === 'pass') ? 'pass' : 'fail',
+    status: selectedJobsPass && !scopeError ? (verificationProfile === 'platform' ? 'partial' : 'pass') : 'fail',
+    ...(scopeManifest ? { scope: scopeManifest } : {}),
     jobs,
     internalToolResults: {
       status: internalToolJobs.every((job) => job.status === 'pass') ? 'pass' : 'fail',
       jobs: internalToolJobs,
     },
-    diagnostics: [],
+    diagnostics: scopeError ? [scopeError] : [],
   };
   return parseVerdict(verdict, sha);
 }
 
-export function fetchGitHubJobEvidence({ repository, runId, plannedJobs, jobPrefix = '', runCommand }) {
+export function fetchGitHubJobEvidence({ repository, runId, plannedJobs, jobPrefix = '', verificationProfile = 'stream', runCommand }) {
   const jobsUrl = `repos/${repository}/actions/runs/${runId}/jobs`;
   const jobs = [];
   let page = 1;
@@ -285,7 +324,7 @@ export function fetchGitHubJobEvidence({ repository, runId, plannedJobs, jobPref
     if (pageJobs.length === 0 || (Number.isSafeInteger(totalCount) ? jobs.length >= totalCount : pageJobs.length < 100)) break;
     page += 1;
   }
-  const missingNames = new Set(plannedJobs.map((job) => `${jobPrefix}${githubJobName(job)}`));
+  const missingNames = new Set(plannedJobs.map((job) => `${jobPrefix}${githubJobName(job, verificationProfile)}`));
   const plannedEvidence = jobs.filter((job) => missingNames.has(job.name));
   const observedNames = new Set(plannedEvidence.map((job) => job.name));
   const absentNames = [...missingNames].filter((name) => !observedNames.has(name));
@@ -324,6 +363,7 @@ function main() {
       runId: process.env.GITHUB_RUN_ID,
       plannedJobs,
       jobPrefix: process.env.REMOTE_JOB_PREFIX ?? '',
+      verificationProfile: process.env.VERIFICATION_PROFILE ?? 'stream',
       runCommand: (endpoint) => {
         const result = spawnSync('gh', ['api', endpoint], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
         if (result.error) throw result.error;
@@ -334,20 +374,27 @@ function main() {
   } catch (error) {
     githubJobsError = error.message;
   }
+  let scopeManifest;
+  if (process.env.REMOTE_SCOPE_MANIFEST) {
+    try { scopeManifest = JSON.parse(process.env.REMOTE_SCOPE_MANIFEST); }
+    catch { scopeManifest = { malformedManifest: true }; }
+  }
   const verdict = aggregateVerdict({
     sha, prepare, prepareJobResult: process.env.PREPARE_JOB_RESULT, build,
     buildJobResult: process.env.BUILD_JOB_RESULT, buildResourceSamples, matrix,
     results: results.filter((result) => result !== prepare && result !== build), selectedPackageCount,
     githubJobs, githubJobsError,
     verificationProfile: process.env.VERIFICATION_PROFILE ?? 'stream',
+    scopeManifest,
   });
   writeFileSync(out, `${JSON.stringify(verdict, null, 2)}\n`);
   if (process.env.GITHUB_STEP_SUMMARY) {
     const rows = verdict.jobs.map((job) => `| ${job.name} | ${job.status} | ${job.durationMs ?? '—'} ms |`).join('\n');
-    writeFileSync(process.env.GITHUB_STEP_SUMMARY, `# Remote verification: ${verdict.status}\n\nCommit: ${sha}\n\n| Stage | Status | Duration |\n|---|---|---:|\n${rows}\n`);
+    const partial = verdict.status === 'partial' ? `\n\n**Platform verification is partial.** ${verdict.scope.warning}\n\nExcluded packages: ${verdict.scope.excludedPackages.join(', ') || 'none affected'}\n\nExcluded checks: ${verdict.scope.excludedChecks.join(', ')}\n` : '';
+    writeFileSync(process.env.GITHUB_STEP_SUMMARY, `# Remote verification: ${verdict.status}\n\nCommit: ${sha}${partial}\n\n| Stage | Status | Duration |\n|---|---|---:|\n${rows}\n`);
   }
   process.stdout.write(`Remote verification ${verdict.status} for ${sha}; wrote ${out}.\n`);
-  if (verdict.status !== 'pass') process.exitCode = 1;
+  if (verdict.status !== 'pass' && verdict.status !== 'partial') process.exitCode = 1;
 }
 
 export function verificationSha(env) {

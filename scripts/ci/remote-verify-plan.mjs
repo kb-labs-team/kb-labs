@@ -40,6 +40,12 @@ export function parseAffectedSelection(output, profileName) {
   }
   const selectionReason = envelope?.data?.selectionReason ?? '';
   if (typeof selectionReason !== 'string') throw new Error(`kb-devkit affected selection returned an invalid selection reason. Rerun the prepare selector: ${selectionCommand}.`);
+  const scope = envelope?.data?.scope;
+  if (profileName === 'platform') {
+    const expectedExcludedChecks = ['internal-tool build', 'internal-tool test', 'internal-tool package checks'];
+    if (!scope || scope.name !== 'platform' || scope.status !== 'partial' || !Array.isArray(scope.excludedPackages) || scope.excludedPackages.some((name) => typeof name !== 'string' || !name) || new Set(scope.excludedPackages).size !== scope.excludedPackages.length || !Array.isArray(scope.excludedChecks) || JSON.stringify(scope.excludedChecks) !== JSON.stringify(expectedExcludedChecks) || typeof scope.warning !== 'string' || !scope.warning) throw new Error('kb-devkit platform selection is missing its partial-scope exclusion manifest.');
+    if (internalToolPackages.length > 0 || scope.excludedPackages.some((name) => packages.includes(name))) throw new Error('kb-devkit platform selection contains an internal-tool package in its selected plan.');
+  }
   if (profileName === 'candidate' && packages.length === 0 && Object.keys(stagePackages).length === 0) {
     throw new Error(`KB_REMOTE_EMPTY_SELECTION: candidate resolved ${changedPathCount} changed path(s) to zero workspace packages. Check the base-ref input and registry, then rerun the prepare selector: ${selectionCommand}.`);
   }
@@ -50,6 +56,7 @@ export function parseAffectedSelection(output, profileName) {
     stagePackages,
     changedPathCount,
     selectionReason,
+    ...(scope ? { scope } : {}),
   };
 }
 
@@ -88,16 +95,16 @@ export function createTestMatrix(packagesOrSelection, independentStages, buildDe
 
 function main() {
   const [profileName, affectedPath, planPath, outputPath] = process.argv.slice(2);
-  if (!profileName || !affectedPath || !planPath || !outputPath) throw new Error('Usage: node scripts/ci/remote-verify-plan.mjs <stream|candidate> <affected-json> <plan-json> <github-output>');
-  const { packages, internalToolPackages, stagePackages, changedPathCount, selectionReason } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
+  if (!profileName || !affectedPath || !planPath || !outputPath) throw new Error('Usage: node scripts/ci/remote-verify-plan.mjs <stream|candidate|platform> <affected-json> <plan-json> <github-output>');
+  const { packages, internalToolPackages, stagePackages, changedPathCount, selectionReason, scope } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
   const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
   const independentStages = profile.independentTestStages[profileName];
   const buildDependentStages = profile.buildDependentTestStages[profileName];
   if (!independentStages || !buildDependentStages) throw new Error(`Unknown verification profile ${profileName}; use stream or candidate.`);
   const matrix = createTestMatrix({ packages, internalToolPackages, stagePackages }, independentStages, buildDependentStages, profile.packageTestStage, profile.maxParallel);
-  writeFileSync(planPath, `${JSON.stringify(matrix)}\n`);
+  writeFileSync(planPath, `${JSON.stringify({ ...matrix, ...(scope ? { scope } : {}) })}\n`);
   const selection = JSON.parse(readFileSync(affectedPath, 'utf8')).data;
-  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\ninternal_tool_matrix=${JSON.stringify(matrix.internalTool)}\ninternal_tool_packages=${internalToolPackages.join(',')}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_packages=${JSON.stringify(packages)}\nselected_package_count=${packages.length}\nselection_mode=${selection.mode ?? 'full'}\nselection_base_sha=${selection.baseSha ?? ''}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\nshard_timeout_minutes=${profile.shardTimeoutMinutes}\n`);
+  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\ninternal_tool_matrix=${JSON.stringify(matrix.internalTool)}\ninternal_tool_packages=${internalToolPackages.join(',')}\nscope_manifest=${scope ? JSON.stringify(scope) : ''}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_packages=${JSON.stringify(packages)}\nselected_package_count=${packages.length}\nselection_mode=${selection.mode ?? 'full'}\nselection_base_sha=${selection.baseSha ?? ''}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\nshard_timeout_minutes=${profile.shardTimeoutMinutes}\n`);
   process.stdout.write(`Planned ${matrix.include.length} test shard(s) from ${packages.length} kb-devkit-selected package(s).\n`);
 }
 
