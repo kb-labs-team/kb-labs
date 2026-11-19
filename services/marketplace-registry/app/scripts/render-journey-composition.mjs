@@ -23,12 +23,12 @@ if (!outputRoot || !registryUrl) {
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
 const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-const config = {
+const configOverride = {
   marketplace: {
     sources: [{ kind: 'registry', url: registryUrl, signingPublicKey: publicPem }],
   },
 };
-const configValidation = validateProductConfig('marketplace', config.marketplace);
+const configValidation = validateProductConfig('marketplace', configOverride.marketplace);
 if (!configValidation.ok) {
   process.stderr.write(`Registry journey config is invalid: ${JSON.stringify(configValidation.errors)}\n`);
   process.exit(1);
@@ -43,7 +43,7 @@ if (!lockValidation.valid) {
 
 const kbRoot = path.join(path.resolve(outputRoot), '.kb');
 await mkdir(kbRoot, { recursive: true, mode: 0o700 });
-await writeFile(path.join(kbRoot, 'kb.config.jsonc'), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+await writeFile(path.join(kbRoot, 'kb.config.override.json'), `${JSON.stringify(configOverride, null, 2)}\n`, { mode: 0o600 });
 await writeFile(path.join(kbRoot, 'marketplace.lock'), `${JSON.stringify(lock, null, 2)}\n`, { mode: 0o600 });
 await writeFile(path.join(kbRoot, 'registry.env'), `KB_REGISTRY_SIGNING_KEY='${privatePem.trimEnd()}\n'\n`, { mode: 0o600 });
 
@@ -78,7 +78,7 @@ const composeOverlay = `services:
       KB_REGISTRY_URL: http://marketplace-tamper:8081
       GATEWAY_INTERNAL_SECRET: journey-marketplace-internal-secret
     volumes:
-      - ${JSON.stringify(`${path.join(kbRoot, 'kb.config.jsonc')}:/app/.kb/kb.config.jsonc:ro`)}
+      - ${JSON.stringify(`${path.join(kbRoot, 'kb.config.override.json')}:/app/.kb/kb.config.override.json:ro`)}
       - ${JSON.stringify(`${path.join(kbRoot, 'marketplace.lock')}:/app/.kb/marketplace.lock:ro`)}
     networks: [journey]
 

@@ -186,8 +186,11 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             self.assertEqual(rendered.returncode, 0, rendered.stderr)
             producer_output = json.loads(rendered.stdout)
             overlay = Path(producer_output["composeOverlayPath"])
-            self.assertTrue((composition / ".kb" / "kb.config.jsonc").is_file())
+            self.assertTrue((composition / ".kb" / "kb.config.override.json").is_file())
             self.assertTrue((composition / ".kb" / "marketplace.lock").is_file())
+            config_override = json.loads((composition / ".kb" / "kb.config.override.json").read_text())
+            self.assertEqual(set(config_override), {"marketplace"})
+            self.assertEqual(config_override["marketplace"]["sources"][0]["kind"], "registry")
             self.assertTrue(overlay.is_file())
             validation = subprocess.run(
                 ["node", "--input-type=module", "-e", """
@@ -195,7 +198,7 @@ import fs from 'node:fs';
 import { validateProductConfig } from './core/config/dist/index.js';
 import { validateMarketplaceLock } from '@kb-labs/core-discovery';
 const root = process.argv[1];
-const config = JSON.parse(fs.readFileSync(`${root}/.kb/kb.config.jsonc`, 'utf8'));
+const config = JSON.parse(fs.readFileSync(`${root}/.kb/kb.config.override.json`, 'utf8'));
 const lock = JSON.parse(fs.readFileSync(`${root}/.kb/marketplace.lock`, 'utf8'));
 const configResult = validateProductConfig('marketplace', config.marketplace);
 const lockResult = validateMarketplaceLock(lock, 'platform');
@@ -225,10 +228,10 @@ if (!configResult.ok || !lockResult.valid) {
             for mount in rendered["services"]["marketplace-registry"].get("volumes", [])
             if mount.get("type") == "bind"
         }
-        self.assertEqual(set(mounts), {"/app/.kb/kb.config.jsonc", "/app/.kb/marketplace.lock"})
-        config_source = Path(mounts["/app/.kb/kb.config.jsonc"]["source"])
+        self.assertEqual(set(mounts), {"/app/.kb/kb.config.override.json", "/app/.kb/marketplace.lock"})
+        config_source = Path(mounts["/app/.kb/kb.config.override.json"]["source"])
         lock_source = Path(mounts["/app/.kb/marketplace.lock"]["source"])
-        self.assertEqual(config_source.name, "kb.config.jsonc")
+        self.assertEqual(config_source.name, "kb.config.override.json")
         self.assertEqual(lock_source.name, "marketplace.lock")
         self.assertEqual(config_source.parent, lock_source.parent)
         self.assertEqual(config_source.parent.name, ".kb")
