@@ -25,7 +25,7 @@ has Corepack but no standalone `pnpm` executable.
 
 | # | Action | Expected |
 |---|---|---|
-| S-298.1 | Install the candidate with `kb-create install` and select the `explore` scenario, then run `kb commit --help` through the launcher created by the install | Installation succeeds and the receipt records `@kb-labs/commit` as installed from the Marketplace. The installed `kb` launcher finds Commit in the platform extension store and prints its command help without a `PLUGIN_STORE_MISSING` diagnostic. Corepack uses the release-pinned pnpm; its package-manager files stay under the platform extension-store cache, and no global pnpm install or user-level package-manager state is needed. |
+| S-298.1 | Install the candidate with `kb-create install` and select the `explore` scenario, then run `kb commit --help` through the launcher created by the install from a fresh project directory | Installation succeeds and the receipt records `@kb-labs/commit` as installed from the Marketplace. The installed `kb` launcher finds Commit in the platform extension store and prints its command help without a `PLUGIN_STORE_MISSING` diagnostic or a project-lock schema error. Corepack uses the release-pinned pnpm; its package-manager files stay under the platform extension-store cache, and no global pnpm install or user-level package-manager state is needed. |
 
 ## Pass criteria
 

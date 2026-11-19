@@ -23,10 +23,10 @@ export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, pla
       ],
       cwd: workspace,
     },
-    { command: installedCLI, args: ['--version'], cwd: workspace },
-    { command: installedCLI, args: ['commit', '--help'], cwd: workspace },
-    { command: installedCLI, args: ['project', 'add', workspace, '--json'], cwd: workspace },
-    { command: installedCLI, args: ['qa', 'cases', 'list', '--json'], cwd: workspace },
+    { command: installedCLI, args: ['--version'], cwd: tempRoot },
+    { command: installedCLI, args: ['commit', '--help'], cwd: tempRoot },
+    { command: installedCLI, args: ['project', 'add', workspace, '--json'], cwd: tempRoot },
+    { command: installedCLI, args: ['qa', 'cases', 'list', '--json'], cwd: tempRoot },
   ];
 }
 
