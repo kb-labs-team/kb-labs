@@ -132,6 +132,24 @@ describe('QA case claim scanning', () => {
     expect(scanned.diagnostics).toEqual([expect.objectContaining({ file: expect.stringContaining('invalid.spec.ts'), message: 'claim references unknown case S-999' })]);
   });
 
+  it('scans adjacent claims above parameterized Vitest declarations', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory);
+    const unitSource = join(directory, 'claims');
+    mkdirSync(unitSource);
+    writeFileSync(join(unitSource, 'parameterized.test.ts'), [
+      '// case: S-010.1',
+      "it.each(['a', 'b'])('accepts %s', () => {})",
+    ].join('\n'));
+
+    const scanned = scanQACaseClaims(directory, [testCase]);
+
+    expect(scanned.diagnostics).toEqual([]);
+    expect(scanned.claims).toEqual([
+      expect.objectContaining({ stepId: 'S-010.1', kind: 'unit', testName: 'accepts %s' }),
+    ]);
+  });
+
   // case: S-262.1
   it('scans Python unittest claims from comments immediately above test functions', () => {
     const directory = fixture();

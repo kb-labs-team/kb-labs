@@ -2,6 +2,16 @@
 
 ## 2026-11-19
 
+### Agent CLI token budgets use command, configuration, then default precedence
+
+`kb agent run --budget N` overrides `tokenBudget.maxTokens` from plugin config;
+without the flag, the configured value applies, and without either value the
+runner's documented default applies. The budget counts combined prompt and
+completion usage after each provider response. Because usage is only known when
+the response returns, that response may cross the limit; any tool calls from
+that response are handled, then the agent stops with `hard_budget` before a
+subsequent provider request. Cases: S-299.1–S-299.5.
+
 ### Registry versions without visibility snapshots fail closed
 
 Legacy Registry entries did not record visibility per release, so their prior
