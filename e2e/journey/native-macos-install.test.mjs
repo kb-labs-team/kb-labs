@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { nativeInstallCommands, redactCommandOutput, verifyMarketplaceInstall } from './native-macos-install.mjs';
 
-test('native Marketplace journey uses kb-create install root and active current platform', () => {
+test('native Marketplace journey uses the kb-create managed launcher for the installed platform', () => {
   const commands = nativeInstallCommands({
     workspace: '/workspace',
     tempRoot: '/tmp/native',
@@ -14,7 +14,9 @@ test('native Marketplace journey uses kb-create install root and active current 
   });
   const install = commands[1];
   assert.equal(install.args[install.args.indexOf('--platform-root') + 1], '/tmp/platform');
-  assert.equal(commands[2].command, '/tmp/platform/current/node_modules/.bin/kb');
+  assert.equal(commands[2].command, '/tmp/native/kb');
+  assert.ok(commands.some(command => command.command === '/tmp/native/kb'
+    && command.args.join(' ') === 'commit --help'));
 });
 
 test('native command logs redact secret environment values and secret fields', () => {
