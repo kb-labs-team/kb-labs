@@ -21,14 +21,18 @@ def workspace_root_with_registry_plugin_lock(source_root: Path, fixture_root: Pa
         (fixture_root / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
     kb_dir = fixture_root / ".kb"
     kb_dir.mkdir()
-    source_lock = json.loads(
-        (source_root / layout_value("versionStatePaths.kb_marketplace_lock")).read_text(encoding="utf-8"))
-    release = source_lock.get("plugins", {}).get("@kb-labs/release")
-    if not isinstance(release, dict):
-        raise AssertionError("workspace fixture requires the release plugin lock entry")
-    (kb_dir / "marketplace.lock").write_text(json.dumps({"plugins": {
-        "@kb-labs/release": {**release, "link": "./plugins/release"},
-    }}), encoding="utf-8")
+    lock = {
+        "schema": "kb.marketplace/3",
+        "plugins": {
+            "@kb-labs/release": {
+                "source": "local",
+                "link": "./plugins/release",
+                "enabled": True,
+            },
+        },
+        "adapters": {},
+    }
+    (kb_dir / "marketplace.lock").write_text(json.dumps(lock), encoding="utf-8")
     config = source_root / ".kb" / "kb.config.jsonc"
     if config.is_file():
         (kb_dir / "kb.config.jsonc").symlink_to(config)
