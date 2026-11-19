@@ -54,11 +54,11 @@ jobs:
           # recursion depth fixed in go1.25.13/go1.26.6).
           # kb-monitor and kb-deploy also need golang.org/x/crypto >= v0.56.0
           # for GO-2026-6355/6354 (ssh channel DoS), which requires `go 1.26`
-          # in their go.mod — hence the toolchain-wide bump to go1.26.8 here.
-          # Their go.mod now carries `toolchain go1.26.8`; the remaining
+          # in their go.mod — hence the toolchain-wide bump to go1.26.11 here.
+          # Their go.mod now carries `toolchain go1.26.11`; the remaining
           # modules still pin `toolchain go1.25.13`, which is compatible with
           # this newer scanning toolchain.
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: ${{ matrix.module }}/go.sum
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
