@@ -65,12 +65,11 @@ describe.each(modes)('%s platform peer resolution', (mode) => {
     const backend = mode === 'worker-pool'
       ? createNormalizedExecutionBackend(new WorkerPoolBackend({
           platform,
-          platformRoot,
           min: 1,
           max: 1,
           workerScript: fileURLToPath(new URL('../../dist/backends/worker-pool/worker-script.js', import.meta.url)),
         }), logger, mode)
-      : createExecutionBackend({ platform, platformRoot, mode, workerPool: { min: 1, max: 1 } });
+      : createExecutionBackend({ platform, mode, workerPool: { min: 1, max: 1 } });
 
     const request: ExecutionRequest = {
       executionId: `sdk-peer-${mode}`,
@@ -84,6 +83,7 @@ describe.each(modes)('%s platform peer resolution', (mode) => {
         hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       },
       pluginRoot,
+      platformRoot,
       handlerRef: './dist/handler.mjs',
       input: {},
       env: {},
