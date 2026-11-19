@@ -33,6 +33,8 @@ export function registryJourneyBuildRoots({ root = ROOT } = {}) {
     }),
     ...plugins,
     // These are journey tooling packages outside the platform release flow.
+    packageName(root, 'core/config'),
+    packageName(root, 'core/discovery'),
     packageName(root, 'plugins/marketplace-registry'),
     packageName(root, 'services/marketplace-registry/app'),
     packageName(root, 'plugins/qa'),

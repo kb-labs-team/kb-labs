@@ -24,6 +24,8 @@ test('registry journey build roots cover release artifacts and journey tooling',
   }
   const root = fileURLToPath(new URL('../../', import.meta.url));
   for (const directory of [
+    'core/config',
+    'core/discovery',
     'plugins/marketplace-registry',
     'services/marketplace-registry/app',
     'plugins/qa',
