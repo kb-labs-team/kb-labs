@@ -11,7 +11,6 @@
  * store, so a broken entry can never corrupt unrelated installs).
  */
 
-import { execa } from 'execa';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
@@ -65,6 +64,7 @@ export class PnpmInstaller implements PackageInstaller {
     }
 
     try {
+      const { execa } = await import('execa');
       await execa(this.pnpmPath, ['install', '--store-dir', casDir], {
         cwd: projectDir,
         timeout: this.timeoutMs,
@@ -134,6 +134,7 @@ async function prepareVerifiedTarball(
 async function rejectPlatformRuntimeDependencies(tarballPath: string, name: string): Promise<void> {
   let manifest: Record<string, unknown>;
   try {
+    const { execa } = await import('execa');
     const { stdout } = await execa('tar', ['-xOf', tarballPath, 'package/package.json']);
     const parsed: unknown = JSON.parse(stdout);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
