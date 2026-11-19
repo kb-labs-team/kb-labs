@@ -30,6 +30,20 @@ export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, pla
   ];
 }
 
+export function redactCommandOutput(value, env = process.env) {
+  if (!value) return '';
+  const result = spawnSync('python3', ['-c', 'import sys; import redaction; sys.stdout.write(redaction.redact_text(sys.stdin.read()))'], {
+    cwd: path.join(workspaceRoot, 'e2e/journey'),
+    encoding: 'utf8',
+    env,
+    input: value,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(`Could not redact native journey output: ${result.error?.message ?? result.stderr ?? result.status}`);
+  }
+  return result.stdout;
+}
+
 function run() {
   const tempRoot = process.env.KB_JOURNEY_NATIVE_ROOT;
   if (!tempRoot) throw new Error('KB_JOURNEY_NATIVE_ROOT is required; run e2e/journey/native-macos-smoke.sh.');
@@ -45,10 +59,12 @@ function run() {
   for (const [index, step] of nativeInstallCommands({ tempRoot, platformRoot, registryUrl }).entries()) {
     const result = spawnSync(step.command, step.args, { cwd: step.cwd, encoding: 'utf8' });
     const label = `${String(index + 1).padStart(2, '0')}-${path.basename(step.command)}`;
-    writeFileSync(path.join(logRoot, `${label}.stdout.log`), result.stdout ?? '');
-    writeFileSync(path.join(logRoot, `${label}.stderr.log`), result.stderr ?? '');
-    if (result.stdout) process.stdout.write(result.stdout);
-    if (result.stderr) process.stderr.write(result.stderr);
+    const stdout = redactCommandOutput(result.stdout ?? '');
+    const stderr = redactCommandOutput(result.stderr ?? '');
+    writeFileSync(path.join(logRoot, `${label}.stdout.log`), stdout);
+    writeFileSync(path.join(logRoot, `${label}.stderr.log`), stderr);
+    if (stdout) process.stdout.write(stdout);
+    if (stderr) process.stderr.write(stderr);
     if (result.error) {
       status = 'FAIL';
       failure = result.error.message;
