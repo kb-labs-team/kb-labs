@@ -11,7 +11,7 @@ export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, pla
   const createPath = path.join(tempRoot, 'kb-create');
   const createModule = path.join(workspace, 'tools/kb-create');
   const indexPath = path.join(workspace, '.journey/release/journey-candidate/release-index.json');
-  const installedCLI = path.join(platformRoot, 'node_modules/.bin/kb');
+  const installedCLI = path.join(platformRoot, 'current', 'node_modules/.bin/kb');
   return [
     { command: 'make', args: ['build', `BINARY=${createPath}`], cwd: createModule },
     {
@@ -40,8 +40,15 @@ function run() {
   let status = 'PASS';
   let caseStatus = 'FAIL';
   let failure = '';
-  for (const step of nativeInstallCommands({ tempRoot, platformRoot, registryUrl })) {
-    const result = spawnSync(step.command, step.args, { cwd: step.cwd, stdio: 'inherit' });
+  const logRoot = path.join(workspaceRoot, '.journey/reports/invocations/native-macos');
+  mkdirSync(logRoot, { recursive: true });
+  for (const [index, step] of nativeInstallCommands({ tempRoot, platformRoot, registryUrl }).entries()) {
+    const result = spawnSync(step.command, step.args, { cwd: step.cwd, encoding: 'utf8' });
+    const label = `${String(index + 1).padStart(2, '0')}-${path.basename(step.command)}`;
+    writeFileSync(path.join(logRoot, `${label}.stdout.log`), result.stdout ?? '');
+    writeFileSync(path.join(logRoot, `${label}.stderr.log`), result.stderr ?? '');
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
     if (result.error) {
       status = 'FAIL';
       failure = result.error.message;
@@ -82,15 +89,16 @@ function run() {
   if (status !== 'PASS') throw new Error(failure || 'Native macOS Marketplace install did not pass.');
 }
 
-function verifyMarketplaceInstall(platformRoot) {
-  const receiptPath = path.join(platformRoot, '.kb', 'v2', 'receipt.json');
+function verifyMarketplaceInstall(installRoot) {
+  const currentPlatformRoot = path.join(installRoot, 'current');
+  const receiptPath = path.join(currentPlatformRoot, '.kb', 'v2', 'receipt.json');
   const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
   const record = receipt.marketplaceInstalls?.find(item => item.id === '@kb-labs/commit');
   if (!record?.version || !record.source || record.spec !== `@kb-labs/commit@${record.version}`) {
     throw new Error('Install receipt does not record the Commit scenario plugin from a Marketplace source.');
   }
 
-  const storeRoot = path.join(platformRoot, 'state', 'home', 'store');
+  const storeRoot = path.join(installRoot, 'state', 'home', 'store');
   const entryDir = path.join(storeRoot, 'entries', `@kb-labs+commit@${record.version}`);
   const corepackHome = path.join(storeRoot, 'cas', '.corepack');
   const pinnedPnpmManifest = path.join(corepackHome, 'v1', 'pnpm', '11.4.0', 'package.json');
