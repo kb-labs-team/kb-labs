@@ -13,7 +13,7 @@ from installed_fixture import layout_value
 from workspace_steps import run_workspace_cli_steps, workspace_checkout_problem
 
 
-def workspace_root_with_empty_marketplace_lock(source_root: Path, fixture_root: Path) -> Path:
+def workspace_root_with_registry_plugin_lock(source_root: Path, fixture_root: Path) -> Path:
     fixture_root.mkdir()
     for entry in source_root.iterdir():
         if entry.name in {".git", ".kb", "node_modules"}:
@@ -21,7 +21,14 @@ def workspace_root_with_empty_marketplace_lock(source_root: Path, fixture_root: 
         (fixture_root / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
     kb_dir = fixture_root / ".kb"
     kb_dir.mkdir()
-    (kb_dir / "marketplace.lock").write_text(json.dumps({"plugins": {}}), encoding="utf-8")
+    source_lock = json.loads(
+        (source_root / layout_value("versionStatePaths.kb_marketplace_lock")).read_text(encoding="utf-8"))
+    release = source_lock.get("plugins", {}).get("@kb-labs/release")
+    if not isinstance(release, dict):
+        raise AssertionError("workspace fixture requires the release plugin lock entry")
+    (kb_dir / "marketplace.lock").write_text(json.dumps({"plugins": {
+        "@kb-labs/release": {**release, "link": "./plugins/release"},
+    }}), encoding="utf-8")
     config = source_root / ".kb" / "kb.config.jsonc"
     if config.is_file():
         (kb_dir / "kb.config.jsonc").symlink_to(config)
@@ -78,7 +85,7 @@ class WorkspaceCliStepsTest(unittest.TestCase):
     def test_workspace_cli_loads_plugins_and_validates_cases(self):
         source_root = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory(prefix="kb-workspace-cli-source-") as directory:
-            repo_root = workspace_root_with_empty_marketplace_lock(source_root, Path(directory) / "workspace")
+            repo_root = workspace_root_with_registry_plugin_lock(source_root, Path(directory) / "workspace")
             journey = Journey("local", "workspace-cli")
             run_workspace_cli_steps(journey, repo_root)
 
@@ -93,7 +100,7 @@ class WorkspaceCliStepsTest(unittest.TestCase):
     def test_workspace_cli_reports_project_scope_config_recovery_command(self):
         source_root = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory(prefix="kb-workspace-cli-config-") as directory:
-            repo_root = workspace_root_with_empty_marketplace_lock(source_root, Path(directory) / "workspace")
+            repo_root = workspace_root_with_registry_plugin_lock(source_root, Path(directory) / "workspace")
             journey = Journey("local", "workspace-cli-project-config-scope")
             run_workspace_cli_steps(journey, repo_root)
 
