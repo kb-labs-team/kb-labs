@@ -85,7 +85,7 @@ const runFlags = {
 /**
  * Plugin permissions
  */
-const pluginPermissions = combinePermissions()
+const buildPluginPermissions = () => combinePermissions()
   .with(kbPlatformPreset)
   .withFs({
     mode: 'readWrite',
@@ -99,11 +99,12 @@ const pluginPermissions = combinePermissions()
   .withQuotas({
     timeoutMs: 1800000, // 30 min for complex tasks
     memoryMb: 1024,
-  })
-  .build();
+  });
 
-const qualityReportPermissions = combinePermissions()
-  .with(pluginPermissions)
+const pluginPermissions = buildPluginPermissions().build();
+
+const qualityReportPermissions = buildPluginPermissions()
+  .withQuotas({ timeoutMs: 5_000, maxOutputBytes: 2 * 1024 * 1024 })
   .withShell({ allow: ['sqlite3'] })
   .build();
 

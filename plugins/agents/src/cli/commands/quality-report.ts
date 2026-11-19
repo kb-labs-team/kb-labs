@@ -129,15 +129,18 @@ export default defineCommand({
 
       const analyticsDir = resolveRuntimeStatePath(process.cwd(), ['analytics', 'buffer']);
       const files = await listEventFiles(analyticsDir, days);
+      const sqlitePath = resolveRuntimeStatePath(process.cwd(), ['analytics', 'analytics.sqlite']);
       if (files.length === 0) {
-        const out = { success: true, message: 'No analytics files found for selected period', runs: 0 };
-        return out;
+        try {
+          await fs.access(sqlitePath);
+        } catch {
+          return { success: true, message: 'No analytics files found for selected period', runs: 0 };
+        }
       }
 
       const since = Date.now() - days * 24 * 60 * 60 * 1000;
       let { runs, regressions } = await readEvents(files, since, sessionIdFilter, limit);
       if (runs.length === 0) {
-        const sqlitePath = resolveRuntimeStatePath(process.cwd(), ['analytics', 'analytics.sqlite']);
         const sqliteEvents = await readEventsFromSqlite(ctx, sqlitePath, since, sessionIdFilter, limit);
         runs = sqliteEvents.runs;
         regressions = sqliteEvents.regressions;
@@ -277,9 +280,18 @@ async function readEventsFromSqlite(
   ].join(' ');
 
   try {
-    const result = await ctx.api.shell.exec('sqlite3', ['-json', sqlitePath, sql], {
+    const result = await ctx.api.shell.exec('sqlite3', [
+      '-readonly',
+      '-safe',
+      '-batch',
+      '-json',
+      '-init', '/dev/null',
+      sqlitePath,
+      sql,
+    ], {
       cwd: process.cwd(),
-      maxOutputBytes: 20 * 1024 * 1024,
+      timeout: 5_000,
+      maxOutputBytes: 2 * 1024 * 1024,
       throwOnError: false,
     });
     if (!result.ok) {

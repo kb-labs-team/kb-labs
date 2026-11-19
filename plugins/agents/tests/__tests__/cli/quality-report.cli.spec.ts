@@ -42,6 +42,8 @@ describe('agents:quality:report governed analytics fallback', () => {
     const tracePermissions = getHandlerPermissions(manifest as never, 'cli', 'agent trace doctor');
 
     expect(qualityPermissions.shell?.allow).toEqual(['sqlite3']);
+    expect(qualityPermissions.quotas?.timeoutMs).toBe(5_000);
+    expect(qualityPermissions.quotas?.maxOutputBytes).toBe(2 * 1024 * 1024);
     expect(tracePermissions.shell).toBeUndefined();
   });
 
@@ -101,10 +103,42 @@ describe('agents:quality:report governed analytics fallback', () => {
 
     expect(shellExec).toHaveBeenCalledOnce();
     expect(shellExec.mock.calls[0]?.[0]).toBe('sqlite3');
-    expect(shellExec.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(['-json']));
-    expect(shellExec.mock.calls[0]?.[2]).toMatchObject({ cwd, throwOnError: false });
+    expect(shellExec.mock.calls[0]?.[1]).toEqual(expect.arrayContaining([
+      '-readonly', '-safe', '-batch', '-json', '-init', '/dev/null',
+    ]));
+    expect(shellExec.mock.calls[0]?.[2]).toMatchObject({
+      cwd,
+      timeout: 5_000,
+      maxOutputBytes: 2 * 1024 * 1024,
+      throwOnError: false,
+    });
     expect(result).toMatchObject({ success: true, report: { runs: 1 } });
     expect(JSON.stringify(result)).toContain('sqlite-fixture-session');
+  });
+
+  // case: S-309.4
+  it('reads SQLite events when no JSONL analytics file exists', async () => {
+    const analyticsDir = path.join(cwd, '.test-state', 'analytics');
+    await mkdir(analyticsDir, { recursive: true });
+    await writeFile(path.join(analyticsDir, 'analytics.sqlite'), 'fixture database marker');
+
+    const shellExec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: JSON.stringify([{
+        type: 'agent.kpi.run_completed',
+        ts: new Date().toISOString(),
+        payload: JSON.stringify({ sessionId: 'sqlite-only-session', success: true }),
+      }]),
+      stderr: '',
+      ok: true,
+    });
+    const ctx = { api: { shell: { exec: shellExec } } } as never;
+
+    const result = await qualityReportCommand.execute(ctx, { days: 1, json: true });
+
+    expect(shellExec).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ success: true, report: { runs: 1 } });
+    expect(JSON.stringify(result)).toContain('sqlite-only-session');
   });
 
   // case: S-309.3
