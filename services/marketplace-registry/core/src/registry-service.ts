@@ -309,7 +309,7 @@ export class RegistryService {
     return entry;
   }
 
-  async resolveIdentity(identity: string): Promise<RegistryIdentityResolution> {
+  async resolveIdentity(identity: string, callerNamespaceId: string | null = null): Promise<RegistryIdentityResolution> {
     const paths = (await this.storage.list(`${STORAGE_PREFIX}/packages/`)).filter(path => path.endsWith('/meta.json'));
     const entries: RegistryEntry[] = [];
     for (const path of paths) {
@@ -317,7 +317,14 @@ export class RegistryService {
       if (raw) { entries.push(JSON.parse(raw.toString()) as RegistryEntry); }
     }
 
-    const matches = entries.filter(entry => entry.meta.identity === identity || shortIdentity(entry.meta.identity) === identity);
+    const exactMatches = entries.filter(entry => entry.meta.identity === identity);
+    const shortMatches = entries.filter(entry => shortIdentity(entry.meta.identity) === identity);
+    const publicShortMatches = shortMatches.filter(entry => entry.visibility === 'public');
+    const matches = exactMatches.length > 0
+      ? exactMatches
+      : callerNamespaceId === null && publicShortMatches.length === 1
+        ? publicShortMatches
+        : shortMatches;
     if (matches.length > 1) {
       throw Object.assign(new Error(`Marketplace identity ${identity} is ambiguous in the Registry.`), { code: 'IDENTITY_AMBIGUOUS' });
     }

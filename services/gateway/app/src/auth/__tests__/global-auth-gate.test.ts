@@ -40,7 +40,8 @@ describe('Gateway global auth gate', () => {
     lastUpstreamHeaders = undefined;
   });
 
-  it('enumerates the actual gateway route table, including a test plugin proxy, and blocks anonymous dispatch', async () => {
+  // case: S-268.1
+  it('enumerates gateway routes and proxies anonymous Registry reads with trusted headers only', async () => {
     let upstreamHits = 0;
     upstream = createHttpServer((request, response) => {
       upstreamHits += 1;
@@ -66,6 +67,7 @@ describe('Gateway global auth gate', () => {
       upstreams: {
         testPlugin: { serviceId: 'test-plugin', prefix: '/api/v1/plugins/test-plugin' },
         mcp: { serviceId: 'mcp-test', prefix: '/api/v1/mcp' },
+        marketplaceRegistry: { serviceId: 'marketplace-registry', prefix: '/api/v1/marketplace-registry' },
       },
       staticTokens: {},
       auth: AuthConfigSchema.parse({ enabled: true }),
@@ -100,6 +102,7 @@ describe('Gateway global auth gate', () => {
     expect(routeInventory.some((route) => route.url.startsWith('/api/v1/plugins/test-plugin'))).toBe(true);
     expect(routeInventory.some((route) => route.url.startsWith('/api/v1/projects/'))).toBe(true);
     expect(routeInventory.some((route) => route.url.startsWith('/api/v1/mcp'))).toBe(true);
+    expect(routeInventory.some((route) => route.url.startsWith('/api/v1/marketplace-registry'))).toBe(true);
 
     for (const route of routeInventory) {
       const methods = Array.isArray(route.method) ? route.method : [route.method];
@@ -146,6 +149,28 @@ describe('Gateway global auth gate', () => {
       'x-kb-auth-namespace-id': 'tenant-1',
       'x-kb-auth-permissions': '["packages:read"]',
     });
+
+    const anonymousRegistryRead = await app.inject({
+      method: 'GET',
+      url: '/api/v1/marketplace-registry/api/v1/resolve?identity=%40acme%2Fwidget',
+      headers: {
+        cookie: 'tracking=present',
+        'x-internal-secret': 'client-forgery',
+        'x-kb-auth-user-id': 'client-forgery',
+        'x-kb-auth-namespace-id': 'forged-tenant',
+      },
+    });
+    expect(anonymousRegistryRead.statusCode).toBe(200);
+    expect(upstreamHits).toBe(2);
+    expect(lastUpstreamHeaders).toMatchObject({ 'x-internal-secret': 'gateway-internal-secret' });
+    expect(lastUpstreamHeaders?.['x-kb-auth-user-id']).toBeUndefined();
+    expect(lastUpstreamHeaders?.['x-kb-auth-namespace-id']).toBeUndefined();
+
+    const anonymousPublish = await app.inject({
+      method: 'POST', url: '/api/v1/marketplace-registry/api/v1/packages/publish',
+    });
+    expect(anonymousPublish.statusCode).toBe(401);
+    expect(upstreamHits).toBe(2);
   });
 
   it('rejects invalid bearer tokens with the same envelope and does not allow webhook plugin routes implicitly', async () => {
@@ -298,6 +323,44 @@ describe('Gateway global auth gate', () => {
     expect(invalid.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED', correlationId: expect.any(String) } });
   });
 
+  // case: S-268.1
+  it('forwards anonymous Registry resolve and tarball reads through the trusted Gateway path only', async () => {
+    app = Fastify({ logger: false });
+    app.addHook('onRequest', createAuthMiddleware(cache(), { secret: 'test-secret-at-least-32-chars-long!' }, {
+      authEnabled: true,
+      internalSecret: 'gateway-internal-secret',
+    }));
+    const paths = [
+      '/api/v1/marketplace-registry/api/v1/resolve?identity=%40acme%2Fwidget',
+      '/api/v1/marketplace-registry/api/v1/packages/acme/widget/1.2.3/tarball',
+    ];
+    for (const path of paths) {
+      app.get(path.split('?')[0]!, async (request) => ({
+        secret: request.headers['x-internal-secret'],
+        user: request.headers['x-kb-auth-user-id'],
+      }));
+    }
+    app.post('/api/v1/marketplace-registry/api/v1/packages/publish', async () => ({ ok: true }));
+    await app.ready();
+
+    for (const path of paths) {
+      const response = await app.inject({ method: 'GET', url: path });
+      expect(response.statusCode, path).toBe(200);
+      expect(response.json(), path).toEqual({ secret: 'gateway-internal-secret' });
+    }
+
+    const forged = await app.inject({
+      method: 'GET',
+      url: paths[1]!,
+      headers: { 'x-internal-secret': 'forged', 'x-kb-auth-user-id': 'forged-user' },
+    });
+    expect(forged.statusCode).toBe(200);
+    expect(forged.json()).toEqual({ secret: 'gateway-internal-secret' });
+
+    const publish = await app.inject({ method: 'POST', url: '/api/v1/marketplace-registry/api/v1/packages/publish' });
+    expect(publish.statusCode).toBe(401);
+  });
+
   it('admits only exact manifest-declared webhook routes and documented public route/method pairs', () => {
     const manifest = {
       webhooks: { handlers: [{ event: 'payment.created', handler: './handler.js#default', auth: { type: 'secret', header: 'x-hook-signature' } }] },
@@ -314,6 +377,12 @@ describe('Gateway global auth gate', () => {
     expect(isPlatformPublicRoute('GET', '/health/identity')).toBe(true);
     expect(isPlatformPublicRoute('GET', '/api/v1/marketplace-registry/api/v1/packages')).toBe(true);
     expect(isPlatformPublicRoute('GET', '/api/v1/projects/prj_demo/marketplace-registry/api/v1/packages/acme/pkg')).toBe(true);
+    expect(isPlatformPublicRoute('GET', '/api/v1/marketplace-registry/api/v1/resolve')).toBe(true);
+    expect(isPlatformPublicRoute('GET', '/api/v1/marketplace-registry/api/v1/packages/acme/pkg/1.2.3/tarball')).toBe(true);
+    expect(isPlatformPublicRoute('GET', '/api/v1/projects/prj_demo/marketplace-registry/api/v1/resolve')).toBe(true);
+    expect(isPlatformPublicRoute('GET', '/api/v1/projects/prj_demo/marketplace-registry/api/v1/packages/acme/pkg/1.2.3/tarball')).toBe(true);
+    expect(isPlatformPublicRoute('POST', '/api/v1/marketplace-registry/api/v1/resolve')).toBe(false);
+    expect(isPlatformPublicRoute('GET', '/api/v1/marketplace-registry/api/v1/packages/acme/pkg/versions')).toBe(false);
     expect(isPlatformPublicRoute('GET', '/api/v1/plugins/custom/health')).toBe(false);
     expect(isPlatformPublicRoute('POST', '/api/v1/marketplace-registry/api/v1/packages/publish')).toBe(false);
   });

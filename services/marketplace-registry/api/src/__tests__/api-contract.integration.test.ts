@@ -45,6 +45,13 @@ function makeMockRegistry() {
   };
 
   return {
+    resolveIdentity: vi.fn().mockResolvedValue({
+      status: 'found',
+      package: {
+        id: '@kirill/my-plugin', version: '1.0.0', integrity: 'sha256-abc', primaryKind: 'plugin',
+        signatureSubject: 'kirill/my-plugin', downloadUrl: 'https://registry.test/api/v1/packages/kirill/my-plugin/1.0.0/tarball',
+      },
+    }),
     listPublicPackages: vi.fn().mockResolvedValue([{ name: 'my-plugin', fullName: 'kirill/my-plugin', version: '1.0.0', installs: 42 }]),
     getEntry: vi.fn().mockResolvedValue(pkg),
     getStats: vi.fn().mockResolvedValue({ installs: 42 }),
@@ -201,6 +208,115 @@ describe('GET /api/v1/packages/:handle/:name/stats', () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin/stats', headers: gatewayHeaders() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ installs: 42 });
+  });
+});
+
+describe('public Registry resolution and tarball access', () => {
+  // case: S-268.1
+  it('resolves and downloads a public package through the Gateway service identity without a Registry user identity', async () => {
+    const app = Fastify({ logger: false });
+    const registry = makeMockRegistry();
+    app.addHook('onRequest', createRegistryAuthMiddleware(REGISTRY_INTERNAL_SECRET));
+    registerPackageRoutes(app, registry as any);
+
+    const resolution = await app.inject({
+      method: 'GET', url: '/api/v1/resolve?identity=%40kirill%2Fmy-plugin', headers: gatewayHeaders(),
+    });
+    expect(resolution.statusCode).toBe(200);
+    expect(registry.canAccess).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'public' }), null, null);
+
+    const download = await app.inject({
+      method: 'GET', url: '/api/v1/packages/kirill/my-plugin/1.0.0/tarball', headers: gatewayHeaders(),
+    });
+    expect(download.statusCode).toBe(200);
+    expect(download.rawPayload).toEqual(Buffer.from('fake'));
+    expect(registry.canAccess).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'public' }), null, null);
+    await app.close();
+  });
+
+  it('refuses an anonymous private tarball before reading or counting the download', async () => {
+    const app = Fastify({ logger: false });
+    const registry = makeMockRegistry();
+    registry.getEntry.mockResolvedValue({
+      name: 'my-plugin', authorHandle: 'kirill', authorNamespaceId: 'ns-kirill',
+      visibility: 'private', trust: 'untrusted', allowlist: [], versions: [], deprecated: false,
+      featured: false, badges: [], tags: [], meta: { name: 'my-plugin', version: '1.0.0', identity: '@kirill/my-plugin' },
+      createdAt: '', updatedAt: '',
+    });
+    registry.canAccess.mockReturnValue(false);
+    app.addHook('onRequest', createRegistryAuthMiddleware(REGISTRY_INTERNAL_SECRET));
+    registerPackageRoutes(app, registry as any);
+
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/packages/kirill/my-plugin/1.0.0/tarball', headers: gatewayHeaders(),
+    });
+    expect(response.statusCode).toBe(403);
+    expect(registry.canAccess).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'private' }), null, null);
+    expect(registry.getTarball).not.toHaveBeenCalled();
+    expect(registry.incrementInstalls).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('keeps exact private identity resolution behind the Registry access check', async () => {
+    const app = Fastify({ logger: false });
+    const registry = makeMockRegistry();
+    registry.resolveIdentity.mockResolvedValue({
+      status: 'found',
+      package: {
+        id: 'my-plugin', version: '1.0.0', integrity: 'sha256-abc', primaryKind: 'plugin',
+        signatureSubject: 'kirill/my-plugin', downloadUrl: 'https://registry.test/api/v1/packages/kirill/my-plugin/1.0.0/tarball',
+      },
+    });
+    registry.getEntry.mockResolvedValue({
+      name: 'my-plugin', authorHandle: 'kirill', authorNamespaceId: 'ns-kirill',
+      visibility: 'private', trust: 'untrusted', allowlist: [], versions: [], deprecated: false,
+      featured: false, badges: [], tags: [], meta: { name: 'my-plugin', version: '1.0.0', identity: '@kirill/my-plugin' },
+      createdAt: '', updatedAt: '',
+    });
+    registry.canAccess.mockReturnValue(false);
+    app.addHook('onRequest', createRegistryAuthMiddleware(REGISTRY_INTERNAL_SECRET));
+    registerPackageRoutes(app, registry as any);
+
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/resolve?identity=%40kirill%2Fmy-plugin', headers: gatewayHeaders(),
+    });
+    expect(response.statusCode).toBe(403);
+    expect(registry.canAccess).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'private' }), null, null);
+    await app.close();
+  });
+
+  it('passes the authenticated owner namespace when resolving an exact private identity', async () => {
+    const app = Fastify({ logger: false });
+    const registry = makeMockRegistry();
+    const privateEntry = {
+      name: 'my-plugin', authorHandle: 'kirill', authorNamespaceId: 'ns-kirill',
+      visibility: 'private' as const, trust: 'untrusted' as const, allowlist: [], versions: [],
+      deprecated: false, featured: false, badges: [], tags: [], meta: { name: 'my-plugin', version: '1.0.0', identity: '@kirill/my-plugin' },
+      createdAt: '', updatedAt: '',
+    };
+    registry.resolveIdentity.mockResolvedValue({
+      status: 'found',
+      package: {
+        id: 'my-plugin', version: '1.0.0', integrity: 'sha256-abc', primaryKind: 'plugin',
+        signatureSubject: 'kirill/my-plugin', downloadUrl: 'https://registry.test/api/v1/packages/kirill/my-plugin/1.0.0/tarball',
+      },
+    });
+    registry.getEntry.mockResolvedValue(privateEntry);
+    app.addHook('onRequest', async (request) => {
+      for (const [name, value] of Object.entries(gatewayHeaders({ namespaceId: 'ns-kirill' }))) {
+        request.headers[name] = value;
+      }
+    });
+    app.addHook('onRequest', createRegistryAuthMiddleware(REGISTRY_INTERNAL_SECRET));
+    registerPackageRoutes(app, registry as any);
+
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/resolve?identity=%40kirill%2Fmy-plugin', headers: gatewayHeaders({ namespaceId: 'ns-kirill' }),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(registry.resolveIdentity).toHaveBeenCalledWith('@kirill/my-plugin', 'ns-kirill');
+    expect(registry.canAccess).toHaveBeenCalledWith(privateEntry, 'ns-kirill', null);
+    await app.close();
   });
 });
 

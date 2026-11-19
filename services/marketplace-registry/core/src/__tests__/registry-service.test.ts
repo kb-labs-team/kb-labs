@@ -94,6 +94,23 @@ describe('RegistryService.publish', () => {
     await expect(svc.resolveIdentity('@other/unknown')).resolves.toEqual({ status: 'not-found-unowned' });
   });
 
+  it('resolves an anonymous short identity to its public package when a private package shares the name', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, makePkg({ name: 'widget', identity: '@public/widget' }), 'public-author', 'ns-public');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'widget', identity: '@private/widget' }),
+      visibility: 'private',
+    }, 'private-author', 'ns-private');
+
+    await expect(svc.resolveIdentity('widget')).resolves.toMatchObject({
+      status: 'found', package: { id: 'widget', signatureSubject: 'public-author/widget' },
+    });
+    await expect(svc.resolveIdentity('widget', 'ns-private')).rejects.toMatchObject({ code: 'IDENTITY_AMBIGUOUS' });
+    await expect(svc.resolveIdentity('@private/widget', 'ns-private')).resolves.toMatchObject({
+      status: 'found', package: { id: 'widget', signatureSubject: 'private-author/widget' },
+    });
+  });
+
   it('RS-01: stores tarball + meta, returns install command', async () => {
     const svc = makeService();
     const result = await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
