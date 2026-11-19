@@ -6,7 +6,9 @@ import (
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"os"
 
+	"github.com/kb-labs/devkit/internal/config"
 	"github.com/kb-labs/devkit/internal/engine"
+	"github.com/kb-labs/devkit/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -41,13 +43,14 @@ var affectedCmd = &cobra.Command{
 		if jsonMode {
 			packages := make([]string, 0, len(selection.Packages))
 			internalToolPackages := make([]string, 0)
+			testPackages := packageNamesWithTask(ws, cfg, selection.Packages, "test")
 			for _, pkg := range selection.Packages {
 				packages = append(packages, pkg.Name)
 				if pkg.ReleaseLane == "internal-tool" {
 					internalToolPackages = append(internalToolPackages, pkg.Name)
 				}
 			}
-			return JSONOut(map[string]any{"packages": packages, "internalToolPackages": internalToolPackages, "selectionReason": selection.Reason})
+			return JSONOut(map[string]any{"packages": packages, "testPackages": testPackages, "internalToolPackages": internalToolPackages, "selectionReason": selection.Reason})
 		}
 
 		if len(selection.Packages) == 0 {
@@ -59,6 +62,16 @@ var affectedCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+func packageNamesWithTask(ws *workspace.Workspace, cfg *config.DevkitConfig, packages []workspace.Package, taskName string) []string {
+	selected := make([]string, 0, len(packages))
+	for _, pkg := range packages {
+		if engine.ResolvePackageTaskDef(ws, cfg, taskName, pkg) != nil {
+			selected = append(selected, pkg.Name)
+		}
+	}
+	return selected
 }
 
 func init() {
