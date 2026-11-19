@@ -23,7 +23,17 @@ cleanup() {
     (( status != 0 )) || status=1
   fi
   journey_compose_cleanup
-  rm -rf "$native_root"
+  # Go module-cache directories are intentionally read-only. Make only the
+  # disposable tree's directories writable before removing the isolated HOME;
+  # file permissions do not prevent unlinking files from writable directories.
+  if ! find "$native_root" -type d -exec chmod u+w {} +; then
+    echo "Could not make native installer smoke directories removable: $native_root" >&2
+    (( status != 0 )) || status=1
+  fi
+  if ! rm -rf "$native_root"; then
+    echo "Could not remove native installer smoke root: $native_root" >&2
+    (( status != 0 )) || status=1
+  fi
   exit "$status"
 }
 trap cleanup EXIT INT TERM
