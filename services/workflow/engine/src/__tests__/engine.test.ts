@@ -181,6 +181,24 @@ describe('WorkflowEngine', () => {
       expect(storedRun?.id).toBe(run.id);
     });
 
+    // case: S-270.6
+    it('logs workflow lifecycle with its trace ID while retaining the run ID', async () => {
+      const run = await engine.createRun({ spec: simpleSpec, trigger: { type: 'manual' } });
+      const job = run.jobs[0]!;
+      const step = job.steps[0]!;
+
+      await engine.markJobStarted(run.id, job.id);
+      await engine.markStepStarted(run.id, job.id, step.id);
+      await engine.markStepCompleted(run.id, job.id, step.id, { message: 'done' });
+      await engine.markJobCompleted(run.id, job.id);
+
+      const runLog = logger.messages.find((log) => log.msg === 'Workflow run completed successfully');
+      expect(runLog?.meta).toMatchObject({ runId: run.id, traceId: run.id });
+      const stepLog = logger.messages.find((log) => log.msg === 'Step completed');
+      expect(stepLog?.meta).toMatchObject({ runId: run.id, traceId: run.id, stepId: step.id });
+      expect(stepLog?.meta).not.toHaveProperty('executionId');
+    });
+
     it('reopens workflow history and step output from storage with a fresh engine cache', async () => {
       const run = await engine.createRun({ spec: simpleSpec, trigger: { type: 'manual' } });
       const job = run.jobs[0]!;

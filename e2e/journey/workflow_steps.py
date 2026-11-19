@@ -1099,6 +1099,21 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
     journey.step("inspect failing command logs", "workflow", inspect_failure_logs,
                  cases=["S-029.3"])
 
+    def inspect_failure_trace_logs() -> None:
+        logs_data = _case_json_cli("S-270.2", ["logs", "query", "--trace-id", failed_id,
+                                               "--level", "error", "--json"], env=env, cwd=project)
+        logs = logs_data.get("logs") if isinstance(logs_data, dict) else None
+        if not isinstance(logs, list) or not any(
+            log.get("traceId") == failed_id
+            and log.get("level") == "error"
+            and (log.get("runId") == failed_id or log.get("workflow.run_id") == failed_id)
+            for log in logs if isinstance(log, dict)
+        ):
+            raise AssertionError("trace-filtered error logs did not retain the failed workflow run ID")
+
+    journey.step("query failed workflow logs by trace ID", "workflow", inspect_failure_trace_logs,
+                 cases=["S-270.2"])
+
     def inspect_history() -> None:
         with invocation_context(step_id="S-009.1"):
             runs = _case_runs(env=env, cwd=project, workflow="journey-hello")
@@ -1122,6 +1137,26 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         if "hello" not in logs:
             raise AssertionError("selected workflow run logs were empty")
     journey.step("inspect selected successful run logs", "workflow", inspect_selected_run_logs, cases=["S-009.3"])
+
+    def inspect_success_trace_logs() -> None:
+        logs_data = _case_json_cli("S-270.6", ["logs", "query", "--trace-id", successful_id,
+                                               "--json"], env=env, cwd=project)
+        logs = logs_data.get("logs") if isinstance(logs_data, dict) else None
+        if not isinstance(logs, list):
+            raise AssertionError("trace-filtered workflow logs were not returned as a list")
+        run_logs = [log for log in logs if isinstance(log, dict) and log.get("traceId") == successful_id]
+        if not any(log.get("runId") == successful_id for log in run_logs):
+            raise AssertionError("workflow lifecycle logs did not retain their run ID")
+        if not any(
+            log.get("workflow.run_id") == successful_id
+            and isinstance(log.get("executionId"), str)
+            and log.get("executionId") != successful_id
+            for log in run_logs
+        ):
+            raise AssertionError("workflow step logs lost their distinct execution ID")
+
+    journey.step("query successful workflow logs by trace ID", "workflow", inspect_success_trace_logs,
+                 cases=["S-270.6"])
 
     def restart_and_verify_project() -> None:
         with invocation_context(step_id="S-056.2"):

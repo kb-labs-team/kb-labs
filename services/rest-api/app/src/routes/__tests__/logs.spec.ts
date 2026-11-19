@@ -65,6 +65,33 @@ describe('Log Routes Integration Tests', () => {
   });
 
   describe('GET /api/v1/logs', () => {
+    // case: S-270.4
+    it('queries logs by trace ID without treating it as an execution ID', async () => {
+      const runId = 'workflow-run-123';
+      (mockLogService.query as any).mockResolvedValue({
+        logs: [createMockLog('run-log', 'info', 'Workflow run completed')],
+        total: 1,
+        hasMore: false,
+        source: 'persistence',
+      });
+      (mockLogService.getStats as any).mockResolvedValue({});
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/logs?traceId=${runId}`,
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockLogService.query).toHaveBeenCalledWith(
+        expect.objectContaining({ traceId: runId }),
+        expect.objectContaining({ limit: 100 }),
+      );
+      expect(mockLogService.query).not.toHaveBeenCalledWith(
+        expect.objectContaining({ executionId: runId }),
+        expect.anything(),
+      );
+    });
+
     it('should query logs with filters', async () => {
       const mockLogs = [
         createMockLog('log-1', 'error', 'Error 1', 1000),

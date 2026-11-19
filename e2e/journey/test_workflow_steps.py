@@ -363,6 +363,14 @@ class WorkflowJourneyTests(unittest.TestCase):
                                  {"spec": {"id": "check-health"}, "status": "success"}]}]
                               if run_id == "real-run" else []))),
                     }}
+                elif args[:2] == ["logs", "query"]:
+                    trace_id = args[args.index("--trace-id") + 1]
+                    level = args[args.index("--level") + 1] if "--level" in args else "info"
+                    output = {"ok": True, "data": {"logs": [
+                        {"id": f"log-{trace_id}", "traceId": trace_id, "level": level,
+                         "runId": trace_id, "workflow.run_id": trace_id,
+                         "executionId": f"wf-{trace_id}-main-step"}
+                    ], "total": 1, "hasMore": False}}
                 elif args[:3] == ["workflow", "runs", "logs"]:
                     run_id = args[3]
                     message = "hello hello-workflow" if run_id == "ok-run" else "journey-failure-diagnostic"
@@ -490,7 +498,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             "S-027.1", "S-027.2", "S-027.3", "S-028.1", "S-028.2", "S-028.3",
             "S-143.1", "S-143.2", "S-143.3", "S-143.4",
             "S-006.3", "S-007.1", "S-007.2", "S-007.3", "S-009.1", "S-009.2", "S-009.3", "S-009.4", "PC-002.5",
-            "S-029.1", "S-029.2", "S-029.3", "S-044.1", "S-044.2", "S-044.3", "S-044.4",
+            "S-029.1", "S-029.2", "S-029.3", "S-270.2", "S-270.6", "S-044.1", "S-044.2", "S-044.3", "S-044.4",
             "S-044.5", "S-044.6", "S-044.7", "S-044.8",
             "S-056.1", "S-056.2", "S-056.3",
         })

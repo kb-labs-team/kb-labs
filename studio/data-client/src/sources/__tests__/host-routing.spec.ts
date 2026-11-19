@@ -36,6 +36,18 @@ describe('host API routing', () => {
     expect(fetch).toHaveBeenCalledWith('/api/v1/projects/local%2Fproject/rest/logs', { baseURL: '' });
   });
 
+  it('sends workflow trace filters without rewriting them as execution IDs', async () => {
+    const client = new HttpClient('/api/v1');
+    const fetch = vi.spyOn(client, 'fetch').mockResolvedValueOnce({ logs: [], total: 0 });
+
+    await new HttpObservabilitySource(client, 'local/project').queryLogs({ traceId: 'workflow-run-123' });
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/v1/projects/local%2Fproject/rest/logs?traceId=workflow-run-123',
+      { baseURL: '' },
+    );
+  });
+
   it('routes analytics and adapter usage through the selected project runtime', async () => {
     const client = new HttpClient('/api/v1');
     const fetch = vi.spyOn(client, 'fetch').mockResolvedValue({});

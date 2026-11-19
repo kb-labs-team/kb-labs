@@ -2237,7 +2237,8 @@ def _main(*, update_variant_runner=None):
                            + [f"S-008.{step}" for step in range(1, 5)]
                            + [f"S-027.{step}" for step in range(1, 4)]
                            + [f"S-028.{step}" for step in range(1, 4)]
-                           + [f"S-143.{step}" for step in range(1, 5)])
+                           + [f"S-143.{step}" for step in range(1, 5)]
+                           + ["S-270.2", "S-270.6"])
         outer_graph.flow(
             "workflow execution journey", "workflow", "workflow",
             lambda: run_workflow_with_host_boundary(
