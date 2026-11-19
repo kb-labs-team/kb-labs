@@ -213,6 +213,7 @@ export class SubprocessBackend implements RawExecutionBackend {
           descriptor: requestToExecute.descriptor,
           platform: this.platform as unknown as IPlatformAdapters,
           handlerPath,
+          platformRoot: requestToExecute.platformRoot,
           exportName: requestToExecute.exportName,
           input: requestToExecute.input,
           environment: {
