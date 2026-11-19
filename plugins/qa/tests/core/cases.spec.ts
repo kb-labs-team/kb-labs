@@ -59,6 +59,19 @@ describe('QA case catalog diagnostics', () => {
     expect(parsed.cases.find(item => item.id === 'S-011')).toMatchObject({ supersededBy: 'S-010', steps: [] });
   });
 
+  it('recognizes the native macOS installer entrypoint as a journey claim source', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory, 'S-298');
+    const entrypoint = join(directory, 'e2e', 'journey', 'native-macos-install.mjs');
+    mkdirSync(join(directory, 'e2e', 'journey'), { recursive: true });
+    writeFileSync(entrypoint, 'export const cases = ["S-298.1"];\n');
+
+    const result = scanQACaseClaims(directory, [testCase]);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.claims).toEqual([expect.objectContaining({ id: 'S-298.1', kind: 'journey' })]);
+  });
+
   it('parses draft cases as non-release product proposals', () => {
     const directory = fixture();
     writeFileSync(join(directory, 'S-269.md'), caseDocument('S-269', '', 'draft').replace('release: true', 'release: false'));

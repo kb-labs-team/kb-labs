@@ -22,7 +22,7 @@ async function createInstallerFixture(): Promise<{ dir: string; pnpmPath: string
   return { dir, pnpmPath };
 }
 
-// case: PC-001.20
+// case: S-298.1
 it('uses the release-pinned Corepack pnpm when no standalone pnpm is on PATH', async () => {
   const { dir, pnpmPath: fakeCorepackPath } = await createInstallerFixture();
   vi.stubEnv('PATH', dir);
