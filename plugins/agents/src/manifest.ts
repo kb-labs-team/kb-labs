@@ -104,7 +104,7 @@ const buildPluginPermissions = () => combinePermissions()
 const pluginPermissions = buildPluginPermissions().build();
 
 const qualityReportPermissions = buildPluginPermissions()
-  .withQuotas({ timeoutMs: 5_000, maxOutputBytes: 2 * 1024 * 1024 })
+  .withQuotas({ timeoutMs: 5_000 })
   .withShell({ allow: ['sqlite3'] })
   .build();
 

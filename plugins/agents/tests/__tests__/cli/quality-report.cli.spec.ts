@@ -43,7 +43,6 @@ describe('agents:quality:report governed analytics fallback', () => {
 
     expect(qualityPermissions.shell?.allow).toEqual(['sqlite3']);
     expect(qualityPermissions.quotas?.timeoutMs).toBe(5_000);
-    expect(qualityPermissions.quotas?.maxOutputBytes).toBe(2 * 1024 * 1024);
     expect(tracePermissions.shell).toBeUndefined();
   });
 

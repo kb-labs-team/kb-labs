@@ -27,14 +27,14 @@ analytics database, without granting the plugin unrestricted process access.
 | # | Action | Expected |
 |---|---|---|
 | S-309.1 | With no recent analytics JSONL files and no SQLite database, run `kb agent quality report show --days=1 --json` in subprocess mode, then repeat in worker-pool mode | Both invocations exit successfully and return `{ "success": true, "message": "No analytics files found for selected period", "runs": 0 }`. Loading the handler does not request direct `node:child_process` access. |
-| S-309.2 | For each isolated mode, create a recent JSONL analytics buffer with no agent KPI rows and seed the project SQLite database with a recent `agent.kpi.run_completed` event, then run `kb agent quality report show --days=1 --json` | The report includes the seeded run and its KPI values. The handler invokes SQLite with read-only and safe modes, an explicit empty init file, a 5-second timeout, and a 2 MiB per-stream output cap. Only `sqlite3` is allowed for this command; the executable allowlist itself does not constrain arguments or create a read-only capability. |
+| S-309.2 | For each isolated mode, create a recent JSONL analytics buffer with no agent KPI rows and seed the project SQLite database with a recent `agent.kpi.run_completed` event, then run `kb agent quality report show --days=1 --json` | The report includes the seeded run and its KPI values. The handler invokes SQLite with read-only and safe modes, an explicit empty init file, a 5-second timeout, and a 2 MiB per-stream output cap for this call. Only `sqlite3` is allowed for this command; the executable allowlist itself does not constrain arguments or create a read-only capability. |
 | S-309.3 | Keep the JSONL buffer and SQLite fixture, but make the host `sqlite3` command unavailable or return a non-zero result; run the same report command | The command completes without an execution crash and returns an empty report, matching the existing fallback behavior when SQLite cannot be queried. |
 | S-309.4 | For each isolated mode, seed the project SQLite database with a recent `agent.kpi.run_completed` event and ensure no recent analytics JSONL file exists, then run `kb agent quality report show --days=1 --json` | The report includes the seeded run and its KPI values; the absence of JSONL files does not bypass the SQLite fallback. |
 
 ## Decision notes
 
 - The platform analytics adapter's worker/subprocess IPC is a no-op reader, so this command uses the governed shell API to query its existing SQLite fallback.
-- The shell permission is limited to this CLI command and to the `sqlite3` executable. Its process timeout and output quota are set to 5 seconds and 2 MiB per stream.
+- The shell permission is limited to this CLI command and to the `sqlite3` executable. The command's process timeout quota is 5 seconds; the handler's SQLite call sets a 2 MiB per-stream output cap.
 - The executable allowlist authorizes launching `sqlite3`; it does not restrict SQL arguments. The quality-report handler itself uses SQLite read-only and safe modes for this query.
 - When no JSONL files exist, the command preserves its empty-state message only if the SQLite database is also absent; otherwise it queries SQLite.
 - SQLite fallback depends on a host `sqlite3` executable; process launch or non-zero failures remain a best-effort fallback and produce no SQLite rows.
