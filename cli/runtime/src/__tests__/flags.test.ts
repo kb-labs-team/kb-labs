@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { parseArgs, validateCommandFlags } from '../flags.js';
+import { describe, it, expect, vi } from 'vitest';
+import { coerceCommandFlags, parseArgs, validateCommandFlags } from '../flags.js';
 import { CliError } from '../errors.js';
+
+vi.mock('../platform-logger.js', () => ({
+  getLogger: () => ({ debug() {}, info() {}, warn() {}, error() {} }),
+}));
 
 describe('parseArgs', () => {
   // ── basic command path parsing ───────────────────────────────────────
@@ -204,5 +208,25 @@ describe('validateCommandFlags', () => {
         [{ name: 'missing', type: 'string', choices: ['a'] }],
       ),
     ).not.toThrow();
+  });
+});
+
+describe('coerceCommandFlags', () => {
+  // case: S-299.1
+  it('converts manifest number flags while preserving string flags', () => {
+    const parsed = parseArgs(['agent', 'run', '--budget', '12000', '--task', 'summarize 12 files']);
+    const flags = coerceCommandFlags(parsed.flagsObj, [
+      { name: 'budget', type: 'number' },
+      { name: 'task', type: 'string' },
+    ]);
+
+    expect(flags.budget).toBe(12_000);
+    expect(flags.task).toBe('summarize 12 files');
+  });
+
+  // case: S-299.4
+  it.each(['', 'not-a-number', 'Infinity'])('rejects invalid numeric CLI values (%s)', (value) => {
+    expect(() => coerceCommandFlags({ budget: value }, [{ name: 'budget', type: 'number' }]))
+      .toThrow(CliError);
   });
 });

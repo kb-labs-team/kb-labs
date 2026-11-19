@@ -15,12 +15,79 @@ import type { RegisteredCommand } from '@kb-labs/cli-commands';
 import { fileURLToPath } from 'node:url';
 
 const { executeCommandV3 } = vi.hoisted(() => ({ executeCommandV3: vi.fn() }));
+vi.mock('@kb-labs/cli-runtime', async () => {
+  const { coerceCommandFlags } = await import('../../../runtime/src/flags.js');
+  return { coerceCommandFlags };
+});
 vi.mock('@kb-labs/cli-runtime/v3', () => ({ executeCommandV3 }));
 
 import { executePlugin, renderUnavailableAdapterError } from './plugin-executor.js';
 
 describe('plugin executor adapter errors', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  // case: S-299.1
+  it('passes manifest-typed numeric flags to the plugin handler as numbers', async () => {
+    executeCommandV3.mockResolvedValue(0);
+    const manifestCmd = {
+      pkgRoot: '/project/.kb/plugins/agents',
+      manifest: {
+        id: '@kb-labs/agents',
+        segments: ['agent', 'run'],
+        flags: [
+          { name: 'task', type: 'string' },
+          { name: 'budget', type: 'number' },
+        ],
+        v3Manifest: {
+          id: '@kb-labs/agents',
+          version: '0.1.0',
+          cli: { commands: [{
+            path: 'agent run', handler: './cli/commands/run.js#default',
+            flags: [{ name: 'task', type: 'string' }, { name: 'budget', type: 'number' }],
+          }] },
+        },
+      },
+    } as unknown as RegisteredCommand;
+
+    const exitCode = await executePlugin({
+      context: { cwd: '/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
+      env: {},
+      commandId: 'agent:run',
+      argv: [],
+      flags: { task: 'inspect only', budget: '12000' },
+      manifestCmd,
+      platform: {} as Parameters<typeof executePlugin>[0]['platform'],
+    });
+
+    expect(exitCode).toBe(0);
+    expect(executeCommandV3).toHaveBeenCalledWith(expect.objectContaining({
+      flags: { task: 'inspect only', budget: 12_000 },
+    }));
+    executeCommandV3.mockReset();
+  });
+
+  // case: S-299.4
+  it.each(['', 'not-a-number'])('rejects invalid manifest number flags before handler dispatch (%s)', async (budget) => {
+    const manifestCmd = {
+      pkgRoot: '/project/.kb/plugins/agents',
+      manifest: {
+        id: '@kb-labs/agents',
+        segments: ['agent', 'run'],
+        v3Manifest: {
+          id: '@kb-labs/agents',
+          version: '0.1.0',
+          cli: { commands: [{ path: 'agent run', handler: './cli/commands/run.js#default', flags: [{ name: 'budget', type: 'number' }] }] },
+        },
+      },
+    } as unknown as RegisteredCommand;
+
+    await expect(executePlugin({
+      context: { cwd: '/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
+      env: {}, commandId: 'agent:run', argv: [], flags: { budget }, manifestCmd,
+      platform: {} as Parameters<typeof executePlugin>[0]['platform'],
+    })).rejects.toMatchObject({ name: 'CliError', code: 'E_INVALID_FLAGS' });
+    expect(executeCommandV3).not.toHaveBeenCalled();
+  });
 
 
   it('renders an unconfigured capability as one line and marks it handled', () => {
