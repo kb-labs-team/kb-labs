@@ -1,8 +1,10 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+export const cases = ['S-298.1'];
 
 export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, platformRoot, registryUrl }) {
   if (!registryUrl) throw new Error('Registry URL is required; run e2e/journey/native-macos-smoke.sh.');
@@ -34,10 +36,73 @@ function run() {
   const registryUrl = process.env.KB_JOURNEY_REGISTRY_URL;
   if (!registryUrl) throw new Error('KB_JOURNEY_REGISTRY_URL is required; run e2e/journey/native-macos-smoke.sh.');
   const platformRoot = path.join(tempRoot, 'platform');
+  const reportPath = process.env.KB_JOURNEY_CASE_REPORT;
+  let status = 'PASS';
+  let caseStatus = 'FAIL';
+  let failure = '';
   for (const step of nativeInstallCommands({ tempRoot, platformRoot, registryUrl })) {
     const result = spawnSync(step.command, step.args, { cwd: step.cwd, stdio: 'inherit' });
-    if (result.error) throw result.error;
-    if (result.status !== 0) process.exit(result.status ?? 1);
+    if (result.error) {
+      status = 'FAIL';
+      failure = result.error.message;
+      break;
+    }
+    if (result.status !== 0) {
+      status = 'FAIL';
+      failure = `${step.command} exited with ${result.status ?? 'no status'}`;
+      break;
+    }
+    if (step.command.endsWith('/kb-create')) {
+      try {
+        verifyMarketplaceInstall(platformRoot);
+        caseStatus = 'PASS';
+      } catch (error) {
+        status = 'FAIL';
+        failure = error instanceof Error ? error.message : String(error);
+        break;
+      }
+    }
+  }
+
+  if (reportPath) {
+    const resolvedReport = path.resolve(workspaceRoot, reportPath);
+    mkdirSync(path.dirname(resolvedReport), { recursive: true });
+    writeFileSync(resolvedReport, `${JSON.stringify({
+      case_run: { mode: 'local', claims: cases.map(claimId => ({ claimId, kind: 'journey', status: caseStatus })) },
+      steps: [{
+        stepId: 'native-macos-marketplace-corepack',
+        name: 'Install scenario plugin through Marketplace with Node 24 Corepack',
+        mode: 'local',
+        cases,
+        status: caseStatus,
+        ...(caseStatus === 'FAIL' && failure ? { message: failure } : {}),
+      }],
+    }, null, 2)}\n`);
+  }
+  if (status !== 'PASS') throw new Error(failure || 'Native macOS Marketplace install did not pass.');
+}
+
+function verifyMarketplaceInstall(platformRoot) {
+  const receiptPath = path.join(platformRoot, '.kb', 'v2', 'receipt.json');
+  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+  const record = receipt.marketplaceInstalls?.find(item => item.id === '@kb-labs/commit');
+  if (!record?.version || !record.source || record.spec !== `@kb-labs/commit@${record.version}`) {
+    throw new Error('Install receipt does not record the Commit scenario plugin from a Marketplace source.');
+  }
+
+  const storeRoot = path.join(platformRoot, 'state', 'home', 'store');
+  const entryDir = path.join(storeRoot, 'entries', `@kb-labs+commit@${record.version}`);
+  const corepackHome = path.join(storeRoot, 'cas', '.corepack');
+  const pinnedPnpmManifest = path.join(corepackHome, 'v1', 'pnpm', '11.4.0', 'package.json');
+  if (!existsSync(path.join(entryDir, 'entry.json'))) {
+    throw new Error('Marketplace plugin entry was not published to the platform extension store.');
+  }
+  if (!existsSync(pinnedPnpmManifest)) {
+    throw new Error('Corepack did not cache the release-pinned pnpm 11.4.0 under the platform extension-store cache.');
+  }
+  const pinnedPnpm = JSON.parse(readFileSync(pinnedPnpmManifest, 'utf8'));
+  if (pinnedPnpm.name !== 'pnpm' || pinnedPnpm.version !== '11.4.0') {
+    throw new Error('Corepack cached a package-manager version other than the release-pinned pnpm 11.4.0.');
   }
 }
 

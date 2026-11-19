@@ -127,10 +127,17 @@ jobs:
           name: installer-journey-candidate
       - name: Install candidate natively and smoke the installed CLI
         run: e2e/journey/native-macos-smoke.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: service-journey-results-macos-native
+          path: .journey/reports/service-native-macos.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   coverage:
     name: Release case coverage
-    needs: [prepare, journey]
+    needs: [prepare, journey, native_macos]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
