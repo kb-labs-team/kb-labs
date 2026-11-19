@@ -310,6 +310,7 @@ const (
 	KB_ENV_SHELL                                  = "KB_ENV_SHELL"
 	KB_HOME                                       = "KB_HOME"
 	KB_HOST_CONTROL_TOKEN                         = "KB_HOST_CONTROL_TOKEN"
+	KB_INSTALLATION_ID                            = "KB_INSTALLATION_ID"
 	KB_LOG_FILE                                   = "KB_LOG_FILE"
 	KB_NET_OFFSET                                 = "KB_NET_OFFSET"
 	KB_PLATFORM_ROOT                              = "KB_PLATFORM_ROOT"
@@ -339,6 +340,7 @@ func CatalogEnvironmentVariableNames() []string {
 		KB_ENV_SHELL,
 		KB_HOME,
 		KB_HOST_CONTROL_TOKEN,
+		KB_INSTALLATION_ID,
 		KB_LOG_FILE,
 		KB_NET_OFFSET,
 		KB_PLATFORM_ROOT,

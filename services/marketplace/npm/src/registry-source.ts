@@ -52,7 +52,10 @@ export class RegistryPackageSource implements MarketplaceSource {
   }
 
   async resolveIdentity(identity: string) {
-    const response = await this.fetch(`${this.baseUrl}/api/v1/resolve?identity=${encodeURIComponent(identity)}`, identity);
+    const { identity: canonicalIdentity, version } = splitIdentityVersion(identity);
+    const query = new URLSearchParams({ identity: canonicalIdentity });
+    if (version) { query.set('version', version); }
+    const response = await this.fetch(`${this.baseUrl}/api/v1/resolve?${query.toString()}`, identity);
     if (!response.ok) {
       throw new RegistryPackageError(response.status === 401 || response.status === 403 ? 'AUTH_FAILED' : 'RESOLUTION_FAILED', `Registry identity resolution failed with HTTP ${response.status}`, identity);
     }
@@ -166,4 +169,19 @@ export class RegistryPackageSource implements MarketplaceSource {
     }
   }
 
+}
+
+function splitIdentityVersion(spec: string): { identity: string; version?: string } {
+  if (spec.startsWith('@')) {
+    const slashIndex = spec.indexOf('/');
+    const versionSeparator = spec.lastIndexOf('@');
+    if (slashIndex >= 0 && versionSeparator > slashIndex) {
+      return { identity: spec.slice(0, versionSeparator), version: spec.slice(versionSeparator + 1) };
+    }
+    return { identity: spec };
+  }
+  const versionSeparator = spec.indexOf('@');
+  return versionSeparator > 0
+    ? { identity: spec.slice(0, versionSeparator), version: spec.slice(versionSeparator + 1) }
+    : { identity: spec };
 }
