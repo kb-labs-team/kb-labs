@@ -45,7 +45,7 @@ describe('agents:quality:report governed analytics fallback', () => {
   // case: S-309.1
   it('returns an empty report without requiring shell access when analytics are absent', async () => {
     const shellExec = vi.fn();
-    const ctx = { api: { shell: { exec: shellExec } } } as never;
+    const ctx = { host: 'cli', api: { shell: { exec: shellExec } } } as never;
 
     const result = await qualityReportCommand.execute(ctx, { days: 1, json: true });
 
@@ -92,7 +92,7 @@ describe('agents:quality:report governed analytics fallback', () => {
       stderr: '',
       ok: true,
     });
-    const ctx = { api: { shell: { exec: shellExec } } } as never;
+    const ctx = { host: 'cli', api: { shell: { exec: shellExec } } } as never;
 
     const result = await qualityReportCommand.execute(ctx, { days: 1, json: true });
 
@@ -127,7 +127,7 @@ describe('agents:quality:report governed analytics fallback', () => {
       stderr: '',
       ok: true,
     });
-    const ctx = { api: { shell: { exec: shellExec } } } as never;
+    const ctx = { host: 'cli', api: { shell: { exec: shellExec } } } as never;
 
     const result = await qualityReportCommand.execute(ctx, { days: 1, json: true });
 
@@ -150,7 +150,7 @@ describe('agents:quality:report governed analytics fallback', () => {
     await writeFile(path.join(analyticsDir, 'analytics.sqlite'), 'fixture database marker');
 
     const shellExec = vi.fn().mockRejectedValue(new Error('Failed to spawn sqlite3: ENOENT'));
-    const ctx = { api: { shell: { exec: shellExec } } } as never;
+    const ctx = { host: 'cli', api: { shell: { exec: shellExec } } } as never;
 
     const result = await qualityReportCommand.execute(ctx, { days: 1, json: true });
 
