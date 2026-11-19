@@ -35,3 +35,24 @@ func TestPackageNamesWithTaskReturnsEmptyWhenNoSelectedPackageOwnsTask(t *testin
 		t.Fatalf("packages with test task = %v, want empty", got)
 	}
 }
+
+// case: S-310.1
+func TestPackageNamesWithTaskPolicyReportsOnlyExactManualOverride(t *testing.T) {
+	ws := &workspace.Workspace{}
+	packages := []workspace.Package{
+		{Name: "github.com/kb-labs/kb-runner", Category: "internal-tool"},
+		{Name: "github.com/kb-labs/kb-devkit", Category: "internal-tool"},
+	}
+	cfg := &config.DevkitConfig{Tasks: map[string]config.TaskConfig{"test": {
+		{Categories: []string{"internal-tool"}, Packages: []string{"github.com/kb-labs/kb-runner"}, Command: "make test", ManualOnly: true},
+		{Categories: []string{"internal-tool"}, Command: "make test"},
+	}}}
+	automatic, skipped := packageNamesWithTaskPolicy(ws, cfg, packages, "test")
+	if !reflect.DeepEqual(automatic, []string{"github.com/kb-labs/kb-devkit"}) {
+		t.Fatalf("automatic test packages = %v, want only active DevKit tool", automatic)
+	}
+	wantSkipped := []skippedManualTask{{Package: "github.com/kb-labs/kb-runner", Task: "test", Reason: "manual-only; run explicitly with --packages"}}
+	if !reflect.DeepEqual(skipped, wantSkipped) {
+		t.Fatalf("skipped manual tasks = %+v, want %+v", skipped, wantSkipped)
+	}
+}
