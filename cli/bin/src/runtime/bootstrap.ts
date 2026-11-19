@@ -5,6 +5,7 @@ import {
   createTextPresenter,
   createContext,
   parseArgs,
+  coerceCommandFlags,
   registerSecretFlagValues,
   type ExecutionLimits,
 } from "@kb-labs/cli-runtime";
@@ -695,6 +696,10 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
   const accessMode = resolveCliAccessMode();
   const { gatewayUrl: _gatewayUrl, ...commandGlobalFlags } = p.global;
   const commandFlags: Record<string, unknown> = { ...commandGlobalFlags, ...p.flagsObj };
+  const declaredCommandFlags = p.manifestCmd.manifest.v3Manifest?.cli?.commands?.find(
+    (command) => command.path === commandPath,
+  )?.flags ?? [];
+  const typedCommandFlags = coerceCommandFlags(commandFlags, declaredCommandFlags);
   if (p.global.gatewayUrl) {
     for (const flag of p.manifestCmd.manifest.flags ?? []) {
       if (flag.name === 'gateway-url' || flag.name === 'gatewayUrl') {
@@ -724,7 +729,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
         return executeViaGateway(gatewayClient, {
           commandId,
           argv: p.actualRest,
-          flags: commandFlags,
+          flags: typedCommandFlags,
           manifestCmd: p.manifestCmd,
           resultWriter: p.resultWriter,
         });
@@ -736,7 +741,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
       env: p.env,
       commandId,
       argv: p.actualRest,
-      flags: commandFlags,
+      flags: typedCommandFlags,
       manifestCmd: p.manifestCmd,
       platform: p.platform,
       resultWriter: p.resultWriter,

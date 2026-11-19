@@ -5,6 +5,7 @@
  */
 
 import type { SystemContext } from "@kb-labs/cli-runtime";
+import { coerceCommandFlags } from "@kb-labs/cli-runtime";
 import { executeCommandV3 } from "@kb-labs/cli-runtime/v3";
 import type {
   UIFacade,
@@ -73,6 +74,7 @@ export async function executePlugin(
   if (!cliCommand) {
     return undefined;
   }
+  const typedFlags = coerceCommandFlags(flags, cliCommand.flags ?? []);
 
   // Resolve handler path from handler field
   const handlerRelativePath = cliCommand.handler.split("#")[0];
@@ -108,7 +110,7 @@ export async function executePlugin(
     const pluginVersion = pluginManifest.version || "0.0.0";
 
     // When --json is active, suppress all UI output except json() to keep stdout clean.
-    const jsonMode = Boolean(flags.json);
+    const jsonMode = Boolean(typedFlags.json);
     // context.presenter (PresenterV1) is a broader runtime object that is
     // structurally compatible with PresenterDelegate at runtime even though
     // the static types differ (PresenterV1 exposes write/info/warn/error/json,
@@ -138,7 +140,7 @@ export async function executePlugin(
           pluginRoot,
           handlerPath,
           argv,
-          flags,
+          flags: typedFlags,
           ui,
           platform: platformServices,
           platformContainer: platform,
