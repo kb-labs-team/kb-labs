@@ -247,6 +247,7 @@ export class CronScheduler {
         this.logger.info('Cron job submitted', {
           cronJobId,
           runId: result.id,
+          traceId: result.id,
         });
       } else if (job.source === 'user' && job.workflowSpec) {
         // User cron job - run workflow directly via WorkflowEngine
@@ -283,6 +284,7 @@ export class CronScheduler {
         this.logger.info('Cron workflow submitted', {
           cronJobId,
           runId: result.id,
+          traceId: result.id,
           workflowName: spec.name,
         });
       } else {

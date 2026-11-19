@@ -225,6 +225,7 @@ export interface LogRecord {
   plugin?: string;
   command?: string;
   executionId?: string;
+  traceId?: string;
   tenantId?: string;
   trace?: string; // OpenTelemetry trace ID
   span?: string; // OpenTelemetry span ID
@@ -247,6 +248,7 @@ export interface LogQuery {
   level?: string; // trace|debug|info|warn|error (comma-separated)
   plugin?: string;
   executionId?: string;
+  traceId?: string;
   tenantId?: string;
   search?: string; // Text search in msg field
   limit?: number; // Max records (default 100, max 1000)
@@ -281,6 +283,7 @@ export interface LogEvent {
   msg?: string;
   plugin?: string;
   executionId?: string;
+  traceId?: string;
   tenantId?: string;
   [key: string]: unknown;
 }

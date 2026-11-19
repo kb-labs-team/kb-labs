@@ -241,11 +241,17 @@ export function LogsPage() {
   const { setProjectId } = useProjectContext();
   const requestedProjectId = searchParams.get('projectId');
   const requestedExecutionId = searchParams.get('executionId');
+  const requestedTraceId = searchParams.get('traceId');
   const [executionIdFilter, setExecutionIdFilter] = useState<string | null>(requestedExecutionId);
+  const [traceIdFilter] = useState<string | null>(requestedTraceId);
   const sources = useDataSources();
+  const logStreamFilters = useMemo(() => ({
+    ...(executionIdFilter ? { executionId: executionIdFilter } : {}),
+    ...(traceIdFilter ? { traceId: traceIdFilter } : {}),
+  }), [executionIdFilter, traceIdFilter]);
   const { logs: streamLogs, isConnected, error, clearLogs } = useLogStream(
     sources.observability,
-    executionIdFilter ? { executionId: executionIdFilter } : undefined,
+    logStreamFilters,
   );
   const [viewMode, setViewMode] = useState<'live' | 'history'>('live');
   const [searchQuery, setSearchQuery] = useState('');
@@ -325,6 +331,9 @@ export function LogsPage() {
         if (executionIdFilter) {
           query.executionId = executionIdFilter;
         }
+        if (traceIdFilter) {
+          query.traceId = traceIdFilter;
+        }
         if (searchQuery.trim()) {
           query.search = searchQuery.trim();
         }
@@ -372,6 +381,7 @@ export function LogsPage() {
     levelFilter,
     pluginFilter,
     executionIdFilter,
+    traceIdFilter,
     timeRange,
     customTimeRange,
     searchQuery,
@@ -390,6 +400,9 @@ export function LogsPage() {
     if (viewMode !== 'history') {
       if (executionIdFilter) {
         filtered = filtered.filter((log) => log.executionId === executionIdFilter);
+      }
+      if (traceIdFilter) {
+        filtered = filtered.filter((log) => log.traceId === traceIdFilter);
       }
       if (levelFilter) {
         filtered = filtered.filter((log) => log.level === levelFilter);

@@ -278,6 +278,7 @@ export async function createWorkflowWorker(
     if (!job) {
       logger.error("Data inconsistency: Job not found in run", undefined, {
         runId: run.id,
+        traceId: run.id,
         jobId: entry.jobId,
       });
       return true; // Entry was processed (but job missing - data corruption)
@@ -296,6 +297,7 @@ export async function createWorkflowWorker(
       : undefined;
     logger.info("Job picked from queue", {
       runId: run.id,
+      traceId: run.id,
       jobId: job.id,
       jobName: job.jobName,
       queuedAt: job.queuedAt,

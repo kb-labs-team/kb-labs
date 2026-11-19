@@ -96,7 +96,7 @@ export class JobBroker {
    */
   async cancel(runId: string): Promise<void> {
     await this.engine.cancelRun(runId);
-    this.logger.info('Job cancelled', { runId });
+    this.logger.info('Job cancelled', { runId, traceId: runId });
   }
 
   /**
@@ -173,7 +173,7 @@ export class JobBroker {
         },
       );
     } catch {
-      this.logger.warn('Log backend unavailable — returning empty log list for run', { runId });
+      this.logger.warn('Log backend unavailable — returning empty log list for run', { runId, traceId: runId });
     }
 
     type LogEntry = {

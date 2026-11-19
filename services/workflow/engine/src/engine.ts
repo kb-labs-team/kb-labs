@@ -148,7 +148,7 @@ export class WorkflowEngine {
       this.logger.error(
         'Workflow ancillary operation failed',
         normalizedError,
-        { operation, runId, jobId },
+        { operation, runId, traceId: runId, jobId },
       )
       const failure = { operation, runId, jobId, message: normalizedError.message }
       failures.push(failure)
@@ -159,7 +159,7 @@ export class WorkflowEngine {
       } catch (persistError) {
         const diagnosticError = persistError instanceof Error ? persistError : new Error(String(persistError))
         this.logger.error('Workflow ancillary diagnostic persistence failed', diagnosticError, {
-          operation: 'run.diagnostics.persist', runId, jobId,
+          operation: 'run.diagnostics.persist', runId, traceId: runId, jobId,
         })
         failures.push({ operation: 'run.diagnostics.persist', runId, jobId, message: diagnosticError.message })
       }
@@ -177,7 +177,7 @@ export class WorkflowEngine {
     }
     const updated = await this.stateStore.transitionRun(runId, status, mutate)
     if (updated) {
-      this.logger.info('Workflow run terminal state persisted', { runId, status })
+      this.logger.info('Workflow run terminal state persisted', { runId, traceId: runId, status })
     }
     return updated
   }
@@ -442,13 +442,13 @@ export class WorkflowEngine {
     const ancillaryFailures: WorkflowAncillaryFailure[] = []
     const run = await this.stateStore.getRun(runId)
     if (!run) {
-      this.logger.warn('Cannot mark job as failed: run not found', { runId, jobId })
+      this.logger.warn('Cannot mark job as failed: run not found', { runId, traceId: runId, jobId })
       return { ancillaryFailures }
     }
 
     const job = run.jobs.find((j) => j.id === jobId)
     if (!job) {
-      this.logger.warn('Cannot mark job as failed: job not found', { runId, jobId })
+      this.logger.warn('Cannot mark job as failed: job not found', { runId, traceId: runId, jobId })
       return { ancillaryFailures }
     }
 
@@ -498,7 +498,7 @@ export class WorkflowEngine {
             })
           } catch (transitionError) {
             if (transitionError instanceof IllegalStateTransitionError) {
-              this.logger.info('Dropping stale job retry: job is no longer failed', { runId, jobId })
+              this.logger.info('Dropping stale job retry: job is no longer failed', { runId, traceId: runId, jobId })
               return
             }
             throw transitionError
@@ -509,11 +509,11 @@ export class WorkflowEngine {
           if (updatedJob) {
             await this.scheduler.enqueueJob(runId, updatedJob, updatedJob.priority ?? 'normal')
           }
-          this.logger.info('Job re-queued for retry', { runId, jobId })
+          this.logger.info('Job re-queued for retry', { runId, traceId: runId, jobId })
         }, ancillaryFailures)
       }, backoffMs)
 
-      this.logger.error('Job failed', error, { runId, jobId, attempt: (job.attempt || 0) + 1 })
+      this.logger.error('Job failed', error, { runId, traceId: runId, jobId, attempt: (job.attempt || 0) + 1 })
       await this.runAncillaryOperation(runId, jobId, 'analytics.job.failed', async () => {
         await this.analytics?.track('workflow.job.failed', {
           runId, jobId, jobName: job.jobName, attempt: (job.attempt || 0) + 1,
@@ -526,10 +526,10 @@ export class WorkflowEngine {
         jobId,
         payload: { jobName: job.jobName, error: error.message, attempt: (job.attempt || 0) + 1 },
       }), ancillaryFailures)
-      this.logger.info('Scheduling job retry', { runId, jobId, attempt: (job.attempt || 0) + 1, backoffMs })
+      this.logger.info('Scheduling job retry', { runId, traceId: runId, jobId, attempt: (job.attempt || 0) + 1, backoffMs })
     } else {
       await this.checkRunCompletion(runId, jobId, ancillaryFailures)
-      this.logger.error('Job failed', error, { runId, jobId, attempt: (job.attempt || 0) + 1 })
+      this.logger.error('Job failed', error, { runId, traceId: runId, jobId, attempt: (job.attempt || 0) + 1 })
       await this.runAncillaryOperation(runId, jobId, 'analytics.job.failed', async () => {
         await this.analytics?.track('workflow.job.failed', {
           runId, jobId, jobName: job.jobName, attempt: (job.attempt || 0) + 1,
@@ -582,7 +582,7 @@ export class WorkflowEngine {
       draft.finishedAt = new Date().toISOString()
     })
 
-    this.logger.warn('Job interrupted', { runId, jobId })
+    this.logger.warn('Job interrupted', { runId, traceId: runId, jobId })
   }
 
   /**
@@ -608,7 +608,7 @@ export class WorkflowEngine {
       }
     })
 
-    this.logger.info('Job started', { runId, jobId })
+    this.logger.info('Job started', { runId, traceId: runId, jobId })
 
     // Track job start
     const run = await this.getRun(runId)
@@ -650,7 +650,7 @@ export class WorkflowEngine {
 
     await this.checkRunCompletion(runId, jobId, ancillaryFailures)
 
-    this.logger.info('Job completed successfully', { runId, jobId })
+    this.logger.info('Job completed successfully', { runId, traceId: runId, jobId })
     await this.runAncillaryOperation(runId, jobId, 'analytics.job.completed', async () => {
       await this.analytics?.track('workflow.job.completed', {
         runId, jobId, jobName: job?.jobName, durationMs: duration, stepCount: job?.steps.length ?? 0,
@@ -663,7 +663,7 @@ export class WorkflowEngine {
       payload: { jobName: job?.jobName, durationMs: duration },
     }), ancillaryFailures)
     for (const skippedJob of dispatch.skipped) {
-      this.logger.info('Job skipped: if condition false', { runId, jobId: skippedJob.id, condition: skippedJob.if })
+      this.logger.info('Job skipped: if condition false', { runId, traceId: runId, jobId: skippedJob.id, condition: skippedJob.if })
     }
     for (const releasedJob of dispatch.jobs) {
       await this.runAncillaryOperation(runId, releasedJob.id, 'scheduler.enqueue', () =>
@@ -756,7 +756,7 @@ export class WorkflowEngine {
         }
         return draft
       })
-      this.logger.info('Workflow run completed successfully', { runId })
+      this.logger.info('Workflow run completed successfully', { runId, traceId: runId })
 
       if (updated) {
         await this.runAncillaryOperation(runId, jobId, 'analytics.run.completed', async () => {
@@ -798,7 +798,7 @@ export class WorkflowEngine {
         }
         return draft
       })
-      this.logger.info('Workflow run failed', { runId })
+      this.logger.info('Workflow run failed', { runId, traceId: runId })
 
       if (updated) {
         await this.runAncillaryOperation(runId, jobId, 'analytics.run.completed', async () => {
@@ -827,7 +827,7 @@ export class WorkflowEngine {
       draft.startedAt = new Date().toISOString()
     })
 
-    this.logger.debug('Step started', { runId, jobId, stepId })
+    this.logger.debug('Step started', { runId, traceId: runId, jobId, stepId })
 
     await this.publishEvent({
       type: EVENT_NAMES.step.started,
@@ -853,7 +853,7 @@ export class WorkflowEngine {
       }
     })
 
-    this.logger.debug('Step completed', { runId, jobId, stepId })
+    this.logger.debug('Step completed', { runId, traceId: runId, jobId, stepId })
 
     await this.publishEvent({
       type: EVENT_NAMES.step.succeeded,
@@ -886,7 +886,7 @@ export class WorkflowEngine {
       if (outputs) {draft.outputs = outputs}
     })
 
-    this.logger.debug('Step failed', { runId, jobId, stepId, error: error.message })
+    this.logger.debug('Step failed', { runId, traceId: runId, jobId, stepId, error: error.message })
 
     await this.publishEvent({
       type: EVENT_NAMES.step.failed,
@@ -935,7 +935,7 @@ export class WorkflowEngine {
       payload: { jobId, stepId },
     })
 
-    this.logger.info('Step waiting for approval', { runId, jobId, stepId })
+    this.logger.info('Step waiting for approval', { runId, traceId: runId, jobId, stepId })
   }
 
   /**
@@ -1044,7 +1044,7 @@ export class WorkflowEngine {
       jobDraft.finishedAt = undefined
     })
 
-    this.logger.info(action === 'approve' ? 'Approval granted' : 'Approval rejected', { runId, jobId, stepId, comment })
+    this.logger.info(action === 'approve' ? 'Approval granted' : 'Approval rejected', { runId, traceId: runId, jobId, stepId, comment })
 
     await this.publishEvent({
       type: EVENT_NAMES.step.updated,
@@ -1230,7 +1230,7 @@ export class WorkflowEngine {
         if (!job) { continue }
         if (job.status !== 'running' && job.status !== 'queued') {
           this.logger.debug('Restart reconciliation kept a job that is no longer abandoned', {
-            runId, jobId, jobStatus: job.status,
+            runId, traceId: runId, jobId, jobStatus: job.status,
           })
           continue
         }
@@ -1310,7 +1310,7 @@ export class WorkflowEngine {
         // Process all interrupted jobs in this run in parallel
         await Promise.all(
           interruptedJobs.map(async job => {
-            this.logger.info('Resuming interrupted job', { runId, jobId: job.id })
+            this.logger.info('Resuming interrupted job', { runId, traceId: runId, jobId: job.id })
 
             await this.stateStore.transitionJob(runId, job.id, 'queued', (draft) => {
               draft.startedAt = undefined
@@ -1344,7 +1344,7 @@ export class WorkflowEngine {
    * is reserved for infrastructure failures and is no longer set here (B-029).
    */
   private async deadLetterJob(runId: string, jobId: string, error: Error): Promise<void> {
-    this.logger.warn('Job dead-lettered after max retries', { runId, jobId })
+    this.logger.warn('Job dead-lettered after max retries', { runId, traceId: runId, jobId })
 
     const dlqKey = workflowDeadLetterCacheKey(runId, jobId)
     const run = await this.stateStore.getRun(runId)
@@ -1490,7 +1490,7 @@ export class WorkflowEngine {
   ): Promise<RunSnapshot | null> {
     const run = await this.getRun(runId)
     if (!run) {
-      this.logger.warn('Cannot create snapshot: run not found', { runId })
+      this.logger.warn('Cannot create snapshot: run not found', { runId, traceId: runId })
       return null
     }
 
@@ -1519,7 +1519,7 @@ export class WorkflowEngine {
     // Load snapshot
     const snapshot = await this.snapshotStorage.getSnapshot(runId)
     if (!snapshot) {
-      this.logger.warn('Cannot replay: snapshot not found', { runId })
+      this.logger.warn('Cannot replay: snapshot not found', { runId, traceId: runId })
       return null
     }
 
@@ -1695,7 +1695,9 @@ export class WorkflowEngine {
 
     this.logger.info('Run replayed as new run from snapshot', {
       originalRunId: runId,
+      runId: newRunId,
       newRunId,
+      traceId: newRunId,
       fromStepId: options.fromStepId,
     })
 

@@ -143,6 +143,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
       if (filters.level) {params.append('level', filters.level);}
       if (filters.plugin) {params.append('plugin', filters.plugin);}
       if (filters.executionId) {params.append('executionId', filters.executionId);}
+      if (filters.traceId) {params.append('traceId', filters.traceId);}
       if (filters.tenantId) {params.append('tenantId', filters.tenantId);}
       if (filters.search) {params.append('search', filters.search);}
       if (filters.limit !== undefined) {params.append('limit', String(filters.limit));}
@@ -176,6 +177,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
     if (filters?.level) {params.append('level', filters.level);}
     if (filters?.plugin) {params.append('plugin', filters.plugin);}
     if (filters?.executionId) {params.append('executionId', filters.executionId);}
+    if (filters?.traceId) {params.append('traceId', filters.traceId);}
     if (filters?.tenantId) {params.append('tenantId', filters.tenantId);}
 
     const queryString = params.toString();

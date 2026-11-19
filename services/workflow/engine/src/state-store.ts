@@ -58,13 +58,14 @@ export class StateStore {
 
   async saveRun(run: WorkflowRun): Promise<void> {
     const path = runRecordPath(run.id)
-    this.logger.debug('Persisting workflow run', { runId: run.id, path })
+    this.logger.debug('Persisting workflow run', { runId: run.id, traceId: run.id, path })
     await this.storage.write(path, Buffer.from(JSON.stringify(run), 'utf8'))
     try {
       await this.cache.zadd('workflow:runs:index', new Date(run.createdAt).getTime(), run.id)
     } catch (error) {
       this.logger.warn('Failed to update workflow run index; storage record is durable', {
         runId: run.id,
+        traceId: run.id,
         error: error instanceof Error ? error.message : String(error),
       })
     }
@@ -79,13 +80,14 @@ export class StateStore {
       const run: unknown = JSON.parse(payload.toString('utf8'))
       if (!run || typeof run !== 'object' || Array.isArray(run)
           || !('id' in run) || run.id !== runId || !('jobs' in run) || !Array.isArray(run.jobs)) {
-        this.logger.error('Stored workflow run does not match its storage key', undefined, { runId })
+        this.logger.error('Stored workflow run does not match its storage key', undefined, { runId, traceId: runId })
         return null
       }
       return run as WorkflowRun
     } catch (error) {
       this.logger.error('Failed to parse stored workflow run', error instanceof Error ? error : undefined, {
         runId,
+        traceId: runId,
       })
       return null
     }
@@ -98,6 +100,7 @@ export class StateStore {
     } catch (error) {
       this.logger.warn('Failed to remove workflow run from cache index', {
         runId,
+        traceId: runId,
         error: error instanceof Error ? error.message : String(error),
       })
     }
