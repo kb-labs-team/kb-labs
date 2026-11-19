@@ -104,6 +104,7 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-280](scenarios/S-280-statebroker-durability.md) | StateBroker cache survives daemon and host restarts | solo-developer | P1 | planned | false | [local] | [cli] | — |
 | [S-281](scenarios/S-281-sqlite-vector-input-contract.md) | SQLite vector storage rejects invalid dimensions and values | plugin-author | P1 | planned | false | [local] | [api] | — |
 | [S-284](scenarios/S-284-local-candidate-registry-delivery.md) | Deliver and install immutable candidates from a local registry | platform-team | P0 | planned | false | [local] | [cli] | — |
+| [S-298](scenarios/S-298-node24-marketplace-install-with-corepack.md) | Marketplace plugin install without standalone pnpm | solo-developer | P0 | active | true | [local] | [cli] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.

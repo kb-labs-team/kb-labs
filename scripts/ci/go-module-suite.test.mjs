@@ -279,8 +279,25 @@ test('reusable installer workflow runs a native macOS install from the candidate
   assert.equal(setup.run, 'e2e/journey/native-macos-smoke.sh');
   assert.doesNotThrow(() => accessSync(path.join(root, setup.run), constants.X_OK));
   assert.deepEqual(native.steps.filter((step) => step.run).map((step) => step.run), ['e2e/journey/native-macos-smoke.sh']);
+  const upload = native.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
+  assert.equal(upload.with?.name, 'service-journey-results-macos-native');
+  assert.match(upload.with?.path, /\.journey\/reports\/service-native-macos\.json/);
+  assert.match(upload.with?.path, /\.journey\/reports\/invocations\/native-macos\/\*\*/);
+  assert.ok(coverage.needs.includes('native_macos'), 'release coverage includes the native Marketplace run');
   assert.ok(!native.steps.some((step) => step.uses?.startsWith('docker/')));
   assert.equal(native['timeout-minutes'] > 0, true);
+});
+
+test('installer journey artifacts use safe names and preserve redacted command logs', () => {
+  const workflow = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
+  const upload = workflow.jobs.journey.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
+  const sanitizer = workflow.jobs.journey.steps.find((step) => step.id === 'artifact-name');
+  assert.equal(sanitizer.if, 'always()');
+  assert.equal(sanitizer.env.MATRIX_OS, '${{ matrix.os }}');
+  assert.equal(sanitizer.env.MATRIX_CASE, '${{ matrix.case }}');
+  assert.equal(upload.with.name, '${{ steps.artifact-name.outputs.name }}');
+  assert.match(upload.with.path, /\.journey\/reports\/invocations\/\*\*/);
+  assert.doesNotMatch(upload.with.path, /container-outcomes\.json|containers\/\*\*/);
 });
 
 test('reusable installer workflow runs the dist-free journey preflight before producer builds', () => {
@@ -299,6 +316,10 @@ test('reusable installer workflow runs the dist-free journey preflight before pr
 // case: S-261.2
 test('native macOS smoke entry installs the candidate and runs the installed CLI', () => {
   const commands = nativeInstallCommands({ workspace: '/workspace', tempRoot: '/tmp/native', platformRoot: '/tmp/platform', registryUrl: 'http://127.0.0.1:49183' });
+  const smokeScript = readFileSync(path.join(root, 'e2e/journey/native-macos-smoke.sh'), 'utf8');
+  assert.match(smokeScript, /node_major=.*process\.versions\.node/);
+  assert.match(smokeScript, /command -v corepack/);
+  assert.match(smokeScript, /command -v pnpm/);
   assert.deepEqual(commands.map(({ command, args, cwd }) => [command, args, cwd]), [
     ['make', ['build', 'BINARY=/tmp/native/kb-create'], '/workspace/tools/kb-create'],
     ['/tmp/native/kb-create', [
@@ -306,11 +327,14 @@ test('native macOS smoke entry installs the candidate and runs the installed CLI
       '--platform-root', '/tmp/platform', '--project-root', '/workspace', '--scenario', 'explore',
       '--scenario-answers', '{"access.mode":"local"}', '--registry', 'http://127.0.0.1:49183',
     ], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['--version'], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['doctor', '--json'], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['project', 'add', '/workspace', '--json'], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['qa', 'cases', 'list', '--json'], '/workspace'],
+    ['/tmp/platform/current/node_modules/.bin/kb', ['--version'], '/workspace'],
+    ['/tmp/platform/current/node_modules/.bin/kb', ['doctor', '--json'], '/workspace'],
+    ['/tmp/platform/current/node_modules/.bin/kb', ['project', 'add', '/workspace', '--json'], '/workspace'],
+    ['/tmp/platform/current/node_modules/.bin/kb', ['qa', 'cases', 'list', '--json'], '/workspace'],
   ]);
+  const install = commands[1];
+  assert.equal(install.args[install.args.indexOf('--platform-root') + 1], '/tmp/platform');
+  assert.match(readFileSync(path.join(root, 'e2e/journey/native-macos-install.mjs'), 'utf8'), /path\.join\(installRoot, 'current', '\.kb'/);
 });
 
 // case: S-261.2

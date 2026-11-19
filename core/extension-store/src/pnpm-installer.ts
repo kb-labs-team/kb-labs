@@ -20,10 +20,13 @@ import type { PackageInstallOptions, PackageInstallResult, PackageInstaller } fr
 import { IntegrityMismatchError, StoreInstallError } from './errors.js';
 
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000;
+const COREPACK_PINNED_PNPM = 'pnpm@11.4.0';
 
 export interface PnpmInstallerOptions {
   /** Overrides the `pnpm` executable, mainly for tests. Defaults to `'pnpm'`. */
   pnpmPath?: string;
+  /** Corepack executable used only when `pnpm` is missing. Defaults to `'corepack'`. */
+  corepackPath?: string;
   timeoutMs?: number;
   /** Installed platform root that owns `.kb/v2/cache/packages` artifacts. */
   platformRoot?: string;
@@ -32,11 +35,13 @@ export interface PnpmInstallerOptions {
 /** Default `PackageInstaller`: a real `pnpm install` into a fresh synthetic project. */
 export class PnpmInstaller implements PackageInstaller {
   private readonly pnpmPath: string;
+  private readonly corepackPath: string;
   private readonly timeoutMs: number;
   private readonly platformRoot?: string;
 
   constructor(options: PnpmInstallerOptions = {}) {
     this.pnpmPath = options.pnpmPath ?? 'pnpm';
+    this.corepackPath = options.corepackPath ?? 'corepack';
     this.timeoutMs = options.timeoutMs ?? INSTALL_TIMEOUT_MS;
     this.platformRoot = options.platformRoot;
   }
@@ -63,15 +68,30 @@ export class PnpmInstaller implements PackageInstaller {
       }
     }
 
+    const installArgs = ['install', '--store-dir', casDir];
+    const { execa } = await import('execa');
     try {
-      const { execa } = await import('execa');
-      await execa(this.pnpmPath, ['install', '--store-dir', casDir], {
+      await execa(this.pnpmPath, installArgs, {
         cwd: projectDir,
         timeout: this.timeoutMs,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new StoreInstallError({ plugin: `${name}@${version}` }, `pnpm install failed: ${message}`);
+      if (this.pnpmPath === 'pnpm' && isMissingExecutable(err)) {
+        try {
+          await pinSyntheticProjectPackageManager(projectDir);
+          await execa(this.corepackPath, ['pnpm', ...installArgs], {
+            cwd: projectDir,
+            timeout: this.timeoutMs,
+            env: { ...process.env, COREPACK_HOME: path.join(casDir, '.corepack') },
+          });
+        } catch (corepackErr) {
+          const message = corepackErr instanceof Error ? corepackErr.message : String(corepackErr);
+          throw new StoreInstallError({ plugin: `${name}@${version}` }, `pnpm install failed: ${message}`);
+        }
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new StoreInstallError({ plugin: `${name}@${version}` }, `pnpm install failed: ${message}`);
+      }
     }
 
     if (linkedPlatformCache) {
@@ -86,6 +106,18 @@ export class PnpmInstaller implements PackageInstaller {
 
     return { integrity, packageRoot };
   }
+}
+
+function isMissingExecutable(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT';
+}
+
+async function pinSyntheticProjectPackageManager(projectDir: string): Promise<void> {
+  const packageJsonPath = path.join(projectDir, 'package.json');
+  const raw = await fs.readFile(packageJsonPath, 'utf8');
+  const pkg = JSON.parse(raw) as Record<string, unknown>;
+  pkg.packageManager = COREPACK_PINNED_PNPM;
+  await fs.writeFile(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8');
 }
 
 async function prepareVerifiedTarball(

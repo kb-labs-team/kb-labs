@@ -9,12 +9,27 @@ source "$ROOT/e2e/journey/candidate-services.sh"
 # service owner runs the same Verdaccio natively.
 journey_compose_init "$ROOT" native
 
+node_major="$(node -p 'process.versions.node.split(".")[0]')"
+if [[ "$node_major" != "24" ]]; then
+  echo "Native Marketplace smoke requires Node 24; found $(node --version)." >&2
+  exit 1
+fi
+if ! command -v corepack >/dev/null 2>&1; then
+  echo "Native Marketplace smoke requires Corepack from the Node 24 distribution." >&2
+  exit 1
+fi
+if command -v pnpm >/dev/null 2>&1; then
+  echo "Native Marketplace smoke must run without standalone pnpm on PATH." >&2
+  exit 1
+fi
+
 native_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/native-installer-smoke.XXXXXX")"
 export HOME="$native_root/home"
 mkdir -p "$HOME"
 unset KB_PLATFORM_ROOT KB_HOME KB_NET_OFFSET
 export NPM_CONFIG_USERCONFIG="$HOME/.npmrc"
 export KB_JOURNEY_NATIVE_ROOT="$native_root"
+export KB_JOURNEY_CASE_REPORT="$ROOT/.journey/reports/service-native-macos.json"
 
 cleanup() {
   local status=$?
@@ -23,7 +38,17 @@ cleanup() {
     (( status != 0 )) || status=1
   fi
   journey_compose_cleanup
-  rm -rf "$native_root"
+  # Go module-cache directories are intentionally read-only. Make only the
+  # disposable tree's directories writable before removing the isolated HOME;
+  # file permissions do not prevent unlinking files from writable directories.
+  if ! find "$native_root" -type d -exec chmod u+w {} +; then
+    echo "Could not make native installer smoke directories removable: $native_root" >&2
+    (( status != 0 )) || status=1
+  fi
+  if ! rm -rf "$native_root"; then
+    echo "Could not remove native installer smoke root: $native_root" >&2
+    (( status != 0 )) || status=1
+  fi
   exit "$status"
 }
 trap cleanup EXIT INT TERM
