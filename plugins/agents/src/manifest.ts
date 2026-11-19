@@ -102,6 +102,11 @@ const pluginPermissions = combinePermissions()
   })
   .build();
 
+const qualityReportPermissions = combinePermissions()
+  .with(pluginPermissions)
+  .withShell({ allow: ['sqlite3'] })
+  .build();
+
 export const manifest = {
   schema: 'kb.plugin/3',
   id: '@kb-labs/agents',
@@ -296,6 +301,7 @@ export const manifest = {
           'kb agent quality report show --session-id=session-123',
           'kb agent quality report show --days=3 --json',
         ],
+        permissions: qualityReportPermissions,
       },
       // File change history commands
       {
