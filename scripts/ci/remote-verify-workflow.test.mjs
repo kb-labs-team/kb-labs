@@ -14,6 +14,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const readYaml = (file) => load(readFileSync(path.join(root, file), 'utf8'));
 
+test('project-scoped workflow lint registers the checkout in a job-local KB_HOME first', () => {
+  const workflow = readYaml('.github/workflows/ci-pr.yml');
+  const job = workflow.jobs['devkit-checks'];
+  assert.equal(job.env.KB_HOME, '${{ runner.temp }}/kb-home');
+  const registerIndex = job.steps.findIndex((step) => step.name === 'Register checkout for project-scoped CLI checks');
+  const lintIndex = job.steps.findIndex((step) => step.name === 'Lint workflow definitions');
+  assert.ok(registerIndex >= 0 && lintIndex > registerIndex, 'checkout registration runs before workflow lint');
+  assert.equal(job.steps[registerIndex].run, 'pnpm kb project add "$GITHUB_WORKSPACE"');
+});
+
 // case: S-262.7
 test('remote verification builds once and fans out independent and artifact-dependent test matrices', () => {
   const workflow = readYaml('.github/workflows/remote-verify.yml');
