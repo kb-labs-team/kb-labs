@@ -59,12 +59,17 @@ export function parseAffectedSelection(output, profileName) {
 }
 
 export function createTestMatrix(packagesOrSelection, independentStages, buildDependentStages, packageTestStage, shardLimit, stagePackages = {}) {
-  const selection = Array.isArray(packagesOrSelection) ? { packages: packagesOrSelection, internalToolPackages: [], stagePackages } : packagesOrSelection;
+  const selection = Array.isArray(packagesOrSelection)
+    ? { packages: packagesOrSelection, unitTestPackages: packagesOrSelection, internalToolPackages: [], stagePackages }
+    : packagesOrSelection;
   const packages = selection.packages;
-  const unitTestPackages = selection.unitTestPackages ?? packages;
+  const unitTestPackages = selection.unitTestPackages;
   stagePackages = selection.stagePackages ?? stagePackages;
   if (!Number.isSafeInteger(shardLimit) || shardLimit < 1) throw new Error('Verification profile maxParallel must be a positive integer.');
   if (new Set(packages).size !== packages.length) throw new Error('Affected package selection contains a duplicate package.');
+  if (!Array.isArray(unitTestPackages) || unitTestPackages.some((name) => !packages.includes(name)) || new Set(unitTestPackages).size !== unitTestPackages.length) {
+    throw new Error('Remote test plan requires a valid unitTestPackages subset resolved from registered package test tasks.');
+  }
   const testStages = [...independentStages, ...buildDependentStages];
   if (new Set(testStages).size !== testStages.length) throw new Error('Verification profile contains a duplicate test stage.');
   const shardCount = Math.min(unitTestPackages.length, shardLimit);
