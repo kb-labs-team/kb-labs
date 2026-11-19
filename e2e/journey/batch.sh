@@ -113,7 +113,8 @@ run_prepare() {
         esac
         [ ! -d "$package_path/dist" ] || printf './%s/dist\n' "$package_path" >> "$shared/archive-files.txt"
       done < "$shared/workspace-packages.txt"
-      for item in .journey/runner-inputs .journey/release .journey/kb-create-release-index e2e/packages; do
+      for item in .journey/runner-inputs .journey/release .journey/kb-create-release-index e2e/packages \
+        .kb/deploy/state-daemon .kb/deploy/marketplace-registry-app .kb/deploy/image-default; do
         [ ! -e "$item" ] || printf '%s\n' "./$item" >> "$shared/archive-files.txt"
       done
     } &&
@@ -165,7 +166,13 @@ run_mode() {
     echo "journey producer build-candidate.tar could not be extracted; see $mode_dir/archive-extract.log; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
     return 1
   fi
-  for log in reset build unit candidate release-build-output-check; do
+  if [ -n "$selected_cases" ] && printf '%s' ",$selected_cases," | grep -Eq ',S-268\.[0-9]+,'; then
+    if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/verify_registry_deploy_inputs.py" "$ROOT"; then
+      return 1
+    fi
+  fi
+  for log in reset build unit candidate deploy-inputs release-build-output-check; do
+    [ "$log" != deploy-inputs ] || [ -f "$shared/$log.log" ] || continue
     if [ ! -f "$shared/$log.log" ]; then
       echo "journey producer artifact is missing shared/$log.log; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
       return 1

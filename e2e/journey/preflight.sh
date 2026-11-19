@@ -92,6 +92,13 @@ if [ "$output_check_rc" -ne 0 ]; then
   echo "release package build outputs are missing; see $OUT/build.log; next: kb-devkit run build --affected" >&2
   exit 1
 fi
+if [ -n "$registry_build_packages" ]; then
+  failed_stage=deploy-inputs
+  if ! bash "$ROOT/e2e/journey/prepare-registry-deploy-inputs.sh" > "$OUT/deploy-inputs.log" 2>&1; then
+    echo "Registry journey image inputs are incomplete; see $OUT/deploy-inputs.log; next: bash e2e/journey/prepare-registry-deploy-inputs.sh" >&2
+    exit 1
+  fi
+fi
 build_seconds=$(( $(date +%s) - stage_started ))
 
 failed_stage=candidate

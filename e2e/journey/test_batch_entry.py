@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -37,6 +38,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         shutil.copy2(REPO / "e2e/journey/jsonl.py", self.root / "e2e/journey/jsonl.py")
         shutil.copy2(REPO / "e2e/journey/scoreboard_contract.py", self.root / "e2e/journey/scoreboard_contract.py")
         shutil.copy2(REPO / "e2e/journey/preflight.sh", self.root / "e2e/journey/preflight.sh")
+        shutil.copy2(REPO / "e2e/journey/prepare-registry-deploy-inputs.sh", self.root / "e2e/journey/prepare-registry-deploy-inputs.sh")
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         shutil.copy2(
             REPO / "e2e/scripts/check-frozen-lockfile.sh",
@@ -123,6 +125,11 @@ case "$*" in
 esac
 case "$*" in
   *build-pack-extras.mjs*) exit 0 ;;
+  *generate-platform-image-default.mjs*)
+    mkdir -p "$ROOT/.kb/deploy/image-default"
+    printf '{}\\n' > "$ROOT/.kb/deploy/image-default/kb.config.json"
+    exit 0
+    ;;
 esac
 case "$*" in
   *--build-outputs*)
@@ -204,8 +211,17 @@ fi
 exit 2
 ''')
         self._script(self.bin / "pnpm", '''#!/bin/sh
-[ "$*" = "-r list --depth -1 --parseable" ] || exit 2
-printf '%s\\n' "$ROOT" "$ROOT/core/fixture"
+case "$*" in
+  "-r list --depth -1 --parseable") printf '%s\\n' "$ROOT" "$ROOT/core/fixture" ;;
+  "--version") printf '12.0.0\\n' ;;
+  deploy\ *)
+    for destination in "$@"; do :; done
+    mkdir -p "$destination/node_modules/.bin" "$destination/node_modules/pkg" "$destination/dist"
+    printf 'fixture\\n' > "$destination/node_modules/pkg/bin.js"
+    ln -s ../pkg/bin.js "$destination/node_modules/.bin/tool"
+    ;;
+  *) exit 2 ;;
+esac
 ''')
         real_tar = shutil.which("tar")
         self._script(self.bin / "tar", '''#!/bin/sh
@@ -218,7 +234,7 @@ exec "$REAL_TAR" "$@"
         self.env = {
             **isolated_environment(
                 Path(self.root / "home"), self.bin,
-                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash", "tar"),
+                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash", "tar", "ln"),
             ),
             "CALLS": str(self.calls),
             "REPORTS": str(self.root / ".journey/reports"),
@@ -270,8 +286,33 @@ exec "$REAL_TAR" "$@"
                  "REGISTRY_BUILD_ROOTS": "@fixture/publisher,@fixture/registry-app"},
             text=True, capture_output=True, check=False,
         )
-        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        deploy_log = self.root / "producer/shared/deploy-inputs.log"
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout + (deploy_log.read_text() if deploy_log.exists() else ""))
         self.assertIn("build packages=@fixture/publisher,@fixture/registry-app selected=2", self.calls.read_text())
+        archive = self.root / "producer/shared/build-candidate.tar"
+        with tarfile.open(archive) as candidate:
+            names = candidate.getnames()
+            for required in (
+                "./.kb/deploy/state-daemon/node_modules",
+                "./.kb/deploy/state-daemon/dist",
+                "./.kb/deploy/marketplace-registry-app/node_modules",
+                "./.kb/deploy/marketplace-registry-app/dist",
+                "./.kb/deploy/image-default/kb.config.json",
+            ):
+                self.assertTrue(any(name == required or name.startswith(required + "/") for name in names), required)
+            link = next(member for member in candidate.getmembers() if member.name.endswith("/node_modules/.bin/tool"))
+            self.assertTrue(link.issym())
+            self.assertEqual(link.linkname, "../pkg/bin.js")
+        consumer = self.root / "consumer"
+        consumer.mkdir()
+        extracted = subprocess.run(
+            [self.env["REAL_TAR"], "-xf", str(archive), "-C", str(consumer)],
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(extracted.returncode, 0, extracted.stderr)
+        extracted_link = consumer / ".kb/deploy/state-daemon/node_modules/.bin/tool"
+        self.assertTrue(extracted_link.is_symlink())
+        self.assertEqual(extracted_link.readlink(), Path("../pkg/bin.js"))
 
     def test_mode_without_scoreboard_fails_with_entry_cause(self):
         env = dict(self.env, OMIT_SCOREBOARD="local")
