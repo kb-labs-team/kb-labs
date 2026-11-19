@@ -92,8 +92,9 @@ describe.each(modes)('%s platform peer resolution', (mode) => {
 
     try {
       const result = await backend.execute(request);
-      expect(result.ok).toBe(true);
-      if (!result.ok) { throw new Error('execution backend rejected the fixture'); }
+      if (!result.ok) {
+        throw new Error(`Execution failed for ${mode}: ${JSON.stringify(result.error, null, 2)}`);
+      }
       expect(result.data).toMatchObject({
         platformMarker: 'installed-sdk',
         sdkUrl: pathToFileURL(path.join(sdkRoot, 'dist', 'index.js')).href,
