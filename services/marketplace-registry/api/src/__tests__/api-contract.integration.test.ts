@@ -284,10 +284,13 @@ describe('public Registry resolution and tarball access', () => {
     registry.canAccess.mockReturnValue(false);
     const app = await buildApp(undefined, registry);
     const knownPrivate = await app.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin/1.0.0/tarball', headers: gatewayHeaders() });
-    const unknown = await app.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin/9.9.9/tarball', headers: gatewayHeaders() });
+    const hiddenVersion = await app.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin/9.9.9/tarball', headers: gatewayHeaders() });
+    const absentVersion = await app.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin/8.8.8/tarball', headers: gatewayHeaders() });
     expect(knownPrivate.statusCode).toBe(404);
-    expect(unknown.statusCode).toBe(knownPrivate.statusCode);
-    expect(unknown.json()).toMatchObject({ code: 'VERSION_NOT_FOUND' });
+    expect(hiddenVersion.statusCode).toBe(knownPrivate.statusCode);
+    expect(absentVersion.statusCode).toBe(404);
+    expect(hiddenVersion.json()).toMatchObject({ code: 'VERSION_NOT_FOUND' });
+    expect(absentVersion.json()).toMatchObject({ code: 'VERSION_NOT_FOUND' });
     expect(knownPrivate.json()).toMatchObject({ code: 'VERSION_NOT_FOUND' });
     expect(registry.getTarball).not.toHaveBeenCalled();
     await app.close();
@@ -297,9 +300,13 @@ describe('public Registry resolution and tarball access', () => {
     const publicUnknown = await publicApp.inject({
       method: 'GET', url: '/api/v1/packages/kirill/my-plugin/9.9.9/tarball', headers: gatewayHeaders(),
     });
+    const publicAbsent = await publicApp.inject({
+      method: 'GET', url: '/api/v1/packages/kirill/my-plugin/8.8.8/tarball', headers: gatewayHeaders(),
+    });
     expect(publicUnknown.statusCode).toBe(404);
     expect(publicUnknown.json()).toMatchObject({ code: 'VERSION_NOT_FOUND' });
-    expect(publicUnknown.json()).toEqual(unknown.json());
+    expect(publicUnknown.json()).toEqual(hiddenVersion.json());
+    expect(publicAbsent.json()).toEqual(absentVersion.json());
     await publicApp.close();
 
     const ownerRegistry = makeMockRegistry();

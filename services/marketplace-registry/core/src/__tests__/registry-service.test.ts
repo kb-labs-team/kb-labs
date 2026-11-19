@@ -644,6 +644,11 @@ describe('RegistryService.listPublicPackages', () => {
       description: 'legacy cached private metadata', primaryKind: 'plugin', installs: 123,
     }]);
 
+    await expect(svc.listPublicPackages()).resolves.toEqual([]);
+    expect(await cache.get('registry:search:__index')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ description: 'legacy cached private metadata' }),
+    ]));
+
     await svc.publish(SMALL_TARBALL, makePkg({ name: 'public-widget', description: 'safe catalog metadata' }), 'public-author', 'ns-public');
 
     expect(await cache.get('registry:search:__index')).toBeNull();
