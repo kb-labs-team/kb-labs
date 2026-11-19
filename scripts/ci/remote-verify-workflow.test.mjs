@@ -227,12 +227,22 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
     assert.match(outputs, /selected_packages=\[/);
     const gatedPackages = matrix.dependent.include.filter(({ stage }) => stage === profile.packageTestStage).flatMap(({ packages = [] }) => packages);
     const kbRunnerModule = 'github.com/kb-labs/kb-runner';
+    const serviceE2ePackage = '@kb-labs/e2e-services';
+    const pluginE2ePackage = '@kb-labs/e2e-plugins';
+    const webPackage = 'kb-labs-web';
+    assert.ok(selection.packages.includes(serviceE2ePackage), 'candidate build selection must retain the services E2E package');
+    assert.ok(!selection.unitTestPackages.includes(serviceE2ePackage), 'services E2E package has no unit-test task');
+    assert.ok(!gatedPackages.includes(serviceE2ePackage), 'services E2E package must not create an empty unit-test shard');
+    assert.ok(selection.packages.includes(pluginE2ePackage), 'candidate build selection must retain the plugin E2E package');
+    assert.ok(!selection.unitTestPackages.includes(pluginE2ePackage), 'plugin E2E package has an e2e task, not a unit-test task');
+    assert.ok(selection.packages.includes(webPackage), 'candidate build selection must retain the web package');
+    assert.ok(!selection.unitTestPackages.includes(webPackage), 'web package has no unit-test task');
     assert.ok(selection.internalToolPackages.includes(kbRunnerModule));
     assert.ok(!gatedPackages.includes(kbRunnerModule));
-    for (const name of ['@kb-labs/commit', '@kb-labs/e2e-plugins', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', 'kb-labs-web', '@kb-labs/core-platform']) {
+    for (const name of ['@kb-labs/commit', '@kb-labs/e2e-delivery', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', '@kb-labs/core-platform']) {
       assert.ok(gatedPackages.includes(name), `candidate plan omitted ${name}`);
     }
-    assert.deepEqual(gatedPackages.sort(), selection.packages.sort());
+    assert.deepEqual(gatedPackages.sort(), selection.unitTestPackages.sort());
     assert.deepEqual(matrix.dependent.include.find(({ stage }) => stage === 'kb-create-go-suite'), {
       stage: 'kb-create-go-suite', shard: 1, packages: ['kb-create'],
     });
