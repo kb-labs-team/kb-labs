@@ -44,9 +44,13 @@ var affectedCmd = &cobra.Command{
 			packages := make([]string, 0, len(selection.Packages))
 			internalToolPackages := make([]string, 0)
 			testPackages, skippedManualTasks := packageNamesWithTaskPolicy(ws, cfg, selection.Packages, "test")
+			automaticTestPackages := make(map[string]bool, len(testPackages))
+			for _, name := range testPackages {
+				automaticTestPackages[name] = true
+			}
 			for _, pkg := range selection.Packages {
 				packages = append(packages, pkg.Name)
-				if pkg.ReleaseLane == "internal-tool" {
+				if pkg.ReleaseLane == "internal-tool" && automaticTestPackages[pkg.Name] {
 					internalToolPackages = append(internalToolPackages, pkg.Name)
 				}
 			}
