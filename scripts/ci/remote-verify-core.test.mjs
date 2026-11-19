@@ -43,15 +43,11 @@ test('Git adapter sends the same configured remote to push, lookup, and delete c
   await operations.pushRef('origin', 'verify/stream', sha);
   assert.equal(await operations.resolveRef('origin', 'verify/stream'), sha);
   await operations.deleteRef('origin', 'verify/stream');
-  assert.deepEqual(commands.map(({ args }) => args.slice(4, 6)), [
-    ['push', 'origin'],
-    ['ls-remote', 'origin'],
-    ['push', 'origin'],
+  assert.deepEqual(commands, [
+    { command: 'git', args: ['push', 'origin', `${sha}:refs/heads/verify/stream`] },
+    { command: 'git', args: ['ls-remote', 'origin', 'refs/heads/verify/stream'] },
+    { command: 'git', args: ['push', 'origin', ':refs/heads/verify/stream'] },
   ]);
-  for (const { command, args } of commands) {
-    assert.equal(command, 'git');
-    assert.deepEqual(args.slice(0, 4), ['-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential']);
-  }
 });
 
 // case: S-262.10
