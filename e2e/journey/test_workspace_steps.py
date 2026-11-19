@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from service_steps import Journey
 from installed_fixture import layout_value
+from journey_resources import config_parser_source_path
+from invocations import run_command
 from workspace_steps import run_workspace_cli_steps, workspace_checkout_problem
 
 
@@ -35,9 +37,26 @@ def workspace_root_with_registry_plugin_lock(source_root: Path, fixture_root: Pa
     (kb_dir / "marketplace.lock").write_text(json.dumps(lock), encoding="utf-8")
     config = source_root / ".kb" / "kb.config.jsonc"
     if config.is_file():
-        (kb_dir / "kb.config.jsonc").symlink_to(config)
+        output_config = kb_dir / "kb.config.jsonc"
+        script = (
+            "import { readFileSync, writeFileSync } from 'node:fs'; "
+            "const { parseJsonc } = await import(process.argv[1]); "
+            "const config = parseJsonc(readFileSync(process.argv[2], 'utf8')); "
+            "config.marketplace ??= {}; config.marketplace.sync ??= {}; "
+            "config.marketplace.sync.include = ['plugins/release', 'plugins/review', 'plugins/mind', "
+            "'plugins/agents', 'adapters/fs']; "
+            "writeFileSync(process.argv[3], JSON.stringify(config));"
+        )
+        result = run_command(
+            ["node", "--input-type=module", "-e", script,
+             config_parser_source_path().as_uri(), str(config), str(output_config)],
+            cwd=source_root,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise AssertionError(f"could not prepare scoped workspace config fixture: {result.stderr or result.stdout}")
     else:
-        (kb_dir / "kb.config.jsonc").write_text("{}\n", encoding="utf-8")
+        raise AssertionError("workspace fixture requires .kb/kb.config.jsonc")
     return fixture_root
 
 
@@ -70,6 +89,22 @@ class WorkspaceCliStepsTest(unittest.TestCase):
 
         self.assertIsNotNone(problem)
         self.assertIn("plugins/example/dist/manifest.js", problem)
+
+    def test_registry_sync_fixture_roots_are_in_registry_build_closure(self):
+        result = run_command(
+            ["node", "e2e/journey/registry-build-roots.mjs"],
+            cwd=Path(__file__).resolve().parents[2],
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        roots = set((result.stdout or "").strip().split(","))
+        self.assertTrue({
+            "@kb-labs/release",
+            "@kb-labs/review",
+            "@kb-labs/mind",
+            "@kb-labs/agents",
+            "@kb-labs/adapters-fs",
+        }.issubset(roots))
 
     def test_missing_workspace_checkout_fails_once_with_all_workspace_claims(self):
         with tempfile.TemporaryDirectory(prefix="kb-workspace-missing-") as directory:
