@@ -33,7 +33,7 @@ test('stream matrix uses the kb-devkit package set and registered stream suites'
 });
 
 // case: S-277.1
-test('candidate plan keeps all previous gating packages except internal tools', () => {
+test('candidate preserves its build package set and shards only packages with test tasks', () => {
   const selection = parseAffectedSelection(JSON.stringify({
     ok: true,
     data: {
@@ -48,8 +48,8 @@ test('candidate plan keeps all previous gating packages except internal tools', 
         'github.com/kb-labs/kb-runner',
       ],
       unitTestPackages: [
-        '@kb-labs/core-platform', '@kb-labs/commit', '@kb-labs/e2e-plugins', '@kb-labs/e2e-shared',
-        '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', 'kb-labs-web', 'github.com/kb-labs/kb-runner',
+        '@kb-labs/core-platform', '@kb-labs/commit', '@kb-labs/e2e-shared',
+        '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic',
       ],
       internalToolPackages: ['github.com/kb-labs/kb-runner'],
       stagePackages: { 'kb-create-go-suite': ['kb-create'] },
@@ -59,9 +59,13 @@ test('candidate plan keeps all previous gating packages except internal tools', 
   }), 'candidate');
 
   assert.deepEqual(selection.packages, ['@kb-labs/core-platform', '@kb-labs/commit', '@kb-labs/e2e-plugins', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', 'kb-labs-web']);
+  assert.deepEqual(selection.unitTestPackages, ['@kb-labs/core-platform', '@kb-labs/commit', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic']);
   assert.deepEqual(selection.internalToolPackages, ['github.com/kb-labs/kb-runner']);
   const matrix = createTestMatrix(selection, profile.independentTestStages.candidate, profile.buildDependentTestStages.candidate, profile.packageTestStage, profile.maxParallel);
-  assert.deepEqual(matrix.dependent.include.filter(({ stage }) => stage === profile.packageTestStage).flatMap(({ packages = [] }) => packages), selection.packages);
+  const unitTestPackages = matrix.dependent.include.filter(({ stage }) => stage === profile.packageTestStage).flatMap(({ packages = [] }) => packages);
+  assert.deepEqual(unitTestPackages, selection.unitTestPackages);
+  assert.ok(!unitTestPackages.includes('@kb-labs/e2e-plugins'));
+  assert.ok(!unitTestPackages.includes('kb-labs-web'));
   assert.deepEqual(matrix.internalTool.include, [{ stage: 'internal-tool-tests', shard: 1, packages: ['github.com/kb-labs/kb-runner'] }]);
   assert.ok(matrix.dependent.include.some((entry) => entry.stage === 'kb-create-go-suite' && entry.shard === 1 && entry.packages[0] === 'kb-create'));
 });
