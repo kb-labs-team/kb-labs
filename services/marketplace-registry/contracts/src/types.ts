@@ -60,6 +60,12 @@ export interface RegistryVersionEntry {
   publishedAt: string;
   /** SRI integrity hash of the tarball */
   integrity: string;
+  /** Visibility for this release; absent only in legacy records. */
+  visibility?: RegistryVisibility;
+  /** Metadata captured with this release; absent only in legacy records. */
+  meta?: PackageMeta;
+  /** Primary entity kind captured with this release; absent only in legacy records. */
+  primaryKind?: EntityKind;
   /** Platform signature (present for trusted/public packages) */
   signature?: EntitySignature;
   yanked?: boolean;
@@ -77,6 +83,8 @@ export interface RegistryEntry {
   authorNamespaceId: string;
   /** Visibility: public (listed in catalog) or private (allowlist only) */
   visibility: RegistryVisibility;
+  /** Visibility attached to the legacy aggregate install counter when migrated. */
+  legacyStatsVisibility?: RegistryVisibility;
   /** Trust level: trusted = signed by KB Labs Platform */
   trust: RegistryTrust;
   /** namespaceIds allowed to install (private packages) */

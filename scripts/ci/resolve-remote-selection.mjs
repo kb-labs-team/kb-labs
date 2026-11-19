@@ -105,6 +105,7 @@ const readAffectedSelection = (result) => {
     throw new Error(`kb-devkit affected --json returned invalid JSON: ${error.message}`);
   }
   const packages = envelope?.data?.packages;
+  const testPackages = envelope?.data?.testPackages;
   const internalToolPackages = envelope?.data?.internalToolPackages;
   const selectionReason = envelope?.data?.selectionReason;
   if (envelope?.ok !== true || !Array.isArray(packages) || packages.some((name) => typeof name !== 'string' || !name)) {
@@ -112,7 +113,10 @@ const readAffectedSelection = (result) => {
   }
   if (typeof selectionReason !== 'string') throw new Error('kb-devkit affected --json returned an invalid selection reason. Rerun the remote verification prepare job.');
   if (!Array.isArray(internalToolPackages)) throw new Error('kb-devkit affected --json returned no internal-tool package selection. Rerun the remote verification prepare job.');
-  return { packages, internalToolPackages, selectionReason };
+  if (!Array.isArray(testPackages) || testPackages.some((name) => typeof name !== 'string' || !name) || new Set(testPackages).size !== testPackages.length || testPackages.some((name) => !packages.includes(name))) {
+    throw new Error('kb-devkit affected --json returned an invalid test-task package selection. Rerun the remote verification prepare job.');
+  }
+  return { packages, testPackages, internalToolPackages, selectionReason };
 };
 try {
   let changed = runChangedFiles();
@@ -151,7 +155,7 @@ try {
     result = runAffected();
     selection = readAffectedSelection(result);
   }
-  let { packages, internalToolPackages, selectionReason } = selection;
+  let { packages, testPackages, internalToolPackages, selectionReason } = selection;
   const emptyAffectedReason = candidateFullFallbackReason({ changedPathCount: changedPaths.length, packages });
   if (emptyAffectedReason && !fullSelection) {
     forcedFullReason = emptyAffectedReason;
@@ -162,7 +166,7 @@ try {
     if (changed.error || changed.status !== 0) throw new Error(`Full changed-path selection failed (exit ${changed.status}): ${changed.stderr || changed.stdout || changed.error?.message}`);
     result = runAffected();
     selection = readAffectedSelection(result);
-    ({ packages, internalToolPackages, selectionReason } = selection);
+    ({ packages, testPackages, internalToolPackages, selectionReason } = selection);
   }
   if (fullSelection && packages.length === 0) {
     throw new Error(`${forcedFullReason || 'full: full selection'}; no workspace packages were returned.`);
@@ -180,7 +184,7 @@ try {
   const finalChangedPaths = JSON.parse(readFileSync(changedFilesPath, 'utf8'));
   const mode = fullSelection || selectionReason.startsWith('full:') ? 'full' : 'affected';
   const reason = forcedFullReason || (mode === 'full' && !selectionReason ? 'full: candidate has no integration base ref' : selectionReason);
-  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, internalToolPackages, stagePackages, changedPathCount: finalChangedPaths.length, selectionReason: reason, mode, baseSha: selectionBaseSha }, selectedPackageCount: packages.length })}\n`);
+  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, unitTestPackages: testPackages, internalToolPackages, stagePackages, changedPathCount: finalChangedPaths.length, selectionReason: reason, mode, baseSha: selectionBaseSha }, selectedPackageCount: packages.length })}\n`);
   process.stdout.write(`Resolved ${packages.length} package(s) from ${finalChangedPaths.length} path(s) using kb-devkit (${reason}).\n`);
 } catch (error) {
   process.stderr.write(`${error.message}\n`);

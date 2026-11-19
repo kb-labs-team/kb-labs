@@ -1,5 +1,17 @@
 # Product decisions log
 
+## 2026-11-19
+
+### Registry versions without visibility snapshots fail closed
+
+Legacy Registry entries did not record visibility per release, so their prior
+version-by-version privacy cannot be reconstructed. A release without its own
+visibility snapshot is treated as private, and legacy aggregate install stats
+are private for the same reason. Publishing a new release snapshots its own
+visibility and preserves old releases as private without deleting their
+metadata or tarballs. Owners and valid share-token holders retain access.
+Case: S-268.21.
+
 ## 2026-10-31
 
 ### SQLite vector search breaks equal-score ties by record ID

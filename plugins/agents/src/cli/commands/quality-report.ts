@@ -13,10 +13,6 @@ import { resolveRuntimeStatePath } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { execFile as execFileCb } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const execFile = promisify(execFileCb);
 
 type QualityReportInput = {
   days?: number;
@@ -133,16 +129,19 @@ export default defineCommand({
 
       const analyticsDir = resolveRuntimeStatePath(process.cwd(), ['analytics', 'buffer']);
       const files = await listEventFiles(analyticsDir, days);
+      const sqlitePath = resolveRuntimeStatePath(process.cwd(), ['analytics', 'analytics.sqlite']);
       if (files.length === 0) {
-        const out = { success: true, message: 'No analytics files found for selected period', runs: 0 };
-        return out;
+        try {
+          await fs.access(sqlitePath);
+        } catch {
+          return { success: true, message: 'No analytics files found for selected period', runs: 0 };
+        }
       }
 
       const since = Date.now() - days * 24 * 60 * 60 * 1000;
       let { runs, regressions } = await readEvents(files, since, sessionIdFilter, limit);
       if (runs.length === 0) {
-        const sqlitePath = resolveRuntimeStatePath(process.cwd(), ['analytics', 'analytics.sqlite']);
-        const sqliteEvents = await readEventsFromSqlite(sqlitePath, since, sessionIdFilter, limit);
+        const sqliteEvents = await readEventsFromSqlite(ctx, sqlitePath, since, sessionIdFilter, limit);
         runs = sqliteEvents.runs;
         regressions = sqliteEvents.regressions;
       }
@@ -258,6 +257,7 @@ async function readEvents(
 }
 
 async function readEventsFromSqlite(
+  ctx: PluginCommandContextV3,
   sqlitePath: string,
   sinceMs: number,
   sessionIdFilter: string | undefined,
@@ -280,10 +280,24 @@ async function readEventsFromSqlite(
   ].join(' ');
 
   try {
-    const { stdout } = await execFile('sqlite3', ['-json', sqlitePath, sql], {
-      maxBuffer: 20 * 1024 * 1024,
+    const result = await ctx.api.shell.exec('sqlite3', [
+      '-readonly',
+      '-safe',
+      '-batch',
+      '-json',
+      '-init', '/dev/null',
+      sqlitePath,
+      sql,
+    ], {
+      cwd: process.cwd(),
+      timeout: 5_000,
+      maxOutputBytes: 2 * 1024 * 1024,
+      throwOnError: false,
     });
-    const rows = JSON.parse(stdout || '[]') as Array<{
+    if (!result.ok) {
+      return { runs: [], regressions: [] };
+    }
+    const rows = JSON.parse(result.stdout || '[]') as Array<{
       type?: string;
       ts?: string;
       payload?: string;
