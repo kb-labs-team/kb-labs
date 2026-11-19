@@ -19,6 +19,7 @@ test('candidate job expands the shared build once and leaves only hosted-only st
   assert.deepEqual(unitGate.with, {
     profile: 'candidate',
     target_sha: '${{ inputs.commit_sha }}',
+    job_prefix: 'Workspace unit verification / ',
   });
   const remoteVerify = loadYaml(readFileSync(fileURLToPath(new URL('../.github/workflows/remote-verify.yml', import.meta.url)), 'utf8'));
   assert.equal(remoteVerify.on.workflow_call.inputs.target_sha.required, true);
