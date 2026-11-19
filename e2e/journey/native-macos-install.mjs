@@ -105,12 +105,12 @@ function run() {
   if (status !== 'PASS') throw new Error(failure || 'Native macOS Marketplace install did not pass.');
 }
 
-function verifyMarketplaceInstall(installRoot) {
+export function verifyMarketplaceInstall(installRoot) {
   const currentPlatformRoot = path.join(installRoot, 'current');
   const receiptPath = path.join(currentPlatformRoot, '.kb', 'v2', 'receipt.json');
   const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
   const record = receipt.marketplaceInstalls?.find(item => item.id === '@kb-labs/commit');
-  if (!record?.version || !record.source || record.spec !== `@kb-labs/commit@${record.version}`) {
+  if (!record?.version || record.source !== 'npm' || record.spec !== '@kb-labs/commit') {
     throw new Error('Install receipt does not record the Commit scenario plugin from a Marketplace source.');
   }
 
