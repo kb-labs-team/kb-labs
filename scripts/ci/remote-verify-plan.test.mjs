@@ -97,6 +97,14 @@ test('affected selection requires a valid subset of packages that own test tasks
   assert.throws(() => parseAffectedSelection(JSON.stringify({ ...base, data: { ...base.data, unitTestPackages: ['@kb-labs/not-selected'] } }), 'stream'), /test task package list/);
 });
 
+// case: S-262.7
+test('test matrix refuses an object selection that omits task-aware package ownership', () => {
+  assert.throws(
+    () => createTestMatrix({ packages: ['@kb-labs/e2e-services'], internalToolPackages: [], stagePackages: {} }, [], [], profile.packageTestStage, profile.maxParallel),
+    /unitTestPackages/,
+  );
+});
+
 // case: S-277.2
 test('stream plan gates an internal-tool change in its ordinary package test shard', () => {
   const selection = parseAffectedSelection(JSON.stringify({
