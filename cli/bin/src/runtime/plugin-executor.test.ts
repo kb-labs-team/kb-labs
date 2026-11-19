@@ -15,9 +15,10 @@ import type { RegisteredCommand } from '@kb-labs/cli-commands';
 import { fileURLToPath } from 'node:url';
 
 const { executeCommandV3 } = vi.hoisted(() => ({ executeCommandV3: vi.fn() }));
-vi.mock('@kb-labs/cli-runtime', async () => {
+vi.mock('@kb-labs/cli-runtime', async (importOriginal) => {
+  const runtime = await importOriginal<typeof import('@kb-labs/cli-runtime')>();
   const { coerceCommandFlags } = await import('../../../runtime/src/flags.js');
-  return { coerceCommandFlags };
+  return { ...runtime, coerceCommandFlags };
 });
 vi.mock('@kb-labs/cli-runtime/v3', () => ({ executeCommandV3 }));
 
