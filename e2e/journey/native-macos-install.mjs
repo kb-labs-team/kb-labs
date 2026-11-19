@@ -11,7 +11,7 @@ export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, pla
   const createPath = path.join(tempRoot, 'kb-create');
   const createModule = path.join(workspace, 'tools/kb-create');
   const indexPath = path.join(workspace, '.journey/release/journey-candidate/release-index.json');
-  const installedCLI = path.join(platformRoot, 'current', 'node_modules/.bin/kb');
+  const installedCLI = path.join(tempRoot, 'kb');
   return [
     { command: 'make', args: ['build', `BINARY=${createPath}`], cwd: createModule },
     {
@@ -24,7 +24,7 @@ export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, pla
       cwd: workspace,
     },
     { command: installedCLI, args: ['--version'], cwd: workspace },
-    { command: installedCLI, args: ['doctor', '--json'], cwd: workspace },
+    { command: installedCLI, args: ['commit', '--help'], cwd: workspace },
     { command: installedCLI, args: ['project', 'add', workspace, '--json'], cwd: workspace },
     { command: installedCLI, args: ['qa', 'cases', 'list', '--json'], cwd: workspace },
   ];
@@ -78,7 +78,6 @@ function run() {
     if (step.command.endsWith('/kb-create')) {
       try {
         verifyMarketplaceInstall(platformRoot);
-        caseStatus = 'PASS';
       } catch (error) {
         status = 'FAIL';
         failure = error instanceof Error ? error.message : String(error);
@@ -86,6 +85,8 @@ function run() {
       }
     }
   }
+
+  if (status === 'PASS') caseStatus = 'PASS';
 
   if (reportPath) {
     const resolvedReport = path.resolve(workspaceRoot, reportPath);
