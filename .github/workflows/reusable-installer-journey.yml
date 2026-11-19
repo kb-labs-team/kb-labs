@@ -101,6 +101,7 @@ jobs:
         run: if [ -f .journey/reports/journey-summary.md ]; then cat .journey/reports/journey-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
       - id: artifact-name
         name: Sanitize journey artifact name
+        if: always()
         env:
           MATRIX_OS: ${{ matrix.os }}
           MATRIX_CASE: ${{ matrix.case }}

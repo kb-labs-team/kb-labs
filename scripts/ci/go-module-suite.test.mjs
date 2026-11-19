@@ -291,6 +291,7 @@ test('installer journey artifacts use safe names and preserve redacted command l
   const workflow = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
   const upload = workflow.jobs.journey.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
   const sanitizer = workflow.jobs.journey.steps.find((step) => step.id === 'artifact-name');
+  assert.equal(sanitizer.if, 'always()');
   assert.equal(sanitizer.env.MATRIX_OS, '${{ matrix.os }}');
   assert.equal(sanitizer.env.MATRIX_CASE, '${{ matrix.case }}');
   assert.equal(upload.with.name, '${{ steps.artifact-name.outputs.name }}');
