@@ -135,17 +135,27 @@ export class RegistryService {
       version,
       publishedAt: new Date().toISOString(),
       integrity,
+      visibility,
+      meta,
+      primaryKind,
       signature,
     };
 
     const now = new Date().toISOString();
+    const previousVersions = existing?.versions.map(version => ({
+      ...version,
+      visibility: version.visibility ?? 'private',
+      meta: version.meta ?? existing.meta,
+      primaryKind: version.primaryKind ?? existing.primaryKind,
+    })) ?? [];
     const entry: RegistryEntry = existing
       ? {
           ...existing,
           visibility,
+          legacyStatsVisibility: 'private',
           primaryKind,
           trust: visibility === 'public' && signature ? 'trusted' : existing.trust,
-          versions: [...existing.versions, versionEntry],
+          versions: [...previousVersions, versionEntry],
           meta,
           updatedAt: now,
         }
@@ -155,6 +165,7 @@ export class RegistryService {
           authorNamespaceId,
           primaryKind,
           visibility,
+          legacyStatsVisibility: visibility,
           trust: visibility === 'public' && signature ? 'trusted' : 'untrusted',
           allowlist: [],
           versions: [versionEntry],
@@ -191,9 +202,19 @@ export class RegistryService {
 
   async updateMeta(authorHandle: string, name: string, meta: Partial<PackageMeta>): Promise<void> {
     const entry = await this.requireEntry(authorHandle, name);
+    const updatedMeta = { ...entry.meta, ...meta };
+    const versions = entry.versions.map(version => ({
+      ...version,
+      visibility: version.visibility ?? 'private',
+      meta: version.meta ?? entry.meta,
+      primaryKind: version.primaryKind ?? entry.primaryKind,
+    }));
+    const latestIndex = versions.length - 1;
+    if (latestIndex >= 0) { versions[latestIndex] = { ...versions[latestIndex]!, meta: updatedMeta }; }
     const updated: RegistryEntry = {
       ...entry,
-      meta: { ...entry.meta, ...meta },
+      meta: updatedMeta,
+      versions,
       updatedAt: new Date().toISOString(),
     };
     await this.saveEntry(authorHandle, name, updated);
@@ -288,14 +309,51 @@ export class RegistryService {
     entry: RegistryEntry,
     callerNamespaceId: string | null,
     shareToken?: { pkg: string } | null,
+    version?: string,
   ): boolean {
-    if (entry.visibility === 'public') { return true; }
+    if (version !== undefined) {
+      const versionEntry = entry.versions.find(candidate => candidate.version === version);
+      if (!versionEntry) { return false; }
+      if ((versionEntry.visibility ?? 'private') === 'public') { return true; }
+      return this.canAccessPrivate(entry, callerNamespaceId, shareToken);
+    }
+    if (entry.versions.some(candidate => (candidate.visibility ?? 'private') === 'public')) { return true; }
+    if (entry.versions.length === 0 && entry.visibility === 'public') { return true; }
+    return this.canAccessPrivate(entry, callerNamespaceId, shareToken);
+  }
+
+  private canAccessPrivate(entry: RegistryEntry, callerNamespaceId: string | null, shareToken?: { pkg: string } | null): boolean {
     if (!callerNamespaceId) {
       return !!shareToken && shareToken.pkg === `${entry.authorHandle}/${entry.name}`;
     }
     if (entry.authorNamespaceId === callerNamespaceId) { return true; }
     if (entry.allowlist.includes(callerNamespaceId)) { return true; }
     return !!shareToken && shareToken.pkg === `${entry.authorHandle}/${entry.name}`;
+  }
+
+  getVisibleEntry(
+    entry: RegistryEntry,
+    callerNamespaceId: string | null,
+    shareToken?: { pkg: string } | null,
+  ): RegistryEntry | null {
+    const versions = entry.versions.filter(version => this.canAccess(entry, callerNamespaceId, shareToken, version.version));
+    const latest = versions.at(-1);
+    if (!latest) { return null; }
+    const isOwner = callerNamespaceId === entry.authorNamespaceId;
+    const meta = latest.meta ?? entry.meta;
+    return {
+      ...entry,
+      authorNamespaceId: isOwner ? entry.authorNamespaceId : '',
+      allowlist: isOwner ? entry.allowlist : [],
+      legacyStatsVisibility: undefined,
+      createdAt: isOwner ? entry.createdAt : versions[0]!.publishedAt,
+      updatedAt: isOwner ? entry.updatedAt : latest.publishedAt,
+      tags: isOwner ? entry.tags : latest.meta ? latest.meta.keywords ?? [] : entry.tags,
+      visibility: latest.visibility ?? 'private',
+      primaryKind: latest.primaryKind ?? entry.primaryKind,
+      meta,
+      versions,
+    };
   }
 
   // ── Metadata reads ─────────────────────────────────────────────────────────
@@ -309,7 +367,12 @@ export class RegistryService {
     return entry;
   }
 
-  async resolveIdentity(identity: string, callerNamespaceId: string | null = null): Promise<RegistryIdentityResolution> {
+  async resolveIdentity(
+    identity: string,
+    callerNamespaceId: string | null = null,
+    shareToken: { pkg: string } | null = null,
+    requestedVersion?: string,
+  ): Promise<RegistryIdentityResolution> {
     const paths = (await this.storage.list(`${STORAGE_PREFIX}/packages/`)).filter(path => path.endsWith('/meta.json'));
     const entries: RegistryEntry[] = [];
     for (const path of paths) {
@@ -317,33 +380,37 @@ export class RegistryService {
       if (raw) { entries.push(JSON.parse(raw.toString()) as RegistryEntry); }
     }
 
-    const exactMatches = entries.filter(entry => entry.meta.identity === identity);
-    const shortMatches = entries.filter(entry => shortIdentity(entry.meta.identity) === identity);
-    const publicShortMatches = shortMatches.filter(entry => entry.visibility === 'public');
+    const qualifiedIdentity = identity.includes('/');
+    const matchingVersions = (entry: RegistryEntry, exact: boolean) => entry.versions.filter(version => {
+      if (version.yanked || (requestedVersion && version.version !== requestedVersion)) { return false; }
+      const versionIdentity = version.meta?.identity ?? entry.meta.identity;
+      return exact ? versionIdentity === identity : shortIdentity(versionIdentity) === identity;
+    });
+    const exactMatches = qualifiedIdentity ? entries.filter(entry => matchingVersions(entry, true).length > 0) : [];
+    const shortMatches = entries.filter(entry => matchingVersions(entry, false).length > 0);
+    const accessibleFor = (entry: RegistryEntry, exact: boolean) => matchingVersions(entry, exact)
+      .filter(version => this.canAccess(entry, callerNamespaceId, shareToken, version.version));
+    const accessibleExactMatches = exactMatches.filter(entry => accessibleFor(entry, true).length > 0);
+    const deniedExactMatches = exactMatches.filter(entry => matchingVersions(entry, true).length > 0);
     const matches = exactMatches.length > 0
-      ? exactMatches
-      : callerNamespaceId === null && publicShortMatches.length === 1
-        ? publicShortMatches
-        : shortMatches;
+      ? accessibleExactMatches.length > 0 ? accessibleExactMatches : deniedExactMatches.slice(0, 1)
+      : shortMatches.filter(entry => accessibleFor(entry, false).length > 0);
+    if (!exactMatches.length && !matches.length && shortMatches.length) {
+      return { status: 'not-found-owned' };
+    }
+    if (shareToken) {
+      const tokenMatches = matches.filter(entry => `${entry.authorHandle}/${entry.name}` === shareToken.pkg);
+      if (tokenMatches.length === 1) {
+        return this.resolutionForEntry(tokenMatches[0]!, callerNamespaceId, shareToken, false, requestedVersion, identity, qualifiedIdentity);
+      }
+    }
     if (matches.length > 1) {
       throw Object.assign(new Error(`Marketplace identity ${identity} is ambiguous in the Registry.`), { code: 'IDENTITY_AMBIGUOUS' });
     }
     const entry = matches[0];
     if (entry) {
-      const latest = entry.versions.filter(version => !version.yanked).at(-1);
-      if (!latest || entry.deprecated) { return { status: 'not-found-owned' }; }
-      return {
-        status: 'found',
-        package: {
-          id: entry.meta.name,
-          version: latest.version,
-          integrity: latest.integrity,
-          ...(latest.signature ? { signature: latest.signature } : {}),
-          primaryKind: entry.primaryKind,
-          downloadUrl: `${this.baseUrl}/api/v1/packages/${entry.authorHandle}/${encodeURIComponent(entry.name)}/${latest.version}/tarball`,
-          signatureSubject: `${entry.authorHandle}/${entry.name}`,
-        },
-      };
+      const inaccessibleExact = exactMatches.length > 0 && accessibleExactMatches.length === 0;
+      return this.resolutionForEntry(entry, callerNamespaceId, shareToken, inaccessibleExact, requestedVersion, identity, qualifiedIdentity);
     }
 
     const namespace = canonicalIdentityNamespace(identity);
@@ -357,27 +424,82 @@ export class RegistryService {
     return { status: 'not-found-unowned' };
   }
 
-  async getStats(authorHandle: string, name: string): Promise<PackageStats> {
-    const key = `registry:stats:${authorHandle}/${name}`;
-    const data = await this.cache.get<PackageStats>(key);
-    return data ?? { installs: 0 };
+  private resolutionForEntry(
+    entry: RegistryEntry,
+    callerNamespaceId: string | null = null,
+    shareToken: { pkg: string } | null = null,
+    includeDeniedVersion = false,
+    requestedVersion?: string,
+    identity?: string,
+    exactIdentity = false,
+  ): RegistryIdentityResolution {
+    const available = entry.versions.filter(version => !version.yanked && (!requestedVersion || version.version === requestedVersion) &&
+      (!identity || (exactIdentity ? (version.meta?.identity ?? entry.meta.identity) === identity :
+        shortIdentity(version.meta?.identity ?? entry.meta.identity) === identity)) &&
+      (includeDeniedVersion || this.canAccess(entry, callerNamespaceId, shareToken, version.version)));
+    const latest = available.at(-1) ?? (includeDeniedVersion
+      ? entry.versions.find(version => !version.yanked && (!requestedVersion || version.version === requestedVersion) &&
+        (!identity || (exactIdentity ? (version.meta?.identity ?? entry.meta.identity) === identity :
+          shortIdentity(version.meta?.identity ?? entry.meta.identity) === identity)))
+      : undefined);
+    if (!latest || entry.deprecated) { return { status: 'not-found-owned' }; }
+    const meta = latest.meta ?? entry.meta;
+    return {
+      status: 'found',
+      package: {
+        id: meta.name,
+        version: latest.version,
+        integrity: latest.integrity,
+        ...(latest.signature ? { signature: latest.signature } : {}),
+        primaryKind: latest.primaryKind ?? entry.primaryKind,
+        downloadUrl: `${this.baseUrl}/api/v1/packages/${entry.authorHandle}/${encodeURIComponent(entry.name)}/${latest.version}/tarball`,
+        signatureSubject: `${entry.authorHandle}/${entry.name}`,
+      },
+    };
   }
 
-  async incrementInstalls(authorHandle: string, name: string): Promise<void> {
-    const key = `registry:stats:${authorHandle}/${name}`;
+  async getStats(
+    authorHandle: string,
+    name: string,
+    callerNamespaceId: string | null = null,
+    shareToken: { pkg: string } | null = null,
+  ): Promise<PackageStats> {
+    const entry = await this.getEntry(authorHandle, name);
+    if (!entry) {
+      return { installs: 0 };
+    }
+    const legacyStats = await this.cache.get<PackageStats>(`registry:stats:${authorHandle}/${name}`);
+    const legacyVisibility = entry.legacyStatsVisibility ?? 'private';
+    let installs = legacyStats && (legacyVisibility === 'public' || this.canAccessPrivate(entry, callerNamespaceId, shareToken))
+      ? legacyStats.installs
+      : 0;
+    for (const version of entry.versions) {
+      if (!this.canAccess(entry, callerNamespaceId, shareToken, version.version)) { continue; }
+      const versionStats = await this.cache.get<PackageStats>(`registry:stats:${authorHandle}/${name}/${version.version}`);
+      installs += versionStats?.installs ?? 0;
+    }
+    return { installs };
+  }
+
+  async incrementInstalls(authorHandle: string, name: string, version?: string): Promise<void> {
+    const key = version
+      ? `registry:stats:${authorHandle}/${name}/${version}`
+      : `registry:stats:${authorHandle}/${name}`;
     const current = await this.cache.get<PackageStats>(key) ?? { installs: 0 };
     await this.cache.set(key, { installs: current.installs + 1 });
   }
 
   async listPublicPackages(): Promise<RegistryPackageSummary[]> {
-    const cached = await this.cache.get<RegistryPackageSummary[]>('registry:search:__index');
+    const generation = await this.cache.get<string>('registry:search:generation') ?? '0';
+    const cached = await this.cache.get<RegistryPackageSummary[]>(`registry:search:${generation}:catalog-index`);
     if (cached) { return cached; }
-    return this.rebuildIndex();
+    return this.rebuildIndex(generation);
   }
 
   async searchPackages(query: string): Promise<RegistryPackageSummary[]> {
     const q = query.toLowerCase().trim();
-    const cacheKey = `registry:search:${q}`;
+    const generation = await this.cache.get<string>('registry:search:generation') ?? '0';
+    const cacheKey = `registry:search:${generation}:query:${q}`;
     const cached = await this.cache.get<RegistryPackageSummary[]>(cacheKey);
     if (cached) { return cached; }
 
@@ -446,10 +568,14 @@ export class RegistryService {
 
   private async invalidateCaches(handle: string, name: string): Promise<void> {
     await this.cache.delete(`registry:pkg:${handle}/${name}`);
+    const generation = await this.cache.get<string>('registry:search:generation') ?? '0';
+    await this.cache.delete(`registry:search:${generation}:catalog-index`);
     await this.cache.delete('registry:search:__index');
+    await this.cache.set('registry:search:generation', `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }
 
-  private async rebuildIndex(): Promise<RegistryPackageSummary[]> {
+  private async rebuildIndex(generation?: string): Promise<RegistryPackageSummary[]> {
+    const cacheGeneration = generation ?? (await this.cache.get<string>('registry:search:generation')) ?? '0';
     const paths = await this.storage.list(`${STORAGE_PREFIX}/packages/`);
     const summaries: RegistryPackageSummary[] = [];
 
@@ -457,21 +583,22 @@ export class RegistryService {
       const raw = await this.storage.read(path);
       if (!raw) { continue; }
       const entry = JSON.parse(raw.toString()) as RegistryEntry;
-      if (entry.visibility !== 'public' || entry.deprecated) { continue; }
+      if (entry.deprecated) { continue; }
 
-      const latest = entry.versions.filter(v => !v.yanked).at(-1);
+      const latest = entry.versions.filter(v => !v.yanked && (v.visibility ?? 'private') === 'public').at(-1);
       if (!latest) { continue; }
 
       const stats = await this.getStats(entry.authorHandle, entry.name);
+      const meta = latest.meta ?? entry.meta;
       summaries.push({
         handle: entry.authorHandle,
         name: entry.name,
         fullName: `${entry.authorHandle}/${entry.name}`,
         version: latest.version,
-        description: entry.meta.description,
-        author: entry.meta.author,
-        keywords: entry.meta.keywords,
-        primaryKind: entry.primaryKind ?? 'plugin',
+        description: meta.description,
+        author: meta.author,
+        keywords: meta.keywords,
+        primaryKind: latest.primaryKind ?? entry.primaryKind ?? 'plugin',
         featured: entry.featured,
         badges: entry.badges,
         trust: entry.trust,
@@ -481,7 +608,7 @@ export class RegistryService {
     }
 
     summaries.sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0) || b.installs - a.installs);
-    await this.cache.set('registry:search:__index', summaries, CACHE_TTL_SEARCH);
+    await this.cache.set(`registry:search:${cacheGeneration}:catalog-index`, summaries, CACHE_TTL_SEARCH);
 
     const indexPath = `${STORAGE_PREFIX}/index.json`;
     await this.storage.write(indexPath, Buffer.from(JSON.stringify(summaries, null, 2)));

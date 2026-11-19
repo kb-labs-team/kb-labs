@@ -6,7 +6,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { createErrorEnvelope, type ICache, type ILogger, type IServiceTransport } from '@kb-labs/core-platform';
 import type { ManifestV3, ProjectServiceDeclaration } from '@kb-labs/plugin-contracts';
 import { signAccessToken } from '@kb-labs/gateway-auth';
-import { AuthConfigSchema, GatewayConfigSchema, type GatewayConfig } from '@kb-labs/gateway-contracts';
+import { AuthConfigSchema, GatewayConfigSchema, readForwardedIdentity, type GatewayConfig } from '@kb-labs/gateway-contracts';
 import { createAuthMiddleware, isDeclaredWebhookRoute, isPlatformPublicRoute } from '../middleware.js';
 import { createServer } from '../../server.js';
 import type { ProjectRouting } from '../../project-routing.js';
@@ -25,6 +25,8 @@ describe('Gateway global auth gate', () => {
   let upstream: Server | undefined;
   let previousInternalSecret: string | undefined;
   let lastUpstreamHeaders: import('node:http').IncomingHttpHeaders | undefined;
+  let lastUpstreamUrl: string | undefined;
+  let lastUpstreamIdentityKind: string | undefined;
   afterEach(async () => {
     await app?.close();
     await new Promise<void>((resolve) => {
@@ -38,6 +40,8 @@ describe('Gateway global auth gate', () => {
     else { process.env.GATEWAY_INTERNAL_SECRET = previousInternalSecret; }
     previousInternalSecret = undefined;
     lastUpstreamHeaders = undefined;
+    lastUpstreamUrl = undefined;
+    lastUpstreamIdentityKind = undefined;
   });
 
   // case: S-268.1
@@ -46,8 +50,15 @@ describe('Gateway global auth gate', () => {
     upstream = createHttpServer((request, response) => {
       upstreamHits += 1;
       lastUpstreamHeaders = request.headers;
+      lastUpstreamUrl = request.url;
+      lastUpstreamIdentityKind = readForwardedIdentity(request.headers, 'gateway-internal-secret').kind;
+      if (lastUpstreamIdentityKind !== 'service' && lastUpstreamIdentityKind !== 'identity') {
+        response.writeHead(401, { 'content-type': 'application/json' });
+        response.end('{"error":"gateway identity required"}');
+        return;
+      }
       response.writeHead(200, { 'content-type': 'application/json' });
-      response.end('{"ok":true}');
+      response.end(JSON.stringify({ ok: true, path: request.url }));
     });
     await new Promise<void>((resolve) => { upstream!.listen(0, '127.0.0.1', resolve); });
     const upstreamPort = (upstream.address() as { port: number }).port;
@@ -67,7 +78,7 @@ describe('Gateway global auth gate', () => {
       upstreams: {
         testPlugin: { serviceId: 'test-plugin', prefix: '/api/v1/plugins/test-plugin' },
         mcp: { serviceId: 'mcp-test', prefix: '/api/v1/mcp' },
-        marketplaceRegistry: { serviceId: 'marketplace-registry', prefix: '/api/v1/marketplace-registry' },
+        marketplaceRegistry: { serviceId: 'marketplace-registry', prefix: '/api/v1/marketplace-registry', rewritePrefix: '' },
       },
       staticTokens: {},
       auth: AuthConfigSchema.parse({ enabled: true }),
@@ -165,12 +176,26 @@ describe('Gateway global auth gate', () => {
     expect(lastUpstreamHeaders).toMatchObject({ 'x-internal-secret': 'gateway-internal-secret' });
     expect(lastUpstreamHeaders?.['x-kb-auth-user-id']).toBeUndefined();
     expect(lastUpstreamHeaders?.['x-kb-auth-namespace-id']).toBeUndefined();
+    expect(lastUpstreamUrl).toBe('/api/v1/resolve?identity=%40acme%2Fwidget');
+    expect(lastUpstreamIdentityKind).toBe('service');
+    expect(anonymousRegistryRead.json()).toMatchObject({ path: '/api/v1/resolve?identity=%40acme%2Fwidget' });
+
+    const anonymousTarballRead = await app.inject({
+      method: 'GET',
+      url: '/api/v1/marketplace-registry/api/v1/packages/acme/widget/1.2.3/tarball?token=kbrt_read',
+      headers: { cookie: 'tracking=present', 'x-kb-auth-user-id': 'forged-user' },
+    });
+    expect(anonymousTarballRead.statusCode).toBe(200);
+    expect(lastUpstreamUrl).toBe('/api/v1/packages/acme/widget/1.2.3/tarball?token=kbrt_read');
+    expect(lastUpstreamIdentityKind).toBe('service');
+    expect(lastUpstreamHeaders).toMatchObject({ 'x-internal-secret': 'gateway-internal-secret' });
+    expect(lastUpstreamHeaders?.['x-kb-auth-user-id']).toBeUndefined();
 
     const anonymousPublish = await app.inject({
       method: 'POST', url: '/api/v1/marketplace-registry/api/v1/packages/publish',
     });
     expect(anonymousPublish.statusCode).toBe(401);
-    expect(upstreamHits).toBe(2);
+    expect(upstreamHits).toBe(3);
   });
 
   it('rejects invalid bearer tokens with the same envelope and does not allow webhook plugin routes implicitly', async () => {

@@ -5,20 +5,20 @@ import { requireRegistryAuth } from '../auth-middleware.js';
 import { parseMultipart } from '../multipart.js';
 
 export function registerPackageRoutes(app: FastifyInstance, registry: RegistryService): void {
-  app.get<{ Querystring: { identity: string } }>(
+  app.get<{ Querystring: { identity: string; version?: string } }>(
     '/api/v1/resolve',
     { config: { registryAccess: 'public' } },
     async (req, reply) => {
       const identity = req.query.identity;
-      const result = await registry.resolveIdentity(identity, req.authContext?.namespaceId ?? null);
+      const token = extractShareToken(req);
+      const resolvedToken = token ? await registry.resolveShareToken(token) : null;
+      const result = await registry.resolveIdentity(identity, req.authContext?.namespaceId ?? null, resolvedToken, req.query.version);
       if (result.status !== 'found') { return reply.send(result); }
       const [handle, ...nameParts] = result.package.signatureSubject?.split('/') ?? [];
       const entry = handle && nameParts.length ? await registry.getEntry(handle, nameParts.join('/')) : null;
       if (!entry) { return reply.code(404).send({ status: 'not-found-owned' }); }
-      const token = extractShareToken(req);
-      const resolvedToken = token ? await registry.resolveShareToken(token) : null;
       const callerNs = req.authContext?.namespaceId ?? null;
-      if (!registry.canAccess(entry, callerNs, resolvedToken)) {
+      if (!registry.canAccess(entry, callerNs, resolvedToken, result.package.version)) {
         return reply.code(403).send({ error: 'Access denied' });
       }
       return reply.send(result);
@@ -51,7 +51,9 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
         return reply.code(403).send({ error: 'Access denied' });
       }
 
-      return reply.send(entry);
+      const visibleEntry = registry.getVisibleEntry(entry, callerNs, resolvedToken);
+      if (!visibleEntry) { return reply.code(403).send({ error: 'Access denied' }); }
+      return reply.send(visibleEntry);
     },
   );
 
@@ -61,7 +63,15 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
     { config: { registryAccess: 'public' } },
     async (req, reply) => {
       const { handle, name } = req.params;
-      return reply.send(await registry.getStats(handle, name));
+      const entry = await registry.getEntry(handle, name);
+      if (!entry) { return reply.code(404).send({ error: 'Package not found' }); }
+      const token = extractShareToken(req);
+      const resolvedToken = token ? await registry.resolveShareToken(token) : null;
+      const callerNs = req.authContext?.namespaceId ?? null;
+      if (!registry.canAccess(entry, callerNs, resolvedToken)) {
+        return reply.code(403).send({ error: 'Access denied' });
+      }
+      return reply.send(await registry.getStats(handle, name, callerNs, resolvedToken));
     },
   );
 
@@ -174,12 +184,15 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
       const resolvedToken = token ? await registry.resolveShareToken(token) : null;
       const callerNs = req.authContext?.namespaceId ?? null;
 
-      if (!registry.canAccess(entry, callerNs, resolvedToken)) {
-        return reply.code(403).send({ error: 'Access denied' });
+      const requestedVersion = entry.versions.find(candidate => candidate.version === version);
+      if (!requestedVersion || !registry.canAccess(entry, callerNs, resolvedToken, version)) {
+        return reply.code(404).send({
+          error: 'NotFound', code: 'VERSION_NOT_FOUND', message: `Version ${version} not found`,
+        });
       }
 
       const { tarball, signature } = await registry.getTarball(handle, name, version);
-      await registry.incrementInstalls(handle, name);
+      await registry.incrementInstalls(handle, name, version);
 
       return reply
         .header('Content-Type', 'application/octet-stream')

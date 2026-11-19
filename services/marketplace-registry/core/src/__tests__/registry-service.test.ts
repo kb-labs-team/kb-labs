@@ -111,6 +111,241 @@ describe('RegistryService.publish', () => {
     });
   });
 
+  // case: S-268.20
+  it('applies access before short-name ambiguity and honors a matching share token', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, makePkg({ name: 'widget', identity: '@public/widget' }), 'public-author', 'ns-public');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'widget', identity: '@private/widget' }), visibility: 'private',
+    }, 'private-author', 'ns-private');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'widget', identity: '@other-private/widget' }), visibility: 'private',
+    }, 'other-author', 'ns-other-private');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'gadget', identity: '@private-a/gadget' }), visibility: 'private',
+    }, 'private-a', 'ns-private-a');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'gadget', identity: '@private-b/gadget' }), visibility: 'private',
+    }, 'private-b', 'ns-private-b');
+
+    await expect(svc.resolveIdentity('widget')).resolves.toMatchObject({
+      status: 'found', package: { signatureSubject: 'public-author/widget' },
+    });
+    await expect(svc.resolveIdentity('widget', 'ns-unrelated')).resolves.toMatchObject({
+      status: 'found', package: { signatureSubject: 'public-author/widget' },
+    });
+    await expect(svc.resolveIdentity('widget', null)).resolves.not.toMatchObject({
+      status: 'found', package: { signatureSubject: 'private-author/widget' },
+    });
+    await expect(svc.resolveIdentity('gadget')).resolves.toEqual({ status: 'not-found-owned' });
+    await expect(svc.resolveIdentity('widget', 'ns-private')).rejects.toMatchObject({ code: 'IDENTITY_AMBIGUOUS' });
+
+    const token = await svc.createShareToken('private-author', 'widget');
+    const resolvedToken = await svc.resolveShareToken(token.token);
+    await expect(svc.resolveIdentity('widget', null, resolvedToken)).resolves.toMatchObject({
+      status: 'found', package: { signatureSubject: 'private-author/widget' },
+    });
+  });
+
+  // case: S-268.20
+  it('does not let a bare stored identity take precedence over canonical short-name matches', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, makePkg({ name: 'widget', identity: '@legitimate/widget' }), 'legitimate', 'ns-legitimate');
+    await svc.publish(SMALL_TARBALL, makePkg({ name: 'widget-bare', identity: 'widget' }), 'bare-owner', 'ns-bare');
+
+    await expect(svc.resolveIdentity('widget')).rejects.toMatchObject({ code: 'IDENTITY_AMBIGUOUS' });
+    await expect(svc.resolveIdentity('@legitimate/widget')).resolves.toMatchObject({
+      status: 'found', package: { signatureSubject: 'legitimate/widget' },
+    });
+  });
+
+  // case: S-268.20
+  it('filters inaccessible exact duplicates before ambiguity and uses one denied candidate when none are accessible', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, makePkg({ name: 'widget-public', identity: '@shared/widget' }), 'public-author', 'ns-public');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'widget-private', identity: '@shared/widget' }), visibility: 'private',
+    }, 'private-author', 'ns-private');
+
+    await expect(svc.resolveIdentity('@shared/widget')).resolves.toMatchObject({
+      status: 'found', package: { signatureSubject: 'public-author/widget-public' },
+    });
+    await expect(svc.resolveIdentity('@shared/widget', 'ns-unrelated')).resolves.toMatchObject({
+      status: 'found', package: { signatureSubject: 'public-author/widget-public' },
+    });
+    await expect(svc.resolveIdentity('@shared/widget', 'ns-private')).rejects.toMatchObject({ code: 'IDENTITY_AMBIGUOUS' });
+
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'private-one', identity: '@only-private/widget' }), visibility: 'private',
+    }, 'private-one', 'ns-private-one');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'private-two', identity: '@only-private/widget' }), visibility: 'private',
+    }, 'private-two', 'ns-private-two');
+    await expect(svc.resolveIdentity('@only-private/widget')).resolves.toMatchObject({
+      status: 'found', package: { signatureSubject: 'private-one/private-one' },
+    });
+  });
+
+  // case: S-268.21
+  it('keeps visibility and metadata private per published version', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'visibility-widget', version: '1.0.0', identity: '@visibility/widget', description: 'private metadata', keywords: ['private-tag'] }),
+      visibility: 'private',
+    }, 'visibility-author', 'ns-visibility');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'visibility-widget', version: '2.0.0', identity: '@visibility/widget', description: 'public metadata', keywords: ['public-tag'] }),
+      visibility: 'public',
+    }, 'visibility-author', 'ns-visibility');
+    await svc.addToAllowlist('visibility-author', 'visibility-widget', 'ns-shared');
+
+    let entry = (await svc.getEntry('visibility-author', 'visibility-widget'))!;
+    expect(entry.versions.map(version => version.visibility)).toEqual(['private', 'public']);
+    expect(svc.canAccess(entry, null, null, '1.0.0')).toBe(false);
+    expect(svc.canAccess(entry, null, null, '2.0.0')).toBe(true);
+    await expect(svc.resolveIdentity('@visibility/widget')).resolves.toMatchObject({
+      status: 'found', package: { version: '2.0.0' },
+    });
+    await expect(svc.resolveIdentity('@visibility/widget', null, null, '1.0.0')).resolves.toMatchObject({
+      status: 'found', package: { version: '1.0.0' },
+    });
+    expect(svc.getVisibleEntry(entry, null, null)).toMatchObject({
+      visibility: 'public', authorNamespaceId: '', allowlist: [], tags: ['public-tag'],
+      meta: { description: 'public metadata', keywords: ['public-tag'] },
+      versions: [{ version: '2.0.0', visibility: 'public' }],
+    });
+    expect(svc.getVisibleEntry(entry, null, null)?.createdAt).toBe(entry.versions[1]!.publishedAt);
+    expect(svc.getVisibleEntry(entry, null, null)?.updatedAt).toBe(entry.versions[1]!.publishedAt);
+    expect(svc.getVisibleEntry(entry, 'ns-visibility', null)?.allowlist).toEqual(['ns-shared']);
+    await svc.incrementInstalls('visibility-author', 'visibility-widget', '1.0.0');
+    await svc.incrementInstalls('visibility-author', 'visibility-widget', '2.0.0');
+    await expect(svc.getStats('visibility-author', 'visibility-widget')).resolves.toEqual({ installs: 1 });
+    await expect(svc.getStats('visibility-author', 'visibility-widget', 'ns-visibility')).resolves.toEqual({ installs: 2 });
+
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'reverse-widget', version: '1.0.0', identity: '@reverse/widget', description: 'public release', keywords: ['public-tag'] }),
+      visibility: 'public',
+    }, 'reverse-author', 'ns-reverse');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'reverse-widget', version: '2.0.0', identity: '@reverse/widget', description: 'private release', keywords: ['private-tag'] }),
+      visibility: 'private',
+    }, 'reverse-author', 'ns-reverse');
+
+    entry = (await svc.getEntry('reverse-author', 'reverse-widget'))!;
+    expect(svc.canAccess(entry, null, null, '1.0.0')).toBe(true);
+    expect(svc.canAccess(entry, null, null, '2.0.0')).toBe(false);
+    await expect(svc.resolveIdentity('@reverse/widget')).resolves.toMatchObject({
+      status: 'found', package: { version: '1.0.0' },
+    });
+    await expect(svc.resolveIdentity('@reverse/widget', null, null, '2.0.0')).resolves.toMatchObject({
+      status: 'found', package: { version: '2.0.0' },
+    });
+    await expect(svc.resolveIdentity('@reverse/widget', 'ns-reverse')).resolves.toMatchObject({
+      status: 'found', package: { version: '2.0.0' },
+    });
+    expect(svc.getVisibleEntry(entry, null, null)).toMatchObject({
+      visibility: 'public', meta: { description: 'public release', keywords: ['public-tag'] },
+      tags: ['public-tag'], versions: [{ version: '1.0.0', visibility: 'public' }],
+    });
+    await expect(svc.listPublicPackages()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ handle: 'reverse-author', version: '1.0.0', description: 'public release' }),
+    ]));
+  });
+
+  // case: S-268.21
+  it('resolves identity against the visible version metadata, not the package latest metadata', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'identity-history', version: '1.0.0', identity: '@history/old' }),
+      visibility: 'public',
+    }, 'history-author', 'ns-history');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'identity-history', version: '2.0.0', identity: '@history/new' }),
+      visibility: 'private',
+    }, 'history-author', 'ns-history');
+
+    await expect(svc.resolveIdentity('@history/old')).resolves.toMatchObject({
+      status: 'found', package: { version: '1.0.0', signatureSubject: 'history-author/identity-history' },
+    });
+    await expect(svc.resolveIdentity('@history/new')).resolves.toMatchObject({
+      status: 'found', package: { version: '2.0.0' },
+    });
+    await expect(svc.resolveIdentity('@history/new', 'ns-history')).resolves.toMatchObject({
+      status: 'found', package: { version: '2.0.0' },
+    });
+  });
+
+  // case: S-268.21
+  it('snapshots legacy release metadata and kind while keeping an unknown legacy release private', async () => {
+    const storage = createMemoryStorage();
+    const svc = new RegistryService({
+      storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071', siteUrl: 'https://kblabs.ru',
+    });
+    const oldMeta = makePkg({ name: 'legacy-widget', version: '1.0.0', identity: '@legacy/widget', description: 'legacy private release' }).meta;
+    const legacyEntry: RegistryEntry = {
+      name: 'legacy-widget', authorHandle: 'legacy-author', authorNamespaceId: 'ns-legacy', primaryKind: 'adapter',
+      visibility: 'private', trust: 'untrusted', allowlist: [],
+      versions: [{ version: '1.0.0', publishedAt: '2024-01-01T00:00:00.000Z', integrity: 'sha256-legacy' }],
+      deprecated: false, featured: false, badges: [], tags: [], meta: oldMeta,
+      createdAt: '2024-01-01T00:00:00.000Z', updatedAt: '2024-01-01T00:00:00.000Z',
+    };
+    await storage.write('marketplace-registry/packages/legacy-author/legacy-widget/meta.json', Buffer.from(JSON.stringify(legacyEntry)));
+    await storage.write('marketplace-registry/packages/legacy-author/legacy-widget/1.0.0.tgz', SMALL_TARBALL);
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'legacy-widget', version: '2.0.0', identity: '@legacy/widget', description: 'new public release' }),
+      visibility: 'public',
+    }, 'legacy-author', 'ns-legacy');
+
+    const migrated = (await svc.getEntry('legacy-author', 'legacy-widget'))!;
+    expect(migrated.versions.map(version => ({ version: version.version, visibility: version.visibility, description: version.meta?.description }))).toEqual([
+      { version: '1.0.0', visibility: 'private', description: 'legacy private release' },
+      { version: '2.0.0', visibility: 'public', description: 'new public release' },
+    ]);
+    expect(migrated.versions[0]?.primaryKind).toBe('adapter');
+    expect(svc.canAccess(migrated, null, null, '1.0.0')).toBe(false);
+    expect(svc.canAccess(migrated, null, null, '2.0.0')).toBe(true);
+  });
+
+  // case: S-268.21
+  it('fails closed for legacy visibility and aggregate stats when version history is ambiguous', async () => {
+    const storage = createMemoryStorage();
+    const cache = createMemoryCache();
+    const svc = new RegistryService({
+      storage, cache, logger: noopLogger, baseUrl: 'http://localhost:5071', siteUrl: 'https://kblabs.ru',
+    });
+    const legacyEntry: RegistryEntry = {
+      name: 'legacy-stats', authorHandle: 'legacy-author', authorNamespaceId: 'ns-legacy', primaryKind: 'adapter',
+      visibility: 'public', trust: 'untrusted', allowlist: [],
+      versions: [{ version: '1.0.0', publishedAt: '2024-01-01T00:00:00.000Z', integrity: 'sha256-legacy' }],
+      deprecated: false, featured: false, badges: [], tags: [],
+      meta: makePkg({ name: 'legacy-stats', version: '1.0.0', identity: '@legacy/stats', description: 'public legacy release' }).meta,
+      createdAt: '2024-01-01T00:00:00.000Z', updatedAt: '2024-01-01T00:00:00.000Z',
+    };
+    await storage.write('marketplace-registry/packages/legacy-author/legacy-stats/meta.json', Buffer.from(JSON.stringify(legacyEntry)));
+    await storage.write('marketplace-registry/packages/legacy-author/legacy-stats/1.0.0.tgz', SMALL_TARBALL);
+    await cache.set('registry:stats:legacy-author/legacy-stats', { installs: 7 });
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'legacy-stats', version: '2.0.0', identity: '@legacy/stats', description: 'private latest release' }),
+      visibility: 'private', primaryKind: 'plugin',
+    }, 'legacy-author', 'ns-legacy');
+    await svc.incrementInstalls('legacy-author', 'legacy-stats', '2.0.0');
+
+    const migrated = (await svc.getEntry('legacy-author', 'legacy-stats'))!;
+    expect(migrated.versions.map(version => version.primaryKind)).toEqual(['adapter', 'plugin']);
+    expect(migrated.versions[0]?.visibility).toBe('private');
+    expect(svc.getVisibleEntry(migrated, null)).toBeNull();
+    expect(svc.getVisibleEntry(migrated, 'ns-legacy')).toMatchObject({
+      primaryKind: 'plugin', versions: [
+        { version: '1.0.0', primaryKind: 'adapter' },
+        { version: '2.0.0', primaryKind: 'plugin' },
+      ],
+    });
+    await expect(svc.getStats('legacy-author', 'legacy-stats')).resolves.toEqual({ installs: 0 });
+    await expect(svc.getStats('legacy-author', 'legacy-stats', 'ns-legacy')).resolves.toEqual({ installs: 8 });
+    await expect(svc.listPublicPackages()).resolves.toEqual([]);
+  });
+
   it('RS-01: stores tarball + meta, returns install command', async () => {
     const svc = makeService();
     const result = await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
@@ -372,6 +607,7 @@ describe('RegistryService.stats', () => {
 
   it('RS-61: incrementInstalls increments counter', async () => {
     const svc = makeService();
+    await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
     await svc.incrementInstalls('kirill', 'my-plugin');
     await svc.incrementInstalls('kirill', 'my-plugin');
 
@@ -397,6 +633,25 @@ describe('RegistryService.listPublicPackages', () => {
     expect(list.find(p => p.name === 'private-plugin')).toBeUndefined();
   });
 
+  it('ignores and invalidates the legacy warm catalog index cache key', async () => {
+    const cache = createMemoryCache();
+    const svc = new RegistryService({
+      storage: createMemoryStorage(), cache, logger: noopLogger,
+      baseUrl: 'http://localhost:5071', siteUrl: 'https://kblabs.ru',
+    });
+    await cache.set('registry:search:__index', [{
+      handle: 'private-author', name: 'hidden', fullName: 'private-author/hidden', version: '9.9.9',
+      description: 'legacy cached private metadata', primaryKind: 'plugin', installs: 123,
+    }]);
+
+    await svc.publish(SMALL_TARBALL, makePkg({ name: 'public-widget', description: 'safe catalog metadata' }), 'public-author', 'ns-public');
+
+    expect(await cache.get('registry:search:__index')).toBeNull();
+    await expect(svc.listPublicPackages()).resolves.toEqual([
+      expect.objectContaining({ name: 'public-widget', description: 'safe catalog metadata' }),
+    ]);
+  });
+
   it('RS-72: featured packages appear first', async () => {
     const svc = makeService();
     await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
@@ -405,5 +660,19 @@ describe('RegistryService.listPublicPackages', () => {
 
     const list = await svc.listPublicPackages();
     expect(list[0]?.name).toBe('featured-plugin');
+  });
+
+  it('does not serve a stale filtered search result after package metadata changes', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, makePkg({ description: 'before update' }), 'kirill', 'ns-kirill');
+    await expect(svc.searchPackages('my-plugin')).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ description: 'before update' }),
+    ]));
+
+    await svc.updateMeta('kirill', 'my-plugin', { description: 'after update' });
+
+    await expect(svc.searchPackages('my-plugin')).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ description: 'after update' }),
+    ]));
   });
 });

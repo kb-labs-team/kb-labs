@@ -20,6 +20,22 @@ describe('RegistryPackageSource', () => {
     expect(resolved).toMatchObject({ status: 'found', package: { id: '@kb-labs/test', version: '1.0.0', primaryKind: 'plugin' } });
   });
 
+  // case: S-268.21
+  it('sends an explicit Marketplace version pin to Registry resolution', async () => {
+    let requestedUrl = '';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({
+        status: 'found', package: { id: '@kb-labs/test', version: '1.0.0', integrity: 'sha256-fixture', primaryKind: 'plugin' },
+      }), { status: 200 });
+    }));
+
+    await new RegistryPackageSource({ registryUrl: 'https://registry.test', signingPublicKey: 'test-key' })
+      .resolveIdentity('@kb-labs/test@1.0.0');
+
+    expect(requestedUrl).toBe('https://registry.test/api/v1/resolve?identity=%40kb-labs%2Ftest&version=1.0.0');
+  });
+
   it('classifies Registry authentication and transport failures without returning not-found', async () => {
     const source = new RegistryPackageSource({ registryUrl: 'https://registry.test', signingPublicKey: 'test-key' });
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })));
