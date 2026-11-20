@@ -24,6 +24,7 @@ const CACHE_TTL_META = 5 * 60 * 1000;
 const CACHE_TTL_SEARCH = 60 * 1000;
 const CACHE_TTL_SHARE_DEFAULT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_TARBALL_SIZE = 50 * 1024 * 1024; // 50 MB
+const MAX_PACKAGE_CACHE_ALIASES = 4096;
 const CANONICAL_AUTHOR_HANDLE = /^[a-z0-9-]{2,32}$/;
 const CANONICAL_PACKAGE_PART = /^[a-z0-9][a-z0-9._-]*$/;
 const SAFE_LEGACY_PATH_PART = /^[A-Za-z0-9._-]+$/;
@@ -96,6 +97,7 @@ export class RegistryService {
   private readonly signingPrivateKey?: string;
   private readonly siteUrl?: string;
   private readonly publishTails = new Map<string, Promise<void>>();
+  private readonly packageCacheKeys = new Map<string, string>();
 
   constructor(opts: RegistryServiceOptions) {
     this.storage = opts.storage;
@@ -120,7 +122,9 @@ export class RegistryService {
     if (!existing && (!CANONICAL_AUTHOR_HANDLE.test(authorHandle) || !isCanonicalPackageName(name))) {
       rejectPublishAddress(!CANONICAL_AUTHOR_HANDLE.test(authorHandle) ? 'author handle' : 'package name');
     }
-    const key = `${authorHandle}/${name}`;
+    // Safe publish path segments are ASCII, so folding case here makes the
+    // in-process queue match storage identity on case-insensitive filesystems.
+    const key = `${authorHandle}/${name}`.toLowerCase();
     const previous = this.publishTails.get(key) ?? Promise.resolve();
     let release: () => void = () => undefined;
     const tail = new Promise<void>((resolve) => { release = resolve; });
@@ -227,7 +231,7 @@ export class RegistryService {
         };
 
     await this.saveEntry(authorHandle, name, entry);
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(existing?.authorHandle ?? authorHandle, existing?.name ?? name);
 
     if (visibility === 'public') {
       await this.rebuildIndex();
@@ -266,7 +270,7 @@ export class RegistryService {
       updatedAt: new Date().toISOString(),
     };
     await this.saveEntry(authorHandle, name, updated);
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(entry.authorHandle, entry.name);
     if (entry.visibility === 'public') { await this.rebuildIndex(); }
   }
 
@@ -281,7 +285,7 @@ export class RegistryService {
       throw Object.assign(new Error(`Version ${version} not found`), { code: 'VERSION_NOT_FOUND' });
     }
     await this.saveEntry(authorHandle, name, { ...entry, versions, updatedAt: new Date().toISOString() });
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(entry.authorHandle, entry.name);
   }
 
   // ── Deprecate package ─────────────────────────────────────────────────────
@@ -294,7 +298,7 @@ export class RegistryService {
       deprecateMessage: message,
       updatedAt: new Date().toISOString(),
     });
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(entry.authorHandle, entry.name);
     if (entry.visibility === 'public') { await this.rebuildIndex(); }
   }
 
@@ -308,7 +312,7 @@ export class RegistryService {
       allowlist: [...entry.allowlist, namespaceId],
       updatedAt: new Date().toISOString(),
     });
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(entry.authorHandle, entry.name);
   }
 
   async createShareToken(
@@ -408,11 +412,24 @@ export class RegistryService {
   // ── Metadata reads ─────────────────────────────────────────────────────────
 
   async getEntry(authorHandle: string, name: string): Promise<RegistryEntry | null> {
-    const cacheKey = `registry:pkg:${authorHandle}/${name}`;
-    const cached = await this.cache.get<RegistryEntry>(cacheKey);
-    if (cached) { return cached; }
+    const lookupKey = `${authorHandle}/${name}`;
+    const knownCacheKey = this.packageCacheKeys.get(lookupKey);
+    if (knownCacheKey) {
+      const cached = await this.cache.get<RegistryEntry>(knownCacheKey);
+      if (cached) { return cached; }
+    }
+
     const entry = await this.loadEntry(authorHandle, name);
-    if (entry) { await this.cache.set(cacheKey, entry, CACHE_TTL_META); }
+    if (!entry) { return null; }
+    const cacheKey = `registry:pkg:${entry.authorHandle}/${entry.name}`;
+    if (!this.packageCacheKeys.has(lookupKey) && this.packageCacheKeys.size >= MAX_PACKAGE_CACHE_ALIASES) {
+      const oldestLookupKey = this.packageCacheKeys.keys().next().value;
+      if (oldestLookupKey) { this.packageCacheKeys.delete(oldestLookupKey); }
+    }
+    this.packageCacheKeys.set(lookupKey, cacheKey);
+    const cached = knownCacheKey ? null : await this.cache.get<RegistryEntry>(cacheKey);
+    if (cached) { return cached; }
+    await this.cache.set(cacheKey, entry, CACHE_TTL_META);
     return entry;
   }
 
@@ -579,7 +596,7 @@ export class RegistryService {
   async setFeatured(authorHandle: string, name: string, featured: boolean): Promise<void> {
     const entry = await this.requireEntry(authorHandle, name);
     await this.saveEntry(authorHandle, name, { ...entry, featured, updatedAt: new Date().toISOString() });
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(entry.authorHandle, entry.name);
     if (entry.visibility === 'public') { await this.rebuildIndex(); }
   }
 

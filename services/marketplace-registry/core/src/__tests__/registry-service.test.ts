@@ -592,6 +592,54 @@ describe('RegistryService.publish', () => {
   });
 
   // case: S-268.22
+  it('serializes concurrent case aliases of a legacy package on case-insensitive storage', async () => {
+    const values = new Map<string, Buffer>();
+    const legacyName = 'Legacy.Plugin_Name';
+    const legacyHandle = 'Legacy.Author';
+    const legacyMeta = { ...makePkg({ name: legacyName }).meta, version: '1.0.0' };
+    const legacyEntry: RegistryEntry = {
+      name: legacyName, authorHandle: legacyHandle, authorNamespaceId: 'ns-legacy',
+      primaryKind: 'plugin', visibility: 'private', legacyStatsVisibility: 'private', trust: 'untrusted',
+      allowlist: [], versions: [{ version: '1.0.0', publishedAt: '2024-01-01T00:00:00Z',
+        integrity: 'sha256-legacy', visibility: 'private', meta: legacyMeta, primaryKind: 'plugin' }],
+      deprecated: false, featured: false, badges: [], tags: [], meta: legacyMeta,
+      createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+    };
+    const base = `marketplace-registry/packages/${legacyHandle}/${legacyName}`;
+    values.set(`${base.toLowerCase()}/meta.json`, Buffer.from(JSON.stringify(legacyEntry)));
+    values.set(`${base.toLowerCase()}/v-312e302e30.tgz`, SMALL_TARBALL);
+    const storage: IStorage = {
+      read: async (path) => values.get(path.toLowerCase()) ?? null,
+      write: async (path, data) => { values.set(path.toLowerCase(), Buffer.from(data)); },
+      delete: async (path) => { values.delete(path.toLowerCase()); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix.toLowerCase())),
+      exists: async (path) => values.has(path.toLowerCase()),
+    };
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071' });
+
+    await svc.getEntry(legacyHandle, legacyName);
+    await svc.getEntry(legacyHandle.toLowerCase(), legacyName.toLowerCase());
+
+    await Promise.all([
+      svc.publish(Buffer.from('release upper alias'), makePkg({ name: legacyName, version: '1.1.0' }),
+        legacyHandle, 'ns-legacy'),
+      svc.publish(Buffer.from('release lower alias'), makePkg({ name: legacyName.toLowerCase(), version: '1.2.0' }),
+        legacyHandle.toLowerCase(), 'ns-legacy'),
+    ]);
+
+    const storedEntry = JSON.parse(values.get(`${base.toLowerCase()}/meta.json`)!.toString()) as RegistryEntry;
+    const entry = await svc.getEntry(legacyHandle, legacyName);
+    expect(storedEntry.versions.map(version => version.version)).toEqual(['1.0.0', '1.1.0', '1.2.0']);
+    expect(entry?.versions.map(version => version.version)).toEqual(['1.0.0', '1.1.0', '1.2.0']);
+    expect((await svc.getEntry(legacyHandle.toLowerCase(), legacyName.toLowerCase()))?.versions.map(version => version.version))
+      .toEqual(['1.0.0', '1.1.0', '1.2.0']);
+    expect((await svc.getTarball(legacyHandle, legacyName, '1.1.0')).tarball).toEqual(Buffer.from('release upper alias'));
+    expect((await svc.getTarball(legacyHandle.toLowerCase(), legacyName.toLowerCase(), '1.2.0')).tarball)
+      .toEqual(Buffer.from('release lower alias'));
+  });
+
+  // case: S-268.22
   it('serializes simultaneous first publication so only one namespace owns the package', async () => {
     const svc = makeService();
     const results = await Promise.allSettled([
