@@ -10,6 +10,8 @@
 //   resolve <event> <ref>        -> prints `selection=full|cases:<b64>` (GITHUB_OUTPUT line)
 //   run <selection> -- <cmd...>  -> runs cmd with `--cases <ids>` appended for a `cases:` selection
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const CASES_REF = /^batch\/.+\/cases\/(?<encoded>.+)$/;
@@ -48,6 +50,12 @@ export function batchArguments(selection) {
   throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
 }
 
+export function sharedUnitSuiteMode(selection) {
+  if (selection === 'full') return 'run';
+  if (selection.startsWith('cases:') && decodeCases(selection.slice(6)).trim() !== '') return 'skip';
+  throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
+}
+
 function main(argv) {
   const [command, ...rest] = argv;
   if (command === 'resolve' && rest.length === 2) {
@@ -59,11 +67,15 @@ function main(argv) {
     const result = spawnSync(executable, [...args, ...batchArguments(selection)], { stdio: 'inherit' });
     return result.status ?? 1;
   }
-  process.stderr.write('usage: journey-batch-selection.mjs resolve <event> <ref> | run <selection> -- <command...>\n');
+  if (command === 'shared-unit-suite' && rest.length === 1) {
+    process.stdout.write(`${sharedUnitSuiteMode(rest[0])}\n`);
+    return 0;
+  }
+  process.stderr.write('usage: journey-batch-selection.mjs resolve <event> <ref> | run <selection> -- <command...> | shared-unit-suite <selection>\n');
   return 2;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

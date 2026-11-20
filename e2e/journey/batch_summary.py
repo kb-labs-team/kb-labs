@@ -213,6 +213,9 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
                  f"- Baseline: `{run['baseline']}`", f"- Build base: `{run['buildBase']}`", "",
                  "## Stage durations"]
         lines.extend(f"- {stage}: {durations[stage]} seconds" for stage in STAGES)
+        unit_log = output / "shared" / "unit.log"
+        if unit_log.is_file() and unit_log.read_text(encoding="utf-8").startswith("SKIPPED:"):
+            lines.append("- Shared generic journey unit suite: skipped for this partial selection; full journey batch remains the gating verification.")
         lines.extend(["", "- Modes: local and secured", "- Reports and logs: one directory per mode", ""])
         lines.extend(f"- {mode}: no selected claims in this mode" if mode_without_selection[mode]
                      else f"- {mode}: {mode_results[mode]} (partial evidence; no gate verdict)"
