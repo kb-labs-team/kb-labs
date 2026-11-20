@@ -25,9 +25,11 @@ on:
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
 
+# Keep one batch active to bound runner use without canceling it on a newer PR.
+# GitHub keeps only one pending run per group; a newer pending run can replace it.
 concurrency:
   group: journey-batch
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read

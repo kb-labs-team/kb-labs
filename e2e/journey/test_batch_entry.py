@@ -1017,6 +1017,7 @@ exec "$REAL_TAR" "$@"
             self.assertIn('journey-batch-selection.mjs run "$BATCH_SELECTION" --', command)
         self.assertNotIn("docs/**", spec["on"]["pull_request"]["paths"])
         self.assertEqual(spec["concurrency"]["group"], "journey-batch")
+        self.assertFalse(spec["concurrency"]["cancel-in-progress"])
         jobs = spec["jobs"]
         self.assertEqual(set(jobs), {"producer", "local", "secured", "summary"})
         producer_steps = jobs["producer"]["steps"]
