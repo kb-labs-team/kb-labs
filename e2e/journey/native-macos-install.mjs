@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-export const cases = ['S-298.1'];
+export const cases = ['S-298.1', 'S-261.2'];
 
 export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, platformRoot, registryUrl }) {
   if (!registryUrl) throw new Error('Registry URL is required; run e2e/journey/native-macos-smoke.sh.');
@@ -26,7 +26,7 @@ export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, pla
     { command: installedCLI, args: ['--version'], cwd: tempRoot },
     { command: installedCLI, args: ['commit', '--help'], cwd: tempRoot },
     { command: installedCLI, args: ['project', 'add', workspace, '--json'], cwd: tempRoot },
-    { command: installedCLI, args: ['qa', 'cases', 'list', '--json'], cwd: tempRoot },
+    { command: installedCLI, args: ['marketplace', 'plugins', 'doctor', '--scope', 'platform', '--json'], cwd: tempRoot },
   ];
 }
 

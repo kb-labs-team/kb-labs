@@ -3,9 +3,10 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { nativeInstallCommands, redactCommandOutput, verifyMarketplaceInstall } from './native-macos-install.mjs';
+import { cases, nativeInstallCommands, redactCommandOutput, verifyMarketplaceInstall } from './native-macos-install.mjs';
 
 test('native Marketplace journey uses the kb-create managed launcher for the installed platform', () => {
+  assert.deepEqual(cases, ['S-298.1', 'S-261.2']);
   const commands = nativeInstallCommands({
     workspace: '/workspace',
     tempRoot: '/tmp/native',
@@ -19,6 +20,9 @@ test('native Marketplace journey uses the kb-create managed launcher for the ins
   assert.ok(commands.slice(2).every(command => command.cwd === '/tmp/native'));
   assert.ok(commands.some(command => command.command === '/tmp/native/kb'
     && command.args.join(' ') === 'commit --help'));
+  assert.ok(commands.some(command => command.command === '/tmp/native/kb'
+    && command.args.join(' ') === 'marketplace plugins doctor --scope platform --json'));
+  assert.ok(!commands.some(command => command.args.join(' ') === 'qa cases list --json'));
 });
 
 test('native command logs redact secret environment values and secret fields', () => {
