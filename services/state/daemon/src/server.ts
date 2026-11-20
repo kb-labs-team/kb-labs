@@ -123,7 +123,8 @@ class StateDaemonRuntime {
           requestId,
           traceId,
           method: request.method,
-          url: request.url,
+          // Use the route template so dynamic cache keys are never logged.
+          url: request.routeOptions.url ?? request.url,
           operation: "http.request",
         });
         request.kbLogger.debug("HTTP request started");
@@ -343,6 +344,39 @@ class StateDaemonRuntime {
         this.broker.clear(pattern),
       );
       reply.code(204);
+      return null;
+    });
+
+    server.post("/state/lookup", { config: { kbRequestKind: "polling" } }, async (request, reply) => {
+      const { key } = request.body as { key: string };
+      const value = await this.observability.observeOperation("state.get", () => this.broker.get(key));
+      if (value === null) {
+        reply.code(404);
+        return null;
+      }
+      reply.type("application/json");
+      return JSON.stringify(value);
+    });
+
+    server.post("/state/store", { config: { kbRequestKind: "polling" } }, async (request, reply) => {
+      const { key, value, ttl } = request.body as { key: string; value: unknown; ttl?: number };
+      await this.observability.observeOperation("state.set", () => this.broker.set(key, value, ttl));
+      reply.code(204);
+      return null;
+    });
+
+    server.post("/state/remove", { config: { kbRequestKind: "polling" } }, async (request, reply) => {
+      const { key } = request.body as { key: string };
+      await this.observability.observeOperation("state.delete", () => this.broker.delete(key));
+      reply.code(204);
+      return null;
+    });
+
+    server.post("/state/put-if-absent", { config: { kbRequestKind: "polling" } }, async (request, reply) => {
+      const { key, value, ttl } = request.body as { key: string; value: unknown; ttl?: number };
+      const inserted = await this.observability.observeOperation("state.setIfNotExists", () =>
+        this.broker.setIfNotExists(key, value, ttl));
+      reply.code(inserted ? 204 : 409);
       return null;
     });
   }

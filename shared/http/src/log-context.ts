@@ -33,7 +33,7 @@ export function createHttpLogger(
   baseLogger: ILogger,
   input: HttpLogContextInput,
 ): IContextLogger {
-  const route = input.url ? normalizeObservabilityRoute(input.url) : undefined;
+  const route = input.url ? normalizeObservabilityRoute(redactHttpUrl(input.url)) : undefined;
   return createContextLogger(baseLogger, {
     applicationId: input.applicationId ?? input.serviceId,
     serviceId: input.serviceId,

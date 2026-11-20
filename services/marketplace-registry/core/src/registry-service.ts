@@ -272,12 +272,28 @@ export class RegistryService {
     const token = `kbrt_${createHash('sha256').update(`${Date.now()}${Math.random()}`).digest('hex').slice(0, 32)}`;
     const expiresAt = new Date(Date.now() + ttlMs).toISOString();
     const pkg = `${authorHandle}/${name}`;
-    await this.cache.set(`registry:sharetoken:${token}`, { pkg, expiresAt }, ttlMs);
+    await this.cache.set(shareTokenCacheKey(token), { pkg, expiresAt }, ttlMs);
     return { token, pkg, expiresAt };
   }
 
   async resolveShareToken(token: string): Promise<{ pkg: string } | null> {
-    return this.cache.get<{ pkg: string; expiresAt: string }>(`registry:sharetoken:${token}`);
+    const cacheKey = shareTokenCacheKey(token);
+    const current = await this.cache.get<{ pkg: string; expiresAt: string }>(cacheKey);
+    if (current) { return current; }
+
+    // Tokens issued before digest-key storage used the credential in the cache
+    // key. Keep those links valid, then migrate their record on first use.
+    const legacyKey = `registry:sharetoken:${token}`;
+    const legacy = await this.cache.get<{ pkg: string; expiresAt: string }>(legacyKey);
+    if (!legacy) { return null; }
+    const remainingTtlMs = Date.parse(legacy.expiresAt) - Date.now();
+    if (!Number.isFinite(remainingTtlMs) || remainingTtlMs <= 0) {
+      await this.cache.delete(legacyKey);
+      return null;
+    }
+    await this.cache.set(cacheKey, legacy, remainingTtlMs);
+    await this.cache.delete(legacyKey);
+    return legacy;
   }
 
   // ── Download ───────────────────────────────────────────────────────────────
@@ -634,4 +650,8 @@ export class RegistryService {
       verifiedChecks: ['integrity'],
     };
   }
+}
+
+function shareTokenCacheKey(token: string): string {
+  return `registry:sharetoken:sha256:${createHash('sha256').update(token).digest('hex')}`;
 }
