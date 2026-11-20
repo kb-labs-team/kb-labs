@@ -622,6 +622,9 @@ def _checks(mode: str, graph: FlowGraph | None = None):
         yield service_check("project MCP refuses host-registration credentials", "mcp",
                             lambda: opaque_host_credential_mcp_rejection(pid(), auth_token()),
                             cases=["S-045.10"], runners=("service-secured:explore",))
+    project_root = (service_project(graph)["root"]
+                    if graph is not None and graph.states.get("project-registered", {}).get("passed") is True
+                    else "")
     yield service_check("project MCP commit schema", "mcp", lambda: commit_tool_schema(pid(), auth_token()),
                         cases=["S-140.1"])
     if project_root:
@@ -631,9 +634,6 @@ def _checks(mode: str, graph: FlowGraph | None = None):
         yield service_check("project MCP and CLI read parity", "mcp",
                             lambda: "BLOCKED: project-registered state must provide the disposable commit fixture root",
                             cases=["S-140.8"])
-    project_root = (service_project(graph)["root"]
-                    if graph is not None and graph.states.get("project-registered", {}).get("passed") is True
-                    else "")
     if project_root:
         yield service_check("project MCP commit mutation", "mcp",
                             lambda: apply_commit_plan(pid(), auth_token(), project_root), cases=["S-140.2"])
