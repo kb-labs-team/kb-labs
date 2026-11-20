@@ -22,6 +22,38 @@ CLEAR_CANDIDATES = ROOT / "e2e/verdaccio/clear-candidates.sh"
 
 
 class CandidatePackageRegistryTests(unittest.TestCase):
+    # case: S-268.11
+    def test_registry_journey_override_leaves_platform_config_image_owned(self):
+        script = (
+            'import { createRegistryJourneyConfig } from '
+            '"./services/marketplace-registry/app/scripts/registry-journey-config.mjs"; '
+            'process.stdout.write(JSON.stringify(createRegistryJourneyConfig({'
+            'registryUrl: "http://registry.test", signingPublicKey: "fixture-key"})));'
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script], cwd=ROOT,
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = json.loads(result.stdout)
+        self.assertEqual(set(config), {"marketplace"})
+        self.assertEqual(config["marketplace"]["sources"][0]["url"], "http://registry.test")
+        self.assertEqual(config["marketplace"]["sources"][0]["signingPublicKey"], "fixture-key")
+
+    # case: S-268.11
+    def test_registry_and_state_images_ship_the_platform_layout_contract(self):
+        for relative in (
+            "services/marketplace-registry/app/Dockerfile",
+            "services/state/daemon/Dockerfile",
+        ):
+            with self.subTest(dockerfile=relative):
+                dockerfile = (ROOT / relative).read_text()
+                self.assertIn(
+                    "COPY --chown=kb:nodejs .kb/deploy/image-default/platform-layout.json "
+                    "/app/.kb/v2/platform-layout.json",
+                    dockerfile,
+        )
+
     def test_registry_service_images_prepare_deploy_outputs_before_compose_build(self):
         with tempfile.TemporaryDirectory(prefix="journey-registry-image-prep-") as directory:
             root = Path(directory)

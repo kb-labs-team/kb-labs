@@ -186,21 +186,21 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             self.assertEqual(rendered.returncode, 0, rendered.stderr)
             producer_output = json.loads(rendered.stdout)
             overlay = Path(producer_output["composeOverlayPath"])
-            self.assertTrue((composition / ".kb" / "kb.config.jsonc").is_file())
-            self.assertTrue((composition / ".kb" / "marketplace.lock").is_file())
+            config_override = composition / ".kb" / "kb.config.override.json"
+            self.assertTrue(config_override.is_file())
+            self.assertFalse((composition / ".kb" / "kb.config.jsonc").exists())
+            self.assertFalse((composition / ".kb" / "marketplace.lock").exists())
+            self.assertEqual(set(json.loads(config_override.read_text())), {"marketplace"})
             self.assertTrue(overlay.is_file())
             validation = subprocess.run(
                 ["node", "--input-type=module", "-e", """
 import fs from 'node:fs';
 import { validateProductConfig } from './core/config/dist/index.js';
-import { validateMarketplaceLock } from '@kb-labs/core-discovery';
 const root = process.argv[1];
-const config = JSON.parse(fs.readFileSync(`${root}/.kb/kb.config.jsonc`, 'utf8'));
-const lock = JSON.parse(fs.readFileSync(`${root}/.kb/marketplace.lock`, 'utf8'));
+const config = JSON.parse(fs.readFileSync(`${root}/.kb/kb.config.override.json`, 'utf8'));
 const configResult = validateProductConfig('marketplace', config.marketplace);
-const lockResult = validateMarketplaceLock(lock, 'platform');
-if (!configResult.ok || !lockResult.valid) {
-  process.stderr.write(JSON.stringify({ config: configResult.errors, lock: lockResult }));
+if (!configResult.ok) {
+  process.stderr.write(JSON.stringify({ config: configResult.errors }));
   process.exitCode = 1;
 }
 """, str(composition)],
@@ -225,14 +225,13 @@ if (!configResult.ok || !lockResult.valid) {
             for mount in rendered["services"]["marketplace-registry"].get("volumes", [])
             if mount.get("type") == "bind"
         }
-        self.assertEqual(set(mounts), {"/app/.kb/kb.config.jsonc", "/app/.kb/marketplace.lock"})
-        config_source = Path(mounts["/app/.kb/kb.config.jsonc"]["source"])
-        lock_source = Path(mounts["/app/.kb/marketplace.lock"]["source"])
-        self.assertEqual(config_source.name, "kb.config.jsonc")
-        self.assertEqual(lock_source.name, "marketplace.lock")
-        self.assertEqual(config_source.parent, lock_source.parent)
+        self.assertEqual(set(mounts), {"/app/.kb/kb.config.override.json"})
+        config_source = Path(mounts["/app/.kb/kb.config.override.json"]["source"])
+        self.assertEqual(config_source.name, "kb.config.override.json")
         self.assertEqual(config_source.parent.name, ".kb")
         self.assertTrue(all(mount.get("read_only") is True for mount in mounts.values()))
+        registry_environment = rendered["services"]["marketplace-registry"].get("environment", {})
+        self.assertEqual(registry_environment.get("KB_STATE_DAEMON_URL"), "http://marketplace-state:7777")
         return rendered
 
     def test_default_compose_configuration_does_not_require_registry_lane_inputs(self):
