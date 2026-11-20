@@ -197,8 +197,7 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             self.assertEqual(set(override), {"marketplace"})
             self.assertEqual(override["marketplace"]["sources"][0]["url"],
                              "http://127.0.0.1:4010/api/v1/marketplace-registry")
-            self.assertIn('KB_JOURNEY_MARKETPLACE_REGISTRY_URL: "http://127.0.0.1:4010/api/v1/marketplace-registry"',
-                          overlay.read_text())
+            self.assertNotIn("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", overlay.read_text())
             self.assertIn('KB_JOURNEY_MARKETPLACE_SERVICE_URL: "http://marketplace-tamper:8081"',
                           overlay.read_text())
             self.assertIn('KB_JOURNEY_MARKETPLACE_PROXY_URL: "http://marketplace-tamper:8081"',
@@ -372,8 +371,7 @@ if (!configResult.ok) {
             runner_environment = rendered["services"]["runner"]["environment"]
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_PUBLISH_URL"],
                              "http://127.0.0.1:4010/api/v1/marketplace-registry/api/v1")
-            self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_REGISTRY_URL"],
-                             "http://127.0.0.1:4010/api/v1/marketplace-registry")
+            self.assertFalse(runner_environment.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL"))
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_SERVICE_URL"],
                              "http://marketplace-tamper:8081")
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_PROXY_URL"],
