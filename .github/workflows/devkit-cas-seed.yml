@@ -35,6 +35,9 @@ jobs:
       - id: devkit-cas
         name: Restore trusted master CAS snapshot
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: read-write
+          namespace: trusted-master
       - name: Build kb-devkit
         working-directory: tools/kb-devkit
         run: go build -trimpath -o "$RUNNER_TEMP/kb-devkit" .

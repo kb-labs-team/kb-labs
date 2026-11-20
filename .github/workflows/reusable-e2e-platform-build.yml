@@ -65,7 +65,8 @@ jobs:
         id: devkit-cas
         uses: ./.github/actions/devkit-cas
         with:
-          mode: ${{ inputs.cache-mode }}
+          mode: ${{ (github.ref == 'refs/heads/master' || inputs.cache-mode == 'off') && 'off' || 'read-write' }}
+          namespace: e2e-platform
 
       - name: Build all packages (topological order)
         run: |

@@ -140,7 +140,8 @@ jobs:
         if: inputs.prebuilt-artifact == '' && inputs.prebuilt-files-artifact == '' && !inputs.fast-build
         uses: ./.github/actions/devkit-cas
         with:
-          mode: ${{ inputs.cache-mode }}
+          mode: ${{ (github.ref == 'refs/heads/master' || inputs.cache-mode == 'off') && 'off' || 'read-only' }}
+          namespace: e2e-docker
 
       - name: Build all packages (topological order)
         if: inputs.prebuilt-artifact == '' && inputs.prebuilt-files-artifact == ''

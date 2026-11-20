@@ -77,6 +77,9 @@ jobs:
       - id: devkit-cas
         name: Restore kb-devkit content-addressed cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: ${{ github.ref == 'refs/heads/master' && 'off' || 'read-write' }}
+          namespace: journey
       - uses: ./.github/actions/install-goreleaser
       - id: batch
         name: Produce shared build and candidate

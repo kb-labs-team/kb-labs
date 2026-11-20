@@ -165,6 +165,9 @@ test('journey batch and candidate route builds through the same runner entry', (
   assert.equal(batchBuild.run, 'node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"');
   assert.ok(batchSteps.indexOf(batchCas) < batchSteps.indexOf(batchBuild), 'restore the shared DevKit CAS before the batch build');
   assert.equal(batchCas.uses, './.github/actions/devkit-cas');
+  assert.equal(batchCas.with.namespace, 'journey');
+  assert.ok(batchCas.with.mode.includes("'off'"), 'manual master batch runs must not write into the trusted namespace');
+  assert.ok(batchCas.with.mode.includes("'read-write'"));
   assert.equal(batchBuild.env.DEVKIT_CACHE_HIT, '${{ steps.devkit-cas.outputs.cache-hit }}');
   assert.equal(batchBuild.env.DEVKIT_CACHE_MODE, '${{ steps.devkit-cas.outputs.cache-mode }}');
   assert.equal(batchBuild.env.DEVKIT_CACHE_STORE_PATH, '${{ steps.devkit-cas.outputs.store-path }}');
@@ -178,34 +181,52 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
   const nodeSetup = steps.find((step) => step.uses?.startsWith('actions/setup-node@'));
   const goSetup = steps.find((step) => step.uses?.startsWith('actions/setup-go@'));
   const cas = readYaml('.github/actions/devkit-cas/action.yml');
-  const cache = cas.runs.steps.find((step) => step.uses?.startsWith('actions/cache@'));
+  const cacheSteps = cas.runs.steps;
+  const cacheWriter = cacheSteps.find((step) => step.uses === 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
+  const cacheReader = cacheSteps.find((step) => step.uses === 'actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
   const profile = JSON.parse(readFileSync(path.join(root, 'scripts/ci/verification-profile.json'), 'utf8'));
 
   assert.equal(nodeSetup.with.cache, 'pnpm');
   assert.equal(goSetup.with['cache-dependency-path'], 'tools/kb-create/go.sum');
-  assert.equal(cache.with.path.trim(), '${{ steps.resolve-store.outputs.path }}/objects\n${{ steps.resolve-store.outputs.path }}/tasks');
-  assert.match(cache.with.key, /\$\{\{ steps\.resolve-store\.outputs\.sha \}\}/);
+  assert.equal(cacheWriter.with.path.trim(), '${{ steps.resolve-store.outputs.path }}/objects\n${{ steps.resolve-store.outputs.path }}/tasks');
+  assert.match(cacheWriter.with.key, /\$\{\{ steps\.resolve-store\.outputs\.sha \}\}/);
   const toolchain = cas.runs.steps.find((step) => step.name === 'Identify cache toolchain partition');
   assert.equal(toolchain.id, 'toolchain');
   assert.match(toolchain.run, /node --version/);
   assert.match(toolchain.run, /go version/);
-  assert.match(cache.with.key, /runner\.arch/);
-  assert.match(cache.with.key, /steps\.toolchain\.outputs\.partition/);
-  assert.doesNotMatch(cache.with.key, /hashFiles\(/);
-  assert.equal(cache.with['restore-keys'].trim(), 'devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-');
-  assert.equal(cas.outputs['cache-hit'].value, '${{ steps.restore.outputs.cache-hit }}');
+  assert.match(cacheWriter.with.key, /runner\.arch/);
+  assert.match(cacheWriter.with.key, /steps\.toolchain\.outputs\.partition/);
+  assert.match(cacheWriter.with.key, /inputs\.namespace/);
+  assert.doesNotMatch(cacheWriter.with.key, /hashFiles\(/);
+  const expectedRestoreKeys = [
+    'devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ inputs.namespace }}-',
+    'devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-trusted-master-',
+  ].join('\n');
+  assert.equal(cacheWriter.with['restore-keys'].trim(), expectedRestoreKeys);
+  assert.equal(cacheReader.with.key, cacheWriter.with.key);
+  assert.equal(cacheReader.with['restore-keys'], cacheWriter.with['restore-keys']);
+  assert.equal(cacheSteps.find((step) => step.id === 'restore-only').if, "inputs.mode == 'read-only'");
+  assert.equal(cacheWriter.if, "inputs.mode == 'read-write'");
+  assert.ok(cacheSteps.find((step) => step.name === 'Validate cache mode and namespace trust').run.includes('WORKFLOW_NAME'));
+  assert.equal(cas.outputs['cache-hit'].value, '${{ steps.restore-write.outputs.cache-hit || steps.restore-only.outputs.cache-hit }}');
   assert.equal(cas.outputs['store-path'].value, '${{ steps.resolve-store.outputs.path }}');
   assert.equal(cas.outputs['cache-mode'].value, '${{ inputs.mode }}');
   assert.equal(cas.outputs['checkout-sha'].value, '${{ steps.resolve-store.outputs.sha }}');
   assert.ok(cas.runs.steps.some((step) => step.id === 'resolve-store' && step.run.includes('resolve-shared-root.sh')));
-  const releaseCacheMode = "${{ (inputs.profile || github.event.inputs.profile || 'stream') == 'candidate' && 'off' || 'read-write' }}";
-  const remoteCacheSteps = workflow.jobs.build.steps.concat(
-    workflow.jobs['independent-test-shards'].steps,
-    workflow.jobs['build-dependent-test-shards'].steps,
-    workflow.jobs['internal-tool-test-shards'].steps,
-  ).filter((step) => step.uses === './.github/actions/devkit-cas');
-  assert.equal(remoteCacheSteps.length, 4);
-  assert.ok(remoteCacheSteps.every((step) => step.with.mode === releaseCacheMode), 'candidate/release verification must never restore or save DevKit CAS');
+  const buildCache = workflow.jobs.build.steps.find((step) => step.uses === './.github/actions/devkit-cas');
+  const shardCacheSteps = [
+    ...workflow.jobs['independent-test-shards'].steps,
+    ...workflow.jobs['build-dependent-test-shards'].steps,
+    ...workflow.jobs['internal-tool-test-shards'].steps,
+  ].filter((step) => step.uses === './.github/actions/devkit-cas');
+  assert.equal(shardCacheSteps.length, 3);
+  assert.equal(buildCache.with.namespace, 'verify');
+  assert.ok(buildCache.with.mode.includes("'read-write'"));
+  assert.ok(shardCacheSteps.every((step) => step.with.namespace === 'verify'));
+  assert.ok(shardCacheSteps.every((step) => step.with.mode.includes("'read-only'")), 'test shards may restore but must not save the shared immutable key');
+  for (const step of [buildCache, ...shardCacheSteps]) {
+    assert.ok(step.with.mode.includes("'off'"), 'candidate and master stream runs must not use the fast CAS namespace');
+  }
   assert.ok(profile.buildDependentTestStages.candidate.includes('journey-unit-suite'));
   assert.ok(!profile.buildDependentTestStages.stream.includes('journey-unit-suite'));
 
@@ -227,6 +248,8 @@ test('trusted master cache seed is manual, master-only, and builds through the s
   assert.deepEqual(workflow.permissions, { contents: 'read' });
   assert.ok(steps.indexOf(cas) < steps.indexOf(build));
   assert.equal(cas.uses, './.github/actions/devkit-cas');
+  assert.equal(cas.with.namespace, 'trusted-master');
+  assert.equal(cas.with.mode, 'read-write');
   assert.equal(build.env.DEVKIT_CAS_STORE_PATH, '${{ steps.devkit-cas.outputs.store-path }}');
   assert.match(build.run, /kb-devkit" run build --json/);
   assert.doesNotMatch(JSON.stringify(workflow), /\$\{\{\s*secrets\./);
@@ -239,6 +262,32 @@ test('trusted master cache seed is manual, master-only, and builds through the s
   const authoritativeBuild = authoritativeE2E.jobs.prepare;
   assert.match(authoritativeBuild.with['cache-mode'], /workflow_call.*read-write.*off/);
   assert.equal(authoritativeBuild.with['cache-mode'], "${{ github.event_name == 'workflow_call' && 'read-write' || 'off' }}");
+});
+
+test('CAS roles isolate the sole master writer from concurrent fast-lane jobs', () => {
+  const remote = readYaml('.github/workflows/remote-verify.yml');
+  const writer = remote.jobs.build.steps.find((step) => step.uses === './.github/actions/devkit-cas');
+  const readers = [
+    ...remote.jobs['independent-test-shards'].steps,
+    ...remote.jobs['build-dependent-test-shards'].steps,
+    ...remote.jobs['internal-tool-test-shards'].steps,
+  ].filter((step) => step.uses === './.github/actions/devkit-cas');
+  const seed = readYaml('.github/workflows/devkit-cas-seed.yml').jobs.seed.steps.find((step) => step.id === 'devkit-cas');
+  const batch = readYaml('.github/workflows/journey-batch.yml').jobs.producer.steps.find((step) => step.id === 'devkit-cas');
+  const action = readYaml('.github/actions/devkit-cas/action.yml');
+  const guard = action.runs.steps.find((step) => step.name === 'Validate cache mode and namespace trust');
+
+  assert.equal(writer.with.namespace, 'verify');
+  assert.ok(writer.with.mode.includes("'read-write'"));
+  assert.equal(readers.length, 3);
+  assert.ok(readers.every((step) => step.with.namespace === 'verify' && step.with.mode.includes("'read-only'")));
+  assert.equal(seed.with.namespace, 'trusted-master');
+  assert.equal(batch.with.namespace, 'journey');
+  assert.equal(action.inputs.namespace.required, true);
+  assert.equal(action.runs.steps.find((step) => step.id === 'restore-only').uses, 'actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
+  assert.match(guard.run, /refs\/heads\/master/);
+  assert.match(guard.run, /workflow_dispatch/);
+  assert.match(guard.run, /Seed DevKit CAS from trusted master/);
 });
 
 test('DevKit CAS cache path follows the repository shared store and isolates nested fixtures', () => {

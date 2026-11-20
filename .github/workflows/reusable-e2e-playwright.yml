@@ -138,7 +138,8 @@ jobs:
         if: inputs.prebuilt-artifact == ''
         uses: ./.github/actions/devkit-cas
         with:
-          mode: ${{ inputs.cache-mode }}
+          mode: ${{ (github.ref == 'refs/heads/master' || inputs.cache-mode == 'off') && 'off' || 'read-only' }}
+          namespace: e2e-playwright
 
       - name: Build all packages
         if: inputs.prebuilt-artifact == ''

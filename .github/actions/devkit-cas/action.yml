@@ -3,14 +3,17 @@ description: Restore the addressable kb-devkit build cache for fast CI lanes.
 
 inputs:
   mode:
-    description: 'read-write restores and saves the CAS; off always builds cold'
+    description: 'read-write restores and saves; read-only restores without saving; off builds cold'
     required: false
     default: read-write
+  namespace:
+    description: Cache role namespace, isolated from other concurrent writers.
+    required: true
 
 outputs:
   cache-hit:
     description: Whether the exact immutable cache key was restored.
-    value: ${{ steps.restore.outputs.cache-hit }}
+    value: ${{ steps.restore-write.outputs.cache-hit || steps.restore-only.outputs.cache-hit }}
   store-path:
     description: The shared content-addressed store path used by kb-devkit.
     value: ${{ steps.resolve-store.outputs.path }}
@@ -28,16 +31,41 @@ runs:
       id: resolve-store
       shell: bash
       run: bash "$GITHUB_ACTION_PATH/resolve-shared-root.sh" "$GITHUB_WORKSPACE" "$GITHUB_OUTPUT"
+    - name: Validate cache mode and namespace trust
+      shell: bash
+      env:
+        CACHE_MODE: ${{ inputs.mode }}
+        CACHE_NAMESPACE: ${{ inputs.namespace }}
+        WORKFLOW_REF: ${{ github.ref }}
+        WORKFLOW_EVENT: ${{ github.event_name }}
+        WORKFLOW_NAME: ${{ github.workflow }}
+      run: |
+        set -euo pipefail
+        case "$CACHE_MODE" in
+          read-write|read-only|off) ;;
+          *) echo "unsupported DevKit CAS mode: $CACHE_MODE" >&2; exit 2 ;;
+        esac
+        [[ "$CACHE_NAMESPACE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "invalid DevKit CAS namespace" >&2; exit 2; }
+        if [[ "$CACHE_NAMESPACE" == trusted-master ]]; then
+          [[ "$WORKFLOW_REF" == refs/heads/master && "$WORKFLOW_EVENT" == workflow_dispatch && "$WORKFLOW_NAME" == "Seed DevKit CAS from trusted master" ]] || {
+            echo "trusted-master CAS writes are restricted to the manual master seed workflow" >&2
+            exit 2
+          }
+          [[ "$CACHE_MODE" == read-write ]] || { echo "trusted-master CAS seed must be read-write" >&2; exit 2; }
+        elif [[ "$WORKFLOW_REF" == refs/heads/master && "$CACHE_MODE" != off ]]; then
+          echo "master jobs must use the trusted seed namespace or disable DevKit CAS" >&2
+          exit 2
+        fi
     - name: Identify cache toolchain partition
-      if: inputs.mode == 'read-write'
+      if: inputs.mode != 'off'
       id: toolchain
       shell: bash
       run: |
         partition=$(printf '%s\n%s\n' "$(node --version)" "$(go version)" | shasum -a 256 | cut -c 1-16)
         printf 'partition=%s\n' "$partition" >> "$GITHUB_OUTPUT"
-    - name: Restore kb-devkit CAS
+    - name: Restore and save kb-devkit CAS
       if: inputs.mode == 'read-write'
-      id: restore
+      id: restore-write
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: |
@@ -45,6 +73,19 @@ runs:
           ${{ steps.resolve-store.outputs.path }}/tasks
         # Task fingerprints own source validity. This outer cache only transports
         # objects between runs sharing a runner platform and Node/Go toolchain.
-        key: devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ steps.resolve-store.outputs.sha }}
+        key: devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ inputs.namespace }}-${{ steps.resolve-store.outputs.sha }}
         restore-keys: |
-          devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-
+          devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ inputs.namespace }}-
+          devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-trusted-master-
+    - name: Restore kb-devkit CAS without saving
+      if: inputs.mode == 'read-only'
+      id: restore-only
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: |
+          ${{ steps.resolve-store.outputs.path }}/objects
+          ${{ steps.resolve-store.outputs.path }}/tasks
+        key: devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ inputs.namespace }}-${{ steps.resolve-store.outputs.sha }}
+        restore-keys: |
+          devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ inputs.namespace }}-
+          devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-trusted-master-
