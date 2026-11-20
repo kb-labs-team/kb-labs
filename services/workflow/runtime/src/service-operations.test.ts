@@ -47,6 +47,8 @@ describe('setWorkflowCronEnabled', () => {
       code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
       envelope: {
         code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+        message: 'The Gateway returned an invalid UX result.',
+        hint: 'Run "kb-create doctor" to check the Gateway, then retry the command.',
         details: { httpStatus: '502', requestStage: 'Gateway request', gatewayUrl: 'https://gateway.test' },
         correlationId: expect.any(String),
       },

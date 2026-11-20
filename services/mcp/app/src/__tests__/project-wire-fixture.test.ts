@@ -289,11 +289,12 @@ describe('project MCP wire fixture producer', () => {
       name: 'workflow__workflow_crons_disable', arguments: { id: 'journey-cron' },
     });
     const fallbackError = parseMcpResponse(malformedServiceResponse.body).result?.structuredContent;
-    expect(fallbackError).toMatchObject({ ok: false, error: {
-      code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+    const actualMcpError = (fallbackError as { error: Record<string, unknown> }).error;
+    const normalizedMcpError = { ...actualMcpError, correlationId: '<dynamic>' };
+    expect(normalizedMcpError).toEqual(createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
       details: { httpStatus: '502', requestStage: 'Gateway request', gatewayUrl: 'https://gateway.test' },
-      correlationId: expect.any(String),
-    } });
+      correlationId: '<dynamic>',
+    }));
     expect(serviceCall.mock.calls.map(([serviceId, request]) => [serviceId, request.path])).toEqual([
       ['workflow', '/api/v1/crons/journey-cron/enable'],
       ['workflow', '/api/v1/crons/journey-cron/disable'],

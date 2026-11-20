@@ -32,12 +32,10 @@ function operationFailure(
 }
 
 function gatewayProtocolFailure(
-  message: string,
   statusCode: number,
   gatewayUrl?: string,
 ): WorkflowServiceOperationError {
   const envelope = createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
-    message,
     details: {
       httpStatus: String(statusCode),
       requestStage: 'Gateway request',
@@ -111,12 +109,12 @@ export async function setWorkflowCronEnabled(
         errorEnvelope.correlationId, errorEnvelope,
       );
     }
-    throw gatewayProtocolFailure('Gateway returned an invalid error response.', response.statusCode, response.gatewayUrl);
+    throw gatewayProtocolFailure(response.statusCode, response.gatewayUrl);
   }
 
   const data = envelope?.ok === true ? record(envelope.data) : envelope;
   if (typeof data?.enabled !== 'boolean') {
-    throw gatewayProtocolFailure('Gateway returned an invalid success response.', response.statusCode, response.gatewayUrl);
+    throw gatewayProtocolFailure(response.statusCode, response.gatewayUrl);
   }
   return { id, enabled: data.enabled };
 }

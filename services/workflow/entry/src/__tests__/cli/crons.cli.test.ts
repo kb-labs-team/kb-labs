@@ -113,7 +113,7 @@ describe('workflow crons CLI', () => {
     } });
   });
 
-  it('returns the same typed fallback as MCP when the service response is malformed', async () => {
+  it('returns the Gateway protocol failure envelope when the service response is malformed', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({ requestServiceOperation: async () => ({
         ok: false, statusCode: 502, payload: { error: 'not a UX result' },
@@ -123,10 +123,10 @@ describe('workflow crons CLI', () => {
       mockCLIInput({ argv: ['journey-cron'], flags: { json: true } }));
 
     expect(result).toMatchObject({ ok: false, error: {
-      code: 'KB_RUNTIME_COMMAND_FAILED',
-      message: 'The workflow service returned an invalid cron update response.',
-      hint: 'Check workflow service health, then retry the command.',
-      details: { command: 'workflow cron toggle' },
+      code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+      message: 'The Gateway returned an invalid UX result.',
+      hint: 'Run "kb-create doctor" to check the Gateway, then retry the command.',
+      details: { httpStatus: '502', requestStage: 'Gateway request', gatewayUrl: '<url>' },
       correlationId: expect.any(String),
     } });
   });

@@ -61,16 +61,18 @@ describe('cron operation with the SDK Gateway client', () => {
     vi.stubGlobal('fetch', fetch);
     const client = new WorkflowDaemonClient({ url: 'https://gateway.test/api/v1/projects/prj_fixture/workflow' });
 
-    await expect(setWorkflowCronEnabled(
+    const error = await setWorkflowCronEnabled(
       { id: 'journey-cron', enabled: false },
       (request) => client.requestServiceOperation(request),
-    )).rejects.toMatchObject({
-      code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
-      envelope: {
-        code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+    ).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE' });
+    const normalizedEnvelope = { ...(error as { envelope: Record<string, unknown> }).envelope, correlationId: '<dynamic>' };
+    expect(normalizedEnvelope).toEqual({
+      ...createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
         details: { httpStatus: '502', requestStage: 'Gateway request', gatewayUrl: 'https://gateway.test' },
-        correlationId: expect.any(String),
-      },
+        correlationId: '<dynamic>',
+      }),
+      correlationId: '<dynamic>',
     });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
