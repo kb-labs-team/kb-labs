@@ -7,6 +7,11 @@ from central_registry_gateway import _fixture_config
 
 
 class CentralRegistryGatewayFixtureTests(unittest.TestCase):
+    def test_runner_image_provides_the_standard_kb_dev_command(self):
+        dockerfile = (Path(__file__).parent / "Dockerfile.runner").read_text()
+
+        self.assertIn("COPY --from=release-index-sealer /out/kb-dev /usr/local/bin/kb-dev", dockerfile)
+
     def test_central_author_gateway_is_distinct_secured_and_narrowly_routed(self):
         config, service_yaml = _fixture_config(
             port=43191,
