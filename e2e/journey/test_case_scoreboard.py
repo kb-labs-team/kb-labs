@@ -59,6 +59,17 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertEqual(secured["releaseCases"], {"fullyGreen": 0, "total": 0})
         self.assertIn("non-gating for Release 1", render_markdown(secured))
 
+    # case: S-262.17
+    def test_selected_claims_are_rendered_by_the_unified_scoreboard_writer(self):
+        write_scoreboards(self.reports, self.catalog, ["S-001.1"])
+        for name in ("case-scoreboard-local.json", "case-scoreboard-secured.json",
+                     "case-scoreboard.json"):
+            data = json.loads((self.reports / name).read_text(encoding="utf-8"))
+            self.assertEqual(data["selection"], ["S-001.1"], name)
+        for name in ("case-scoreboard-local.md", "case-scoreboard-secured.md",
+                     "case-scoreboard.md"):
+            self.assertIn("selection: S-001.1", (self.reports / name).read_text(encoding="utf-8"), name)
+
     def test_scores_case_defined_denominator_and_mode_specific_results(self):
         self.write_json("installer-case-local-agent-explore-default.json", {
             "case_run": {"mode": "local", "claims": [

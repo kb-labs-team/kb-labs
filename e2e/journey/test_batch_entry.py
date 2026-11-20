@@ -37,6 +37,9 @@ class JourneyBatchEntryTests(unittest.TestCase):
         shutil.copy2(REPO / "e2e/journey/redaction.py", self.root / "e2e/journey/redaction.py")
         shutil.copy2(REPO / "e2e/journey/jsonl.py", self.root / "e2e/journey/jsonl.py")
         shutil.copy2(REPO / "e2e/journey/scoreboard_contract.py", self.root / "e2e/journey/scoreboard_contract.py")
+        shutil.copy2(REPO / "e2e/journey/scoreboard.py", self.root / "e2e/journey/scoreboard.py")
+        shutil.copy2(REPO / "e2e/journey/journey_dependencies.py", self.root / "e2e/journey/journey_dependencies.py")
+        shutil.copytree(REPO / "docs/qa/scenarios", self.root / "docs/qa/scenarios")
         shutil.copy2(REPO / "e2e/journey/preflight.sh", self.root / "e2e/journey/preflight.sh")
         shutil.copy2(REPO / "scripts/ci/journey-batch-selection.mjs", self.root / "scripts/ci/journey-batch-selection.mjs")
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
@@ -81,6 +84,19 @@ if [ -n "$KB_JOURNEY_ONLY" ] && [ ! -s "$ROOT/core/fixture/dist/index.js" ]; the
 fi
 if [ -n "${KB_JOURNEY_CASES:-}" ]; then
   printf 'cases %s\\n' "$KB_JOURNEY_CASES" >> "$CALLS"
+  if [ "${OMIT_SELECTED_EVIDENCE:-}" != "$mode" ]; then
+  "$PYTHON" - "$REPORTS/selection-plan.json" "$mode" <<'PY'
+import json, os, sys
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+claims = sorted(plan["steps"])
+report = {"case_run": {"mode": sys.argv[2], "claims": [
+    {"claimId": claim, "status": "PASS"} for claim in claims]}, "steps": [
+    {"name": name, "mode": sys.argv[2], "status": "PASS", "cases": owner_claims}
+    for name, owner_claims in plan["selectedOwningSteps"].items()]}
+with open(os.path.join(os.environ["REPORTS"], "service-" + sys.argv[2] + ".json"), "w", encoding="utf-8") as output:
+    json.dump(report, output)
+PY
+  fi
 fi
 mkdir -p "$REPORTS"
 if [ "${OMIT_SCOREBOARD:-}" != "$mode" ]; then
@@ -151,11 +167,9 @@ exit 0
         self._script(self.bin / "batch-python", f'''#!/bin/sh
 case "$1" in
   *select_from_cases.py)
-    case "$3" in
-      local) printf '%s\\n' "${{SELECTED_RUNNERS_LOCAL:-[]}}" ;;
-      secured) printf '%s\\n' "${{SELECTED_RUNNERS_SECURED:-[]}}" ;;
-      *) exit 2 ;;
-    esac
+    mode="$KB_JOURNEY_SELECTION_MODE"
+    case "$mode" in local) runners="${{SELECTED_RUNNERS_LOCAL:-[]}}" ;; secured) runners="${{SELECTED_RUNNERS_SECURED:-[]}}" ;; *) exit 2 ;; esac
+    SELECTED_RUNNERS="$runners" "{sys.executable}" -c 'import json,os; tokens=[x.strip() for x in os.environ["KB_JOURNEY_CASES"].split(",") if x.strip()]; claims=[x if "." in x else x+".1" for x in tokens]; print(json.dumps({{"selection":tokens,"steps":claims,"selectedOwningSteps":{{"selected owner":claims}},"runners":json.loads(os.environ["SELECTED_RUNNERS"])}}))'
     ;;
   *) exec "{sys.executable}" "$@" ;;
 esac
@@ -224,6 +238,7 @@ exec "$REAL_TAR" "$@"
             "KB_DEVKIT_BASE_REF": "origin/master",
             "ROOT": str(self.root),
             "BATCH_PYTHON": str(self.bin / "batch-python"),
+            "PYTHON": sys.executable,
             "BATCH_SELECTION": "full",
             "REAL_TAR": real_tar,
             "REAL_NODE": shutil.which("node") or "node",
@@ -558,6 +573,96 @@ exec "$REAL_TAR" "$@"
         self.assertIn("- Result: PARTIAL", rendered)
         self.assertNotIn("- Result: PASS", rendered)
 
+    # case: S-262.17
+    def test_selected_mode_gate_validates_release_contract_before_bypassing_mode_gate(self):
+        import json
+        mode_dir = self.root / "secured-gate-input"
+        mode_dir.mkdir()
+        scoreboard = json.loads(self.scoreboard_fixtures["secured"].read_text())
+        scoreboard["releaseGate"] = {"modes": []}
+        (mode_dir / "case-scoreboard.json").write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        result = subprocess.run(
+            [sys.executable, str(self.root / "e2e/journey/batch_summary.py"), "mode-gating",
+             str(mode_dir), "secured", str(self.root / "producer"), str(self.root / "out"), "S-268.1"],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+        self.assertIn("releaseGate.modes must equal ['local']; got []", result.stderr)
+
+    # case: S-262.17
+    def test_zero_exit_with_empty_selected_scoreboard_fails_the_mode(self):
+        import json
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        stale_mode = self.root / "secured-empty-evidence/secured"
+        stale_mode.mkdir(parents=True)
+        (stale_mode / "selection-plan.json").write_text(
+            '{"selectedOwningSteps":{"selected owner":["S-268.1"]}}', encoding="utf-8")
+        (stale_mode / "service-secured.json").write_text(
+            '{"case_run":{"mode":"secured","claims":[{"claimId":"S-268.1","status":"PASS"}]},'
+            '"steps":[{"name":"selected owner","mode":"secured","status":"PASS","cases":["S-268.1"]}]}',
+            encoding="utf-8")
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "secured",
+             str(producer), str(self.root / "secured-empty-evidence"), "--cases", "S-268.1"],
+            cwd=self.root,
+            env={**self.env, "SELECTED_RUNNERS_SECURED": '["service-marketplace-registry:secured"]',
+                 "OMIT_SELECTED_EVIDENCE": "secured"},
+            text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("selected owning-step evidence is missing", result.stderr + result.stdout)
+        metadata = json.loads(
+            (self.root / "secured-empty-evidence/secured/batch-metadata.json").read_text())
+        self.assertEqual(metadata["result"], "FAIL")
+
+    # case: S-262.17
+    def test_selected_mode_requires_raw_owning_step_and_claim_evidence(self):
+        from batch_summary import selected_owners_have_evidence
+        mode_dir = self.root / "selected-evidence"
+        mode_dir.mkdir()
+        plan = {"selectedOwningSteps": {"publish package": ["S-268.1"]}}
+        (mode_dir / "selection-plan.json").write_text(__import__("json").dumps(plan), encoding="utf-8")
+        report = {"case_run": {"mode": "secured", "claims": [
+            {"claimId": "S-268.1", "status": "PASS"}]}, "steps": [
+                {"name": "publish package", "mode": "secured", "status": "PASS", "cases": ["S-268.1"]}]}
+        (mode_dir / "service-secured.json").write_text(__import__("json").dumps(report), encoding="utf-8")
+        self.assertTrue(selected_owners_have_evidence(mode_dir, "secured"))
+        report["steps"] = []
+        (mode_dir / "service-secured.json").write_text(__import__("json").dumps(report), encoding="utf-8")
+        self.assertFalse(selected_owners_have_evidence(mode_dir, "secured"))
+
+    # case: S-262.17
+    def test_missing_selected_mode_artifact_uses_authoritative_selection(self):
+        import json
+        batch_result = self._run()
+        self.assertEqual(batch_result.returncode, 0, batch_result.stderr + batch_result.stdout +
+                         str(list(self.root.rglob("batch.log"))) +
+                         ((self.root / "out/shared/summary.md").read_text()
+                          if (self.root / "out/shared/summary.md").exists() else ""))
+        stale = self.root / "selected-summary/secured/stale-report.json"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text('{"case_run":{"mode":"secured","claims":[]},"steps":[]}', encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(self.root / "e2e/journey/batch_summary.py"),
+             str(self.root / "selected-summary"), str(self.root / "out"),
+             str(self.root / "out/.artifact-local"), str(self.root / "missing-secured"),
+             "S-268.1,S-268.11"],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        rendered = (self.root / "selected-summary/shared/summary.md").read_text()
+        self.assertNotEqual(result.returncode, 0, result.stderr + rendered)
+        self.assertIn("secured=[S-268.1, S-268.11]", rendered)
+        self.assertIn("- Result: PARTIAL", rendered)
+        self.assertNotIn("- Result: PASS", rendered)
+        self.assertFalse(stale.exists())
+
     # case: S-262.2
     def test_local_product_failure_fails_batch(self):
         result = self._run("local", failure_kind="product")
@@ -658,7 +763,6 @@ exec "$REAL_TAR" "$@"
             scoreboard = json.loads(fixture.read_text())
             original_gates[mode] = scoreboard["releaseGate"]
             scoreboard["selection"] = ["S-023.1", "S-024.1"] if mode == "local" else []
-            scoreboard["releaseGate"] = {"modes": "gate-path-must-not-be-read"}
             fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
 
         result = self._run()
@@ -666,7 +770,7 @@ exec "$REAL_TAR" "$@"
         summary = (self.root / "out/shared/summary.md").read_text()
         self.assertIn("- Result: PARTIAL", summary)
         self.assertIn("## Stage durations", summary)
-        self.assertIn("local=[S-023.1, S-024.1]; secured=[]", summary)
+        self.assertIn("local=[S-023.1, S-024.1]", summary)
 
         for mode, fixture in self.scoreboard_fixtures.items():
             scoreboard = json.loads(fixture.read_text())
