@@ -65,7 +65,7 @@ class MarketplaceStepTests(unittest.TestCase):
             env = {"KB_JOURNEY_WORKSPACE_ROOT": str(workspace),
                    "KB_JOURNEY_REGISTRY_READY_URL": "http://registry.test/ready",
                    "KB_JOURNEY_REGISTRY_INTERNAL_SECRET": "fixture-only"}
-            with patch("marketplace_steps.open_http", return_value=(200, {}, b'{"ready":true}')), \
+            with patch("marketplace_steps.open_http", return_value=(200, b'{"ready":true}', {})), \
                     patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": "S-268.11",
                                             "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
                 journey = Journey("local", "registry-image-composition")
