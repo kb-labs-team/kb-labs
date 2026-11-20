@@ -612,6 +612,42 @@ describe('RegistryService.publish', () => {
   });
 
   // case: S-268.22
+  it('falls back to a long raw-version tarball when its former hex path exceeds the filesystem limit', async () => {
+    const values = new Map<string, Buffer>();
+    const version = `1.0.0+${'a'.repeat(140)}`;
+    const base = 'marketplace-registry/packages/legacy/legacy-plugin';
+    const meta = makePkg({ name: 'legacy-plugin', version }).meta;
+    const registryEntry: RegistryEntry = {
+      name: 'legacy-plugin', authorHandle: 'legacy', authorNamespaceId: 'ns-legacy',
+      primaryKind: 'plugin', visibility: 'private', legacyStatsVisibility: 'private', trust: 'untrusted',
+      allowlist: [], versions: [{ version, publishedAt: '2024-01-01T00:00:00Z', integrity: 'sha256-legacy',
+        visibility: 'private', meta, primaryKind: 'plugin' }],
+      deprecated: false, featured: false, badges: [], tags: [], meta,
+      createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+    };
+    const tarball = Buffer.from('long raw-key legacy release');
+    values.set(`${base}/meta.json`, Buffer.from(JSON.stringify(registryEntry)));
+    values.set(`${base}/${version}.tgz`, tarball);
+    const enforceComponentLimit = (path: string) => {
+      const component = path.slice(path.lastIndexOf('/') + 1);
+      if (Buffer.byteLength(component, 'utf8') > 255) {
+        throw Object.assign(new Error('File name too long'), { code: 'ENAMETOOLONG' });
+      }
+    };
+    const storage: IStorage = {
+      read: async (path) => { enforceComponentLimit(path); return values.get(path) ?? null; },
+      write: async (path, data) => { enforceComponentLimit(path); values.set(path, Buffer.from(data)); },
+      delete: async (path) => { values.delete(path); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => values.has(path),
+    };
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071' });
+
+    await expect(svc.getTarball('legacy', 'legacy-plugin', version)).resolves.toMatchObject({ tarball });
+  });
+
+  // case: S-268.22
   it('allows an owner to append to an existing safe legacy handle and package name', async () => {
     const values = new Map<string, Buffer>();
     const legacyName = 'Legacy.Plugin_Name';

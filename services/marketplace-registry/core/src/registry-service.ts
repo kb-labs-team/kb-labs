@@ -355,7 +355,7 @@ export class RegistryService {
     }
 
     const tarball = await this.storage.read(this.tarballPath(authorHandle, name, version))
-      ?? await this.storage.read(this.hexVersionTarballPath(authorHandle, name, version))
+      ?? await this.readPreviousHexTarball(authorHandle, name, version)
       ?? await this.storage.read(this.legacyTarballPath(authorHandle, name, version));
     if (!tarball) {
       throw Object.assign(new Error('Tarball not found in storage'), { code: 'VERSION_NOT_FOUND' });
@@ -628,6 +628,17 @@ export class RegistryService {
   private hexVersionTarballPath(handle: string, name: string, version: string): string {
     const legacySegment = `v-${Buffer.from(version, 'utf8').toString('hex')}`;
     return `${STORAGE_PREFIX}/packages/${handle}/${name}/${legacySegment}.tgz`;
+  }
+
+  private async readPreviousHexTarball(handle: string, name: string, version: string): Promise<Buffer | null> {
+    try {
+      return await this.storage.read(this.hexVersionTarballPath(handle, name, version));
+    } catch (error) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENAMETOOLONG') {
+        return null;
+      }
+      throw error;
+    }
   }
 
   private sigPath(handle: string, name: string, version: string): string {
