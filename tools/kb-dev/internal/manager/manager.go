@@ -495,12 +495,15 @@ func (m *Manager) startDocker(ctx context.Context, svc *service.Service) Action 
 			m.cleanupFailedStart(svc, pidDir)
 			tail, _ := logger.Tail(logsDir, svc.ID, logTailLines)
 			return Action{
-				Service:   svc.ID,
-				Action:    "failed",
-				ErrorCode: ActionErrorHealthCheckFailed,
-				Error:     "health check timeout",
-				LogsTail:  tail,
-				Elapsed:   time.Since(start).Truncate(time.Millisecond).String(),
+				Service:          svc.ID,
+				Action:           "failed",
+				ErrorCode:        ActionErrorHealthCheckFailed,
+				HealthReason:     healthFailureReason(result.FailureReason),
+				LastProbeReason:  healthFailureReason(result.LastProbeReason),
+				HealthStatusCode: safeHealthStatusCode(result.StatusCode),
+				Error:            "health check timeout",
+				LogsTail:         tail,
+				Elapsed:          time.Since(start).Truncate(time.Millisecond).String(),
 			}
 		}
 		if svc.Config.Container != "" {
@@ -578,12 +581,15 @@ func (m *Manager) startNode(ctx context.Context, svc *service.Service) Action {
 				errMsg = hr.Error.Error()
 			}
 			return Action{
-				Service:   svc.ID,
-				Action:    "failed",
-				ErrorCode: ActionErrorHealthCheckFailed,
-				Error:     errMsg,
-				LogsTail:  tail,
-				Elapsed:   time.Since(start).Truncate(time.Millisecond).String(),
+				Service:          svc.ID,
+				Action:           "failed",
+				ErrorCode:        ActionErrorHealthCheckFailed,
+				HealthReason:     healthFailureReason(hr.FailureReason),
+				LastProbeReason:  healthFailureReason(hr.LastProbeReason),
+				HealthStatusCode: safeHealthStatusCode(hr.StatusCode),
+				Error:            errMsg,
+				LogsTail:         tail,
+				Elapsed:          time.Since(start).Truncate(time.Millisecond).String(),
 			}
 		}
 		svc.LastLatency = hr.Latency
@@ -659,8 +665,32 @@ func (m *Manager) waitHealthOrExit(ctx context.Context, svc *service.Service, ex
 		if state != nil {
 			desc = fmt.Sprintf("process exited: %s", state.String())
 		}
-		return health.Result{OK: false, Error: fmt.Errorf("%s", desc)}
+		return health.Result{OK: false, Error: fmt.Errorf("%s", desc), FailureReason: health.FailureReasonProcessExited}
 	}
+}
+
+func healthFailureReason(reason health.FailureReason) HealthFailureReason {
+	switch reason {
+	case health.FailureReasonProbeFailed:
+		return HealthFailureProbeFailed
+	case health.FailureReasonHTTPStatus:
+		return HealthFailureHTTPStatus
+	case health.FailureReasonTimeout:
+		return HealthFailureTimeout
+	case health.FailureReasonProcessExited:
+		return HealthFailureProcessExited
+	case health.FailureReasonCancelled:
+		return HealthFailureCancelled
+	default:
+		return ""
+	}
+}
+
+func safeHealthStatusCode(code int) int {
+	if code < 100 || code > 599 {
+		return 0
+	}
+	return code
 }
 
 func (m *Manager) startTimeout() time.Duration {

@@ -15,10 +15,13 @@ func TestStartFailureDataPreservesActionAndRedactsSecrets(t *testing.T) {
 	result := &manager.Result{
 		OK: false,
 		Actions: []manager.Action{{
-			Service:   "gateway",
-			Action:    "failed",
-			ErrorCode: manager.ActionErrorHealthCheckFailed,
-			Error:     "gateway failed while using " + secret,
+			Service:          "gateway",
+			Action:           "failed",
+			ErrorCode:        manager.ActionErrorHealthCheckFailed,
+			HealthReason:     manager.HealthFailureTimeout,
+			LastProbeReason:  manager.HealthFailureHTTPStatus,
+			HealthStatusCode: 503,
+			Error:            "gateway failed while using " + secret,
 			LogsTail: []string{
 				"GATEWAY_INTERNAL_SECRET=" + secret,
 				"gateway stopped before readiness",
@@ -43,9 +46,32 @@ func TestStartFailureDataPreservesActionAndRedactsSecrets(t *testing.T) {
 		t.Fatalf("structured start failure included arbitrary process text: %s", text)
 	}
 	if !strings.Contains(text, `"errorCode":"health_check_failed"`) ||
+		!strings.Contains(text, `"healthReason":"timeout"`) ||
+		!strings.Contains(text, `"lastProbeReason":"http_status"`) ||
+		!strings.Contains(text, `"healthStatusCode":503`) ||
 		!strings.Contains(text, `"logPath":"/tmp/fixture/logs/gateway.log"`) ||
 		!strings.Contains(text, `"code":"KB_RUNTIME_COMMAND_FAILED"`) {
 		t.Fatalf("structured start failure lost its useful action details: %s", text)
+	}
+}
+
+func TestStartFailureDataDropsUnknownHealthDiagnostics(t *testing.T) {
+	result := &manager.Result{OK: false, Actions: []manager.Action{{
+		Service: "gateway", Action: "failed", ErrorCode: manager.ActionErrorHealthCheckFailed,
+		HealthReason:    manager.HealthFailureReason("secret-fragment"),
+		LastProbeReason: manager.HealthFailureHTTPStatus, HealthStatusCode: 999,
+	}}}
+	data := safeStartResult(result, func(string) string { return "/tmp/gateway.log" })
+	serialized, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(serialized)
+	if strings.Contains(text, "secret-fragment") || strings.Contains(text, `"healthStatusCode":999`) {
+		t.Fatalf("structured start failure leaked unrecognized health diagnostics: %s", text)
+	}
+	if !strings.Contains(text, `"lastProbeReason":"http_status"`) {
+		t.Fatalf("structured start failure lost recognized health diagnostics: %s", text)
 	}
 }
 

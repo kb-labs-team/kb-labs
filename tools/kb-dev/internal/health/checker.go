@@ -30,24 +30,29 @@ func (c *Checker) WaitHealthy(ctx context.Context) Result {
 	defer ticker.Stop()
 
 	// Try immediately.
-	if r := c.probe.Execute(ctx); r.OK {
-		return r
+	lastResult := c.probe.Execute(ctx)
+	if lastResult.OK {
+		return lastResult
 	}
-
-	var lastResult Result
 	for {
 		select {
 		case <-ctx.Done():
 			return Result{
-				OK:      false,
-				Latency: lastResult.Latency,
-				Error:   ctx.Err(),
+				OK:              false,
+				Latency:         lastResult.Latency,
+				Error:           ctx.Err(),
+				FailureReason:   FailureReasonCancelled,
+				LastProbeReason: lastResult.FailureReason,
+				StatusCode:      lastResult.StatusCode,
 			}
 		case <-deadline:
 			return Result{
-				OK:      false,
-				Latency: lastResult.Latency,
-				Error:   fmt.Errorf("health check timeout after %s", c.timeout),
+				OK:              false,
+				Latency:         lastResult.Latency,
+				Error:           fmt.Errorf("health check timeout after %s", c.timeout),
+				FailureReason:   FailureReasonTimeout,
+				LastProbeReason: lastResult.FailureReason,
+				StatusCode:      lastResult.StatusCode,
 			}
 		case <-ticker.C:
 			lastResult = c.probe.Execute(ctx)

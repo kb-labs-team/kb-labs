@@ -94,10 +94,13 @@ type structuredStartResult struct {
 }
 
 type structuredStartAction struct {
-	Service   string                  `json:"service"`
-	Action    string                  `json:"action"`
-	ErrorCode manager.ActionErrorCode `json:"errorCode,omitempty"`
-	LogPath   string                  `json:"logPath,omitempty"`
+	Service          string                      `json:"service"`
+	Action           string                      `json:"action"`
+	ErrorCode        manager.ActionErrorCode     `json:"errorCode,omitempty"`
+	HealthReason     manager.HealthFailureReason `json:"healthReason,omitempty"`
+	LastProbeReason  manager.HealthFailureReason `json:"lastProbeReason,omitempty"`
+	HealthStatusCode int                         `json:"healthStatusCode,omitempty"`
+	LogPath          string                      `json:"logPath,omitempty"`
 }
 
 func safeStartResult(result *manager.Result, logPath func(string) string) *structuredStartResult {
@@ -112,10 +115,31 @@ func safeStartResult(result *manager.Result, logPath func(string) string) *struc
 		}
 		safe.Actions[i] = structuredStartAction{
 			Service: action.Service, Action: action.Action, ErrorCode: errorCode,
-			LogPath: logPath(action.Service),
+			HealthReason:     knownHealthReason(action.HealthReason),
+			LastProbeReason:  knownHealthReason(action.LastProbeReason),
+			HealthStatusCode: safeHealthStatusCode(action.HealthStatusCode),
+			LogPath:          logPath(action.Service),
 		}
 	}
 	return safe
+}
+
+func knownHealthReason(reason manager.HealthFailureReason) manager.HealthFailureReason {
+	switch reason {
+	case manager.HealthFailureProbeFailed, manager.HealthFailureHTTPStatus,
+		manager.HealthFailureTimeout, manager.HealthFailureProcessExited,
+		manager.HealthFailureCancelled:
+		return reason
+	default:
+		return ""
+	}
+}
+
+func safeHealthStatusCode(code int) int {
+	if code < 100 || code > 599 {
+		return 0
+	}
+	return code
 }
 
 func knownActionErrorCode(code manager.ActionErrorCode) bool {

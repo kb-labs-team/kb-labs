@@ -77,6 +77,23 @@ func TestHTTPProbeFail(t *testing.T) {
 	if r.OK {
 		t.Error("expected failure for 500 response")
 	}
+	if r.FailureReason != FailureReasonHTTPStatus || r.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("failure diagnostics = (%q, %d), want http_status and 500", r.FailureReason, r.StatusCode)
+	}
+}
+
+func TestCheckerTimeoutPreservesTypedLastProbeFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	r := NewChecker(ClassifyProbe(srv.URL, time.Second), time.Millisecond, 15*time.Millisecond).
+		WaitHealthy(context.Background())
+	if r.OK || r.FailureReason != FailureReasonTimeout ||
+		r.LastProbeReason != FailureReasonHTTPStatus || r.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("timeout diagnostics = %#v", r)
+	}
 }
 
 func TestHTTPProbeLatency(t *testing.T) {
