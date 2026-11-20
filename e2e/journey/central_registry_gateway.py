@@ -17,8 +17,49 @@ from typing import Callable
 from invocations import CompletedProcess, open_http, run_command, run_with_runner
 
 
+_START_ERROR_CODES = {
+    "port_in_use",
+    "docker_unavailable",
+    "process_start_failed",
+    "health_check_failed",
+    "service_start_failed",
+}
+
+
 def _json_yaml(value: object) -> str:
     return json.dumps(value, separators=(",", ":"))
+
+
+def _structured_start_failure(stdout: str, stderr: str, returncode: int) -> dict[str, str] | None:
+    """Extract only typed manager diagnostics from kb-dev's failure envelope."""
+    if returncode == 0:
+        return None
+    for output in (stdout, stderr):
+        try:
+            payload = json.loads(output)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("ok") is not False:
+            continue
+        error = payload.get("error")
+        data = payload.get("data")
+        if (not isinstance(error, dict) or error.get("code") != "KB_RUNTIME_COMMAND_FAILED"
+                or not isinstance(data, dict) or data.get("ok") is not False):
+            continue
+        actions = data.get("actions")
+        if not isinstance(actions, list):
+            continue
+        for action in actions:
+            if (not isinstance(action, dict) or action.get("service") != "gateway"
+                    or action.get("action") != "failed"):
+                continue
+            code = action.get("errorCode")
+            log_path = action.get("logPath")
+            if (not isinstance(code, str) or code not in _START_ERROR_CODES
+                    or not isinstance(log_path, str) or not log_path):
+                continue
+            return {"errorCode": code, "logPath": log_path}
+    return None
 
 
 def _fixture_config(*, port: int, gateway_entry: Path, proxy_url: str,
@@ -117,10 +158,17 @@ class CentralRegistryGatewayFixture:
                 path.chmod(0o600)
             fixture = cls(fixture_root, f"http://127.0.0.1:{port}",
                           "hub-author@journey.example", password, config_path, runner)
-            command = ["kb-dev", "start", "gateway", "--config", str(config_path), "--net-offset", "0"]
+            command = ["kb-dev", "start", "gateway", "--config", str(config_path), "--net-offset", "0", "--json"]
             result = run_with_runner(runner, command, cwd=fixture_root, env=dict(os.environ), timeout=90)
             if result.returncode != 0:
-                raise RuntimeError("could not start the isolated central Registry Gateway fixture")
+                manager_failure = _structured_start_failure(result.stdout, result.stderr, result.returncode)
+                if manager_failure is None:
+                    raise RuntimeError("could not start the isolated central Registry Gateway fixture: "
+                                       "safe manager diagnostics were unavailable")
+                raise RuntimeError(
+                    "could not start the isolated central Registry Gateway fixture: "
+                    f"manager_error_code={manager_failure['errorCode']}; "
+                    f"manager_log_path={manager_failure['logPath']}")
             fixture.started = True
             fixture._wait_ready()
             return fixture
