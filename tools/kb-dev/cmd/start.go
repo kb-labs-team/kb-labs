@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kb-labs/dev/internal/config"
+	"github.com/kb-labs/dev/internal/manager"
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +46,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 	result := mgr.Start(cmd.Context(), targets, forceFlag)
 
 	if !result.OK {
+		if jsonMode {
+			return commandFailureWithData("kb-dev start", safeStartResult(result, mgr.LogPath))
+		}
 		return commandFailure("kb-dev start")
 	}
 	if jsonMode {
@@ -82,6 +86,49 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+type structuredStartResult struct {
+	OK      bool                    `json:"ok"`
+	Actions []structuredStartAction `json:"actions,omitempty"`
+}
+
+type structuredStartAction struct {
+	Service   string                  `json:"service"`
+	Action    string                  `json:"action"`
+	ErrorCode manager.ActionErrorCode `json:"errorCode,omitempty"`
+	LogPath   string                  `json:"logPath,omitempty"`
+}
+
+func safeStartResult(result *manager.Result, logPath func(string) string) *structuredStartResult {
+	if result == nil {
+		return nil
+	}
+	safe := &structuredStartResult{OK: result.OK, Actions: make([]structuredStartAction, len(result.Actions))}
+	for i, action := range result.Actions {
+		errorCode := action.ErrorCode
+		if action.Action == "failed" && !knownActionErrorCode(errorCode) {
+			errorCode = manager.ActionErrorServiceStartFailed
+		}
+		safe.Actions[i] = structuredStartAction{
+			Service: action.Service, Action: action.Action, ErrorCode: errorCode,
+			LogPath: logPath(action.Service),
+		}
+	}
+	return safe
+}
+
+func knownActionErrorCode(code manager.ActionErrorCode) bool {
+	switch code {
+	case manager.ActionErrorPortInUse,
+		manager.ActionErrorDockerUnavailable,
+		manager.ActionErrorProcessStartFailed,
+		manager.ActionErrorHealthCheckFailed,
+		manager.ActionErrorServiceStartFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 // printHighlights prints a prominent block for services marked highlight:true.
