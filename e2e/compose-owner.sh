@@ -82,7 +82,7 @@ journey_compose_init() {
       --output "$REGISTRY_COMPOSITION_ROOT" --registry-url http://marketplace-registry:5071)"
     overlay_path="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(value.composeOverlayPath)' "$rendered")"
     JOURNEY_COMPOSE_FILES+=(-f "$overlay_path")
-    export KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(value.signingPublicKeyBase64)' "$rendered")"
+    export KB_JOURNEY_REGISTRY_PUBLIC_KEY_B64="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(value.signingPublicKeyBase64)' "$rendered")"
   fi
 
   JOURNEY_COMPOSE=("${COMPOSE_OWNER_COMMAND[@]}" "${JOURNEY_COMPOSE_FILES[@]}")
