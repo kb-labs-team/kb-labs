@@ -228,7 +228,7 @@ describe('project MCP wire fixture producer', () => {
     expect(serviceCall).not.toHaveBeenCalled();
 
     const enabled = await postMcp(port, 3, 'tools/call', {
-      name: 'workflow__workflow_crons_enable', arguments: { id: 'journey-cron' },
+      name: 'workflow__workflow_crons_enable', arguments: { id: 'journey-cron', json: true },
     });
     const enableResult = parseMcpResponse(enabled.body).result;
     if (!enableResult) {throw new Error('MCP tools/call returned no result for cron enable.');}
@@ -240,7 +240,7 @@ describe('project MCP wire fixture producer', () => {
     if (!disableResult) {throw new Error('MCP tools/call returned no result for cron disable.');}
     expect(disableResult.isError).toBe(false);
     expect(serviceCall.mock.calls.map(([serviceId, request]) => [serviceId, request.path])).toEqual([
-      ['workflow', '/api/v1/crons/journey-cron/enable'],
+      ['workflow', '/api/v1/crons/journey-cron/enable?json=true'],
       ['workflow', '/api/v1/crons/journey-cron/disable'],
     ]);
   });
