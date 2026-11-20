@@ -10,6 +10,7 @@ import {
   buildRegistryImageCompositionPlan,
   configuredAdapterPackageRoots,
   createRegistryImageArtifacts,
+  writeRegistryImageArtifacts,
 } from '../../tools/release/registry-image-composition.mjs';
 import { readPlatformReleaseConfig } from '../../tools/kb-create/scripts/platform-release-config.mjs';
 
@@ -55,7 +56,7 @@ test('configured adapter subpaths collapse to one package root and unknown roots
 });
 
 // case: S-268.11
-test('platform lock and image manifest are generated from projected package identities', () => {
+test('platform lock and image manifest are generated from projected package identities', async () => {
   const root = mkdtempSync(join(tmpdir(), 'registry-image-composition-'));
   try {
     const sourcePackages = {
@@ -135,6 +136,15 @@ test('platform lock and image manifest are generated from projected package iden
     assert.equal(result.manifest.pnpmVersion, '11.4.0');
     assert.equal(result.manifest.adapterPackages.length, 1);
     assert.match(result.manifest.pnpmLockSha256, /^[a-f0-9]{64}$/);
+    const paths = await writeRegistryImageArtifacts({
+      workspaceRoot: root,
+      deploymentRoot,
+      sourceRevision: 'source-revision',
+      pnpmVersion: '11.4.0',
+    });
+    assert.deepEqual(JSON.parse(readFileSync(paths.lockPath, 'utf8')), result.lock);
+    assert.deepEqual(JSON.parse(readFileSync(paths.manifestPath, 'utf8')), result.manifest);
+    assert.equal(paths.manifestPath, join(deploymentRoot, '.kb/image-composition.json'));
 
     const adapterSdkAlias = join(deploymentRoot, 'node_modules/@kb-labs/adapters-sqlite/node_modules/@kb-labs/sdk');
     unlinkSync(adapterSdkAlias);
