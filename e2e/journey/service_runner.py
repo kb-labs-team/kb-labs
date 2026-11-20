@@ -1359,6 +1359,8 @@ def main() -> int:
                 flow_env["KB_JOURNEY_MARKETPLACE_GATEWAY_URL"] = central_gateway.url
                 flow_env["KB_JOURNEY_MARKETPLACE_REGISTRY_URL"] = \
                     f"{central_gateway.url}/api/v1/marketplace-registry"
+                flow_env["KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64"] = \
+                    flow_env.get("KB_JOURNEY_REGISTRY_PUBLIC_KEY_B64", "")
                 flow_env["KB_JOURNEY_MARKETPLACE_PUBLISH_URL"] = \
                     f"{flow_env['KB_JOURNEY_MARKETPLACE_REGISTRY_URL']}/api/v1"
                 flow_env["KB_JOURNEY_MARKETPLACE_AUTHOR_EMAIL"] = central_gateway.email
