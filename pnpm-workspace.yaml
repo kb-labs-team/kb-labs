@@ -24,6 +24,9 @@ auditConfig:
 minimumReleaseAge: 10080
 strictDepBuilds: true
 blockExoticSubdeps: true
+injectWorkspacePackages: true
+syncInjectedDepsAfterScripts:
+  - build
 
 allowBuilds:
   '@parcel/watcher': true
