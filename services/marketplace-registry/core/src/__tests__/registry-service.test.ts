@@ -431,6 +431,56 @@ describe('RegistryService.publish', () => {
     expect(result.pageUrl).toBeDefined();
   });
 
+  // case: S-268.22
+  it('allows only the owning namespace to append a package version without mutating state on refusal', async () => {
+    const storageValues = new Map<string, Buffer>();
+    const storage: IStorage = {
+      read: async (path) => storageValues.get(path) ?? null,
+      write: vi.fn(async (path, data) => {
+        storageValues.set(path, Buffer.isBuffer(data) ? Buffer.from(data) : Buffer.from(data));
+      }),
+      delete: vi.fn(async (path) => { storageValues.delete(path); }),
+      list: async (prefix) => [...storageValues.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => storageValues.has(path),
+    };
+    const cache = createMemoryCache();
+    const cacheDelete = vi.spyOn(cache, 'delete');
+    const cacheSet = vi.spyOn(cache, 'set');
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const svc = new RegistryService({
+      storage, cache, logger: noopLogger,
+      baseUrl: 'http://localhost:5071', siteUrl: 'https://kblabs.ru',
+      signingPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    });
+
+    await svc.publish(SMALL_TARBALL, makePkg(), 'shared-handle', 'ns-owner');
+    const originalEntry = await svc.getEntry('shared-handle', 'my-plugin');
+    const originalStorage = new Map([...storageValues].map(([path, value]) => [path, Buffer.from(value)]));
+    const writesBeforeRefusal = vi.mocked(storage.write).mock.calls.length;
+    const deletesBeforeRefusal = cacheDelete.mock.calls.length;
+    const setsBeforeRefusal = cacheSet.mock.calls.length;
+
+    const refusal = await svc.publish(Buffer.from('attacker tarball'), makePkg({ version: '1.1.0' }),
+      'shared-handle', 'ns-other').catch(error => error);
+
+    expect(refusal.code).toBe('FORBIDDEN');
+    expect(vi.mocked(storage.write)).toHaveBeenCalledTimes(writesBeforeRefusal);
+    expect(cacheDelete).toHaveBeenCalledTimes(deletesBeforeRefusal);
+    expect(cacheSet).toHaveBeenCalledTimes(setsBeforeRefusal);
+    expect([...storageValues.entries()]).toEqual([...originalStorage.entries()]);
+    expect(await svc.getEntry('shared-handle', 'my-plugin')).toEqual(originalEntry);
+    await expect(svc.getTarball('shared-handle', 'my-plugin', '1.0.0')).resolves.toMatchObject({
+      tarball: SMALL_TARBALL,
+      signature: expect.objectContaining({ signature: expect.any(String) }),
+    });
+
+    const ownerUpdate = await svc.publish(Buffer.from('owner release'), makePkg({ version: '1.1.0' }),
+      'shared-handle', 'ns-owner');
+    expect(ownerUpdate.version).toBe('1.1.0');
+    expect((await svc.getEntry('shared-handle', 'my-plugin')?.versions ?? []).map(version => version.version))
+      .toEqual(['1.0.0', '1.1.0']);
+  });
+
   it('RS-07: second version publishes, entry has two versions', async () => {
     const svc = makeService();
     await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
