@@ -11,6 +11,7 @@ import sys
 from typing import Any
 
 from scoreboard_contract import release_gate_modes
+from scoreboard import write_scoreboards
 
 
 STAGES = ("reset", "build", "unit", "candidate", "local", "secured", "total")
@@ -58,15 +59,56 @@ def requested_selection(value: str) -> list[str]:
     return sorted(selection)
 
 
-def record_scoreboard_selection(path: Path, selected_cases: str) -> None:
+def record_scoreboard_selection(path: Path, selected_cases: str, catalog: Path) -> None:
     value = _read_scoreboard(path.parent)
-    current = value["selection"]
-    value["selection"] = sorted(set(current).union(requested_selection(selected_cases)))
-    _write_metadata(path, value)
+    release_gate_modes(value)
+    selection = sorted(set(value["selection"]).union(requested_selection(selected_cases)))
+    write_scoreboards(path.parent, catalog, selection)
+
+
+def selected_owners_have_evidence(directory: Path, mode: str) -> bool:
+    """Require each resolved selected owner and claim in raw reports for this mode."""
+    plan_path = directory / "selection-plan.json"
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    owners = plan.get("selectedOwningSteps") if isinstance(plan, dict) else None
+    if not isinstance(owners, dict) or not owners:
+        return False
+    obligations = [(name, claim) for name, claims in owners.items()
+                   if isinstance(name, str) and isinstance(claims, list)
+                   for claim in claims if isinstance(claim, str)]
+    if not obligations:
+        return False
+    evidence: set[tuple[str, str]] = set()
+    passing_claims: set[str] = set()
+    for report_path in directory.glob("*.json"):
+        if report_path.name.startswith("case-scoreboard") or report_path.name == plan_path.name:
+            continue
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(report, dict):
+            continue
+        case_run = report.get("case_run")
+        if isinstance(case_run, dict) and case_run.get("mode") == mode:
+            for claim in case_run.get("claims", []):
+                if isinstance(claim, dict) and claim.get("status") == "PASS" and isinstance(claim.get("claimId"), str):
+                    passing_claims.add(claim["claimId"])
+        for step in report.get("steps", []):
+            if (isinstance(step, dict) and step.get("name") and step.get("status") == "PASS"
+                    and (step.get("mode") == mode or (isinstance(case_run, dict) and case_run.get("mode") == mode))):
+                for claim in step.get("cases", []):
+                    if isinstance(claim, str):
+                        evidence.add((step["name"], claim))
+    return all(claim in passing_claims and (name, claim) in evidence for name, claim in obligations)
 
 
 def mode_is_gating(directory: Path, mode: str, selected_cases: str = "") -> bool:
-    return bool(requested_selection(selected_cases)) or mode in release_gate_modes(_read_scoreboard(directory))
+    gate_modes = release_gate_modes(_read_scoreboard(directory))
+    return bool(requested_selection(selected_cases)) or mode in gate_modes
 
 
 def _write_metadata(path: Path, value: dict[str, Any]) -> None:
@@ -135,12 +177,16 @@ def write_mode_metadata(source: Path, destination: Path, mode: str, result: str,
     _write_metadata(destination, value)
 
 
-def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
+def assemble(output: Path, producer: Path, local: Path, secured: Path,
+             authoritative_selection: str = "") -> int:
     shared_dir = producer / "shared"
     local_dir = local / "local"
     secured_dir = secured / "secured"
+    selected = requested_selection(authoritative_selection)
     output.mkdir(parents=True, exist_ok=True)
-    for mode in ("shared", "local", "secured"):
+    for mode, source in (("shared", shared_dir), ("local", local_dir), ("secured", secured_dir)):
+        if not source.is_dir() or source.resolve() != (output / mode).resolve():
+            shutil.rmtree(output / mode, ignore_errors=True)
         (output / mode).mkdir(parents=True, exist_ok=True)
 
     for source, destination, ignore in (
@@ -151,19 +197,35 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
         if source.is_dir() and source.resolve() != destination.resolve():
             shutil.copytree(source, destination, dirs_exist_ok=True, ignore=ignore)
 
-    missing = [str(path) for path in (
-        output / "shared" / "batch-metadata.json",
-        output / "shared" / "run.json",
-        output / "local" / "batch-metadata.json",
-        output / "secured" / "batch-metadata.json",
-    ) if not path.is_file()]
-    if missing:
-        message = "\n".join(["# Journey batch", "", "- Result: FAIL",
-                               "- Missing batch metadata:", *[f"  - `{path}`" for path in missing], ""])
+    missing_shared = [str(path) for path in (
+        output / "shared" / "batch-metadata.json", output / "shared" / "run.json")
+        if not path.is_file()]
+    if missing_shared:
+        message = "\n".join([
+            "# Journey batch", "", "- Result: FAIL", "- Missing shared producer artifacts:",
+            *[f"  - `{path}`" for path in missing_shared], "",
+        ])
         (output / "shared" / "summary.md").write_text(message, encoding="utf-8")
         return 1
 
     producer_metadata = _read_metadata(output, "shared")
+    missing_mode_metadata = [mode for mode in ("local", "secured")
+                             if not (output / mode / "batch-metadata.json").is_file()]
+    if missing_mode_metadata and not selected:
+        paths = [output / mode / "batch-metadata.json" for mode in missing_mode_metadata]
+        message = "\n".join(["# Journey batch", "", "- Result: FAIL",
+                               "- Missing batch metadata:", *[f"  - `{path}`" for path in paths], ""])
+        (output / "shared" / "summary.md").write_text(message, encoding="utf-8")
+        return 1
+    for mode in missing_mode_metadata:
+        durations = dict(producer_metadata["stageDurationsSeconds"])
+        durations[mode] = 0
+        durations["total"] = sum(durations.get(stage, 0) for stage in STAGES if stage != "total")
+        synthetic = {key: producer_metadata[key] for key in ("commit", "baseline", "buildBase")
+                     if key in producer_metadata}
+        synthetic.update({"mode": mode, "result": "FAIL", "stageDurationsSeconds": durations,
+                          "requestedSelection": selected})
+        _write_metadata(output / mode / "batch-metadata.json", synthetic)
     local_metadata = _read_metadata(output, "local")
     secured_metadata = _read_metadata(output, "secured")
     run = json.loads((output / "shared" / "run.json").read_text(encoding="utf-8"))
@@ -197,8 +259,16 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
             if scoreboard_path.exists():
                 raise ValueError(f"mode {mode} has no selected claims but produced a scoreboard")
             scoreboards[mode] = None
+        elif not scoreboard_path.is_file() and selected:
+            scoreboards[mode] = None
         else:
             scoreboards[mode] = _read_scoreboard(output / mode)
+    for board in scoreboards.values():
+        if board is not None:
+            release_gate_modes(board)
+    declared_gates = [release_gate_modes(board) for board in scoreboards.values() if board is not None]
+    if declared_gates and any(gates != declared_gates[0] for gates in declared_gates[1:]):
+        raise ValueError("local and secured scoreboards publish different releaseGate modes")
     local_durations = local_metadata["stageDurationsSeconds"]
     secured_durations = secured_metadata["stageDurationsSeconds"]
     shared_durations = producer_metadata["stageDurationsSeconds"]
@@ -224,15 +294,18 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
     if any(not isinstance(selection, list) or any(not isinstance(item, str) for item in selection)
            for selection in requested_selections.values()):
         raise ValueError("batch mode metadata has an invalid requestedSelection")
-    partial = (any(bool(board["selection"]) for board in scoreboards.values() if board is not None)
+    partial = (bool(selected)
+               or any(bool(board["selection"]) for board in scoreboards.values() if board is not None)
                or any(mode_without_selection.values())
                or any(bool(selection) for selection in requested_selections.values()))
     if partial:
         selected_by_mode = {
-            mode: sorted(set(scoreboards[mode]["selection"]) | set(requested_selections[mode]))
+            mode: sorted(set(scoreboards[mode]["selection"] if scoreboards[mode] else [])
+                         | set(requested_selections[mode])
+                         | set(selected if mode in missing_mode_metadata or scoreboards[mode] is None else []))
             for mode in ("local", "secured")
-            if scoreboards[mode] is not None
-            and (scoreboards[mode]["selection"] or requested_selections[mode])
+            if ((scoreboards[mode] is not None and scoreboards[mode]["selection"])
+                or requested_selections[mode] or selected)
         }
         selections = "; ".join(
             f"{mode}=[{', '.join(selection)}]" for mode, selection in selected_by_mode.items()
@@ -355,20 +428,22 @@ def main(argv: list[str]) -> int:
             print(f"journey mode gate could not be read: {error}; next: {next_command}",
                   file=sys.stderr)
             return 2
-    if len(argv) == 4 and argv[1] == "record-selection":
+    if len(argv) == 5 and argv[1] == "record-selection":
         try:
-            record_scoreboard_selection(Path(argv[2]), argv[3])
+            record_scoreboard_selection(Path(argv[2]), argv[3], Path(argv[4]))
             return 0
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
             print(f"journey scoreboard selection could not be recorded: {error}; next: rerun the selected journey",
                   file=sys.stderr)
             return 1
-    if len(argv) != 5:
+    if len(argv) == 4 and argv[1] == "verify-selection-evidence":
+        return 0 if selected_owners_have_evidence(Path(argv[2]), argv[3]) else 1
+    if len(argv) not in {5, 6}:
         print("usage: batch_summary.py <output> <producer-artifact> <local-artifact> <secured-artifact>",
               file=sys.stderr)
         return 2
     try:
-        return assemble(*(Path(value) for value in argv[1:]))
+        return assemble(*(Path(value) for value in argv[1:5]), argv[5] if len(argv) == 6 else "")
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         if isinstance(error, CandidateArchiveError):
             next_command = shlex.join(["e2e/journey/batch.sh", "prepare", argv[2]])

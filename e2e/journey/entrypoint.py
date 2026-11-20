@@ -100,6 +100,10 @@ def record_runner_failure(summary_path: str | Path, mode: str, error: BaseExcept
         if not isinstance(recorded_selection, list) or any(not isinstance(item, str) for item in recorded_selection):
             recorded_selection = []
         case_run["selection"] = sorted(set(recorded_selection).union(selection.requested))
+        case_run["selectedClaims"] = sorted(selection.claims)
+        case_run["selectedOwningSteps"] = {
+            name: sorted(claims) for name, claims in selection.owning_steps.items()
+        }
         result["case_run"] = case_run
     write_report_json(target, result)
 

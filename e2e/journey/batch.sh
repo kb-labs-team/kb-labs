@@ -141,6 +141,7 @@ run_mode() {
   selected_cases=$4
   case "$mode" in local|secured) ;; *) usage ;; esac
   shared="$producer/shared"; mode_dir="$out/$mode"
+  rm -rf "$mode_dir"
   mkdir -p "$mode_dir"
   cd "$ROOT"
   if [ ! -s "$shared/build-candidate.tar" ]; then
@@ -181,12 +182,13 @@ run_mode() {
   fi
   run_started=$(date +%s)
   if [ -n "$selected_cases" ]; then
-    selected_runners_json=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py" \
-      --runners-for-mode "$mode" "$selected_cases") || {
+    selection_plan=$(KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
+      "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py") || {
       echo "journey $mode mode could not resolve selected claim owners; next: rerun e2e/journey/batch.sh mode $mode $producer $out --cases $selected_cases" >&2
       return 1
     }
-    runner_selectors=$(printf '%s' "$selected_runners_json" | "${BATCH_PYTHON:-python3}" -c 'import json,sys; print(",".join(json.load(sys.stdin)))')
+    printf '%s\n' "$selection_plan" > "$mode_dir/selection-plan.json"
+    runner_selectors=$(printf '%s' "$selection_plan" | "${BATCH_PYTHON:-python3}" -c 'import json,sys; print(",".join(json.load(sys.stdin)["runners"]))')
     if [ -z "$runner_selectors" ]; then
       printf 'no selected claims in this mode\n'
       printf 'no selected claims in this mode\nexit=0\n' > "$mode_dir/batch.log"
@@ -210,6 +212,12 @@ run_mode() {
       printf 'KB_JOURNEY_ONLY=%s e2e/journey/run.sh --no-build' "$runner_selectors"
     fi
   }
+  rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
+  rm -rf .journey/reports/invocations
+  if [ -n "$selected_cases" ]; then
+    mkdir -p .journey/reports
+    cp "$mode_dir/selection-plan.json" .journey/reports/selection-plan.json || return 1
+  fi
   rc=0
   KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
     KB_JOURNEY_ONLY="$runner_selectors" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
@@ -232,6 +240,14 @@ run_mode() {
   rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
   rm -rf .journey/reports/invocations
   duration=$(($(date +%s) - run_started))
+  if [ "$rc" -eq 0 ] && [ -n "$selected_cases" ] && [ -n "$runner_selectors" ]; then
+    if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" verify-selection-evidence \
+      "$mode_dir" "$mode"; then
+      printf 'selected owning-step evidence is missing or incomplete\n' >> "$mode_dir/batch.log"
+      echo "journey $mode mode selected owning-step evidence is missing or incomplete; see $mode_dir/batch.log" >&2
+      rc=1
+    fi
+  fi
   result=PASS; [ "$rc" -eq 0 ] || result=FAIL
   scoreboard_missing=0
   if [ ! -s "$mode_dir/case-scoreboard.json" ]; then
@@ -239,8 +255,17 @@ run_mode() {
     result=FAIL
   elif [ -n "$selected_cases" ]; then
     if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" record-selection \
-      "$mode_dir/case-scoreboard.json" "$selected_cases"; then
+      "$mode_dir/case-scoreboard.json" "$selected_cases" "$ROOT/docs/qa/scenarios"; then
       echo "journey $mode mode could not preserve its requested selection in the scoreboard; next: $(next_runner_command)" >&2
+      return 1
+    fi
+  fi
+  if [ -n "$selected_cases" ]; then
+    gate_rc=0
+    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-gating \
+      "$mode_dir" "$mode" "$producer" "$out" "$selected_cases" || gate_rc=$?
+    if [ "$gate_rc" -ne 0 ]; then
+      echo "journey $mode mode has an invalid releaseGate declaration; see $mode_dir/case-scoreboard.json" >&2
       return 1
     fi
   fi
@@ -285,8 +310,9 @@ case "${1:-}" in
     run_mode "$2" "$3" "$4" "$selected_cases"
     ;;
   summarize)
-    [ "$#" -eq 5 ] || usage
-    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" "$2" "$3" "$4" "$5"
+    [ "$#" -ge 5 ] && [ "$#" -le 7 ] || usage
+    if [ "$#" -eq 7 ]; then [ "$6" = "--selection" ] || usage; fi
+    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" "$2" "$3" "$4" "$5" "${7:-}"
     ;;
   *)
     [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage

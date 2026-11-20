@@ -557,9 +557,13 @@ def _write_journey_summary(directory: Path, scoreboard: dict) -> None:
     write_report_text(path, updated)
 
 
-def write_scoreboards(directory: Path, catalog: Path) -> None:
+def write_scoreboards(directory: Path, catalog: Path, requested_selection: Iterable[str] = ()) -> None:
     outputs = {f"case-scoreboard-{mode}": build_scoreboard(directory, catalog, [mode]) for mode in MODES}
     outputs["case-scoreboard"] = build_scoreboard(directory, catalog, MODES)
+    selection = set(requested_selection)
+    if selection:
+        for scoreboard in outputs.values():
+            scoreboard["selection"] = sorted(set(scoreboard["selection"]) | selection)
     _write_journey_summary(directory, outputs["case-scoreboard"])
     for stem, scoreboard in outputs.items():
         write_report_json(directory / f"{stem}.json", scoreboard)
