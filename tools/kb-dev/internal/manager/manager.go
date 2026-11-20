@@ -321,7 +321,7 @@ func (m *Manager) withLock(fn func() *Result) *Result {
 	if err != nil {
 		return &Result{
 			OK:      false,
-			Actions: []Action{{Action: "failed", Error: err.Error()}},
+			Actions: []Action{{Action: "failed", ErrorCode: ActionErrorServiceStartFailed, Error: err.Error()}},
 			Hint:    "another kb-dev instance is running. Wait for it to finish or kill it: pkill -f kb-dev",
 		}
 	}
@@ -425,9 +425,10 @@ func (m *Manager) startOne(ctx context.Context, id string, force bool) Action {
 			// Non-force mode: if the port is already taken, refuse to start.
 			// This prevents a misleading "started" when the port belongs to another process.
 			return Action{
-				Service: id,
-				Action:  "failed",
-				Error:   fmt.Sprintf("port %d is already in use — use --force to kill it first", svc.Config.Port),
+				Service:   id,
+				Action:    "failed",
+				ErrorCode: ActionErrorPortInUse,
+				Error:     fmt.Sprintf("port %d is already in use — use --force to kill it first", svc.Config.Port),
 			}
 		}
 	}
@@ -445,7 +446,8 @@ func (m *Manager) startDocker(ctx context.Context, svc *service.Service) Action 
 	start := time.Now()
 
 	if err := docker.EnsureRunning(ctx); err != nil {
-		return Action{Service: svc.ID, Action: "failed", Error: "Docker unavailable: " + err.Error()}
+		return Action{Service: svc.ID, Action: "failed", ErrorCode: ActionErrorDockerUnavailable,
+			Error: "Docker unavailable: " + err.Error()}
 	}
 
 	_ = svc.SetState(service.StateStarting, "")
@@ -466,7 +468,7 @@ func (m *Manager) startDocker(ctx context.Context, svc *service.Service) Action 
 	})
 	if err != nil {
 		_ = svc.SetState(service.StateFailed, err.Error())
-		return Action{Service: svc.ID, Action: "failed", Error: err.Error()}
+		return Action{Service: svc.ID, Action: "failed", ErrorCode: ActionErrorProcessStartFailed, Error: err.Error()}
 	}
 
 	svc.PID = spawnResult.PID
@@ -493,11 +495,12 @@ func (m *Manager) startDocker(ctx context.Context, svc *service.Service) Action 
 			m.cleanupFailedStart(svc, pidDir)
 			tail, _ := logger.Tail(logsDir, svc.ID, logTailLines)
 			return Action{
-				Service:  svc.ID,
-				Action:   "failed",
-				Error:    "health check timeout",
-				LogsTail: tail,
-				Elapsed:  time.Since(start).Truncate(time.Millisecond).String(),
+				Service:   svc.ID,
+				Action:    "failed",
+				ErrorCode: ActionErrorHealthCheckFailed,
+				Error:     "health check timeout",
+				LogsTail:  tail,
+				Elapsed:   time.Since(start).Truncate(time.Millisecond).String(),
 			}
 		}
 		if svc.Config.Container != "" {
@@ -537,7 +540,7 @@ func (m *Manager) startNode(ctx context.Context, svc *service.Service) Action {
 	})
 	if err != nil {
 		_ = svc.SetState(service.StateFailed, err.Error())
-		return Action{Service: svc.ID, Action: "failed", Error: err.Error()}
+		return Action{Service: svc.ID, Action: "failed", ErrorCode: ActionErrorProcessStartFailed, Error: err.Error()}
 	}
 
 	svc.PID = result.PID
@@ -575,11 +578,12 @@ func (m *Manager) startNode(ctx context.Context, svc *service.Service) Action {
 				errMsg = hr.Error.Error()
 			}
 			return Action{
-				Service:  svc.ID,
-				Action:   "failed",
-				Error:    errMsg,
-				LogsTail: tail,
-				Elapsed:  time.Since(start).Truncate(time.Millisecond).String(),
+				Service:   svc.ID,
+				Action:    "failed",
+				ErrorCode: ActionErrorHealthCheckFailed,
+				Error:     errMsg,
+				LogsTail:  tail,
+				Elapsed:   time.Since(start).Truncate(time.Millisecond).String(),
 			}
 		}
 		svc.LastLatency = hr.Latency

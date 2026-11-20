@@ -47,7 +47,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	if !result.OK {
 		if jsonMode {
-			return commandFailureWithData("kb-dev start", safeStartResult(result, mgr.Config()))
+			return commandFailureWithData("kb-dev start", safeStartResult(result, mgr.LogPath))
 		}
 		return commandFailure("kb-dev start")
 	}
@@ -88,44 +88,47 @@ func runStart(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func safeStartResult(result *manager.Result, cfg *config.Config) *manager.Result {
+type structuredStartResult struct {
+	OK      bool                    `json:"ok"`
+	Actions []structuredStartAction `json:"actions,omitempty"`
+}
+
+type structuredStartAction struct {
+	Service   string                  `json:"service"`
+	Action    string                  `json:"action"`
+	ErrorCode manager.ActionErrorCode `json:"errorCode,omitempty"`
+	LogPath   string                  `json:"logPath,omitempty"`
+}
+
+func safeStartResult(result *manager.Result, logPath func(string) string) *structuredStartResult {
 	if result == nil {
 		return nil
 	}
-	safe := *result
-	safe.Actions = make([]manager.Action, len(result.Actions))
+	safe := &structuredStartResult{OK: result.OK, Actions: make([]structuredStartAction, len(result.Actions))}
 	for i, action := range result.Actions {
-		safe.Actions[i] = action
-		safe.Actions[i].Error = redactStartText(action.Error, cfg)
-		safe.Actions[i].LogsTail = redactDiagnosticLines(action.LogsTail)
-		for lineIndex, line := range safe.Actions[i].LogsTail {
-			safe.Actions[i].LogsTail[lineIndex] = redactConfiguredSecrets(line, cfg)
+		errorCode := action.ErrorCode
+		if action.Action == "failed" && !knownActionErrorCode(errorCode) {
+			errorCode = manager.ActionErrorServiceStartFailed
+		}
+		safe.Actions[i] = structuredStartAction{
+			Service: action.Service, Action: action.Action, ErrorCode: errorCode,
+			LogPath: logPath(action.Service),
 		}
 	}
-	safe.Hint = redactStartText(result.Hint, cfg)
-	return &safe
+	return safe
 }
 
-func redactStartText(value string, cfg *config.Config) string {
-	for _, service := range cfg.Services {
-		for key, secret := range service.Env {
-			if isSensitiveConfigKey(key) && len(secret) >= 12 {
-				value = strings.ReplaceAll(value, secret, "[REDACTED]")
-			}
-		}
+func knownActionErrorCode(code manager.ActionErrorCode) bool {
+	switch code {
+	case manager.ActionErrorPortInUse,
+		manager.ActionErrorDockerUnavailable,
+		manager.ActionErrorProcessStartFailed,
+		manager.ActionErrorHealthCheckFailed,
+		manager.ActionErrorServiceStartFailed:
+		return true
+	default:
+		return false
 	}
-	return redactDiagnosticLines([]string{value})[0]
-}
-
-func redactConfiguredSecrets(value string, cfg *config.Config) string {
-	for _, service := range cfg.Services {
-		for key, secret := range service.Env {
-			if isSensitiveConfigKey(key) && len(secret) >= 12 {
-				value = strings.ReplaceAll(value, secret, "[REDACTED]")
-			}
-		}
-	}
-	return value
 }
 
 // printHighlights prints a prominent block for services marked highlight:true.
