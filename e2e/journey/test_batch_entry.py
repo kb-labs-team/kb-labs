@@ -30,6 +30,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         (self.root / "scripts/ci").mkdir(parents=True)
         shutil.copy2(REPO / "e2e/journey/batch.sh", self.root / "e2e/journey/batch.sh")
         shutil.copy2(REPO / "e2e/journey/batch_summary.py", self.root / "e2e/journey/batch_summary.py")
+        shutil.copy2(REPO / "e2e/journey/candidate_cache.py", self.root / "e2e/journey/candidate_cache.py")
         shutil.copy2(REPO / "e2e/journey/dispatch_registry.py", self.root / "e2e/journey/dispatch_registry.py")
         shutil.copy2(REPO / "e2e/journey/invocations.py", self.root / "e2e/journey/invocations.py")
         shutil.copy2(REPO / "e2e/journey/journey_values.py", self.root / "e2e/journey/journey_values.py")
@@ -174,6 +175,29 @@ case "$1" in
   *) exec "{sys.executable}" "$@" ;;
 esac
 ''')
+        (self.root / "e2e/journey/candidate_cache.py").write_text('''
+import hashlib, json, os, pathlib, shutil, sys
+command = sys.argv[1]
+with open(os.environ["CALLS"], "a", encoding="utf-8") as log: log.write("cache-" + command + "\\n")
+if command == "verify":
+    if os.environ.get("CACHE_VERIFY_VALID") == "1":
+        print("verified fixture candidate cache")
+        raise SystemExit(0)
+    print("fixture candidate cache mismatch")
+    raise SystemExit(1)
+if command == "seal":
+    root, archive, cache, key = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]), pathlib.Path(sys.argv[4]), sys.argv[5]
+    cache.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(archive, cache / "build-candidate.tar")
+    digest = hashlib.sha256((cache / "build-candidate.tar").read_bytes()).hexdigest()
+    (cache / "manifest.json").write_text(json.dumps({
+        "sourceSha": "deadbeef", "inputFingerprint": "fixture-fingerprint", "cacheKey": key,
+        "candidateArchiveSha256": digest, "candidateArchiveSizeBytes": (cache / "build-candidate.tar").stat().st_size,
+        "candidateReleaseIndexSha256": "fixture-index-digest", "candidateChecksumsSha256": "fixture-checksums-digest",
+        "releaseSourceRevision": "deadbee"}, sort_keys=True) + "\\n")
+    raise SystemExit(0)
+raise SystemExit(2)
+''', encoding="utf-8")
         self._script(self.bin / "go", '''#!/bin/sh
 {
   printf 'go build'
@@ -287,6 +311,99 @@ exec "$REAL_TAR" "$@"
         metadata = json.loads((self.root / "out/.artifact-local/local/batch-metadata.json").read_text())
         self.assertEqual(metadata["result"], "FAIL")
         self.assertIn("mode produced no case scoreboard", metadata["failureReason"])
+
+    # case: S-262.18
+    def test_targeted_batch_reuses_only_a_verified_exact_candidate(self):
+        import hashlib
+        import json
+        import tarfile
+
+        cache = self.root / ".journey/prepared-candidate-cache"
+        cache.mkdir(parents=True)
+        source = self.root / "cached-candidate/core/fixture/dist/index.js"
+        source.parent.mkdir(parents=True)
+        source.write_text("prepared for exact source\n", encoding="utf-8")
+        with tarfile.open(cache / "build-candidate.tar", "w") as archive:
+            archive.add(source.parent.parent.parent, arcname="./core/fixture/dist")
+        digest = hashlib.sha256((cache / "build-candidate.tar").read_bytes()).hexdigest()
+        (cache / "manifest.json").write_text(json.dumps({
+            "sourceSha": "deadbeef", "inputFingerprint": "fixture-fingerprint", "cacheKey": "fixture-cache-key",
+            "candidateArchiveSha256": digest, "candidateArchiveSizeBytes": (cache / "build-candidate.tar").stat().st_size,
+            "candidateReleaseIndexSha256": "fixture-index-digest", "candidateChecksumsSha256": "fixture-checksums-digest",
+            "releaseSourceRevision": "deadbee"}, sort_keys=True) + "\n", encoding="utf-8")
+        env = dict(self.env,
+                   BATCH_SELECTION="cases:Uy0yNjguMQ==",
+                   JOURNEY_CANDIDATE_CACHE_DIR=".journey/prepared-candidate-cache",
+                   JOURNEY_CANDIDATE_CACHE_KEY="fixture-cache-key",
+                   CACHE_VERIFY_VALID="1")
+
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(self.root / "producer")],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls.read_text().splitlines()
+        self.assertNotIn("build", calls)
+        self.assertNotIn("build-output-check", calls)
+        self.assertNotIn("candidate", calls)
+        self.assertNotIn("unit", calls)
+        metadata = json.loads((self.root / "producer/shared/batch-metadata.json").read_text())
+        self.assertEqual(metadata["candidateCache"]["status"], "reused", calls)
+        self.assertEqual(metadata["candidateCache"]["sourceSha"], "deadbeef")
+        self.assertEqual(metadata["candidateCache"]["cacheKey"], "fixture-cache-key")
+        self.assertEqual(metadata["stageDurationsSeconds"]["build"], 0)
+        self.assertEqual(metadata["stageDurationsSeconds"]["candidate"], 0)
+        self.assertEqual(metadata["stageDurationsSeconds"]["unit"], 0)
+        self.assertIn("Candidate: reused for source SHA `deadbeef`", (self.root / "producer/shared/summary.md").read_text())
+
+    # case: S-262.18
+    def test_targeted_cache_miss_prepares_fresh_candidate(self):
+        import json
+        env = dict(self.env,
+                   BATCH_SELECTION="cases:Uy0yNjguMQ==",
+                   JOURNEY_CANDIDATE_CACHE_DIR=".journey/prepared-candidate-cache",
+                   JOURNEY_CANDIDATE_CACHE_KEY="fixture-cache-key",
+                   CACHE_VERIFY_VALID="0")
+
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(self.root / "producer")],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls.read_text().splitlines()
+        self.assertIn("build", calls)
+        self.assertIn("build-output-check", calls)
+        self.assertIn("candidate", calls)
+        self.assertNotIn("unit", calls)
+        metadata = json.loads((self.root / "producer/shared/batch-metadata.json").read_text())
+        self.assertEqual(metadata["candidateCache"]["status"], "prepared")
+        self.assertEqual(metadata["candidateCache"]["sourceSha"], "deadbeef")
+
+    # case: S-262.18
+    def test_full_batch_ignores_targeted_candidate_cache(self):
+        import json
+        env = dict(self.env,
+                   BATCH_SELECTION="full",
+                   JOURNEY_CANDIDATE_CACHE_DIR=".journey/prepared-candidate-cache",
+                   JOURNEY_CANDIDATE_CACHE_KEY="fixture-cache-key",
+                   CACHE_VERIFY_VALID="1")
+
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(self.root / "producer")],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls.read_text().splitlines()
+        self.assertIn("build", calls)
+        self.assertIn("build-output-check", calls)
+        self.assertIn("candidate", calls)
+        self.assertIn("unit", calls)
+        self.assertNotIn("cache-verify", calls)
+        metadata = json.loads((self.root / "producer/shared/batch-metadata.json").read_text())
+        self.assertNotIn("candidateCache", metadata)
 
     # case: S-262.8
     def test_partial_batch_dispatches_the_selected_claim_owner(self):
