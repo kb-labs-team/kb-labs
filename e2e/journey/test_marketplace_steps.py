@@ -24,7 +24,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                run_plugin_policy_diagnostic_step,
                                run_marketplace_steps, validate_commit_status_response,
                                validate_shared_failure, validate_unmounted_commit_response,
-                               wait_for_marketplace_ready)
+                               verify_registry_image_composition, wait_for_marketplace_ready)
 from service_steps import FlowGraph, Journey
 from marketplace_tamper_proxy import tamper_tarball
 from journey_dependencies import Dependency
@@ -43,6 +43,64 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_registry_image_composition_claim_checks_manifest_lock_layout_and_ready(self):
+        with tempfile.TemporaryDirectory(prefix="registry-image-claim-") as temp:
+            workspace = Path(temp)
+            deployment = workspace / ".kb" / "deploy" / "registry-image-composition" / ".kb"
+            deployment.mkdir(parents=True)
+            (workspace / ".kb" / "deploy" / "image-default").mkdir(parents=True)
+            (workspace / ".kb" / "deploy" / "image-default" / "platform-layout.json").write_text(
+                json.dumps({"platformDataRoot": {"platformPath": ".kb/data"}}))
+            roots = ["@kb-labs/adapter-a", "@kb-labs/adapter-b"]
+            packages = [{"name": "@kb-labs/marketplace-registry-app"}, {"name": "@kb-labs/sdk"}]
+            (deployment / "image-composition.json").write_text(json.dumps({
+                "schema": "kb.registry-image-composition/v1", "sourceRevision": "abc123",
+                "pnpmLockSha256": "a" * 64, "packages": packages, "adapterPackages": roots,
+            }))
+            (deployment / "marketplace.lock").write_text(json.dumps({"adapters": {
+                name: {"source": "platform", "enabled": True, "version": "1.0.0",
+                       "integrity": "sha256-test", "resolvedPath": f"./node_modules/{name}"}
+                for name in roots
+            }}))
+            env = {"KB_JOURNEY_WORKSPACE_ROOT": str(workspace),
+                   "KB_JOURNEY_REGISTRY_READY_URL": "http://registry.test/ready",
+                   "KB_JOURNEY_REGISTRY_INTERNAL_SECRET": "fixture-only"}
+            with patch("marketplace_steps.open_http", return_value=(200, {}, b'{"ready":true}')), \
+                    patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": "S-268.11",
+                                            "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
+                journey = Journey("local", "registry-image-composition")
+                verify_registry_image_composition(journey, env)
+            result = journey.result()
+            self.assertEqual(result.status, "PASS")
+            self.assertEqual(result.steps[0]["cases"], ["S-268.11"])
+
+    def test_registry_image_composition_claim_rejects_manifest_lock_mismatch(self):
+        with tempfile.TemporaryDirectory(prefix="registry-image-claim-invalid-") as temp:
+            workspace = Path(temp)
+            deployment = workspace / ".kb" / "deploy" / "registry-image-composition" / ".kb"
+            deployment.mkdir(parents=True)
+            (workspace / ".kb" / "deploy" / "image-default").mkdir(parents=True)
+            (workspace / ".kb" / "deploy" / "image-default" / "platform-layout.json").write_text(
+                json.dumps({"platformDataRoot": {"platformPath": ".kb/data"}}))
+            (deployment / "image-composition.json").write_text(json.dumps({
+                "schema": "kb.registry-image-composition/v1", "sourceRevision": "abc123",
+                "pnpmLockSha256": "a" * 64,
+                "packages": [{"name": "@kb-labs/marketplace-registry-app"}, {"name": "@kb-labs/sdk"}],
+                "adapterPackages": ["@kb-labs/adapter-a"],
+            }))
+            (deployment / "marketplace.lock").write_text(json.dumps({"adapters": {}}))
+            with patch("marketplace_steps.open_http") as opener, \
+                    patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": "S-268.11",
+                                            "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
+                journey = Journey("local", "registry-image-composition-invalid")
+                verify_registry_image_composition(journey, {
+                    "KB_JOURNEY_WORKSPACE_ROOT": str(workspace),
+                    "KB_JOURNEY_REGISTRY_READY_URL": "http://registry.test/ready",
+                    "KB_JOURNEY_REGISTRY_INTERNAL_SECRET": "fixture-only",
+                })
+            self.assertEqual(journey.result().status, "FAIL")
+            opener.assert_not_called()
+
     def test_not_found_source_expectations_come_from_kb_create_status(self):
         self.assertEqual(configured_marketplace_source_kinds({"marketplaceSources": [
             {"kind": "registry", "url": "https://registry.example"}, {"kind": "npm"},

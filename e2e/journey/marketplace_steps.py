@@ -169,6 +169,67 @@ def wait_for_marketplace_ready(project: Path, env: dict[str, str], runner: Comma
     )
 
 
+def _assert_registry_image_composition(env: dict[str, str]) -> None:
+    """Check the built Registry composition artifacts and live ready endpoint."""
+    workspace = Path(env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+    deployment = workspace / ".kb" / "deploy" / "registry-image-composition"
+    try:
+        manifest = json.loads((deployment / ".kb" / "image-composition.json").read_text())
+        lock = json.loads((deployment / ".kb" / "marketplace.lock").read_text())
+        layout = json.loads((workspace / ".kb" / "deploy" / "image-default" / "platform-layout.json").read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Registry image composition artifacts are missing or invalid: {error}") from error
+
+    packages = manifest.get("packages") if isinstance(manifest, dict) else None
+    adapter_packages = manifest.get("adapterPackages") if isinstance(manifest, dict) else None
+    adapters = lock.get("adapters") if isinstance(lock, dict) else None
+    expected_roots = set(adapter_packages) if isinstance(adapter_packages, list) else set()
+    if (manifest.get("schema") != "kb.registry-image-composition/v1"
+            or not isinstance(manifest.get("sourceRevision"), str) or not manifest["sourceRevision"]
+            or not isinstance(manifest.get("pnpmLockSha256"), str)
+            or not isinstance(packages, list)
+            or not any(item.get("name") == "@kb-labs/marketplace-registry-app" for item in packages if isinstance(item, dict))
+            or not any(item.get("name") == "@kb-labs/sdk" for item in packages if isinstance(item, dict))
+            or not isinstance(adapter_packages, list) or not expected_roots
+            or not isinstance(adapters, dict) or set(adapters) != expected_roots):
+        raise RuntimeError("Registry image composition manifest and platform adapter lock do not agree")
+    for name, entry in adapters.items():
+        if (not isinstance(entry, dict) or entry.get("source") != "platform"
+                or entry.get("enabled") is not True or not entry.get("version")
+                or not str(entry.get("integrity", "")).startswith("sha256-")
+                or entry.get("resolvedPath") != f"./node_modules/{name}"):
+            raise RuntimeError(f"Registry platform adapter lock entry is incomplete for {name}")
+    if layout.get("platformDataRoot", {}).get("platformPath") != ".kb/data":
+        raise RuntimeError("Registry image platform layout does not use its declared .kb/data root")
+
+    ready_url = env.get("KB_JOURNEY_REGISTRY_READY_URL")
+    internal_secret = env.get("KB_JOURNEY_REGISTRY_INTERNAL_SECRET")
+    if not ready_url or not internal_secret:
+        raise RuntimeError("Registry image readiness probe is missing its journey-only endpoint configuration")
+    request = urllib.request.Request(ready_url, headers={
+        "x-internal-secret": internal_secret,
+        "x-kb-auth-type": "user",
+        "x-kb-auth-user-id": "journey-registry-ready",
+        "x-kb-auth-namespace-id": "journey-registry-ready",
+        "x-kb-auth-tier": "free",
+        "x-kb-auth-permissions": '["packages:read"]',
+    })
+    try:
+        status, _, body = open_http(urllib.request.urlopen, request, timeout=15, env=env)
+        response = json.loads(body.decode("utf-8"))
+    except Exception as error:
+        raise RuntimeError(f"Registry image readiness endpoint could not be read: {error}") from error
+    if status != 200 or not isinstance(response, dict) or response.get("ready") is not True:
+        raise RuntimeError(f"Registry image readiness endpoint returned an unexpected response: HTTP {status}")
+
+
+
+def verify_registry_image_composition(journey: Journey, env: dict[str, str]) -> None:
+    journey.step("verify Registry image composition and readiness", "marketplace-registry",
+                 lambda: _assert_registry_image_composition(env), cases=["S-268.11"],
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
+
+
 def _project_config(root: Path) -> tuple[Path, dict]:
     config_file = root / ".kb" / "kb.config.json"
     try:
@@ -454,6 +515,8 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
     base_env = dict(os.environ if env is None else env)
     export_project_identity_to_child_environment(base_env, project_root=str(project))
     captured: dict[str, dict] = {}
+
+    verify_registry_image_composition(journey, base_env)
 
     def install_fixture() -> None:
         wait_for_marketplace_ready(project, base_env, runner)

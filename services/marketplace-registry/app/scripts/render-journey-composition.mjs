@@ -41,6 +41,8 @@ const composeOverlay = `services:
     environment:
       KB_JOURNEY_MARKETPLACE_PUBLISH_URL: ${JSON.stringify(`${registryUrl}/api/v1`)}
       KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE: journey
+      KB_JOURNEY_REGISTRY_READY_URL: http://marketplace-registry:5071/ready
+      KB_JOURNEY_REGISTRY_INTERNAL_SECRET: journey-marketplace-internal-secret
 
   marketplace-state:
     profiles: [marketplace-registry]
