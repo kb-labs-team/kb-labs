@@ -371,7 +371,7 @@ plugin installs need no credential. A team's private or paid plugins are fetched
 by the host with the installation's marketplace credential, so members only
 authenticate to their own platform. Author actions use a personal author
 credential scoped to the author's plugin scopes; CI uses short-lived, scope-limited
-publish credentials. Cases: S-216, S-217 (planned).
+publish credentials. Case S-216 is active; S-217 remains planned.
 
 ### Plugin lock keys are the manifest IDs
 

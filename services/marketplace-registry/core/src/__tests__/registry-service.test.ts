@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync, verify as cryptoVerify } from 'node:crypto';
 import type { IStorage, ICache, ILogger } from '@kb-labs/core-platform';
 import type { RegistryEntry } from '@kb-labs/marketplace-registry-contracts';
 import { RegistryService } from '../registry-service.js';
@@ -429,6 +429,332 @@ describe('RegistryService.publish', () => {
     );
     expect(result.visibility).toBe('private');
     expect(result.pageUrl).toBeDefined();
+  });
+
+  // case: S-268.22
+  it('allows only the owning namespace to append a package version without mutating state on refusal', async () => {
+    const storageValues = new Map<string, Buffer>();
+    const storage: IStorage = {
+      read: async (path) => storageValues.get(path) ?? null,
+      write: vi.fn(async (path, data) => {
+        storageValues.set(path, Buffer.isBuffer(data) ? Buffer.from(data) : Buffer.from(data));
+      }),
+      delete: vi.fn(async (path) => { storageValues.delete(path); }),
+      list: async (prefix) => [...storageValues.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => storageValues.has(path),
+    };
+    const cache = createMemoryCache();
+    const cacheDelete = vi.spyOn(cache, 'delete');
+    const cacheSet = vi.spyOn(cache, 'set');
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const svc = new RegistryService({
+      storage, cache, logger: noopLogger,
+      baseUrl: 'http://localhost:5071', siteUrl: 'https://kblabs.ru',
+      signingPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    });
+
+    await svc.publish(SMALL_TARBALL, makePkg(), 'shared-handle', 'ns-owner');
+    const originalEntry = await svc.getEntry('shared-handle', 'my-plugin');
+    const originalStorage = new Map([...storageValues].map(([path, value]) => [path, Buffer.from(value)]));
+    const writesBeforeRefusal = vi.mocked(storage.write).mock.calls.length;
+    const deletesBeforeRefusal = cacheDelete.mock.calls.length;
+    const setsBeforeRefusal = cacheSet.mock.calls.length;
+
+    const refusal = await svc.publish(Buffer.from('attacker tarball'), makePkg({ version: '1.1.0' }),
+      'shared-handle', 'ns-other').catch(error => error);
+
+    expect(refusal.code).toBe('FORBIDDEN');
+    expect(vi.mocked(storage.write)).toHaveBeenCalledTimes(writesBeforeRefusal);
+    expect(cacheDelete).toHaveBeenCalledTimes(deletesBeforeRefusal);
+    expect(cacheSet).toHaveBeenCalledTimes(setsBeforeRefusal);
+    expect([...storageValues.entries()]).toEqual([...originalStorage.entries()]);
+    expect(await svc.getEntry('shared-handle', 'my-plugin')).toEqual(originalEntry);
+    await expect(svc.getTarball('shared-handle', 'my-plugin', '1.0.0')).resolves.toMatchObject({
+      tarball: SMALL_TARBALL,
+      signature: expect.objectContaining({ value: expect.any(String) }),
+    });
+
+    const ownerUpdate = await svc.publish(Buffer.from('owner release'), makePkg({ version: '1.1.0' }),
+      'shared-handle', 'ns-owner');
+    expect(ownerUpdate.version).toBe('1.1.0');
+    const updatedEntry = await svc.getEntry('shared-handle', 'my-plugin');
+    expect(updatedEntry?.versions.map(version => version.version)).toEqual(['1.0.0', '1.1.0']);
+  });
+
+  // case: S-268.22
+  it('rejects unsafe publish identifiers before writes while preserving scoped names and exact SemVer', async () => {
+    const values = new Map<string, Buffer>();
+    const storage: IStorage = {
+      read: async (path) => values.get(path) ?? null,
+      write: vi.fn(async (path, data) => { values.set(path, Buffer.from(data)); }),
+      delete: vi.fn(async (path) => { values.delete(path); }),
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => values.has(path),
+    };
+    const cache = createMemoryCache();
+    const cacheDelete = vi.spyOn(cache, 'delete');
+    const cacheSet = vi.spyOn(cache, 'set');
+    const svc = new RegistryService({ storage, cache, logger: noopLogger, baseUrl: 'http://localhost:5071' });
+
+    const invalidAddresses: Array<[string, string, string]> = [
+      ['../victim', 'my-plugin', '1.0.0'],
+      ['victim', '../my-plugin', '1.0.0'],
+      ['victim', '@scope/../my-plugin', '1.0.0'],
+      ['victim', 'my-plugin', '1.0.0/../../meta'],
+      ['victim', 'my-plugin', ' 1.0.0'],
+      ['Victim', 'my-plugin', '1.0.0'],
+      ['v', 'my-plugin', '1.0.0'],
+    ];
+    for (const [handle, name, version] of invalidAddresses) {
+      const error = await svc.publish(SMALL_TARBALL, makePkg({ name, version }), handle, 'ns-owner')
+        .catch(reason => reason);
+      expect(error.code).toBe('INVALID_MANIFEST');
+    }
+    expect(storage.write).not.toHaveBeenCalled();
+    expect(storage.delete).not.toHaveBeenCalled();
+    expect(cacheDelete).not.toHaveBeenCalled();
+    expect(cacheSet).not.toHaveBeenCalled();
+
+    await svc.publish(SMALL_TARBALL, makePkg({
+      name: '@kb-labs/test_widget.v2', version: '1.2.3-rc.1+build.7',
+    }), 'valid-handle', 'ns-owner');
+    const scoped = await svc.getEntry('valid-handle', '@kb-labs/test_widget.v2');
+    expect(scoped?.versions.map(version => version.version)).toEqual(['1.2.3-rc.1+build.7']);
+  });
+
+  // case: S-268.22
+  it('stores case-distinct SemVer releases separately on case-insensitive storage', async () => {
+    const values = new Map<string, Buffer>();
+    const storage: IStorage = {
+      read: async (path) => values.get(path.toLowerCase()) ?? null,
+      write: async (path, data) => { values.set(path.toLowerCase(), Buffer.from(data)); },
+      delete: async (path) => { values.delete(path.toLowerCase()); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix.toLowerCase())),
+      exists: async (path) => values.has(path.toLowerCase()),
+    };
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const svc = new RegistryService({
+      storage, cache: createMemoryCache(), logger: noopLogger, baseUrl: 'http://localhost:5071',
+      signingPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    });
+    const alphaUpper = Buffer.from('alpha upper release');
+    const alphaLower = Buffer.from('alpha lower release');
+    const versionUpper = '1.0.0-Alpha+Build.7';
+    const versionLower = '1.0.0-alpha+build.7';
+
+    await svc.publish(alphaUpper, makePkg({ version: versionUpper }), 'portable-owner', 'ns-owner');
+    await svc.publish(alphaLower, makePkg({ version: versionLower }), 'portable-owner', 'ns-owner');
+
+    const entry = await svc.getEntry('portable-owner', 'my-plugin');
+    expect(entry?.versions.map(version => version.version)).toEqual([versionUpper, versionLower]);
+    expect((await svc.getTarball('portable-owner', 'my-plugin', versionUpper)).tarball).toEqual(alphaUpper);
+    expect((await svc.getTarball('portable-owner', 'my-plugin', versionLower)).tarball).toEqual(alphaLower);
+    expect(entry?.versions.every(version => version.signature?.value)).toBe(true);
+    const signatureFiles = [...values.entries()].filter(([path]) => path.endsWith('.sig'));
+    expect(signatureFiles).toHaveLength(2);
+    expect(new Set(signatureFiles.map(([, bytes]) => JSON.parse(bytes.toString()).value)).size).toBe(2);
+  });
+
+  // case: S-268.22
+  it('stores long valid SemVer versions under a filesystem-safe fixed-length key', async () => {
+    const values = new Map<string, Buffer>();
+    const storage: IStorage = {
+      read: async (path) => values.get(path) ?? null,
+      write: async (path, data) => {
+        const component = path.slice(path.lastIndexOf('/') + 1);
+        if (Buffer.byteLength(component, 'utf8') > 255) { throw new Error('Filesystem component too long'); }
+        values.set(path, Buffer.from(data));
+      },
+      delete: async (path) => { values.delete(path); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => values.has(path),
+    };
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071' });
+    const version = `1.0.0+${'a'.repeat(200)}`;
+    const tarball = Buffer.from('long semver release');
+
+    await expect(svc.publish(tarball, makePkg({ version }), 'long-version-owner', 'ns-owner'))
+      .resolves.toMatchObject({ version });
+    await expect(svc.getTarball('long-version-owner', 'my-plugin', version)).resolves.toMatchObject({ tarball });
+    const versionPath = [...values.keys()].find(path => path.endsWith('.tgz'));
+    expect(versionPath?.split('/').at(-1)).toMatch(/^v-[a-f0-9]{64}\.tgz$/);
+  });
+
+  // case: S-268.22
+  it('reads tarballs stored under the previous hexadecimal version key', async () => {
+    const values = new Map<string, Buffer>();
+    const version = '1.2.3-rc.1+Build.7';
+    const base = 'marketplace-registry/packages/legacy/legacy-plugin';
+    const meta = makePkg({ name: 'legacy-plugin', version }).meta;
+    const registryEntry: RegistryEntry = {
+      name: 'legacy-plugin', authorHandle: 'legacy', authorNamespaceId: 'ns-legacy',
+      primaryKind: 'plugin', visibility: 'private', legacyStatsVisibility: 'private', trust: 'untrusted',
+      allowlist: [], versions: [{ version, publishedAt: '2024-01-01T00:00:00Z', integrity: 'sha256-legacy',
+        visibility: 'private', meta, primaryKind: 'plugin' }],
+      deprecated: false, featured: false, badges: [], tags: [], meta,
+      createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+    };
+    const tarball = Buffer.from('hex-key legacy release');
+    values.set(`${base}/meta.json`, Buffer.from(JSON.stringify(registryEntry)));
+    values.set(`${base}/v-${Buffer.from(version, 'utf8').toString('hex')}.tgz`, tarball);
+    const storage: IStorage = {
+      read: async (path) => values.get(path) ?? null,
+      write: async (path, data) => { values.set(path, Buffer.from(data)); },
+      delete: async (path) => { values.delete(path); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => values.has(path),
+    };
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071' });
+
+    await expect(svc.getTarball('legacy', 'legacy-plugin', version)).resolves.toMatchObject({ tarball });
+  });
+
+  // case: S-268.22
+  it('falls back to a long raw-version tarball when its former hex path exceeds the filesystem limit', async () => {
+    const values = new Map<string, Buffer>();
+    const version = `1.0.0+${'a'.repeat(140)}`;
+    const base = 'marketplace-registry/packages/legacy/legacy-plugin';
+    const meta = makePkg({ name: 'legacy-plugin', version }).meta;
+    const registryEntry: RegistryEntry = {
+      name: 'legacy-plugin', authorHandle: 'legacy', authorNamespaceId: 'ns-legacy',
+      primaryKind: 'plugin', visibility: 'private', legacyStatsVisibility: 'private', trust: 'untrusted',
+      allowlist: [], versions: [{ version, publishedAt: '2024-01-01T00:00:00Z', integrity: 'sha256-legacy',
+        visibility: 'private', meta, primaryKind: 'plugin' }],
+      deprecated: false, featured: false, badges: [], tags: [], meta,
+      createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+    };
+    const tarball = Buffer.from('long raw-key legacy release');
+    values.set(`${base}/meta.json`, Buffer.from(JSON.stringify(registryEntry)));
+    values.set(`${base}/${version}.tgz`, tarball);
+    const enforceComponentLimit = (path: string) => {
+      const component = path.slice(path.lastIndexOf('/') + 1);
+      if (Buffer.byteLength(component, 'utf8') > 255) {
+        throw Object.assign(new Error('File name too long'), { code: 'ENAMETOOLONG' });
+      }
+    };
+    const storage: IStorage = {
+      read: async (path) => { enforceComponentLimit(path); return values.get(path) ?? null; },
+      write: async (path, data) => { enforceComponentLimit(path); values.set(path, Buffer.from(data)); },
+      delete: async (path) => { values.delete(path); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => values.has(path),
+    };
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071' });
+
+    await expect(svc.getTarball('legacy', 'legacy-plugin', version)).resolves.toMatchObject({ tarball });
+  });
+
+  // case: S-268.22
+  it('allows an owner to append to an existing safe legacy handle and package name', async () => {
+    const values = new Map<string, Buffer>();
+    const legacyName = 'Legacy.Plugin_Name';
+    const legacyHandle = 'Legacy.Author';
+    const legacyMeta = { ...makePkg({ name: legacyName }).meta, version: '1.0.0' };
+    const legacyEntry: RegistryEntry = {
+      name: legacyName, authorHandle: legacyHandle, authorNamespaceId: 'ns-legacy',
+      primaryKind: 'plugin', visibility: 'private', legacyStatsVisibility: 'private', trust: 'untrusted',
+      allowlist: [], versions: [{ version: '1.0.0', publishedAt: '2024-01-01T00:00:00Z',
+        integrity: 'sha256-legacy', visibility: 'private', meta: legacyMeta, primaryKind: 'plugin' }],
+      deprecated: false, featured: false, badges: [], tags: [], meta: legacyMeta,
+      createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+    };
+    const base = `marketplace-registry/packages/${legacyHandle}/${legacyName}`;
+    values.set(`${base}/meta.json`, Buffer.from(JSON.stringify(legacyEntry)));
+    values.set(`${base}/1.0.0.tgz`, SMALL_TARBALL);
+    const storage: IStorage = {
+      read: async (path) => values.get(path) ?? null,
+      write: async (path, data) => { values.set(path, Buffer.from(data)); },
+      delete: async (path) => { values.delete(path); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => values.has(path),
+    };
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071' });
+    expect((await svc.getTarball(legacyHandle, legacyName, '1.0.0')).tarball).toEqual(SMALL_TARBALL);
+
+    const result = await svc.publish(SMALL_TARBALL, makePkg({ name: legacyName, version: '1.1.0' }),
+      legacyHandle, 'ns-legacy');
+
+    expect(result.version).toBe('1.1.0');
+    expect((await svc.getEntry(legacyHandle, legacyName))?.versions.map(version => version.version))
+      .toEqual(['1.0.0', '1.1.0']);
+  });
+
+  // case: S-268.22
+  it('serializes concurrent case aliases of a legacy package on case-insensitive storage', async () => {
+    const values = new Map<string, Buffer>();
+    const legacyName = 'Legacy.Plugin_Name';
+    const legacyHandle = 'Legacy.Author';
+    const legacyMeta = { ...makePkg({ name: legacyName }).meta, version: '1.0.0' };
+    const legacyEntry: RegistryEntry = {
+      name: legacyName, authorHandle: legacyHandle, authorNamespaceId: 'ns-legacy',
+      primaryKind: 'plugin', visibility: 'private', legacyStatsVisibility: 'private', trust: 'untrusted',
+      allowlist: [], versions: [{ version: '1.0.0', publishedAt: '2024-01-01T00:00:00Z',
+        integrity: 'sha256-legacy', visibility: 'private', meta: legacyMeta, primaryKind: 'plugin' }],
+      deprecated: false, featured: false, badges: [], tags: [], meta: legacyMeta,
+      createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+    };
+    const base = `marketplace-registry/packages/${legacyHandle}/${legacyName}`;
+    values.set(`${base.toLowerCase()}/meta.json`, Buffer.from(JSON.stringify(legacyEntry)));
+    values.set(`${base.toLowerCase()}/v-312e302e30.tgz`, SMALL_TARBALL);
+    const storage: IStorage = {
+      read: async (path) => values.get(path.toLowerCase()) ?? null,
+      write: async (path, data) => { values.set(path.toLowerCase(), Buffer.from(data)); },
+      delete: async (path) => { values.delete(path.toLowerCase()); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix.toLowerCase())),
+      exists: async (path) => values.has(path.toLowerCase()),
+    };
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071',
+      signingPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+
+    await svc.getEntry(legacyHandle, legacyName);
+    await svc.getEntry(legacyHandle.toLowerCase(), legacyName.toLowerCase());
+
+    await Promise.all([
+      svc.publish(Buffer.from('release upper alias'), makePkg({ name: legacyName, version: '1.1.0' }),
+        legacyHandle, 'ns-legacy'),
+      svc.publish(Buffer.from('release lower alias'), makePkg({ name: legacyName.toLowerCase(), version: '1.2.0' }),
+        legacyHandle.toLowerCase(), 'ns-legacy'),
+    ]);
+
+    const storedEntry = JSON.parse(values.get(`${base.toLowerCase()}/meta.json`)!.toString()) as RegistryEntry;
+    const entry = await svc.getEntry(legacyHandle, legacyName);
+    expect(storedEntry.versions.map(version => version.version)).toEqual(['1.0.0', '1.1.0', '1.2.0']);
+    expect(entry?.versions.map(version => version.version)).toEqual(['1.0.0', '1.1.0', '1.2.0']);
+    expect((await svc.getEntry(legacyHandle.toLowerCase(), legacyName.toLowerCase()))?.versions.map(version => version.version))
+      .toEqual(['1.0.0', '1.1.0', '1.2.0']);
+    expect((await svc.getTarball(legacyHandle, legacyName, '1.1.0')).tarball).toEqual(Buffer.from('release upper alias'));
+    expect((await svc.getTarball(legacyHandle.toLowerCase(), legacyName.toLowerCase(), '1.2.0')).tarball)
+      .toEqual(Buffer.from('release lower alias'));
+
+    const resolved = await svc.resolveIdentity(legacyMeta.identity, 'ns-legacy', null, '1.2.0');
+    if (resolved.status !== 'found') { throw new Error('Legacy alias release did not resolve'); }
+    const { integrity, version, signatureSubject, signature } = resolved.package;
+    if (!integrity || !version || !signatureSubject || !signature) {
+      throw new Error('Resolved legacy alias release is missing signature data');
+    }
+    const payload = Buffer.from(JSON.stringify({ integrity, pkg: `${signatureSubject}@${version}` }));
+    expect(cryptoVerify(null, payload, publicKey, Buffer.from(signature.value, 'base64'))).toBe(true);
+  });
+
+  // case: S-268.22
+  it('serializes simultaneous first publication so only one namespace owns the package', async () => {
+    const svc = makeService();
+    const results = await Promise.allSettled([
+      svc.publish(SMALL_TARBALL, makePkg(), 'first-owner', 'ns-first'),
+      svc.publish(Buffer.from('second namespace'), makePkg(), 'first-owner', 'ns-second'),
+    ]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const refused = results.find(result => result.status === 'rejected') as PromiseRejectedResult;
+    expect(refused.reason.code).toBe('FORBIDDEN');
+    const entry = await svc.getEntry('first-owner', 'my-plugin');
+    expect(['ns-first', 'ns-second']).toContain(entry?.authorNamespaceId);
+    expect(entry?.versions).toHaveLength(1);
   });
 
   it('RS-07: second version publishes, entry has two versions', async () => {
