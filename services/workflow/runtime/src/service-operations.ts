@@ -68,7 +68,15 @@ export async function setWorkflowCronEnabled(
       // mounting this under the manifest's public project API prefix.
       path: route,
     });
-  } catch {
+  } catch (error) {
+    const thrownEnvelope = record(error)?.envelope;
+    if (isErrorEnvelope(thrownEnvelope)) {
+      const errorEnvelope = { ...thrownEnvelope, correlationId: thrownEnvelope.correlationId ?? randomUUID() };
+      throw new WorkflowServiceOperationError(
+        errorEnvelope.code, errorEnvelope.message, errorEnvelope.hint, errorEnvelope.details,
+        errorEnvelope.correlationId, errorEnvelope,
+      );
+    }
     throw operationFailure('The workflow service could not complete the cron update.',
       'Check workflow service health, then retry the command.', { command: 'workflow cron toggle' });
   }
