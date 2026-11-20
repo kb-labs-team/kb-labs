@@ -534,7 +534,7 @@ exec "$REAL_TAR" "$@"
     def test_selected_secured_runner_crash_fails_the_mode_and_partial_summary(self):
         import json
 
-        selected = "S-268.1,S-268.11"
+        selected = "S-268.1,S-268.2"
         producer = self.root / "producer"
         prepared = subprocess.run(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
@@ -563,7 +563,7 @@ exec "$REAL_TAR" "$@"
         secured_metadata = json.loads(
             (self.root / "secured-artifact/secured/batch-metadata.json").read_text())
         self.assertEqual(secured_metadata["result"], "FAIL")
-        self.assertEqual(secured_metadata["requestedSelection"], ["S-268.1", "S-268.11"])
+        self.assertEqual(secured_metadata["requestedSelection"], ["S-268.1", "S-268.2"])
 
         summary = subprocess.run(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
@@ -573,7 +573,7 @@ exec "$REAL_TAR" "$@"
         )
         rendered = (self.root / "summary/shared/summary.md").read_text()
         self.assertNotEqual(summary.returncode, 0, summary.stderr + rendered)
-        self.assertIn("secured=[S-268.1, S-268.11]", rendered)
+        self.assertIn("secured=[S-268.1, S-268.2]", rendered)
         self.assertIn("- Result: PARTIAL", rendered)
         self.assertNotIn("- Result: PASS", rendered)
 
@@ -707,11 +707,11 @@ exec "$REAL_TAR" "$@"
         local_dir = self.root / "out/.artifact-local/local"
         local_metadata_path = local_dir / "batch-metadata.json"
         local_metadata = json.loads(local_metadata_path.read_text())
-        local_metadata["requestedSelection"] = ["S-268.1", "S-268.11"]
+        local_metadata["requestedSelection"] = ["S-268.1", "S-268.2"]
         local_metadata_path.write_text(json.dumps(local_metadata), encoding="utf-8")
         local_scoreboard_path = local_dir / "case-scoreboard.json"
         local_scoreboard = json.loads(local_scoreboard_path.read_text())
-        local_scoreboard["selection"] = ["S-268.1", "S-268.11"]
+        local_scoreboard["selection"] = ["S-268.1", "S-268.2"]
         local_scoreboard_path.write_text(json.dumps(local_scoreboard), encoding="utf-8")
         stale = self.root / "selected-summary/secured/stale-report.json"
         stale.parent.mkdir(parents=True, exist_ok=True)
@@ -720,12 +720,12 @@ exec "$REAL_TAR" "$@"
             [sys.executable, str(self.root / "e2e/journey/batch_summary.py"),
              str(self.root / "selected-summary"), str(self.root / "out"),
              str(self.root / "out/.artifact-local"), str(self.root / "missing-secured"),
-             "S-268.1,S-268.11"],
+             "S-268.1,S-268.2"],
             cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
         )
         rendered = (self.root / "selected-summary/shared/summary.md").read_text()
         self.assertNotEqual(result.returncode, 0, result.stderr + rendered)
-        self.assertIn("secured=[S-268.1, S-268.11]", rendered)
+        self.assertIn("secured=[S-268.1, S-268.2]", rendered)
         self.assertIn("- Result: PARTIAL", rendered)
         self.assertNotIn("- Result: PASS", rendered)
         self.assertFalse(stale.exists())

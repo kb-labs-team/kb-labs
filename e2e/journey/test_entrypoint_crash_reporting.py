@@ -39,9 +39,9 @@ class RunnerCrashReportingTests(unittest.TestCase):
                if limit_output else "")
             + "from entrypoint import run_runner\n"
             + ("from journey_selection import read_journey_selection, use_journey_selection\n"
-               "requested = read_journey_selection({'KB_JOURNEY_CASES': 'S-268.1,S-268.11', "
-               "'KB_JOURNEY_SELECTED_STEPS': 'S-268.1,S-268.11', "
-               "'KB_JOURNEY_SELECTED_OWNING_STEPS': '{\\\"publish package\\\":[\\\"S-268.1\\\",\\\"S-268.11\\\"]}'})\n"
+               "requested = read_journey_selection({'KB_JOURNEY_CASES': 'S-268.1,S-268.2', "
+               "'KB_JOURNEY_SELECTED_STEPS': 'S-268.1,S-268.2', "
+               "'KB_JOURNEY_SELECTED_OWNING_STEPS': '{\\\"publish package\\\":[\\\"S-268.1\\\",\\\"S-268.2\\\"]}'})\n"
                "with use_journey_selection(requested):\n"
                "    raise SystemExit(run_runner(sys.argv[1], sys.argv[2], 'secured', selection=requested))\n"
                if selected else "raise SystemExit(run_runner(sys.argv[1], sys.argv[2], 'local'))\n"),
@@ -83,12 +83,12 @@ class RunnerCrashReportingTests(unittest.TestCase):
         with temporary:
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             report = json.loads((root / "service-secured.json").read_text(encoding="utf-8"))
-            self.assertEqual(report["case_run"]["selection"], ["S-268.1", "S-268.11"])
-            self.assertEqual(report["case_run"]["selectedClaims"], ["S-268.1", "S-268.11"])
+            self.assertEqual(report["case_run"]["selection"], ["S-268.1", "S-268.2"])
+            self.assertEqual(report["case_run"]["selectedClaims"], ["S-268.1", "S-268.2"])
             self.assertEqual(report["case_run"]["selectedOwningSteps"], {
-                "publish package": ["S-268.1", "S-268.11"]})
+                "publish package": ["S-268.1", "S-268.2"]})
             scoreboard = json.loads((root / "case-scoreboard-secured.json").read_text(encoding="utf-8"))
-            self.assertEqual(scoreboard["selection"], ["S-268.1", "S-268.11"])
+            self.assertEqual(scoreboard["selection"], ["S-268.1", "S-268.2"])
             target_case = next(case for case in scoreboard["cases"] if case["id"] == "S-268")
             self.assertEqual(target_case["status"], "Unclaimed")
             self.assertEqual(target_case["passingClaims"], [])
