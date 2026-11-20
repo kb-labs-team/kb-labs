@@ -74,11 +74,19 @@ function createPlatformServices(container: PlatformContainer): PlatformServices 
  * Execute an MCP tool. tenantId is propagated end-to-end (no loss); the platform
  * container is resolved through the seam so isolation is the platform's concern.
  *
- * Output capture: activates the AsyncLocalStorage context so the execution
- * backend's uiProvider can write into the call-local `lines` buffer. The `ui`
- * param passed to executeCommandV3 is unused by V3 (the backend uses uiProvider),
- * but noopUI is passed explicitly to make the intent clear.
+ * Output capture: activates the AsyncLocalStorage context for presentation text
+ * and captures the normalized command result directly from executeCommandV3.
+ * Ordinary calls preserve readable UI output; JSON calls and data-only commands
+ * use the normalized machine result.
  */
+function serializeMachineResult(result: { ok: true; data: unknown; meta?: unknown }): string {
+  try {
+    return JSON.stringify(result) ?? 'null';
+  } catch {
+    return 'The command succeeded, but its result could not be represented as JSON.';
+  }
+}
+
 export async function callTool(
   tool: McpTool,
   args: Record<string, unknown>,
@@ -88,7 +96,7 @@ export async function callTool(
   const output = { text: [] as string[], structured: [] as UIOutput[] };
   const container = resolvePlatform(tenantId);
   let error: ErrorEnvelope | undefined;
-  let normalizedResult: string | undefined;
+  let normalizedResult: { ok: true; data: unknown; meta?: unknown } | undefined;
 
   const exitCode = await callOutput.run(output, () =>
     executeCommandV3({
@@ -97,7 +105,7 @@ export async function callTool(
       pluginVersion: tool.version,
       commandPath: tool.commandPath,
       onError: (envelope) => { error = envelope; },
-      onResult: (result) => { normalizedResult = JSON.stringify(result); },
+      onResult: (result) => { normalizedResult = result; },
       pluginRoot: tool.pluginRoot,
       handlerPath: resolveHandlerPath(tool.pluginRoot, tool.handlerPath),
       argv: [],
@@ -113,9 +121,13 @@ export async function callTool(
     }),
   );
 
-  // The normalized executor result is the command's return value. It takes
-  // precedence over presentation output so result JSON is returned exactly once.
-  const text = normalizedResult ?? output.text.join('\n');
+  const presentationText = output.text.join('\n');
+  // JSON is opt-in for tools with presentation output; data-only commands still
+  // need a non-empty success result when no UI text was emitted.
+  const shouldReturnMachineResult = args.json === true || presentationText.length === 0;
+  const text = shouldReturnMachineResult && normalizedResult
+    ? serializeMachineResult(normalizedResult)
+    : presentationText;
   if (exitCode === 0) {return { success: true, output: text, structured: output.structured, exitCode: 0 };}
   if (!error) {throw new Error(`MCP tool ${tool.name} exited ${exitCode} without a normalized error envelope.`);}
   return {
