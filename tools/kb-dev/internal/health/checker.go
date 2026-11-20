@@ -33,6 +33,9 @@ func (c *Checker) WaitHealthy(ctx context.Context) Result {
 	// Try immediately. Every probe shares the startup deadline so a slow probe
 	// cannot return healthy after the overall startup budget has expired.
 	lastResult := c.probe.Execute(checkCtx)
+	if checkCtx.Err() != nil {
+		return checkerStoppedResult(checkCtx, lastResult)
+	}
 	if lastResult.OK {
 		return lastResult
 	}

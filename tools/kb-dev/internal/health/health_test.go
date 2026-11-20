@@ -89,7 +89,7 @@ func TestCheckerTimeoutPreservesTypedLastProbeFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	r := NewChecker(ClassifyProbe(srv.URL, time.Second), time.Millisecond, 15*time.Millisecond).
+	r := NewChecker(ClassifyProbe(srv.URL, time.Second), time.Millisecond, 150*time.Millisecond).
 		WaitHealthy(context.Background())
 	if r.OK || r.FailureReason != FailureReasonTimeout ||
 		r.LastProbeReason != FailureReasonHTTPStatus || r.StatusCode != http.StatusServiceUnavailable {
@@ -100,18 +100,18 @@ func TestCheckerTimeoutPreservesTypedLastProbeFailure(t *testing.T) {
 // case: PC-003.4
 func TestCheckerCancelsProbeAtStartupDeadline(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
 	started := time.Now()
-	r := NewChecker(ClassifyProbe(srv.URL, time.Second), time.Millisecond, 15*time.Millisecond).
+	r := NewChecker(ClassifyProbe(srv.URL, time.Second), time.Millisecond, 50*time.Millisecond).
 		WaitHealthy(context.Background())
 	if r.OK || r.FailureReason != FailureReasonTimeout {
 		t.Fatalf("slow health response result = %#v, want startup timeout", r)
 	}
-	if elapsed := time.Since(started); elapsed > 80*time.Millisecond {
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
 		t.Fatalf("checker waited past its startup deadline: %s", elapsed)
 	}
 }
