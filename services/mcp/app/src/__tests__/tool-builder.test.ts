@@ -169,6 +169,27 @@ describe('service command tools', () => {
       commands: [{ kind: 'local', name: 'local lint', description: 'Lint local files', scope: 'project', category: 'workflow', jsonTest: {}, flags: {} }],
     }])).toEqual([]);
   });
+
+  it('adds required string inputs for route placeholders alongside declared flags', () => {
+    const [tool] = buildServiceTools([{
+      schema: 'kb.service/1', id: 'workflow', name: 'Workflow', version: '1',
+      runtime: { entry: 'dist/index.js', port: 1, healthCheck: '/health' },
+      commands: [{
+        kind: 'service',
+        name: 'workflow crons enable', description: 'Enable a workflow cron', scope: 'project', category: 'workflow',
+        jsonTest: {}, flags: { json: { type: 'boolean' } },
+        route: { method: 'POST', path: '/crons/{id}/enable', mount: 'project-api' },
+      }],
+    }]);
+
+    expect(tool?.name).toBe('workflow__workflow_crons_enable');
+    expect(tool?.inputSchema).toMatchObject({
+      type: 'object',
+      properties: { id: { type: 'string' }, json: { type: 'boolean' } },
+      required: ['id'],
+      additionalProperties: false,
+    });
+  });
 });
 
 describe('validateManifests', () => {

@@ -137,13 +137,27 @@ export interface McpServiceTool {
 export function buildServiceTools(manifests: readonly ServiceManifest[]): McpServiceTool[] {
   return manifests.flatMap((manifest) => (manifest.commands ?? []).flatMap((command) => {
     if (command.kind === 'local') {return [];}
+    const properties = Object.fromEntries(
+      Object.entries(command.flags).map(([key, flag]) => [key, { type: flag.type }]),
+    ) as Record<string, { type: 'string' | 'boolean' | 'number' | 'array' }>;
+    const required = new Set(
+      Object.entries(command.flags).filter(([, flag]) => flag.required).map(([key]) => key),
+    );
+    for (const match of command.route.path.matchAll(/\{([^}]+)\}/g)) {
+      // Route placeholders are part of the command's input contract even when
+      // they are positional CLI arguments rather than declared flags.
+      const name = match[1];
+      if (!name) {continue;}
+      properties[name] = { ...properties[name], type: 'string' };
+      required.add(name);
+    }
     return [{
       name: mcpToolName(manifest.id, command.name),
       description: command.description,
       inputSchema: {
         type: 'object',
-        properties: Object.fromEntries(Object.entries(command.flags).map(([key, flag]) => [key, { type: flag.type }])),
-        required: Object.entries(command.flags).filter(([, flag]) => flag.required).map(([key]) => key),
+        properties,
+        required: [...required],
         additionalProperties: false,
       },
       serviceId: manifest.id,

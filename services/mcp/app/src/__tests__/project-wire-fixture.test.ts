@@ -5,10 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
 import { createErrorEnvelope, PLATFORM_AUDIT_COLLECTION } from '@kb-labs/core-platform';
+import type { IServiceTransport } from '@kb-labs/core-platform';
 import { createInMemoryDocumentDatabase, InMemoryCache } from '@kb-labs/core-platform/inmemory';
 import { openCatalog } from '@kb-labs/core-registry';
 import type { BaseDocument } from '@kb-labs/core-platform/adapters';
 import { forwardedIdentityHeaders } from '@kb-labs/gateway-contracts';
+import type { ServiceManifest } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { Policy } from '@kb-labs/core-policy';
 import { McpDaemonServer } from '../server.js';
@@ -46,6 +48,23 @@ async function postMcp(port: number, id: number, method: string, params: unknown
     headers: { 'content-type': response.headers.get('content-type') ?? '' },
     body: await response.text(),
   };
+}
+
+interface McpWirePayload {
+  result?: {
+    isError?: boolean;
+    structuredContent?: unknown;
+    tools?: Array<{
+      name: string;
+      inputSchema: { properties: Record<string, { type: string }>; required?: string[] };
+    }>;
+  };
+}
+
+function parseMcpResponse(body: string): McpWirePayload {
+  const eventData = body.split(/\r?\n/).filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trim()).filter(Boolean).at(-1);
+  return JSON.parse(eventData ?? body) as McpWirePayload;
 }
 
 describe('project MCP wire fixture producer', () => {
@@ -136,6 +155,94 @@ describe('project MCP wire fixture producer', () => {
       commandPath: 'fixture-wire-plugin__echo',
       flags: { text: 'through real router' },
     }));
+  });
+
+  // case: S-045.12
+  it('exposes service route placeholders as required MCP inputs and dispatches cron enable/disable', async () => {
+    projectRoot = await mkdtemp(join(tmpdir(), 'kb-mcp-service-route-'));
+    catalog = await openCatalog({ platformRoot: projectRoot, projectRoot }, { resolvePlatformVersion: async () => 'test' });
+    const serviceCall = vi.fn<IServiceTransport['call']>().mockImplementation(async (_serviceId, request) => ({
+      ok: true,
+      statusCode: 200,
+      payload: {
+        id: 'journey-cron',
+        enabled: request.path.endsWith('/enable'),
+      },
+    }));
+    const serviceTransport = { call: serviceCall } as unknown as IServiceTransport;
+    const workflowManifest: ServiceManifest = {
+      schema: 'kb.service/1',
+      id: 'workflow',
+      name: 'Workflow',
+      version: '1.0.0',
+      description: 'Workflow daemon test manifest',
+      runtime: { entry: 'dist/index.js', port: 7777, healthCheck: '/health' },
+      commands: ['enable', 'disable'].map((action) => ({
+        kind: 'service' as const,
+        name: `workflow crons ${action}`,
+        description: `${action} a workflow cron`,
+        scope: 'project' as const,
+        category: 'workflow',
+        jsonTest: {},
+        flags: { json: { type: 'boolean' as const } },
+        route: { method: 'POST' as const, path: `/crons/{id}/${action}`, mount: 'project-api' as const },
+      })),
+    };
+
+    daemon = new McpDaemonServer({
+      port: 0,
+      host: '127.0.0.1',
+      logger: new NoOpLogger(),
+      cache: new InMemoryCache(),
+      catalog,
+      platform: {
+        analytics: { track: async () => undefined },
+        documentDatabase: createInMemoryDocumentDatabase(),
+      } as unknown as PlatformContainer,
+      projectRoot,
+      policy: { schemaVersion: '1.0', default: 'allow', rules: [] } satisfies Policy,
+      authMode: 'local',
+      serviceManifests: [workflowManifest],
+      serviceTransport,
+    });
+    const address = await daemon.start();
+    const port = Number(new URL(address).port);
+
+    const listed = await postMcp(port, 1, 'tools/list', {});
+    expect(listed.status).toBe(200);
+    const listResult = parseMcpResponse(listed.body).result;
+    if (!listResult?.tools) {throw new Error('MCP tools/list returned no tool catalog.');}
+    const tools = listResult.tools;
+    const enableTool = tools.find((tool) => tool.name === 'workflow__workflow_crons_enable');
+    const disableTool = tools.find((tool) => tool.name === 'workflow__workflow_crons_disable');
+    expect(enableTool?.inputSchema).toMatchObject({ properties: { id: { type: 'string' }, json: { type: 'boolean' } }, required: ['id'] });
+    expect(disableTool?.inputSchema).toMatchObject({ properties: { id: { type: 'string' } }, required: ['id'] });
+
+    const missingId = await postMcp(port, 2, 'tools/call', {
+      name: 'workflow__workflow_crons_enable', arguments: { json: true },
+    });
+    const missingResult = parseMcpResponse(missingId.body).result;
+    if (!missingResult) {throw new Error('MCP tools/call returned no result for a missing argument.');}
+    expect(missingResult.isError).toBe(true);
+    expect(missingResult.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_MCP_INVALID_ARGUMENTS' } });
+    expect(serviceCall).not.toHaveBeenCalled();
+
+    const enabled = await postMcp(port, 3, 'tools/call', {
+      name: 'workflow__workflow_crons_enable', arguments: { id: 'journey-cron' },
+    });
+    const enableResult = parseMcpResponse(enabled.body).result;
+    if (!enableResult) {throw new Error('MCP tools/call returned no result for cron enable.');}
+    expect(enableResult.isError).toBe(false);
+    const disabled = await postMcp(port, 4, 'tools/call', {
+      name: 'workflow__workflow_crons_disable', arguments: { id: 'journey-cron' },
+    });
+    const disableResult = parseMcpResponse(disabled.body).result;
+    if (!disableResult) {throw new Error('MCP tools/call returned no result for cron disable.');}
+    expect(disableResult.isError).toBe(false);
+    expect(serviceCall.mock.calls.map(([serviceId, request]) => [serviceId, request.path])).toEqual([
+      ['workflow', '/api/v1/crons/journey-cron/enable'],
+      ['workflow', '/api/v1/crons/journey-cron/disable'],
+    ]);
   });
 
   // case: S-253.3, S-045.10

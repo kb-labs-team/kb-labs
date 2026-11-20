@@ -18,6 +18,7 @@ An agent client connects to the selected project's MCP endpoint, discovers that 
 
 - [ ] Host running and project registered; the project MCP runtime is enabled.
 - [ ] The selected project has the `commit` plugin installed and at least one plugin command manifest.
+- [ ] For S-045.12, the selected project has a user cron named `journey-cron` in the disabled state.
 - [ ] In secured mode, a valid gateway bearer token is available to the agent client.
 
 ## Steps
@@ -34,3 +35,4 @@ An agent client connects to the selected project's MCP endpoint, discovers that 
 | S-045.8 | In secured mode, call `tools/list` at the registered project endpoint with a valid machine access token obtained from the gateway | HTTP 200 returns the project's tool catalog using the machine identity resolved by the gateway. |
 | S-045.10 | In secured mode, send the opaque host-registry credential issued by `/hosts/register` to the registered project MCP endpoint | HTTP 401 returns the catalogued `KB_AUTH_MCP_CREDENTIAL_REQUIRED` envelope and a correlation ID. Its catalogue hint identifies the user or machine access credential MCP accepts and explains that a host-registration credential is for host connections. |
 | S-045.11 | Start the real project runtime with the workflow service manifest omitted from its enabled module set, then send JSON-RPC `tools/list` to its MCP endpoint | The served service-tool names exactly equal the generated MCP service tools for the runtime's loaded manifests, and contain no `workflow__*` tool. |
+| S-045.12 | In local mode, call `tools/list`, then call `workflow__workflow_crons_enable` and `workflow__workflow_crons_disable` with `{ "id": "journey-cron" }`; verify the result with `kb workflow crons list --json` | Both tools declare `id` as a required string route argument. MCP calls return the same cron ID and enabled state as CLI/API, and the final state is disabled. Calling either tool without `id` is rejected before service dispatch. |
