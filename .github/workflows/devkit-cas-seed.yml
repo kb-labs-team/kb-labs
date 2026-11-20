@@ -9,7 +9,7 @@ permissions:
 jobs:
   seed:
     if: github.ref == 'refs/heads/master'
-    name: Build and cache master workspace
+    name: Build and cache default master tasks
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -38,20 +38,32 @@ jobs:
       - name: Build kb-devkit
         working-directory: tools/kb-devkit
         run: go build -trimpath -o "$RUNNER_TEMP/kb-devkit" .
-      - name: Build complete master workspace into the CAS
+      - name: Build default master tasks into the CAS
         env:
           DEVKIT_CAS_STORE_PATH: ${{ steps.devkit-cas.outputs.store-path }}
+          DEVKIT_CACHE_HIT: ${{ steps.devkit-cas.outputs.cache-hit }}
         run: |
           "$RUNNER_TEMP/kb-devkit" run build --json > "$RUNNER_TEMP/devkit-cas-build.json"
-          jq -e '.ok == true and (.data.summary.cached | type == "number") and (.data.summary.passed | type == "number") and (.data.summary.failed | type == "number")' "$RUNNER_TEMP/devkit-cas-build.json" > /dev/null
-          cas_bytes=$(du -sb "$DEVKIT_CAS_STORE_PATH/objects" "$DEVKIT_CAS_STORE_PATH/tasks" 2>/dev/null | awk '{total += $1} END {print total + 0}')
+          jq -e '.ok == true and (.data.summary.cached | type == "number") and (.data.summary.passed | type == "number") and (.data.summary.failed | type == "number") and (.data.summary.skippedManual | type == "number")' "$RUNNER_TEMP/devkit-cas-build.json" > /dev/null
+          cas_bytes=$(node scripts/ci/devkit-cas-size.mjs "$DEVKIT_CAS_STORE_PATH")
           cached=$(jq -r '.data.summary.cached' "$RUNNER_TEMP/devkit-cas-build.json")
           executed=$(jq -r '.data.summary.passed + .data.summary.failed' "$RUNNER_TEMP/devkit-cas-build.json")
+          skipped_manual=$(jq -r '.data.summary.skippedManual' "$RUNNER_TEMP/devkit-cas-build.json")
+          skipped_builds=$(jq -r '(.data.skippedBuilds // []) | length' "$RUNNER_TEMP/devkit-cas-build.json")
+          case "$DEVKIT_CACHE_HIT" in
+            true) cache_archive_status=exact-key-hit ;;
+            false) cache_archive_status=restore-prefix-hit ;;
+            '') cache_archive_status=miss ;;
+            *) cache_archive_status=unavailable ;;
+          esac
           {
             echo '### Trusted master DevKit CAS seed'
             echo ''
-            echo "- Source SHA: `$GITHUB_SHA`"
+            echo "- Source SHA: $GITHUB_SHA"
+            echo "- Cache archive restore: $cache_archive_status"
             echo "- DevKit tasks restored from cache: $cached"
             echo "- DevKit tasks executed: $executed"
+            echo "- Manual-only tasks skipped: $skipped_manual"
+            echo "- Default-build packages skipped: $skipped_builds"
             echo "- CAS size: $cas_bytes bytes"
           } >> "$GITHUB_STEP_SUMMARY"

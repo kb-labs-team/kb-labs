@@ -184,7 +184,7 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
   assert.equal(nodeSetup.with.cache, 'pnpm');
   assert.equal(goSetup.with['cache-dependency-path'], 'tools/kb-create/go.sum');
   assert.equal(cache.with.path.trim(), '${{ steps.resolve-store.outputs.path }}/objects\n${{ steps.resolve-store.outputs.path }}/tasks');
-  assert.match(cache.with.key, /\$\{\{ github\.sha \}\}/);
+  assert.match(cache.with.key, /\$\{\{ steps\.resolve-store\.outputs\.sha \}\}/);
   const toolchain = cas.runs.steps.find((step) => step.name === 'Identify cache toolchain partition');
   assert.equal(toolchain.id, 'toolchain');
   assert.match(toolchain.run, /node --version/);
@@ -196,7 +196,16 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
   assert.equal(cas.outputs['cache-hit'].value, '${{ steps.restore.outputs.cache-hit }}');
   assert.equal(cas.outputs['store-path'].value, '${{ steps.resolve-store.outputs.path }}');
   assert.equal(cas.outputs['cache-mode'].value, '${{ inputs.mode }}');
+  assert.equal(cas.outputs['checkout-sha'].value, '${{ steps.resolve-store.outputs.sha }}');
   assert.ok(cas.runs.steps.some((step) => step.id === 'resolve-store' && step.run.includes('resolve-shared-root.sh')));
+  const releaseCacheMode = "${{ (inputs.profile || github.event.inputs.profile || 'stream') == 'candidate' && 'off' || 'read-write' }}";
+  const remoteCacheSteps = workflow.jobs.build.steps.concat(
+    workflow.jobs['independent-test-shards'].steps,
+    workflow.jobs['build-dependent-test-shards'].steps,
+    workflow.jobs['internal-tool-test-shards'].steps,
+  ).filter((step) => step.uses === './.github/actions/devkit-cas');
+  assert.equal(remoteCacheSteps.length, 4);
+  assert.ok(remoteCacheSteps.every((step) => step.with.mode === releaseCacheMode), 'candidate/release verification must never restore or save DevKit CAS');
   assert.ok(profile.buildDependentTestStages.candidate.includes('journey-unit-suite'));
   assert.ok(!profile.buildDependentTestStages.stream.includes('journey-unit-suite'));
 
@@ -211,7 +220,7 @@ test('trusted master cache seed is manual, master-only, and builds through the s
   const seed = workflow.jobs.seed;
   const steps = seed.steps;
   const cas = steps.find((step) => step.id === 'devkit-cas');
-  const build = steps.find((step) => step.name === 'Build complete master workspace into the CAS');
+  const build = steps.find((step) => step.name === 'Build default master tasks into the CAS');
 
   assert.ok(Object.hasOwn(workflow.on, 'workflow_dispatch'));
   assert.equal(seed.if, "github.ref == 'refs/heads/master'");
@@ -221,6 +230,10 @@ test('trusted master cache seed is manual, master-only, and builds through the s
   assert.equal(build.env.DEVKIT_CAS_STORE_PATH, '${{ steps.devkit-cas.outputs.store-path }}');
   assert.match(build.run, /kb-devkit" run build --json/);
   assert.doesNotMatch(JSON.stringify(workflow), /\$\{\{\s*secrets\./);
+
+  const devkitConfig = load(readFileSync(path.join(root, 'devkit.yaml'), 'utf8'));
+  const goBuildTask = devkitConfig.tasks.build.find((definition) => definition.categories.includes('go-binary'));
+  assert.equal(goBuildTask.cache, false, 'make build embeds VCS version, commit, and date not present in the input fingerprint');
 
   const authoritativeE2E = readYaml('.github/workflows/e2e-platform.yml');
   const authoritativeBuild = authoritativeE2E.jobs.prepare;
@@ -234,15 +247,29 @@ test('DevKit CAS cache path follows the repository shared store and isolates nes
     const repository = path.join(temporaryRoot, 'repository');
     mkdirSync(repository);
     execFileSync('git', ['init', '--quiet', repository]);
+    execFileSync('git', ['-C', repository, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'fixture']);
     const output = path.join(temporaryRoot, 'github-output');
     execFileSync('bash', [path.join(root, '.github/actions/devkit-cas/resolve-shared-root.sh'), repository, output]);
-    assert.equal(readFileSync(output, 'utf8').trim(), `path=${path.join(realpathSync(repository), '.git', 'kb-devkit')}`);
+    const outputLines = readFileSync(output, 'utf8').trim().split('\n');
+    const checkoutSha = execFileSync('git', ['-C', repository, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    assert.equal(outputLines[0], `path=${path.join(realpathSync(repository), '.git', 'kb-devkit')}`);
+    assert.equal(outputLines[1], `sha=${checkoutSha}`);
+
+    const linkedWorktree = path.join(temporaryRoot, 'linked-worktree');
+    execFileSync('git', ['-C', repository, 'worktree', 'add', '--detach', linkedWorktree, checkoutSha]);
+    writeFileSync(output, '');
+    execFileSync('bash', [path.join(root, '.github/actions/devkit-cas/resolve-shared-root.sh'), linkedWorktree, output]);
+    const linkedOutput = readFileSync(output, 'utf8').trim().split('\n');
+    assert.equal(linkedOutput[0], `path=${path.join(realpathSync(repository), '.git', 'kb-devkit')}`);
+    assert.equal(linkedOutput[1], `sha=${checkoutSha}`);
 
     const nested = path.join(repository, 'e2e', 'fixture');
     mkdirSync(nested, { recursive: true });
     writeFileSync(output, '');
     execFileSync('bash', [path.join(root, '.github/actions/devkit-cas/resolve-shared-root.sh'), nested, output]);
-    assert.equal(readFileSync(output, 'utf8').trim(), `path=${path.join(realpathSync(nested), '.kb', 'devkit', 'shared')}`);
+    const nestedOutput = readFileSync(output, 'utf8').trim().split('\n');
+    assert.equal(nestedOutput[0], `path=${path.join(realpathSync(nested), '.kb', 'devkit', 'shared')}`);
+    assert.equal(nestedOutput[1], `sha=${checkoutSha}`);
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }

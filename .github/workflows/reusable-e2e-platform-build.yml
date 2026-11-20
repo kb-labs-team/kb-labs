@@ -171,7 +171,7 @@ jobs:
           elapsed=$(( $(date +%s) - started ))
           tarball_count=$(find e2e/packages -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d ' ')
           tarball_digest=$(find e2e/packages -maxdepth 1 -type f -name '*.tgz' -exec sha256sum {} \; | LC_ALL=C sort | sha256sum | awk '{print $1}')
-          cas_size_bytes=$(du -sb "${{ steps.devkit-cas.outputs.store-path }}/objects" "${{ steps.devkit-cas.outputs.store-path }}/tasks" 2>/dev/null | awk '{total += $1} END {print total + 0}')
+          cas_size_bytes=$(node scripts/ci/devkit-cas-size.mjs "${{ steps.devkit-cas.outputs.store-path }}")
           jq -n \
             --arg source_sha "$GITHUB_SHA" \
             --arg cache_mode "${{ inputs.cache-mode }}" \

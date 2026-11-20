@@ -17,6 +17,9 @@ outputs:
   cache-mode:
     description: Whether this action is enabled for the current job.
     value: ${{ inputs.mode }}
+  checkout-sha:
+    description: The commit checked out in this workspace.
+    value: ${{ steps.resolve-store.outputs.sha }}
 
 runs:
   using: composite
@@ -42,6 +45,6 @@ runs:
           ${{ steps.resolve-store.outputs.path }}/tasks
         # Task fingerprints own source validity. This outer cache only transports
         # objects between runs sharing a runner platform and Node/Go toolchain.
-        key: devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ github.sha }}
+        key: devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-${{ steps.resolve-store.outputs.sha }}
         restore-keys: |
           devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-

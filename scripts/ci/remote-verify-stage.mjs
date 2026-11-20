@@ -1,7 +1,8 @@
-import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resourcePeaks, sampleRunnerResources } from './remote-build-resources.mjs';
+import { devkitCasSizeBytes } from './devkit-cas-size.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
@@ -29,8 +30,15 @@ function internalToolCommandOutput(outcome) {
 
 function cacheStatus(value) {
   if (value === 'true') return 'exact-hit';
-  if (value === 'false') return 'restore-prefix-hit';
-  if (value === '') return 'miss';
+  if (value === 'false') return 'miss-or-restore-prefix';
+  return 'unavailable';
+}
+
+function devkitCacheStatus(cache) {
+  if (cache.devkitMode === 'off') return 'disabled';
+  if (cache.devkit === 'true') return 'exact-hit';
+  if (cache.devkit === 'false') return 'restore-prefix-hit';
+  if (cache.devkit === '') return 'miss';
   return 'unavailable';
 }
 
@@ -58,8 +66,11 @@ export async function runStage({
         name, status: 'pass', failures: [], logTail: 'kb-devkit selected no affected workspace packages; build had no work.',
         selectedPackageCount: 0,
         startedAt: new Date(at).toISOString(), finishedAt: new Date(at).toISOString(), durationMs: 0,
-        cache: cacheRecord(cache), devkitTaskCache: { scheduled: 0, cached: 0, executed: 0, blocked: 0, notAffected: 0 },
-        devkitCasSizeBytes: directorySizeBytes(devkitCacheStorePath),
+        cache: cacheRecord(cache),
+        devkitTaskCache: {
+          scheduled: 0, cached: 0, executed: 0, blocked: 0, notAffected: 0, skippedManual: 0, skippedBuildPackages: null,
+        },
+        devkitCasSizeBytes: devkitCasSizeBytes(devkitCacheStorePath),
       };
     }
     command = devkitExecutable;
@@ -180,7 +191,7 @@ export async function runStage({
     ...(stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package' ? { packages: packageNames } : {}),
     cache: cacheRecord(cache),
     ...(stage === profile.buildStage ? { devkitTaskCache } : {}),
-    ...(stage === profile.buildStage ? { devkitCasSizeBytes: directorySizeBytes(devkitCacheStorePath) } : {}),
+    ...(stage === profile.buildStage ? { devkitCasSizeBytes: devkitCasSizeBytes(devkitCacheStorePath) } : {}),
     ...(stage === profile.buildStage ? {
       resourcePeaks: resourcePeaks(buildSamples),
       lastResourceSample: buildSamples.at(-1),
@@ -192,7 +203,8 @@ export async function runStage({
 
 function devkitTaskCacheRecord(stdout) {
   try {
-    const summary = JSON.parse(stdout)?.data?.summary;
+    const envelope = JSON.parse(stdout);
+    const summary = envelope?.data?.summary;
     if (!summary || !Number.isSafeInteger(summary.scheduled) || !Number.isSafeInteger(summary.cached)
       || !Number.isSafeInteger(summary.passed) || !Number.isSafeInteger(summary.failed)) return null;
     return {
@@ -201,28 +213,9 @@ function devkitTaskCacheRecord(stdout) {
       executed: summary.passed + summary.failed,
       blocked: Number.isSafeInteger(summary.blocked) ? summary.blocked : null,
       notAffected: Number.isSafeInteger(summary.notAffected) ? summary.notAffected : null,
+      skippedManual: Number.isSafeInteger(summary.skippedManual) ? summary.skippedManual : null,
+      skippedBuildPackages: Array.isArray(envelope.data.skippedBuilds) ? envelope.data.skippedBuilds.length : null,
     };
-  } catch {
-    return null;
-  }
-}
-
-function directorySizeBytes(storePath) {
-  if (typeof storePath !== 'string' || storePath.length === 0) return null;
-  let total = 0;
-  const visit = (directory) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const entryPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) visit(entryPath);
-      else if (entry.isFile()) total += statSync(entryPath).size;
-    }
-  };
-  try {
-    for (const child of ['objects', 'tasks']) {
-      const childPath = path.join(storePath, child);
-      if (existsSync(childPath)) visit(childPath);
-    }
-    return total;
   } catch {
     return null;
   }
@@ -323,6 +316,6 @@ export function cacheRecord(cache) {
   return {
     pnpm: cacheStatus(cache.pnpm),
     go: cacheStatus(cache.go),
-    devkit: cache.devkitMode === 'off' ? 'disabled' : cacheStatus(cache.devkit),
+    devkit: devkitCacheStatus(cache),
   };
 }

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { runStage } from './remote-verify-stage.mjs';
+import { cacheRecord, runStage } from './remote-verify-stage.mjs';
 
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -17,12 +17,13 @@ test('journey workspace build passes no concurrency of its own and streams affec
     packages: [],
     selectedPackageCount: 0,
     affectedBuild: true,
-    cache: { pnpm: '', go: 'false', devkit: '', devkitMode: 'read-write' },
+    cache: { pnpm: 'false', go: 'false', devkit: '', devkitMode: 'read-write' },
     runCommand: async (command, args) => {
       invocation = [command, args];
       return { status: 0, stdout: JSON.stringify({ ok: true, data: {
         results: [{ Package: '@fixture/a', Task: 'build', OK: true, Cached: true }],
-        summary: { scheduled: 1, cached: 1, passed: 0, failed: 0, blocked: 0, notAffected: 0 },
+        summary: { scheduled: 1, cached: 1, passed: 0, failed: 0, blocked: 0, notAffected: 0, skippedManual: 0 },
+        skippedBuilds: [],
       } }), stderr: '' };
     },
   });
@@ -30,8 +31,10 @@ test('journey workspace build passes no concurrency of its own and streams affec
   assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--affected', '--json']]);
   assert.equal(result.status, 'pass');
   assert.equal(result.selectedPackageCount, 1);
-  assert.deepEqual(result.cache, { pnpm: 'miss', go: 'restore-prefix-hit', devkit: 'miss' });
-  assert.deepEqual(result.devkitTaskCache, { scheduled: 1, cached: 1, executed: 0, blocked: 0, notAffected: 0 });
+  assert.deepEqual(result.cache, { pnpm: 'miss-or-restore-prefix', go: 'miss-or-restore-prefix', devkit: 'miss' });
+  assert.deepEqual(result.devkitTaskCache, {
+    scheduled: 1, cached: 1, executed: 0, blocked: 0, notAffected: 0, skippedManual: 0, skippedBuildPackages: 0,
+  });
 });
 
 test('workspace build distinguishes disabled and uninstrumented CAS status', async () => {
@@ -51,6 +54,16 @@ test('workspace build distinguishes disabled and uninstrumented CAS status', asy
   assert.equal(result.cache.devkit, 'disabled');
   assert.equal(result.devkitTaskCache, null);
   assert.equal(result.devkitCasSizeBytes, null);
+});
+
+test('DevKit cache metadata distinguishes exact hit, prefix restore, miss, disabled, and unavailable', () => {
+  assert.deepEqual(cacheRecord({ pnpm: 'false', go: 'true', devkit: 'true', devkitMode: 'read-write' }), {
+    pnpm: 'miss-or-restore-prefix', go: 'exact-hit', devkit: 'exact-hit',
+  });
+  assert.equal(cacheRecord({ devkit: 'false', devkitMode: 'read-write' }).devkit, 'restore-prefix-hit');
+  assert.equal(cacheRecord({ devkit: '', devkitMode: 'read-write' }).devkit, 'miss');
+  assert.equal(cacheRecord({ devkit: '', devkitMode: 'off' }).devkit, 'disabled');
+  assert.equal(cacheRecord({}).devkit, 'unavailable');
 });
 
 test('workspace build records the on-disk shared CAS bytes excluding temporary files', async () => {

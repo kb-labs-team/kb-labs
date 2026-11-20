@@ -647,6 +647,11 @@ tasks:
         - "kb-runner"
       deps:
         - "^build"
+      # Makefiles inject git describe, short HEAD, and commit date into these
+      # binaries; the task input fingerprint does not include that VCS stamp.
+      # Do not replay a binary built from another checkout until that stamp is
+      # represented in the cache key.
+      cache: false
 
     - categories: [site-pkg, site-config]
       command: pnpm run build

@@ -4,6 +4,7 @@ set -euo pipefail
 workspace_root=${1:?usage: resolve-shared-root.sh <workspace-root> <github-output>}
 github_output=${2:?usage: resolve-shared-root.sh <workspace-root> <github-output>}
 workspace_root=$(cd "$workspace_root" && pwd -P)
+checkout_sha=$(git -C "$workspace_root" rev-parse HEAD)
 
 top_level=$(git -C "$workspace_root" rev-parse --show-toplevel)
 top_level=$(cd "$top_level" && pwd -P)
@@ -21,3 +22,4 @@ fi
 
 mkdir -p "$store_path"
 printf 'path=%s\n' "$store_path" >> "$github_output"
+printf 'sha=%s\n' "$checkout_sha" >> "$github_output"

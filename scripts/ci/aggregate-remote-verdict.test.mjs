@@ -183,7 +183,7 @@ test('aggregates the prepare stage and fails with its named cause', () => {
     failures: ['install-workspace-dependencies exited with status 17'],
     logTail: 'pnpm registry unavailable',
     durationMs: 1250,
-    cache: { pnpm: 'restore-prefix-hit', go: 'exact-hit', devkit: 'unavailable' },
+    cache: { pnpm: 'miss-or-restore-prefix', go: 'exact-hit', devkit: 'unavailable' },
   };
   const verdict = aggregateVerdict({
     sha: 'c'.repeat(40), prepare, prepareJobResult: 'failure', build: undefined, buildJobResult: 'skipped', matrix: { include: [] }, results: [], selectedPackageCount: 0,
@@ -272,7 +272,7 @@ test('real prepare result producer records a named command failure for aggregati
     assert.equal(prepare.status, 'fail');
     assert.ok(prepare.durationMs >= 0);
     assert.equal(prepare.selectedPackageCount, 0);
-    assert.deepEqual(prepare.cache, { pnpm: 'restore-prefix-hit', go: 'exact-hit', devkit: 'unavailable' });
+    assert.deepEqual(prepare.cache, { pnpm: 'miss-or-restore-prefix', go: 'exact-hit', devkit: 'unavailable' });
     assert.equal(prepare.operations[0].name, 'install-workspace-dependencies');
     assert.equal(prepare.operations[0].status, 'fail');
     assert.ok(prepare.failures.some((failure) => failure.includes('install-workspace-dependencies')));
