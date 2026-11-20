@@ -123,7 +123,8 @@ def selected_owners_have_evidence(directory: Path, mode: str) -> bool:
                     if isinstance(claim, str):
                         evidence.add((name, claim))
     passing_claims = {claim for claim, statuses in claim_statuses.items() if statuses == {"PASS"}}
-    return (all(step_statuses.get(name) == {"PASS"} for name in required_prerequisites)
+    return (set(selected_claims).issubset(passing_claims)
+            and all(step_statuses.get(name) == {"PASS"} for name in required_prerequisites)
             and all(step_statuses.get(name) == {"PASS"}
                     and claim in passing_claims and (name, claim) in evidence
                     for name, claim in owner_obligations))
