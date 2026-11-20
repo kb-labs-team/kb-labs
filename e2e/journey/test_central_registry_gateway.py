@@ -67,6 +67,7 @@ class CentralRegistryGatewayFixtureTests(unittest.TestCase):
             self.assertIn("[REDACTED]", str(raised.exception))
             self.assertNotIn("fixture-internal-secret-value", str(raised.exception))
             self.assertIn("node_path=", str(raised.exception))
+            self.assertIn("bash_path=", str(raised.exception))
             self.assertIn("port_available_before_start=true", str(raised.exception))
             self.assertEqual([call[1] for call in calls], ["start", "logs"])
 
