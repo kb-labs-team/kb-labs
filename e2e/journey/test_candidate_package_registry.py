@@ -70,7 +70,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
                 command.write_text(
                     "#!/bin/sh\n"
                     f"printf '%s %s\\n' '{name}' \"$*\" >> \"$SERVICE_OPERATIONS\"\n"
-                    + ("if [ \"$*\" = '--version' ]; then echo 12.21.0; fi\n" if name == "pnpm" else ""),
+                    + ("if [ \"$*\" = '--version' ]; then echo 11.4.0; fi\n" if name == "pnpm" else ""),
                     encoding="utf-8",
                 )
                 command.chmod(0o755)
@@ -104,7 +104,7 @@ class CandidatePackageRegistryTests(unittest.TestCase):
                 "pnpm --filter @kb-labs/registry-image-composition --prod --config.inject-workspace-packages=true deploy .kb/deploy/registry-image-composition",
                 "git rev-parse HEAD",
                 "pnpm --version",
-                "node tools/release/registry-image-composition.mjs --deployment-root .kb/deploy/registry-image-composition --source-revision fixture-revision --pnpm-version 12.21.0",
+                "node tools/release/registry-image-composition.mjs --deployment-root .kb/deploy/registry-image-composition --source-revision fixture-revision --pnpm-version 11.4.0",
                 "node tools/release/generate-platform-image-default.mjs",
                 "docker compose build marketplace-state marketplace-registry",
             ])
