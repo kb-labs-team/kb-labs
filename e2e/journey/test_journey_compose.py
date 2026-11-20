@@ -185,12 +185,28 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             )
             self.assertEqual(rendered.returncode, 0, rendered.stderr)
             producer_output = json.loads(rendered.stdout)
+            self.assertEqual(producer_output["marketplaceSourceUrl"],
+                             "http://127.0.0.1:4010/api/v1/marketplace-registry")
+            self.assertEqual(producer_output["marketplaceProxyUrl"], "http://marketplace-tamper:8081")
             overlay = Path(producer_output["composeOverlayPath"])
             config_override = composition / ".kb" / "kb.config.override.json"
             self.assertTrue(config_override.is_file())
             self.assertFalse((composition / ".kb" / "kb.config.jsonc").exists())
             self.assertFalse((composition / ".kb" / "marketplace.lock").exists())
-            self.assertEqual(set(json.loads(config_override.read_text())), {"marketplace"})
+            override = json.loads(config_override.read_text())
+            self.assertEqual(set(override), {"marketplace"})
+            self.assertEqual(override["marketplace"]["sources"][0]["url"],
+                             "http://127.0.0.1:4010/api/v1/marketplace-registry")
+            self.assertIn('KB_JOURNEY_MARKETPLACE_REGISTRY_URL: "http://127.0.0.1:4010/api/v1/marketplace-registry"',
+                          overlay.read_text())
+            self.assertIn('KB_JOURNEY_MARKETPLACE_SERVICE_URL: "http://marketplace-tamper:8081"',
+                          overlay.read_text())
+            self.assertIn('KB_JOURNEY_MARKETPLACE_PROXY_URL: "http://marketplace-tamper:8081"',
+                          overlay.read_text())
+            self.assertIn('KB_REGISTRY_URL: "http://127.0.0.1:4010/api/v1/marketplace-registry"',
+                          overlay.read_text())
+            self.assertIn('MARKETPLACE_TAMPER_UPSTREAM: "http://marketplace-registry:5071"',
+                          overlay.read_text())
             self.assertTrue(overlay.is_file())
             validation = subprocess.run(
                 ["node", "--input-type=module", "-e", """
@@ -355,7 +371,13 @@ if (!configResult.ok) {
             self.assertEqual(rendered["services"]["marketplace-tamper"]["profiles"], ["marketplace-registry"])
             runner_environment = rendered["services"]["runner"]["environment"]
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_PUBLISH_URL"],
-                             "http://marketplace-registry:5071/api/v1")
+                             "http://127.0.0.1:4010/api/v1/marketplace-registry/api/v1")
+            self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_REGISTRY_URL"],
+                             "http://127.0.0.1:4010/api/v1/marketplace-registry")
+            self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_SERVICE_URL"],
+                             "http://marketplace-tamper:8081")
+            self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_PROXY_URL"],
+                             "http://marketplace-tamper:8081")
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE"], "journey")
             self.assertEqual(runner_environment["KB_JOURNEY_REGISTRY_READY_URL"],
                              "http://marketplace-registry:5071/ready")

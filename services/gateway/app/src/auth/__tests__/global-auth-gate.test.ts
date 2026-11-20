@@ -78,7 +78,11 @@ describe('Gateway global auth gate', () => {
       upstreams: {
         testPlugin: { serviceId: 'test-plugin', prefix: '/api/v1/plugins/test-plugin' },
         mcp: { serviceId: 'mcp-test', prefix: '/api/v1/mcp' },
-        marketplaceRegistry: { serviceId: 'marketplace-registry', prefix: '/api/v1/marketplace-registry', rewritePrefix: '' },
+        marketplaceRegistry: {
+          serviceId: 'marketplace-registry',
+          prefix: '/api/v1/marketplace-registry/api/v1',
+          rewritePrefix: '/api/v1',
+        },
       },
       staticTokens: {},
       auth: AuthConfigSchema.parse({ enabled: true }),
@@ -191,11 +195,45 @@ describe('Gateway global auth gate', () => {
     expect(lastUpstreamHeaders).toMatchObject({ 'x-internal-secret': 'gateway-internal-secret' });
     expect(lastUpstreamHeaders?.['x-kb-auth-user-id']).toBeUndefined();
 
+    const securedRegistryRead = await app.inject({
+      method: 'GET',
+      url: '/api/v1/marketplace-registry/api/v1/resolve?identity=%40acme%2Fwidget',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(securedRegistryRead.statusCode).toBe(200);
+    expect(upstreamHits).toBe(4);
+    expect(lastUpstreamUrl).toBe('/api/v1/resolve?identity=%40acme%2Fwidget');
+    expect(lastUpstreamIdentityKind).toBe('identity');
+    expect(lastUpstreamHeaders).toMatchObject({
+      'x-kb-auth-user-id': 'member-1',
+      'x-kb-auth-namespace-id': 'tenant-1',
+      'x-kb-auth-permissions': '["packages:read"]',
+    });
+
+    const { token: authorToken } = await signAccessToken({
+      hostId: 'author-1', namespaceId: 'tenant-1', tier: 'pro', type: 'machine_access',
+      permissions: ['packages:publish'],
+    }, jwtConfig);
+    const securedRegistryPublish = await app.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace-registry/api/v1/packages/publish',
+      headers: { authorization: `Bearer ${authorToken}` },
+      payload: { fixture: 'multipart-forwarding-is-covered-by-proxy-test' },
+    });
+    expect(securedRegistryPublish.statusCode).toBe(200);
+    expect(upstreamHits).toBe(5);
+    expect(lastUpstreamUrl).toBe('/api/v1/packages/publish');
+    expect(lastUpstreamIdentityKind).toBe('identity');
+    expect(lastUpstreamHeaders).toMatchObject({
+      'x-kb-auth-user-id': 'author-1',
+      'x-kb-auth-namespace-id': 'tenant-1',
+    });
+
     const anonymousPublish = await app.inject({
       method: 'POST', url: '/api/v1/marketplace-registry/api/v1/packages/publish',
     });
     expect(anonymousPublish.statusCode).toBe(401);
-    expect(upstreamHits).toBe(3);
+    expect(upstreamHits).toBe(5);
   });
 
   it('rejects invalid bearer tokens with the same envelope and does not allow webhook plugin routes implicitly', async () => {

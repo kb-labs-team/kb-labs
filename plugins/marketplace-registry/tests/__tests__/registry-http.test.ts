@@ -29,10 +29,18 @@ describe('registry HTTP uses the shared gateway client', () => {
   it('sends JSON requests through gatewayApiFetch and honors an explicit registry base URL', async () => {
     gatewayApiFetch.mockImplementation(async () => ok({ ok: true }));
     await registryPost('/packages/test', { name: 'test' });
-    expect(gatewayApiFetch).toHaveBeenCalledWith('http://127.0.0.1:4000/api/v1/registry/packages/test', expect.objectContaining({ method: 'POST' }));
+    expect(gatewayApiFetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:4000/api/v1/registry/packages/test',
+      expect.objectContaining({ method: 'POST' }),
+      { gatewayUrl: 'http://127.0.0.1:4000' },
+    );
     process.env.KB_REGISTRY_URL = 'https://registry.example.test/api/v1/registry/';
     await registryPatch('/packages/test/meta', { version: '1.0.0' });
-    expect(gatewayApiFetch).toHaveBeenLastCalledWith('https://registry.example.test/api/v1/registry/packages/test/meta', expect.objectContaining({ method: 'PATCH' }));
+    expect(gatewayApiFetch).toHaveBeenLastCalledWith(
+      'https://registry.example.test/api/v1/registry/packages/test/meta',
+      expect.objectContaining({ method: 'PATCH' }),
+      { gatewayUrl: 'https://registry.example.test' },
+    );
   });
 
   it('sends multipart publishing through the shared gateway client', async () => {
@@ -42,6 +50,7 @@ describe('registry HTTP uses the shared gateway client', () => {
     expect(init.method).toBe('POST');
     expect(init.body).toBeInstanceOf(FormData);
     expect(new Headers(init.headers).get('X-Author-Handle')).toBe('author');
+    expect(gatewayApiFetch.mock.calls[0]?.[2]).toEqual({ gatewayUrl: 'http://127.0.0.1:4000' });
   });
 
   it('resolves the configured author handle and gives the exact setup command when missing', async () => {
