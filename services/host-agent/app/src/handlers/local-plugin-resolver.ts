@@ -12,10 +12,10 @@
  * @see ADR-0017: Workspace Agent Architecture (INV-1: plugin executes where files are)
  */
 
-import { resolve, normalize, join, sep } from 'node:path';
-import { readdir, readFile, stat, realpath } from 'node:fs/promises';
+import { resolve, normalize, join, sep, basename } from 'node:path';
+import { readdir, readFile, stat, lstat, realpath } from 'node:fs/promises';
 import { DiagnosticCollector, readMarketplaceLock } from '@kb-labs/core-discovery';
-import { createExtensionStore } from '@kb-labs/core-extension-store';
+import { createExtensionStore, resolveEntryDir } from '@kb-labs/core-extension-store';
 import { canonicalizeProjectPath, deriveProjectId } from '@kb-labs/core-project-registry';
 import { getHandlerPermissions, isManifestV3, type PluginContextDescriptor } from '@kb-labs/plugin-contracts';
 import { resolveCliHandlerPath } from '@kb-labs/core-platform';
@@ -105,6 +105,24 @@ export class LocalPluginResolver {
     if (!stored || stored.entry.kind !== 'plugin' || stored.entry.name !== request.pluginId || stored.entry.version !== pin.version) {
       throw new Error(`Pinned Marketplace plugin is not present in the local extension store: ${request.pluginId}@${pin.version}`);
     }
+    const expectedEntryDir = resolveEntryDir(store.root, request.pluginId, pin.version);
+    const expectedEntryInfo = await lstat(expectedEntryDir);
+    if (!expectedEntryInfo.isDirectory() || expectedEntryInfo.isSymbolicLink()) {
+      throw new Error('Marketplace store entry is not a canonical directory');
+    }
+    const storeEntriesRoot = await realpath(store.entriesDir);
+    const exactEntryRoot = join(storeEntriesRoot, basename(expectedEntryDir));
+    if (await realpath(expectedEntryDir) !== exactEntryRoot
+      || resolve(stored.entryDir) !== resolve(expectedEntryDir)
+      || await realpath(stored.entryDir) !== exactEntryRoot) {
+      throw new Error('Marketplace store entry does not match the exact pinned version directory');
+    }
+    const metadataPath = join(expectedEntryDir, 'entry.json');
+    const metadataInfo = await lstat(metadataPath);
+    if (!metadataInfo.isFile() || metadataInfo.isSymbolicLink()
+      || await realpath(metadataPath) !== join(exactEntryRoot, 'entry.json')) {
+      throw new Error('Marketplace store metadata is not inside the exact pinned version directory');
+    }
     const manifest = stored.entry.manifest;
     if (!manifest || !isManifestV3(manifest) || manifest.id !== request.pluginId || manifest.version !== pin.version) {
       throw new Error(`Stored plugin manifest does not match the project pin: ${request.pluginId}@${pin.version}`);
@@ -118,9 +136,8 @@ export class LocalPluginResolver {
       throw new Error(`Marketplace command has an invalid handler declaration: ${request.commandPath}`);
     }
     const pluginRoot = await realpath(stored.packageRoot);
-    const storeEntriesRoot = await realpath(store.entriesDir);
-    if (!pluginRoot.startsWith(storeEntriesRoot + sep)) {
-      throw new Error('Marketplace package root is outside the trusted extension store');
+    if (!pluginRoot.startsWith(exactEntryRoot + sep)) {
+      throw new Error('Marketplace package root is outside the exact pinned extension store entry');
     }
     const resolvedHandler = resolveCliHandlerPath(pluginRoot, command.handler);
     const realHandler = await realpath(resolvedHandler);

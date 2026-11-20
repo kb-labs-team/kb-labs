@@ -19,7 +19,6 @@ describe('Host Agent Marketplace command resolver', () => {
   });
 
   it('resolves only the exact approved store pin and manifest-declared handler', async () => {
-    // case: S-010.8
     root = await mkdtemp(path.join(tmpdir(), 'kb-marketplace-resolver-'));
     const kbHome = path.join(root, 'home', '.kb');
     const projectRoot = path.join(root, 'project');
@@ -42,6 +41,17 @@ describe('Host Agent Marketplace command resolver', () => {
     process.env.KB_HOME = kbHome;
     const store = createExtensionStore({ root: kbHome, installer: new PnpmInstaller() });
     const installed = await store.resolve({ name: pluginId, version, kind: 'plugin', spec: `file:${packageRoot}` });
+    const otherPackageRoot = path.join(root, 'other-package');
+    await mkdir(path.join(otherPackageRoot, 'dist', 'commands'), { recursive: true });
+    await writeFile(path.join(otherPackageRoot, 'package.json'), JSON.stringify({ name: pluginId, version: '1.0.3' }));
+    await writeFile(path.join(otherPackageRoot, 'dist', 'manifest.json'), JSON.stringify({ ...manifest, version: '1.0.3' }));
+    await writeFile(path.join(otherPackageRoot, 'dist', 'commands', 'show-plan.js'), `export const showPlan = { async execute() { return { source: 'other-version' }; } };`);
+    const installedOtherVersion = await store.resolve({
+      name: pluginId,
+      version: '1.0.3',
+      kind: 'plugin',
+      spec: `file:${otherPackageRoot}`,
+    });
     const lock = createEmptyLock();
     lock.plugins[pluginId] = createMarketplaceEntry({
       version,
@@ -93,11 +103,9 @@ describe('Host Agent Marketplace command resolver', () => {
     await symlink(externalHandler, storedHandler);
     await expect(resolver.resolveMarketplace(request)).rejects.toThrow(/inside the installed package dist directory/);
 
-    const externalPackage = path.join(root, 'outside-package');
-    await mkdir(externalPackage, { recursive: true });
     const installedPackagePath = installed.packageRoot;
     await rm(installedPackagePath);
-    await symlink(externalPackage, installedPackagePath, 'dir');
-    await expect(resolver.resolveMarketplace(request)).rejects.toThrow(/outside the trusted extension store/);
+    await symlink(installedOtherVersion.packageRoot, installedPackagePath, 'dir');
+    await expect(resolver.resolveMarketplace(request)).rejects.toThrow(/outside the exact pinned extension store entry/);
   }, 60_000);
 });
