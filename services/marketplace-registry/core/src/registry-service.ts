@@ -23,6 +23,8 @@ const CACHE_TTL_META = 5 * 60 * 1000;
 const CACHE_TTL_SEARCH = 60 * 1000;
 const CACHE_TTL_SHARE_DEFAULT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_TARBALL_SIZE = 50 * 1024 * 1024; // 50 MB
+const SHARE_TOKEN_PATTERN = /^kbrt_[a-f0-9]{32}$/;
+const SHARE_TOKEN_DIGEST_PREFIX = 'sha256:';
 
 function shortIdentity(identity: string): string {
   return identity.slice(identity.lastIndexOf('/') + 1);
@@ -277,6 +279,14 @@ export class RegistryService {
   }
 
   async resolveShareToken(token: string): Promise<{ pkg: string } | null> {
+    // Only tokens issued by this Registry are valid credentials. In particular,
+    // never let a digest namespace value reach the legacy-key fallback: the
+    // State Broker treats digest keys as safe path keys, while legacy bearer
+    // values must stay in request bodies.
+    if (typeof token !== 'string' || token.startsWith(SHARE_TOKEN_DIGEST_PREFIX) || !SHARE_TOKEN_PATTERN.test(token)) {
+      return null;
+    }
+
     const cacheKey = shareTokenCacheKey(token);
     const current = await this.cache.get<{ pkg: string; expiresAt: string }>(cacheKey);
     if (current) { return current; }

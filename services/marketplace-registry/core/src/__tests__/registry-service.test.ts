@@ -591,7 +591,7 @@ describe('RegistryService.shareToken', () => {
     expect(setSpy).toHaveBeenCalledWith(`registry:sharetoken:sha256:${digest}`, expect.any(Object), 60_000);
     expect(JSON.stringify(setSpy.mock.calls)).not.toContain(token);
 
-    const previouslyIssuedToken = 'kbrt_legacy-share-token-test-only';
+    const previouslyIssuedToken = `kbrt_${'b'.repeat(32)}`;
     await cache.set(`registry:sharetoken:${previouslyIssuedToken}`, {
       pkg: 'kirill/my-plugin',
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -604,7 +604,7 @@ describe('RegistryService.shareToken', () => {
   it('keeps parallel legacy-token resolutions successful when another lookup is delayed', async () => {
     const cache = createMemoryCache();
     const svc = makeService({ cache });
-    const token = 'kbrt_parallel-legacy-test-only';
+    const token = `kbrt_${'c'.repeat(32)}`;
     const digestKey = `registry:sharetoken:sha256:${createHash('sha256').update(token).digest('hex')}`;
     const legacyKey = `registry:sharetoken:${token}`;
     await cache.set(legacyKey, {
@@ -638,7 +638,7 @@ describe('RegistryService.shareToken', () => {
   it('does not resurrect a legacy token after a concurrent revoke', async () => {
     const cache = createMemoryCache();
     const svc = makeService({ cache });
-    const token = 'kbrt_revoke-race-test-only';
+    const token = `kbrt_${'d'.repeat(32)}`;
     const digestKey = `registry:sharetoken:sha256:${createHash('sha256').update(token).digest('hex')}`;
     const legacyKey = `registry:sharetoken:${token}`;
     await cache.set(legacyKey, {
@@ -669,12 +669,34 @@ describe('RegistryService.shareToken', () => {
     expect(await realGet(digestKey)).toBeNull();
   });
 
+  it('rejects malformed and digest-namespace inputs before consulting the cache', async () => {
+    const cache = createMemoryCache();
+    const svc = makeService({ cache });
+    const cacheGet = vi.spyOn(cache, 'get');
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const digestNamespaceToken = `sha256:${'e'.repeat(64)}`;
+    const malformedTokens = [
+      'kbrt_unknown',
+      'kbrt_ABCDEF0123456789abcdef0123456789',
+      'sha256:short-digest',
+      digestNamespaceToken,
+      `registry:sharetoken:${digestNamespaceToken}`,
+    ];
+
+    for (const token of malformedTokens) {
+      await cache.set(`registry:sharetoken:${token}`, { pkg: 'kirill/my-plugin', expiresAt }, 60_000);
+      await expect(svc.resolveShareToken(token)).resolves.toBeNull();
+    }
+
+    expect(cacheGet).not.toHaveBeenCalled();
+  });
+
   it('RS-50: createShareToken + resolveShareToken round trip', async () => {
     const svc = makeService();
     await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
 
     const { token, pkg, expiresAt } = await svc.createShareToken('kirill', 'my-plugin', 60_000);
-    expect(token).toMatch(/^kbrt_/);
+    expect(token).toMatch(/^kbrt_[a-f0-9]{32}$/);
     expect(pkg).toBe('kirill/my-plugin');
     expect(expiresAt).toBeTruthy();
 
