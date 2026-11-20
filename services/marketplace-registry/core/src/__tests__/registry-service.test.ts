@@ -522,6 +522,41 @@ describe('RegistryService.publish', () => {
   });
 
   // case: S-268.22
+  it('allows an owner to append to an existing safe legacy handle and package name', async () => {
+    const values = new Map<string, Buffer>();
+    const legacyName = 'Legacy.Plugin_Name';
+    const legacyHandle = 'Legacy.Author';
+    const legacyMeta = { ...makePkg({ name: legacyName }).meta, version: '1.0.0' };
+    const legacyEntry: RegistryEntry = {
+      name: legacyName, authorHandle: legacyHandle, authorNamespaceId: 'ns-legacy',
+      primaryKind: 'plugin', visibility: 'private', legacyStatsVisibility: 'private', trust: 'untrusted',
+      allowlist: [], versions: [{ version: '1.0.0', publishedAt: '2024-01-01T00:00:00Z',
+        integrity: 'sha256-legacy', visibility: 'private', meta: legacyMeta, primaryKind: 'plugin' }],
+      deprecated: false, featured: false, badges: [], tags: [], meta: legacyMeta,
+      createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+    };
+    const base = `marketplace-registry/packages/${legacyHandle}/${legacyName}`;
+    values.set(`${base}/meta.json`, Buffer.from(JSON.stringify(legacyEntry)));
+    values.set(`${base}/1.0.0.tgz`, SMALL_TARBALL);
+    const storage: IStorage = {
+      read: async (path) => values.get(path) ?? null,
+      write: async (path, data) => { values.set(path, Buffer.from(data)); },
+      delete: async (path) => { values.delete(path); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => values.has(path),
+    };
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071' });
+
+    const result = await svc.publish(SMALL_TARBALL, makePkg({ name: legacyName, version: '1.1.0' }),
+      legacyHandle, 'ns-legacy');
+
+    expect(result.version).toBe('1.1.0');
+    expect((await svc.getEntry(legacyHandle, legacyName))?.versions.map(version => version.version))
+      .toEqual(['1.0.0', '1.1.0']);
+  });
+
+  // case: S-268.22
   it('serializes simultaneous first publication so only one namespace owns the package', async () => {
     const svc = makeService();
     const results = await Promise.allSettled([
