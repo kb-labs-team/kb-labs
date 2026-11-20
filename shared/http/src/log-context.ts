@@ -5,6 +5,7 @@ import {
   type ILogger,
 } from "@kb-labs/core-platform";
 import { normalizeObservabilityRoute } from "./http-observability-collector.js";
+import { redactHttpUrl } from "./redact-http-url.js";
 
 export interface HttpLogContextInput {
   applicationId?: string;
@@ -44,7 +45,7 @@ export function createHttpLogger(
     ...(input.traceId ? { traceId: input.traceId } : {}),
     ...(input.operation ? { operation: input.operation } : {}),
     ...(input.method ? { "http.method": input.method.toUpperCase() } : {}),
-    ...(input.url ? { "http.url": input.url } : {}),
+    ...(input.url ? { "http.url": redactHttpUrl(input.url) } : {}),
     ...(route ? { "http.route": route } : {}),
     ...(input.fields ?? {}),
   });
