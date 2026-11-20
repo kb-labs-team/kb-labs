@@ -18,6 +18,7 @@ An agent can invoke an authorized mutating project tool, receives structured err
 
 - [ ] Host running with projects A and B registered and their project-scoped MCP runtimes enabled.
 - [ ] Project A has the `@kb-labs/commit` plugin installed at project scope and a prepared commit plan for a staged change in a disposable repository; project B is a separate project with a different repository and no project-scoped commit plugin.
+- [ ] For S-140.2, Project A's execution mode is `in-process`; worker-pool UI output transport is not covered by this step.
 - [ ] In secured mode, a valid bearer token is available; an invalid token can be supplied for the negative path.
 
 ## Steps
