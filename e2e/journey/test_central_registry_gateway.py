@@ -3,12 +3,21 @@ from pathlib import Path
 import sys
 import subprocess
 import tempfile
+import socket
 
 sys.path.insert(0, str(Path(__file__).parent))
-from central_registry_gateway import CentralRegistryGatewayFixture, _fixture_config
+from central_registry_gateway import CentralRegistryGatewayFixture, _loopback_port_available, _fixture_config
 
 
 class CentralRegistryGatewayFixtureTests(unittest.TestCase):
+    def test_fixture_port_probe_detects_a_busy_loopback_port(self):
+        with socket.socket() as occupied:
+            occupied.bind(("127.0.0.1", 0))
+            port = occupied.getsockname()[1]
+
+            self.assertFalse(_loopback_port_available(port))
+        self.assertTrue(_loopback_port_available(0))
+
     def test_runner_image_provides_the_standard_kb_dev_command(self):
         dockerfile = (Path(__file__).parent / "Dockerfile.runner").read_text()
 
@@ -57,6 +66,8 @@ class CentralRegistryGatewayFixtureTests(unittest.TestCase):
 
             self.assertIn("[REDACTED]", str(raised.exception))
             self.assertNotIn("fixture-internal-secret-value", str(raised.exception))
+            self.assertIn("node_path=", str(raised.exception))
+            self.assertIn("port_available_before_start=true", str(raised.exception))
             self.assertEqual([call[1] for call in calls], ["start", "logs"])
 
 
