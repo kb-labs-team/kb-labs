@@ -44,7 +44,6 @@ await writeFile(path.join(kbRoot, 'registry.env'), `KB_REGISTRY_SIGNING_KEY='${p
 const composeOverlay = `services:
   runner:
     environment:
-      KB_JOURNEY_MARKETPLACE_REGISTRY_URL: ${JSON.stringify(topology.marketplaceSourceUrl)}
       KB_JOURNEY_MARKETPLACE_SERVICE_URL: ${JSON.stringify(topology.marketplaceProxyUrl)}
       KB_JOURNEY_MARKETPLACE_PROXY_URL: ${JSON.stringify(topology.marketplaceProxyUrl)}
       KB_JOURNEY_MARKETPLACE_GATEWAY_URL: http://127.0.0.1:4010
