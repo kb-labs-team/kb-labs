@@ -176,6 +176,17 @@ journey_start_container_services() {
     -e "PUBLISHER_DIAGNOSTIC_NEXT=${JOURNEY_COMPOSE[*]} logs verdaccio" publisher)
 }
 
+journey_build_marketplace_registry_images() {
+  local root
+  journey_compose_require_workspace_source || return
+  root="$KB_JOURNEY_WORKSPACE_SOURCE"
+  if ! (cd "$root" && bash tools/release/prepare-platform-image-deploys.sh registry-journey); then
+    echo "Marketplace Registry Docker build inputs could not be prepared. Next: bash tools/release/prepare-platform-image-deploys.sh registry-journey" >&2
+    return 1
+  fi
+  journey_compose build marketplace-state marketplace-registry
+}
+
 journey_wait_container_publisher() {
   local exit_code log_path
   if [[ -z "$JOURNEY_PUBLISHER_ID" ]]; then
