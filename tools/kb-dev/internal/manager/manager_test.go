@@ -68,6 +68,7 @@ func TestStatusReportsPortOccupantForFailedService(t *testing.T) {
 	}
 }
 
+// case: PC-003.4
 func TestStartCleansProcessWhenHealthCheckFails(t *testing.T) {
 	root := t.TempDir()
 	cfg := &config.Config{
@@ -92,6 +93,10 @@ func TestStartCleansProcessWhenHealthCheckFails(t *testing.T) {
 	result := m.Start(context.Background(), []string{"stuck"}, false)
 	if result.OK {
 		t.Fatal("start should fail when health check never becomes ready")
+	}
+	if len(result.Actions) != 1 || result.Actions[0].HealthReason != HealthFailureTimeout ||
+		result.Actions[0].LastProbeReason != HealthFailureProbeFailed {
+		t.Fatalf("failed start diagnostics = %#v", result.Actions)
 	}
 	if m.services["stuck"].PID != 0 || m.services["stuck"].PGID != 0 {
 		t.Fatalf("failed start retained process ownership: pid=%d pgid=%d", m.services["stuck"].PID, m.services["stuck"].PGID)
