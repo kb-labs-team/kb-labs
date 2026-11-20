@@ -471,14 +471,14 @@ describe('RegistryService.publish', () => {
     expect(await svc.getEntry('shared-handle', 'my-plugin')).toEqual(originalEntry);
     await expect(svc.getTarball('shared-handle', 'my-plugin', '1.0.0')).resolves.toMatchObject({
       tarball: SMALL_TARBALL,
-      signature: expect.objectContaining({ signature: expect.any(String) }),
+      signature: expect.objectContaining({ value: expect.any(String) }),
     });
 
     const ownerUpdate = await svc.publish(Buffer.from('owner release'), makePkg({ version: '1.1.0' }),
       'shared-handle', 'ns-owner');
     expect(ownerUpdate.version).toBe('1.1.0');
-    expect((await svc.getEntry('shared-handle', 'my-plugin')?.versions ?? []).map(version => version.version))
-      .toEqual(['1.0.0', '1.1.0']);
+    const updatedEntry = await svc.getEntry('shared-handle', 'my-plugin');
+    expect(updatedEntry?.versions.map(version => version.version)).toEqual(['1.0.0', '1.1.0']);
   });
 
   it('RS-07: second version publishes, entry has two versions', async () => {

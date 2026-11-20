@@ -112,6 +112,12 @@ export class RegistryService {
     const existing = await this.loadEntry(authorHandle, name);
 
     if (existing) {
+      if (existing.authorNamespaceId !== authorNamespaceId) {
+        throw Object.assign(
+          new Error(`Namespace ${authorNamespaceId} does not own ${authorHandle}/${name}`),
+          { code: 'FORBIDDEN' },
+        );
+      }
       if (existing.versions.some(v => v.version === version)) {
         throw Object.assign(
           new Error(`Version ${version} already exists. Versions are immutable.`),
