@@ -146,9 +146,12 @@ class CentralRegistryGatewayFixture:
                 raw_start_output = "\n".join((result.stdout + result.stderr).splitlines()[-12:]).strip()
                 start_output = redaction.redact_text(raw_start_output, diagnostics_env)
                 node_path = shutil.which("node") or "unavailable"
+                bash_path = shutil.which("bash") or "unavailable"
                 entry_status = "readable" if os.access(gateway_entry, os.R_OK) else "unreadable"
                 evidence = [f"port_available_before_start={str(port_available_before_start).lower()}",
-                            f"node_path={node_path}", f"gateway_entry={entry_status}"]
+                            f"node_path={node_path}", f"bash_path={bash_path}",
+                            f"gateway_entry={entry_status}",
+                            f"fixture_state_writable={str(os.access(kb_dir, os.W_OK)).lower()}"]
                 if start_output:
                     evidence.append(f"start_output={start_output}")
                 if details:
