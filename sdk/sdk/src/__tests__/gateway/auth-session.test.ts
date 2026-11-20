@@ -3,6 +3,7 @@ import { createErrorEnvelope } from '@kb-labs/core-platform';
 
 const stores = vi.hoisted(() => ({
   session: null as null | { gatewayUrl: string; accessToken: string; refreshToken: string; expiresAt: number; email?: string },
+  extraSessions: [] as Array<{ gatewayUrl: string; accessToken: string; refreshToken: string; expiresAt: number; email?: string }>,
   machine: null as null | { gatewayUrl: string; accessToken: string; refreshToken: string; expiresAt: number },
   sessionError: null as unknown,
   machineError: null as unknown,
@@ -10,9 +11,15 @@ const stores = vi.hoisted(() => ({
 }));
 
 vi.mock('../../gateway/session.js', () => ({ SessionManager: class {
-  async load() { if (stores.sessionError) { throw stores.sessionError; } return stores.session; }
+  async load(gatewayUrl?: string) { if (stores.sessionError) { throw stores.sessionError; }
+    const entries = [...(stores.session ? [stores.session] : []), ...stores.extraSessions];
+    const matching = entries.filter((entry) => !gatewayUrl || new URL(entry.gatewayUrl).origin === new URL(gatewayUrl).origin);
+    return matching.length === 1 ? matching[0] : null; }
+  async list() { if (stores.sessionError) { throw stores.sessionError; } return [...(stores.session ? [stores.session] : []), ...stores.extraSessions]; }
   async save(value: typeof stores.session) { stores.saveSession(value); stores.session = value; }
-  async clear() { stores.session = null; }
+  async clear(gatewayUrl?: string) { if (!gatewayUrl) { stores.session = null; stores.extraSessions = []; return; }
+    if (stores.session && new URL(stores.session.gatewayUrl).origin === new URL(gatewayUrl).origin) { stores.session = null; }
+    stores.extraSessions = stores.extraSessions.filter((entry) => new URL(entry.gatewayUrl).origin !== new URL(gatewayUrl).origin); }
   getFilePath() { return '/tmp/home/.kb/session.json'; }
 } }));
 vi.mock('../../gateway/credentials.js', () => ({ CredentialsManager: class {
@@ -26,7 +33,7 @@ import { SavedAuthFileError } from '../../gateway/saved-auth-file.js';
 
 describe('AuthSessionOwner', () => {
   beforeEach(() => {
-    stores.session = null; stores.machine = null; stores.sessionError = null; stores.machineError = null;
+    stores.session = null; stores.extraSessions = []; stores.machine = null; stores.sessionError = null; stores.machineError = null;
     stores.saveSession.mockReset(); stores.saveMachine.mockReset();
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -52,6 +59,38 @@ describe('AuthSessionOwner', () => {
     const auth = await new AuthSessionOwner().load('either');
     expect(auth?.kind).toBe('session');
     expect(auth?.accessToken).toBe('user');
+  });
+
+  // case: S-216.3
+  it('selects the session for the explicitly targeted Gateway without substituting identity', async () => {
+    stores.session = { gatewayUrl: 'http://localhost:4000', accessToken: 'local-user', refreshToken: 'local-refresh', expiresAt: Date.now() + 600_000 };
+    stores.extraSessions = [{ gatewayUrl: 'https://hub.example.test', accessToken: 'hub-user', refreshToken: 'hub-refresh', expiresAt: Date.now() + 600_000 }];
+    const owner = new AuthSessionOwner();
+
+    const auth = await owner.load('session', { gatewayUrl: 'https://hub.example.test' });
+
+    expect(auth?.gatewayUrl).toBe('https://hub.example.test');
+    expect(auth?.accessToken).toBe('hub-user');
+    await expect(owner.load('session', { gatewayUrl: 'https://other.example.test' })).rejects.toMatchObject({
+      envelope: { code: 'KB_AUTH_REQUIRED', details: { gatewayUrl: 'https://other.example.test' } },
+    });
+  });
+
+  // case: S-216.4
+  it('revokes and removes only the explicitly targeted Gateway session', async () => {
+    stores.session = { gatewayUrl: 'http://localhost:4000', accessToken: 'local-user', refreshToken: 'local-refresh', expiresAt: Date.now() + 600_000 };
+    stores.extraSessions = [{ gatewayUrl: 'https://hub.example.test', accessToken: 'hub-user', refreshToken: 'hub-refresh', expiresAt: Date.now() + 600_000 }];
+    const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+
+    expect(await new AuthSessionOwner().logout('https://hub.example.test')).toBe(true);
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledWith('https://hub.example.test/auth/logout/cli', expect.objectContaining({
+      body: JSON.stringify({ refreshToken: 'hub-refresh' }),
+    }));
+    expect(stores.session?.gatewayUrl).toBe('http://localhost:4000');
+    expect(stores.extraSessions).toEqual([]);
   });
 
   it('refreshes and saves expired sessions at the CLI session endpoint', async () => {
