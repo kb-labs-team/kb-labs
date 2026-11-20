@@ -1,6 +1,7 @@
 import type { RegisteredServiceCommandOperation, ServiceCommandRequestCapability } from '@kb-labs/plugin-contracts';
 import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
-import { isErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, isErrorEnvelope } from '@kb-labs/core-platform';
+import { randomUUID } from 'node:crypto';
 import { workflowServiceCommands } from '@kb-labs/workflow-contracts/service-commands';
 
 export class WorkflowServiceOperationError extends Error {
@@ -17,6 +18,19 @@ export class WorkflowServiceOperationError extends Error {
   }
 }
 
+function operationFailure(
+  message: string,
+  hint: string,
+  details: Record<string, unknown>,
+): WorkflowServiceOperationError {
+  const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+    message, hint, details, correlationId: randomUUID(),
+  });
+  return new WorkflowServiceOperationError(
+    envelope.code, envelope.message, envelope.hint, envelope.details, envelope.correlationId, envelope,
+  );
+}
+
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -31,36 +45,53 @@ export async function setWorkflowCronEnabled(
   const id = input.id;
   const enabled = input.enabled;
   if (typeof id !== 'string' || id.length === 0 || typeof enabled !== 'boolean') {
-    throw new WorkflowServiceOperationError('KB_RUNTIME_INPUT_INVALID', 'A cron ID and enabled state are required.');
+    const envelope = createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+      message: 'A cron ID and enabled state are required.',
+      hint: 'Provide a non-empty cron ID and retry the command.',
+      details: { field: 'id' },
+      correlationId: randomUUID(),
+    });
+    throw new WorkflowServiceOperationError(
+      envelope.code, envelope.message, envelope.hint, envelope.details, envelope.correlationId, envelope,
+    );
   }
 
   const declaration = enabled
     ? workflowServiceCommands.commands.cronsEnable
     : workflowServiceCommands.commands.cronsDisable;
   const route = declaration.route.path.replace('{id}', encodeURIComponent(id));
-  const response = await request({
-    method: declaration.route.method,
-    // Service operations speak service-relative paths. The host adapter owns
-    // mounting this under the manifest's public project API prefix.
-    path: route,
-  });
+  let response: Awaited<ReturnType<ServiceCommandRequestCapability>>;
+  try {
+    response = await request({
+      method: declaration.route.method,
+      // Service operations speak service-relative paths. The host adapter owns
+      // mounting this under the manifest's public project API prefix.
+      path: route,
+    });
+  } catch {
+    throw operationFailure('The workflow service could not complete the cron update.',
+      'Check workflow service health, then retry the command.', { command: 'workflow cron toggle' });
+  }
   const envelope = record(response.payload);
   const failure = record(envelope?.error);
   if (!response.ok || envelope?.ok === false) {
-    const code = typeof failure?.code === 'string' ? failure.code : 'KB_RUNTIME_COMMAND_FAILED';
-    const message = typeof failure?.message === 'string'
-      ? failure.message
-      : `Failed to ${enabled ? 'enable' : 'disable'} cron ${id}.`;
-    const hint = typeof failure?.hint === 'string' ? failure.hint : undefined;
-    const details = record(failure?.details);
-    const correlationId = typeof failure?.correlationId === 'string' ? failure.correlationId : undefined;
-    const errorEnvelope = isErrorEnvelope(failure) ? failure : undefined;
-    throw new WorkflowServiceOperationError(code, message, hint, details, correlationId, errorEnvelope);
+    const errorEnvelope = isErrorEnvelope(failure)
+      ? { ...failure, correlationId: failure.correlationId ?? randomUUID() }
+      : undefined;
+    if (errorEnvelope) {
+      throw new WorkflowServiceOperationError(
+        errorEnvelope.code, errorEnvelope.message, errorEnvelope.hint, errorEnvelope.details,
+        errorEnvelope.correlationId, errorEnvelope,
+      );
+    }
+    throw operationFailure('The workflow service returned an invalid cron update response.',
+      'Check workflow service health, then retry the command.', { command: 'workflow cron toggle' });
   }
 
   const data = envelope?.ok === true ? record(envelope.data) : envelope;
   if (typeof data?.enabled !== 'boolean') {
-    throw new WorkflowServiceOperationError('KB_RUNTIME_COMMAND_FAILED', 'The workflow service returned an invalid cron update result.');
+    throw operationFailure('The workflow service returned an invalid cron update result.',
+      'Check workflow service health, then retry the command.', { command: 'workflow cron toggle' });
   }
   return { id, enabled: data.enabled };
 }

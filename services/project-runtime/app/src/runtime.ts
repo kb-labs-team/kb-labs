@@ -40,6 +40,8 @@ import { manifest as mcpManifest } from "@kb-labs/mcp-app/manifest";
 import type { RuntimeArgs } from "./args.js";
 import { createRuntimeGuard } from "./guard.js";
 import { RuntimeServiceTransport } from "./transport.js";
+import { collectProjectServiceOperations } from "./service-operations.js";
+export { collectProjectServiceOperations } from "./service-operations.js";
 
 export const PROJECT_RUNTIME_APP_ID = "kb-project-runtime";
 
@@ -137,6 +139,7 @@ export async function createProjectRuntimeConfig(
   }
 
   const modules = options.modules ?? DEFAULT_PROJECT_MODULES;
+  const serviceOperations = collectProjectServiceOperations(modules);
   const serviceDeclarations = collectProjectServiceDeclarations(
     modules.map((module) => module.manifest),
   );
@@ -210,7 +213,7 @@ export async function createProjectRuntimeConfig(
             { ...ctx, logger: ctx.logger.forComponent(spec.manifest.id) },
             modules.map((module) => module.manifest),
             projectServiceId(spec) === 'mcp'
-              ? { operations: modules.flatMap((module) => module.operations ?? []) }
+              ? { operations: serviceOperations }
               : undefined,
           );
           if (index === 0) {

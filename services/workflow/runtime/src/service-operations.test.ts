@@ -40,4 +40,18 @@ describe('setWorkflowCronEnabled', () => {
       envelope,
     });
   });
+
+  it('produces the same typed fallback envelope for malformed service errors', async () => {
+    const request = vi.fn(async () => ({ ok: false, statusCode: 502, payload: { error: 'upstream body was not a UX result' } }));
+    await expect(setWorkflowCronEnabled({ id: 'journey-cron', enabled: true }, request)).rejects.toMatchObject({
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      envelope: {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        message: 'The workflow service returned an invalid cron update response.',
+        hint: 'Check workflow service health, then retry the command.',
+        details: { command: 'workflow cron toggle' },
+        correlationId: expect.any(String),
+      },
+    });
+  });
 });

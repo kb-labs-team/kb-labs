@@ -94,6 +94,28 @@ class UninstallShimResultTest(unittest.TestCase):
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_cron_parity_check_prepares_fixture_and_captures_environment(self):
+        graph = FlowGraph(
+            Journey("local", "cron-parity-callback"),
+            {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+            states={
+                "project-registered": {"passed": True, "value": {"id": "project-123", "root": "/work/project"}},
+                "service-api-session": {"passed": True, "value": None},
+            },
+            groups=SERVICE_GROUPS,
+        )
+        with patch("service_runner.prepare_workflow_fixtures") as prepare, \
+             patch("service_runner.workflow_cron_invocation_parity", return_value=None) as parity, \
+             patch.dict(os.environ, {"CRON_PARITY_FIXTURE": "synthetic"}):
+            check = next(step for step in checks("local", graph)
+                         if step[0] == "workflow cron CLI and MCP state parity")
+            self.assertIsNone(check[2]())
+
+        prepare.assert_called_once_with(Path("/work/project"))
+        args = parity.call_args.args
+        self.assertEqual(args[:3], ("project-123", "", "/work/project"))
+        self.assertEqual(args[3]["CRON_PARITY_FIXTURE"], "synthetic")
+
     def test_project_mcp_tool_name_artifact_matches_producer(self):
         root = Path(__file__).parents[2]
         result = subprocess.run(

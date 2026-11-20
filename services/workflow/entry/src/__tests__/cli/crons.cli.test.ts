@@ -82,7 +82,9 @@ describe('workflow crons CLI', () => {
       return makeClient({ requestServiceOperation: async () => ({
         ok: false,
         statusCode: 403,
-        payload: { ok: false, error: { code: 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY', message: 'Plugin cron plugin:qa:cleanup is read-only', hint: pluginCronHint } },
+        payload: { ok: false, error: createErrorEnvelope('KB_RUNTIME_CRON_PLUGIN_READ_ONLY', {
+          message: 'Plugin cron plugin:qa:cleanup is read-only', hint: pluginCronHint,
+        }) },
       }) });
     });
     const { ui } = createCapturedUI();
@@ -111,13 +113,33 @@ describe('workflow crons CLI', () => {
     } });
   });
 
+  it('returns the same typed fallback as MCP when the service response is malformed', async () => {
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ requestServiceOperation: async () => ({
+        ok: false, statusCode: 502, payload: { error: 'not a UX result' },
+      }) });
+    });
+    const result = await enableCommand.execute(createMockContext({ ui: createCapturedUI().ui }),
+      mockCLIInput({ argv: ['journey-cron'], flags: { json: true } }));
+
+    expect(result).toMatchObject({ ok: false, error: {
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      message: 'The workflow service returned an invalid cron update response.',
+      hint: 'Check workflow service health, then retry the command.',
+      details: { command: 'workflow cron toggle' },
+      correlationId: expect.any(String),
+    } });
+  });
+
   it('prints the plugin cron refusal without a misleading retry command', async () => {
     expect(pluginCronHint).toBeTruthy();
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({ requestServiceOperation: async () => ({
         ok: false,
         statusCode: 403,
-        payload: { ok: false, error: { code: 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY', message: 'Plugin cron plugin:qa:cleanup is read-only', hint: pluginCronHint } },
+        payload: { ok: false, error: createErrorEnvelope('KB_RUNTIME_CRON_PLUGIN_READ_ONLY', {
+          message: 'Plugin cron plugin:qa:cleanup is read-only', hint: pluginCronHint,
+        }) },
       }) });
     });
     const { ui, captured } = createCapturedUI();

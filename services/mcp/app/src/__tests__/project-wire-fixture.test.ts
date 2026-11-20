@@ -283,10 +283,22 @@ describe('project MCP wire fixture producer', () => {
         hint: 'Retry the operation.', details: { command: 'workflow cron toggle' }, correlationId: 'fixture-correlation',
       } },
     });
+    serviceCall.mockResolvedValueOnce({ ok: false, statusCode: 502, payload: { error: 'not a UX result' } });
+    const malformedServiceResponse = await postMcp(port, 8, 'tools/call', {
+      name: 'workflow__workflow_crons_disable', arguments: { id: 'journey-cron' },
+    });
+    const fallbackError = parseMcpResponse(malformedServiceResponse.body).result?.structuredContent;
+    expect(fallbackError).toMatchObject({ ok: false, error: {
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      message: 'The workflow service returned an invalid cron update response.',
+      details: { command: 'workflow cron toggle' },
+      correlationId: expect.any(String),
+    } });
     expect(serviceCall.mock.calls.map(([serviceId, request]) => [serviceId, request.path])).toEqual([
       ['workflow', '/api/v1/crons/journey-cron/enable'],
       ['workflow', '/api/v1/crons/journey-cron/disable'],
       ['workflow', '/api/v1/crons/journey-cron/enable'],
+      ['workflow', '/api/v1/crons/journey-cron/disable'],
     ]);
   });
 

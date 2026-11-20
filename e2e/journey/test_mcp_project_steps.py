@@ -57,6 +57,10 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             requests.append(payload)
             if payload.get("method") == "tools/list":
                 return 200, {"result": {"tools": [tool]}}, {}
+            arguments = payload["params"].get("arguments", {})
+            if not arguments.get("id"):
+                return 200, tool_error("KB_RUNTIME_INPUT_INVALID", "The provided input is invalid.",
+                                       catalogued_error_hint("KB_RUNTIME_INPUT_INVALID")), {}
             action = payload["params"]["name"].rsplit("_", 1)[-1]
             enabled = action == "enable"
             return 200, {"result": {"isError": False, "structuredContent": {
@@ -64,10 +68,21 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             }}}, {}
 
         def fake_cli(argv, **kwargs):
-            if "list" in argv:
-                data = {"crons": [{"id": "journey-cron", "enabled": False}]}
+            command = " ".join(argv)
+            if "workflow crons enable" in command and "journey-cron" not in command:
+                envelope = {
+                    "code": "KB_RUNTIME_INPUT_INVALID", "area": "runtime", "stage": "run",
+                    "severity": "error", "retryable": False,
+                    "message": "The provided input is invalid.",
+                    "hint": catalogued_error_hint("KB_RUNTIME_INPUT_INVALID"),
+                    "details": {"field": "id"}, "correlationId": "corr-input",
+                }
+                return subprocess.CompletedProcess(argv, 2, json.dumps({"ok": False, "error": envelope}), "")
+            if "crons list" in command:
+                data = {"crons": [{"id": "journey-cron", "source": "user", "schedule": "* * * * *",
+                                   "target": {"workflow": "journey-cron-target"}, "enabled": False}]}
             else:
-                action = argv[3]
+                action = "enable" if "crons enable" in command else "disable"
                 data = {"id": "journey-cron", "enabled": action == "enable"}
             return subprocess.CompletedProcess(argv, 0, json.dumps({"ok": True, "data": data}), "")
 
@@ -75,10 +90,13 @@ class ProjectMcpJourneyTests(unittest.TestCase):
              patch("mcp_project_steps.run_command", side_effect=fake_cli):
             self.assertIsNone(workflow_cron_invocation_parity("prj_a", "token", "/tmp/project", {}))
 
-        self.assertEqual([item.get("params", {}).get("name") for item in requests[1:]], [
+        self.assertEqual([item.get("params", {}).get("name") for item in requests[3:]], [
             "workflow__workflow_crons_disable", "workflow__workflow_crons_enable",
         ])
-        self.assertEqual([item.get("params", {}).get("arguments") for item in requests[1:]], [
+        self.assertEqual([item.get("params", {}).get("arguments") for item in requests[1:3]], [
+            {}, {"id": ""},
+        ])
+        self.assertEqual([item.get("params", {}).get("arguments") for item in requests[3:]], [
             {"id": "journey-cron"}, {"id": "journey-cron"},
         ])
 
