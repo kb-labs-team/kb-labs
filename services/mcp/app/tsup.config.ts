@@ -14,7 +14,7 @@ export default defineConfig([
   {
     ...nodePreset,
     tsconfig: 'tsconfig.build.json',
-    entry: ['src/index.ts', 'src/manifest.ts', 'src/project-module.ts'],
+    entry: ['src/index.ts', 'src/manifest.ts', 'src/project-module.ts', 'src/mcp/output-capture.ts'],
     clean: false,
   },
 ]);
