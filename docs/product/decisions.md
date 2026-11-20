@@ -22,6 +22,21 @@ visibility and preserves old releases as private without deleting their
 metadata or tarballs. Owners and valid share-token holders retain access.
 Case: S-268.21.
 
+## 2026-11-20
+
+### Registry journey images use source-built frozen-lock composition
+
+The Registry journey image is assembled from the same candidate source revision
+with the frozen workspace lock. Its private composition importer contains the
+Registry service, the SDK, and exactly the unique adapter package roots selected
+by `platform.adapters` in the platform release configuration. An image
+composition manifest records that revision, lock digest, and selected package
+identities. The platform adapter lock follows core-discovery's package identity
+contract: version plus the SRI hash of `package.json`. This journey composition
+does not claim byte identity with separately sealed npm release tarballs; that
+stronger guarantee remains owned by sealed release-index installation cases.
+Case: S-268.11.
+
 ## 2026-10-31
 
 ### SQLite vector search breaks equal-score ties by record ID
