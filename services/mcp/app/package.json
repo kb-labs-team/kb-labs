@@ -11,10 +11,6 @@
     "./project-module": {
       "types": "./dist/project-module.d.ts",
       "import": "./dist/project-module.js"
-    },
-    "./output-capture": {
-      "types": "./dist/mcp/output-capture.d.ts",
-      "import": "./dist/mcp/output-capture.js"
     }
   },
   "bin": {
