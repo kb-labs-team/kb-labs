@@ -344,7 +344,8 @@ export class RegistryService {
       throw Object.assign(new Error(`Version ${version} has been yanked`), { code: 'VERSION_YANKED' });
     }
 
-    const tarball = await this.storage.read(this.tarballPath(authorHandle, name, version));
+    const tarball = await this.storage.read(this.tarballPath(authorHandle, name, version))
+      ?? await this.storage.read(this.legacyTarballPath(authorHandle, name, version));
     if (!tarball) {
       throw Object.assign(new Error('Tarball not found in storage'), { code: 'VERSION_NOT_FOUND' });
     }
@@ -588,12 +589,20 @@ export class RegistryService {
     return `${STORAGE_PREFIX}/packages/${handle}/${name}/meta.json`;
   }
 
+  private versionStorageSegment(version: string): string {
+    return `v-${Buffer.from(version, 'utf8').toString('hex')}`;
+  }
+
   private tarballPath(handle: string, name: string, version: string): string {
+    return `${STORAGE_PREFIX}/packages/${handle}/${name}/${this.versionStorageSegment(version)}.tgz`;
+  }
+
+  private legacyTarballPath(handle: string, name: string, version: string): string {
     return `${STORAGE_PREFIX}/packages/${handle}/${name}/${version}.tgz`;
   }
 
   private sigPath(handle: string, name: string, version: string): string {
-    return `${STORAGE_PREFIX}/packages/${handle}/${name}/${version}.sig`;
+    return `${STORAGE_PREFIX}/packages/${handle}/${name}/${this.versionStorageSegment(version)}.sig`;
   }
 
   private async loadEntry(handle: string, name: string): Promise<RegistryEntry | null> {
