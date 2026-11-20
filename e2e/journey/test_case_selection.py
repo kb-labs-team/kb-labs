@@ -148,6 +148,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
                 "composeProfiles": [],
                 "selectedOwningSteps": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
+                "selectedClaimOwners": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
             })
 
     # case: S-262.8
@@ -290,6 +291,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
             "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
             "composeProfiles": [],
             "selectedOwningSteps": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
+            "selectedClaimOwners": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
         })
 
     def test_rejects_unknown_case_or_step_id_by_name(self):

@@ -169,7 +169,7 @@ case "$1" in
   *select_from_cases.py)
     mode="$KB_JOURNEY_SELECTION_MODE"
     case "$mode" in local) runners="${{SELECTED_RUNNERS_LOCAL:-[]}}" ;; secured) runners="${{SELECTED_RUNNERS_SECURED:-[]}}" ;; *) exit 2 ;; esac
-    SELECTED_RUNNERS="$runners" "{sys.executable}" -c 'import json,os; tokens=[x.strip() for x in os.environ["KB_JOURNEY_CASES"].split(",") if x.strip()]; claims=[x if "." in x else x+".1" for x in tokens]; print(json.dumps({{"selection":tokens,"steps":claims,"selectedOwningSteps":{{"selected owner":claims}},"runners":json.loads(os.environ["SELECTED_RUNNERS"])}}))'
+    SELECTED_RUNNERS="$runners" "{sys.executable}" -c 'import json,os; tokens=[x.strip() for x in os.environ["KB_JOURNEY_CASES"].split(",") if x.strip()]; claims=[x if "." in x else x+".1" for x in tokens]; print(json.dumps({{"selection":tokens,"steps":claims,"prerequisiteSteps":[],"selectedOwningSteps":{{"selected owner":claims}},"selectedClaimOwners":{{"selected owner":claims}},"runners":json.loads(os.environ["SELECTED_RUNNERS"])}}))'
     ;;
   *) exec "{sys.executable}" "$@" ;;
 esac
@@ -275,6 +275,7 @@ exec "$REAL_TAR" "$@"
         )
 
     def test_mode_without_scoreboard_fails_with_entry_cause(self):
+        import json
         env = dict(self.env, OMIT_SCOREBOARD="local")
         result = subprocess.run(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
@@ -283,6 +284,9 @@ exec "$REAL_TAR" "$@"
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("produced no case scoreboard", result.stderr)
         self.assertIn("entry exited with 0", result.stderr)
+        metadata = json.loads((self.root / "out/.artifact-local/local/batch-metadata.json").read_text())
+        self.assertEqual(metadata["result"], "FAIL")
+        self.assertIn("mode produced no case scoreboard", metadata["failureReason"])
 
     # case: S-262.8
     def test_partial_batch_dispatches_the_selected_claim_owner(self):
@@ -338,7 +342,7 @@ exec "$REAL_TAR" "$@"
         summary = subprocess.run(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
              str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
-             str(self.root / "secured-artifact")],
+             str(self.root / "secured-artifact"), "--selection", "S-187.11"],
             cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
         )
         self.assertNotEqual(summary.returncode, 0)
@@ -382,7 +386,7 @@ exec "$REAL_TAR" "$@"
         summary = subprocess.run(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
              str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
-             str(self.root / "secured-artifact")],
+             str(self.root / "secured-artifact"), "--selection", "S-045.4,S-045.5"],
             cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
         )
         self.assertNotEqual(summary.returncode, 0)
@@ -443,7 +447,7 @@ exec "$REAL_TAR" "$@"
         summary = subprocess.run(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
              str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
-             str(self.root / "secured-artifact")],
+             str(self.root / "secured-artifact"), "--selection", "S-010"],
             cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
         )
 
@@ -564,7 +568,7 @@ exec "$REAL_TAR" "$@"
         summary = subprocess.run(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
              str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
-             str(self.root / "secured-artifact")],
+             str(self.root / "secured-artifact"), "--selection", selected],
             cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
         )
         rendered = (self.root / "summary/shared/summary.md").read_text()
@@ -627,7 +631,8 @@ exec "$REAL_TAR" "$@"
         from batch_summary import selected_owners_have_evidence
         mode_dir = self.root / "selected-evidence"
         mode_dir.mkdir()
-        plan = {"selectedOwningSteps": {"publish package": ["S-268.1"]}}
+        plan = {"steps": ["S-268.1"], "prerequisiteSteps": [],
+                "selectedClaimOwners": {"publish package": ["S-268.1"]}}
         (mode_dir / "selection-plan.json").write_text(__import__("json").dumps(plan), encoding="utf-8")
         report = {"case_run": {"mode": "secured", "claims": [
             {"claimId": "S-268.1", "status": "PASS"}]}, "steps": [
@@ -639,6 +644,32 @@ exec "$REAL_TAR" "$@"
         self.assertFalse(selected_owners_have_evidence(mode_dir, "secured"))
 
     # case: S-262.17
+    def test_real_s268_selection_plan_checks_prerequisite_by_name_and_owner_by_claim(self):
+        from batch_summary import selected_owners_have_evidence
+        from select_from_cases import selection_from_coverage
+        coverage = [{"mode": "local", "cases": [{"id": "S-268", "status": "active", "steps": [{
+            "stepId": "S-268.1", "claims": [{"kind": "journey",
+                "source": "e2e/journey/marketplace_steps.py", "line": 497}]}]}]}]
+        plan = selection_from_coverage(coverage, "S-268.1", mode="local", requested_runners="")
+        self.assertEqual(plan["selectedClaimOwners"], {
+            "verify Commit Registry signature and provenance": ["S-268.1"]})
+        self.assertIn("publish and install Commit through Registry", plan["prerequisiteSteps"])
+        mode_dir = self.root / "real-selected-plan"
+        mode_dir.mkdir()
+        (mode_dir / "selection-plan.json").write_text(__import__("json").dumps(plan), encoding="utf-8")
+        report = {"case_run": {"mode": "local", "claims": [
+            {"claimId": "S-268.1", "status": "PASS"}]}, "steps": [
+                {"name": "publish and install Commit through Registry", "mode": "local",
+                 "status": "PASS", "cases": []},
+                {"name": "verify Commit Registry signature and provenance", "mode": "local",
+                 "status": "PASS", "cases": ["S-268.1"]}]}
+        (mode_dir / "service-local.json").write_text(__import__("json").dumps(report), encoding="utf-8")
+        self.assertTrue(selected_owners_have_evidence(mode_dir, "local"))
+        report["steps"] = report["steps"][1:]
+        (mode_dir / "service-local.json").write_text(__import__("json").dumps(report), encoding="utf-8")
+        self.assertFalse(selected_owners_have_evidence(mode_dir, "local"))
+
+    # case: S-262.17
     def test_missing_selected_mode_artifact_uses_authoritative_selection(self):
         import json
         batch_result = self._run()
@@ -646,6 +677,15 @@ exec "$REAL_TAR" "$@"
                          str(list(self.root.rglob("batch.log"))) +
                          ((self.root / "out/shared/summary.md").read_text()
                           if (self.root / "out/shared/summary.md").exists() else ""))
+        local_dir = self.root / "out/.artifact-local/local"
+        local_metadata_path = local_dir / "batch-metadata.json"
+        local_metadata = json.loads(local_metadata_path.read_text())
+        local_metadata["requestedSelection"] = ["S-268.1", "S-268.11"]
+        local_metadata_path.write_text(json.dumps(local_metadata), encoding="utf-8")
+        local_scoreboard_path = local_dir / "case-scoreboard.json"
+        local_scoreboard = json.loads(local_scoreboard_path.read_text())
+        local_scoreboard["selection"] = ["S-268.1", "S-268.11"]
+        local_scoreboard_path.write_text(json.dumps(local_scoreboard), encoding="utf-8")
         stale = self.root / "selected-summary/secured/stale-report.json"
         stale.parent.mkdir(parents=True, exist_ok=True)
         stale.write_text('{"case_run":{"mode":"secured","claims":[]},"steps":[]}', encoding="utf-8")
@@ -662,6 +702,63 @@ exec "$REAL_TAR" "$@"
         self.assertIn("- Result: PARTIAL", rendered)
         self.assertNotIn("- Result: PASS", rendered)
         self.assertFalse(stale.exists())
+        failed_mode_metadata = json.loads(
+            (self.root / "selected-summary/secured/batch-metadata.json").read_text())
+        self.assertEqual(failed_mode_metadata["result"], "FAIL")
+        self.assertIn("case-scoreboard.json is missing", failed_mode_metadata["failureReason"])
+
+    # case: S-262.17
+    def test_summary_rejects_mode_metadata_or_scoreboard_selection_drift(self):
+        import json
+        batch_result = self._run()
+        self.assertEqual(batch_result.returncode, 0, batch_result.stderr + batch_result.stdout)
+        selected = ["S-268.1"]
+        for mode in ("local", "secured"):
+            directory = self.root / f"out/.artifact-{mode}/{mode}"
+            metadata_path = directory / "batch-metadata.json"
+            metadata = json.loads(metadata_path.read_text())
+            metadata["requestedSelection"] = selected
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            scoreboard_path = directory / "case-scoreboard.json"
+            scoreboard = json.loads(scoreboard_path.read_text())
+            scoreboard["selection"] = selected
+            scoreboard_path.write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        secured_scoreboard_path = self.root / "out/.artifact-secured/secured/case-scoreboard.json"
+        secured_scoreboard = json.loads(secured_scoreboard_path.read_text())
+        secured_scoreboard["selection"] = []
+        secured_scoreboard_path.write_text(json.dumps(secured_scoreboard), encoding="utf-8")
+        scoreboard_result = subprocess.run(
+            [sys.executable, str(self.root / "e2e/journey/batch_summary.py"),
+             str(self.root / "drift-scoreboard"), str(self.root / "out"),
+             str(self.root / "out/.artifact-local"), str(self.root / "out/.artifact-secured"),
+             "S-268.1"],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        scoreboard_summary = (self.root / "drift-scoreboard/shared/summary.md").read_text()
+        self.assertNotEqual(scoreboard_result.returncode, 0)
+        self.assertIn("scoreboard selection does not match the producer selection", scoreboard_summary)
+        rejected_scoreboard_metadata = json.loads(
+            (self.root / "drift-scoreboard/secured/batch-metadata.json").read_text())
+        self.assertEqual(rejected_scoreboard_metadata["result"], "FAIL")
+        self.assertIn("scoreboard selection", rejected_scoreboard_metadata["failureReason"])
+
+        secured_scoreboard["selection"] = selected
+        secured_scoreboard_path.write_text(json.dumps(secured_scoreboard), encoding="utf-8")
+        secured_metadata_path = self.root / "out/.artifact-secured/secured/batch-metadata.json"
+        secured_metadata = json.loads(secured_metadata_path.read_text())
+        secured_metadata["requestedSelection"] = []
+        secured_metadata_path.write_text(json.dumps(secured_metadata), encoding="utf-8")
+        metadata_result = subprocess.run(
+            [sys.executable, str(self.root / "e2e/journey/batch_summary.py"),
+             str(self.root / "drift-metadata"), str(self.root / "out"),
+             str(self.root / "out/.artifact-local"), str(self.root / "out/.artifact-secured"),
+             "S-268.1"],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        metadata_summary = (self.root / "drift-metadata/shared/summary.md").read_text()
+        self.assertNotEqual(metadata_result.returncode, 0)
+        self.assertIn("requestedSelection does not match the producer selection", metadata_summary)
 
     # case: S-262.2
     def test_local_product_failure_fails_batch(self):
@@ -746,7 +843,7 @@ exec "$REAL_TAR" "$@"
         summary = subprocess.run(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
              str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
-             str(self.root / "secured-artifact")],
+             str(self.root / "secured-artifact"), "--selection", "S-268.1"],
             cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
         )
         self.assertNotEqual(summary.returncode, 0)
@@ -755,8 +852,8 @@ exec "$REAL_TAR" "$@"
         self.assertIn("full journey batch remains the gating verification", rendered)
         self.assertIn("- Result: PARTIAL", rendered)
 
-    # case: S-262.8
-    def test_partial_scoreboards_cannot_produce_a_passing_batch_verdict(self):
+    # case: S-262.17
+    def test_unrequested_partial_scoreboard_is_rejected_as_foreign_artifact(self):
         import json
         original_gates = {}
         for mode, fixture in self.scoreboard_fixtures.items():
@@ -768,9 +865,9 @@ exec "$REAL_TAR" "$@"
         result = self._run()
         self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
         summary = (self.root / "out/shared/summary.md").read_text()
-        self.assertIn("- Result: PARTIAL", summary)
-        self.assertIn("## Stage durations", summary)
-        self.assertIn("local=[S-023.1, S-024.1]", summary)
+        self.assertIn("- Result: FAIL", summary)
+        self.assertIn("producer selection is empty", summary)
+        self.assertNotIn("- Result: PARTIAL", summary)
 
         for mode, fixture in self.scoreboard_fixtures.items():
             scoreboard = json.loads(fixture.read_text())
