@@ -1,9 +1,12 @@
 import json
 import ast
+import http.client
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from urllib.parse import urlparse
 import urllib.request
@@ -15,8 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
                                configured_marketplace_source_kinds,
                                commit_publish_command,
+                               _assert_central_registry_author_namespace,
                                _publish_fixture_command,
                                _assert_catalogued_marketplace_failure,
+                               _set_marketplace_proxy_faults,
                                prepare_commit_project_fixture,
                                prepare_registry_commit_project_fixture,
                                publish_commit_update_fixture,
@@ -26,7 +31,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                validate_shared_failure, validate_unmounted_commit_response,
                                verify_registry_image_composition, wait_for_marketplace_ready)
 from service_steps import FlowGraph, Journey
-from marketplace_tamper_proxy import tamper_tarball
+from marketplace_tamper_proxy import Handler as MarketplaceTamperHandler, tamper_tarball
 from journey_dependencies import Dependency
 import service_runner
 from test_install_layout import create_test_install_container
@@ -43,6 +48,79 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_tamper_proxy_forwards_publish_post_and_keeps_fault_control_local(self):
+        received = {}
+
+        class UpstreamHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                received["path"] = self.path
+                received["content_type"] = self.headers.get("Content-Type")
+                received["body"] = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                self.send_response(201)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"published":true}')
+
+            def log_message(self, *_args):
+                return
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+        proxy = ThreadingHTTPServer(("127.0.0.1", 0), MarketplaceTamperHandler)
+        upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+        upstream_thread.start()
+        proxy_thread.start()
+        try:
+            boundary = "journey-boundary"
+            body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"pkg.tgz\"\r\n"
+                    "Content-Type: application/gzip\r\n\r\n").encode() + b"\x00archive\xff" + \
+                   f"\r\n--{boundary}--\r\n".encode()
+            with patch.dict(os.environ, {"MARKETPLACE_TAMPER_UPSTREAM":
+                                          f"http://127.0.0.1:{upstream.server_port}"}):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{proxy.server_port}/api/v1/packages/publish",
+                    data=body, method="POST",
+                    headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    self.assertEqual(response.status, 201)
+                    self.assertEqual(response.read(), b'{"published":true}')
+                self.assertEqual(received, {
+                    "path": "/api/v1/packages/publish",
+                    "content_type": f"multipart/form-data; boundary={boundary}",
+                    "body": body,
+                })
+
+                chunked_body = b"multipart-chunked-fixture"
+                chunked = http.client.HTTPConnection("127.0.0.1", proxy.server_port, timeout=3)
+                chunked.putrequest("POST", "/api/v1/packages/publish")
+                chunked.putheader("Content-Type", "application/octet-stream")
+                chunked.putheader("Transfer-Encoding", "chunked")
+                chunked.endheaders()
+                chunked.send(f"{len(chunked_body):x}\r\n".encode() + chunked_body + b"\r\n0\r\n\r\n")
+                chunked_response = chunked.getresponse()
+                self.assertEqual(chunked_response.status, 201)
+                chunked_response.read()
+                chunked.close()
+                self.assertEqual(received["body"], chunked_body)
+                self.assertEqual(received["content_type"], "application/octet-stream")
+
+                faults_request = urllib.request.Request(
+                    f"http://127.0.0.1:{proxy.server_port}/__journey/faults",
+                    data=b'{"@acme/widget":"integrity"}', method="POST",
+                    headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(faults_request, timeout=3) as response:
+                    self.assertEqual(response.status, 204)
+                self.assertEqual(received["path"], "/api/v1/packages/publish")
+        finally:
+            from marketplace_tamper_proxy import FAULTS
+            FAULTS.clear()
+            proxy.shutdown()
+            upstream.shutdown()
+            proxy.server_close()
+            upstream.server_close()
+            proxy_thread.join(timeout=1)
+            upstream_thread.join(timeout=1)
+
     def test_registry_image_composition_claim_checks_manifest_lock_layout_and_ready(self):
         with tempfile.TemporaryDirectory(prefix="registry-image-claim-") as temp:
             workspace = Path(temp)
@@ -100,6 +178,16 @@ class MarketplaceStepTests(unittest.TestCase):
                 })
             self.assertEqual(journey.result().status, "FAIL")
             opener.assert_not_called()
+
+    def test_marketplace_fault_control_targets_internal_proxy_not_public_gateway_source(self):
+        with patch("marketplace_steps.open_http", return_value=(204, b"", {})) as open_http_mock:
+            _set_marketplace_proxy_faults(Path("/journey/project"), {
+                "KB_JOURNEY_MARKETPLACE_REGISTRY_URL":
+                    "http://127.0.0.1:4000/api/v1/marketplace-registry",
+                "KB_JOURNEY_MARKETPLACE_PROXY_URL": "http://marketplace-tamper:8081",
+            }, lambda *_args, **_kwargs: None, {"@kb-labs/commit": "integrity"})
+        request = open_http_mock.call_args.args[1]
+        self.assertEqual(request.full_url, "http://marketplace-tamper:8081/__journey/faults")
 
     def test_not_found_source_expectations_come_from_kb_create_status(self):
         self.assertEqual(configured_marketplace_source_kinds({"marketplaceSources": [
@@ -175,7 +263,7 @@ class MarketplaceStepTests(unittest.TestCase):
             commands = []
             source_version = commit_fixture_source_version(Path(__file__).resolve().parents[2])
 
-            def runner(command, *, cwd, env, capture_output, text, timeout):
+            def runner(command, *, cwd, env, capture_output, text, timeout, input=None):
                 commands.append(tuple(command))
                 args = command[1:]
                 if args[:3] == ["marketplace", "plugins", "doctor"]:
@@ -297,14 +385,44 @@ class MarketplaceStepTests(unittest.TestCase):
             (project / ".kb" / "kb.config.json").write_text("{}\n")
             workspace = root / "workspace"
             calls = []
+            kb_home = root / ".kb"
+            kb_home.mkdir()
+            session_file = kb_home / "session.json"
+            platform_session = {"gatewayUrl": "http://platform-gateway.test:4000",
+                                "accessToken": "platform-token", "refreshToken": "platform-refresh",
+                                "expiresAt": 9999999999999, "email": "platform-user@example.test",
+                                "tenantId": "platform-tenant"}
+            previous_store = {"version": 1, "sessions": [platform_session]}
+            previous_bytes = (json.dumps(previous_store, indent=2) + "\n").encode()
+            session_file.write_bytes(previous_bytes)
 
-            def runner(command, *, cwd, env, capture_output, text, timeout):
+            def runner(command, *, cwd, env, capture_output, text, timeout, input=None):
                 calls.append((tuple(command), cwd, env.copy()))
-                if command[0] == "node":
+                args = command[1:]
+                if args[:3] == ["auth", "login", "--gateway-url"]:
+                    central_session = {"gatewayUrl": "http://127.0.0.1:4010",
+                                       "accessToken": "hub-token", "refreshToken": "hub-refresh",
+                                       "expiresAt": 9999999999999, "email": "hub-author@journey.example",
+                                       "tenantId": "journey-hub-author"}
+                    session_file.write_text(json.dumps({"version": 1,
+                                                        "sessions": [platform_session, central_session]}))
+                    return subprocess.CompletedProcess(command, 0, json.dumps({
+                        "ok": True, "data": {"gatewayUrl": "http://127.0.0.1:4010"},
+                    }), "")
+                if args[:2] == ["auth", "status"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
+                        "sessions": [
+                            {"authenticated": True, "gatewayUrl": "http://platform-gateway.test:4000",
+                             "email": "platform-user@example.test"},
+                            {"authenticated": True, "gatewayUrl": "http://127.0.0.1:4010",
+                             "email": "hub-author@journey.example"},
+                        ],
+                    }}), "")
+                if args[:2] == ["hub", "publish"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({
                         "ok": True, "data": {"version": "2.120.1"},
                     }), "")
-                if command[0] == "kb":
+                if args[:2] == ["marketplace", "install"]:
                     lock = {"schema": "kb.marketplace/3", "plugins": {
                         "@kb-labs/commit": {"version": "2.120.1", "package": "@kb-labs/commit",
                             "source": "marketplace", "marketplaceSource": "registry",
@@ -318,23 +436,62 @@ class MarketplaceStepTests(unittest.TestCase):
                 self.fail(f"unexpected Registry fixture command: {command}")
 
             env = {"HOME": str(root), "KB_JOURNEY_WORKSPACE_ROOT": str(workspace),
+                   "KB_HOME": str(kb_home),
+                   "KB_JOURNEY_MARKETPLACE_GATEWAY_URL": "http://127.0.0.1:4010",
+                   "KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://127.0.0.1:4010/api/v1/marketplace-registry",
                    "KB_JOURNEY_MARKETPLACE_PUBLISH_URL": "http://registry.test/api/v1",
-                   "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey"}
+                   "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey",
+                   "KB_JOURNEY_MARKETPLACE_AUTHOR_EMAIL": "hub-author@journey.example",
+                   "KB_JOURNEY_MARKETPLACE_AUTHOR_PASSWORD": "fixture-password"}
             with patch("marketplace_steps.wait_for_marketplace_ready"), \
+                    patch("marketplace_steps.verify_registry_image_composition"), \
+                    patch("marketplace_steps._assert_central_registry_author_namespace"), \
+                    patch("marketplace_steps.open_http", return_value=(200, b'{"status":"found"}', {})), \
                     patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
-                journey = Journey("local", "registry-commit-fixture")
+                journey = Journey("secured", "registry-commit-fixture")
                 entry = prepare_registry_commit_project_fixture(journey, project, "http://verdaccio.test",
                                                                  env, runner)
 
+            self.assertIsNotNone(entry, journey.steps)
             self.assertEqual(entry["marketplaceSource"], "registry")
             self.assertEqual(entry["signatureStatus"], "verified")
-            workspace_cli = str(workspace / "cli" / "bin" / "dist" / "bin.js")
-            self.assertEqual([call[0] for call in calls if call[0][0] == "node"], [
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/commit"), "--json"),
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"),
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"),
+            self.assertEqual([call[0][1:] for call in calls if call[0][1:3] == ("hub", "publish")], [
+                ("hub", "publish", "--path", str(workspace / "plugins/commit"), "--json"),
+                ("hub", "publish", "--path", str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"),
+                ("hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"),
             ])
+            self.assertEqual(sum(call[0][1:3] == ("auth", "login") for call in calls), 1)
+            self.assertEqual(session_file.read_bytes(), previous_bytes)
             self.assertEqual(journey.result().status, "PASS")
+
+    def test_registry_author_namespace_uses_the_central_hub_session_by_gateway_origin(self):
+        with tempfile.TemporaryDirectory(prefix="kb-central-author-session-") as directory:
+            kb_home = Path(directory) / ".kb"
+            kb_home.mkdir()
+            (kb_home / "session.json").write_text(json.dumps({"version": 1, "sessions": [
+                {"gatewayUrl": "http://platform-gateway.test:4000", "accessToken": "platform-token",
+                 "email": "platform-user@example.test", "tenantId": "platform-tenant"},
+                {"gatewayUrl": "http://hub-gateway.test:4010", "accessToken": "hub-token",
+                 "email": "hub-author@journey.example", "tenantId": "journey-hub-author"},
+            ]}))
+            captured = {}
+
+            def fake_open_http(_opener, request, **_kwargs):
+                captured["url"] = request.full_url
+                captured["authorization"] = request.get_header("Authorization")
+                return (200, json.dumps([
+                    {"name": name, "authorNamespaceId": "journey-hub-author", "authorHandle": "journey"}
+                    for name in ("@kb-labs/commit", "@kb-labs/e2e-analytics-emitter", "@kb-labs/qa")
+                ]).encode(), {})
+
+            env = {"KB_HOME": str(kb_home),
+                   "KB_JOURNEY_MARKETPLACE_GATEWAY_URL": "http://hub-gateway.test:4010"}
+            with patch("marketplace_steps.open_http", side_effect=fake_open_http):
+                _assert_central_registry_author_namespace(Path(directory), env)
+
+            self.assertEqual(captured["url"],
+                             "http://hub-gateway.test:4010/api/v1/marketplace-registry/api/v1/my/packages")
+            self.assertEqual(captured["authorization"], "Bearer hub-token")
 
     def test_policy_diagnostic_step_restores_config_and_proves_blocked_fixture_and_first_party_cli(self):
         with tempfile.TemporaryDirectory(prefix="kb-policy-journey-unit-") as directory:
