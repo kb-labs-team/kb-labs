@@ -51,8 +51,22 @@ def _read_scoreboard(directory: Path) -> dict[str, Any]:
     return value
 
 
-def mode_is_gating(directory: Path, mode: str) -> bool:
-    return mode in release_gate_modes(_read_scoreboard(directory))
+def requested_selection(value: str) -> list[str]:
+    selection = [item.strip() for item in value.split(",") if item.strip()]
+    if len(selection) != len(set(selection)):
+        raise ValueError("requested case selection contains duplicate IDs")
+    return sorted(selection)
+
+
+def record_scoreboard_selection(path: Path, selected_cases: str) -> None:
+    value = _read_scoreboard(path.parent)
+    current = value["selection"]
+    value["selection"] = sorted(set(current).union(requested_selection(selected_cases)))
+    _write_metadata(path, value)
+
+
+def mode_is_gating(directory: Path, mode: str, selected_cases: str = "") -> bool:
+    return bool(requested_selection(selected_cases)) or mode in release_gate_modes(_read_scoreboard(directory))
 
 
 def _write_metadata(path: Path, value: dict[str, Any]) -> None:
@@ -106,7 +120,8 @@ def verify_candidate_archive(metadata_path: Path, archive: Path) -> None:
         raise CandidateArchiveError("candidate archive digest does not match producer metadata")
 
 
-def write_mode_metadata(source: Path, destination: Path, mode: str, result: str, elapsed: int) -> None:
+def write_mode_metadata(source: Path, destination: Path, mode: str, result: str, elapsed: int,
+                        selected_cases: str = "") -> None:
     if mode not in {"local", "secured"} or result not in {"PASS", "FAIL", "NO_SELECTED_CLAIMS"}:
         raise ValueError("mode metadata has an unsupported mode or result")
     value = json.loads(source.read_text(encoding="utf-8"))
@@ -116,6 +131,7 @@ def write_mode_metadata(source: Path, destination: Path, mode: str, result: str,
     value["stageDurationsSeconds"] = durations
     value["mode"] = mode
     value["result"] = result
+    value["requestedSelection"] = requested_selection(selected_cases)
     _write_metadata(destination, value)
 
 
@@ -201,13 +217,25 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path) -> int:
         mode: metadata.get("result")
         for mode, metadata in mode_metadata.items()
     }
+    requested_selections = {
+        mode: metadata.get("requestedSelection", [])
+        for mode, metadata in mode_metadata.items()
+    }
+    if any(not isinstance(selection, list) or any(not isinstance(item, str) for item in selection)
+           for selection in requested_selections.values()):
+        raise ValueError("batch mode metadata has an invalid requestedSelection")
     partial = (any(bool(board["selection"]) for board in scoreboards.values() if board is not None)
-               or any(mode_without_selection.values()))
+               or any(mode_without_selection.values())
+               or any(bool(selection) for selection in requested_selections.values()))
     if partial:
-        selections = "; ".join(
-            f"{mode}=[{', '.join(scoreboards[mode]['selection'])}]"
+        selected_by_mode = {
+            mode: sorted(set(scoreboards[mode]["selection"]) | set(requested_selections[mode]))
             for mode in ("local", "secured")
             if scoreboards[mode] is not None
+            and (scoreboards[mode]["selection"] or requested_selections[mode])
+        }
+        selections = "; ".join(
+            f"{mode}=[{', '.join(selection)}]" for mode, selection in selected_by_mode.items()
         )
         lines = ["# Journey batch", "", f"- Commit: `{run['commit']}`",
                  f"- Baseline: `{run['baseline']}`", f"- Build base: `{run['buildBase']}`", "",
@@ -302,9 +330,10 @@ def main(argv: list[str]) -> int:
             print(f"journey batch metadata could not be written: {error}; next: rerun e2e/journey/batch.sh prepare",
                   file=sys.stderr)
             return 1
-    if len(argv) == 7 and argv[1] == "mode-metadata":
+    if len(argv) in {7, 8} and argv[1] == "mode-metadata":
         try:
-            write_mode_metadata(Path(argv[2]), Path(argv[3]), argv[4], argv[5], int(argv[6]))
+            write_mode_metadata(Path(argv[2]), Path(argv[3]), argv[4], argv[5], int(argv[6]),
+                                argv[7] if len(argv) == 8 else "")
             return 0
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
             print(f"journey mode metadata could not be written: {error}; next: rerun e2e/journey/batch.sh mode {argv[4]}",
@@ -317,7 +346,7 @@ def main(argv: list[str]) -> int:
         output = Path(argv[5])
         selected_cases = argv[6]
         try:
-            return 0 if mode_is_gating(mode_dir, mode) else 1
+            return 0 if mode_is_gating(mode_dir, mode, selected_cases) else 1
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
             command = ["e2e/journey/batch.sh", "mode", mode, str(producer), str(output)]
             if selected_cases:
@@ -326,6 +355,14 @@ def main(argv: list[str]) -> int:
             print(f"journey mode gate could not be read: {error}; next: {next_command}",
                   file=sys.stderr)
             return 2
+    if len(argv) == 4 and argv[1] == "record-selection":
+        try:
+            record_scoreboard_selection(Path(argv[2]), argv[3])
+            return 0
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+            print(f"journey scoreboard selection could not be recorded: {error}; next: rerun the selected journey",
+                  file=sys.stderr)
+            return 1
     if len(argv) != 5:
         print("usage: batch_summary.py <output> <producer-artifact> <local-artifact> <secured-artifact>",
               file=sys.stderr)

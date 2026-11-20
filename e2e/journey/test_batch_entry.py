@@ -511,6 +511,53 @@ exec "$REAL_TAR" "$@"
         import json
         self.assertEqual(json.loads((mode_dir / "batch-metadata.json").read_text())["result"], "FAIL")
 
+    # case: S-262.16
+    def test_selected_secured_runner_crash_fails_the_mode_and_partial_summary(self):
+        import json
+
+        selected = "S-268.1,S-268.11"
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env,
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+
+        local = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--cases", selected],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_LOCAL='["service-marketplace-registry:local"]'),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(local.returncode, 0, local.stderr + local.stdout)
+
+        secured = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "secured",
+             str(producer), str(self.root / "secured-artifact"), "--cases", selected],
+            cwd=self.root,
+            env={**self.env, "SELECTED_RUNNERS_SECURED": '["service-marketplace-registry:secured"]',
+                 "FAIL_MODE": "secured", "FAIL_KIND": "product"},
+            text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(secured.returncode, 0, secured.stderr + secured.stdout)
+        secured_metadata = json.loads(
+            (self.root / "secured-artifact/secured/batch-metadata.json").read_text())
+        self.assertEqual(secured_metadata["result"], "FAIL")
+        self.assertEqual(secured_metadata["requestedSelection"], ["S-268.1", "S-268.11"])
+
+        summary = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
+             str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
+             str(self.root / "secured-artifact")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        rendered = (self.root / "summary/shared/summary.md").read_text()
+        self.assertNotEqual(summary.returncode, 0, summary.stderr + rendered)
+        self.assertIn("secured=[S-268.1, S-268.11]", rendered)
+        self.assertIn("- Result: PARTIAL", rendered)
+        self.assertNotIn("- Result: PASS", rendered)
+
     # case: S-262.2
     def test_local_product_failure_fails_batch(self):
         result = self._run("local", failure_kind="product")

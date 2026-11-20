@@ -237,10 +237,16 @@ run_mode() {
   if [ ! -s "$mode_dir/case-scoreboard.json" ]; then
     scoreboard_missing=1
     result=FAIL
+  elif [ -n "$selected_cases" ]; then
+    if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" record-selection \
+      "$mode_dir/case-scoreboard.json" "$selected_cases"; then
+      echo "journey $mode mode could not preserve its requested selection in the scoreboard; next: $(next_runner_command)" >&2
+      return 1
+    fi
   fi
   source_meta="$shared/batch-metadata.json"
   "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
-    "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" || return 1
+    "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" "$selected_cases" || return 1
   if [ "$scoreboard_missing" -eq 1 ]; then
     echo "journey $mode mode produced no case scoreboard (entry exited with $rc); see $mode_dir/batch.log for the cause. Next: $(next_runner_command)" >&2
     return 1

@@ -19,7 +19,7 @@ from dispatch_registry import RUNNERS
 from scoreboard import write_scoreboards
 from journey_resources import case_catalog_root, journey_module
 from invocations import print_report_text, write_report_json, write_report_text
-from journey_selection import JourneySelectionError, read_journey_selection, use_journey_selection
+from journey_selection import JourneySelection, JourneySelectionError, read_journey_selection, use_journey_selection
 
 
 class RunnerSignalTermination(RuntimeError):
@@ -58,7 +58,8 @@ def write_case_scoreboards(summary_path: str | Path) -> None:
     write_scoreboards(report_dir, case_catalog_root())
 
 
-def record_runner_failure(summary_path: str | Path, mode: str, error: BaseException, phase: str) -> None:
+def record_runner_failure(summary_path: str | Path, mode: str, error: BaseException, phase: str,
+                          selection: JourneySelection | None = None) -> None:
     name = "journey selection metadata" if phase == "selection" else "runner startup" if phase == "startup" else "runner crash"
     step = {
         "name": name,
@@ -86,11 +87,26 @@ def record_runner_failure(summary_path: str | Path, mode: str, error: BaseExcept
     result["steps"].append(step)
     result["status"] = "FAIL"
     result["first_failure"] = result.get("first_failure") or step
+    if selection and selection.requested:
+        case_run = result.get("case_run")
+        if not isinstance(case_run, dict):
+            case_run = {
+                "schema": "kb.qa-case-run/v2",
+                "runId": result.get("run_id", f"runner-{mode}"),
+                "mode": mode,
+                "claims": [],
+            }
+        recorded_selection = case_run.get("selection", [])
+        if not isinstance(recorded_selection, list) or any(not isinstance(item, str) for item in recorded_selection):
+            recorded_selection = []
+        case_run["selection"] = sorted(set(recorded_selection).union(selection.requested))
+        result["case_run"] = case_run
     write_report_json(target, result)
 
 
 def _record_process_failure(summary_path: str | Path, mode: str, error: BaseException,
-                            phase: str, namespace: dict | None = None) -> None:
+                            phase: str, namespace: dict | None = None,
+                            selection: JourneySelection | None = None) -> None:
     report = Path(summary_path)
     reason = _failure_message(error)
     diagnostic = report.with_name("journey-diagnostics.log")
@@ -114,7 +130,7 @@ def _record_process_failure(summary_path: str | Path, mode: str, error: BaseExce
                           stream=sys.stderr, flush=True)
 
     try:
-        record_runner_failure(summary_path, mode, error, phase)
+        record_runner_failure(summary_path, mode, error, phase, selection)
         write_case_scoreboards(summary_path)
     except BaseException as write_error:
         print_report_text(f"Journey runner {phase} failed; could not write result: {write_error}",
@@ -125,7 +141,8 @@ def _record_process_failure(summary_path: str | Path, mode: str, error: BaseExce
     print_report_text(message, stream=sys.stdout, flush=True)
 
 
-def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> int:
+def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str,
+               selection: JourneySelection | None = None) -> int:
     namespace = None
     phase = "startup"
     exit_code = 0
@@ -162,7 +179,7 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
             except BaseException as dump_error:
                 print_report_text(f"Journey state dump failed: {dump_error.__class__.__name__}: {dump_error}",
                                   stream=sys.stderr, flush=True)
-            _record_process_failure(summary_path, mode, error, phase, namespace)
+            _record_process_failure(summary_path, mode, error, phase, namespace, selection)
             exit_code = 1
     finally:
         cleanup = namespace.get("cleanup") if namespace is not None else None
@@ -170,7 +187,7 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
             try:
                 cleanup()
             except BaseException as cleanup_error:
-                _record_process_failure(summary_path, mode, cleanup_error, "crash", namespace)
+                _record_process_failure(summary_path, mode, cleanup_error, "crash", namespace, selection)
                 exit_code = 1
     return exit_code
 
@@ -178,6 +195,7 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
 def main() -> int:
     summary_path = journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")
     mode = "secured" if journey_value("KB_JOURNEY_VARIANT", "default").endswith("secured") else "local"
+    selection = None
     try:
         selection = read_journey_selection(os.environ, strict=True)
         with use_journey_selection(selection):
@@ -186,12 +204,12 @@ def main() -> int:
                 raise ValueError(f"unknown registered journey runner {selection.runner_selector!r}")
             runner_path = journey_module("runner.py")
             mode = runner.mode
-            return run_runner(runner_path, summary_path, mode)
+            return run_runner(runner_path, summary_path, mode, selection)
     except BaseException as error:
         if isinstance(error, SystemExit) and error.code in (None, 0):
             return 0
         phase = "selection" if isinstance(error, JourneySelectionError) else "crash"
-        _record_process_failure(summary_path, mode, error, phase)
+        _record_process_failure(summary_path, mode, error, phase, selection=selection)
         return 1
 
 
