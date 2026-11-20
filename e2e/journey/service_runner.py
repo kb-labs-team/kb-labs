@@ -49,6 +49,7 @@ from invocations import (
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import (prepare_commit_project_fixture, prepare_registry_commit_project_fixture,
                                run_marketplace_steps, run_ordered_source_journey_steps)
+from central_registry_gateway import CentralRegistryGatewayFixture
 from marketplace_steps import _registry_version, _output
 from dispatch_registry import MARKETPLACE_REGISTRY_LANE, lane_for_runner
 from adapter_defaults_steps import _config_difference_keys, run_adapter_default_steps
@@ -1346,10 +1347,30 @@ def main() -> int:
             flow_env["KB_JOURNEY_PLATFORM_ROOT"] = journey_value("KB_JOURNEY_PLATFORM_ROOT", required=True)
             flow_env["KB_JOURNEY_REGISTRY"] = journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
             # This runner has its own installed project/platform lifecycle; its Marketplace lock is not the shared npm fixture lock.
-            entry = prepare_registry_commit_project_fixture(journey, project_root, registry, flow_env, run_command)
-            if entry is None:
-                return "Registry lane did not capture the verified Commit provenance entry"
-            run_ordered_source_journey_steps(journey, project_root, flow_env, run_command)
+            platform_root = active_platform_root(Path(flow_env["KB_JOURNEY_PLATFORM_ROOT"]))
+            central_gateway = CentralRegistryGatewayFixture.start(
+                platform_root,
+                flow_env.get("KB_JOURNEY_MARKETPLACE_SERVICE_URL", ""),
+                flow_env.get("KB_JOURNEY_REGISTRY_INTERNAL_SECRET", ""),
+                port=4010,
+                runner=run_command,
+            )
+            try:
+                flow_env["KB_JOURNEY_MARKETPLACE_GATEWAY_URL"] = central_gateway.url
+                flow_env["KB_JOURNEY_MARKETPLACE_REGISTRY_URL"] = \
+                    f"{central_gateway.url}/api/v1/marketplace-registry"
+                flow_env["KB_JOURNEY_MARKETPLACE_PUBLISH_URL"] = \
+                    f"{flow_env['KB_JOURNEY_MARKETPLACE_REGISTRY_URL']}/api/v1"
+                flow_env["KB_JOURNEY_MARKETPLACE_AUTHOR_EMAIL"] = central_gateway.email
+                store_report_secret(flow_env, "KB_JOURNEY_MARKETPLACE_AUTHOR_PASSWORD",
+                                    central_gateway.password, "isolated central Hub author password")
+                central_gateway.verify_anonymous_registry_route()
+                entry = prepare_registry_commit_project_fixture(journey, project_root, registry, flow_env, run_command)
+                if entry is None:
+                    return "Registry lane did not capture the verified Commit provenance entry"
+                run_ordered_source_journey_steps(journey, project_root, flow_env, run_command)
+            finally:
+                central_gateway.stop()
             return None
 
         graph.flow("Registry ordered-source Marketplace assertions", "marketplace-registry",

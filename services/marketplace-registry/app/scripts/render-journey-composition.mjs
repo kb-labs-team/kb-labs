@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const { validateProductConfig } = await import(path.join(root, 'core/config/dist/index.js'));
-const { createRegistryJourneyConfig } = await import('./registry-journey-config.mjs');
+const { createRegistryJourneyConfig, createRegistryJourneyTopology } = await import('./registry-journey-config.mjs');
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -21,9 +21,14 @@ if (!outputRoot || !registryUrl) {
 }
 
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+const topology = createRegistryJourneyTopology({
+  gatewayUrl: 'http://127.0.0.1:4010',
+  registryBackendUrl: registryUrl,
+  proxyUrl: 'http://marketplace-tamper:8081',
+});
 const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
 const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-const config = createRegistryJourneyConfig({ registryUrl, signingPublicKey: publicPem });
+const config = createRegistryJourneyConfig({ registryUrl: topology.marketplaceSourceUrl, signingPublicKey: publicPem });
 const configValidation = validateProductConfig('marketplace', config.marketplace);
 if (!configValidation.ok) {
   process.stderr.write(`Registry journey config is invalid: ${JSON.stringify(configValidation.errors)}\n`);
@@ -39,7 +44,11 @@ await writeFile(path.join(kbRoot, 'registry.env'), `KB_REGISTRY_SIGNING_KEY='${p
 const composeOverlay = `services:
   runner:
     environment:
-      KB_JOURNEY_MARKETPLACE_PUBLISH_URL: ${JSON.stringify(`${registryUrl}/api/v1`)}
+      KB_JOURNEY_MARKETPLACE_REGISTRY_URL: ${JSON.stringify(topology.marketplaceSourceUrl)}
+      KB_JOURNEY_MARKETPLACE_SERVICE_URL: ${JSON.stringify(topology.marketplaceProxyUrl)}
+      KB_JOURNEY_MARKETPLACE_PROXY_URL: ${JSON.stringify(topology.marketplaceProxyUrl)}
+      KB_JOURNEY_MARKETPLACE_GATEWAY_URL: http://127.0.0.1:4010
+      KB_JOURNEY_MARKETPLACE_PUBLISH_URL: ${JSON.stringify(topology.marketplacePublishUrl)}
       KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE: journey
       KB_JOURNEY_REGISTRY_READY_URL: http://marketplace-registry:5071/ready
       KB_JOURNEY_REGISTRY_INTERNAL_SECRET: journey-marketplace-internal-secret
@@ -66,7 +75,7 @@ const composeOverlay = `services:
     environment:
       KB_REGISTRY_HOST: 0.0.0.0
       KB_REGISTRY_PORT: "5071"
-      KB_REGISTRY_URL: http://marketplace-tamper:8081
+      KB_REGISTRY_URL: ${JSON.stringify(topology.registryAdvertisedBaseUrl)}
       KB_STATE_DAEMON_URL: http://marketplace-state:7777
       GATEWAY_INTERNAL_SECRET: journey-marketplace-internal-secret
     volumes:
@@ -78,7 +87,7 @@ const composeOverlay = `services:
     image: python:3.12-alpine
     command: ["python3", "/fixture/marketplace_tamper_proxy.py"]
     environment:
-      MARKETPLACE_TAMPER_UPSTREAM: http://marketplace-registry:5071
+      MARKETPLACE_TAMPER_UPSTREAM: ${JSON.stringify(topology.tamperUpstreamUrl)}
     volumes:
       - ${JSON.stringify(`${path.join(root, 'e2e/journey/marketplace_tamper_proxy.py')}:/fixture/marketplace_tamper_proxy.py:ro`)}
     depends_on:
@@ -91,5 +100,7 @@ await writeFile(composeOverlayPath, composeOverlay, { mode: 0o600 });
 process.stdout.write(`${JSON.stringify({
   composeOverlayPath,
   configOverridePath,
+  marketplaceSourceUrl: topology.marketplaceSourceUrl,
+  marketplaceProxyUrl: topology.marketplaceProxyUrl,
   signingPublicKeyBase64: Buffer.from(publicPem).toString('base64'),
 })}\n`);

@@ -8,9 +8,12 @@ from project_service_path import project_service_path
 import json
 import hashlib
 import os
+import stat
 import tempfile
 import time
 import urllib.request
+from contextlib import contextmanager
+from urllib.parse import urlencode
 from pathlib import Path
 from typing import Callable
 
@@ -52,15 +55,95 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     author_handle = env.get("KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE")
     if not registry_url or not author_handle:
         raise RuntimeError("journey Registry publish configuration is missing; enable the marketplace-registry lane")
-    workspace_cli = workspace_root / "cli" / "bin" / "dist" / "bin.js"
     publish = _publish_fixture_command(workspace_root, package_path)
-    command = ["node", str(workspace_cli), *publish]
+    command = kb_command(publish)
     publish_env = dict(env)
     publish_env["KB_REGISTRY_URL"] = registry_url
     publish_env["KB_REGISTRY_AUTHOR_HANDLE"] = author_handle
-    return run_hermetic_cli(
-        command, cwd=workspace_root, env=publish_env, runner=runner,
+    return run_with_runner(runner, command, cwd=workspace_root, env=publish_env, timeout=300)
+
+
+@contextmanager
+def _central_author_session(workspace: Path, env: dict[str, str], runner: CommandRunner):
+    """Log into the isolated Hub Gateway while preserving other origin-scoped sessions."""
+    gateway = env.get("KB_JOURNEY_MARKETPLACE_GATEWAY_URL")
+    email = env.get("KB_JOURNEY_MARKETPLACE_AUTHOR_EMAIL")
+    password = env.get("KB_JOURNEY_MARKETPLACE_AUTHOR_PASSWORD")
+    if not gateway or not email or not password:
+        raise RuntimeError("central Hub author fixture credentials are unavailable")
+    kb_home = Path(env.get("KB_HOME", str(Path(env.get("HOME", "~")).expanduser() / ".kb")))
+    session_file = kb_home / "session.json"
+    previous_session = session_file.read_bytes() if session_file.is_file() else None
+    previous_value = json.loads(previous_session) if previous_session else None
+    if isinstance(previous_value, dict) and isinstance(previous_value.get("sessions"), list):
+        previous_sessions = previous_value["sessions"]
+    elif isinstance(previous_value, dict) and isinstance(previous_value.get("gatewayUrl"), str):
+        previous_sessions = [previous_value]
+    else:
+        previous_sessions = []
+    login = kb_command(["auth", "login", "--gateway-url", gateway, "--email", email,
+                        "--password-stdin", "--json"])
+    try:
+        result = _run(login, cwd=workspace, env=env, runner=runner, input=password + "\n")
+        if result.returncode != 0:
+            raise RuntimeError("installed CLI could not log into the isolated central Hub Gateway")
+        status = kb_command(["auth", "status", "--json"])
+        sessions = _json(_run(status, cwd=workspace, env=env, runner=runner), status).get("sessions")
+        central_sessions = [session for session in sessions if isinstance(session, dict)
+                            and session.get("authenticated") is True
+                            and session.get("gatewayUrl", "").rstrip("/") == gateway.rstrip("/")
+                            and session.get("email") == email] if isinstance(sessions, list) else []
+        preserved = {(session.get("gatewayUrl"), session.get("email")) for session in sessions
+                     if isinstance(session, dict)} if isinstance(sessions, list) else set()
+        if len(central_sessions) != 1 or any(
+                (session.get("gatewayUrl"), session.get("email")) not in preserved
+                for session in previous_sessions if isinstance(session, dict)):
+            raise RuntimeError("installed CLI did not retain the central Hub author session")
+        yield
+    finally:
+        if previous_session is None:
+            try:
+                session_file.unlink()
+            except FileNotFoundError:
+                pass
+        else:
+            session_file.parent.mkdir(parents=True, exist_ok=True)
+            session_file.write_bytes(previous_session)
+            session_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def _assert_central_registry_author_namespace(workspace: Path, env: dict[str, str]) -> None:
+    gateway = env["KB_JOURNEY_MARKETPLACE_GATEWAY_URL"].rstrip("/")
+    session_path = Path(env.get("KB_HOME", str(Path(env.get("HOME", "~")).expanduser() / ".kb"))) / "session.json"
+    saved = json.loads(session_path.read_text(encoding="utf-8"))
+    sessions = saved.get("sessions") if isinstance(saved, dict) else None
+    if not isinstance(sessions, list) and isinstance(saved, dict):
+        sessions = [saved]
+    session = next((item for item in sessions or [] if isinstance(item, dict)
+                    and item.get("gatewayUrl", "").rstrip("/") == gateway), None)
+    if not isinstance(session, dict):
+        raise RuntimeError("central Hub author session is missing from origin-scoped CLI sessions")
+    token = session.get("accessToken")
+    namespace = session.get("tenantId")
+    if (not isinstance(token, str) or not token or not isinstance(namespace, str) or not namespace
+            or session.get("gatewayUrl", "").rstrip("/") != gateway):
+        raise RuntimeError("central author session does not contain its expected origin and namespace")
+    request = urllib.request.Request(
+        f"{gateway}/api/v1/marketplace-registry/api/v1/my/packages",
+        headers={"Authorization": f"Bearer {token}"},
     )
+    status, body, _ = open_http(urllib.request.urlopen, request, timeout=15, env=env)
+    try:
+        entries = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("central Registry author package list returned invalid JSON") from error
+    if status != 200 or not isinstance(entries, list):
+        raise RuntimeError(f"central Registry author package list failed with HTTP {status}")
+    expected_names = {"@kb-labs/commit", "@kb-labs/e2e-analytics-emitter", "@kb-labs/qa"}
+    owned = {entry.get("name") for entry in entries if isinstance(entry, dict)
+             and entry.get("authorNamespaceId") == namespace and entry.get("authorHandle") == "journey"}
+    if not expected_names.issubset(owned):
+        raise RuntimeError("central Registry package ownership did not match the authenticated Hub namespace")
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandRunner,
@@ -521,16 +604,31 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
     def install_fixture() -> None:
         wait_for_marketplace_ready(project, base_env, runner)
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
-        published = _json(_publish_workspace_fixture(workspace, "plugins/commit", base_env, runner),
-                           commit_publish_command(workspace))
-        version = published.get("version")
-        if not isinstance(version, str) or not version:
-            raise RuntimeError("kb hub publish did not return the published Commit version")
-        for fixture_path in ("e2e/journey/fixtures/analytics-emitter", "plugins/qa"):
-            publication = _json(_publish_workspace_fixture(workspace, fixture_path, base_env, runner),
-                                _publish_fixture_command(workspace, fixture_path))
-            if not isinstance(publication.get("version"), str) or not publication.get("version"):
-                raise RuntimeError(f"kb hub publish did not return a version for {fixture_path}")
+        with _central_author_session(workspace, base_env, runner):
+            published = _json(_publish_workspace_fixture(workspace, "plugins/commit", base_env, runner),
+                              commit_publish_command(workspace))
+            version = published.get("version")
+            if not isinstance(version, str) or not version:
+                raise RuntimeError("kb hub publish did not return the published Commit version")
+            for fixture_path in ("e2e/journey/fixtures/analytics-emitter", "plugins/qa"):
+                publication = _json(_publish_workspace_fixture(workspace, fixture_path, base_env, runner),
+                                    _publish_fixture_command(workspace, fixture_path))
+                if not isinstance(publication.get("version"), str) or not publication.get("version"):
+                    raise RuntimeError(f"kb hub publish did not return a version for {fixture_path}")
+            _assert_central_registry_author_namespace(workspace, base_env)
+        source_url = base_env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "").rstrip("/")
+        if not source_url:
+            raise RuntimeError("Marketplace Registry Gateway source URL is missing")
+        query = urlencode({"identity": "@kb-labs/commit"})
+        resolve_request = urllib.request.Request(f"{source_url}/api/v1/resolve?{query}")
+        status, resolve_body, _ = open_http(urllib.request.urlopen, resolve_request, timeout=30, env=base_env)
+        try:
+            anonymous_resolution = json.loads(resolve_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RuntimeError("anonymous Gateway Registry resolution returned invalid JSON") from error
+        if status != 200 or not isinstance(anonymous_resolution, dict) \
+                or anonymous_resolution.get("status") != "found":
+            raise RuntimeError(f"anonymous Gateway Registry resolution failed with HTTP {status}")
         command = ["marketplace", "install", "@kb-labs/commit", "--json"]
         result = _json(_run(kb_command(command), cwd=project, env=base_env, runner=runner), command)
         installed = result.get("installed")
@@ -565,7 +663,7 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
 
 def _set_marketplace_proxy_faults(project: Path, env: dict[str, str], runner: CommandRunner,
                                   faults: dict[str, str]) -> None:
-    proxy = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL")
+    proxy = env.get("KB_JOURNEY_MARKETPLACE_PROXY_URL")
     if not proxy:
         raise RuntimeError("Marketplace Registry mirror URL was not provided by the journey composition")
     request = urllib.request.Request(
