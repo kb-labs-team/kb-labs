@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import shutil
+import socket
 import tempfile
 import time
 from urllib.parse import urlencode
@@ -20,6 +21,15 @@ import redaction
 
 def _json_yaml(value: object) -> str:
     return json.dumps(value, separators=(",", ":"))
+
+
+def _loopback_port_available(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+        return True
 
 
 def _fixture_config(*, port: int, gateway_entry: Path, proxy_url: str,
@@ -118,6 +128,7 @@ class CentralRegistryGatewayFixture:
                 path.chmod(0o600)
             fixture = cls(fixture_root, f"http://127.0.0.1:{port}",
                           "hub-author@journey.example", password, config_path, runner)
+            port_available_before_start = _loopback_port_available(port)
             command = ["kb-dev", "start", "gateway", "--config", str(config_path), "--net-offset", "0"]
             result = run_with_runner(runner, command, cwd=fixture_root, env=dict(os.environ), timeout=90)
             if result.returncode != 0:
@@ -132,8 +143,18 @@ class CentralRegistryGatewayFixture:
                                        env=diagnostics_env, timeout=30)
                 raw_details = "\n".join((logs.stdout + logs.stderr).splitlines()[-12:]).strip()
                 details = redaction.redact_text(raw_details, diagnostics_env)
-                suffix = f": {details}" if details else ""
-                raise RuntimeError(f"could not start the isolated central Registry Gateway fixture{suffix}")
+                raw_start_output = "\n".join((result.stdout + result.stderr).splitlines()[-12:]).strip()
+                start_output = redaction.redact_text(raw_start_output, diagnostics_env)
+                node_path = shutil.which("node") or "unavailable"
+                entry_status = "readable" if os.access(gateway_entry, os.R_OK) else "unreadable"
+                evidence = [f"port_available_before_start={str(port_available_before_start).lower()}",
+                            f"node_path={node_path}", f"gateway_entry={entry_status}"]
+                if start_output:
+                    evidence.append(f"start_output={start_output}")
+                if details:
+                    evidence.append(f"logs={details}")
+                raise RuntimeError("could not start the isolated central Registry Gateway fixture: "
+                                   + "; ".join(evidence))
             fixture.started = True
             fixture._wait_ready()
             return fixture
