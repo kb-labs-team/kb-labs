@@ -1019,6 +1019,8 @@ export interface ServiceCommandRequestCapability {
     ok: boolean;
     statusCode: number;
     payload?: unknown;
+    /** Public endpoint used by the host, for canonical Gateway protocol errors. */
+    gatewayUrl?: string;
   }>;
 }
 

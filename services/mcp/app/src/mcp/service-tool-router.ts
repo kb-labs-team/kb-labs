@@ -52,6 +52,7 @@ export async function callRegisteredServiceOperation(
   input: Record<string, unknown>,
   operation: RegisteredServiceCommandOperation,
   servicePathPrefix: string,
+  gatewayUrl: string | undefined,
   transport: IServiceTransport,
   logger: ILogger,
 ) {
@@ -60,7 +61,7 @@ export async function callRegisteredServiceOperation(
       path: `${servicePathPrefix}${request.path}`,
       metadata: { 'http-method': request.method, ...(request.payload === undefined ? {} : { 'content-type': 'application/json' }) },
       ...(request.payload === undefined ? {} : { payload: request.payload }),
-    }));
+    }).then((response) => ({ ...response, gatewayUrl })));
     return mcpToolSuccessValue(result);
   } catch (error) {
     const envelope = typeof error === 'object' && error !== null && 'envelope' in error

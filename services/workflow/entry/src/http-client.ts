@@ -375,7 +375,7 @@ export class WorkflowDaemonClient {
       }),
     });
     const payload = await response.json().catch(() => undefined) as unknown;
-    return { ok: response.ok, statusCode: response.status, payload };
+    return { ok: response.ok, statusCode: response.status, payload, gatewayUrl: new URL(this.baseUrl).origin };
   }
 
   /**

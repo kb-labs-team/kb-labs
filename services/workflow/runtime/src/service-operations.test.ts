@@ -41,15 +41,13 @@ describe('setWorkflowCronEnabled', () => {
     });
   });
 
-  it('produces the same typed fallback envelope for malformed service errors', async () => {
-    const request = vi.fn(async () => ({ ok: false, statusCode: 502, payload: { error: 'upstream body was not a UX result' } }));
+  it('maps malformed Gateway failures to the SDK protocol failure envelope', async () => {
+    const request = vi.fn(async () => ({ ok: false, statusCode: 502, gatewayUrl: 'https://gateway.test', payload: { error: 'upstream body was not a UX result' } }));
     await expect(setWorkflowCronEnabled({ id: 'journey-cron', enabled: true }, request)).rejects.toMatchObject({
-      code: 'KB_RUNTIME_COMMAND_FAILED',
+      code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
       envelope: {
-        code: 'KB_RUNTIME_COMMAND_FAILED',
-        message: 'The workflow service returned an invalid cron update response.',
-        hint: 'Check workflow service health, then retry the command.',
-        details: { command: 'workflow cron toggle' },
+        code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+        details: { httpStatus: '502', requestStage: 'Gateway request', gatewayUrl: 'https://gateway.test' },
         correlationId: expect.any(String),
       },
     });

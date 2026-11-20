@@ -299,7 +299,9 @@ export class McpDaemonServer {
                       candidate.serviceId === serviceTool.serviceId && candidate.operationId === serviceTool.invocation?.operationId,
                     );
                     result = operation
-                      ? await callRegisteredServiceOperation(normalized.value, operation, serviceTool.servicePathPrefix, this.opts.serviceTransport, reqLogger)
+                      ? await callRegisteredServiceOperation(normalized.value, operation, serviceTool.servicePathPrefix,
+                        this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL,
+                        this.opts.serviceTransport, reqLogger)
                       : unexpectedMcpResult(new Error(`No trusted operation is registered for ${serviceTool.serviceId}:${serviceTool.invocation.operationId}.`), reqLogger);
                   }
                 } else {

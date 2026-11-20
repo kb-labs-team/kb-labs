@@ -212,6 +212,7 @@ describe('project MCP wire fixture producer', () => {
       projectRoot,
       policy: { schemaVersion: '1.0', default: 'allow', rules: [] } satisfies Policy,
       authMode: 'local',
+      gatewayUrl: 'https://gateway.test',
       serviceManifests: [workflowManifest],
       serviceTransport,
       serviceOperations: workflowServiceOperations,
@@ -289,9 +290,8 @@ describe('project MCP wire fixture producer', () => {
     });
     const fallbackError = parseMcpResponse(malformedServiceResponse.body).result?.structuredContent;
     expect(fallbackError).toMatchObject({ ok: false, error: {
-      code: 'KB_RUNTIME_COMMAND_FAILED',
-      message: 'The workflow service returned an invalid cron update response.',
-      details: { command: 'workflow cron toggle' },
+      code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+      details: { httpStatus: '502', requestStage: 'Gateway request', gatewayUrl: 'https://gateway.test' },
       correlationId: expect.any(String),
     } });
     expect(serviceCall.mock.calls.map(([serviceId, request]) => [serviceId, request.path])).toEqual([

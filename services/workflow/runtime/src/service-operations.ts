@@ -31,6 +31,25 @@ function operationFailure(
   );
 }
 
+function gatewayProtocolFailure(
+  message: string,
+  statusCode: number,
+  gatewayUrl?: string,
+): WorkflowServiceOperationError {
+  const envelope = createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
+    message,
+    details: {
+      httpStatus: String(statusCode),
+      requestStage: 'Gateway request',
+      gatewayUrl: gatewayUrl ?? '<url>',
+    },
+    correlationId: randomUUID(),
+  });
+  return new WorkflowServiceOperationError(
+    envelope.code, envelope.message, envelope.hint, envelope.details, envelope.correlationId, envelope,
+  );
+}
+
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -92,14 +111,12 @@ export async function setWorkflowCronEnabled(
         errorEnvelope.correlationId, errorEnvelope,
       );
     }
-    throw operationFailure('The workflow service returned an invalid cron update response.',
-      'Check workflow service health, then retry the command.', { command: 'workflow cron toggle' });
+    throw gatewayProtocolFailure('Gateway returned an invalid error response.', response.statusCode, response.gatewayUrl);
   }
 
   const data = envelope?.ok === true ? record(envelope.data) : envelope;
   if (typeof data?.enabled !== 'boolean') {
-    throw operationFailure('The workflow service returned an invalid cron update result.',
-      'Check workflow service health, then retry the command.', { command: 'workflow cron toggle' });
+    throw gatewayProtocolFailure('Gateway returned an invalid success response.', response.statusCode, response.gatewayUrl);
   }
   return { id, enabled: data.enabled };
 }
