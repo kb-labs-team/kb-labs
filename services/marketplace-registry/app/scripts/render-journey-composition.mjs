@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const { createEmptyLock, validateMarketplaceLock } = await import(path.join(root, 'core/discovery/dist/index.js'));
 const { validateProductConfig } = await import(path.join(root, 'core/config/dist/index.js'));
+const { createRegistryJourneyConfig } = await import('./registry-journey-config.mjs');
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -23,11 +24,7 @@ if (!outputRoot || !registryUrl) {
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
 const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-const config = {
-  marketplace: {
-    sources: [{ kind: 'registry', url: registryUrl, signingPublicKey: publicPem }],
-  },
-};
+const config = createRegistryJourneyConfig({ registryUrl, signingPublicKey: publicPem });
 const configValidation = validateProductConfig('marketplace', config.marketplace);
 if (!configValidation.ok) {
   process.stderr.write(`Registry journey config is invalid: ${JSON.stringify(configValidation.errors)}\n`);

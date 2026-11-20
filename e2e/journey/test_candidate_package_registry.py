@@ -22,6 +22,23 @@ CLEAR_CANDIDATES = ROOT / "e2e/verdaccio/clear-candidates.sh"
 
 
 class CandidatePackageRegistryTests(unittest.TestCase):
+    def test_registry_journey_overlay_declares_cloud_deployment_topology(self):
+        script = (
+            'import { createRegistryJourneyConfig } from '
+            '"./services/marketplace-registry/app/scripts/registry-journey-config.mjs"; '
+            'process.stdout.write(JSON.stringify(createRegistryJourneyConfig({'
+            'registryUrl: "http://registry.test", signingPublicKey: "fixture-key"})));'
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script], cwd=ROOT,
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = json.loads(result.stdout)
+        self.assertEqual(config["platform"]["deployment"]["topology"], "cloud")
+        self.assertEqual(config["marketplace"]["sources"][0]["url"], "http://registry.test")
+        self.assertEqual(config["marketplace"]["sources"][0]["signingPublicKey"], "fixture-key")
+
     def test_registry_service_images_prepare_deploy_outputs_before_compose_build(self):
         with tempfile.TemporaryDirectory(prefix="journey-registry-image-prep-") as directory:
             root = Path(directory)
