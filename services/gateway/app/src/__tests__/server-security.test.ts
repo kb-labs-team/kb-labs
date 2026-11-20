@@ -121,6 +121,7 @@ describe('H11 — access_token query param redacted from logs', () => {
 });
 
 describe('S-252.2 — Marketplace share token redacted from Gateway request logs', () => {
+  // case: S-252.2
   it('redacts token while retaining ordinary query parameters', async () => {
     logMessages.length = 0;
     const fakeToken = 'share-token-test-only-456';

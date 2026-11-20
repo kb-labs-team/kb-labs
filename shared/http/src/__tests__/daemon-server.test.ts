@@ -141,6 +141,7 @@ describe('createDaemonServer()', () => {
     expect(kbLoggerInCustomHook).toBeTruthy();
   });
 
+  // case: S-252.2
   it('redacts credentials from logged URLs without changing the route query', async () => {
     const logged: unknown[] = [];
     const write = (...args: unknown[]) => { logged.push(args); };
