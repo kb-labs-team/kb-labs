@@ -6,9 +6,9 @@ import { readPlatformReleaseConfig } from '../kb-create/scripts/platform-release
 const outputPath = resolve(process.argv[2] ?? '.kb/deploy/image-default/kb.config.json');
 const releaseConfigPath = fileURLToPath(new URL('../kb-create/config/platform-release.jsonc', import.meta.url));
 const platformLayoutPath = fileURLToPath(new URL('../kb-create/v2/contracts/platform-layout.json', import.meta.url));
-const { adapters, marketplaceSources } = readPlatformReleaseConfig(releaseConfigPath);
+const { marketplaceSources } = readPlatformReleaseConfig(releaseConfigPath);
 const config = {
-  platform: { deployment: { topology: 'cloud' }, adapters },
+  platform: { deployment: { topology: 'cloud' } },
   marketplace: { sources: marketplaceSources },
   gateway: {
     access: { mode: 'secured' },

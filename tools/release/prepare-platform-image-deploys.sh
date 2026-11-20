@@ -35,3 +35,6 @@ case "$mode" in
 esac
 
 node tools/release/generate-platform-image-default.mjs
+if [[ "$mode" == "registry-journey" ]]; then
+  node tools/release/generate-registry-image-default.mjs
+fi
