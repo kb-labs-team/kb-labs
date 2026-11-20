@@ -19,13 +19,29 @@ test('journey workspace build passes no concurrency of its own and streams affec
     affectedBuild: true,
     runCommand: async (command, args) => {
       invocation = [command, args];
-      return { status: 0, stdout: JSON.stringify({ ok: true, data: { results: [{ Package: '@fixture/a', Task: 'build', OK: true }] } }), stderr: '' };
+      return { status: 0, stdout: JSON.stringify({ ok: true, data: {
+        results: [{ Package: '@fixture/a', Task: 'build', OK: true, Cached: true }],
+        summary: { scheduled: 1, cached: 1, passed: 0, failed: 0, blocked: 0, notAffected: 0 },
+      } }), stderr: '' };
     },
   });
 
   assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--affected', '--json']]);
   assert.equal(result.status, 'pass');
   assert.equal(result.selectedPackageCount, 1);
+  assert.deepEqual(result.devkitTaskCache, { scheduled: 1, cached: 1, executed: 0, blocked: 0, notAffected: 0 });
+});
+
+test('workspace build reports task cache as unavailable when DevKit omits its summary', async () => {
+  const result = await runStage({
+    stage: profile.buildStage,
+    packages: [],
+    selectedPackageCount: 0,
+    affectedBuild: true,
+    runCommand: async () => ({ status: 0, stdout: JSON.stringify({ ok: true, data: { results: [{ Package: '@fixture/a', Task: 'build', OK: true }] } }), stderr: '' }),
+  });
+
+  assert.equal(result.devkitTaskCache, null);
 });
 
 // case: S-262.7

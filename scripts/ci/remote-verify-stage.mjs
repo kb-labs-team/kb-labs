@@ -92,6 +92,7 @@ export async function runStage({
       finishedAt: null, durationMs: Math.max(0, now() - startedAt),
       ...(stage === profile.buildStage ? { resourcePeaks: resourcePeaks(buildSamples), lastResourceSample: buildSamples.at(-1) } : {}),
       cache: cacheRecord(cache),
+      ...(stage === profile.buildStage ? { devkitTaskCache: null } : {}),
     };
     writeAtomicJSON(partialResultPath, partial);
   };
@@ -153,6 +154,7 @@ export async function runStage({
     return [label, failure.logPath, failure.logTail || failure.error].filter(Boolean).join('\n');
   }).join('\n\n');
   const isDevkitStage = stage === profile.buildStage || stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package';
+  const devkitTaskCache = stage === profile.buildStage ? devkitTaskCacheRecord(result.stdout) : undefined;
   const visibleLog = taskFailures.length ? taskLogOutput : isDevkitStage ? (result.stderr || '') : log;
   const failures = internalToolStage
     ? result.internalToolFailures
@@ -173,6 +175,7 @@ export async function runStage({
     durationMs: Math.max(0, finishedAt - startedAt),
     ...(stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package' ? { packages: packageNames } : {}),
     cache: cacheRecord(cache),
+    ...(stage === profile.buildStage ? { devkitTaskCache } : {}),
     ...(stage === profile.buildStage ? {
       resourcePeaks: resourcePeaks(buildSamples),
       lastResourceSample: buildSamples.at(-1),
@@ -180,6 +183,23 @@ export async function runStage({
   };
   if (partialResultPath) writeAtomicJSON(partialResultPath, stageResult);
   return stageResult;
+}
+
+function devkitTaskCacheRecord(stdout) {
+  try {
+    const summary = JSON.parse(stdout)?.data?.summary;
+    if (!summary || !Number.isSafeInteger(summary.scheduled) || !Number.isSafeInteger(summary.cached)
+      || !Number.isSafeInteger(summary.passed) || !Number.isSafeInteger(summary.failed)) return null;
+    return {
+      scheduled: summary.scheduled,
+      cached: summary.cached,
+      executed: summary.passed + summary.failed,
+      blocked: Number.isSafeInteger(summary.blocked) ? summary.blocked : null,
+      notAffected: Number.isSafeInteger(summary.notAffected) ? summary.notAffected : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function writeAtomicJSON(file, value) {

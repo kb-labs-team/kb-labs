@@ -74,11 +74,15 @@ jobs:
         run: corepack pnpm install --frozen-lockfile
       - name: Run journey static preflight
         run: bash e2e/journey/static-preflight.sh
+      - id: devkit-cas
+        name: Restore kb-devkit content-addressed cache
+        uses: ./.github/actions/devkit-cas
       - uses: ./.github/actions/install-goreleaser
       - id: batch
         name: Produce shared build and candidate
         env:
           BATCH_SELECTION: ${{ steps.selection.outputs.selection }}
+          DEVKIT_CACHE_HIT: ${{ steps.devkit-cas.outputs.cache-hit }}
         run: node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()

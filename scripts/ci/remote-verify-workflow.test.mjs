@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -158,9 +158,14 @@ test('journey batch and candidate route builds through the same runner entry', (
   const batch = readYaml('.github/workflows/journey-batch.yml');
   const candidate = readYaml('.github/workflows/remote-verify.yml');
   const batchBuild = batch.jobs.producer.steps.find((step) => step.name === 'Produce shared build and candidate');
+  const batchSteps = batch.jobs.producer.steps;
+  const batchCas = batchSteps.find((step) => step.id === 'devkit-cas');
   const candidateBuild = candidate.jobs.build.steps.find((step) => step.name === 'Build selected workspace packages once');
   assert.equal(batch.jobs.producer.env.KB_DEVKIT_BASE_REF, "${{ github.event.pull_request.base.sha || format('origin/{0}', github.event.repository.default_branch) }}");
   assert.equal(batchBuild.run, 'node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"');
+  assert.ok(batchSteps.indexOf(batchCas) < batchSteps.indexOf(batchBuild), 'restore the shared DevKit CAS before the batch build');
+  assert.equal(batchCas.uses, './.github/actions/devkit-cas');
+  assert.equal(batchBuild.env.DEVKIT_CACHE_HIT, '${{ steps.devkit-cas.outputs.cache-hit }}');
   assert.equal(candidateBuild.run, 'node scripts/ci/run-remote-stage.mjs');
 });
 
@@ -176,7 +181,7 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
 
   assert.equal(nodeSetup.with.cache, 'pnpm');
   assert.equal(goSetup.with['cache-dependency-path'], 'tools/kb-create/go.sum');
-  assert.equal(cache.with.path, '.kb/devkit/');
+  assert.equal(cache.with.path.trim(), '${{ steps.resolve-store.outputs.path }}/objects\n${{ steps.resolve-store.outputs.path }}/tasks');
   assert.match(cache.with.key, /\$\{\{ github\.sha \}\}/);
   const toolchain = cas.runs.steps.find((step) => step.name === 'Identify cache toolchain partition');
   assert.equal(toolchain.id, 'toolchain');
@@ -187,8 +192,30 @@ test('remote verification reuses the existing lockfile, Go module, and kb-devkit
   assert.doesNotMatch(cache.with.key, /hashFiles\(/);
   assert.equal(cache.with['restore-keys'].trim(), 'devkit-cas-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.partition }}-');
   assert.equal(cas.outputs['cache-hit'].value, '${{ steps.restore.outputs.cache-hit }}');
+  assert.equal(cas.outputs['store-path'].value, '${{ steps.resolve-store.outputs.path }}');
+  assert.ok(cas.runs.steps.some((step) => step.id === 'resolve-store' && step.run.includes('resolve-shared-root.sh')));
   assert.ok(profile.buildDependentTestStages.candidate.includes('journey-unit-suite'));
   assert.ok(!profile.buildDependentTestStages.stream.includes('journey-unit-suite'));
+});
+
+test('DevKit CAS cache path follows the repository shared store and isolates nested fixtures', () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'kb-devkit-cas-path-'));
+  try {
+    const repository = path.join(temporaryRoot, 'repository');
+    mkdirSync(repository);
+    execFileSync('git', ['init', '--quiet', repository]);
+    const output = path.join(temporaryRoot, 'github-output');
+    execFileSync('bash', [path.join(root, '.github/actions/devkit-cas/resolve-shared-root.sh'), repository, output]);
+    assert.equal(readFileSync(output, 'utf8').trim(), `path=${path.join(realpathSync(repository), '.git', 'kb-devkit')}`);
+
+    const nested = path.join(repository, 'e2e', 'fixture');
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(output, '');
+    execFileSync('bash', [path.join(root, '.github/actions/devkit-cas/resolve-shared-root.sh'), nested, output]);
+    assert.equal(readFileSync(output, 'utf8').trim(), `path=${path.join(realpathSync(nested), '.kb', 'devkit', 'shared')}`);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 // case: S-262.7
