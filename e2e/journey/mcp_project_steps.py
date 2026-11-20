@@ -464,7 +464,6 @@ def apply_commit_plan(project_id: str, token: str, project_root: str) -> str | N
     return None
 
 
-
 def cli_mcp_read_parity(project_id: str, token: str, project_root: str) -> str | None:
     """Compare the same read-only manifest command through CLI and MCP."""
     cli = run_command(["kb", "commit", "plan", "show", "--json"],

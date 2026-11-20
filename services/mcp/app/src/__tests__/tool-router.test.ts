@@ -20,6 +20,7 @@ const tool: McpTool = {
   handlerPath: 'dist/commands/mind-search.js',
   commandPath: 'mind search',
   commandPath: 'mind search',
+  commandPath: 'mind search',
   version: '1.2.3',
   operationType: 'read',
   permissions: {},
@@ -113,6 +114,7 @@ describe('callTool', () => {
       expect.objectContaining({
         pluginId: 'mind',
         pluginVersion: '1.2.3',
+        commandPath: 'mind search',
         commandPath: 'mind search',
         commandPath: 'mind search',
         pluginRoot: '/plugins/mind',

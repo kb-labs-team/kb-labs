@@ -94,7 +94,7 @@ export async function callTool(
       binaryName: 'kb',
       pluginId: tool.pluginId,
       pluginVersion: tool.version,
-      commandPath: tool.name,
+      commandPath: tool.commandPath,
       onError: (envelope) => { error = envelope; },
       pluginRoot: tool.pluginRoot,
       handlerPath: resolveHandlerPath(tool.pluginRoot, tool.handlerPath),
