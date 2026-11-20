@@ -17,10 +17,11 @@ const readYaml = (file) => load(readFileSync(path.join(root, file), 'utf8'));
 test('project-scoped workflow lint registers the checkout in a job-local KB_HOME first', () => {
   const workflow = readYaml('.github/workflows/ci-pr.yml');
   const job = workflow.jobs['devkit-checks'];
-  assert.equal(job.env.KB_HOME, '${{ runner.temp }}/kb-home');
+  const configureIndex = job.steps.findIndex((step) => step.name === 'Configure job-local project registry');
   const registerIndex = job.steps.findIndex((step) => step.name === 'Register checkout for project-scoped CLI checks');
   const lintIndex = job.steps.findIndex((step) => step.name === 'Lint workflow definitions');
-  assert.ok(registerIndex >= 0 && lintIndex > registerIndex, 'checkout registration runs before workflow lint');
+  assert.equal(job.steps[configureIndex]?.run, 'echo "KB_HOME=${RUNNER_TEMP}/kb-home" >> "$GITHUB_ENV"');
+  assert.ok(configureIndex >= 0 && registerIndex > configureIndex && lintIndex > registerIndex, 'temporary registry configuration and checkout registration run before workflow lint');
   assert.equal(job.steps[registerIndex].run, 'pnpm kb project add "$GITHUB_WORKSPACE"');
 });
 

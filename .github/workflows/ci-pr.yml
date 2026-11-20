@@ -362,8 +362,6 @@ jobs:
   devkit-checks:
     name: Devkit checks
     runs-on: ubuntu-latest
-    env:
-      KB_HOME: ${{ runner.temp }}/kb-home
     needs: [build-tools, build, e2e-test-plan, full-unit-tests]
     permissions:
       contents: read
@@ -392,6 +390,8 @@ jobs:
           name: full-dist-for-devkit-checks
       - run: tar xf full-dist-artifacts.tar
       - run: pnpm install --frozen-lockfile
+      - name: Configure job-local project registry
+        run: echo "KB_HOME=${RUNNER_TEMP}/kb-home" >> "$GITHUB_ENV"
       - name: Register checkout for project-scoped CLI checks
         run: pnpm kb project add "$GITHUB_WORKSPACE"
       - name: Lint workflow definitions
