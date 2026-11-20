@@ -2463,6 +2463,9 @@ importers:
       '@kb-labs/adapters-log-ringbuffer':
         specifier: workspace:*
         version: link:../../adapters/log-ringbuffer
+      '@kb-labs/adapters-openai':
+        specifier: workspace:*
+        version: link:../../adapters/openai
       '@kb-labs/adapters-pino':
         specifier: workspace:*
         version: link:../../adapters/pino
