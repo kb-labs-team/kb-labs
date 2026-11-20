@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ILogger } from '@kb-labs/core-platform';
 import { createDaemonServer, type ObservabilityCollectorLike } from '../daemon-server.js';
+import { redactHttpUrl } from '../redact-http-url.js';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -161,12 +162,13 @@ describe('createDaemonServer()', () => {
     });
     const fakeToken = 'share-token-test-only-123';
     await server.inject({ method: 'GET', url: `/private?token=${fakeToken}&version=1.2.3` });
-
     expect(receivedQuery).toEqual({ token: fakeToken, version: '1.2.3' });
     const serializedLogs = JSON.stringify(logged);
     expect(serializedLogs).not.toContain(fakeToken);
     expect(serializedLogs).toContain('[REDACTED]');
     expect(serializedLogs).toContain('version=1.2.3');
+    expect(redactHttpUrl(`/private#token=${fakeToken}&version=1.2.3`))
+      .toBe('/private#token=[REDACTED]&version=1.2.3');
   });
 
   // --- standard routes ---

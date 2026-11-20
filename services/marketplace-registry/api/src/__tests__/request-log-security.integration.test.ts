@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { request as httpRequest } from 'node:http';
 import type { ILogger } from '@kb-labs/core-platform';
 import type { RegistryService } from '@kb-labs/marketplace-registry-core';
 import { createRegistryServer } from '../server.js';
@@ -21,7 +22,12 @@ describe('S-252.2 — Registry request log credential redaction', () => {
     } as unknown as ILogger;
     const fakeToken = 'share-token-registry-test-only';
     const resolveShareToken = vi.fn().mockResolvedValue({ packageKey: 'owner/plugin' });
+    const resolveIdentity = vi.fn().mockResolvedValue({
+      status: 'found',
+      package: { signatureSubject: 'owner/plugin', version: '1.2.3' },
+    });
     const registry = {
+      resolveIdentity,
       getEntry: vi.fn().mockResolvedValue({ visibility: 'private' }),
       resolveShareToken,
       canAccess: vi.fn().mockReturnValue(true),
@@ -37,6 +43,28 @@ describe('S-252.2 — Registry request log credential redaction', () => {
 
     expect(response.statusCode).toBe(200);
     expect(resolveShareToken).toHaveBeenCalledWith(fakeToken);
+
+    const address = new URL(await server.listen({ port: 0, host: '127.0.0.1' }));
+    const rawHashQueryResponse = await new Promise<{ statusCode?: number; body: string }>((resolve, reject) => {
+      const request = httpRequest({
+        hostname: address.hostname,
+        port: Number(address.port),
+        method: 'GET',
+        path: `/api/v1/resolve#identity=widget&token=${fakeToken}&version=1.2.3`,
+        headers: { 'x-internal-secret': 'registry-log-test-secret' },
+      }, (incoming) => {
+        let body = '';
+        incoming.setEncoding('utf8');
+        incoming.on('data', (chunk: string) => { body += chunk; });
+        incoming.on('end', () => resolve({ statusCode: incoming.statusCode, body }));
+      });
+      request.on('error', reject);
+      request.end();
+    });
+    expect(rawHashQueryResponse.statusCode).toBe(200);
+    expect(JSON.parse(rawHashQueryResponse.body)).toMatchObject({ status: 'found' });
+    expect(resolveShareToken).toHaveBeenCalledTimes(2);
+    expect(resolveIdentity).toHaveBeenCalledWith('widget', null, { packageKey: 'owner/plugin' }, '1.2.3');
     const serializedLogs = JSON.stringify(logged);
     expect(serializedLogs).not.toContain(fakeToken);
     expect(serializedLogs).toContain('[REDACTED]');

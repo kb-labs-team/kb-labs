@@ -68,10 +68,10 @@ function makePkg(overrides?: Partial<Parameters<RegistryService['publish']>[1]['
   };
 }
 
-function makeService(extraOpts?: { signingPrivateKey?: string }): RegistryService {
+function makeService(extraOpts?: { signingPrivateKey?: string; cache?: ICache }): RegistryService {
   return new RegistryService({
     storage: createMemoryStorage(),
-    cache: createMemoryCache(),
+    cache: extraOpts?.cache ?? createMemoryCache(),
     logger: noopLogger,
     baseUrl: 'http://localhost:5071',
     siteUrl: 'https://kblabs.ru',
@@ -578,6 +578,29 @@ describe('RegistryService.canAccess', () => {
 });
 
 describe('RegistryService.shareToken', () => {
+  // case: S-252.2
+  it('stores share-token credentials by digest and continues to resolve legacy cache entries', async () => {
+    const cache = createMemoryCache();
+    const setSpy = vi.spyOn(cache, 'set');
+    const svc = makeService({ cache });
+    await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
+    setSpy.mockClear();
+
+    const { token } = await svc.createShareToken('kirill', 'my-plugin', 60_000);
+    const digest = createHash('sha256').update(token).digest('hex');
+    expect(setSpy).toHaveBeenCalledWith(`registry:sharetoken:sha256:${digest}`, expect.any(Object), 60_000);
+    expect(JSON.stringify(setSpy.mock.calls)).not.toContain(token);
+
+    const previouslyIssuedToken = 'kbrt_legacy-share-token-test-only';
+    await cache.set(`registry:sharetoken:${previouslyIssuedToken}`, {
+      pkg: 'kirill/my-plugin',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }, 60_000);
+    await expect(svc.resolveShareToken(previouslyIssuedToken)).resolves.toMatchObject({ pkg: 'kirill/my-plugin' });
+    expect(await cache.get(`registry:sharetoken:sha256:${createHash('sha256').update(previouslyIssuedToken).digest('hex')}`))
+      .toEqual({ pkg: 'kirill/my-plugin', expiresAt: expect.any(String) });
+  });
+
   it('RS-50: createShareToken + resolveShareToken round trip', async () => {
     const svc = makeService();
     await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');

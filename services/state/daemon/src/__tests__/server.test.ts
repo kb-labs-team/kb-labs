@@ -4,7 +4,8 @@
  * Real HTTP server tests - no mocks, real requests, real timing.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import type { ILogger } from '@kb-labs/core-platform';
 import {
   checkCanonicalObservabilityMetrics,
   validateServiceObservabilityDescribe,
@@ -14,11 +15,17 @@ import { StateDaemonServer } from '../server.js';
 
 describe('StateDaemonServer', () => {
   let server: StateDaemonServer;
+  const logged: unknown[] = [];
+  const writeLog = (...args: unknown[]) => { logged.push(args); };
+  const logger = {
+    trace: writeLog, debug: writeLog, info: writeLog, warn: writeLog, error: writeLog, fatal: writeLog,
+    flush: vi.fn().mockResolvedValue(undefined), child: vi.fn(),
+  } as unknown as ILogger;
   const port = 9877;
   const baseURL = `http://localhost:${port}`;
 
   beforeAll(async () => {
-    server = new StateDaemonServer({ port, host: 'localhost' });
+    server = new StateDaemonServer({ port, host: 'localhost', logger });
     await server.start();
   });
 
@@ -81,6 +88,27 @@ describe('StateDaemonServer', () => {
   });
 
   describe('State Operations', () => {
+    // case: S-252.2
+    it('looks up legacy share-token keys through request bodies without logging their contents', async () => {
+      logged.length = 0;
+      const token = 'kbrt_state-daemon-legacy-test-only';
+      const key = `registry:sharetoken:${token}`;
+      const writeRes = await fetch(`${baseURL}/state/store`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value: { pkg: 'owner/plugin' }, ttl: 60_000 }),
+      });
+      expect(writeRes.status).toBe(204);
+      const readRes = await fetch(`${baseURL}/state/lookup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      });
+      expect(readRes.status).toBe(200);
+      await expect(readRes.json()).resolves.toEqual({ pkg: 'owner/plugin' });
+      expect(JSON.stringify(logged)).not.toContain(token);
+    });
+
     it('should set and get value', async () => {
       const key = 'test-key';
       const value = { data: 'hello' };
