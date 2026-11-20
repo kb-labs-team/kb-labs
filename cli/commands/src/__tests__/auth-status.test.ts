@@ -87,7 +87,8 @@ describe('kb auth status', () => {
     expectSuccessEnvelope(captured, { authenticated: false, sessions: [{ authenticated: false, path: '/tmp/test-home/.kb/session.json' }] });
   });
 
-  it('ST-02: machine only — top-level authenticated true, session.authenticated false', async () => {
+  // case: S-216.2
+  it('ST-02: machine only — authenticated true with no human sessions', async () => {
     mockCredLoad.mockResolvedValueOnce({ gatewayUrl: 'http://localhost:4000', accessToken: 'a', expiresAt: Date.now() + 10 * 60_000 });
     mockCredIsExpired.mockReturnValueOnce(false);
 
@@ -98,7 +99,7 @@ describe('kb auth status', () => {
     expectSuccessEnvelope(captured, {
       authenticated: true,
       gatewayUrl: 'http://localhost:4000',
-      sessions: [{ authenticated: false, path: '/tmp/test-home/.kb/session.json' }],
+      sessions: [],
     });
   });
 
