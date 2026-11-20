@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from invocations import CompletedProcess, open_http, run_command, run_with_runner
+import redaction
 
 
 def _json_yaml(value: object) -> str:
@@ -120,7 +121,19 @@ class CentralRegistryGatewayFixture:
             command = ["kb-dev", "start", "gateway", "--config", str(config_path), "--net-offset", "0"]
             result = run_with_runner(runner, command, cwd=fixture_root, env=dict(os.environ), timeout=90)
             if result.returncode != 0:
-                raise RuntimeError("could not start the isolated central Registry Gateway fixture")
+                diagnostics_env = dict(os.environ)
+                diagnostics_env.update({
+                    "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD": password,
+                    "GATEWAY_JWT_SECRET": jwt_secret,
+                    "GATEWAY_INTERNAL_SECRET": internal_secret,
+                })
+                logs_command = ["kb-dev", "logs", "gateway", "--config", str(config_path), "--net-offset", "0"]
+                logs = run_with_runner(runner, logs_command, cwd=fixture_root,
+                                       env=diagnostics_env, timeout=30)
+                raw_details = "\n".join((logs.stdout + logs.stderr).splitlines()[-12:]).strip()
+                details = redaction.redact_text(raw_details, diagnostics_env)
+                suffix = f": {details}" if details else ""
+                raise RuntimeError(f"could not start the isolated central Registry Gateway fixture{suffix}")
             fixture.started = True
             fixture._wait_ready()
             return fixture
