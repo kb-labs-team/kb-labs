@@ -48,8 +48,6 @@ describe('filterTools', () => {
     expect(tools).toHaveLength(1);
     expect(tools[0]!.name).toBe('mind__mind_search');
     expect(tools[0]!.commandPath).toBe('mind search');
-    expect(tools[0]!.commandPath).toBe('mind search');
-    expect(tools[0]!.commandPath).toBe('mind search');
     expect(tools[0]!.pluginId).toBe('mind');
     expect(tools[0]!.handlerPath).toBe('./dist/commands/mind-search.js');
     expect(tools[0]!.pluginRoot).toBe('/plugins/mind');
@@ -84,8 +82,6 @@ describe('filterTools', () => {
     const snap = { manifests: [entry('@kb-labs/commit', [cmd('commit plan create', 'read')])] };
     const [tool] = filterTools(snap, allow);
     expect(tool!.name).toBe('kb-labs-commit__commit_plan_create');
-    expect(tool!.commandPath).toBe('commit plan create');
-    expect(tool!.commandPath).toBe('commit plan create');
     expect(tool!.commandPath).toBe('commit plan create');
     expect(tool!.name).toMatch(/^[a-z0-9-]+__[a-z0-9_]+$/);
   });
