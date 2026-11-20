@@ -28,5 +28,6 @@ A plugin author publishes a built plugin package to a configured KB Labs registr
 | S-026.3 | In a disposable project, run `kb marketplace install <package-name>@<version>` | The exact published version is installed and recorded in the project lock. |
 | S-026.4 | From a directory without a KB Labs plugin `package.json`, run `kb hub publish` | CLI reports that it cannot read the package manifest and instructs the author to run from the plugin root. |
 | S-026.5 | Change the tarball contents without changing the package version, then run `kb hub publish` again | The registry returns HTTP 409 with `VERSION_ALREADY_EXISTS` and says that published versions are immutable and require a version bump. The original version integrity and tarball remain unchanged. |
+| S-026.6 | Set `KB_REGISTRY_URL` to a secured test Gateway B while the CLI has a saved session only for Gateway A, then run `kb hub publish`; repeat with no saved session for B | The request never sends Gateway A credentials to B and does not publish a version. The CLI reports `KB_AUTH_REQUIRED` with B's URL. After signing in to B, Hub publish uses that Gateway's author identity and the Registry records that identity as the package owner. |
 
 Publishing to the registry is plugin-author and registry-maintainer tooling, not a platform-core release requirement.
