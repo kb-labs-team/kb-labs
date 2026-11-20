@@ -6,7 +6,7 @@ cd "$ROOT"
 
 mode="${1:-all}"
 prepare_deploy() {
-  pnpm deploy --filter "$1" --prod "$2"
+  pnpm deploy --legacy --filter "$1" --prod "$2"
 }
 
 case "$mode" in

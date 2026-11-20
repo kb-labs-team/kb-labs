@@ -54,8 +54,8 @@ class CandidatePackageRegistryTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(operations.read_text(encoding="utf-8").splitlines(), [
-                "pnpm deploy --filter @kb-labs/core-state-daemon --prod .kb/deploy/state-daemon",
-                "pnpm deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app",
+                "pnpm deploy --legacy --filter @kb-labs/core-state-daemon --prod .kb/deploy/state-daemon",
+                "pnpm deploy --legacy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app",
                 "node tools/release/generate-platform-image-default.mjs",
                 "docker compose build marketplace-state marketplace-registry",
             ])
@@ -66,14 +66,14 @@ class CandidatePackageRegistryTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(operations.read_text(encoding="utf-8").splitlines(), [
-                "pnpm deploy --filter @kb-labs/core-state-daemon --prod .kb/deploy/state-daemon",
-                "pnpm deploy --filter @kb-labs/gateway-app --prod .kb/deploy/gateway-app",
-                "pnpm deploy --filter @kb-labs/marketplace-app --prod .kb/deploy/marketplace-app",
-                "pnpm deploy --filter @kb-labs/rest-api-app --prod .kb/deploy/rest-api-app",
-                "pnpm deploy --filter @kb-labs/studio-app --prod .kb/deploy/studio-app",
-                "pnpm deploy --filter @kb-labs/workflow-daemon --prod .kb/deploy/workflow-daemon",
-                "pnpm deploy --filter @kb-labs/mcp-app --prod .kb/deploy/mcp-app",
-                "pnpm deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app",
+                "pnpm deploy --legacy --filter @kb-labs/core-state-daemon --prod .kb/deploy/state-daemon",
+                "pnpm deploy --legacy --filter @kb-labs/gateway-app --prod .kb/deploy/gateway-app",
+                "pnpm deploy --legacy --filter @kb-labs/marketplace-app --prod .kb/deploy/marketplace-app",
+                "pnpm deploy --legacy --filter @kb-labs/rest-api-app --prod .kb/deploy/rest-api-app",
+                "pnpm deploy --legacy --filter @kb-labs/studio-app --prod .kb/deploy/studio-app",
+                "pnpm deploy --legacy --filter @kb-labs/workflow-daemon --prod .kb/deploy/workflow-daemon",
+                "pnpm deploy --legacy --filter @kb-labs/mcp-app --prod .kb/deploy/mcp-app",
+                "pnpm deploy --legacy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app",
                 "node tools/release/generate-platform-image-default.mjs",
             ])
 
