@@ -120,6 +120,19 @@ describe('H11 — access_token query param redacted from logs', () => {
   });
 });
 
+describe('S-252.2 — Marketplace share token redacted from Gateway request logs', () => {
+  it('redacts token while retaining ordinary query parameters', async () => {
+    logMessages.length = 0;
+    const fakeToken = 'share-token-test-only-456';
+    await app.inject({ method: 'GET', url: `/health?token=${fakeToken}&version=1.2.3` });
+
+    const serializedLogs = JSON.stringify(logMessages);
+    expect(serializedLogs).not.toContain(fakeToken);
+    expect(serializedLogs).toContain('[REDACTED]');
+    expect(serializedLogs).toContain('version=1.2.3');
+  });
+});
+
 // ── H12: CORS not wildcard ─────────────────────────────────────────────────────
 
 describe('H12 — CORS does not reflect arbitrary origin', () => {
