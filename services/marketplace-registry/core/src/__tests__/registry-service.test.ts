@@ -496,7 +496,7 @@ describe('RegistryService.publish', () => {
     const cacheSet = vi.spyOn(cache, 'set');
     const svc = new RegistryService({ storage, cache, logger: noopLogger, baseUrl: 'http://localhost:5071' });
 
-    for (const [handle, name, version] of [
+    const invalidAddresses: Array<[string, string, string]> = [
       ['../victim', 'my-plugin', '1.0.0'],
       ['victim', '../my-plugin', '1.0.0'],
       ['victim', '@scope/../my-plugin', '1.0.0'],
@@ -504,7 +504,8 @@ describe('RegistryService.publish', () => {
       ['victim', 'my-plugin', ' 1.0.0'],
       ['Victim', 'my-plugin', '1.0.0'],
       ['v', 'my-plugin', '1.0.0'],
-    ]) {
+    ];
+    for (const [handle, name, version] of invalidAddresses) {
       const error = await svc.publish(SMALL_TARBALL, makePkg({ name, version }), handle, 'ns-owner')
         .catch(reason => reason);
       expect(error.code).toBe('INVALID_MANIFEST');
