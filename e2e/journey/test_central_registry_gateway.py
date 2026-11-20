@@ -1,9 +1,11 @@
 import unittest
 from pathlib import Path
 import sys
+import subprocess
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).parent))
-from central_registry_gateway import _fixture_config
+from central_registry_gateway import CentralRegistryGatewayFixture, _fixture_config
 
 
 class CentralRegistryGatewayFixtureTests(unittest.TestCase):
@@ -34,6 +36,28 @@ class CentralRegistryGatewayFixtureTests(unittest.TestCase):
         self.assertIn("GATEWAY_JWT_SECRET", service_yaml)
         self.assertNotIn("127.0.0.1:4000", service_yaml)
         self.assertNotIn("__journey/faults", service_yaml)
+
+    def test_failed_start_reports_redacted_kb_dev_logs(self):
+        with tempfile.TemporaryDirectory(prefix="journey-central-gateway-platform-") as temp:
+            entry = Path(temp) / "node_modules/@kb-labs/gateway-app/dist/bin.js"
+            entry.parent.mkdir(parents=True)
+            entry.write_text("// fixture entry")
+            calls = []
+            def runner(argv, **_kwargs):
+                calls.append(argv)
+                if argv[1] == "start":
+                    return subprocess.CompletedProcess(argv, 1, "", "KB_RUNTIME_COMMAND_FAILED")
+                return subprocess.CompletedProcess(argv, 0,
+                    "ERROR gateway failed to bind; GATEWAY_INTERNAL_SECRET=fixture-internal-secret-value\n", "")
+
+            with self.assertRaisesRegex(RuntimeError, "gateway failed to bind") as raised:
+                CentralRegistryGatewayFixture.start(
+                    Path(temp), "http://marketplace-tamper:8081", "fixture-internal-secret-value",
+                    runner=runner)
+
+            self.assertIn("[REDACTED]", str(raised.exception))
+            self.assertNotIn("fixture-internal-secret-value", str(raised.exception))
+            self.assertEqual([call[1] for call in calls], ["start", "logs"])
 
 
 if __name__ == "__main__":
