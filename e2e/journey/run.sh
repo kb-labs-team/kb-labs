@@ -211,7 +211,7 @@ find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf 
 journey_toolchain_ensure "$ROOT"
 journey_compose build publisher runner idp-stub
 if [[ ",${COMPOSE_PROFILES:-}," == *",marketplace-registry,"* ]]; then
-  journey_compose build marketplace-state marketplace-registry
+  journey_build_marketplace_registry_images
 fi
 journey_start_container_services
 start_project_container_monitors
