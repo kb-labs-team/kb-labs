@@ -2235,7 +2235,6 @@ def _main(*, update_variant_runner=None):
 
         workflow_claims = ([f"S-002.{step}" for step in range(1, 7)]
                            + [f"S-008.{step}" for step in range(1, 5)]
-                           + ["S-007.5"]
                            + [f"S-027.{step}" for step in range(1, 4)]
                            + [f"S-028.{step}" for step in range(1, 4)]
                            + [f"S-143.{step}" for step in range(1, 5)])
@@ -2250,7 +2249,7 @@ def _main(*, update_variant_runner=None):
                     restart_host=restart_for_workflow_history,
                 ),
             ),
-            cases=workflow_claims, record_empty_success=False,
+            cases=[*workflow_claims, "S-007.5"], record_empty_success=False,
             runners=("service-local:explore", "service-secured:explore"),
         )
         if isinstance(project_b_handoff, ProjectBRootValid):
