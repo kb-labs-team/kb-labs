@@ -4,14 +4,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-export const cases = ['S-298.1'];
+export const cases = ['S-298.1', 'S-261.2'];
 
 export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, platformRoot, registryUrl }) {
   if (!registryUrl) throw new Error('Registry URL is required; run e2e/journey/native-macos-smoke.sh.');
   const createPath = path.join(tempRoot, 'kb-create');
   const createModule = path.join(workspace, 'tools/kb-create');
   const indexPath = path.join(workspace, '.journey/release/journey-candidate/release-index.json');
-  const installedCLI = path.join(platformRoot, 'current', 'node_modules/.bin/kb');
+  const installedCLI = path.join(tempRoot, 'kb');
   return [
     { command: 'make', args: ['build', `BINARY=${createPath}`], cwd: createModule },
     {
@@ -23,10 +23,10 @@ export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, pla
       ],
       cwd: workspace,
     },
-    { command: installedCLI, args: ['--version'], cwd: workspace },
-    { command: installedCLI, args: ['doctor', '--json'], cwd: workspace },
-    { command: installedCLI, args: ['project', 'add', workspace, '--json'], cwd: workspace },
-    { command: installedCLI, args: ['qa', 'cases', 'list', '--json'], cwd: workspace },
+    { command: installedCLI, args: ['--version'], cwd: tempRoot },
+    { command: installedCLI, args: ['commit', '--help'], cwd: tempRoot },
+    { command: installedCLI, args: ['project', 'add', workspace, '--json'], cwd: tempRoot },
+    { command: installedCLI, args: ['marketplace', 'plugins', 'doctor', '--scope', 'platform', '--json'], cwd: tempRoot },
   ];
 }
 
@@ -78,7 +78,6 @@ function run() {
     if (step.command.endsWith('/kb-create')) {
       try {
         verifyMarketplaceInstall(platformRoot);
-        caseStatus = 'PASS';
       } catch (error) {
         status = 'FAIL';
         failure = error instanceof Error ? error.message : String(error);
@@ -86,6 +85,8 @@ function run() {
       }
     }
   }
+
+  if (status === 'PASS') caseStatus = 'PASS';
 
   if (reportPath) {
     const resolvedReport = path.resolve(workspaceRoot, reportPath);

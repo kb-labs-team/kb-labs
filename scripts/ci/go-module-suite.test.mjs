@@ -327,10 +327,10 @@ test('native macOS smoke entry installs the candidate and runs the installed CLI
       '--platform-root', '/tmp/platform', '--project-root', '/workspace', '--scenario', 'explore',
       '--scenario-answers', '{"access.mode":"local"}', '--registry', 'http://127.0.0.1:49183',
     ], '/workspace'],
-    ['/tmp/platform/current/node_modules/.bin/kb', ['--version'], '/workspace'],
-    ['/tmp/platform/current/node_modules/.bin/kb', ['doctor', '--json'], '/workspace'],
-    ['/tmp/platform/current/node_modules/.bin/kb', ['project', 'add', '/workspace', '--json'], '/workspace'],
-    ['/tmp/platform/current/node_modules/.bin/kb', ['qa', 'cases', 'list', '--json'], '/workspace'],
+    ['/tmp/native/kb', ['--version'], '/tmp/native'],
+    ['/tmp/native/kb', ['commit', '--help'], '/tmp/native'],
+    ['/tmp/native/kb', ['project', 'add', '/workspace', '--json'], '/tmp/native'],
+    ['/tmp/native/kb', ['marketplace', 'plugins', 'doctor', '--scope', 'platform', '--json'], '/tmp/native'],
   ]);
   const install = commands[1];
   assert.equal(install.args[install.args.indexOf('--platform-root') + 1], '/tmp/platform');
