@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -115,7 +116,7 @@ test('platform lock and image manifest are generated from projected package iden
       workspaceRoot: root,
       deploymentRoot,
       sourceRevision: 'source-revision',
-      pnpmVersion: '12.21.0',
+      pnpmVersion: '11.4.0',
     });
     assert.deepEqual(result.lock, {
       schema: 'kb.marketplace/3',
@@ -131,9 +132,27 @@ test('platform lock and image manifest are generated from projected package iden
       },
     });
     assert.equal(result.manifest.sourceRevision, 'source-revision');
-    assert.equal(result.manifest.pnpmVersion, '12.21.0');
+    assert.equal(result.manifest.pnpmVersion, '11.4.0');
     assert.equal(result.manifest.adapterPackages.length, 1);
     assert.match(result.manifest.pnpmLockSha256, /^[a-f0-9]{64}$/);
+
+    const adapterSdkAlias = join(deploymentRoot, 'node_modules/@kb-labs/adapters-sqlite/node_modules/@kb-labs/sdk');
+    unlinkSync(adapterSdkAlias);
+    mkdirSync(adapterSdkAlias, { recursive: true });
+    writeFileSync(join(adapterSdkAlias, 'package.json'), JSON.stringify(sourcePackages['@kb-labs/sdk'].manifest));
+    writeFileSync(join(adapterSdkAlias, 'index.js'), 'export {};\n');
+    const helperUrl = new URL('../../tools/release/registry-image-composition.mjs', import.meta.url).href;
+    const duplicateSdk = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { createRegistryImageArtifacts } from ${JSON.stringify(helperUrl)};
+      createRegistryImageArtifacts({
+        workspaceRoot: process.argv[1],
+        deploymentRoot: process.argv[2],
+        sourceRevision: 'source-revision',
+        pnpmVersion: '11.4.0',
+      });
+    `, root, deploymentRoot], { encoding: 'utf8' });
+    assert.notEqual(duplicateSdk.status, 0, `${duplicateSdk.stdout}\n${duplicateSdk.stderr}`);
+    assert.match(duplicateSdk.stderr, /multiple copies of @kb-labs\/sdk/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -52,7 +52,12 @@ class CandidatePackageRegistryTests(unittest.TestCase):
                     "COPY --chown=kb:nodejs .kb/deploy/image-default/platform-layout.json "
                     "/app/.kb/v2/platform-layout.json",
                     dockerfile,
-        )
+                )
+        registry_dockerfile = (ROOT / "services/marketplace-registry/app/Dockerfile").read_text()
+        self.assertIn(".kb/deploy/registry-image-composition/node_modules ./node_modules", registry_dockerfile)
+        self.assertIn(".kb/deploy/registry-image-composition/.kb/marketplace.lock", registry_dockerfile)
+        self.assertIn(".kb/deploy/registry-image-composition/.kb/image-composition.json", registry_dockerfile)
+        self.assertIn("node_modules/@kb-labs/marketplace-registry-app/dist/bootstrap.js", registry_dockerfile)
 
     def test_registry_service_images_prepare_deploy_outputs_before_compose_build(self):
         with tempfile.TemporaryDirectory(prefix="journey-registry-image-prep-") as directory:
@@ -64,12 +69,21 @@ class CandidatePackageRegistryTests(unittest.TestCase):
                 command = bin_dir / name
                 command.write_text(
                     "#!/bin/sh\n"
-                    f"printf '%s %s\\n' '{name}' \"$*\" >> \"$SERVICE_OPERATIONS\"\n",
+                    f"printf '%s %s\\n' '{name}' \"$*\" >> \"$SERVICE_OPERATIONS\"\n"
+                    + ("if [ \"$*\" = '--version' ]; then echo 12.21.0; fi\n" if name == "pnpm" else ""),
                     encoding="utf-8",
                 )
                 command.chmod(0o755)
+            fake_git = bin_dir / "git"
+            fake_git.write_text(
+                "#!/bin/sh\n"
+                "printf 'git %s\\n' \"$*\" >> \"$SERVICE_OPERATIONS\"\n"
+                "if [ \"$*\" = 'rev-parse HEAD' ]; then echo fixture-revision; fi\n",
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o755)
             env = isolated_environment(
-                root / "home", bin_dir, required_tools=("bash",),
+                root / "home", bin_dir, required_tools=("bash", "git"),
                 overrides={"SERVICE_OPERATIONS": str(operations)},
             )
             invocation = (
@@ -87,7 +101,10 @@ class CandidatePackageRegistryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(operations.read_text(encoding="utf-8").splitlines(), [
                 "pnpm --filter @kb-labs/core-state-daemon --prod --config.inject-workspace-packages=true deploy .kb/deploy/state-daemon",
-                "pnpm --filter @kb-labs/marketplace-registry-app --prod --config.inject-workspace-packages=true deploy .kb/deploy/marketplace-registry-app",
+                "pnpm --filter @kb-labs/registry-image-composition --prod --config.inject-workspace-packages=true deploy .kb/deploy/registry-image-composition",
+                "git rev-parse HEAD",
+                "pnpm --version",
+                "node tools/release/registry-image-composition.mjs --deployment-root .kb/deploy/registry-image-composition --source-revision fixture-revision --pnpm-version 12.21.0",
                 "node tools/release/generate-platform-image-default.mjs",
                 "docker compose build marketplace-state marketplace-registry",
             ])
