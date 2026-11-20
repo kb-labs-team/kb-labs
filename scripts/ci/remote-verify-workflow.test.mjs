@@ -14,6 +14,17 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 const readYaml = (file) => load(readFileSync(path.join(root, file), 'utf8'));
 
+test('project-scoped workflow lint registers the checkout in a job-local KB_HOME first', () => {
+  const workflow = readYaml('.github/workflows/ci-pr.yml');
+  const job = workflow.jobs['devkit-checks'];
+  const configureIndex = job.steps.findIndex((step) => step.name === 'Configure job-local project registry');
+  const registerIndex = job.steps.findIndex((step) => step.name === 'Register checkout for project-scoped CLI checks');
+  const lintIndex = job.steps.findIndex((step) => step.name === 'Lint workflow definitions');
+  assert.equal(job.steps[configureIndex]?.run, 'echo "KB_HOME=${RUNNER_TEMP}/kb-home" >> "$GITHUB_ENV"');
+  assert.ok(configureIndex >= 0 && registerIndex > configureIndex && lintIndex > registerIndex, 'temporary registry configuration and checkout registration run before workflow lint');
+  assert.equal(job.steps[registerIndex].run, 'pnpm kb project add "$GITHUB_WORKSPACE"');
+});
+
 // case: S-262.7
 test('remote verification builds once and fans out independent and artifact-dependent test matrices', () => {
   const workflow = readYaml('.github/workflows/remote-verify.yml');
@@ -237,7 +248,9 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
     assert.ok(!selection.unitTestPackages.includes(pluginE2ePackage), 'plugin E2E package has an e2e task, not a unit-test task');
     assert.ok(selection.packages.includes(webPackage), 'candidate build selection must retain the web package');
     assert.ok(!selection.unitTestPackages.includes(webPackage), 'web package has no unit-test task');
-    assert.ok(selection.internalToolPackages.includes(kbRunnerModule));
+    assert.ok(!selection.internalToolPackages.includes(kbRunnerModule), 'frozen kb-runner tests are absent from automatic internal-tool shards');
+    assert.ok(selection.skippedManualTasks.some((task) => task.package === kbRunnerModule && task.task === 'test'), 'prepare evidence reports the frozen task as manually skipped');
+    assert.match(outputs, /skipped_manual_tasks=.*kb-labs\/kb-runner/);
     assert.ok(!gatedPackages.includes(kbRunnerModule));
     for (const name of ['@kb-labs/commit', '@kb-labs/e2e-delivery', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', '@kb-labs/core-platform']) {
       assert.ok(gatedPackages.includes(name), `candidate plan omitted ${name}`);

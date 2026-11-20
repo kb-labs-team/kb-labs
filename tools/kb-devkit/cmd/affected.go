@@ -43,14 +43,18 @@ var affectedCmd = &cobra.Command{
 		if jsonMode {
 			packages := make([]string, 0, len(selection.Packages))
 			internalToolPackages := make([]string, 0)
-			testPackages := packageNamesWithTask(ws, cfg, selection.Packages, "test")
+			testPackages, skippedManualTasks := packageNamesWithTaskPolicy(ws, cfg, selection.Packages, "test")
+			automaticTestPackages := make(map[string]bool, len(testPackages))
+			for _, name := range testPackages {
+				automaticTestPackages[name] = true
+			}
 			for _, pkg := range selection.Packages {
 				packages = append(packages, pkg.Name)
-				if pkg.ReleaseLane == "internal-tool" {
+				if pkg.ReleaseLane == "internal-tool" && automaticTestPackages[pkg.Name] {
 					internalToolPackages = append(internalToolPackages, pkg.Name)
 				}
 			}
-			return JSONOut(map[string]any{"packages": packages, "testPackages": testPackages, "internalToolPackages": internalToolPackages, "selectionReason": selection.Reason})
+			return JSONOut(map[string]any{"packages": packages, "testPackages": testPackages, "skippedManualTasks": skippedManualTasks, "internalToolPackages": internalToolPackages, "selectionReason": selection.Reason})
 		}
 
 		if len(selection.Packages) == 0 {
@@ -59,6 +63,10 @@ var affectedCmd = &cobra.Command{
 		}
 		for _, pkg := range selection.Packages {
 			clikitcommand.Println(pkg.Name)
+		}
+		_, skippedManualTasks := packageNamesWithTaskPolicy(ws, cfg, selection.Packages, "test")
+		for _, skipped := range skippedManualTasks {
+			clikitcommand.Printf("skipped manual-only task: %s:%s (%s)\n", skipped.Package, skipped.Task, skipped.Reason)
 		}
 		return nil
 	},
@@ -72,6 +80,29 @@ func packageNamesWithTask(ws *workspace.Workspace, cfg *config.DevkitConfig, pac
 		}
 	}
 	return selected
+}
+
+type skippedManualTask struct {
+	Package string `json:"package"`
+	Task    string `json:"task"`
+	Reason  string `json:"reason"`
+}
+
+func packageNamesWithTaskPolicy(ws *workspace.Workspace, cfg *config.DevkitConfig, packages []workspace.Package, taskName string) ([]string, []skippedManualTask) {
+	selected := make([]string, 0, len(packages))
+	var skipped []skippedManualTask
+	for _, pkg := range packages {
+		def := engine.ResolvePackageTaskDef(ws, cfg, taskName, pkg)
+		if def == nil {
+			continue
+		}
+		if def.ManualOnly {
+			skipped = append(skipped, skippedManualTask{Package: pkg.Name, Task: taskName, Reason: "manual-only; run explicitly with --packages"})
+			continue
+		}
+		selected = append(selected, pkg.Name)
+	}
+	return selected, skipped
 }
 
 func init() {

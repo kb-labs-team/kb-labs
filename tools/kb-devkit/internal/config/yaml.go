@@ -75,6 +75,8 @@ type yamlConfig struct {
 // yamlTaskVariant is one variant of a task (single object in YAML).
 type yamlTaskVariant struct {
 	Categories []string `yaml:"categories"`
+	Packages   []string `yaml:"packages"`
+	ManualOnly bool     `yaml:"manualOnly"`
 	Command    string   `yaml:"command"`
 	Inputs     []string `yaml:"inputs"`
 	Outputs    []string `yaml:"outputs"`
@@ -454,6 +456,8 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 			for i, v := range variants {
 				tc[i] = TaskVariant{
 					Categories: v.Categories,
+					Packages:   v.Packages,
+					ManualOnly: v.ManualOnly,
 					Command:    v.Command,
 					Inputs:     v.Inputs,
 					Outputs:    v.Outputs,

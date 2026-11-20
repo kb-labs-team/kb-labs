@@ -68,6 +68,25 @@ workspace:
 	}
 }
 
+// case: S-310.1
+func TestYAMLManualOnlyTaskVariant(t *testing.T) {
+	cfg, err := parseYAMLBytes([]byte(`schemaVersion: 2
+tasks:
+  test:
+    - categories: [internal-tool]
+      command: make test
+      manualOnly: true
+    - categories: [go-binary]
+      command: make test
+`))
+	if err != nil {
+		t.Fatalf("parse manual-only task variant: %v", err)
+	}
+	if !cfg.Tasks["test"][0].ManualOnly || cfg.Tasks["test"][1].ManualOnly {
+		t.Fatalf("manualOnly variants = %#v, want only first variant manual-only", cfg.Tasks["test"])
+	}
+}
+
 // case: S-179.27
 func TestChecksTimeoutConfiguration(t *testing.T) {
 	cfg, err := parseYAMLBytes([]byte("checks:\n  timeout_ms: 250\n"))

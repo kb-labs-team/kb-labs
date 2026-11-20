@@ -24,6 +24,7 @@ export function parseAffectedSelection(output, profileName) {
   const envelope = JSON.parse(output);
   const unitTestPackages = envelope?.data?.unitTestPackages;
   const internalToolPackages = envelope?.data?.internalToolPackages;
+  const skippedManualTasks = envelope?.data?.skippedManualTasks ?? [];
   const stagePackages = envelope?.data?.stagePackages;
   const changedPathCount = envelope?.data?.changedPathCount;
   if (!Number.isSafeInteger(changedPathCount) || changedPathCount < 0) throw new Error(`kb-devkit affected selection is missing its changed-path count. Rerun the prepare selector: ${selectionCommand}.`);
@@ -32,6 +33,9 @@ export function parseAffectedSelection(output, profileName) {
   }
   if (!Array.isArray(unitTestPackages) || unitTestPackages.some((name) => typeof name !== 'string' || !name) || new Set(unitTestPackages).size !== unitTestPackages.length || unitTestPackages.some((name) => !packages.includes(name))) {
     throw new Error(`kb-devkit affected selection returned an invalid test task package list. Rerun the prepare selector: ${selectionCommand}.`);
+  }
+  if (!Array.isArray(skippedManualTasks) || skippedManualTasks.some((task) => !task || typeof task.package !== 'string' || !task.package || typeof task.task !== 'string' || !task.task || typeof task.reason !== 'string' || !task.reason || !packages.includes(task.package))) {
+    throw new Error(`kb-devkit affected selection returned an invalid skipped-manual task report. Rerun the prepare selector: ${selectionCommand}.`);
   }
   if (!stagePackages || typeof stagePackages !== 'object' || Array.isArray(stagePackages)) throw new Error(`Remote package selection did not include its manifest-backed stage packages. Rerun the prepare selector: ${selectionCommand}.`);
   for (const [stage, names] of Object.entries(stagePackages)) {
@@ -52,6 +56,7 @@ export function parseAffectedSelection(output, profileName) {
     packages: profileName === 'candidate' ? packages.filter((name) => !internalSet.has(name)) : packages,
     unitTestPackages: profileName === 'candidate' ? unitTestPackages.filter((name) => !internalSet.has(name)) : unitTestPackages,
     internalToolPackages: profileName === 'candidate' ? internalToolPackages : [],
+    skippedManualTasks,
     stagePackages,
     changedPathCount,
     selectionReason,
@@ -60,7 +65,7 @@ export function parseAffectedSelection(output, profileName) {
 
 export function createTestMatrix(packagesOrSelection, independentStages, buildDependentStages, packageTestStage, shardLimit, stagePackages = {}) {
   const selection = Array.isArray(packagesOrSelection)
-    ? { packages: packagesOrSelection, unitTestPackages: packagesOrSelection, internalToolPackages: [], stagePackages }
+    ? { packages: packagesOrSelection, unitTestPackages: packagesOrSelection, internalToolPackages: [], skippedManualTasks: [], stagePackages }
     : packagesOrSelection;
   const packages = selection.packages;
   const unitTestPackages = selection.unitTestPackages;
@@ -100,7 +105,7 @@ export function createTestMatrix(packagesOrSelection, independentStages, buildDe
 function main() {
   const [profileName, affectedPath, planPath, outputPath] = process.argv.slice(2);
   if (!profileName || !affectedPath || !planPath || !outputPath) throw new Error('Usage: node scripts/ci/remote-verify-plan.mjs <stream|candidate> <affected-json> <plan-json> <github-output>');
-  const { packages, unitTestPackages, internalToolPackages, stagePackages, changedPathCount, selectionReason } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
+  const { packages, unitTestPackages, internalToolPackages, skippedManualTasks, stagePackages, changedPathCount, selectionReason } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
   const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
   const independentStages = profile.independentTestStages[profileName];
   const buildDependentStages = profile.buildDependentTestStages[profileName];
@@ -108,8 +113,8 @@ function main() {
   const matrix = createTestMatrix({ packages, unitTestPackages, internalToolPackages, stagePackages }, independentStages, buildDependentStages, profile.packageTestStage, profile.maxParallel);
   writeFileSync(planPath, `${JSON.stringify(matrix)}\n`);
   const selection = JSON.parse(readFileSync(affectedPath, 'utf8')).data;
-  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\ninternal_tool_matrix=${JSON.stringify(matrix.internalTool)}\ninternal_tool_packages=${internalToolPackages.join(',')}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_packages=${JSON.stringify(packages)}\nselected_package_count=${packages.length}\nunit_test_packages=${unitTestPackages.join(',')}\nunit_test_package_count=${unitTestPackages.length}\nselection_mode=${selection.mode ?? 'full'}\nselection_base_sha=${selection.baseSha ?? ''}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\nshard_timeout_minutes=${profile.shardTimeoutMinutes}\n`);
-  process.stdout.write(`Planned ${matrix.include.length} test shard(s) from ${unitTestPackages.length} packages with a registered test task.\n`);
+  appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\ninternal_tool_matrix=${JSON.stringify(matrix.internalTool)}\ninternal_tool_packages=${internalToolPackages.join(',')}\nskipped_manual_tasks=${JSON.stringify(skippedManualTasks)}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_packages=${JSON.stringify(packages)}\nselected_package_count=${packages.length}\nunit_test_packages=${unitTestPackages.join(',')}\nunit_test_package_count=${unitTestPackages.length}\nselection_mode=${selection.mode ?? 'full'}\nselection_base_sha=${selection.baseSha ?? ''}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\nshard_timeout_minutes=${profile.shardTimeoutMinutes}\n`);
+  process.stdout.write(`Planned ${matrix.include.length} test shard(s) from ${unitTestPackages.length} packages with a registered test task; ${skippedManualTasks.length} manual-only task(s) reported skipped.\n`);
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

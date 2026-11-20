@@ -107,6 +107,7 @@ const readAffectedSelection = (result) => {
   const packages = envelope?.data?.packages;
   const testPackages = envelope?.data?.testPackages;
   const internalToolPackages = envelope?.data?.internalToolPackages;
+  const skippedManualTasks = envelope?.data?.skippedManualTasks ?? [];
   const selectionReason = envelope?.data?.selectionReason;
   if (envelope?.ok !== true || !Array.isArray(packages) || packages.some((name) => typeof name !== 'string' || !name)) {
     throw new Error('kb-devkit affected --json returned an invalid package selection. Rerun the remote verification prepare job.');
@@ -116,7 +117,10 @@ const readAffectedSelection = (result) => {
   if (!Array.isArray(testPackages) || testPackages.some((name) => typeof name !== 'string' || !name) || new Set(testPackages).size !== testPackages.length || testPackages.some((name) => !packages.includes(name))) {
     throw new Error('kb-devkit affected --json returned an invalid test-task package selection. Rerun the remote verification prepare job.');
   }
-  return { packages, testPackages, internalToolPackages, selectionReason };
+  if (!Array.isArray(skippedManualTasks) || skippedManualTasks.some((task) => !task || typeof task.package !== 'string' || !task.package || typeof task.task !== 'string' || !task.task || typeof task.reason !== 'string' || !task.reason || !packages.includes(task.package))) {
+    throw new Error('kb-devkit affected --json returned an invalid skipped-manual task report. Rerun the remote verification prepare job.');
+  }
+  return { packages, testPackages, internalToolPackages, skippedManualTasks, selectionReason };
 };
 try {
   let changed = runChangedFiles();
@@ -155,7 +159,7 @@ try {
     result = runAffected();
     selection = readAffectedSelection(result);
   }
-  let { packages, testPackages, internalToolPackages, selectionReason } = selection;
+  let { packages, testPackages, internalToolPackages, skippedManualTasks, selectionReason } = selection;
   const emptyAffectedReason = candidateFullFallbackReason({ changedPathCount: changedPaths.length, packages });
   if (emptyAffectedReason && !fullSelection) {
     forcedFullReason = emptyAffectedReason;
@@ -166,7 +170,7 @@ try {
     if (changed.error || changed.status !== 0) throw new Error(`Full changed-path selection failed (exit ${changed.status}): ${changed.stderr || changed.stdout || changed.error?.message}`);
     result = runAffected();
     selection = readAffectedSelection(result);
-    ({ packages, testPackages, internalToolPackages, selectionReason } = selection);
+    ({ packages, testPackages, internalToolPackages, skippedManualTasks, selectionReason } = selection);
   }
   if (fullSelection && packages.length === 0) {
     throw new Error(`${forcedFullReason || 'full: full selection'}; no workspace packages were returned.`);
@@ -184,8 +188,8 @@ try {
   const finalChangedPaths = JSON.parse(readFileSync(changedFilesPath, 'utf8'));
   const mode = fullSelection || selectionReason.startsWith('full:') ? 'full' : 'affected';
   const reason = forcedFullReason || (mode === 'full' && !selectionReason ? 'full: candidate has no integration base ref' : selectionReason);
-  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, unitTestPackages: testPackages, internalToolPackages, stagePackages, changedPathCount: finalChangedPaths.length, selectionReason: reason, mode, baseSha: selectionBaseSha }, selectedPackageCount: packages.length })}\n`);
-  process.stdout.write(`Resolved ${packages.length} package(s) from ${finalChangedPaths.length} path(s) using kb-devkit (${reason}).\n`);
+  writeFileSync(outputPath, `${JSON.stringify({ ok: true, data: { packages, unitTestPackages: testPackages, internalToolPackages, skippedManualTasks, stagePackages, changedPathCount: finalChangedPaths.length, selectionReason: reason, mode, baseSha: selectionBaseSha }, selectedPackageCount: packages.length })}\n`);
+  process.stdout.write(`Resolved ${packages.length} package(s) from ${finalChangedPaths.length} path(s) using kb-devkit (${reason}); ${skippedManualTasks.length} manual-only task(s) skipped.\n`);
 } catch (error) {
   process.stderr.write(`${error.message}\n`);
   process.exitCode = 1;

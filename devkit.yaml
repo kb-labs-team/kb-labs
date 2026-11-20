@@ -774,6 +774,21 @@ tasks:
       deps:
         - "build"
 
+    - categories: [internal-tool]
+      packages: [github.com/kb-labs/kb-runner]
+      command: make test
+      manualOnly: true
+      inputs:
+        - "**/*.go"
+        - "go.mod"
+        - "go.sum"
+        - "Makefile"
+        - "internal/manifest/manifest.json"
+        - "^dist/**"
+      outputs: []
+      deps:
+        - "^build"
+
     - categories: [go-binary, internal-tool]
       command: make test
       inputs:

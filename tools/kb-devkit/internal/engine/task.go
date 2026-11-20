@@ -14,10 +14,11 @@ import (
 // TaskDef is the resolved definition of one (package, task) pair.
 // Resolution picks the correct variant from TaskConfig based on the package category.
 type TaskDef struct {
-	Name    string
-	Command string
-	Inputs  []string // glob patterns relative to package dir
-	Outputs []string // glob patterns relative to package dir
+	Name       string
+	ManualOnly bool
+	Command    string
+	Inputs     []string // glob patterns relative to package dir
+	Outputs    []string // glob patterns relative to package dir
 	// Deps: "^build" = run 'build' for all workspace deps first
 	//       "build"  = run 'build' for this package first
 	Deps  []string
@@ -57,12 +58,13 @@ func ResolveTaskDef(cfg *config.DevkitConfig, taskName, pkgCategory string) *Tas
 		cacheVal = *v.Cache
 	}
 	return &TaskDef{
-		Name:    taskName,
-		Command: v.Command,
-		Inputs:  v.Inputs,
-		Outputs: v.Outputs,
-		Deps:    v.Deps,
-		Cache:   cacheVal,
+		Name:       taskName,
+		ManualOnly: v.ManualOnly,
+		Command:    v.Command,
+		Inputs:     v.Inputs,
+		Outputs:    v.Outputs,
+		Deps:       v.Deps,
+		Cache:      cacheVal,
 	}
 }
 
@@ -73,5 +75,17 @@ func ResolvePackageTaskDef(ws *workspace.Workspace, cfg *config.DevkitConfig, ta
 	if ws.IsAggregatePackage(pkg.Name) {
 		return nil
 	}
-	return ResolveTaskDef(cfg, taskName, pkg.Category)
+	tc, ok := cfg.Tasks[taskName]
+	if !ok {
+		return nil
+	}
+	v := tc.ResolvePackageVariant(pkg.Category, pkg.Name)
+	if v == nil {
+		return nil
+	}
+	cacheVal := true
+	if v.Cache != nil {
+		cacheVal = *v.Cache
+	}
+	return &TaskDef{Name: taskName, ManualOnly: v.ManualOnly, Command: v.Command, Inputs: v.Inputs, Outputs: v.Outputs, Deps: v.Deps, Cache: cacheVal}
 }
