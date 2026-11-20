@@ -1,0 +1,19 @@
+{
+  "name": "@kb-labs/registry-image-composition",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Private pnpm deployment importer for the Registry OCI image composition",
+  "dependencies": {
+    "@kb-labs/marketplace-registry-app": "workspace:*",
+    "@kb-labs/sdk": "workspace:*",
+    "@kb-labs/adapters-fs": "workspace:*",
+    "@kb-labs/adapters-state-broker": "workspace:*",
+    "@kb-labs/adapters-eventbus-cache": "workspace:*",
+    "@kb-labs/adapters-sqlite": "workspace:*",
+    "@kb-labs/adapters-pino": "workspace:*",
+    "@kb-labs/adapters-log-ringbuffer": "workspace:*",
+    "@kb-labs/adapters-log-document": "workspace:*",
+    "@kb-labs/adapters-analytics-sqlite": "workspace:*",
+    "@kb-labs/adapters-service-transport-http": "workspace:*"
+  }
+}

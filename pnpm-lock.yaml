@@ -2446,6 +2446,42 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
+  e2e/registry-image-composition:
+    dependencies:
+      '@kb-labs/adapters-analytics-sqlite':
+        specifier: workspace:*
+        version: link:../../adapters/analytics-sqlite
+      '@kb-labs/adapters-eventbus-cache':
+        specifier: workspace:*
+        version: link:../../adapters/eventbus-cache
+      '@kb-labs/adapters-fs':
+        specifier: workspace:*
+        version: link:../../adapters/fs
+      '@kb-labs/adapters-log-document':
+        specifier: workspace:*
+        version: link:../../adapters/log-document
+      '@kb-labs/adapters-log-ringbuffer':
+        specifier: workspace:*
+        version: link:../../adapters/log-ringbuffer
+      '@kb-labs/adapters-pino':
+        specifier: workspace:*
+        version: link:../../adapters/pino
+      '@kb-labs/adapters-service-transport-http':
+        specifier: workspace:*
+        version: link:../../adapters/service-transport-http
+      '@kb-labs/adapters-sqlite':
+        specifier: workspace:*
+        version: link:../../adapters/sqlite
+      '@kb-labs/adapters-state-broker':
+        specifier: workspace:*
+        version: link:../../adapters/state-broker
+      '@kb-labs/marketplace-registry-app':
+        specifier: workspace:*
+        version: link:../../services/marketplace-registry/app
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../sdk/sdk
+
   e2e/plugins:
     devDependencies:
       '@kb-labs/commit':
