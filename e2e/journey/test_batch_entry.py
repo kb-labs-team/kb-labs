@@ -670,6 +670,33 @@ exec "$REAL_TAR" "$@"
         self.assertFalse(selected_owners_have_evidence(mode_dir, "local"))
 
     # case: S-262.17
+    def test_two_real_secured_claims_require_pass_for_every_resolved_step(self):
+        from batch_summary import selected_owners_have_evidence
+        from select_from_cases import selection_from_coverage
+        coverage = [{"mode": "secured", "cases": [{"id": "S-141", "status": "active", "steps": [
+            {"stepId": "S-141.1", "claims": [{"kind": "journey",
+                "source": "e2e/journey/mcp_project_steps.py", "line": 581}]},
+            {"stepId": "S-141.2", "claims": [{"kind": "journey",
+                "source": "e2e/journey/service_runner.py", "line": 1378}]},
+        ]}]}]
+        plan = selection_from_coverage(coverage, "S-141.1,S-141.2", mode="secured", requested_runners="")
+        self.assertEqual(plan["steps"], ["S-141.1", "S-141.2"])
+        self.assertEqual(plan["selectedClaimOwners"], {"create project agent session": ["S-141.1"]})
+        mode_dir = self.root / "two-secured-claims"
+        mode_dir.mkdir()
+        (mode_dir / "selection-plan.json").write_text(__import__("json").dumps(plan), encoding="utf-8")
+        report = {"case_run": {"mode": "secured", "claims": [
+            {"claimId": "S-141.1", "status": "PASS"}]}, "steps": [
+                {"name": "create project agent session", "mode": "secured",
+                 "status": "PASS", "cases": ["S-141.1"]}]}
+        report_path = mode_dir / "service-secured.json"
+        report_path.write_text(__import__("json").dumps(report), encoding="utf-8")
+        self.assertFalse(selected_owners_have_evidence(mode_dir, "secured"))
+        report["case_run"]["claims"].append({"claimId": "S-141.2", "status": "PASS"})
+        report_path.write_text(__import__("json").dumps(report), encoding="utf-8")
+        self.assertTrue(selected_owners_have_evidence(mode_dir, "secured"))
+
+    # case: S-262.17
     def test_missing_selected_mode_artifact_uses_authoritative_selection(self):
         import json
         batch_result = self._run()
