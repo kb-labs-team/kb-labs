@@ -18,7 +18,6 @@ import {
 } from "@kb-labs/core-project-registry";
 import { reserveLoopbackPorts, runHost } from "@kb-labs/shared-daemon";
 import { buildServiceTools, mcpToolName } from "@kb-labs/mcp-app/project-module";
-import { callOutput } from "@kb-labs/mcp-app/mcp/output-capture";
 import {
   createProjectRuntimeConfig,
   DEFAULT_PROJECT_MODULES,
@@ -215,6 +214,8 @@ async function startRuntime(options: {
   /** Environment the platform sees, on top of the isolated one. */
   env?: Record<string, string>;
   modules?: readonly ProjectRuntimeModule[];
+  executionMode?: "in-process";
+  prepareProject?: (root: string) => Promise<void>;
 } = {}): Promise<Running> {
   const dir = await mkdtemp(join(tmpdir(), "kb-runtime-config-"));
   await mkdir(join(dir, ".kb"), { recursive: true });
@@ -222,10 +223,15 @@ async function startRuntime(options: {
   await writeFile(
     join(dir, ".kb", "kb.config.json"),
     JSON.stringify({
-      platform: { deployment: { topology: "local" }, adapters: {} },
+      platform: {
+        deployment: { topology: "local" },
+        adapters: {},
+        ...(options.executionMode ? { execution: { mode: options.executionMode } } : {}),
+      },
     }),
   );
   const root = await canonicalizeProjectPath(dir);
+  await options.prepareProject?.(root);
   const kbHome = join(dir, "kb-home");
   await mkdir(kbHome, { recursive: true });
   await createProjectRegistry({ root: kbHome }).add(root);
@@ -472,36 +478,171 @@ describe("project runtime composition (real runHost, minimal modules)", () => {
   });
 
   // case: S-140.2
-  it("captures readable plugin UI output through the real project runtime platform config", async () => {
-    const project = await mkdtemp(join(tmpdir(), "kb-runtime-mcp-ui-"));
+  it("keeps concurrent Project Runtime MCP UI results readable and isolated through the real execution backend", async () => {
+    const mcpModule = DEFAULT_PROJECT_MODULES.find(
+      (module) => module.manifest.projectApi?.serviceId === "mcp",
+    );
+    expect(mcpModule).toBeDefined();
+    const running = await startRuntime({
+      modules: [mcpModule!],
+      env: { KB_MCP_AUTH_MODE: "local" },
+      executionMode: "in-process",
+      prepareProject: async (root) => {
+        const pluginRoot = join(root, "plugins", "ui-fixture");
+        await mkdir(join(pluginRoot, "dist", "commands"), { recursive: true });
+        await writeFile(
+          join(root, "pnpm-workspace.yaml"),
+          'packages:\n  - "plugins/*"\n',
+        );
+        await writeFile(
+          join(pluginRoot, "package.json"),
+          JSON.stringify({
+            name: "@fixture/ui-plugin",
+            version: "1.0.0",
+            type: "module",
+            kb: { manifest: "dist/manifest.json" },
+          }),
+        );
+        await writeFile(
+          join(pluginRoot, "dist", "manifest.json"),
+          JSON.stringify({
+            schema: "kb.plugin/3",
+            id: "@fixture/ui-plugin",
+            version: "1.0.0",
+            cli: {
+              commands: [
+                {
+                  path: "capture",
+                  describe: "Capture a readable result",
+                  handler: "dist/commands/capture.js#execute",
+                  operationType: "read",
+                  flags: [
+                    { name: "label", type: "string", required: true },
+                    { name: "delayMs", type: "number", required: false },
+                    { name: "json", type: "boolean", required: false },
+                  ],
+                },
+              ],
+            },
+          }),
+        );
+        await writeFile(
+          join(pluginRoot, "dist", "commands", "capture.js"),
+          [
+            "export async function execute(ctx, input) {",
+            "  const label = input.flags.label;",
+            "  await new Promise((resolve) => setTimeout(resolve, input.flags.delayMs));",
+            "  ctx.ui.success(`Completed ${label}`, {",
+            '    sections: [{ header: "Request", items: [label] }],',
+            "  });",
+            "  return { label };",
+            "}",
+          ].join("\n"),
+        );
+      },
+    });
+
+    const call = async (
+      id: number,
+      label: string,
+      delayMs: number,
+      json = false,
+    ) => {
+      const response = await fetch(`${running.base}/mcp/`, {
+        method: "POST",
+        headers: {
+          [RUNTIME_TOKEN_HEADER]: TOKEN,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          method: "tools/call",
+          params: {
+            name: "fixture-ui-plugin__capture",
+            arguments: { label, delayMs, ...(json ? { json: true } : {}) },
+          },
+        }),
+      });
+      expect(response.status).toBe(200);
+      const frame = (await response.text()).split("\ndata: ")[1]?.trim();
+      expect(frame).toBeDefined();
+      return JSON.parse(frame ?? "{}").result as {
+        isError: boolean;
+        content: Array<{ type: string; text: string }>;
+        structuredContent: {
+          ok: boolean;
+          data: string;
+          meta: { ui: Array<Record<string, unknown>> };
+        };
+      };
+    };
+
     try {
-      const root = await canonicalizeProjectPath(project);
-      const config = await createProjectRuntimeConfig({
-        projectRoot: root,
-        projectId: deriveProjectId(root),
-        listen: { host: "127.0.0.1", port: 51234 },
-        token: TOKEN,
-        modules: [],
-      });
-      const provider = config.platform.uiProvider;
-      expect(provider).toBeDefined();
+      const [first, second] = await Promise.all([
+        call(1, "first-request", 30),
+        call(2, "second-request", 5),
+      ]);
 
-      const output = { text: [] as string[], structured: [] as unknown[] };
-      await callOutput.run(output, async () => {
-        provider!("cli").success("Created commit abc1234", {
-          sections: [{ title: "Commit", lines: ["SHA: abc1234"] }],
-        });
+      expect(first.isError).toBe(false);
+      expect(second.isError).toBe(false);
+      expect(first.content[0]?.text).toContain("Completed first-request");
+      expect(first.content[0]?.text).not.toContain("second-request");
+      expect(second.content[0]?.text).toContain("Completed second-request");
+      expect(second.content[0]?.text).not.toContain("first-request");
+      expect(first.structuredContent).toMatchObject({
+        ok: true,
+        data: expect.stringContaining("Completed first-request"),
+        meta: {
+          ui: [
+            {
+              kind: "message",
+              level: "success",
+              message: "Completed first-request",
+              options: {
+                sections: [{ header: "Request", items: ["first-request"] }],
+              },
+            },
+          ],
+        },
+      });
+      expect(second.structuredContent).toMatchObject({
+        ok: true,
+        data: expect.stringContaining("Completed second-request"),
+        meta: {
+          ui: [
+            {
+              kind: "message",
+              level: "success",
+              message: "Completed second-request",
+              options: {
+                sections: [{ header: "Request", items: ["second-request"] }],
+              },
+            },
+          ],
+        },
       });
 
-      expect(output.text.join("\n")).toContain("Created commit abc1234");
-      expect(output.structured).toMatchObject([{
-        kind: "message",
-        level: "success",
-        message: "Created commit abc1234",
-        options: { sections: [{ title: "Commit", lines: ["SHA: abc1234"] }] },
-      }]);
+      const machineResult = await call(3, "json-request", 0, true);
+      expect(machineResult.isError).toBe(false);
+      expect(JSON.parse(machineResult.content[0]!.text)).toMatchObject({
+        ok: true,
+        data: { label: "json-request" },
+      });
+      expect(JSON.parse(machineResult.structuredContent.data)).toMatchObject({
+        ok: true,
+        data: { label: "json-request" },
+      });
+      expect(machineResult.structuredContent.meta.ui).toMatchObject([
+        {
+          kind: "message",
+          level: "success",
+          message: "Completed json-request",
+        },
+      ]);
     } finally {
-      await rm(project, { recursive: true, force: true });
+      await running.stop();
     }
   });
 
