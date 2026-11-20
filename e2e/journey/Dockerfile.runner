@@ -9,6 +9,8 @@ COPY tools/kb-create/go.mod tools/kb-create/go.sum /src/kb-create/
 COPY tools/kb-create/main.go /src/kb-create/main.go
 COPY tools/kb-create/v2 /src/kb-create/v2
 RUN go build -trimpath -o /out/kb-create-release-index ./v2/cmd/kb-create-release-index
+COPY tools/kb-dev /src/kb-dev
+RUN mkdir -p /out && (cd /src/kb-dev && go build -trimpath -o /out/kb-dev .)
 
 # The toolchain stage owns the slow, rarely-changing layers (apt packages, pnpm,
 # Playwright and Chromium). e2e/journey/run.sh builds and tags it from these
@@ -45,6 +47,7 @@ ENV KB_JOURNEY_RESOURCE_LAYOUT=runner-image
 
 COPY tools/kb-create/install.sh /usr/local/share/kb-create/install.sh
 COPY --from=release-index-sealer /out/kb-create-release-index /usr/local/bin/kb-create-release-index
+COPY --from=release-index-sealer /out/kb-dev /usr/local/bin/kb-dev
 COPY e2e/journey /opt/kb-journey/e2e/journey
 COPY e2e/compose-owner.sh /opt/kb-journey/e2e/compose-owner.sh
 COPY .journey/runner-inputs/config-jsonc-edit.mjs /opt/kb-journey/core/config/dist/jsonc-edit.mjs
@@ -82,6 +85,6 @@ COPY e2e/journey/entrypoint.py /usr/local/bin/kb-journey-runner
 ENV PYTHONPATH="/opt/kb-journey/e2e/journey"
 COPY e2e/journey/studio-playwright.config.mjs /opt/kb-studio-playwright/playwright.config.mjs
 COPY .journey/runner-inputs/studio-specs /opt/kb-studio-playwright/specs
-RUN chmod +x /usr/local/share/kb-create/install.sh /usr/local/bin/kb-journey-runner /usr/local/bin/kb-create-release-index
+RUN chmod +x /usr/local/share/kb-create/install.sh /usr/local/bin/kb-journey-runner /usr/local/bin/kb-create-release-index /usr/local/bin/kb-dev
 
 ENTRYPOINT ["python3", "/usr/local/bin/kb-journey-runner"]
