@@ -38,7 +38,7 @@ class PreparedCandidateCacheTests(unittest.TestCase):
         self.archive = self.root / "build-candidate.tar"
         self._write_archive(self.source_sha[:7])
 
-    def _write_archive(self, source_revision):
+    def _write_archive(self, source_revision, *, bad_index_checksum=False):
         release = self.root / "release"
         release.mkdir(exist_ok=True)
         index = {
@@ -57,7 +57,7 @@ class PreparedCandidateCacheTests(unittest.TestCase):
         binary = release / "kb-create"
         binary.write_bytes(b"fixture binary")
         (release / "checksums.txt").write_text(
-            f"{hashlib.sha256(index_bytes).hexdigest()}  release-index.json\n"
+            f"{'0' * 64 if bad_index_checksum else hashlib.sha256(index_bytes).hexdigest()}  release-index.json\n"
             f"{hashlib.sha256(binary.read_bytes()).hexdigest()}  kb-create\n",
             encoding="utf-8",
         )
@@ -129,6 +129,21 @@ class PreparedCandidateCacheTests(unittest.TestCase):
         self._write_archive("other-source")
 
         with self.assertRaisesRegex(ValueError, "provenance"):
+            self._create()
+
+    def test_release_index_checksum_must_match_candidate_checksums(self):
+        self._write_archive(self.source_sha[:7], bad_index_checksum=True)
+
+        with self.assertRaisesRegex(ValueError, "checksum"):
+            self._create()
+
+    def test_archive_paths_must_not_escape_the_workspace(self):
+        with tarfile.open(self.archive, "w") as archive:
+            escaped = self.root / "escape.txt"
+            escaped.write_text("outside candidate", encoding="utf-8")
+            archive.add(escaped, arcname="../escape.txt")
+
+        with self.assertRaisesRegex(ValueError, "unsafe path"):
             self._create()
 
 
