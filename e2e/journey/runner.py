@@ -2235,6 +2235,7 @@ def _main(*, update_variant_runner=None):
 
         workflow_claims = ([f"S-002.{step}" for step in range(1, 7)]
                            + [f"S-008.{step}" for step in range(1, 5)]
+                           + ["S-007.5"]
                            + [f"S-027.{step}" for step in range(1, 4)]
                            + [f"S-028.{step}" for step in range(1, 4)]
                            + [f"S-143.{step}" for step in range(1, 5)])
