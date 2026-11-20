@@ -215,7 +215,7 @@ def _assert_registry_image_composition(env: dict[str, str]) -> None:
         "x-kb-auth-permissions": '["packages:read"]',
     })
     try:
-        status, _, body = open_http(urllib.request.urlopen, request, timeout=15, env=env)
+        status, body, _ = open_http(urllib.request.urlopen, request, timeout=15, env=env)
         response = json.loads(body.decode("utf-8"))
     except Exception as error:
         raise RuntimeError(f"Registry image readiness endpoint could not be read: {error}") from error
