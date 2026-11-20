@@ -57,6 +57,7 @@ import { registerAggregatedDocsRoutes } from "./docs/routes.js";
 import { HostRegistry } from "./hosts/registry.js";
 import { attachGatewayWs, type SocketWsUpstream } from "./ws/gateway-ws.js";
 import { GatewayObservabilityCollector } from "./observability/collector.js";
+import { gatewayObservabilityHealthResponseSchema } from "./observability/health-response-schema.js";
 import { randomUUID } from "node:crypto";
 import { registerGatewayUxBoundary } from './ux-boundary.js';
 import { registerInternalRoutes } from "./internal/routes.js";
@@ -730,7 +731,7 @@ export async function createServer(
           tags: ["Observability"],
           summary: "Gateway observability health snapshot",
           querystring: { type: 'object', properties: {}, additionalProperties: false },
-          response: { 200: { type: 'object' } },
+          response: { 200: gatewayObservabilityHealthResponseSchema },
         },
       },
       async () => {
