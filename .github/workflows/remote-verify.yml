@@ -147,6 +147,8 @@ jobs:
           PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
           GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+          DEVKIT_CACHE_MODE: ${{ steps.devkit-cache.outputs.cache-mode }}
+          DEVKIT_CACHE_STORE_PATH: ${{ steps.devkit-cache.outputs.store-path }}
         run: node scripts/ci/run-remote-stage.mjs
       - name: Archive workspace build outputs
         if: success()
@@ -226,6 +228,7 @@ jobs:
           PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
           GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+          DEVKIT_CACHE_MODE: ${{ steps.devkit-cache.outputs.cache-mode }}
         run: node scripts/ci/run-remote-stage.mjs
       - name: Upload independent test result
         if: always()
@@ -287,6 +290,7 @@ jobs:
           PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
           GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+          DEVKIT_CACHE_MODE: ${{ steps.devkit-cache.outputs.cache-mode }}
         run: node scripts/ci/run-remote-stage.mjs
       - name: Upload build-dependent test result
         if: always()
@@ -347,6 +351,7 @@ jobs:
           PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
           GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+          DEVKIT_CACHE_MODE: ${{ steps.devkit-cache.outputs.cache-mode }}
         run: node scripts/ci/run-remote-stage.mjs
       - name: Upload internal-tool result
         if: always()

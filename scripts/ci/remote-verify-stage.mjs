@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resourcePeaks, sampleRunnerResources } from './remote-build-resources.mjs';
@@ -29,7 +29,8 @@ function internalToolCommandOutput(outcome) {
 
 function cacheStatus(value) {
   if (value === 'true') return 'exact-hit';
-  if (value === 'false') return 'miss-or-restore-prefix';
+  if (value === 'false') return 'restore-prefix-hit';
+  if (value === '') return 'miss';
   return 'unavailable';
 }
 
@@ -37,7 +38,7 @@ export async function runStage({
   stage, packageNames, packages, selectedPackageCount, shard, runCommand, now = Date.now, cache = {},
   resourceSamplePath, partialResultPath, sampleIntervalMs = 30_000,
   sampleResources = () => sampleRunnerResources({ workspaceRoot: root, now }),
-  affectedBuild = false, devkitExecutable = './tools/kb-devkit/kb-devkit',
+  affectedBuild = false, devkitExecutable = './tools/kb-devkit/kb-devkit', devkitCacheStorePath,
 }) {
   const definition = stageDefinitions.find((entry) => entry.id === stage);
   if (!definition) throw new Error(`Unknown verification stage ${stage}; use the registered stages in scripts/ci/verification-profile.json.`);
@@ -56,7 +57,9 @@ export async function runStage({
       return {
         name, status: 'pass', failures: [], logTail: 'kb-devkit selected no affected workspace packages; build had no work.',
         selectedPackageCount: 0,
-        startedAt: new Date(at).toISOString(), finishedAt: new Date(at).toISOString(), durationMs: 0, cache: cacheRecord(cache),
+        startedAt: new Date(at).toISOString(), finishedAt: new Date(at).toISOString(), durationMs: 0,
+        cache: cacheRecord(cache), devkitTaskCache: { scheduled: 0, cached: 0, executed: 0, blocked: 0, notAffected: 0 },
+        devkitCasSizeBytes: directorySizeBytes(devkitCacheStorePath),
       };
     }
     command = devkitExecutable;
@@ -93,6 +96,7 @@ export async function runStage({
       ...(stage === profile.buildStage ? { resourcePeaks: resourcePeaks(buildSamples), lastResourceSample: buildSamples.at(-1) } : {}),
       cache: cacheRecord(cache),
       ...(stage === profile.buildStage ? { devkitTaskCache: null } : {}),
+      ...(stage === profile.buildStage ? { devkitCasSizeBytes: null } : {}),
     };
     writeAtomicJSON(partialResultPath, partial);
   };
@@ -176,6 +180,7 @@ export async function runStage({
     ...(stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package' ? { packages: packageNames } : {}),
     cache: cacheRecord(cache),
     ...(stage === profile.buildStage ? { devkitTaskCache } : {}),
+    ...(stage === profile.buildStage ? { devkitCasSizeBytes: directorySizeBytes(devkitCacheStorePath) } : {}),
     ...(stage === profile.buildStage ? {
       resourcePeaks: resourcePeaks(buildSamples),
       lastResourceSample: buildSamples.at(-1),
@@ -197,6 +202,27 @@ function devkitTaskCacheRecord(stdout) {
       blocked: Number.isSafeInteger(summary.blocked) ? summary.blocked : null,
       notAffected: Number.isSafeInteger(summary.notAffected) ? summary.notAffected : null,
     };
+  } catch {
+    return null;
+  }
+}
+
+function directorySizeBytes(storePath) {
+  if (typeof storePath !== 'string' || storePath.length === 0) return null;
+  let total = 0;
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(entryPath);
+      else if (entry.isFile()) total += statSync(entryPath).size;
+    }
+  };
+  try {
+    for (const child of ['objects', 'tasks']) {
+      const childPath = path.join(storePath, child);
+      if (existsSync(childPath)) visit(childPath);
+    }
+    return total;
   } catch {
     return null;
   }
@@ -297,6 +323,6 @@ export function cacheRecord(cache) {
   return {
     pnpm: cacheStatus(cache.pnpm),
     go: cacheStatus(cache.go),
-    devkit: cacheStatus(cache.devkit),
+    devkit: cache.devkitMode === 'off' ? 'disabled' : cacheStatus(cache.devkit),
   };
 }

@@ -14,6 +14,9 @@ outputs:
   store-path:
     description: The shared content-addressed store path used by kb-devkit.
     value: ${{ steps.resolve-store.outputs.path }}
+  cache-mode:
+    description: Whether this action is enabled for the current job.
+    value: ${{ inputs.mode }}
 
 runs:
   using: composite

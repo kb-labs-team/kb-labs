@@ -17,6 +17,7 @@ test('journey workspace build passes no concurrency of its own and streams affec
     packages: [],
     selectedPackageCount: 0,
     affectedBuild: true,
+    cache: { pnpm: '', go: 'false', devkit: '', devkitMode: 'read-write' },
     runCommand: async (command, args) => {
       invocation = [command, args];
       return { status: 0, stdout: JSON.stringify({ ok: true, data: {
@@ -29,7 +30,55 @@ test('journey workspace build passes no concurrency of its own and streams affec
   assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'build', '--affected', '--json']]);
   assert.equal(result.status, 'pass');
   assert.equal(result.selectedPackageCount, 1);
+  assert.deepEqual(result.cache, { pnpm: 'miss', go: 'restore-prefix-hit', devkit: 'miss' });
   assert.deepEqual(result.devkitTaskCache, { scheduled: 1, cached: 1, executed: 0, blocked: 0, notAffected: 0 });
+});
+
+test('workspace build distinguishes disabled and uninstrumented CAS status', async () => {
+  const result = await runStage({
+    stage: profile.buildStage,
+    packages: [],
+    selectedPackageCount: 0,
+    affectedBuild: true,
+    cache: { devkit: '', devkitMode: 'off' },
+    runCommand: async () => ({
+      status: 0,
+      stdout: JSON.stringify({ ok: true, data: { results: [{ Package: '@fixture/a', Task: 'build', OK: true }] } }),
+      stderr: '',
+    }),
+  });
+
+  assert.equal(result.cache.devkit, 'disabled');
+  assert.equal(result.devkitTaskCache, null);
+  assert.equal(result.devkitCasSizeBytes, null);
+});
+
+test('workspace build records the on-disk shared CAS bytes excluding temporary files', async () => {
+  const storePath = mkdtempSync(path.join(os.tmpdir(), 'kb-devkit-cas-metrics-'));
+  try {
+    mkdirSync(path.join(storePath, 'objects'));
+    mkdirSync(path.join(storePath, 'tasks'));
+    mkdirSync(path.join(storePath, 'tmp'));
+    writeFileSync(path.join(storePath, 'objects', 'object'), 'abc');
+    writeFileSync(path.join(storePath, 'tasks', 'manifest'), '12345');
+    writeFileSync(path.join(storePath, 'tmp', 'temporary'), 'ignored');
+    const result = await runStage({
+      stage: profile.buildStage,
+      packages: [],
+      selectedPackageCount: 0,
+      affectedBuild: true,
+      devkitCacheStorePath: storePath,
+      runCommand: async () => ({
+        status: 0,
+        stdout: JSON.stringify({ ok: true, data: { results: [{ Package: '@fixture/a', Task: 'build', OK: true }] } }),
+        stderr: '',
+      }),
+    });
+
+    assert.equal(result.devkitCasSizeBytes, 8);
+  } finally {
+    rmSync(storePath, { recursive: true, force: true });
+  }
 });
 
 test('workspace build reports task cache as unavailable when DevKit omits its summary', async () => {
@@ -42,6 +91,7 @@ test('workspace build reports task cache as unavailable when DevKit omits its su
   });
 
   assert.equal(result.devkitTaskCache, null);
+  assert.equal(result.cache.devkit, 'unavailable');
 });
 
 // case: S-262.7

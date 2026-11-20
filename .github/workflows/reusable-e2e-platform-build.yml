@@ -62,6 +62,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Restore kb-devkit build cache
+        id: devkit-cas
         uses: ./.github/actions/devkit-cas
         with:
           mode: ${{ inputs.cache-mode }}
@@ -170,15 +171,15 @@ jobs:
           elapsed=$(( $(date +%s) - started ))
           tarball_count=$(find e2e/packages -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d ' ')
           tarball_digest=$(find e2e/packages -maxdepth 1 -type f -name '*.tgz' -exec sha256sum {} \; | LC_ALL=C sort | sha256sum | awk '{print $1}')
-          cas_size=$(du -sh .kb/devkit 2>/dev/null | awk '{print $1}' || true)
+          cas_size_bytes=$(du -sb "${{ steps.devkit-cas.outputs.store-path }}/objects" "${{ steps.devkit-cas.outputs.store-path }}/tasks" 2>/dev/null | awk '{total += $1} END {print total + 0}')
           jq -n \
             --arg source_sha "$GITHUB_SHA" \
             --arg cache_mode "${{ inputs.cache-mode }}" \
             --arg tarball_digest "$tarball_digest" \
             --argjson elapsed_seconds "$elapsed" \
             --argjson tarball_count "$tarball_count" \
-            --arg cas_size "${cas_size:-0}" \
-            '{source_sha: $source_sha, cache_mode: $cache_mode, elapsed_seconds: $elapsed_seconds, tarball_count: $tarball_count, tarball_digest: $tarball_digest, devkit_cas_size: $cas_size}' \
+            --argjson cas_size_bytes "$cas_size_bytes" \
+            '{source_sha: $source_sha, cache_mode: $cache_mode, elapsed_seconds: $elapsed_seconds, tarball_count: $tarball_count, tarball_digest: $tarball_digest, devkit_cas_size_bytes: $cas_size_bytes}' \
             | tee /tmp/e2e-bundle-metadata.json
           {
             echo '### E2E prepare metrics'
@@ -189,7 +190,7 @@ jobs:
             echo "| Prepare elapsed | ${elapsed}s |"
             echo "| Packed tarballs | $tarball_count |"
             echo "| Tarball digest | \`$tarball_digest\` |"
-            echo "| kb-devkit CAS size | ${cas_size:-0} |"
+            echo "| kb-devkit CAS size | ${cas_size_bytes} bytes |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload immutable E2E bundle

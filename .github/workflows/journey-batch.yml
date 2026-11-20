@@ -83,6 +83,8 @@ jobs:
         env:
           BATCH_SELECTION: ${{ steps.selection.outputs.selection }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cas.outputs.cache-hit }}
+          DEVKIT_CACHE_MODE: ${{ steps.devkit-cas.outputs.cache-mode }}
+          DEVKIT_CACHE_STORE_PATH: ${{ steps.devkit-cas.outputs.store-path }}
         run: node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
