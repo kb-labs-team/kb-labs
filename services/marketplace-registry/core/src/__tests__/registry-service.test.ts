@@ -481,6 +481,61 @@ describe('RegistryService.publish', () => {
     expect(updatedEntry?.versions.map(version => version.version)).toEqual(['1.0.0', '1.1.0']);
   });
 
+  // case: S-268.22
+  it('rejects unsafe publish identifiers before writes while preserving scoped names and exact SemVer', async () => {
+    const values = new Map<string, Buffer>();
+    const storage: IStorage = {
+      read: async (path) => values.get(path) ?? null,
+      write: vi.fn(async (path, data) => { values.set(path, Buffer.from(data)); }),
+      delete: vi.fn(async (path) => { values.delete(path); }),
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => values.has(path),
+    };
+    const cache = createMemoryCache();
+    const cacheDelete = vi.spyOn(cache, 'delete');
+    const cacheSet = vi.spyOn(cache, 'set');
+    const svc = new RegistryService({ storage, cache, logger: noopLogger, baseUrl: 'http://localhost:5071' });
+
+    for (const [handle, name, version] of [
+      ['../victim', 'my-plugin', '1.0.0'],
+      ['victim', '../my-plugin', '1.0.0'],
+      ['victim', '@scope/../my-plugin', '1.0.0'],
+      ['victim', 'my-plugin', '1.0.0/../../meta'],
+      ['victim', 'my-plugin', ' 1.0.0'],
+      ['Victim', 'my-plugin', '1.0.0'],
+      ['v', 'my-plugin', '1.0.0'],
+    ]) {
+      const error = await svc.publish(SMALL_TARBALL, makePkg({ name, version }), handle, 'ns-owner')
+        .catch(reason => reason);
+      expect(error.code).toBe('INVALID_MANIFEST');
+    }
+    expect(storage.write).not.toHaveBeenCalled();
+    expect(storage.delete).not.toHaveBeenCalled();
+    expect(cacheDelete).not.toHaveBeenCalled();
+    expect(cacheSet).not.toHaveBeenCalled();
+
+    await svc.publish(SMALL_TARBALL, makePkg({
+      name: '@kb-labs/test_widget.v2', version: '1.2.3-rc.1+build.7',
+    }), 'valid-handle', 'ns-owner');
+    const scoped = await svc.getEntry('valid-handle', '@kb-labs/test_widget.v2');
+    expect(scoped?.versions.map(version => version.version)).toEqual(['1.2.3-rc.1+build.7']);
+  });
+
+  // case: S-268.22
+  it('serializes simultaneous first publication so only one namespace owns the package', async () => {
+    const svc = makeService();
+    const results = await Promise.allSettled([
+      svc.publish(SMALL_TARBALL, makePkg(), 'first-owner', 'ns-first'),
+      svc.publish(Buffer.from('second namespace'), makePkg(), 'first-owner', 'ns-second'),
+    ]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const refused = results.find(result => result.status === 'rejected') as PromiseRejectedResult;
+    expect(refused.reason.code).toBe('FORBIDDEN');
+    const entry = await svc.getEntry('first-owner', 'my-plugin');
+    expect(['ns-first', 'ns-second']).toContain(entry?.authorNamespaceId);
+    expect(entry?.versions).toHaveLength(1);
+  });
+
   it('RS-07: second version publishes, entry has two versions', async () => {
     const svc = makeService();
     await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
