@@ -4,7 +4,7 @@ title: Authentication — keep separate CLI sessions for several Gateways
 persona: plugin-author
 area: security
 priority: P1
-status: planned
+status: active
 release: false
 modes: [secured]
 surfaces: [cli]
