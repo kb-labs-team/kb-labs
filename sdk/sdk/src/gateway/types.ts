@@ -128,10 +128,12 @@ export interface ICredentialsManager {
  * Manages human-user session credentials stored in ~/.kb/session.json.
  */
 export interface ISessionManager {
-  /** Load session from disk */
-  load(): Promise<SessionCredentials | null>;
+  /** Load the only session or the session for the requested Gateway origin. */
+  load(gatewayUrl?: string): Promise<SessionCredentials | null>;
+  /** List every saved human session. */
+  list(): Promise<SessionCredentials[]>;
   /** Save session to disk (chmod 600) */
   save(session: SessionCredentials): Promise<void>;
-  /** Clear session (logout) */
-  clear(): Promise<void>;
+  /** Clear all sessions or only the one for the requested Gateway origin. */
+  clear(gatewayUrl?: string): Promise<void>;
 }

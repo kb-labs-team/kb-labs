@@ -94,4 +94,21 @@ describe('SessionManager', () => {
     await expect(manager.clear()).resolves.not.toThrow();
   });
 
+  // case: S-216.1, S-216.3, S-216.4, S-216.5
+  it('keeps sessions by origin and requires an unambiguous origin for lookup', async () => {
+    const hub = { ...SESSION, gatewayUrl: 'https://hub.example.test', accessToken: 'hub-access' };
+    const local = { ...SESSION, gatewayUrl: 'http://localhost:4000', accessToken: 'local-access' };
+    await manager.save(local);
+    await manager.save(hub);
+
+    expect(await manager.load()).toBeNull();
+    expect(await manager.load('https://hub.example.test/')).toEqual(hub);
+    expect(await manager.load('http://localhost:4000')).toEqual(local);
+    expect(await manager.list()).toEqual([local, hub]);
+
+    await manager.clear('https://hub.example.test');
+    expect(await manager.load('https://hub.example.test')).toBeNull();
+    expect(await manager.load('http://localhost:4000')).toEqual(local);
+  });
+
 });

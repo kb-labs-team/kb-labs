@@ -2,7 +2,7 @@
  * kb auth status — Show current Gateway authentication status.
  *
  * Reports both identity stores: machine credentials (~/.kb/credentials.json)
- * and a human session (~/.kb/session.json) — a caller with only one of the
+ * and human sessions (~/.kb/session.json) — a caller with only one of the
  * two would otherwise get a misleadingly incomplete picture now that both
  * exist. Top-level `authenticated`/`gatewayUrl`/`tokenExpired`/`expiresAt`
  * describe the machine store (unchanged shape, for existing --json
@@ -31,7 +31,7 @@ type StatusResult = CommandResult & {
   tokenExpired?: boolean;
   expiresAt?: string;
   minutesLeft?: number;
-  session: SessionStatus;
+  sessions: SessionStatus[];
 };
 
 export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
@@ -50,28 +50,28 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
     json: { type: 'boolean', description: 'Output in JSON format' },
   },
   async handler(ctx, _argv, flags) {
-    const { machine: credentials, session, sessionPath, sessionExpired, machineExpired } = await new AuthSessionOwner().inspect();
+    const { machine: credentials, sessions, sessionPath, sessionExpired, machineExpired } = await new AuthSessionOwner().inspect();
 
-    const sessionStatus: SessionStatus = session
-      ? {
+    const sessionStatuses: SessionStatus[] = sessions.map((session) => ({
         authenticated: true,
         path: sessionPath,
         gatewayUrl: session.gatewayUrl,
-        tokenExpired: sessionExpired,
+        tokenExpired: Date.now() >= session.expiresAt - 60_000,
         expiresAt: new Date(session.expiresAt).toISOString(),
         email: session.email,
-      }
-      : { authenticated: false, path: sessionPath };
+      }));
 
     if (!credentials) {
       if (!flags.json) {
-        if (session) {
-          ctx.ui?.write?.(`Session (human): ${session.email ?? session.gatewayUrl}${sessionStatus.tokenExpired ? ' — token expired (will auto-refresh)' : ''}\n`);
+        if (sessions.length > 0) {
+          for (const [index, session] of sessions.entries()) {
+            ctx.ui?.write?.(`Session (human): ${session.email ?? session.gatewayUrl} (${session.gatewayUrl})${sessionStatuses[index].tokenExpired ? ' — token expired (will auto-refresh)' : ''}\n`);
+          }
         } else {
           ctx.ui?.write?.('Not authenticated. Run "kb auth login" to configure Gateway connection.\n');
         }
       }
-      return {  authenticated: false, session: sessionStatus };
+      return {  authenticated: false, sessions: sessionStatuses.length ? sessionStatuses : [{ authenticated: false, path: sessionPath }] };
     }
 
     const expired = machineExpired;
@@ -86,9 +86,9 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
       } else {
         ctx.ui?.write?.(`  Token: valid (expires in ${minutesLeft} min)\n`);
       }
-      if (session) {
-        ctx.ui?.write?.(`Session (human): ${session.email ?? session.gatewayUrl}\n`);
-        ctx.ui?.write?.(`  Token: ${sessionStatus.tokenExpired ? 'expired (will auto-refresh)' : 'valid'}\n`);
+      for (const [index, session] of sessions.entries()) {
+        ctx.ui?.write?.(`Session (human): ${session.email ?? session.gatewayUrl} (${session.gatewayUrl})\n`);
+        ctx.ui?.write?.(`  Token: ${sessionStatuses[index].tokenExpired ? 'expired (will auto-refresh)' : 'valid'}\n`);
       }
     }
 
@@ -99,7 +99,7 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
       tokenExpired: expired,
       expiresAt,
       minutesLeft,
-      session: sessionStatus,
+      sessions: sessionStatuses,
     };
   },
 });
