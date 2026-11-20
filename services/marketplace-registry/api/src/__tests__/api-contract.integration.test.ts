@@ -103,6 +103,9 @@ async function buildApp(
     if (code === 'VERSION_ALREADY_EXISTS') {
       return reply.code(409).send({ error: 'Conflict', code, message: err.message });
     }
+    if (code === 'FORBIDDEN') {
+      return reply.code(403).send({ error: 'Forbidden', code, message: err.message });
+    }
     if (err.statusCode) {
       return reply.code(err.statusCode).send({ error: err.message });
     }
@@ -523,6 +526,35 @@ describe('public Registry resolution and tarball access', () => {
     expect(registry.publish).toHaveBeenNthCalledWith(2, expect.any(Buffer), {
       meta: { name: 'widget-private', version: '1.0.0', identity: '@shared/widget' }, visibility: 'private', primaryKind: 'plugin',
     }, 'private-author', 'ns-private');
+  });
+
+  // case: S-268.22
+  it('returns forbidden when an authenticated namespace tries to append another namespace package', async () => {
+    const registry = makeMockRegistry();
+    registry.publish.mockRejectedValueOnce(Object.assign(
+      new Error('Authenticated namespace does not own kirill/my-plugin'), { code: 'FORBIDDEN' },
+    ));
+    const app = await buildApp({ namespaceId: 'ns-other' }, registry);
+    const { boundary, payload } = publishMultipartBody(Buffer.from('unauthorized version'), {
+      meta: { name: 'my-plugin', version: '1.1.0', identity: '@kirill/my-plugin' },
+      visibility: 'public', primaryKind: 'plugin',
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST', url: '/api/v1/packages/publish', payload,
+        headers: {
+          ...gatewayHeaders({ namespaceId: 'ns-other' }),
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+          'x-author-handle': 'kirill',
+        },
+      });
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toMatchObject({ code: 'FORBIDDEN' });
+      expect(registry.publish).toHaveBeenCalledWith(expect.any(Buffer), {
+        meta: { name: 'my-plugin', version: '1.1.0', identity: '@kirill/my-plugin' },
+        visibility: 'public', primaryKind: 'plugin',
+      }, 'kirill', 'ns-other');
+    } finally { await app.close(); }
   });
 
   it('passes the authenticated owner namespace when resolving an exact private identity', async () => {

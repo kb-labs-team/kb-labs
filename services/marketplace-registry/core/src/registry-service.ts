@@ -4,6 +4,7 @@
  */
 
 import { createHash, sign as cryptoSign } from 'node:crypto';
+import semver from 'semver';
 import type { IStorage, ICache, ILogger } from '@kb-labs/core-platform';
 import type {
   RegistryEntry,
@@ -23,6 +24,12 @@ const CACHE_TTL_META = 5 * 60 * 1000;
 const CACHE_TTL_SEARCH = 60 * 1000;
 const CACHE_TTL_SHARE_DEFAULT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_TARBALL_SIZE = 50 * 1024 * 1024; // 50 MB
+const MAX_PACKAGE_CACHE_ALIASES = 4096;
+const CANONICAL_AUTHOR_HANDLE = /^[a-z0-9-]{2,32}$/;
+const CANONICAL_PACKAGE_PART = /^[a-z0-9][a-z0-9._-]*$/;
+const SAFE_LEGACY_PATH_PART = /^[A-Za-z0-9._-]+$/;
+const SEMVER_IDENTIFIER = '(?:0|[1-9]\\d*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)';
+const SEMVER_VERSION = new RegExp(`^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(${SEMVER_IDENTIFIER}(?:\\.${SEMVER_IDENTIFIER})*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$`);
 
 function shortIdentity(identity: string): string {
   return identity.slice(identity.lastIndexOf('/') + 1);
@@ -38,6 +45,36 @@ function identityHandle(identity: string): string | undefined {
   const separator = identity.indexOf('/');
   if (identity.startsWith('@') || separator <= 0 || separator === identity.length - 1) { return undefined; }
   return identity.slice(0, separator);
+}
+
+function rejectPublishAddress(field: string): never {
+  throw Object.assign(new Error(`Registry publish has an invalid ${field}`), { code: 'INVALID_MANIFEST' });
+}
+
+function isSafeLegacyHandle(handle: string): boolean {
+  return SAFE_LEGACY_PATH_PART.test(handle) && handle !== '.' && handle !== '..';
+}
+
+function isSafeLegacyPackageName(name: string): boolean {
+  if (name.includes('\\') || name.includes('%') || name.includes('\0')) { return false; }
+  const parts = name.startsWith('@') ? name.slice(1).split('/') : name.split('/');
+  if (parts.length !== (name.startsWith('@') ? 2 : 1)) { return false; }
+  return parts.every(part => SAFE_LEGACY_PATH_PART.test(part) && part !== '.' && part !== '..');
+}
+
+function isCanonicalPackageName(name: string): boolean {
+  const scoped = name.startsWith('@');
+  const parts = scoped ? name.slice(1).split('/') : name.split('/');
+  if (parts.length !== (scoped ? 2 : 1)) { return false; }
+  return parts.every(part => CANONICAL_PACKAGE_PART.test(part));
+}
+
+function validatePublishAddress(handle: string, name: string, version: string): void {
+  if (typeof handle !== 'string' || !isSafeLegacyHandle(handle)) { rejectPublishAddress('author handle'); }
+  if (typeof name !== 'string' || !isSafeLegacyPackageName(name)) { rejectPublishAddress('package name'); }
+  if (typeof version !== 'string' || !SEMVER_VERSION.test(version) || !semver.valid(version, { loose: false })) {
+    rejectPublishAddress('SemVer version');
+  }
 }
 
 export interface RegistryServiceOptions {
@@ -60,6 +97,7 @@ export class RegistryService {
   private readonly signingPrivateKey?: string;
   private readonly siteUrl?: string;
   private readonly publishTails = new Map<string, Promise<void>>();
+  private readonly packageCacheKeys = new Map<string, string>();
 
   constructor(opts: RegistryServiceOptions) {
     this.storage = opts.storage;
@@ -78,7 +116,15 @@ export class RegistryService {
     authorHandle: string,
     authorNamespaceId: string,
   ): Promise<PublishResponse> {
-    const key = `${authorHandle}/${req.meta.name}`;
+    const { name, version } = req?.meta ?? {};
+    validatePublishAddress(authorHandle, name, version);
+    const existing = await this.loadEntry(authorHandle, name);
+    if (!existing && (!CANONICAL_AUTHOR_HANDLE.test(authorHandle) || !isCanonicalPackageName(name))) {
+      rejectPublishAddress(!CANONICAL_AUTHOR_HANDLE.test(authorHandle) ? 'author handle' : 'package name');
+    }
+    // Safe publish path segments are ASCII, so folding case here makes the
+    // in-process queue match storage identity on case-insensitive filesystems.
+    const key = `${authorHandle}/${name}`.toLowerCase();
     const previous = this.publishTails.get(key) ?? Promise.resolve();
     let release: () => void = () => undefined;
     const tail = new Promise<void>((resolve) => { release = resolve; });
@@ -112,6 +158,12 @@ export class RegistryService {
     const existing = await this.loadEntry(authorHandle, name);
 
     if (existing) {
+      if (existing.authorNamespaceId !== authorNamespaceId) {
+        throw Object.assign(
+          new Error(`Namespace ${authorNamespaceId} does not own ${authorHandle}/${name}`),
+          { code: 'FORBIDDEN' },
+        );
+      }
       if (existing.versions.some(v => v.version === version)) {
         throw Object.assign(
           new Error(`Version ${version} already exists. Versions are immutable.`),
@@ -126,7 +178,13 @@ export class RegistryService {
 
     let signature: EntitySignature | undefined;
     if (visibility === 'public' && this.signingPrivateKey) {
-      signature = this.signTarball(tarball, integrity, authorHandle, name, version);
+      signature = this.signTarball(
+        tarball,
+        integrity,
+        existing?.authorHandle ?? authorHandle,
+        existing?.name ?? name,
+        version,
+      );
       const sigPath = this.sigPath(authorHandle, name, version);
       await this.storage.write(sigPath, Buffer.from(JSON.stringify(signature)));
     }
@@ -179,7 +237,7 @@ export class RegistryService {
         };
 
     await this.saveEntry(authorHandle, name, entry);
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(existing?.authorHandle ?? authorHandle, existing?.name ?? name);
 
     if (visibility === 'public') {
       await this.rebuildIndex();
@@ -218,7 +276,7 @@ export class RegistryService {
       updatedAt: new Date().toISOString(),
     };
     await this.saveEntry(authorHandle, name, updated);
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(entry.authorHandle, entry.name);
     if (entry.visibility === 'public') { await this.rebuildIndex(); }
   }
 
@@ -233,7 +291,7 @@ export class RegistryService {
       throw Object.assign(new Error(`Version ${version} not found`), { code: 'VERSION_NOT_FOUND' });
     }
     await this.saveEntry(authorHandle, name, { ...entry, versions, updatedAt: new Date().toISOString() });
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(entry.authorHandle, entry.name);
   }
 
   // ── Deprecate package ─────────────────────────────────────────────────────
@@ -246,7 +304,7 @@ export class RegistryService {
       deprecateMessage: message,
       updatedAt: new Date().toISOString(),
     });
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(entry.authorHandle, entry.name);
     if (entry.visibility === 'public') { await this.rebuildIndex(); }
   }
 
@@ -260,7 +318,7 @@ export class RegistryService {
       allowlist: [...entry.allowlist, namespaceId],
       updatedAt: new Date().toISOString(),
     });
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(entry.authorHandle, entry.name);
   }
 
   async createShareToken(
@@ -296,7 +354,9 @@ export class RegistryService {
       throw Object.assign(new Error(`Version ${version} has been yanked`), { code: 'VERSION_YANKED' });
     }
 
-    const tarball = await this.storage.read(this.tarballPath(authorHandle, name, version));
+    const tarball = await this.storage.read(this.tarballPath(authorHandle, name, version))
+      ?? await this.readPreviousHexTarball(authorHandle, name, version)
+      ?? await this.storage.read(this.legacyTarballPath(authorHandle, name, version));
     if (!tarball) {
       throw Object.assign(new Error('Tarball not found in storage'), { code: 'VERSION_NOT_FOUND' });
     }
@@ -359,11 +419,24 @@ export class RegistryService {
   // ── Metadata reads ─────────────────────────────────────────────────────────
 
   async getEntry(authorHandle: string, name: string): Promise<RegistryEntry | null> {
-    const cacheKey = `registry:pkg:${authorHandle}/${name}`;
-    const cached = await this.cache.get<RegistryEntry>(cacheKey);
-    if (cached) { return cached; }
+    const lookupKey = `${authorHandle}/${name}`;
+    const knownCacheKey = this.packageCacheKeys.get(lookupKey);
+    if (knownCacheKey) {
+      const cached = await this.cache.get<RegistryEntry>(knownCacheKey);
+      if (cached) { return cached; }
+    }
+
     const entry = await this.loadEntry(authorHandle, name);
-    if (entry) { await this.cache.set(cacheKey, entry, CACHE_TTL_META); }
+    if (!entry) { return null; }
+    const cacheKey = `registry:pkg:${entry.authorHandle}/${entry.name}`;
+    if (!this.packageCacheKeys.has(lookupKey) && this.packageCacheKeys.size >= MAX_PACKAGE_CACHE_ALIASES) {
+      const oldestLookupKey = this.packageCacheKeys.keys().next().value;
+      if (oldestLookupKey) { this.packageCacheKeys.delete(oldestLookupKey); }
+    }
+    this.packageCacheKeys.set(lookupKey, cacheKey);
+    const cached = knownCacheKey ? null : await this.cache.get<RegistryEntry>(cacheKey);
+    if (cached) { return cached; }
+    await this.cache.set(cacheKey, entry, CACHE_TTL_META);
     return entry;
   }
 
@@ -530,7 +603,7 @@ export class RegistryService {
   async setFeatured(authorHandle: string, name: string, featured: boolean): Promise<void> {
     const entry = await this.requireEntry(authorHandle, name);
     await this.saveEntry(authorHandle, name, { ...entry, featured, updatedAt: new Date().toISOString() });
-    await this.invalidateCaches(authorHandle, name);
+    await this.invalidateCaches(entry.authorHandle, entry.name);
     if (entry.visibility === 'public') { await this.rebuildIndex(); }
   }
 
@@ -540,12 +613,36 @@ export class RegistryService {
     return `${STORAGE_PREFIX}/packages/${handle}/${name}/meta.json`;
   }
 
+  private versionStorageSegment(version: string): string {
+    return `v-${createHash('sha256').update(version, 'utf8').digest('hex')}`;
+  }
+
   private tarballPath(handle: string, name: string, version: string): string {
+    return `${STORAGE_PREFIX}/packages/${handle}/${name}/${this.versionStorageSegment(version)}.tgz`;
+  }
+
+  private legacyTarballPath(handle: string, name: string, version: string): string {
     return `${STORAGE_PREFIX}/packages/${handle}/${name}/${version}.tgz`;
   }
 
+  private hexVersionTarballPath(handle: string, name: string, version: string): string {
+    const legacySegment = `v-${Buffer.from(version, 'utf8').toString('hex')}`;
+    return `${STORAGE_PREFIX}/packages/${handle}/${name}/${legacySegment}.tgz`;
+  }
+
+  private async readPreviousHexTarball(handle: string, name: string, version: string): Promise<Buffer | null> {
+    try {
+      return await this.storage.read(this.hexVersionTarballPath(handle, name, version));
+    } catch (error) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENAMETOOLONG') {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   private sigPath(handle: string, name: string, version: string): string {
-    return `${STORAGE_PREFIX}/packages/${handle}/${name}/${version}.sig`;
+    return `${STORAGE_PREFIX}/packages/${handle}/${name}/${this.versionStorageSegment(version)}.sig`;
   }
 
   private async loadEntry(handle: string, name: string): Promise<RegistryEntry | null> {
