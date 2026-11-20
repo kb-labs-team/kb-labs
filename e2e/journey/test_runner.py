@@ -77,6 +77,12 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
 
         self.assertEqual(marketplace_install_flags(env), ["--marketplace-npm-url", REGISTRY])
 
+    def test_staged_registry_key_does_not_enable_registry_during_platform_bootstrap(self):
+        env = {"HOME": "/tmp/kb-journey-test-home",
+               "KB_JOURNEY_REGISTRY_PUBLIC_KEY_B64": "cHVibGljLWtleQ=="}
+
+        self.assertEqual(marketplace_install_flags(env), ["--marketplace-npm-url", REGISTRY])
+
     def test_clean_install_requires_the_marketplace_commit_receipt(self):
         self.assertIsNotNone(commit_marketplace_install_record({"marketplaceInstalls": [
             {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},

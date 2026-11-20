@@ -372,6 +372,8 @@ if (!configResult.ok) {
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_PUBLISH_URL"],
                              "http://127.0.0.1:4010/api/v1/marketplace-registry/api/v1")
             self.assertFalse(runner_environment.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL"))
+            self.assertFalse(runner_environment.get("KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64"))
+            self.assertTrue(runner_environment.get("KB_JOURNEY_REGISTRY_PUBLIC_KEY_B64"))
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_SERVICE_URL"],
                              "http://marketplace-tamper:8081")
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_PROXY_URL"],
