@@ -4,6 +4,7 @@ import {
   HttpObservabilityCollector,
   createDaemonServer,
   createServiceReadyResponse,
+  redactHttpUrl,
   type ObservabilityCollectorLike,
 } from '@kb-labs/shared-http';
 import type { ILogger } from '@kb-labs/core-platform';
@@ -89,7 +90,7 @@ export async function createRegistryServer(opts: RegistryServerOptions): Promise
         }
         // Unhandled error — log full stack so failures surface in service logs.
         logger.error('Unhandled registry error', err, {
-          route: `${request.method} ${request.url}`,
+          route: `${request.method} ${redactHttpUrl(request.url)}`,
           code,
         });
         return reply.code(500).send({ error: 'InternalServerError', code, message: err.message });

@@ -28,6 +28,7 @@ export {
   resolveObservabilityInstanceId,
   type HttpLogContextInput,
 } from "./log-context.js";
+export { redactHttpUrl } from "./redact-http-url.js";
 export {
   SLOW_REQUEST_THRESHOLD_MS,
   logRequestCompleted,

@@ -7,6 +7,7 @@
  * Fastify logger messages do not contain raw tokens when access_token is in URL.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { request as httpRequest, createServer as createHttpServer } from 'node:http';
 import type { FastifyInstance } from 'fastify';
 import type { ICache, ILogger, IServiceTransport } from '@kb-labs/core-platform';
 import { platform } from '@kb-labs/core-runtime';
@@ -117,6 +118,97 @@ describe('H11 — access_token query param redacted from logs', () => {
       return msgStr.includes('foo=bar');
     });
     expect(hasOtherParams).toBe(true);
+  });
+});
+
+describe('S-252.2 — Marketplace share token redacted from Gateway request logs', () => {
+  // case: S-252.2
+  it('redacts token while retaining ordinary query parameters', async () => {
+    logMessages.length = 0;
+    const fakeToken = 'share-token-test-only-456';
+    await app.inject({ method: 'GET', url: `/health?token=${fakeToken}&version=1.2.3` });
+
+    const serializedLogs = JSON.stringify(logMessages);
+    expect(serializedLogs).not.toContain(fakeToken);
+    expect(serializedLogs).toContain('[REDACTED]');
+    expect(serializedLogs).toContain('version=1.2.3');
+  });
+
+  it('forwards the real Registry query unchanged through the configured Gateway route', async () => {
+    const fakeToken = 'share-token-through-gateway-test-only';
+    const receivedUrls: string[] = [];
+    const registry = createHttpServer((request, response) => {
+      receivedUrls.push(request.url ?? '');
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ ok: true }));
+    });
+    await new Promise<void>((resolve) => registry.listen(0, '127.0.0.1', resolve));
+    const registryAddress = registry.address();
+    if (!registryAddress || typeof registryAddress === 'string') { throw new Error('Expected TCP listener'); }
+
+    const gateway = await createServer(
+      GatewayConfigSchema.parse({
+        access: { mode: 'local' },
+        upstreams: {
+          registry: {
+            serviceId: 'marketplace-registry',
+            prefix: '/api/v1/registry',
+            rewritePrefix: '/api/v1',
+          },
+        },
+      }),
+      makeCache(),
+      makeLogger(),
+      jwtConfig,
+      undefined,
+      {
+        ...stubTransport,
+        connectionInfo: () => ({ baseUrl: `http://127.0.0.1:${registryAddress.port}` }),
+      },
+    );
+
+    try {
+      await gateway.listen({ port: 0, host: '127.0.0.1' });
+      const gatewayAddress = gateway.server.address();
+      if (!gatewayAddress || typeof gatewayAddress === 'string') { throw new Error('Expected TCP listener'); }
+      const requestGateway = (path: string) => new Promise<{ statusCode?: number; body: string }>((resolve, reject) => {
+        const request = httpRequest({
+          hostname: '127.0.0.1',
+          port: gatewayAddress.port,
+          method: 'GET',
+          path,
+        }, (response) => {
+          let body = '';
+          response.setEncoding('utf8');
+          response.on('data', (chunk: string) => { body += chunk; });
+          response.on('end', () => resolve({ statusCode: response.statusCode, body }));
+        });
+        request.on('error', reject);
+        request.end();
+      });
+      const result = await requestGateway(`/api/v1/registry/packages/owner/plugin?token=${fakeToken}&version=1.2.3`);
+
+      expect(result.statusCode).toBe(200);
+      expect(JSON.parse(result.body)).toEqual({ ok: true });
+      expect(receivedUrls).toEqual([`/api/v1/packages/owner/plugin?token=${fakeToken}&version=1.2.3`]);
+
+      // A raw '#' in an HTTP request target is treated as a URL fragment by
+      // the proxy and is not forwarded as a query string. Only '?' carries the
+      // share token through the real Gateway route.
+      const fragmentResult = await requestGateway(`/api/v1/registry/packages/owner/plugin#token=${fakeToken}&version=1.2.3`);
+      expect(fragmentResult.statusCode).toBe(200);
+      expect(receivedUrls).toEqual([
+        `/api/v1/packages/owner/plugin?token=${fakeToken}&version=1.2.3`,
+        '/api/v1/packages/owner/plugin',
+      ]);
+      const serializedLogs = JSON.stringify(logMessages);
+      expect(serializedLogs).not.toContain(fakeToken);
+      expect(serializedLogs).toContain('[REDACTED]');
+      expect(serializedLogs).toContain('version=1.2.3');
+    } finally {
+      await gateway.close();
+      await new Promise<void>((resolve, reject) => registry.close((error) => error ? reject(error) : resolve()));
+    }
   });
 });
 

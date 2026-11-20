@@ -119,11 +119,6 @@ export interface UserAuthServerDeps {
   authReadiness?: () => Promise<AuthReadiness>;
 }
 
-/** Strip bearer tokens from query params before logging (prevents JWT leakage in access logs). */
-function redactQueryToken(url: string): string {
-  return url.replace(/([?&]access_token=)[^&]*/gi, "$1[REDACTED]");
-}
-
 /**
  * Public base URL of the gateway: GATEWAY_PUBLIC_URL when set, otherwise the
  * loopback URL of the resolved listen port.
@@ -266,7 +261,6 @@ export async function createServer(
     reply.header("X-Request-Id", requestId);
     reply.header("X-Trace-Id", traceId);
 
-    const safeUrl = redactQueryToken(request.url);
     request.kbLogger = createHttpLogger(logger, {
       serviceId: "gateway",
       layer: "service",
@@ -274,7 +268,7 @@ export async function createServer(
       requestId,
       traceId,
       method: request.method,
-      url: safeUrl,
+      url: request.url,
       operation: "http.request",
     });
     request.kbLogger.debug("HTTP request started");

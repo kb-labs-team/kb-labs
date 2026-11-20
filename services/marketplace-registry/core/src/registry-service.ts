@@ -24,6 +24,8 @@ const CACHE_TTL_META = 5 * 60 * 1000;
 const CACHE_TTL_SEARCH = 60 * 1000;
 const CACHE_TTL_SHARE_DEFAULT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_TARBALL_SIZE = 50 * 1024 * 1024; // 50 MB
+const SHARE_TOKEN_PATTERN = /^kbrt_[a-f0-9]{32}$/;
+const SHARE_TOKEN_DIGEST_PREFIX = 'sha256:';
 const MAX_PACKAGE_CACHE_ALIASES = 4096;
 const CANONICAL_AUTHOR_HANDLE = /^[a-z0-9-]{2,32}$/;
 const CANONICAL_PACKAGE_PART = /^[a-z0-9][a-z0-9._-]*$/;
@@ -330,12 +332,32 @@ export class RegistryService {
     const token = `kbrt_${createHash('sha256').update(`${Date.now()}${Math.random()}`).digest('hex').slice(0, 32)}`;
     const expiresAt = new Date(Date.now() + ttlMs).toISOString();
     const pkg = `${authorHandle}/${name}`;
-    await this.cache.set(`registry:sharetoken:${token}`, { pkg, expiresAt }, ttlMs);
+    await this.cache.set(shareTokenCacheKey(token), { pkg, expiresAt }, ttlMs);
     return { token, pkg, expiresAt };
   }
 
   async resolveShareToken(token: string): Promise<{ pkg: string } | null> {
-    return this.cache.get<{ pkg: string; expiresAt: string }>(`registry:sharetoken:${token}`);
+    // Only tokens issued by this Registry are valid credentials. In particular,
+    // never let a digest namespace value reach the legacy-key fallback: the
+    // State Broker treats digest keys as safe path keys, while legacy bearer
+    // values must stay in request bodies.
+    if (typeof token !== 'string' || token.startsWith(SHARE_TOKEN_DIGEST_PREFIX) || !SHARE_TOKEN_PATTERN.test(token)) {
+      return null;
+    }
+
+    const cacheKey = shareTokenCacheKey(token);
+    const current = await this.cache.get<{ pkg: string; expiresAt: string }>(cacheKey);
+    if (current) { return current; }
+
+    // Tokens issued before digest-key storage used the credential in the cache
+    // key. Read the legacy entry without moving it: separate get/set/delete
+    // calls can race concurrent lookups or revocation and restore a deleted
+    // token. The old entry expires under its original TTL.
+    const legacyKey = `registry:sharetoken:${token}`;
+    const legacy = await this.cache.get<{ pkg: string; expiresAt: string }>(legacyKey);
+    if (!legacy) { return null; }
+    const expiresAt = Date.parse(legacy.expiresAt);
+    return Number.isFinite(expiresAt) && expiresAt > Date.now() ? legacy : null;
   }
 
   // ── Download ───────────────────────────────────────────────────────────────
@@ -731,4 +753,8 @@ export class RegistryService {
       verifiedChecks: ['integrity'],
     };
   }
+}
+
+function shareTokenCacheKey(token: string): string {
+  return `registry:sharetoken:sha256:${createHash('sha256').update(token).digest('hex')}`;
 }
