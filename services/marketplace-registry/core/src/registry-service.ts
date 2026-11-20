@@ -178,7 +178,13 @@ export class RegistryService {
 
     let signature: EntitySignature | undefined;
     if (visibility === 'public' && this.signingPrivateKey) {
-      signature = this.signTarball(tarball, integrity, authorHandle, name, version);
+      signature = this.signTarball(
+        tarball,
+        integrity,
+        existing?.authorHandle ?? authorHandle,
+        existing?.name ?? name,
+        version,
+      );
       const sigPath = this.sigPath(authorHandle, name, version);
       await this.storage.write(sigPath, Buffer.from(JSON.stringify(signature)));
     }
@@ -349,6 +355,7 @@ export class RegistryService {
     }
 
     const tarball = await this.storage.read(this.tarballPath(authorHandle, name, version))
+      ?? await this.storage.read(this.hexVersionTarballPath(authorHandle, name, version))
       ?? await this.storage.read(this.legacyTarballPath(authorHandle, name, version));
     if (!tarball) {
       throw Object.assign(new Error('Tarball not found in storage'), { code: 'VERSION_NOT_FOUND' });
@@ -607,7 +614,7 @@ export class RegistryService {
   }
 
   private versionStorageSegment(version: string): string {
-    return `v-${Buffer.from(version, 'utf8').toString('hex')}`;
+    return `v-${createHash('sha256').update(version, 'utf8').digest('hex')}`;
   }
 
   private tarballPath(handle: string, name: string, version: string): string {
@@ -616,6 +623,11 @@ export class RegistryService {
 
   private legacyTarballPath(handle: string, name: string, version: string): string {
     return `${STORAGE_PREFIX}/packages/${handle}/${name}/${version}.tgz`;
+  }
+
+  private hexVersionTarballPath(handle: string, name: string, version: string): string {
+    const legacySegment = `v-${Buffer.from(version, 'utf8').toString('hex')}`;
+    return `${STORAGE_PREFIX}/packages/${handle}/${name}/${legacySegment}.tgz`;
   }
 
   private sigPath(handle: string, name: string, version: string): string {

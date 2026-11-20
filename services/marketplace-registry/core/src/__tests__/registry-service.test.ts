@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync, verify as cryptoVerify } from 'node:crypto';
 import type { IStorage, ICache, ILogger } from '@kb-labs/core-platform';
 import type { RegistryEntry } from '@kb-labs/marketplace-registry-contracts';
 import { RegistryService } from '../registry-service.js';
@@ -556,6 +556,62 @@ describe('RegistryService.publish', () => {
   });
 
   // case: S-268.22
+  it('stores long valid SemVer versions under a filesystem-safe fixed-length key', async () => {
+    const values = new Map<string, Buffer>();
+    const storage: IStorage = {
+      read: async (path) => values.get(path) ?? null,
+      write: async (path, data) => {
+        const component = path.slice(path.lastIndexOf('/') + 1);
+        if (Buffer.byteLength(component, 'utf8') > 255) { throw new Error('Filesystem component too long'); }
+        values.set(path, Buffer.from(data));
+      },
+      delete: async (path) => { values.delete(path); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => values.has(path),
+    };
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071' });
+    const version = `1.0.0+${'a'.repeat(200)}`;
+    const tarball = Buffer.from('long semver release');
+
+    await expect(svc.publish(tarball, makePkg({ version }), 'long-version-owner', 'ns-owner'))
+      .resolves.toMatchObject({ version });
+    await expect(svc.getTarball('long-version-owner', 'my-plugin', version)).resolves.toMatchObject({ tarball });
+    const versionPath = [...values.keys()].find(path => path.endsWith('.tgz'));
+    expect(versionPath?.split('/').at(-1)).toMatch(/^v-[a-f0-9]{64}\.tgz$/);
+  });
+
+  // case: S-268.22
+  it('reads tarballs stored under the previous hexadecimal version key', async () => {
+    const values = new Map<string, Buffer>();
+    const version = '1.2.3-rc.1+Build.7';
+    const base = 'marketplace-registry/packages/legacy/legacy-plugin';
+    const meta = makePkg({ name: 'legacy-plugin', version }).meta;
+    const registryEntry: RegistryEntry = {
+      name: 'legacy-plugin', authorHandle: 'legacy', authorNamespaceId: 'ns-legacy',
+      primaryKind: 'plugin', visibility: 'private', legacyStatsVisibility: 'private', trust: 'untrusted',
+      allowlist: [], versions: [{ version, publishedAt: '2024-01-01T00:00:00Z', integrity: 'sha256-legacy',
+        visibility: 'private', meta, primaryKind: 'plugin' }],
+      deprecated: false, featured: false, badges: [], tags: [], meta,
+      createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+    };
+    const tarball = Buffer.from('hex-key legacy release');
+    values.set(`${base}/meta.json`, Buffer.from(JSON.stringify(registryEntry)));
+    values.set(`${base}/v-${Buffer.from(version, 'utf8').toString('hex')}.tgz`, tarball);
+    const storage: IStorage = {
+      read: async (path) => values.get(path) ?? null,
+      write: async (path, data) => { values.set(path, Buffer.from(data)); },
+      delete: async (path) => { values.delete(path); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix)),
+      exists: async (path) => values.has(path),
+    };
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071' });
+
+    await expect(svc.getTarball('legacy', 'legacy-plugin', version)).resolves.toMatchObject({ tarball });
+  });
+
+  // case: S-268.22
   it('allows an owner to append to an existing safe legacy handle and package name', async () => {
     const values = new Map<string, Buffer>();
     const legacyName = 'Legacy.Plugin_Name';
@@ -615,8 +671,10 @@ describe('RegistryService.publish', () => {
       list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix.toLowerCase())),
       exists: async (path) => values.has(path.toLowerCase()),
     };
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
     const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
-      baseUrl: 'http://localhost:5071' });
+      baseUrl: 'http://localhost:5071',
+      signingPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
 
     await svc.getEntry(legacyHandle, legacyName);
     await svc.getEntry(legacyHandle.toLowerCase(), legacyName.toLowerCase());
@@ -637,6 +695,15 @@ describe('RegistryService.publish', () => {
     expect((await svc.getTarball(legacyHandle, legacyName, '1.1.0')).tarball).toEqual(Buffer.from('release upper alias'));
     expect((await svc.getTarball(legacyHandle.toLowerCase(), legacyName.toLowerCase(), '1.2.0')).tarball)
       .toEqual(Buffer.from('release lower alias'));
+
+    const resolved = await svc.resolveIdentity(legacyMeta.identity, 'ns-legacy', null, '1.2.0');
+    if (resolved.status !== 'found') { throw new Error('Legacy alias release did not resolve'); }
+    const { integrity, version, signatureSubject, signature } = resolved.package;
+    if (!integrity || !version || !signatureSubject || !signature) {
+      throw new Error('Resolved legacy alias release is missing signature data');
+    }
+    const payload = Buffer.from(JSON.stringify({ integrity, pkg: `${signatureSubject}@${version}` }));
+    expect(cryptoVerify(null, payload, publicKey, Buffer.from(signature.value, 'base64'))).toBe(true);
   });
 
   // case: S-268.22
