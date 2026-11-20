@@ -91,11 +91,17 @@ if [ "$candidate_rc" -ne 0 ]; then
 fi
 
 failed_stage=unit
-unit_home=$(mktemp -d "${TMPDIR:-/tmp}/kb-journey-unit.XXXXXX")
 stage_started=$(date +%s)
 unit_rc=0
-HOME="$unit_home" env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET python3 -m unittest discover -s e2e/journey -p 'test_*.py' > "$OUT/unit.log" 2>&1 || unit_rc=$?
-unit_seconds=$(( $(date +%s) - stage_started ))
+unit_suite_mode=$(node "$ROOT/scripts/ci/journey-batch-selection.mjs" shared-unit-suite "${BATCH_SELECTION:-full}")
+if [ "$unit_suite_mode" = run ]; then
+  unit_home=$(mktemp -d "${TMPDIR:-/tmp}/kb-journey-unit.XXXXXX")
+  HOME="$unit_home" env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET python3 -m unittest discover -s e2e/journey -p 'test_*.py' > "$OUT/unit.log" 2>&1 || unit_rc=$?
+  unit_seconds=$(( $(date +%s) - stage_started ))
+else
+  printf 'SKIPPED: shared generic journey unit suite omitted for an explicitly selected partial batch.\nThis batch is iteration-only; run the full journey batch for gating verification.\n' > "$OUT/unit.log"
+  unit_seconds=0
+fi
 if [ "$unit_rc" -ne 0 ]; then
   echo "journey unit suite failed; see $OUT/unit.log; next: python3 -m unittest discover -s e2e/journey -p 'test_*.py'" >&2
   exit "$unit_rc"

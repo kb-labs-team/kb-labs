@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import { test } from 'node:test';
-import { batchArguments, resolveSelection } from './journey-batch-selection.mjs';
+import { batchArguments, resolveSelection, sharedUnitSuiteMode } from './journey-batch-selection.mjs';
 import { validateJourneyCaseDeclarations } from './journey-case-claims-preflight.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -40,6 +40,21 @@ test('PR and dispatch run the full gating batch, never an empty --cases', () => 
 });
 
 // case: S-262.8
+test('only an explicit case selection skips the shared generic unit suite', () => {
+  const targeted = resolveSelection('push', `batch/t1/cases/${encode('S-268.1')}`);
+  assert.equal(sharedUnitSuiteMode(targeted), 'skip');
+  for (const selection of [
+    resolveSelection('push', 'batch/plain'),
+    resolveSelection('pull_request', 'refs/pull/1/merge'),
+    resolveSelection('workflow_dispatch', 'main'),
+  ]) {
+    assert.equal(sharedUnitSuiteMode(selection), 'run');
+  }
+  assert.throws(() => sharedUnitSuiteMode(''), /unknown journey batch selection/);
+  assert.throws(() => sharedUnitSuiteMode(`cases:${encode('  ')}`), /unknown journey batch selection/);
+});
+
+// case: S-262.8
 test('an undeclared trigger and an empty encoded selection are refused', () => {
   assert.throws(() => resolveSelection('schedule', 'x'), /no declared case selection for trigger "schedule"/);
   assert.throws(() => resolveSelection('push', `batch/t/cases/${encode('  ')}`), /empty case selection/);
@@ -54,6 +69,8 @@ test('consumer jobs take the selection only from the producer-owned output', () 
     assert.doesNotMatch(run, /--cases|base64/);
   }
   assert.match(JSON.stringify(workflow.jobs.producer.steps), /journey-batch-selection\.mjs resolve/);
+  const prepare = workflow.jobs.producer.steps.find((step) => step.name === 'Produce shared build and candidate');
+  assert.equal(prepare.env?.BATCH_SELECTION, '${{ steps.selection.outputs.selection }}');
 });
 
 test('batch producer runs the dist-free journey preflight before producing build artifacts', () => {

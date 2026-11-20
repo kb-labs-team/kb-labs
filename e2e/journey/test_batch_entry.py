@@ -27,6 +27,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         (self.root / "core/fixture/package.json").write_text('{"name":"fixture-build-output","private":true}\n')
         (self.root / "prompts").mkdir()
         (self.root / "tools/kb-devkit").mkdir(parents=True)
+        (self.root / "scripts/ci").mkdir(parents=True)
         shutil.copy2(REPO / "e2e/journey/batch.sh", self.root / "e2e/journey/batch.sh")
         shutil.copy2(REPO / "e2e/journey/batch_summary.py", self.root / "e2e/journey/batch_summary.py")
         shutil.copy2(REPO / "e2e/journey/dispatch_registry.py", self.root / "e2e/journey/dispatch_registry.py")
@@ -37,6 +38,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         shutil.copy2(REPO / "e2e/journey/jsonl.py", self.root / "e2e/journey/jsonl.py")
         shutil.copy2(REPO / "e2e/journey/scoreboard_contract.py", self.root / "e2e/journey/scoreboard_contract.py")
         shutil.copy2(REPO / "e2e/journey/preflight.sh", self.root / "e2e/journey/preflight.sh")
+        shutil.copy2(REPO / "scripts/ci/journey-batch-selection.mjs", self.root / "scripts/ci/journey-batch-selection.mjs")
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         shutil.copy2(
             REPO / "e2e/scripts/check-frozen-lockfile.sh",
@@ -109,6 +111,9 @@ printf 'candidate package\\n' > "$ROOT/e2e/packages/candidate.tgz"
 exit 0
 ''')
         self._script(self.bin / "node", '''#!/bin/sh
+case "$*" in
+  *journey-batch-selection.mjs*) exec "$REAL_NODE" "$@" ;;
+esac
 case "$*" in
   *scripts/ci/run-remote-stage.mjs*)
     "$REMOTE_DEVKIT_EXECUTABLE" > "$REMOTE_STAGE_LOG" 2>&1
@@ -219,7 +224,9 @@ exec "$REAL_TAR" "$@"
             "KB_DEVKIT_BASE_REF": "origin/master",
             "ROOT": str(self.root),
             "BATCH_PYTHON": str(self.bin / "batch-python"),
+            "BATCH_SELECTION": "full",
             "REAL_TAR": real_tar,
+            "REAL_NODE": shutil.which("node") or "node",
             "SCOREBOARD_LOCAL": str(self.scoreboard_fixtures["local"]),
             "SCOREBOARD_SECURED": str(self.scoreboard_fixtures["secured"]),
         }
@@ -434,7 +441,9 @@ exec "$REAL_TAR" "$@"
     # case: S-262.1
     def test_entry_runs_product_steps_in_order_and_exports_both_modes(self):
         result = self._run()
-        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        unit_log = (self.root / "out/shared/unit.log")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout + self.calls.read_text()
+                         + (unit_log.read_text() if unit_log.exists() else "unit log missing\n"))
         self.assertNotIn("not found", result.stderr)
         calls = self.calls.read_text().splitlines()
         self.assertEqual(calls, [
@@ -547,6 +556,52 @@ exec "$REAL_TAR" "$@"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("candidate artifact is bound to another-commit, checked out deadbeef", result.stderr)
         self.assertNotIn("journey service-local:explore --no-build", self.calls.read_text().splitlines())
+
+    # case: S-262.8
+    def test_explicit_case_selection_skips_shared_unit_suite_and_marks_summary_non_gating(self):
+        import base64
+        import json
+
+        for mode, fixture in self.scoreboard_fixtures.items():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard["selection"] = ["S-268.1"] if mode == "local" else []
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+        selection = "cases:" + base64.b64encode(b"S-268.1").decode("ascii")
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=dict(self.env, BATCH_SELECTION=selection),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+        self.assertNotIn("unit\n", self.calls.read_text().splitlines())
+        self.assertIn("SKIPPED: shared generic journey unit suite", (producer / "shared/unit.log").read_text())
+
+        local = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--cases", "S-268.1"],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_LOCAL='["marketplace-registry"]'),
+            text=True, capture_output=True, check=False,
+        )
+        secured = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "secured",
+             str(producer), str(self.root / "secured-artifact"), "--cases", "S-268.1"],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_SECURED="[]"),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(local.returncode, 0, local.stderr + local.stdout)
+        self.assertEqual(secured.returncode, 0, secured.stderr + secured.stdout)
+        summary = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
+             str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
+             str(self.root / "secured-artifact")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(summary.returncode, 0)
+        rendered = (self.root / "summary/shared/summary.md").read_text()
+        self.assertIn("Shared generic journey unit suite: skipped for this partial selection", rendered)
+        self.assertIn("full journey batch remains the gating verification", rendered)
+        self.assertIn("- Result: PARTIAL", rendered)
 
     # case: S-262.8
     def test_partial_scoreboards_cannot_produce_a_passing_batch_verdict(self):

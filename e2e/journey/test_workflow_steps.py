@@ -417,9 +417,11 @@ class WorkflowJourneyTests(unittest.TestCase):
                         errors = [{"file": ".kb/crons/journey-cron.yml", "reason": "invalid cron expression"}]
                     elif "missing-workflow" in content:
                         errors = [{"file": ".kb/crons/journey-cron.yml", "reason": "unknown workflow missing-workflow"}]
+                    schedule = next((line.partition(":")[2].strip().strip("'\"")
+                                     for line in content.splitlines() if line.startswith("schedule:")), "* * * * *")
                     output = {"ok": True, "data": {"crons": [{
                         "id": "journey-cron", "source": "user", "enabled": enabled,
-                        "schedule": "* * * * *", "target": {"workflow": "journey-cron-target"},
+                        "schedule": schedule, "target": {"workflow": "journey-cron-target"},
                         "input": {"message": "journey-cron-fired"},
                         "nextFireAt": "next",
                     }, {"id": "plugin:test:read-only", "source": "plugin", "enabled": True,
@@ -491,7 +493,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             "S-143.1", "S-143.2", "S-143.3", "S-143.4",
             "S-006.3", "S-007.1", "S-007.2", "S-007.3", "S-009.1", "S-009.2", "S-009.3", "S-009.4", "PC-002.5",
             "S-029.1", "S-029.2", "S-029.3", "S-044.1", "S-044.2", "S-044.3", "S-044.4",
-            "S-044.5", "S-044.6", "S-044.7", "S-044.8",
+            "S-044.5", "S-044.6", "S-044.7", "S-044.8", "S-044.9",
             "S-056.1", "S-056.2", "S-056.3",
         })
 

@@ -975,6 +975,16 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
             raise AssertionError("refused plugin cron enable changed the listed cron")
 
     journey.step("refuse enabling plugin cron", "workflow", refuse_plugin_enable, cases=["S-044.8"])
+
+    def accept_standard_cron_range() -> None:
+        schedule_file.write_text(_schedule_yaml(True).replace("* * * * *", "0 9 * * 1-5"), encoding="utf-8")
+        data = _case_json_cli("S-044.9", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
+        cron_data = _workflow_cron_list_data(data)
+        cron = next((item for item in cron_data["crons"] if item["id"] == "journey-cron"), None)
+        if cron is None or cron.get("schedule") != "0 9 * * 1-5":
+            raise AssertionError(f"weekday range cron was not accepted and listed: {cron_data!r}")
+
+    journey.step("accept standard cron field range", "workflow", accept_standard_cron_range, cases=["S-044.9"])
     schedule_file.unlink(missing_ok=True)
 
 
