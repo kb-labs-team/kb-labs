@@ -11,7 +11,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 # This private composition deploy importer contains the Registry service, the
 # SDK, and exactly the adapter roots configured by platform-release.jsonc.
 COPY --chown=kb:nodejs .kb/deploy/registry-image-composition/node_modules ./node_modules
-COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json
+COPY --chown=kb:nodejs .kb/deploy/registry-image-default/kb.config.json /app/.kb/kb.config.json
 COPY --chown=kb:nodejs .kb/deploy/image-default/platform-layout.json /app/.kb/v2/platform-layout.json
 COPY --chown=kb:nodejs .kb/deploy/registry-image-composition/.kb/marketplace.lock /app/.kb/marketplace.lock
 COPY --chown=kb:nodejs .kb/deploy/registry-image-composition/.kb/image-composition.json /app/.kb/image-composition.json
