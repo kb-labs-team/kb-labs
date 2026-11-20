@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from urllib.parse import quote
 
-from invocations import catalogued_error_hint, invocation_context, run_command
+from invocations import catalogued_error_hint, invocation_context, read_ux_cli_result, run_command
 from journey_resources import read_installed_platform_resource
 from journey_values import journey_value
 from service_steps import Journey
@@ -186,6 +186,74 @@ def mcp_call(project_id: str, request_id: int, name: str, arguments: dict, token
         },
     )
     return status, body
+
+
+def workflow_cron_invocation_parity(project_id: str, token: str, project_root: str,
+                                    env: dict[str, str]) -> str | None:
+    """Exercise both public command surfaces against one installed workflow state."""
+    tool_name = "workflow__workflow_crons_enable"
+    status, catalog, _ = _request(
+        project_service_path(project_id, "mcp"), method="POST", token=token,
+        step="S-045.12 MCP tools/list", accept="application/json, text/event-stream",
+        payload={"jsonrpc": "2.0", "id": 4512, "method": "tools/list", "params": {}},
+    )
+    tools = catalog.get("result", {}).get("tools", []) if isinstance(catalog, dict) else []
+    tool = next((item for item in tools if isinstance(item, dict) and item.get("name") == tool_name), None)
+    schema = tool.get("inputSchema", {}) if isinstance(tool, dict) else {}
+    if not isinstance(schema, dict):
+        return "workflow cron MCP tool omitted its input schema"
+    properties = schema.get("properties", {})
+    id_schema = properties.get("id", {}) if isinstance(properties, dict) else {}
+    if status != 200 or "id" not in schema.get("required", []) or not isinstance(id_schema, dict) or id_schema.get("minLength") != 1:
+        return "workflow cron MCP tool does not expose the required non-empty id schema"
+
+    def cli(action: str) -> str | None:
+        with invocation_context(step_id="S-045.12"):
+            result = run_command(["kb", "workflow", "crons", action, "journey-cron", "--json"],
+                                 cwd=project_root, env=env, timeout=120)
+        if result.returncode != 0:
+            return f"CLI cron {action} exited {result.returncode}"
+        try:
+            payload = read_ux_cli_result(result)
+        except Exception as error:
+            return f"CLI cron {action} returned invalid UX JSON: {error}"
+        expected = action == "enable"
+        if payload.get("ok") is not True or payload.get("data") != {"id": "journey-cron", "enabled": expected}:
+            return f"CLI cron {action} returned an unexpected result payload"
+        return None
+
+    def mcp(action: str, request_id: int) -> str | None:
+        name = f"workflow__workflow_crons_{action}"
+        status, body = mcp_call(project_id, request_id, name, {"id": "journey-cron"}, token)
+        result = body.get("result") if isinstance(body, dict) else None
+        expected = action == "enable"
+        expected_data = {"id": "journey-cron", "enabled": expected}
+        if status != 200 or not isinstance(result, dict) or result.get("isError") is not False:
+            return f"MCP cron {action} did not return a successful tool result"
+        if result.get("structuredContent", {}).get("data") != expected_data:
+            return f"MCP cron {action} returned an unexpected result payload"
+        return None
+
+    for action, invoke in (("enable", lambda: cli("enable")),
+                           ("disable", lambda: mcp("disable", 4513)),
+                           ("enable", lambda: mcp("enable", 4514)),
+                           ("disable", lambda: cli("disable"))):
+        failure = invoke()
+        if failure:
+            return failure
+
+    with invocation_context(step_id="S-045.12"):
+        listing = run_command(["kb", "workflow", "crons", "list", "--json"],
+                              cwd=project_root, env=env, timeout=120)
+    if listing.returncode != 0:
+        return "final CLI cron list failed after the shared CLI/MCP mutations"
+    try:
+        data = read_ux_cli_result(listing).get("data")
+    except Exception as error:
+        return f"final CLI cron list returned invalid UX JSON: {error}"
+    crons = data.get("crons", []) if isinstance(data, dict) else []
+    cron = next((item for item in crons if isinstance(item, dict) and item.get("id") == "journey-cron"), None)
+    return None if isinstance(cron, dict) and cron.get("enabled") is False else "final cron listing did not reflect disabled state"
 
 
 def _check_error_result(body: object, expected_code: str, *, argument: str | None = None) -> str | None:

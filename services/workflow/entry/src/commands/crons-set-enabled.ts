@@ -1,7 +1,7 @@
 import { defineCommand, handleError, type PluginCommandContextV3, type CLIInput, type CommandResult } from '@kb-labs/sdk';
 import { normalizeServiceCommandInput, setWorkflowCronEnabled, WorkflowServiceOperationError } from '@kb-labs/workflow-runtime';
 import { workflowServiceCommands } from '@kb-labs/workflow-contracts/service-commands';
-import { isErrorCode } from '@kb-labs/core-platform';
+import { ErrorEnvelopeError, isErrorCode } from '@kb-labs/core-platform';
 import { WorkflowDaemonClient, WorkflowDaemonError } from '../http-client.js';
 import { workflowCommandError } from './errors.js';
 
@@ -27,6 +27,9 @@ export function createCronEnabledCommand(enabled: boolean) {
           if (!outputJson) {ctx.ui?.success?.(`Cron ${id} ${enabled ? 'enabled' : 'disabled'}`);}
           return result;
         } catch (error) {
+          if (error instanceof WorkflowServiceOperationError && error.envelope) {
+            return handleError(new ErrorEnvelopeError(error.envelope));
+          }
           if (error instanceof WorkflowServiceOperationError && isErrorCode(error.code)) {
             if (error.code === 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY' && error.hint) {
               return workflowCommandError(

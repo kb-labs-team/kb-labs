@@ -8,6 +8,7 @@ const tool: McpServiceTool = {
   description: 'Run a workflow',
   inputSchema: { type: 'object', properties: { input: { type: 'string' } }, required: [], additionalProperties: false },
   serviceId: 'workflow',
+  servicePathPrefix: '',
   route: { method: 'POST', path: '/workflows/{workflow-id}/runs', mount: 'project-api', body: true },
 };
 const logger: ILogger = {

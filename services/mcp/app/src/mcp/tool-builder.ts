@@ -20,6 +20,7 @@ import type { CliCommandDecl, PermissionSpec } from '@kb-labs/plugin-contracts';
 import type { ServiceManifest } from '@kb-labs/plugin-contracts';
 import type { ServiceCommandRouteDeclaration } from '@kb-labs/plugin-contracts';
 import type { ServiceCommandInvocationDeclaration } from '@kb-labs/plugin-contracts';
+import type { RegisteredServiceCommandOperation } from '@kb-labs/plugin-contracts';
 import type { CommandManifest } from '@kb-labs/cli-commands';
 import type { Permits } from './authz.js';
 
@@ -131,6 +132,8 @@ export interface McpServiceTool {
     additionalProperties: false;
   };
   serviceId: string;
+  /** Internal API prefix restored by the host transport, never supplied by an operation. */
+  servicePathPrefix: string;
   route: ServiceCommandRouteDeclaration;
   invocation?: ServiceCommandInvocationDeclaration;
 }
@@ -171,11 +174,38 @@ export function buildServiceTools(manifests: readonly ServiceManifest[]): McpSer
         required: invocationRequired,
         additionalProperties: false,
       },
-      serviceId: manifest.id,
+      serviceId: manifest.projectApi?.serviceId ?? manifest.id,
+      servicePathPrefix: manifest.projectApi?.rewritePrefix === '/' ? '' : manifest.projectApi?.rewritePrefix ?? '',
       route: command.route,
       invocation: command.invocation,
     }];
   }));
+}
+
+/** Fail startup when trusted operation registrations diverge from declared commands. */
+export function validateServiceOperations(
+  manifests: readonly ServiceManifest[],
+  operations: readonly RegisteredServiceCommandOperation[],
+): void {
+  const declared = new Set<string>();
+  for (const manifest of manifests) {
+    const serviceId = manifest.projectApi?.serviceId ?? manifest.id;
+    for (const command of manifest.commands ?? []) {
+      if (command.kind !== 'local' && command.invocation) {
+        declared.add(`${serviceId}:${command.invocation.operationId}`);
+      }
+    }
+  }
+  const registered = new Set<string>();
+  for (const operation of operations) {
+    const key = `${operation.serviceId}:${operation.operationId}`;
+    if (registered.has(key)) {throw new Error(`Duplicate trusted service operation registration: ${key}.`);}
+    registered.add(key);
+    if (!declared.has(key)) {throw new Error(`Trusted service operation is not declared by an enabled service manifest: ${key}.`);}
+  }
+  for (const key of declared) {
+    if (!registered.has(key)) {throw new Error(`Declared service operation has no trusted registration: ${key}.`);}
+  }
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shared-testing-e2e/cli';
 import type { CronListResponse } from '@kb-labs/workflow-contracts';
 import { getCatalogEntry } from '@kb-labs/core-platform/error-envelope';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import { makeClient } from '../helpers/defaults.js';
 import { WorkflowDaemonClient } from '../../http-client.js';
 import cronListCommand from '../../commands/crons-list.js';
@@ -55,8 +56,8 @@ describe('workflow crons CLI', () => {
     expect(disabled).toEqual({ id: 'journey-cron', enabled: false });
     expect(state.get('journey-cron')).toBe(false);
     expect(requests).toEqual([
-      'POST /api/v1/crons/journey-cron/enable',
-      'POST /api/v1/crons/journey-cron/disable',
+      'POST /crons/journey-cron/enable',
+      'POST /crons/journey-cron/disable',
     ]);
   });
 
@@ -88,6 +89,26 @@ describe('workflow crons CLI', () => {
     const result = await enableCommand.execute(createMockContext({ ui }), mockCLIInput({ argv: ['plugin:qa:cleanup'], flags: { json: true } }));
     expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY', message: 'Plugin cron plugin:qa:cleanup is read-only', hint: pluginCronHint } });
+  });
+
+  it('preserves the service ErrorEnvelope details and correlation ID through CLI', async () => {
+    const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      message: 'Cron operation failed.', hint: 'Retry the operation.',
+      details: { command: 'workflow cron toggle' }, correlationId: 'fixture-correlation',
+    });
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ requestServiceOperation: async () => ({
+        ok: false, statusCode: 500, payload: { ok: false, error: envelope },
+      }) });
+    });
+    const result = await enableCommand.execute(createMockContext({ ui: createCapturedUI().ui }),
+      mockCLIInput({ argv: ['journey-cron'], flags: { json: true } }));
+
+    expect(result).toMatchObject({ ok: false, error: {
+      code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Cron operation failed.',
+      hint: 'Retry the operation.', details: { command: 'workflow cron toggle' },
+      correlationId: 'fixture-correlation',
+    } });
   });
 
   it('prints the plugin cron refusal without a misleading retry command', async () => {

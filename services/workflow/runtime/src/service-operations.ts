@@ -1,4 +1,6 @@
 import type { RegisteredServiceCommandOperation, ServiceCommandRequestCapability } from '@kb-labs/plugin-contracts';
+import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { isErrorEnvelope } from '@kb-labs/core-platform';
 import { workflowServiceCommands } from '@kb-labs/workflow-contracts/service-commands';
 
 export class WorkflowServiceOperationError extends Error {
@@ -6,6 +8,9 @@ export class WorkflowServiceOperationError extends Error {
     readonly code: string,
     message: string,
     readonly hint?: string,
+    readonly details?: Record<string, unknown>,
+    readonly correlationId?: string,
+    readonly envelope?: ErrorEnvelope,
   ) {
     super(message);
     this.name = 'WorkflowServiceOperationError';
@@ -35,7 +40,9 @@ export async function setWorkflowCronEnabled(
   const route = declaration.route.path.replace('{id}', encodeURIComponent(id));
   const response = await request({
     method: declaration.route.method,
-    path: `/api/v1${route}`,
+    // Service operations speak service-relative paths. The host adapter owns
+    // mounting this under the manifest's public project API prefix.
+    path: route,
   });
   const envelope = record(response.payload);
   const failure = record(envelope?.error);
@@ -45,7 +52,10 @@ export async function setWorkflowCronEnabled(
       ? failure.message
       : `Failed to ${enabled ? 'enable' : 'disable'} cron ${id}.`;
     const hint = typeof failure?.hint === 'string' ? failure.hint : undefined;
-    throw new WorkflowServiceOperationError(code, message, hint);
+    const details = record(failure?.details);
+    const correlationId = typeof failure?.correlationId === 'string' ? failure.correlationId : undefined;
+    const errorEnvelope = isErrorEnvelope(failure) ? failure : undefined;
+    throw new WorkflowServiceOperationError(code, message, hint, details, correlationId, errorEnvelope);
   }
 
   const data = envelope?.ok === true ? record(envelope.data) : envelope;

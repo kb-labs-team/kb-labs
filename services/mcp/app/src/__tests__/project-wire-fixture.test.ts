@@ -181,6 +181,7 @@ describe('project MCP wire fixture producer', () => {
       version: '1.0.0',
       description: 'Workflow daemon test manifest',
       runtime: { entry: 'dist/index.js', port: 7777, healthCheck: '/health' },
+      projectApi: { serviceId: 'workflow', rewritePrefix: '/api/v1' },
       commands: ['enable', 'disable'].map((action) => ({
         kind: 'service' as const,
         name: `workflow crons ${action}`,
@@ -264,9 +265,28 @@ describe('project MCP wire fixture producer', () => {
     expect(disableResult.isError).toBe(false);
     expect(disableResult.structuredContent).toMatchObject({ ok: true, data: { id: 'journey-cron', enabled: false } });
     expect(cronState.get('journey-cron')).toBe(false);
+    serviceCall.mockResolvedValueOnce({
+      ok: false,
+      statusCode: 403,
+      payload: { ok: false, error: createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+        message: 'Cron operation failed.', hint: 'Retry the operation.',
+        details: { command: 'workflow cron toggle' }, correlationId: 'fixture-correlation',
+      }) },
+    });
+    const rejected = await postMcp(port, 7, 'tools/call', {
+      name: 'workflow__workflow_crons_enable', arguments: { id: 'journey-cron' },
+    });
+    expect(parseMcpResponse(rejected.body).result).toMatchObject({
+      isError: true,
+      structuredContent: { ok: false, error: {
+        code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Cron operation failed.',
+        hint: 'Retry the operation.', details: { command: 'workflow cron toggle' }, correlationId: 'fixture-correlation',
+      } },
+    });
     expect(serviceCall.mock.calls.map(([serviceId, request]) => [serviceId, request.path])).toEqual([
       ['workflow', '/api/v1/crons/journey-cron/enable'],
       ['workflow', '/api/v1/crons/journey-cron/disable'],
+      ['workflow', '/api/v1/crons/journey-cron/enable'],
     ]);
   });
 

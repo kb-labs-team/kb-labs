@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { setWorkflowCronEnabled } from './service-operations.js';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 
 describe('setWorkflowCronEnabled', () => {
   it('uses the declared route and returns the canonical result payload', async () => {
@@ -14,22 +15,29 @@ describe('setWorkflowCronEnabled', () => {
     });
     expect(request).toHaveBeenCalledWith({
       method: 'POST',
-      path: '/api/v1/crons/journey-cron/enable',
+      path: '/crons/journey-cron/enable',
     });
   });
 
   it('preserves catalogued service errors for both host adapters', async () => {
+    const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      message: 'Cron operation failed.', hint: 'Retry the operation.',
+      details: { command: 'workflow cron toggle' }, correlationId: 'fixture-correlation',
+    });
     const request = vi.fn(async () => ({
       ok: false,
       statusCode: 403,
-      payload: { ok: false, error: { code: 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY', message: 'Cron is read-only.', hint: 'Use a project cron.' } },
+      payload: { ok: false, error: envelope },
     }));
 
     await expect(setWorkflowCronEnabled({ id: 'plugin:cron', enabled: false }, request)).rejects.toMatchObject({
       name: 'WorkflowServiceOperationError',
-      code: 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY',
-      message: 'Cron is read-only.',
-      hint: 'Use a project cron.',
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      message: 'Cron operation failed.',
+      hint: 'Retry the operation.',
+      details: { command: 'workflow cron toggle' },
+      correlationId: 'fixture-correlation',
+      envelope,
     });
   });
 });

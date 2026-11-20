@@ -27,6 +27,22 @@ describe('WorkflowDaemonClient shared gateway client', () => {
     );
   });
 
+  it('mounts the shared service-relative operation through the project Gateway URL once', async () => {
+    gatewayApiFetch.mockResolvedValue(new Response(
+      JSON.stringify({ ok: true, data: { enabled: true } }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+
+    await new WorkflowDaemonClient({ projectId: 'prj_0123456789abcdef' }).requestServiceOperation({
+      method: 'POST', path: '/crons/journey-cron/enable',
+    });
+
+    expect(gatewayApiFetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/crons/journey-cron/enable',
+      { method: 'POST' },
+    );
+  });
+
   // case: S-054.3
   it('preserves the message from an error envelope returned by the workflow catalog', async () => {
     gatewayApiFetch.mockResolvedValue(new Response(

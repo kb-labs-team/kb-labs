@@ -39,7 +39,7 @@ import type { IEntityRegistry, RegisteredServiceCommandOperation, ServiceManifes
 import { createDaemonServer, getListenOptions, type ObservabilityCollectorLike } from '@kb-labs/shared-http';
 import { readForwardedIdentity } from '@kb-labs/gateway-contracts';
 import { toIdentity, actionForOperation, type Permits } from './mcp/authz.js';
-import { buildServiceTools, validateManifests, type McpServiceTool } from './mcp/tool-builder.js';
+import { buildServiceTools, validateManifests, validateServiceOperations, type McpServiceTool } from './mcp/tool-builder.js';
 import { callRegisteredServiceOperation, callServiceTool } from './mcp/service-tool-router.js';
 import { type PlatformResolver } from './mcp/tool-router.js';
 import { resolveVisibleTools, executeToolCall, invalidMcpToolArguments, mcpToolError, mcpToolSuccess, unexpectedMcpResult, validateToolArguments } from './mcp/request-handler.js';
@@ -125,6 +125,7 @@ export class McpDaemonServer {
     // Initialize the registry ONCE; snapshot() is reused per request.
     this.registry = this.opts.catalog;
     this.serviceTools = buildServiceTools(this.opts.serviceManifests ?? []);
+    validateServiceOperations(this.opts.serviceManifests ?? [], this.opts.serviceOperations ?? []);
 
     // Structural manifest validation runs ONCE here, independent of any
     // identity's permissions — so broken manifests are visible in logs and
@@ -298,7 +299,7 @@ export class McpDaemonServer {
                       candidate.serviceId === serviceTool.serviceId && candidate.operationId === serviceTool.invocation?.operationId,
                     );
                     result = operation
-                      ? await callRegisteredServiceOperation(normalized.value, operation, this.opts.serviceTransport, reqLogger)
+                      ? await callRegisteredServiceOperation(normalized.value, operation, serviceTool.servicePathPrefix, this.opts.serviceTransport, reqLogger)
                       : unexpectedMcpResult(new Error(`No trusted operation is registered for ${serviceTool.serviceId}:${serviceTool.invocation.operationId}.`), reqLogger);
                   }
                 } else {

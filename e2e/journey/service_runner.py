@@ -75,6 +75,7 @@ from mcp_project_steps import (
     secured_auth,
     secured_project_catalog_isolation,
     unknown_tool,
+    workflow_cron_invocation_parity,
 )
 from platform_state_dump import archive_service_logs
 from journey_resources import journey_module, active_platform_root
@@ -627,9 +628,16 @@ def _checks(mode: str, graph: FlowGraph | None = None):
                     if graph is not None and graph.states.get("project-registered", {}).get("passed") is True
                     else "")
     if project_root:
+        yield service_check("workflow cron CLI and MCP state parity", "workflow",
+                            lambda: workflow_cron_invocation_parity(pid(), auth_token(), project_root, env),
+                            cases=["S-045.12"],
+                            runners=("service-secured:explore" if mode == "secured" else "service-local:explore",))
         yield service_check("project MCP commit mutation", "mcp",
                             lambda: apply_commit_plan(pid(), auth_token(), project_root), cases=["S-140.2"])
     else:
+        yield service_check("workflow cron CLI and MCP state parity", "workflow",
+                            lambda: "BLOCKED: project-registered state must provide the isolated workflow fixture root",
+                            cases=["S-045.12"])
         yield service_check("project MCP commit mutation", "mcp",
                             lambda: "BLOCKED: project-registered state must provide the disposable commit fixture root",
                             cases=["S-140.2"])

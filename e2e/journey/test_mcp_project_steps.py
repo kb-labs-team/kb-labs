@@ -17,7 +17,8 @@ from mcp_project_steps import (apply_commit_plan, commit_tool_schema, invalid_ar
                                mcp_ux_result_contract, project_isolation, project_plugin_catalog_isolation,
                                project_readonly_tool_isolation,
                                run_agent_session_steps,
-                               opaque_host_credential_mcp_rejection, secured_auth, secured_project_catalog_isolation, unknown_tool)
+                               opaque_host_credential_mcp_rejection, secured_auth, secured_project_catalog_isolation,
+                               unknown_tool, workflow_cron_invocation_parity)
 from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint
 import service_runner
@@ -44,6 +45,43 @@ def tool_error(code: str, message: str, hint: str):
 
 
 class ProjectMcpJourneyTests(unittest.TestCase):
+    # case: S-045.12
+    def test_workflow_cron_parity_drives_one_cli_and_mcp_state_sequence(self):
+        tool = {"name": "workflow__workflow_crons_enable", "inputSchema": {
+            "type": "object", "properties": {"id": {"type": "string", "minLength": 1}},
+            "required": ["id"], "additionalProperties": False,
+        }}
+        requests = []
+        def fake_request(path, **kwargs):
+            payload = kwargs.get("payload", {})
+            requests.append(payload)
+            if payload.get("method") == "tools/list":
+                return 200, {"result": {"tools": [tool]}}, {}
+            action = payload["params"]["name"].rsplit("_", 1)[-1]
+            enabled = action == "enable"
+            return 200, {"result": {"isError": False, "structuredContent": {
+                "ok": True, "data": {"id": "journey-cron", "enabled": enabled},
+            }}}, {}
+
+        def fake_cli(argv, **kwargs):
+            if "list" in argv:
+                data = {"crons": [{"id": "journey-cron", "enabled": False}]}
+            else:
+                action = argv[3]
+                data = {"id": "journey-cron", "enabled": action == "enable"}
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"ok": True, "data": data}), "")
+
+        with patch("mcp_project_steps._request", side_effect=fake_request), \
+             patch("mcp_project_steps.run_command", side_effect=fake_cli):
+            self.assertIsNone(workflow_cron_invocation_parity("prj_a", "token", "/tmp/project", {}))
+
+        self.assertEqual([item.get("params", {}).get("name") for item in requests[1:]], [
+            "workflow__workflow_crons_disable", "workflow__workflow_crons_enable",
+        ])
+        self.assertEqual([item.get("params", {}).get("arguments") for item in requests[1:]], [
+            {"id": "journey-cron"}, {"id": "journey-cron"},
+        ])
+
     def setUp(self):
         def read_installed_contract(*parts: str) -> bytes:
             root = Path(__file__).resolve().parents[2]

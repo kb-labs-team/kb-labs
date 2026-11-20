@@ -52,8 +52,13 @@ function errorResult(envelope: ErrorEnvelope): CallToolResult {
   };
 }
 
+/** Preserve a typed service-operation failure without rebuilding or narrowing its envelope. */
+export function mcpToolErrorEnvelope(envelope: ErrorEnvelope): CallToolResult {
+  return errorResult(envelope);
+}
+
 export function mcpToolError(request: CatalogErrorRequest): CallToolResult {
-  return errorResult(createCatalogErrorEnvelope({ ...request, correlationId: randomUUID() }));
+  return errorResult(createCatalogErrorEnvelope({ ...request, correlationId: request.correlationId ?? randomUUID() }));
 }
 
 /** Convert an unexpected MCP boundary failure to one safe, correlated result. */
