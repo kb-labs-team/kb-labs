@@ -132,6 +132,9 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: ${{ (github.ref == 'refs/heads/master' || (inputs.profile || github.event.inputs.profile || 'stream') == 'candidate') && 'off' || 'read-write' }}
+          namespace: verify
       - name: Download prepared kb-devkit binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -147,6 +150,8 @@ jobs:
           PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
           GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+          DEVKIT_CACHE_MODE: ${{ steps.devkit-cache.outputs.cache-mode }}
+          DEVKIT_CACHE_STORE_PATH: ${{ steps.devkit-cache.outputs.store-path }}
         run: node scripts/ci/run-remote-stage.mjs
       - name: Archive workspace build outputs
         if: success()
@@ -215,6 +220,9 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: ${{ (github.ref == 'refs/heads/master' || (inputs.profile || github.event.inputs.profile || 'stream') == 'candidate') && 'off' || 'read-only' }}
+          namespace: verify
       - name: Download prepared kb-devkit binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -226,6 +234,7 @@ jobs:
           PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
           GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+          DEVKIT_CACHE_MODE: ${{ steps.devkit-cache.outputs.cache-mode }}
         run: node scripts/ci/run-remote-stage.mjs
       - name: Upload independent test result
         if: always()
@@ -274,6 +283,9 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: ${{ (github.ref == 'refs/heads/master' || (inputs.profile || github.event.inputs.profile || 'stream') == 'candidate') && 'off' || 'read-only' }}
+          namespace: verify
       - name: Download producer build outputs and kb-devkit
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -287,6 +299,7 @@ jobs:
           PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
           GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+          DEVKIT_CACHE_MODE: ${{ steps.devkit-cache.outputs.cache-mode }}
         run: node scripts/ci/run-remote-stage.mjs
       - name: Upload build-dependent test result
         if: always()
@@ -336,6 +349,9 @@ jobs:
       - name: Restore kb-devkit content-addressed cache
         id: devkit-cache
         uses: ./.github/actions/devkit-cas
+        with:
+          mode: ${{ (github.ref == 'refs/heads/master' || (inputs.profile || github.event.inputs.profile || 'stream') == 'candidate') && 'off' || 'read-only' }}
+          namespace: verify
       - name: Download prepared kb-devkit binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -347,6 +363,7 @@ jobs:
           PNPM_CACHE_HIT: ${{ steps.setup-node.outputs.cache-hit }}
           GO_CACHE_HIT: ${{ steps.setup-go.outputs.cache-hit }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cache.outputs.cache-hit }}
+          DEVKIT_CACHE_MODE: ${{ steps.devkit-cache.outputs.cache-mode }}
         run: node scripts/ci/run-remote-stage.mjs
       - name: Upload internal-tool result
         if: always()
