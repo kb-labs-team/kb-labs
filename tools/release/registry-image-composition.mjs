@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readPlatformReleaseConfig } from '../kb-create/scripts/platform-release-config.mjs';
@@ -119,18 +118,20 @@ function projectedPackageRoot(deploymentRoot, packageName) {
   return { name: packageName, packageRoot, realPackageRoot, manifestPath, manifest: packageJson(manifestPath) };
 }
 
-function packageRootForEntry(entryPath, expectedName) {
-  let current = path.dirname(realpathSync(entryPath));
+function resolveWorkspacePackageRoot(fromPackageRoot, packageName) {
+  let current = realpathSync(fromPackageRoot);
   while (true) {
-    const manifestPath = path.join(current, 'package.json');
-    if (existsSync(manifestPath) && packageJson(manifestPath).name === expectedName) {
-      return realpathSync(current);
+    const candidate = path.join(current, 'node_modules', ...packageName.split('/'));
+    if (existsSync(path.join(candidate, 'package.json'))) {
+      const resolvedRoot = realpathSync(candidate);
+      const manifest = packageJson(path.join(resolvedRoot, 'package.json'));
+      if (manifest.name === packageName) return resolvedRoot;
     }
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
   }
-  throw new Error(`could not identify package root for ${expectedName}`);
+  throw new Error(`could not resolve package root for ${packageName} from ${fromPackageRoot}`);
 }
 
 function assertOnePlatformModuleGraph(deploymentRoot, initialPackages) {
@@ -164,9 +165,9 @@ function assertOnePlatformModuleGraph(deploymentRoot, initialPackages) {
     };
     for (const dependencyName of Object.keys(dependencies)) {
       if (!dependencyName.startsWith('@kb-labs/')) continue;
-      let entryPath;
+      let dependencyRoot;
       try {
-        entryPath = createRequire(path.join(current.root, 'package.json')).resolve(dependencyName);
+        dependencyRoot = resolveWorkspacePackageRoot(current.root, dependencyName);
       } catch (error) {
         if (
           current.manifest.optionalDependencies?.[dependencyName] !== undefined ||
@@ -174,7 +175,6 @@ function assertOnePlatformModuleGraph(deploymentRoot, initialPackages) {
         ) continue;
         throw new Error(`Registry composition cannot resolve ${dependencyName} from ${current.name}: ${error.message}`);
       }
-      const dependencyRoot = packageRootForEntry(entryPath, dependencyName);
       if (dependencyName === SDK_PACKAGE || dependencyName.startsWith('@kb-labs/core-')) {
         const priorRoot = rootsByName.get(dependencyName);
         if (priorRoot && priorRoot !== dependencyRoot) {

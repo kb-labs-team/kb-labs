@@ -66,7 +66,10 @@ test('platform lock and image manifest are generated from projected package iden
       },
       '@kb-labs/sdk': {
         directory: 'sdk/sdk',
-        manifest: { name: '@kb-labs/sdk', version: '1.2.3', main: 'index.js' },
+        manifest: {
+          name: '@kb-labs/sdk', version: '1.2.3', type: 'module',
+          exports: { '.': { types: './index.d.ts', import: './index.js' } },
+        },
       },
       '@kb-labs/adapters-sqlite': {
         directory: 'adapters/sqlite',
