@@ -10,7 +10,7 @@ function makeEntry(overrides: Partial<{
   namespaceId: string;
   hostId: string;
   pluginId: string;
-  handlerRef: string;
+  commandPath: string;
 }> = {}) {
   return {
     executionId: 'exec-1',
@@ -18,7 +18,7 @@ function makeEntry(overrides: Partial<{
     namespaceId: 'ns-1',
     hostId: 'host-1',
     pluginId: 'plugin-a',
-    handlerRef: 'handlers/run.ts',
+    commandPath: 'handlers/run.ts',
     ...overrides,
   };
 }

@@ -250,7 +250,7 @@ describe('WebSocket /clients/connect: subscribe / unsubscribe', () => {
       namespaceId: 'ns-other-forbidden',  // different namespace
       hostId: 'host-x',
       pluginId: 'p',
-      handlerRef: 'h',
+      commandPath: 'h',
     });
 
     const { ws } = await connectAndHandshake();
@@ -338,7 +338,7 @@ describe('WebSocket /clients/connect: cancel', () => {
       namespaceId: 'ns-client-e2e', // same namespace as token
       hostId: 'host-001',
       pluginId: 'p',
-      handlerRef: 'h',
+      commandPath: 'h',
     });
 
     const ws = await connectAndHandshake();
@@ -361,7 +361,7 @@ describe('WebSocket /clients/connect: cancel', () => {
       namespaceId: 'ns-client-e2e',
       hostId: 'host-001',
       pluginId: 'p',
-      handlerRef: 'h',
+      commandPath: 'h',
     });
     // Cancel it first
     executionRegistry.cancel(execId, 'user');

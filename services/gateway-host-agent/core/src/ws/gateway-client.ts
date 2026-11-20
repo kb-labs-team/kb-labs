@@ -148,15 +148,15 @@ export class GatewayClient {
     params: Record<string, unknown> | undefined,
     callbacks: PendingExecute,
   ): void {
-    // Parse command: "pluginId:handlerRef"
+    // Parse command: "pluginId:commandPath"
     const colonIdx = command.indexOf(':');
     const pluginId = colonIdx > 0 ? command.slice(0, colonIdx) : command;
-    const handlerRef = colonIdx > 0 ? command.slice(colonIdx + 1) : command;
+    const commandPath = colonIdx > 0 ? command.slice(colonIdx + 1) : command;
 
     const body = {
+      projectId: params?.projectId,
       pluginId,
-      handlerRef,
-      exportName: (params?.exportName as string) ?? handlerRef,
+      commandPath,
       input: params?.input ?? {},
       timeoutMs: (params?.timeoutMs as number) ?? undefined,
     };

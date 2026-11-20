@@ -34,9 +34,9 @@ export class HostAgentTransport implements IGatewayClient {
     const ipcRequest = {
       type: 'execute',
       requestId,
-      command: `${request.pluginId}:${request.handlerRef}`,
+      command: `${request.pluginId}:${request.commandPath}`,
       params: {
-        exportName: request.exportName,
+        projectId: request.projectId,
         input: request.input,
         timeoutMs: request.timeoutMs,
       },

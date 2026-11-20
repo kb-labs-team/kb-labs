@@ -14,6 +14,11 @@
 
 import { resolve, normalize, join, sep } from 'node:path';
 import { readdir, readFile, stat, realpath } from 'node:fs/promises';
+import { DiagnosticCollector, readMarketplaceLock } from '@kb-labs/core-discovery';
+import { createExtensionStore } from '@kb-labs/core-extension-store';
+import { canonicalizeProjectPath, deriveProjectId } from '@kb-labs/core-project-registry';
+import { getHandlerPermissions, isManifestV3 } from '@kb-labs/plugin-contracts';
+import type { PluginContextDescriptor } from '@kb-labs/plugin-contracts';
 
 export interface ResolvedPlugin {
   pluginRoot: string;
@@ -24,6 +29,22 @@ export interface PluginInventoryEntry {
   id: string;
   version: string;
   root: string;
+}
+
+export interface MarketplaceExecutionRequest {
+  projectId: string;
+  pluginId: string;
+  commandPath: string;
+  requestId: string;
+  executionId: string;
+  namespaceId: string;
+  input: unknown;
+  approvedPins: Array<{ package: string; version: string; integrity: string }>;
+}
+
+export interface ResolvedMarketplaceExecution extends ResolvedPlugin {
+  descriptor: PluginContextDescriptor;
+  projectRoot: string;
 }
 
 interface ManifestEntry {
@@ -37,6 +58,84 @@ export class LocalPluginResolver {
   private scanned = false;
 
   constructor(private readonly allowedPaths: string[]) {}
+
+  /** Resolve a Marketplace command from an agent-owned project root and exact store pin. */
+  async resolveMarketplace(request: MarketplaceExecutionRequest): Promise<ResolvedMarketplaceExecution> {
+    if (!request.projectId || !request.namespaceId || !request.pluginId || !request.commandPath.trim()) {
+      throw new Error('Marketplace execution requires projectId, pluginId, and commandPath');
+    }
+
+    const matchingRoots: string[] = [];
+    for (const configuredPath of this.allowedPaths) {
+      let canonical: string;
+      try {
+        canonical = await canonicalizeProjectPath(configuredPath);
+      } catch {
+        continue;
+      }
+      if (deriveProjectId(canonical) === request.projectId) matchingRoots.push(canonical);
+    }
+    const uniqueRoots = [...new Set(matchingRoots)];
+    if (uniqueRoots.length !== 1) {
+      throw new Error(uniqueRoots.length === 0
+        ? 'Project is not managed by this Host Agent'
+        : 'Project binding is ambiguous on this Host Agent');
+    }
+    const projectRoot = uniqueRoots[0]!;
+
+    const lock = await readMarketplaceLock(projectRoot, new DiagnosticCollector(), 'project');
+    const pin = lock?.plugins[request.pluginId];
+    if (!pin || !pin.enabled || pin.source !== 'marketplace' || pin.package !== request.pluginId || !pin.integrity) {
+      throw new Error(`Marketplace plugin is not enabled and pinned in the project: ${request.pluginId}`);
+    }
+    if (!request.approvedPins.some((approved) => approved.package === request.pluginId
+      && approved.version === pin.version && approved.integrity === pin.integrity)) {
+      throw new Error(`Marketplace plugin pin is not approved by Host Agent policy: ${request.pluginId}@${pin.version}`);
+    }
+
+    const store = createExtensionStore();
+    const stored = await store.lookup({ name: request.pluginId, version: pin.version, expectedIntegrity: pin.integrity });
+    if (!stored || stored.entry.kind !== 'plugin' || stored.entry.name !== request.pluginId || stored.entry.version !== pin.version) {
+      throw new Error(`Pinned Marketplace plugin is not present in the local extension store: ${request.pluginId}@${pin.version}`);
+    }
+    const manifest = stored.entry.manifest;
+    if (!manifest || !isManifestV3(manifest) || manifest.id !== request.pluginId || manifest.version !== pin.version) {
+      throw new Error(`Stored plugin manifest does not match the project pin: ${request.pluginId}@${pin.version}`);
+    }
+
+    const commands = manifest.cli?.commands.filter((command) => command.path === request.commandPath) ?? [];
+    if (commands.length !== 1) throw new Error(`Marketplace command is missing or ambiguous: ${request.commandPath}`);
+    const command = commands[0]!;
+    const [handlerRef, exportName = 'default'] = command.handler.split('#');
+    if (!handlerRef || !exportName) throw new Error(`Marketplace command has an invalid handler declaration: ${request.commandPath}`);
+
+    const pluginRoot = await realpath(stored.packageRoot);
+    const handlerPath = resolve(pluginRoot, handlerRef);
+    if (!handlerPath.startsWith(pluginRoot + sep)) throw new Error('Marketplace handler path escapes the package root');
+    const realHandler = await realpath(handlerPath);
+    if (!realHandler.startsWith(pluginRoot + sep) || !(await stat(realHandler)).isFile()) {
+      throw new Error('Marketplace handler is not a regular file inside the installed package');
+    }
+
+    const input = request.input && typeof request.input === 'object' ? request.input as { argv?: unknown; flags?: unknown } : {};
+    const descriptor: PluginContextDescriptor = {
+      hostType: 'cli',
+      hostContext: {
+        host: 'cli',
+        binaryName: 'kb',
+        argv: Array.isArray(input.argv) ? input.argv.filter((arg): arg is string => typeof arg === 'string') : [],
+        flags: input.flags && typeof input.flags === 'object' && !Array.isArray(input.flags) ? input.flags as Record<string, unknown> : {},
+      },
+      permissions: getHandlerPermissions(manifest, 'cli', request.commandPath),
+      pluginId: manifest.id,
+      pluginVersion: manifest.version,
+      handlerId: request.commandPath,
+      requestId: request.requestId,
+      executionId: request.executionId,
+      tenantId: request.namespaceId,
+    };
+    return { pluginRoot, handlerPath: `${realHandler}#${exportName}`, projectRoot, descriptor };
+  }
 
   /**
    * Resolve pluginId + handlerRef → absolute paths.

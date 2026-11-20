@@ -732,6 +732,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
           flags: typedCommandFlags,
           manifestCmd: p.manifestCmd,
           resultWriter: p.resultWriter,
+          projectRoot: p.projectRoot,
         });
       }
     }

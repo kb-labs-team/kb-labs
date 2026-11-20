@@ -105,7 +105,8 @@ describe('Gateway execution cancel', () => {
       },
       body: JSON.stringify({
         pluginId: 'test-plugin',
-        handlerRef: 'dist/handler.js',
+        projectId: 'project-1',
+      commandPath: 'cli run',
         input: {},
       }),
     });

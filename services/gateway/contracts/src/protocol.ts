@@ -261,12 +261,12 @@ export const AdapterCancelMessageSchema = z.object({
 // ── Execute request schema (for POST /api/v1/execute) ──
 
 export const ExecuteRequestSchema = z.object({
+  projectId: z.string().min(1),
   pluginId: z.string(),
-  handlerRef: z.string(),
-  exportName: z.string().optional(),
+  commandPath: z.string().min(1),
   input: z.unknown(),
   timeoutMs: z.number().int().positive().optional(),
-});
+}).strict();
 
 export const SUPPORTED_PROTOCOL_VERSIONS = ['1.0'] as const;
 

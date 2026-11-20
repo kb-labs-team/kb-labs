@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   createProxyPlatform: vi.fn(),
-  resolvePlugin: vi.fn(),
+  resolveMarketplace: vi.fn(),
   runInProcess: vi.fn(),
   runInSubprocess: vi.fn(),
 }));
@@ -14,7 +14,7 @@ vi.mock('@kb-labs/plugin-runtime', () => ({
 }));
 vi.mock('../handlers/local-plugin-resolver.js', () => ({
   LocalPluginResolver: class {
-    resolve = mocks.resolvePlugin;
+    resolveMarketplace = mocks.resolveMarketplace;
     listPlugins = vi.fn();
   },
 }));
@@ -27,25 +27,31 @@ describe('ExecutionHandler subprocess transport', () => {
   it('passes the Gateway proxy platform into the shared stdio subprocess runner', async () => {
     const proxyPlatform = { cache: { get: vi.fn() } };
     mocks.createProxyPlatform.mockResolvedValue(proxyPlatform);
-    mocks.resolvePlugin.mockResolvedValue({ pluginRoot: '/plugins/sample', handlerPath: '/plugins/sample/handler.js' });
+    mocks.resolveMarketplace.mockResolvedValue({
+      pluginRoot: '/plugins/sample', handlerPath: '/plugins/sample/handler.js#default', projectRoot: '/projects/sample',
+      descriptor: {
+        hostType: 'cli', pluginId: '@test/sample', pluginVersion: '1.0.0', requestId: 'req-stdio',
+        handlerId: 'sample:run', permissions: {},
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+      },
+    });
     mocks.runInSubprocess.mockResolvedValue({ data: 'executed' });
     const handler = new ExecutionHandler({
       gatewayTransport: { send: vi.fn(), close: vi.fn() } as never,
       allowedPaths: ['/plugins'],
       executionMode: 'subprocess',
       timeoutMs: 5000,
+      allowedPlugins: ['@test/sample'],
+      namespaceId: 'test-ns',
+      marketplacePins: [{ package: '@test/sample', version: '1.0.0', integrity: 'sha512-fixture' }],
     });
 
     try {
       await expect(handler.handle({
         type: 'call', requestId: 'req-stdio', adapter: 'execution', method: 'execute',
         args: [{
-          executionId: 'exec-stdio', pluginId: '@test/sample', handlerRef: 'handler.js', input: {},
-          descriptor: {
-            hostType: 'cli', pluginId: '@test/sample', pluginVersion: '1.0.0', requestId: 'req-stdio',
-            handlerId: 'sample:handler', permissions: { platform: { cache: true } },
-            hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
-          },
+          executionId: 'exec-stdio', requestId: 'req-stdio', projectId: 'project-sample',
+          namespaceId: 'test-ns', pluginId: '@test/sample', commandPath: 'sample:run', input: {},
         }],
       })).resolves.toBe('executed');
 

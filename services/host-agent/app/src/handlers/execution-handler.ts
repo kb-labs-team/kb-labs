@@ -35,11 +35,12 @@ import { LocalPluginResolver, type PluginInventoryEntry } from './local-plugin-r
 
 interface ExecutionRequest {
   executionId: string;
+  requestId: string;
+  projectId: string;
+  namespaceId: string;
   pluginId: string;
-  handlerRef: string;
-  exportName?: string;
+  commandPath: string;
   input: unknown;
-  descriptor: PluginContextDescriptor;
   timeoutMs?: number;
 }
 
@@ -56,6 +57,8 @@ export interface ExecutionHandlerOptions {
   executionMode: 'in-process' | 'subprocess';
   timeoutMs: number;
   allowedPlugins?: string[];
+  marketplacePins: Array<{ package: string; version: string; integrity: string }>;
+  namespaceId: string;
 }
 
 // ── Constants ──
@@ -100,7 +103,19 @@ export class ExecutionHandler {
 
   /** Execute a plugin handler locally */
   private async execute(request: ExecutionRequest): Promise<unknown> {
-    const { executionId, pluginId, handlerRef, input, descriptor, timeoutMs } = request;
+    const { executionId, pluginId, input, timeoutMs } = request;
+    if (typeof executionId !== 'string' || !executionId
+      || typeof request.requestId !== 'string' || !request.requestId
+      || typeof request.projectId !== 'string' || !request.projectId
+      || typeof request.commandPath !== 'string' || !request.commandPath.trim()) {
+      throw new Error('Invalid Marketplace execution request');
+    }
+    if (request.timeoutMs !== undefined && (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0)) {
+      throw new Error('Execution timeout must be a positive integer');
+    }
+    if (request.namespaceId !== this.opts.namespaceId) {
+      throw new Error('Execution namespace is not authorized by this Host Agent configuration');
+    }
 
     // 1. Idempotency check (at-most-once for mutating, ADR-0053)
     const existing = this.journal.get(executionId);
@@ -116,25 +131,23 @@ export class ExecutionHandler {
     this.journal.set(executionId, { status: 'started', startedAt: Date.now() });
 
     // 2. Plugin allowlist check
-    if (this.opts.allowedPlugins && this.opts.allowedPlugins.length > 0) {
-      if (!this.opts.allowedPlugins.includes(pluginId)) {
-        this.journal.delete(executionId);
-        throw new Error(`Plugin not allowed: ${pluginId}`);
-      }
+    if (!this.opts.allowedPlugins?.includes(pluginId)) {
+      this.journal.delete(executionId);
+      throw new Error(`Plugin not allowed by Host Agent policy: ${pluginId}`);
     }
 
-    // 3. Default permissions if not provided (CLI dispatch may omit them)
-    if (descriptor && !descriptor.permissions) {
-      descriptor.permissions = {
-        fs: { read: ['.'], write: ['.'] },
-        network: { fetch: [] },
-        env: { read: [] },
-        platform: { llm: true, cache: true },
-      };
-    }
-
-    // 4. Resolve plugin locally (Workspace Agent owns path resolution)
-    const resolved = await this.pluginResolver.resolve(pluginId, handlerRef);
+    // The agent derives all execution authority from its configured project root,
+    // exact Marketplace pin, immutable store entry, and static manifest.
+    const resolved = await this.pluginResolver.resolveMarketplace({
+      projectId: request.projectId,
+      pluginId,
+      commandPath: request.commandPath,
+      requestId: request.requestId,
+      executionId,
+      namespaceId: this.opts.namespaceId,
+      input,
+      approvedPins: this.opts.marketplacePins,
+    });
 
     // 5. Create proxy platform (LLM/Cache/etc → GatewayTransport → Platform)
     const proxyPlatform = await createProxyPlatform({
@@ -143,15 +156,15 @@ export class ExecutionHandler {
 
 
     // 6. Setup timeout
-    const effectiveTimeout = timeoutMs ?? this.opts.timeoutMs;
+    const effectiveTimeout = Math.min(timeoutMs ?? this.opts.timeoutMs, this.opts.timeoutMs);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), effectiveTimeout);
 
     try {
       // 7. Execute plugin handler — mode determines isolation level
       const result = this.opts.executionMode === 'subprocess'
-        ? await this.executeInSubprocess(resolved, descriptor, input, proxyPlatform, effectiveTimeout, controller.signal)
-        : await this.executeInProcess(resolved, descriptor, input, proxyPlatform, controller.signal);
+        ? await this.executeInSubprocess(resolved, resolved.descriptor, input, proxyPlatform, effectiveTimeout, controller.signal)
+        : await this.executeInProcess(resolved, resolved.descriptor, input, proxyPlatform, controller.signal);
 
       // 8. Record success in journal
       this.journal.set(executionId, {
@@ -182,7 +195,7 @@ export class ExecutionHandler {
    * Plugin runs in same process as Workspace Agent daemon.
    */
   private async executeInProcess(
-    resolved: { pluginRoot: string; handlerPath: string },
+    resolved: { pluginRoot: string; handlerPath: string; projectRoot: string },
     descriptor: PluginContextDescriptor,
     input: unknown,
     proxyPlatform: PlatformContainer,
@@ -195,7 +208,7 @@ export class ExecutionHandler {
       handlerPath: resolved.handlerPath,
       input,
       signal,
-      cwd: resolved.pluginRoot,
+      cwd: resolved.projectRoot,
     });
     return result.data;
   }
@@ -209,7 +222,7 @@ export class ExecutionHandler {
    *   3. Subprocess applies sandbox patches and returns its result over the same stream
    */
   private async executeInSubprocess(
-    resolved: { pluginRoot: string; handlerPath: string },
+    resolved: { pluginRoot: string; handlerPath: string; projectRoot: string },
     descriptor: PluginContextDescriptor,
     input: unknown,
     proxyPlatform: PlatformContainer,
@@ -223,7 +236,7 @@ export class ExecutionHandler {
       input,
       timeoutMs,
       signal,
-      cwd: resolved.pluginRoot,
+      cwd: resolved.projectRoot,
     });
     return result.data;
   }

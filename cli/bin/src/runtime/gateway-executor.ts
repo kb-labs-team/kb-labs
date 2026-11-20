@@ -14,6 +14,7 @@ import { resolveTransport, TerminalEventRenderer } from '@kb-labs/cli-runtime/ga
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
 import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { CliResultWriter } from './result-serializer.js';
+import { canonicalizeProjectPath, deriveProjectId } from '@kb-labs/core-project-registry';
 
 export interface GatewayExecutionOptions {
   commandId: string;
@@ -21,6 +22,7 @@ export interface GatewayExecutionOptions {
   flags: Record<string, unknown>;
   manifestCmd: RegisteredCommand | undefined;
   resultWriter: CliResultWriter;
+  projectRoot?: string;
 }
 
 export function pluginCommandUnavailable(commandPath: string): ErrorEnvelopeError {
@@ -59,13 +61,13 @@ export async function executeViaGateway(
   const v3Manifest = manifestCmd.manifest.v3Manifest;
   const pluginId = v3Manifest?.id || manifestCmd.manifest.id;
   const commandPath = manifestCmd.manifest.segments.join(' ');
-  const cliCommand = v3Manifest?.cli?.commands?.find((c) => c.path === commandPath);
-  const handlerRef = cliCommand?.handler?.split('#')[0] ?? '';
+  const projectRoot = options.projectRoot;
+  if (!projectRoot) throw pluginCommandUnavailable(commandId);
 
   const request: GatewayExecuteRequest = {
+    projectId: deriveProjectId(await canonicalizeProjectPath(projectRoot)),
     pluginId,
-    handlerRef,
-    exportName: cliCommand?.handler?.split('#')[1] ?? 'default',
+    commandPath,
     input: { argv, flags },
   };
 

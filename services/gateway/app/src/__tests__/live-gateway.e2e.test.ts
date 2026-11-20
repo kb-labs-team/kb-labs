@@ -383,7 +383,8 @@ describe.sequential('Live Gateway — POST /api/v1/execute (ndjson streaming)', 
 
     const res = await post('/api/v1/execute', {
       pluginId: 'test-plugin',
-      handlerRef: 'dist/handler.js',
+      projectId: 'project-1',
+      commandPath: 'cli run',
       input: { msg: 'hello' },
     }, accessToken);
 
@@ -421,7 +422,8 @@ describe.sequential('Live Gateway — POST /api/v1/execute (ndjson streaming)', 
 
     const res = await post('/api/v1/execute', {
       pluginId: 'test-plugin',
-      handlerRef: 'dist/handler.js',
+      projectId: 'project-1',
+      commandPath: 'cli run',
       input: {},
     }, accessToken);
 
@@ -444,7 +446,7 @@ describe.sequential('Live Gateway — POST /api/v1/execute (ndjson streaming)', 
 
     const res = await post('/api/v1/execute', {
       pluginId: 'p',
-      handlerRef: 'h',
+      projectId: 'project-1', commandPath: 'cli run',
       input: null,
     }, accessToken);
 
@@ -459,7 +461,7 @@ describe.sequential('Live Gateway — POST /api/v1/execute (ndjson streaming)', 
   }, 8000);
 
   it('returns 401 without token', async () => {
-    const res = await post('/api/v1/execute', { pluginId: 'p', handlerRef: 'h', input: null });
+    const res = await post('/api/v1/execute', { pluginId: 'p', projectId: 'project-1', commandPath: 'cli run', input: null });
     expect(res.status).toBe(401);
   });
 
@@ -489,7 +491,8 @@ describe.sequential('Live Gateway — POST /api/v1/execute/:id/cancel', () => {
     // Start execution — don't await body yet (it streams)
     const execPromise = post('/api/v1/execute', {
       pluginId: 'test-plugin',
-      handlerRef: 'dist/handler.js',
+      projectId: 'project-1',
+      commandPath: 'cli run',
       input: {},
     }, accessToken);
 
@@ -545,7 +548,7 @@ describe.sequential('Live Gateway — /clients/connect WS pub/sub broadcast', ()
         'content-type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ pluginId: 'p', handlerRef: 'h', input: {} }),
+      body: JSON.stringify({ pluginId: 'p', projectId: 'project-1', commandPath: 'cli run', input: {} }),
     });
 
     // 4. Host: wait for call, then respond — but first we need to subscribe
@@ -633,7 +636,7 @@ describe.sequential('Live Gateway — /clients/connect WS pub/sub broadcast', ()
         'content-type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ pluginId: 'p', handlerRef: 'h', input: {} }),
+      body: JSON.stringify({ pluginId: 'p', projectId: 'project-1', commandPath: 'cli run', input: {} }),
     });
 
     const execRes = await execFetch;
