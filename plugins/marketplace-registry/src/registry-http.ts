@@ -13,6 +13,10 @@ function resolveRegistryBaseUrl(): string {
   return `${gateway.replace(/\/$/, '')}${REGISTRY_GATEWAY_PREFIX}`;
 }
 
+function registryGatewayTarget(baseUrl: string): { gatewayUrl: string } {
+  return { gatewayUrl: new URL(baseUrl).origin };
+}
+
 export async function resolveRegistryHandle(): Promise<string> {
   const configured = useEnv('KB_REGISTRY_AUTHOR_HANDLE');
   if (configured) { return configured; }
@@ -23,7 +27,12 @@ async function request<T>(path: string, init: RequestInit, timeoutMessage: strin
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const response = await gatewayApiFetch(`${resolveRegistryBaseUrl()}${path}`, { ...init, signal: controller.signal });
+    const baseUrl = resolveRegistryBaseUrl();
+    const response = await gatewayApiFetch(
+      `${baseUrl}${path}`,
+      { ...init, signal: controller.signal },
+      registryGatewayTarget(baseUrl),
+    );
     if (!response.ok) {
       throw new Error(`Registry ${path} failed (HTTP ${response.status}).`);
     }
