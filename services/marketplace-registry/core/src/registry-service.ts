@@ -4,6 +4,7 @@
  */
 
 import { createHash, sign as cryptoSign } from 'node:crypto';
+import semver from 'semver';
 import type { IStorage, ICache, ILogger } from '@kb-labs/core-platform';
 import type {
   RegistryEntry,
@@ -23,6 +24,11 @@ const CACHE_TTL_META = 5 * 60 * 1000;
 const CACHE_TTL_SEARCH = 60 * 1000;
 const CACHE_TTL_SHARE_DEFAULT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_TARBALL_SIZE = 50 * 1024 * 1024; // 50 MB
+const CANONICAL_AUTHOR_HANDLE = /^[a-z0-9-]{2,32}$/;
+const CANONICAL_PACKAGE_PART = /^[a-z0-9][a-z0-9._-]*$/;
+const SAFE_LEGACY_PATH_PART = /^[A-Za-z0-9._-]+$/;
+const SEMVER_IDENTIFIER = '(?:0|[1-9]\\d*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)';
+const SEMVER_VERSION = new RegExp(`^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(${SEMVER_IDENTIFIER}(?:\\.${SEMVER_IDENTIFIER})*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$`);
 
 function shortIdentity(identity: string): string {
   return identity.slice(identity.lastIndexOf('/') + 1);
@@ -38,6 +44,36 @@ function identityHandle(identity: string): string | undefined {
   const separator = identity.indexOf('/');
   if (identity.startsWith('@') || separator <= 0 || separator === identity.length - 1) { return undefined; }
   return identity.slice(0, separator);
+}
+
+function rejectPublishAddress(field: string): never {
+  throw Object.assign(new Error(`Registry publish has an invalid ${field}`), { code: 'INVALID_MANIFEST' });
+}
+
+function isSafeLegacyHandle(handle: string): boolean {
+  return SAFE_LEGACY_PATH_PART.test(handle) && handle !== '.' && handle !== '..';
+}
+
+function isSafeLegacyPackageName(name: string): boolean {
+  if (name.includes('\\') || name.includes('%') || name.includes('\0')) { return false; }
+  const parts = name.startsWith('@') ? name.slice(1).split('/') : name.split('/');
+  if (parts.length !== (name.startsWith('@') ? 2 : 1)) { return false; }
+  return parts.every(part => SAFE_LEGACY_PATH_PART.test(part) && part !== '.' && part !== '..');
+}
+
+function isCanonicalPackageName(name: string): boolean {
+  const scoped = name.startsWith('@');
+  const parts = scoped ? name.slice(1).split('/') : name.split('/');
+  if (parts.length !== (scoped ? 2 : 1)) { return false; }
+  return parts.every(part => CANONICAL_PACKAGE_PART.test(part));
+}
+
+function validatePublishAddress(handle: string, name: string, version: string): void {
+  if (typeof handle !== 'string' || !isSafeLegacyHandle(handle)) { rejectPublishAddress('author handle'); }
+  if (typeof name !== 'string' || !isSafeLegacyPackageName(name)) { rejectPublishAddress('package name'); }
+  if (typeof version !== 'string' || !SEMVER_VERSION.test(version) || !semver.valid(version, { loose: false })) {
+    rejectPublishAddress('SemVer version');
+  }
 }
 
 export interface RegistryServiceOptions {
@@ -78,7 +114,13 @@ export class RegistryService {
     authorHandle: string,
     authorNamespaceId: string,
   ): Promise<PublishResponse> {
-    const key = `${authorHandle}/${req.meta.name}`;
+    const { name, version } = req?.meta ?? {};
+    validatePublishAddress(authorHandle, name, version);
+    const existing = await this.loadEntry(authorHandle, name);
+    if (!existing && (!CANONICAL_AUTHOR_HANDLE.test(authorHandle) || !isCanonicalPackageName(name))) {
+      rejectPublishAddress(!CANONICAL_AUTHOR_HANDLE.test(authorHandle) ? 'author handle' : 'package name');
+    }
+    const key = `${authorHandle}/${name}`;
     const previous = this.publishTails.get(key) ?? Promise.resolve();
     let release: () => void = () => undefined;
     const tail = new Promise<void>((resolve) => { release = resolve; });

@@ -4179,10 +4179,16 @@ importers:
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../../core/plugin-contracts
+      semver:
+        specifier: ^7.8.5
+        version: 7.8.5
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@types/semver':
+        specifier: ^7.7.1
+        version: 7.7.1
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
