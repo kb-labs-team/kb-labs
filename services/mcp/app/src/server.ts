@@ -34,12 +34,13 @@ import {
 import { can, type Policy, type Identity } from '@kb-labs/core-policy';
 import { PlatformAuditStore, isErrorCode, type ICache, type ILogger, type IServiceTransport } from '@kb-labs/core-platform';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
-import type { IEntityRegistry, ServiceManifest } from '@kb-labs/plugin-contracts';
+import { normalizeServiceCommandInput } from '@kb-labs/plugin-contracts';
+import type { IEntityRegistry, RegisteredServiceCommandOperation, ServiceManifest } from '@kb-labs/plugin-contracts';
 import { createDaemonServer, getListenOptions, type ObservabilityCollectorLike } from '@kb-labs/shared-http';
 import { readForwardedIdentity } from '@kb-labs/gateway-contracts';
 import { toIdentity, actionForOperation, type Permits } from './mcp/authz.js';
 import { buildServiceTools, validateManifests, type McpServiceTool } from './mcp/tool-builder.js';
-import { callServiceTool } from './mcp/service-tool-router.js';
+import { callRegisteredServiceOperation, callServiceTool } from './mcp/service-tool-router.js';
 import { type PlatformResolver } from './mcp/tool-router.js';
 import { resolveVisibleTools, executeToolCall, invalidMcpToolArguments, mcpToolError, mcpToolSuccess, unexpectedMcpResult, validateToolArguments } from './mcp/request-handler.js';
 import { McpObservabilityCollector } from './observability/collector.js';
@@ -87,6 +88,7 @@ export interface McpDaemonServerOptions {
   gatewayUrl?: string;
   serviceManifests?: readonly ServiceManifest[];
   serviceTransport?: IServiceTransport;
+  serviceOperations?: readonly RegisteredServiceCommandOperation[];
 }
 
 export class McpDaemonServer {
@@ -287,11 +289,23 @@ export class McpDaemonServer {
                 result = unexpectedMcpResult(new Error(`Service transport is unavailable for ${serviceTool.serviceId}.`), reqLogger);
               } else {
                 const args = (params.arguments ?? {}) as Record<string, unknown>;
-                const validationError = validateToolArguments(serviceTool.inputSchema, args);
-                if (validationError) {
-                  result = invalidMcpToolArguments(validationError);
+                if (serviceTool.invocation) {
+                  const normalized = normalizeServiceCommandInput(serviceTool.invocation, { arguments: args });
+                  if (!normalized.ok) {
+                    result = mcpToolError({ code: normalized.code, details: { field: normalized.field } });
+                  } else {
+                    const operation = this.opts.serviceOperations?.find((candidate) =>
+                      candidate.serviceId === serviceTool.serviceId && candidate.operationId === serviceTool.invocation?.operationId,
+                    );
+                    result = operation
+                      ? await callRegisteredServiceOperation(normalized.value, operation, this.opts.serviceTransport, reqLogger)
+                      : unexpectedMcpResult(new Error(`No trusted operation is registered for ${serviceTool.serviceId}:${serviceTool.invocation.operationId}.`), reqLogger);
+                  }
                 } else {
-                  result = await callServiceTool(serviceTool, args, this.opts.serviceTransport, reqLogger);
+                  const validationError = validateToolArguments(serviceTool.inputSchema, args);
+                  result = validationError
+                    ? invalidMcpToolArguments(validationError)
+                    : await callServiceTool(serviceTool, args, this.opts.serviceTransport, reqLogger);
                 }
               }
             } else {result = await executeToolCall({

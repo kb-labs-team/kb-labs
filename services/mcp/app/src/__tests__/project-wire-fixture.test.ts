@@ -11,6 +11,7 @@ import { openCatalog } from '@kb-labs/core-registry';
 import type { BaseDocument } from '@kb-labs/core-platform/adapters';
 import { forwardedIdentityHeaders } from '@kb-labs/gateway-contracts';
 import type { ServiceManifest } from '@kb-labs/plugin-contracts';
+import { workflowServiceOperations } from '@kb-labs/workflow-runtime';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { Policy } from '@kb-labs/core-policy';
 import { McpDaemonServer } from '../server.js';
@@ -161,14 +162,17 @@ describe('project MCP wire fixture producer', () => {
   it('exposes service route placeholders as required MCP inputs and dispatches cron enable/disable', async () => {
     projectRoot = await mkdtemp(join(tmpdir(), 'kb-mcp-service-route-'));
     catalog = await openCatalog({ platformRoot: projectRoot, projectRoot }, { resolvePlatformVersion: async () => 'test' });
-    const serviceCall = vi.fn<IServiceTransport['call']>().mockImplementation(async (_serviceId, request) => ({
-      ok: true,
-      statusCode: 200,
-      payload: {
-        id: 'journey-cron',
-        enabled: request.path.endsWith('/enable'),
-      },
-    }));
+    const cronState = new Map([['journey-cron', false]]);
+    const serviceCall = vi.fn<IServiceTransport['call']>().mockImplementation(async (_serviceId, request) => {
+      const path = request.path.split('?')[0] ?? request.path;
+      const enabled = path.endsWith('/enable');
+      cronState.set('journey-cron', enabled);
+      return {
+        ok: true,
+        statusCode: 200,
+        payload: { ok: true, data: { enabled: cronState.get('journey-cron') } },
+      };
+    });
     const serviceTransport = { call: serviceCall } as unknown as IServiceTransport;
     const workflowManifest: ServiceManifest = {
       schema: 'kb.service/1',
@@ -185,6 +189,11 @@ describe('project MCP wire fixture producer', () => {
         category: 'workflow',
         jsonTest: {},
         flags: { json: { type: 'boolean' as const } },
+        invocation: {
+          operationId: 'workflow.cron.set-enabled',
+          inputs: [{ name: 'id', type: 'string' as const, required: true, source: { kind: 'positional' as const, index: 0 } }],
+          values: { enabled: action === 'enable' },
+        },
         route: { method: 'POST' as const, path: `/crons/{id}/${action}`, mount: 'project-api' as const },
       })),
     };
@@ -204,6 +213,7 @@ describe('project MCP wire fixture producer', () => {
       authMode: 'local',
       serviceManifests: [workflowManifest],
       serviceTransport,
+      serviceOperations: workflowServiceOperations,
     });
     const address = await daemon.start();
     const port = Number(new URL(address).port);
@@ -215,32 +225,47 @@ describe('project MCP wire fixture producer', () => {
     const tools = listResult.tools;
     const enableTool = tools.find((tool) => tool.name === 'workflow__workflow_crons_enable');
     const disableTool = tools.find((tool) => tool.name === 'workflow__workflow_crons_disable');
-    expect(enableTool?.inputSchema).toMatchObject({ properties: { id: { type: 'string' }, json: { type: 'boolean' } }, required: ['id'] });
-    expect(disableTool?.inputSchema).toMatchObject({ properties: { id: { type: 'string' } }, required: ['id'] });
+    expect(enableTool?.inputSchema).toMatchObject({ properties: { id: { type: 'string', minLength: 1 } }, required: ['id'], additionalProperties: false });
+    expect(disableTool?.inputSchema).toMatchObject({ properties: { id: { type: 'string', minLength: 1 } }, required: ['id'], additionalProperties: false });
 
     const missingId = await postMcp(port, 2, 'tools/call', {
-      name: 'workflow__workflow_crons_enable', arguments: { json: true },
+      name: 'workflow__workflow_crons_enable', arguments: {},
     });
     const missingResult = parseMcpResponse(missingId.body).result;
     if (!missingResult) {throw new Error('MCP tools/call returned no result for a missing argument.');}
     expect(missingResult.isError).toBe(true);
-    expect(missingResult.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_MCP_INVALID_ARGUMENTS' } });
+    expect(missingResult.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID' } });
+    expect(serviceCall).not.toHaveBeenCalled();
+
+    const emptyId = await postMcp(port, 5, 'tools/call', {
+      name: 'workflow__workflow_crons_enable', arguments: { id: '' },
+    });
+    expect(parseMcpResponse(emptyId.body).result?.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID' } });
+    expect(serviceCall).not.toHaveBeenCalled();
+
+    const presentationFlag = await postMcp(port, 6, 'tools/call', {
+      name: 'workflow__workflow_crons_enable', arguments: { id: 'journey-cron', json: true },
+    });
+    expect(parseMcpResponse(presentationFlag.body).result?.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID' } });
     expect(serviceCall).not.toHaveBeenCalled();
 
     const enabled = await postMcp(port, 3, 'tools/call', {
-      name: 'workflow__workflow_crons_enable', arguments: { id: 'journey-cron', json: true },
+      name: 'workflow__workflow_crons_enable', arguments: { id: 'journey-cron' },
     });
     const enableResult = parseMcpResponse(enabled.body).result;
     if (!enableResult) {throw new Error('MCP tools/call returned no result for cron enable.');}
     expect(enableResult.isError).toBe(false);
+    expect(enableResult.structuredContent).toMatchObject({ ok: true, data: { id: 'journey-cron', enabled: true } });
     const disabled = await postMcp(port, 4, 'tools/call', {
       name: 'workflow__workflow_crons_disable', arguments: { id: 'journey-cron' },
     });
     const disableResult = parseMcpResponse(disabled.body).result;
     if (!disableResult) {throw new Error('MCP tools/call returned no result for cron disable.');}
     expect(disableResult.isError).toBe(false);
+    expect(disableResult.structuredContent).toMatchObject({ ok: true, data: { id: 'journey-cron', enabled: false } });
+    expect(cronState.get('journey-cron')).toBe(false);
     expect(serviceCall.mock.calls.map(([serviceId, request]) => [serviceId, request.path])).toEqual([
-      ['workflow', '/api/v1/crons/journey-cron/enable?json=true'],
+      ['workflow', '/api/v1/crons/journey-cron/enable'],
       ['workflow', '/api/v1/crons/journey-cron/disable'],
     ]);
   });

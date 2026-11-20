@@ -1,5 +1,7 @@
 import type { ILogger, IServiceTransport } from '@kb-labs/core-platform';
-import { unexpectedMcpResult, mcpToolSuccess } from './request-handler.js';
+import { isErrorCode } from '@kb-labs/core-platform';
+import type { RegisteredServiceCommandOperation } from '@kb-labs/plugin-contracts';
+import { unexpectedMcpResult, mcpToolError, mcpToolSuccess, mcpToolSuccessValue } from './request-handler.js';
 import type { McpServiceTool } from './tool-builder.js';
 
 /** Invoke an enabled service command through the platform's topology-aware transport. */
@@ -41,6 +43,42 @@ export async function callServiceTool(
     }
     return mcpToolSuccess(JSON.stringify(response.payload ?? null));
   } catch (error) {
+    return unexpectedMcpResult(error, logger);
+  }
+}
+
+/** Execute a trusted host-neutral operation with a service-scoped request capability. */
+export async function callRegisteredServiceOperation(
+  input: Record<string, unknown>,
+  operation: RegisteredServiceCommandOperation,
+  transport: IServiceTransport,
+  logger: ILogger,
+) {
+  try {
+    const result = await operation.execute(input, async (request) => transport.call(operation.serviceId, {
+      path: request.path,
+      metadata: { 'http-method': request.method, ...(request.payload === undefined ? {} : { 'content-type': 'application/json' }) },
+      ...(request.payload === undefined ? {} : { payload: request.payload }),
+    }));
+    return mcpToolSuccessValue(result);
+  } catch (error) {
+    const candidate = typeof error === 'object' && error !== null ? error as { code?: unknown; message?: unknown; hint?: unknown } : undefined;
+    const message = typeof candidate?.message === 'string' ? candidate.message : 'The workflow command failed.';
+    const hint = typeof candidate?.hint === 'string' ? candidate.hint : 'Review the cron ID and retry the command.';
+    switch (candidate?.code) {
+      case 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY':
+        return mcpToolError({ code: candidate.code, message, hint });
+      case 'KB_RUNTIME_CRON_NOT_FOUND':
+        return mcpToolError({ code: candidate.code, message, hint });
+      case 'KB_RUNTIME_CRON_MUTATION_FAILED':
+        return mcpToolError({ code: candidate.code, message, hint });
+      case 'KB_RUNTIME_COMMAND_FAILED':
+        return mcpToolError({ code: candidate.code, message, hint });
+      default:
+        if (typeof candidate?.code === 'string' && isErrorCode(candidate.code)) {
+          return mcpToolError({ code: 'KB_RUNTIME_COMMAND_FAILED', message, hint });
+        }
+    }
     return unexpectedMcpResult(error, logger);
   }
 }

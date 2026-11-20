@@ -50,6 +50,7 @@
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
     "@kb-labs/shared-testing-e2e": "workspace:*",
+    "@kb-labs/workflow-runtime": "workspace:*",
     "eslint": "^9",
     "rimraf": "^6.0.1",
     "tsup": "^8.5.0",

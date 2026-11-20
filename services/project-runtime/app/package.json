@@ -43,7 +43,8 @@
     "@kb-labs/mcp-app": "workspace:*",
     "@kb-labs/rest-api-app": "workspace:*",
     "@kb-labs/shared-daemon": "workspace:*",
-    "@kb-labs/workflow-daemon": "workspace:*"
+    "@kb-labs/workflow-daemon": "workspace:*",
+    "@kb-labs/workflow-runtime": "workspace:*"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

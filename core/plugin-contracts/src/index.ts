@@ -268,6 +268,9 @@ export type {
   ServiceManifest,
   ServiceCommandDeclaration,
   ServiceCommandRouteDeclaration,
+  ServiceCommandInvocationDeclaration,
+  ServiceCommandRequestCapability,
+  RegisteredServiceCommandOperation,
   ProjectServiceApiDeclaration,
   ProjectServiceDeclaration,
   ServiceRuntime,
@@ -298,6 +301,8 @@ export type {
   SetupSpec,
   ErrorSpec,
 } from "./manifest.js";
+export { normalizeServiceCommandInput } from './service-command-invocation.js';
+export type { ServiceCommandInputSources, ServiceCommandInputResult } from './service-command-invocation.js';
 export {
   collectProjectServiceDeclarations,
   validateProjectServiceDeclarations,

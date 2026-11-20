@@ -13,6 +13,7 @@ import { HttpServiceTransport } from "@kb-labs/adapters-service-transport-http";
 import type { IServiceTransport } from "@kb-labs/core-platform";
 import {
   collectProjectServiceDeclarations,
+  type RegisteredServiceCommandOperation,
   type ServiceManifest,
 } from "@kb-labs/plugin-contracts";
 import { requireProjectContext, type PlatformAssemblyHook } from "@kb-labs/core-runtime";
@@ -31,6 +32,7 @@ import {
   type ServiceContext,
 } from "@kb-labs/shared-daemon";
 import { setup as setupWorkflow } from "@kb-labs/workflow-daemon";
+import { workflowServiceOperations } from "@kb-labs/workflow-runtime";
 import { setupProjectMcp } from "@kb-labs/mcp-app/project-module";
 import { manifest as restManifest } from "@kb-labs/rest-api-app/manifest";
 import { manifest as workflowManifest } from "@kb-labs/workflow-daemon/manifest";
@@ -49,13 +51,14 @@ type Teardown = () => Promise<void>;
 /** One project-scoped service the runtime runs. */
 export interface ProjectRuntimeModule {
   manifest: ServiceManifest;
-  setup: (ctx: ServiceContext, serviceManifests: readonly ServiceManifest[]) => Promise<Teardown>;
+  operations?: readonly RegisteredServiceCommandOperation[];
+  setup: (ctx: ServiceContext, serviceManifests: readonly ServiceManifest[], options?: { operations: readonly RegisteredServiceCommandOperation[] }) => Promise<Teardown>;
 }
 
 /** The project-scoped services composed into every project runtime. */
 export const DEFAULT_PROJECT_MODULES: readonly ProjectRuntimeModule[] = [
   { manifest: restManifest, setup: setupRest },
-  { manifest: workflowManifest, setup: setupWorkflow },
+  { manifest: workflowManifest, setup: setupWorkflow, operations: workflowServiceOperations },
   { manifest: mcpManifest, setup: setupProjectMcp },
 ];
 
@@ -206,6 +209,9 @@ export async function createProjectRuntimeConfig(
           const teardown = await spec.setup(
             { ...ctx, logger: ctx.logger.forComponent(spec.manifest.id) },
             modules.map((module) => module.manifest),
+            projectServiceId(spec) === 'mcp'
+              ? { operations: modules.flatMap((module) => module.operations ?? []) }
+              : undefined,
           );
           if (index === 0) {
             return async () => {

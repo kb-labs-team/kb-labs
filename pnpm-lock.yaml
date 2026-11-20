@@ -4438,6 +4438,9 @@ importers:
       '@kb-labs/shared-testing-e2e':
         specifier: workspace:*
         version: link:../../../shared/testing-e2e
+      '@kb-labs/workflow-runtime':
+        specifier: workspace:*
+        version: link:../../workflow/runtime
       eslint:
         specifier: ^9
         version: 9.39.4(jiti@2.6.1)
@@ -4489,6 +4492,9 @@ importers:
       '@kb-labs/workflow-daemon':
         specifier: workspace:*
         version: link:../../workflow/daemon
+      '@kb-labs/workflow-runtime':
+        specifier: workspace:*
+        version: link:../../workflow/runtime
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*

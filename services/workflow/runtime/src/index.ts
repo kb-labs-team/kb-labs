@@ -1,6 +1,8 @@
 export * from './types'
 export * from './context'
 export * from './input-log'
+export * from './service-operations'
+export { normalizeServiceCommandInput } from '@kb-labs/plugin-contracts'
 export * from './runners/local-runner'
 export * from './runners/sandbox-runner'
 export * from './config'

@@ -19,6 +19,7 @@ import type {
 import type { CliCommandDecl, PermissionSpec } from '@kb-labs/plugin-contracts';
 import type { ServiceManifest } from '@kb-labs/plugin-contracts';
 import type { ServiceCommandRouteDeclaration } from '@kb-labs/plugin-contracts';
+import type { ServiceCommandInvocationDeclaration } from '@kb-labs/plugin-contracts';
 import type { CommandManifest } from '@kb-labs/cli-commands';
 import type { Permits } from './authz.js';
 
@@ -125,12 +126,13 @@ export interface McpServiceTool {
   description: string;
   inputSchema: {
     type: 'object';
-    properties: Record<string, { type: 'string' | 'boolean' | 'number' | 'array' }>;
+    properties: Record<string, { type: 'string' | 'boolean' | 'number' | 'array'; minLength?: number }>;
     required: string[];
     additionalProperties: false;
   };
   serviceId: string;
   route: ServiceCommandRouteDeclaration;
+  invocation?: ServiceCommandInvocationDeclaration;
 }
 
 /** Derive project service tools from the enabled service manifests. */
@@ -148,20 +150,30 @@ export function buildServiceTools(manifests: readonly ServiceManifest[]): McpSer
       // they are positional CLI arguments rather than declared flags.
       const name = match[1];
       if (!name) {continue;}
-      properties[name] = { ...properties[name], type: 'string' };
+      properties[name] = properties[name] ?? { type: 'string' };
       required.add(name);
     }
+    const invocationProperties = command.invocation
+      ? Object.fromEntries(command.invocation.inputs.map((input) => [input.name, {
+        type: input.type,
+        ...(input.type === 'string' && input.required ? { minLength: 1 } : {}),
+      }]))
+      : properties;
+    const invocationRequired = command.invocation
+      ? command.invocation.inputs.filter((input) => input.required).map((input) => input.name)
+      : [...required];
     return [{
       name: mcpToolName(manifest.id, command.name),
       description: command.description,
       inputSchema: {
         type: 'object',
-        properties,
-        required: [...required],
+        properties: invocationProperties,
+        required: invocationRequired,
         additionalProperties: false,
       },
       serviceId: manifest.id,
       route: command.route,
+      invocation: command.invocation,
     }];
   }));
 }

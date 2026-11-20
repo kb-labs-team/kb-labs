@@ -34,6 +34,15 @@ export function mcpToolSuccess(data: string, ui: UIOutput[] = []): CallToolResul
   };
 }
 
+/** Build a structured tool result without stringifying its machine payload. */
+export function mcpToolSuccessValue(data: unknown): CallToolResult {
+  return {
+    content: [{ type: 'text', text: typeof data === 'string' ? data : JSON.stringify(data) }],
+    structuredContent: { ...createUxSuccessResult(data) },
+    isError: false,
+  };
+}
+
 function errorResult(envelope: ErrorEnvelope): CallToolResult {
   const correlation = envelope.correlationId ? ` (correlationId: ${envelope.correlationId})` : '';
   return {
@@ -57,6 +66,7 @@ export function unexpectedMcpResult(error: unknown, logger: ILogger): CallToolRe
 
 interface JsonSchema {
   type?: string;
+  minLength?: number;
   required?: string[];
   properties?: Record<string, JsonSchema>;
   items?: JsonSchema;
@@ -79,6 +89,9 @@ function matchesSchemaType(value: unknown, type: string): boolean {
 function argumentError(schema: JsonSchema, value: unknown, path = ''): { path: string; expected: string } | null {
   if (schema.type && !matchesSchemaType(value, schema.type)) {
     return { path: path || 'arguments', expected: schema.type };
+  }
+  if (schema.type === 'string' && typeof value === 'string' && schema.minLength !== undefined && value.length < schema.minLength) {
+    return { path: path || 'arguments', expected: `string with at least ${schema.minLength} character(s)` };
   }
   if (schema.type === 'object' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
     const objectValue = value as Record<string, unknown>;
