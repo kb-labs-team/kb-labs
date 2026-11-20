@@ -1,12 +1,10 @@
-# Scheduled report — runs on a cron schedule.
+# Scheduled report workflow; its cron is configured in .kb/crons/scheduled-report.yml.
 # This workflow runs daily and generates a project health summary.
 # Docs: https://docs.kblabs.ru/workflows
 name: scheduled-report
 version: 1.0.0
 description: "Daily project health check (cron)"
 on:
-  schedule:
-    cron: "0 9 * * 1-5"
   manual: true
 
 jobs:
