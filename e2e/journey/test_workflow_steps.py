@@ -412,6 +412,8 @@ class WorkflowJourneyTests(unittest.TestCase):
                     enabled = schedule_file.exists() and "enabled: true" in schedule_file.read_text()
                     exists = schedule_file.exists()
                     content = schedule_file.read_text() if exists else ""
+                    schedule = next((line.split(":", 1)[1].strip().strip("'\"")
+                                     for line in content.splitlines() if line.startswith("schedule:")), "")
                     errors = []
                     if "not a cron" in content:
                         errors = [{"file": ".kb/crons/journey-cron.yml", "reason": "invalid cron expression"}]
