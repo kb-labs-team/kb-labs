@@ -16,6 +16,47 @@ import jsonl
 
 
 class WorkflowJourneyTests(unittest.TestCase):
+    # case: S-007.5
+    def test_workflow_health_claim_uses_the_registered_project_and_raw_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+
+            def fake_run(args, *, env, cwd, timeout=120, input_text=None):
+                calls.append((args, cwd))
+                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                    "status": "healthy", "service": "workflow", "ts": "2026-11-21T00:00:00.000Z",
+                }}))
+
+            original = workflow_steps.run_cli
+            workflow_steps.run_cli = fake_run
+            try:
+                health = workflow_steps._workflow_health(env={"HOME": directory}, cwd=Path(directory))
+            finally:
+                workflow_steps.run_cli = original
+
+        self.assertEqual(calls, [(["workflow", "health", "--json"], Path(directory))])
+        self.assertEqual(health["status"], "healthy")
+        self.assertEqual(health["service"], "workflow")
+        self.assertTrue(health["ts"])
+        self.assertNotIn("ok", health)
+        self.assertNotIn("data", health)
+
+    # case: S-007.5
+    def test_workflow_health_claim_rejects_a_nested_success_envelope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            def fake_run(args, *, env, cwd, timeout=120, input_text=None):
+                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                    "ok": True, "data": {"status": "healthy", "service": "workflow", "ts": "now"},
+                }}))
+
+            original = workflow_steps.run_cli
+            workflow_steps.run_cli = fake_run
+            try:
+                with self.assertRaisesRegex(AssertionError, "nested a success envelope"):
+                    workflow_steps._workflow_health(env={"HOME": directory}, cwd=Path(directory))
+            finally:
+                workflow_steps.run_cli = original
+
     def test_registry_representative_selection_fails_for_unrepresented_protection_class(self):
         registry_listing = {
             "data": {"commands": [
