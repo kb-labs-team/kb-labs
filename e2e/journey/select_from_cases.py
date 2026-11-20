@@ -949,10 +949,13 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
     flow_prerequisites = sorted(Dependency.parse(item).name for item in prerequisites
                                 if Dependency.parse(item).kind == "flow")
     selected_owners: dict[str, set[str]] = {}
+    selected_claim_owners: dict[str, set[str]] = {}
     for step_id in selected:
         for declaration in declarations_by_step.get(step_id, []):
             if declaration.get("kind", "step") == "step":
-                selected_owners.setdefault(str(declaration.get("name") or step_id), set()).add(step_id)
+                owner_name = str(declaration.get("name") or step_id)
+                selected_owners.setdefault(owner_name, set()).add(step_id)
+                selected_claim_owners.setdefault(owner_name, set()).add(step_id)
     for name in step_prerequisites:
         selected_owners.setdefault(name, set()).update(selected)
     return {"runners": sorted(runners), "owners": {key: sorted(value) for key, value in sorted(owners.items())},
@@ -960,7 +963,8 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
             "prerequisiteSteps": step_prerequisites, "prerequisiteFlows": flow_prerequisites,
             "stepSources": sorted(sources), "capabilities": sorted(capabilities),
             "composeProfiles": lanes_for_runners(runners),
-            "selectedOwningSteps": {key: sorted(value) for key, value in sorted(selected_owners.items())}}
+            "selectedOwningSteps": {key: sorted(value) for key, value in sorted(selected_owners.items())},
+            "selectedClaimOwners": {key: sorted(value) for key, value in sorted(selected_claim_owners.items())}}
 
 
 def read_coverage_result(result: CompletedProcess[str]) -> dict:
@@ -1086,7 +1090,8 @@ def selection_from_coverage(results: list[dict], requested: str, *, mode: str | 
             else:
                 return {"selection": sorted(set(tokens)), "steps": [], "owners": {}, "runners": [],
                         "prerequisiteSteps": [], "prerequisiteFlows": [], "stepSources": [],
-                        "capabilities": [], "composeProfiles": [], "selectedOwningSteps": {}}
+                        "capabilities": [], "composeProfiles": [], "selectedOwningSteps": {},
+                        "selectedClaimOwners": {}}
     claim_sources = set().union(*sources_by_step.values()) if sources_by_step else set()
     declarations_by_name = validate_dependency_declarations(claim_sources, root)
     resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name,

@@ -67,22 +67,32 @@ def record_scoreboard_selection(path: Path, selected_cases: str, catalog: Path) 
 
 
 def selected_owners_have_evidence(directory: Path, mode: str) -> bool:
-    """Require each resolved selected owner and claim in raw reports for this mode."""
+    """Require selected prerequisites and direct owner claims in raw reports."""
     plan_path = directory / "selection-plan.json"
     try:
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    owners = plan.get("selectedOwningSteps") if isinstance(plan, dict) else None
-    if not isinstance(owners, dict) or not owners:
+    owners = plan.get("selectedClaimOwners") if isinstance(plan, dict) else None
+    prerequisites = plan.get("prerequisiteSteps") if isinstance(plan, dict) else None
+    selected_claims = plan.get("steps") if isinstance(plan, dict) else None
+    if (not isinstance(owners, dict) or not isinstance(prerequisites, list)
+            or not isinstance(selected_claims, list)
+            or any(not isinstance(claim, str) for claim in selected_claims)
+            or any(not isinstance(name, str) or not name or not isinstance(claims, list) or not claims
+                   or any(not isinstance(claim, str) or not claim for claim in claims)
+                   for name, claims in owners.items())
+            or any(not isinstance(name, str) or not name for name in prerequisites)):
         return False
-    obligations = [(name, claim) for name, claims in owners.items()
-                   if isinstance(name, str) and isinstance(claims, list)
-                   for claim in claims if isinstance(claim, str)]
-    if not obligations:
+    owner_obligations = [(name, claim) for name, claims in owners.items()
+                         if isinstance(name, str) and isinstance(claims, list)
+                         for claim in claims if isinstance(claim, str)]
+    required_prerequisites = {name for name in prerequisites if isinstance(name, str)}
+    if not owner_obligations or any(claim not in selected_claims for _name, claim in owner_obligations):
         return False
     evidence: set[tuple[str, str]] = set()
-    passing_claims: set[str] = set()
+    step_statuses: dict[str, set[str]] = {}
+    claim_statuses: dict[str, set[str]] = {}
     for report_path in directory.glob("*.json"):
         if report_path.name.startswith("case-scoreboard") or report_path.name == plan_path.name:
             continue
@@ -95,15 +105,28 @@ def selected_owners_have_evidence(directory: Path, mode: str) -> bool:
         case_run = report.get("case_run")
         if isinstance(case_run, dict) and case_run.get("mode") == mode:
             for claim in case_run.get("claims", []):
-                if isinstance(claim, dict) and claim.get("status") == "PASS" and isinstance(claim.get("claimId"), str):
-                    passing_claims.add(claim["claimId"])
+                if isinstance(claim, dict) and isinstance(claim.get("claimId"), str):
+                    claim_statuses.setdefault(claim["claimId"], set()).add(str(claim.get("status", "")))
         for step in report.get("steps", []):
-            if (isinstance(step, dict) and step.get("name") and step.get("status") == "PASS"
-                    and (step.get("mode") == mode or (isinstance(case_run, dict) and case_run.get("mode") == mode))):
+            if not isinstance(step, dict) or not isinstance(step.get("name"), str):
+                continue
+            step_mode = step.get("mode")
+            if step_mode is None and isinstance(case_run, dict):
+                step_mode = case_run.get("mode")
+            if step_mode != mode:
+                continue
+            name = step["name"]
+            status = str(step.get("status", ""))
+            step_statuses.setdefault(name, set()).add(status)
+            if status == "PASS":
                 for claim in step.get("cases", []):
                     if isinstance(claim, str):
-                        evidence.add((step["name"], claim))
-    return all(claim in passing_claims and (name, claim) in evidence for name, claim in obligations)
+                        evidence.add((name, claim))
+    passing_claims = {claim for claim, statuses in claim_statuses.items() if statuses == {"PASS"}}
+    return (all(step_statuses.get(name) == {"PASS"} for name in required_prerequisites)
+            and all(step_statuses.get(name) == {"PASS"}
+                    and claim in passing_claims and (name, claim) in evidence
+                    for name, claim in owner_obligations))
 
 
 def mode_is_gating(directory: Path, mode: str, selected_cases: str = "") -> bool:
@@ -163,7 +186,7 @@ def verify_candidate_archive(metadata_path: Path, archive: Path) -> None:
 
 
 def write_mode_metadata(source: Path, destination: Path, mode: str, result: str, elapsed: int,
-                        selected_cases: str = "") -> None:
+                        selected_cases: str = "", failure_reason: str = "") -> None:
     if mode not in {"local", "secured"} or result not in {"PASS", "FAIL", "NO_SELECTED_CLAIMS"}:
         raise ValueError("mode metadata has an unsupported mode or result")
     value = json.loads(source.read_text(encoding="utf-8"))
@@ -174,6 +197,8 @@ def write_mode_metadata(source: Path, destination: Path, mode: str, result: str,
     value["mode"] = mode
     value["result"] = result
     value["requestedSelection"] = requested_selection(selected_cases)
+    if failure_reason:
+        value["failureReason"] = failure_reason
     _write_metadata(destination, value)
 
 
@@ -224,7 +249,8 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path,
         synthetic = {key: producer_metadata[key] for key in ("commit", "baseline", "buildBase")
                      if key in producer_metadata}
         synthetic.update({"mode": mode, "result": "FAIL", "stageDurationsSeconds": durations,
-                          "requestedSelection": selected})
+                          "requestedSelection": selected,
+                          "failureReason": "mode artifact is missing batch-metadata.json"})
         _write_metadata(output / mode / "batch-metadata.json", synthetic)
     local_metadata = _read_metadata(output, "local")
     secured_metadata = _read_metadata(output, "secured")
@@ -263,9 +289,6 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path,
             scoreboards[mode] = None
         else:
             scoreboards[mode] = _read_scoreboard(output / mode)
-    for board in scoreboards.values():
-        if board is not None:
-            release_gate_modes(board)
     declared_gates = [release_gate_modes(board) for board in scoreboards.values() if board is not None]
     if declared_gates and any(gates != declared_gates[0] for gates in declared_gates[1:]):
         raise ValueError("local and secured scoreboards publish different releaseGate modes")
@@ -294,6 +317,44 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path,
     if any(not isinstance(selection, list) or any(not isinstance(item, str) for item in selection)
            for selection in requested_selections.values()):
         raise ValueError("batch mode metadata has an invalid requestedSelection")
+    if any(len(selection) != len(set(selection)) for selection in requested_selections.values()):
+        raise ValueError("batch mode metadata requestedSelection contains duplicate IDs")
+
+    def reject_mode_selection(mode: str, reason: str) -> None:
+        metadata = mode_metadata[mode]
+        metadata["result"] = "FAIL"
+        metadata["failureReason"] = reason
+        _write_metadata(output / mode / "batch-metadata.json", metadata)
+        raise ValueError(reason)
+
+    for mode in ("local", "secured"):
+        metadata_selection = requested_selections[mode]
+        scoreboard_selection = scoreboards[mode]["selection"] if scoreboards[mode] is not None else []
+        if selected:
+            if metadata_selection != selected:
+                reject_mode_selection(mode,
+                    f"mode {mode} requestedSelection does not match the producer selection: "
+                    f"{metadata_selection!r} != {selected!r}"
+                )
+            if scoreboards[mode] is not None and scoreboard_selection != selected:
+                reject_mode_selection(mode,
+                    f"mode {mode} scoreboard selection does not match the producer selection: "
+                    f"{scoreboard_selection!r} != {selected!r}"
+                )
+        elif metadata_selection or scoreboard_selection:
+            reject_mode_selection(mode,
+                f"mode {mode} reports a selected run, but the producer selection is empty"
+            )
+
+    for mode in ("local", "secured"):
+        if scoreboards[mode] is None and not mode_without_selection[mode]:
+            metadata = mode_metadata[mode]
+            metadata["result"] = "FAIL"
+            previous_reason = metadata.get("failureReason", "")
+            suffix = "case-scoreboard.json is missing"
+            metadata["failureReason"] = f"{previous_reason}; {suffix}" if previous_reason else suffix
+            _write_metadata(output / mode / "batch-metadata.json", metadata)
+            mode_results[mode] = "FAIL"
     partial = (bool(selected)
                or any(bool(board["selection"]) for board in scoreboards.values() if board is not None)
                or any(mode_without_selection.values())
@@ -318,9 +379,13 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path,
         if unit_log.is_file() and unit_log.read_text(encoding="utf-8").startswith("SKIPPED:"):
             lines.append("- Shared generic journey unit suite: skipped for this partial selection; full journey batch remains the gating verification.")
         lines.extend(["", "- Modes: local and secured", "- Reports and logs: one directory per mode", ""])
-        lines.extend(f"- {mode}: no selected claims in this mode" if mode_without_selection[mode]
-                     else f"- {mode}: {mode_results[mode]} (partial evidence; no gate verdict)"
-                     for mode in mode_metadata)
+        for mode in mode_metadata:
+            if mode_without_selection[mode]:
+                lines.append(f"- {mode}: no selected claims in this mode")
+            else:
+                reason = mode_metadata[mode].get("failureReason")
+                suffix = f"; {reason}" if isinstance(reason, str) and reason else ""
+                lines.append(f"- {mode}: {mode_results[mode]} (partial evidence; no gate verdict{suffix})")
         lines.extend(["", f"- Partial selection: {selections}",
                       "- Partial evidence is iteration-only and cannot produce a gate verdict.",
                       "", "- Result: PARTIAL", ""])
@@ -403,10 +468,11 @@ def main(argv: list[str]) -> int:
             print(f"journey batch metadata could not be written: {error}; next: rerun e2e/journey/batch.sh prepare",
                   file=sys.stderr)
             return 1
-    if len(argv) in {7, 8} and argv[1] == "mode-metadata":
+    if len(argv) in {7, 8, 9} and argv[1] == "mode-metadata":
         try:
             write_mode_metadata(Path(argv[2]), Path(argv[3]), argv[4], argv[5], int(argv[6]),
-                                argv[7] if len(argv) == 8 else "")
+                                argv[7] if len(argv) >= 8 else "",
+                                argv[8] if len(argv) == 9 else "")
             return 0
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
             print(f"journey mode metadata could not be written: {error}; next: rerun e2e/journey/batch.sh mode {argv[4]}",

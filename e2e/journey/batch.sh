@@ -194,7 +194,8 @@ run_mode() {
       printf 'no selected claims in this mode\nexit=0\n' > "$mode_dir/batch.log"
       duration=$(($(date +%s) - run_started))
       "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
-        "$shared/batch-metadata.json" "$mode_dir/batch-metadata.json" "$mode" NO_SELECTED_CLAIMS "$duration" || return 1
+        "$shared/batch-metadata.json" "$mode_dir/batch-metadata.json" "$mode" NO_SELECTED_CLAIMS \
+        "$duration" "$selected_cases" || return 1
       return 0
     fi
   else
@@ -260,7 +261,7 @@ run_mode() {
       return 1
     fi
   fi
-  if [ -n "$selected_cases" ]; then
+  if [ -n "$selected_cases" ] && [ "$scoreboard_missing" -eq 0 ]; then
     gate_rc=0
     "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-gating \
       "$mode_dir" "$mode" "$producer" "$out" "$selected_cases" || gate_rc=$?
@@ -270,8 +271,13 @@ run_mode() {
     fi
   fi
   source_meta="$shared/batch-metadata.json"
+  failure_reason=""
+  if [ "$scoreboard_missing" -eq 1 ]; then
+    failure_reason="mode produced no case scoreboard (runner exited $rc)"
+  fi
   "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
-    "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" "$selected_cases" || return 1
+    "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" "$selected_cases" \
+    "$failure_reason" || return 1
   if [ "$scoreboard_missing" -eq 1 ]; then
     echo "journey $mode mode produced no case scoreboard (entry exited with $rc); see $mode_dir/batch.log for the cause. Next: $(next_runner_command)" >&2
     return 1

@@ -390,7 +390,8 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
                          "claimsPassing": {"count": passing, "total": len(claims)},
                          "claimsReachable": {"count": reachable, "total": len(claims)}}}
 
-def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> dict:
+def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str],
+                    requested_selection: Iterable[str] = ()) -> dict:
     modes = list(modes)
     cases = load_cases(catalog)
     evidence = load_evidence(directory, modes)
@@ -398,7 +399,7 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
         path.name.startswith((f"service-{mode}", f"service-auth-{mode}", f"installer-case-{mode}",
                              f"platform-{mode}", f"studio-playwright-{mode}"))
         for path in directory.glob("*.json"))] if directory.is_dir() else []
-    partial_selections = []
+    partial_selections = list(requested_selection)
     if directory.is_dir():
         for path in sorted(directory.glob("*.json")):
             if path.name.startswith("case-scoreboard"):
@@ -558,12 +559,10 @@ def _write_journey_summary(directory: Path, scoreboard: dict) -> None:
 
 
 def write_scoreboards(directory: Path, catalog: Path, requested_selection: Iterable[str] = ()) -> None:
-    outputs = {f"case-scoreboard-{mode}": build_scoreboard(directory, catalog, [mode]) for mode in MODES}
-    outputs["case-scoreboard"] = build_scoreboard(directory, catalog, MODES)
-    selection = set(requested_selection)
-    if selection:
-        for scoreboard in outputs.values():
-            scoreboard["selection"] = sorted(set(scoreboard["selection"]) | selection)
+    selection = list(requested_selection)
+    outputs = {f"case-scoreboard-{mode}": build_scoreboard(directory, catalog, [mode], selection)
+               for mode in MODES}
+    outputs["case-scoreboard"] = build_scoreboard(directory, catalog, MODES, selection)
     _write_journey_summary(directory, outputs["case-scoreboard"])
     for stem, scoreboard in outputs.items():
         write_report_json(directory / f"{stem}.json", scoreboard)
