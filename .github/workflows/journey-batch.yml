@@ -69,6 +69,17 @@ jobs:
         with:
           go-version: '1.26.8'
           cache-dependency-path: tools/kb-devkit/go.sum
+      - id: candidate-cache-key
+        name: Fingerprint candidate inputs for a targeted run
+        if: startsWith(steps.selection.outputs.selection, 'cases:')
+        run: python3 e2e/journey/candidate_cache.py key "$GITHUB_WORKSPACE" >> "$GITHUB_OUTPUT"
+      - id: candidate-cache
+        name: Restore an exact-source targeted candidate
+        if: startsWith(steps.selection.outputs.selection, 'cases:')
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .journey/prepared-candidate-cache
+          key: ${{ steps.candidate-cache-key.outputs.key }}
       - id: dependencies
         name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
@@ -79,7 +90,15 @@ jobs:
         name: Produce shared build and candidate
         env:
           BATCH_SELECTION: ${{ steps.selection.outputs.selection }}
+          JOURNEY_CANDIDATE_CACHE_DIR: .journey/prepared-candidate-cache
+          JOURNEY_CANDIDATE_CACHE_KEY: ${{ steps.candidate-cache-key.outputs.key }}
         run: node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"
+      - name: Save the freshly prepared targeted candidate
+        if: success() && startsWith(steps.selection.outputs.selection, 'cases:') && steps.candidate-cache.outputs.cache-hit != 'true' && hashFiles('.journey/prepared-candidate-cache/manifest.json') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .journey/prepared-candidate-cache
+          key: ${{ steps.candidate-cache-key.outputs.key }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
