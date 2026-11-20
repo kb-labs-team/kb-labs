@@ -132,8 +132,9 @@ async function execute(requestId: string, message: ExecuteMessage): Promise<void
     if (platformRoot) {
       installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
     }
-    const handlerModule = await import(handlerPath);
-    const handler = handlerModule.default ?? handlerModule;
+    const [modulePath = handlerPath, exportName] = handlerPath.split('#', 2);
+    const handlerModule = await import(modulePath);
+    const handler = exportName ? handlerModule[exportName] : handlerModule.default ?? handlerModule;
     if (typeof handler.execute !== 'function') {
       throw new PluginError(`Handler at ${handlerPath} does not export an execute function`, 'KB_PLUGIN_LOAD_FAILED', { plugin: descriptor.pluginId });
     }

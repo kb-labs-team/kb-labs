@@ -3872,9 +3872,18 @@ importers:
 
   services/host-agent/app:
     dependencies:
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:../../../core/discovery
+      '@kb-labs/core-extension-store':
+        specifier: workspace:*
+        version: link:../../../core/extension-store
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../../core/platform
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../../core/project-registry
       '@kb-labs/core-runtime':
         specifier: workspace:*
         version: link:../../../core/runtime

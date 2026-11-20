@@ -28,7 +28,10 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-discovery": "workspace:*",
+    "@kb-labs/core-extension-store": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/core-runtime": "workspace:*",
     "@kb-labs/host-agent-contracts": "workspace:*",
     "@kb-labs/host-agent-core": "workspace:*",
