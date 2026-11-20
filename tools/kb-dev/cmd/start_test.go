@@ -10,6 +10,7 @@ import (
 	"github.com/kb-labs/dev/internal/manager"
 )
 
+// case: PC-003.4
 func TestStartFailureDataPreservesActionAndRedactsSecrets(t *testing.T) {
 	secret := "fixture-internal-secret-value"
 	result := &manager.Result{

@@ -647,6 +647,8 @@ func (m *Manager) waitHealth(ctx context.Context, svc *service.Service) health.R
 // process's exit status instead of silently burning the full health-check
 // timeout waiting on a port that will never open.
 func (m *Manager) waitHealthOrExit(ctx context.Context, svc *service.Service, exited <-chan *os.ProcessState) health.Result {
+	probeCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	probe := health.ClassifyServiceProbe(svc.Config.HealthCheck, svc.Config.Socket, 3*time.Second)
 	checker := health.NewChecker(
 		probe,
@@ -655,7 +657,7 @@ func (m *Manager) waitHealthOrExit(ctx context.Context, svc *service.Service, ex
 	)
 
 	healthDone := make(chan health.Result, 1)
-	go func() { healthDone <- checker.WaitHealthy(ctx) }()
+	go func() { healthDone <- checker.WaitHealthy(probeCtx) }()
 
 	select {
 	case hr := <-healthDone:

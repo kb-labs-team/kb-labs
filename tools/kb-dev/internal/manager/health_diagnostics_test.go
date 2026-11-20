@@ -26,6 +26,7 @@ func TestHealthFailureReasonIsAllowlisted(t *testing.T) {
 	}
 }
 
+// case: PC-003.4
 func TestWaitHealthOrExitReportsTypedChildExit(t *testing.T) {
 	cfg := &config.Config{
 		Services: map[string]config.Service{"gateway": {

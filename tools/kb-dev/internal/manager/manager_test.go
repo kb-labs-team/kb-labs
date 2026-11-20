@@ -68,6 +68,7 @@ func TestStatusReportsPortOccupantForFailedService(t *testing.T) {
 	}
 }
 
+// case: PC-003.4
 func TestStartCleansProcessWhenHealthCheckFails(t *testing.T) {
 	root := t.TempDir()
 	cfg := &config.Config{
