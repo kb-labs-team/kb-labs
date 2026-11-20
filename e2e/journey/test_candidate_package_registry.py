@@ -22,6 +22,61 @@ CLEAR_CANDIDATES = ROOT / "e2e/verdaccio/clear-candidates.sh"
 
 
 class CandidatePackageRegistryTests(unittest.TestCase):
+    def test_registry_service_images_prepare_deploy_outputs_before_compose_build(self):
+        with tempfile.TemporaryDirectory(prefix="journey-registry-image-prep-") as directory:
+            root = Path(directory)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            operations = root / "operations.log"
+            for name in ("pnpm", "node", "docker"):
+                command = bin_dir / name
+                command.write_text(
+                    "#!/bin/sh\n"
+                    f"printf '%s %s\\n' '{name}' \"$*\" >> \"$SERVICE_OPERATIONS\"\n",
+                    encoding="utf-8",
+                )
+                command.chmod(0o755)
+            env = isolated_environment(
+                root / "home", bin_dir, required_tools=("bash",),
+                overrides={"SERVICE_OPERATIONS": str(operations)},
+            )
+            invocation = (
+                'source "$1"; source "$2"; '
+                'JOURNEY_COMPOSE=(docker compose); COMPOSE_AVAILABLE=1; '
+                'JOURNEY_COMPOSE_INITIALIZED=1; KB_JOURNEY_WORKSPACE_SOURCE="$3"; '
+                'journey_build_marketplace_registry_images'
+            )
+            result = subprocess.run(
+                ["bash", "-c", invocation, "registry-image-prep-test",
+                 str(ROOT / "e2e/compose-owner.sh"),
+                 str(ROOT / "e2e/journey/candidate-services.sh"), str(ROOT)],
+                cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(operations.read_text(encoding="utf-8").splitlines(), [
+                "pnpm deploy --filter @kb-labs/core-state-daemon --prod .kb/deploy/state-daemon",
+                "pnpm deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app",
+                "node tools/release/generate-platform-image-default.mjs",
+                "docker compose build marketplace-state marketplace-registry",
+            ])
+            operations.write_text("", encoding="utf-8")
+            result = subprocess.run(
+                ["bash", str(ROOT / "tools/release/prepare-platform-image-deploys.sh"), "all"],
+                cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(operations.read_text(encoding="utf-8").splitlines(), [
+                "pnpm deploy --filter @kb-labs/core-state-daemon --prod .kb/deploy/state-daemon",
+                "pnpm deploy --filter @kb-labs/gateway-app --prod .kb/deploy/gateway-app",
+                "pnpm deploy --filter @kb-labs/marketplace-app --prod .kb/deploy/marketplace-app",
+                "pnpm deploy --filter @kb-labs/rest-api-app --prod .kb/deploy/rest-api-app",
+                "pnpm deploy --filter @kb-labs/studio-app --prod .kb/deploy/studio-app",
+                "pnpm deploy --filter @kb-labs/workflow-daemon --prod .kb/deploy/workflow-daemon",
+                "pnpm deploy --filter @kb-labs/mcp-app --prod .kb/deploy/mcp-app",
+                "pnpm deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app",
+                "node tools/release/generate-platform-image-default.mjs",
+            ])
+
     def _run_service_without_owner_source(self, temporary: str, service_call: str) -> tuple[subprocess.CompletedProcess[str], Path]:
         root = Path(temporary)
         workspace = root / "unrelated-workspace"
