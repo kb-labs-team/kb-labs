@@ -79,15 +79,20 @@ class HttpBroker implements Broker {
   constructor(private readonly baseUrl: string) {}
 
   async get<T>(key: string): Promise<T | null> {
-    const response = isShareTokenCacheKey(key)
-      ? await this.postByKey("lookup", { key })
-      : await fetch(this.path(key));
+    if (isLegacyShareTokenCacheKey(key)) {
+      const response = await this.postByKey("lookup", { key });
+      if (response.status === 404) {
+        throw new Error("State broker opaque-key lookup is unavailable; upgrade the State Daemon before resolving legacy share tokens");
+      }
+      return this.read<T | null>(response);
+    }
+    const response = await fetch(this.path(key));
     if (response.status === 404) {return null;}
     return this.read<T>(response);
   }
 
   async set<T>(key: string, value: T, ttl?: number): Promise<void> {
-    if (isShareTokenCacheKey(key)) {
+    if (isLegacyShareTokenCacheKey(key)) {
       await this.read(await this.postByKey("store", { key, value, ttl }));
       return;
     }
@@ -95,7 +100,7 @@ class HttpBroker implements Broker {
   }
 
   async delete(key: string): Promise<void> {
-    if (isShareTokenCacheKey(key)) {
+    if (isLegacyShareTokenCacheKey(key)) {
       await this.read(await this.postByKey("remove", { key }));
       return;
     }
@@ -107,7 +112,7 @@ class HttpBroker implements Broker {
   }
 
   async setIfNotExists<T>(key: string, value: T, ttl?: number): Promise<boolean> {
-    if (isShareTokenCacheKey(key)) {
+    if (isLegacyShareTokenCacheKey(key)) {
       const response = await this.postByKey("put-if-absent", { key, value, ttl });
       if (response.status === 409) {return false;}
       await this.read(response);
@@ -147,6 +152,10 @@ class HttpBroker implements Broker {
   }
 }
 
-function isShareTokenCacheKey(key: string): boolean {
-  return key.startsWith("registry:sharetoken:");
+function isLegacyShareTokenCacheKey(key: string): boolean {
+  const marker = "registry:sharetoken:";
+  const markerAt = key.lastIndexOf(marker);
+  if (markerAt < 0) { return false; }
+  const suffix = key.slice(markerAt + marker.length);
+  return !/^sha256:[a-f0-9]{64}$/i.test(suffix);
 }

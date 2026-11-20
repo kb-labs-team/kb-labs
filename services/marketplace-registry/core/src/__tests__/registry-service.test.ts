@@ -598,7 +598,75 @@ describe('RegistryService.shareToken', () => {
     }, 60_000);
     await expect(svc.resolveShareToken(previouslyIssuedToken)).resolves.toMatchObject({ pkg: 'kirill/my-plugin' });
     expect(await cache.get(`registry:sharetoken:sha256:${createHash('sha256').update(previouslyIssuedToken).digest('hex')}`))
-      .toEqual({ pkg: 'kirill/my-plugin', expiresAt: expect.any(String) });
+      .toBeNull();
+  });
+
+  it('keeps parallel legacy-token resolutions successful when another lookup is delayed', async () => {
+    const cache = createMemoryCache();
+    const svc = makeService({ cache });
+    const token = 'kbrt_parallel-legacy-test-only';
+    const digestKey = `registry:sharetoken:sha256:${createHash('sha256').update(token).digest('hex')}`;
+    const legacyKey = `registry:sharetoken:${token}`;
+    await cache.set(legacyKey, {
+      pkg: 'kirill/my-plugin', expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }, 60_000);
+
+    const realGet = cache.get.bind(cache);
+    let releaseFirstDigestRead!: () => void;
+    let signalFirstDigestRead!: () => void;
+    const firstDigestRead = new Promise<void>((resolve) => { signalFirstDigestRead = resolve; });
+    const allowFirstDigestRead = new Promise<void>((resolve) => { releaseFirstDigestRead = resolve; });
+    let digestReads = 0;
+    vi.spyOn(cache, 'get').mockImplementation(async (key) => {
+      if (key === digestKey && digestReads++ === 0) {
+        signalFirstDigestRead();
+        await allowFirstDigestRead;
+        return null;
+      }
+      return realGet(key);
+    });
+
+    const delayed = svc.resolveShareToken(token);
+    await firstDigestRead;
+    const firstResult = await svc.resolveShareToken(token);
+    releaseFirstDigestRead();
+
+    expect(firstResult).toMatchObject({ pkg: 'kirill/my-plugin' });
+    await expect(delayed).resolves.toMatchObject({ pkg: 'kirill/my-plugin' });
+  });
+
+  it('does not resurrect a legacy token after a concurrent revoke', async () => {
+    const cache = createMemoryCache();
+    const svc = makeService({ cache });
+    const token = 'kbrt_revoke-race-test-only';
+    const digestKey = `registry:sharetoken:sha256:${createHash('sha256').update(token).digest('hex')}`;
+    const legacyKey = `registry:sharetoken:${token}`;
+    await cache.set(legacyKey, {
+      pkg: 'kirill/my-plugin', expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }, 60_000);
+
+    const realGet = cache.get.bind(cache);
+    let releaseLegacyRead!: () => void;
+    let signalLegacyRead!: () => void;
+    const legacyReadStarted = new Promise<void>((resolve) => { signalLegacyRead = resolve; });
+    const allowLegacyRead = new Promise<void>((resolve) => { releaseLegacyRead = resolve; });
+    vi.spyOn(cache, 'get').mockImplementation(async (key) => {
+      const value = await realGet(key);
+      if (key === legacyKey) {
+        signalLegacyRead();
+        await allowLegacyRead;
+      }
+      return value;
+    });
+
+    const inFlight = svc.resolveShareToken(token);
+    await legacyReadStarted;
+    await cache.delete(legacyKey);
+    releaseLegacyRead();
+
+    await expect(inFlight).resolves.toMatchObject({ pkg: 'kirill/my-plugin' });
+    await expect(svc.resolveShareToken(token)).resolves.toBeNull();
+    expect(await realGet(digestKey)).toBeNull();
   });
 
   it('RS-50: createShareToken + resolveShareToken round trip', async () => {

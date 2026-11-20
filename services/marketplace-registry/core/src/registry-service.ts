@@ -282,18 +282,14 @@ export class RegistryService {
     if (current) { return current; }
 
     // Tokens issued before digest-key storage used the credential in the cache
-    // key. Keep those links valid, then migrate their record on first use.
+    // key. Read the legacy entry without moving it: separate get/set/delete
+    // calls can race concurrent lookups or revocation and restore a deleted
+    // token. The old entry expires under its original TTL.
     const legacyKey = `registry:sharetoken:${token}`;
     const legacy = await this.cache.get<{ pkg: string; expiresAt: string }>(legacyKey);
     if (!legacy) { return null; }
-    const remainingTtlMs = Date.parse(legacy.expiresAt) - Date.now();
-    if (!Number.isFinite(remainingTtlMs) || remainingTtlMs <= 0) {
-      await this.cache.delete(legacyKey);
-      return null;
-    }
-    await this.cache.set(cacheKey, legacy, remainingTtlMs);
-    await this.cache.delete(legacyKey);
-    return legacy;
+    const expiresAt = Date.parse(legacy.expiresAt);
+    return Number.isFinite(expiresAt) && expiresAt > Date.now() ? legacy : null;
   }
 
   // ── Download ───────────────────────────────────────────────────────────────

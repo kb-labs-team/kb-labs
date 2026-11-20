@@ -106,6 +106,13 @@ describe('StateDaemonServer', () => {
       });
       expect(readRes.status).toBe(200);
       await expect(readRes.json()).resolves.toEqual({ pkg: 'owner/plugin' });
+      const missingRes = await fetch(`${baseURL}/state/lookup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'kb:registry:sharetoken:sha256:missing-digest' }),
+      });
+      expect(missingRes.status).toBe(200);
+      await expect(missingRes.json()).resolves.toBeNull();
       expect(JSON.stringify(logged)).not.toContain(token);
     });
 

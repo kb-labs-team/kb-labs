@@ -351,8 +351,8 @@ class StateDaemonRuntime {
       const { key } = request.body as { key: string };
       const value = await this.observability.observeOperation("state.get", () => this.broker.get(key));
       if (value === null) {
-        reply.code(404);
-        return null;
+        reply.type("application/json");
+        return JSON.stringify(null);
       }
       reply.type("application/json");
       return JSON.stringify(value);
