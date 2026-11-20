@@ -3652,6 +3652,7 @@
     "project MCP read-only tool isolation",
     "workspace checkout is staged and built",
     "service runner",
+    "workflow cron CLI and MCP state parity",
     "outer journey orchestration",
     "candidate provenance",
     "unexpected CLI error trail with host running",

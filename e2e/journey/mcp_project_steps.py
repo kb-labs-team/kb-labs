@@ -191,7 +191,7 @@ def mcp_call(project_id: str, request_id: int, name: str, arguments: dict, token
 
 
 def workflow_cron_invocation_parity(project_id: str, token: str, project_root: str,
-                                    env: dict[str, str]) -> str | None:
+                                    env: dict[str, str], case_id: str) -> str | None:
     """Exercise both public command surfaces against one installed workflow state."""
     tool_name = "workflow__workflow_crons_enable"
     project = Path(project_root)
@@ -206,7 +206,7 @@ def workflow_cron_invocation_parity(project_id: str, token: str, project_root: s
     cron = None
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
-        with invocation_context(step_id="S-045.12"):
+        with invocation_context(step_id=case_id):
             listing = cli_result(["workflow", "crons", "list", "--json"])
         if listing.returncode == 0:
             try:
@@ -226,7 +226,7 @@ def workflow_cron_invocation_parity(project_id: str, token: str, project_root: s
 
     status, catalog, _ = _request(
         project_service_path(project_id, "mcp"), method="POST", token=token,
-        step="S-045.12 MCP tools/list", accept="application/json, text/event-stream",
+        step=f"{case_id} MCP tools/list", accept="application/json, text/event-stream",
         payload={"jsonrpc": "2.0", "id": 4512, "method": "tools/list", "params": {}},
     )
     tools = catalog.get("result", {}).get("tools", []) if isinstance(catalog, dict) else []
@@ -240,7 +240,7 @@ def workflow_cron_invocation_parity(project_id: str, token: str, project_root: s
         return "workflow cron MCP tool does not expose the required non-empty id schema"
 
     def cli_invalid(argv: list[str]) -> str | None:
-        with invocation_context(step_id="S-045.12"):
+        with invocation_context(step_id=case_id):
             result = cli_result(argv)
         try:
             payload = read_ux_cli_result(result)
@@ -261,7 +261,7 @@ def workflow_cron_invocation_parity(project_id: str, token: str, project_root: s
         if status != 200 or not isinstance(result, dict) or result.get("isError") is not True or not isinstance(envelope, dict) or envelope.get("code") != "KB_RUNTIME_INPUT_INVALID":
             return "MCP accepted missing or empty cron ID instead of returning KB_RUNTIME_INPUT_INVALID"
 
-    with invocation_context(step_id="S-045.12"):
+    with invocation_context(step_id=case_id):
         unchanged = cli_result(["workflow", "crons", "list", "--json"])
     try:
         unchanged_data = read_ux_cli_result(unchanged).get("data")
@@ -305,7 +305,7 @@ def workflow_cron_invocation_parity(project_id: str, token: str, project_root: s
         if failure:
             return failure
 
-    with invocation_context(step_id="S-045.12"):
+    with invocation_context(step_id=case_id):
         listing = cli_result(["workflow", "crons", "list", "--json"])
     if listing.returncode != 0:
         return "final CLI cron list failed after the shared CLI/MCP mutations"

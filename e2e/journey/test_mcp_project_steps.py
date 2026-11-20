@@ -88,7 +88,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         with patch("mcp_project_steps._request", side_effect=fake_request), \
              patch("mcp_project_steps.run_command", side_effect=fake_cli):
-            self.assertIsNone(workflow_cron_invocation_parity("prj_a", "token", "/tmp/project", {}))
+            self.assertIsNone(workflow_cron_invocation_parity("prj_a", "token", "/tmp/project", {}, "S-045.12"))
 
         self.assertEqual([item.get("params", {}).get("name") for item in requests[3:]], [
             "workflow__workflow_crons_disable", "workflow__workflow_crons_enable",
