@@ -550,6 +550,9 @@ describe('RegistryService.publish', () => {
     expect((await svc.getTarball('portable-owner', 'my-plugin', versionUpper)).tarball).toEqual(alphaUpper);
     expect((await svc.getTarball('portable-owner', 'my-plugin', versionLower)).tarball).toEqual(alphaLower);
     expect(entry?.versions.every(version => version.signature?.value)).toBe(true);
+    const signatureFiles = [...values.entries()].filter(([path]) => path.endsWith('.sig'));
+    expect(signatureFiles).toHaveLength(2);
+    expect(new Set(signatureFiles.map(([, bytes]) => JSON.parse(bytes.toString()).value)).size).toBe(2);
   });
 
   // case: S-268.22
@@ -578,6 +581,7 @@ describe('RegistryService.publish', () => {
     };
     const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger,
       baseUrl: 'http://localhost:5071' });
+    expect((await svc.getTarball(legacyHandle, legacyName, '1.0.0')).tarball).toEqual(SMALL_TARBALL);
 
     const result = await svc.publish(SMALL_TARBALL, makePkg({ name: legacyName, version: '1.1.0' }),
       legacyHandle, 'ns-legacy');
