@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import { test } from 'node:test';
-import { batchArguments, resolveSelection, sharedUnitSuiteMode } from './journey-batch-selection.mjs';
+import { batchArguments, resolveSelection, selectionIds, sharedUnitSuiteMode } from './journey-batch-selection.mjs';
 import { validateJourneyCaseDeclarations } from './journey-case-claims-preflight.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -28,7 +28,9 @@ test('a pushed cases ref yields its decoded non-empty case list; other batch ref
   const ids = 'S-010,S-027.1';
   const selection = resolveSelection('push', `batch/t1/cases/${encode(ids)}`);
   assert.deepEqual(batchArguments(selection), ['--cases', ids]);
+  assert.equal(selectionIds(selection), ids);
   assert.deepEqual(batchArguments(resolveSelection('push', 'batch/plain')), []);
+  assert.equal(selectionIds('full'), '');
 });
 
 // case: S-262.8
@@ -71,6 +73,15 @@ test('consumer jobs take the selection only from the producer-owned output', () 
   assert.match(JSON.stringify(workflow.jobs.producer.steps), /journey-batch-selection\.mjs resolve/);
   const prepare = workflow.jobs.producer.steps.find((step) => step.name === 'Produce shared build and candidate');
   assert.equal(prepare.env?.BATCH_SELECTION, '${{ steps.selection.outputs.selection }}');
+});
+
+// case: S-262.17
+test('summary job decodes the producer-owned selection for missing mode artifacts', () => {
+  const summary = workflow.jobs.summary;
+  assert.equal(summary.env.BATCH_SELECTION, '${{ needs.producer.outputs.selection }}');
+  const run = summary.steps.map((step) => step.run ?? '').join('\n');
+  assert.match(run, /journey-batch-selection\.mjs ids "\$BATCH_SELECTION"/);
+  assert.match(run, /batch\.sh summarize .*--selection "\$selection_ids"/);
 });
 
 test('batch producer runs the dist-free journey preflight before producing build artifacts', () => {

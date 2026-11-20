@@ -59,6 +59,29 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertEqual(secured["releaseCases"], {"fullyGreen": 0, "total": 0})
         self.assertIn("non-gating for Release 1", render_markdown(secured))
 
+    # case: S-262.17
+    def test_selected_claims_are_rendered_by_the_unified_scoreboard_writer(self):
+        write_scoreboards(self.reports, self.catalog, ["S-001.1"])
+        for name in ("case-scoreboard-local.json", "case-scoreboard-secured.json",
+                     "case-scoreboard.json"):
+            data = json.loads((self.reports / name).read_text(encoding="utf-8"))
+            self.assertEqual(data["selection"], ["S-001.1"], name)
+        for name in ("case-scoreboard-local.md", "case-scoreboard-secured.md",
+                     "case-scoreboard.md"):
+            self.assertIn("selection: S-001.1", (self.reports / name).read_text(encoding="utf-8"), name)
+
+    # case: S-262.17
+    def test_requested_selection_is_partial_before_score_coverage_is_computed(self):
+        self.write_json("installer-case-local-agent-explore-default.json", {
+            "case_run": {"mode": "local", "claims": [
+                {"claimId": "S-001.1", "status": "PASS"},
+                {"claimId": "S-001.2", "status": "PASS"}]}, "steps": []})
+        selected = build_scoreboard(self.reports, self.catalog, ["local"], ["S-001.1"])
+        case = next(row for row in selected["cases"] if row["id"] == "S-001")
+        self.assertEqual(selected["selection"], ["S-001.1"])
+        self.assertEqual(case["status"], "Unclaimed")
+        self.assertEqual(case["passingClaims"], [])
+
     def test_scores_case_defined_denominator_and_mode_specific_results(self):
         self.write_json("installer-case-local-agent-explore-default.json", {
             "case_run": {"mode": "local", "claims": [

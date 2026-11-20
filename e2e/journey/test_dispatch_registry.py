@@ -1404,6 +1404,9 @@ class DispatchRegistryTests(unittest.TestCase):
             "candidate provenance": ["S-023.2"],
             "plan the newer sealed release": ["S-023.2"],
         })
+        self.assertEqual(resolved["selectedClaimOwners"], {
+            "plan the newer sealed release": ["S-023.2"],
+        })
 
     def test_flow_graph_uses_resolved_step_names_to_select_update_journey(self):
         with patch.dict(os.environ, {

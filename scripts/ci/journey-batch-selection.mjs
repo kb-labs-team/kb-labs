@@ -56,6 +56,15 @@ export function sharedUnitSuiteMode(selection) {
   throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
 }
 
+export function selectionIds(selection) {
+  if (selection === 'full') return '';
+  if (selection.startsWith('cases:')) {
+    const ids = decodeCases(selection.slice(6)).trim();
+    if (ids) return ids;
+  }
+  throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
+}
+
 function main(argv) {
   const [command, ...rest] = argv;
   if (command === 'resolve' && rest.length === 2) {
@@ -71,7 +80,11 @@ function main(argv) {
     process.stdout.write(`${sharedUnitSuiteMode(rest[0])}\n`);
     return 0;
   }
-  process.stderr.write('usage: journey-batch-selection.mjs resolve <event> <ref> | run <selection> -- <command...> | shared-unit-suite <selection>\n');
+  if (command === 'ids' && rest.length === 1) {
+    process.stdout.write(`${selectionIds(rest[0])}\n`);
+    return 0;
+  }
+  process.stderr.write('usage: journey-batch-selection.mjs resolve <event> <ref> | run <selection> -- <command...> | shared-unit-suite <selection> | ids <selection>\n');
   return 2;
 }
 
