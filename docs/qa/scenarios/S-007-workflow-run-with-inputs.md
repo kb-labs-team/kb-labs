@@ -27,3 +27,4 @@ A project user starts a workflow with a JSON input and verifies the job received
 | S-007.2 | Run `kb workflow runs view <runId>` | Run reaches a terminal status and reports the submitted input. |
 | S-007.3 | Run `kb workflow runs logs <runId>` | Step output contains `hello`, confirming the job received the input. |
 | S-007.4 | In secured mode, with no CLI session or saved Gateway credentials, run `kb workflow defs list --json` and `kb workflow defs list` | Both invocations exit non-zero with `KB_AUTH_REQUIRED` and the message `Authentication is required.`. JSON output contains one error envelope; human output includes the code, message, and catalogued login hint rendered with the configured Gateway URL. |
+| S-007.5 | With the local workflow service running, run `kb workflow health --json` | Command exits 0 and returns the workflow health fields (`status`, `service`, and `ts`) as data, without a nested success envelope. |

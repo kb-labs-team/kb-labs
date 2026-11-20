@@ -259,7 +259,7 @@ export class WorkflowDaemonClient {
     if (!response.ok) {
       throw new Error(`Health check failed: ${response.statusText}`);
     }
-    return this.parseJsonResponse<WorkflowHealthResponse>(response);
+    return this.unwrapData<WorkflowHealthResponse>(await this.parseJsonResponse<unknown>(response));
   }
 
   /**
