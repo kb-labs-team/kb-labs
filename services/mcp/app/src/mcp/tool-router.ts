@@ -88,6 +88,7 @@ export async function callTool(
   const output = { text: [] as string[], structured: [] as UIOutput[] };
   const container = resolvePlatform(tenantId);
   let error: ErrorEnvelope | undefined;
+  let normalizedResult: string | undefined;
 
   const exitCode = await callOutput.run(output, () =>
     executeCommandV3({
@@ -96,13 +97,14 @@ export async function callTool(
       pluginVersion: tool.version,
       commandPath: tool.commandPath,
       onError: (envelope) => { error = envelope; },
+      onResult: (result) => { normalizedResult = JSON.stringify(result); },
       pluginRoot: tool.pluginRoot,
       handlerPath: resolveHandlerPath(tool.pluginRoot, tool.handlerPath),
       argv: [],
       flags: args,
       tenantId,
-      // ui is ignored by executeCommandV3 V3 (backend uses uiProvider).
-      // noopUI is passed explicitly to document this intent.
+      // The normalized result is captured through onResult; avoid writing the
+      // executor's JSON renderer to the process terminal.
       ui: noopUI,
       platform: createPlatformServices(container),
       platformContainer: container,
@@ -111,7 +113,9 @@ export async function callTool(
     }),
   );
 
-  const text = output.text.join('\n');
+  // The normalized executor result is the command's return value. It takes
+  // precedence over presentation output so result JSON is returned exactly once.
+  const text = normalizedResult ?? output.text.join('\n');
   if (exitCode === 0) {return { success: true, output: text, structured: output.structured, exitCode: 0 };}
   if (!error) {throw new Error(`MCP tool ${tool.name} exited ${exitCode} without a normalized error envelope.`);}
   return {
