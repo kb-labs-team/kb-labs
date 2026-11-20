@@ -22,7 +22,11 @@ case "$mode" in
     ;;
   registry-journey)
     prepare_deploy @kb-labs/core-state-daemon .kb/deploy/state-daemon
-    prepare_deploy @kb-labs/marketplace-registry-app .kb/deploy/marketplace-registry-app
+    prepare_deploy @kb-labs/registry-image-composition .kb/deploy/registry-image-composition
+    node tools/release/registry-image-composition.mjs \
+      --deployment-root .kb/deploy/registry-image-composition \
+      --source-revision "$(git rev-parse HEAD)" \
+      --pnpm-version "$(pnpm --version)"
     ;;
   *)
     echo "Usage: $0 [all|registry-journey]" >&2
