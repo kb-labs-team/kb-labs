@@ -523,6 +523,36 @@ describe('RegistryService.publish', () => {
   });
 
   // case: S-268.22
+  it('stores case-distinct SemVer releases separately on case-insensitive storage', async () => {
+    const values = new Map<string, Buffer>();
+    const storage: IStorage = {
+      read: async (path) => values.get(path.toLowerCase()) ?? null,
+      write: async (path, data) => { values.set(path.toLowerCase(), Buffer.from(data)); },
+      delete: async (path) => { values.delete(path.toLowerCase()); },
+      list: async (prefix) => [...values.keys()].filter(path => path.startsWith(prefix.toLowerCase())),
+      exists: async (path) => values.has(path.toLowerCase()),
+    };
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const svc = new RegistryService({
+      storage, cache: createMemoryCache(), logger: noopLogger, baseUrl: 'http://localhost:5071',
+      signingPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    });
+    const alphaUpper = Buffer.from('alpha upper release');
+    const alphaLower = Buffer.from('alpha lower release');
+    const versionUpper = '1.0.0-Alpha+Build.7';
+    const versionLower = '1.0.0-alpha+build.7';
+
+    await svc.publish(alphaUpper, makePkg({ version: versionUpper }), 'portable-owner', 'ns-owner');
+    await svc.publish(alphaLower, makePkg({ version: versionLower }), 'portable-owner', 'ns-owner');
+
+    const entry = await svc.getEntry('portable-owner', 'my-plugin');
+    expect(entry?.versions.map(version => version.version)).toEqual([versionUpper, versionLower]);
+    expect((await svc.getTarball('portable-owner', 'my-plugin', versionUpper)).tarball).toEqual(alphaUpper);
+    expect((await svc.getTarball('portable-owner', 'my-plugin', versionLower)).tarball).toEqual(alphaLower);
+    expect(entry?.versions.every(version => version.signature?.value)).toBe(true);
+  });
+
+  // case: S-268.22
   it('allows an owner to append to an existing safe legacy handle and package name', async () => {
     const values = new Map<string, Buffer>();
     const legacyName = 'Legacy.Plugin_Name';
