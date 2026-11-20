@@ -56,6 +56,22 @@ test('only an explicit case selection skips the shared generic unit suite', () =
   assert.throws(() => sharedUnitSuiteMode(`cases:${encode('  ')}`), /unknown journey batch selection/);
 });
 
+// case: S-262.18
+test('only targeted cases restore and save exact-source prepared candidates', () => {
+  const steps = workflow.jobs.producer.steps;
+  const restore = steps.find(step => step.id === 'candidate-cache');
+  const save = steps.find(step => step.name === 'Save the freshly prepared targeted candidate');
+  assert.equal(restore?.uses, 'actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
+  assert.equal(restore?.if, "startsWith(steps.selection.outputs.selection, 'cases:')");
+  assert.equal(restore?.with?.path, '.journey/prepared-candidate-cache');
+  assert.equal(restore?.with?.key, '${{ steps.candidate-cache-key.outputs.key }}');
+  assert.match(save?.if ?? '', /startsWith\(steps\.selection\.outputs\.selection, 'cases:'\)/);
+  assert.match(save?.if ?? '', /steps\.candidate-cache\.outputs\.cache-hit != 'true'/);
+  assert.equal(save?.uses, 'actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
+  assert.equal(save?.with?.path, '.journey/prepared-candidate-cache');
+  assert.equal(save?.with?.key, restore?.with?.key);
+});
+
 // case: S-262.8
 test('an undeclared trigger and an empty encoded selection are refused', () => {
   assert.throws(() => resolveSelection('schedule', 'x'), /no declared case selection for trigger "schedule"/);

@@ -22,7 +22,37 @@ write_metadata() {
     "$metadata_path" "$metadata_mode" "$metadata_result" "$metadata_commit" "$metadata_baseline" "$metadata_build" \
     "${reset_seconds:-0}" "${build_seconds:-0}" "${unit_seconds:-0}" "${candidate_seconds:-0}" \
     "${local_seconds:-0}" "${secured_seconds:-0}" "${total_seconds:-0}" \
-    "$(absolute "${metadata_path%/batch-metadata.json}/build-candidate.tar")"
+    "$(absolute "${metadata_path%/batch-metadata.json}/build-candidate.tar")" \
+    "${BATCH_CANDIDATE_CACHE_MANIFEST:-}" "${BATCH_CANDIDATE_CACHE_STATUS:-}"
+}
+reuse_prepared_candidate() {
+  case "${BATCH_SELECTION:-full}" in cases:*) ;; *) return 1 ;; esac
+  [ -n "${JOURNEY_CANDIDATE_CACHE_KEY:-}" ] || return 1
+  cache_dir=$(absolute "${JOURNEY_CANDIDATE_CACHE_DIR:-.journey/prepared-candidate-cache}")
+  [ -d "$cache_dir" ] || return 1
+  if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/candidate_cache.py" verify \
+    "$ROOT" "$cache_dir" "$JOURNEY_CANDIDATE_CACHE_KEY" > "$shared/candidate-cache.log" 2>&1; then
+    rm -rf "$cache_dir"
+    return 1
+  fi
+  if ! cp "$cache_dir/build-candidate.tar" "$shared/build-candidate.tar" ||
+    ! cp "$cache_dir/manifest.json" "$shared/candidate-cache.json"; then
+    echo "verified journey candidate cache could not be staged; next: rerun the targeted batch" >&2
+    return 2
+  fi
+  BATCH_CANDIDATE_CACHE_MANIFEST="$shared/candidate-cache.json"
+  BATCH_CANDIDATE_CACHE_STATUS=reused
+  printf 'Reused prepared candidate for source SHA %s.\n' "$commit" > "$shared/build.log"
+  printf 'Candidate archive checksum, candidate release checksums, tool inputs, runner identity, and sealed provenance verified.\n' \
+    > "$shared/release-build-output-check.log"
+  printf 'Reused prepared candidate for source SHA %s; see candidate-cache.json for fingerprint and digests.\n' "$commit" \
+    > "$shared/candidate.log"
+  printf 'SKIPPED: targeted batch reused a verified prepared candidate; the shared generic unit suite is not run for partial selections.\n' \
+    > "$shared/unit.log"
+  printf 'Candidate: reused for source SHA `%s` (cache key `%s`).\n' "$commit" "$JOURNEY_CANDIDATE_CACHE_KEY" \
+    >> "$shared/summary.md"
+  build_seconds=0; candidate_seconds=0; unit_seconds=0
+  return 0
 }
 run_prepare() {
   out=$(absolute "$1")
@@ -81,12 +111,21 @@ run_prepare() {
     return 1
   fi
   preflight_rc=0
-  "$SCRIPT_DIR/preflight.sh" "$shared" "$BUILD_BASE" || preflight_rc=$?
   build_seconds=0; unit_seconds=0; candidate_seconds=0
-  if [ -s "$shared/stage-durations.env" ]; then
-    . "$shared/stage-durations.env"
-    build_seconds=$build; candidate_seconds=$candidate; unit_seconds=$unit
-    rm -f "$shared/stage-durations.env"
+  candidate_reused=0
+  cache_reuse_rc=0
+  reuse_prepared_candidate || cache_reuse_rc=$?
+  if [ "$cache_reuse_rc" -eq 0 ]; then
+    [ "${BATCH_CANDIDATE_CACHE_STATUS:-}" = reused ] && candidate_reused=1
+  elif [ "$cache_reuse_rc" -eq 1 ]; then
+    "$SCRIPT_DIR/preflight.sh" "$shared" "$BUILD_BASE" || preflight_rc=$?
+    if [ -s "$shared/stage-durations.env" ]; then
+      . "$shared/stage-durations.env"
+      build_seconds=$build; candidate_seconds=$candidate; unit_seconds=$unit
+      rm -f "$shared/stage-durations.env"
+    fi
+  else
+    preflight_rc=$cache_reuse_rc
   fi
   if [ "$preflight_rc" -ne 0 ]; then
     failed_stage=${failed_stage:-build}
@@ -99,6 +138,7 @@ run_prepare() {
     echo "journey shared $failed_stage stage failed; see $shared/$failed_stage.log; next: e2e/journey/$([ "$failed_stage" = candidate ] && echo prepare-candidate.sh || echo preflight.sh)" >&2
     return "$preflight_rc"
   fi
+  if [ "$candidate_reused" -eq 0 ]; then
   archive="$shared/build-candidate.tar"
   pack_started=$(date +%s)
   if ! (
@@ -131,6 +171,24 @@ run_prepare() {
   pack_elapsed=$(($(date +%s) - pack_started))
   candidate_seconds=$((candidate_seconds + pack_elapsed))
   rm -f "$shared/archive-files.txt" "$shared/workspace-packages.txt"
+  case "${BATCH_SELECTION:-full}" in
+    cases:*)
+      if [ -n "${JOURNEY_CANDIDATE_CACHE_KEY:-}" ]; then
+        cache_dir=$(absolute "${JOURNEY_CANDIDATE_CACHE_DIR:-.journey/prepared-candidate-cache}")
+        if "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/candidate_cache.py" seal \
+          "$ROOT" "$archive" "$cache_dir" "$JOURNEY_CANDIDATE_CACHE_KEY" > "$shared/candidate-cache.log" 2>&1; then
+          cp "$cache_dir/manifest.json" "$shared/candidate-cache.json"
+          BATCH_CANDIDATE_CACHE_MANIFEST="$shared/candidate-cache.json"
+          BATCH_CANDIDATE_CACHE_STATUS=prepared
+          printf 'Prepared and sealed a candidate cache for source SHA %s.\n' "$commit" >> "$shared/summary.md"
+        else
+          rm -rf "$cache_dir"
+          printf 'Candidate cache was not saved; this run used its fresh prepared candidate.\n' > "$shared/candidate-cache.log"
+        fi
+      fi
+      ;;
+  esac
+  fi
   result=PASS; total_seconds=$(($(date +%s) - batch_started)); local_seconds=0; secured_seconds=0
   write_metadata "$shared/batch-metadata.json" shared "$result" "$commit" "$BASELINE" "$BUILD_BASE"
   trap - EXIT HUP INT TERM

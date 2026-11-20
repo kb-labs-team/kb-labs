@@ -157,7 +157,9 @@ def verify_run_commit(path: Path, current_commit: str) -> None:
 
 
 def write_stage_metadata(path: Path, mode: str, result: str, commit: str, baseline: str,
-                         build_base: str, stage_values: list[str], archive: Path) -> None:
+                         build_base: str, stage_values: list[str], archive: Path,
+                         candidate_cache_manifest: Path | None = None,
+                         candidate_cache_status: str = "") -> None:
     if mode not in {"shared", "local", "secured"} or result not in {"PASS", "FAIL", "INTERRUPTED"}:
         raise ValueError("batch metadata has an unsupported mode or result")
     if len(stage_values) != len(STAGES):
@@ -171,6 +173,22 @@ def write_stage_metadata(path: Path, mode: str, result: str, commit: str, baseli
     }
     if archive.is_file():
         value["candidateArchiveSha256"] = candidate_archive_sha256(archive)
+    if candidate_cache_manifest is not None and candidate_cache_manifest.is_file():
+        cache = json.loads(candidate_cache_manifest.read_text(encoding="utf-8"))
+        required_cache_fields = (
+            "sourceSha", "inputFingerprint", "cacheKey", "candidateArchiveSha256",
+            "candidateReleaseIndexSha256", "candidateChecksumsSha256", "releaseSourceRevision",
+        )
+        if (not isinstance(cache, dict) or any(not isinstance(cache.get(field), str) or not cache[field]
+                                                for field in required_cache_fields)
+                or candidate_cache_status not in {"prepared", "reused"}):
+            raise ValueError("prepared candidate cache metadata is incomplete")
+        if cache["sourceSha"] != commit or cache["candidateArchiveSha256"] != value.get("candidateArchiveSha256"):
+            raise ValueError("prepared candidate cache metadata does not match this run's candidate archive")
+        value["candidateCache"] = {
+            "status": candidate_cache_status,
+            **{field: cache[field] for field in required_cache_fields},
+        }
     if mode != "shared":
         value["mode"] = mode
     _write_metadata(path, value)
@@ -461,9 +479,13 @@ def main(argv: list[str]) -> int:
             print(f"journey run metadata could not be written: {error}; next: rerun e2e/journey/batch.sh prepare",
                   file=sys.stderr)
             return 1
-    if len(argv) == 16 and argv[1] == "metadata":
+    if len(argv) in {16, 18} and argv[1] == "metadata":
         try:
-            write_stage_metadata(Path(argv[2]), argv[3], argv[4], argv[5], argv[6], argv[7], argv[8:15], Path(argv[15]))
+            write_stage_metadata(
+                Path(argv[2]), argv[3], argv[4], argv[5], argv[6], argv[7], argv[8:15], Path(argv[15]),
+                Path(argv[16]) if len(argv) == 18 and argv[16] else None,
+                argv[17] if len(argv) == 18 else "",
+            )
             return 0
         except (OSError, ValueError) as error:
             print(f"journey batch metadata could not be written: {error}; next: rerun e2e/journey/batch.sh prepare",
