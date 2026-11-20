@@ -18,6 +18,7 @@ import {
 } from "@kb-labs/core-project-registry";
 import { reserveLoopbackPorts, runHost } from "@kb-labs/shared-daemon";
 import { buildServiceTools, mcpToolName } from "@kb-labs/mcp-app/project-module";
+import { callOutput } from "@kb-labs/mcp-app/mcp/output-capture";
 import {
   createProjectRuntimeConfig,
   DEFAULT_PROJECT_MODULES,
@@ -465,6 +466,40 @@ describe("project runtime composition (real runHost, minimal modules)", () => {
         projectId: deriveProjectId(root),
         startDir: root,
       });
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  // case: S-140.2
+  it("captures readable plugin UI output through the real project runtime platform config", async () => {
+    const project = await mkdtemp(join(tmpdir(), "kb-runtime-mcp-ui-"));
+    try {
+      const root = await canonicalizeProjectPath(project);
+      const config = await createProjectRuntimeConfig({
+        projectRoot: root,
+        projectId: deriveProjectId(root),
+        listen: { host: "127.0.0.1", port: 51234 },
+        token: TOKEN,
+        modules: [],
+      });
+      const provider = config.platform.uiProvider;
+      expect(provider).toBeDefined();
+
+      const output = { text: [] as string[], structured: [] as unknown[] };
+      await callOutput.run(output, async () => {
+        provider!("cli").success("Created commit abc1234", {
+          sections: [{ title: "Commit", lines: ["SHA: abc1234"] }],
+        });
+      });
+
+      expect(output.text.join("\n")).toContain("Created commit abc1234");
+      expect(output.structured).toMatchObject([{
+        kind: "message",
+        level: "success",
+        message: "Created commit abc1234",
+        options: { sections: [{ title: "Commit", lines: ["SHA: abc1234"] }] },
+      }]);
     } finally {
       await rm(project, { recursive: true, force: true });
     }
