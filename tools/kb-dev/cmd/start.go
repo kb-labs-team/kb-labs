@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kb-labs/dev/internal/config"
+	"github.com/kb-labs/dev/internal/manager"
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +46,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 	result := mgr.Start(cmd.Context(), targets, forceFlag)
 
 	if !result.OK {
+		if jsonMode {
+			return commandFailureWithData("kb-dev start", safeStartResult(result, mgr.Config()))
+		}
 		return commandFailure("kb-dev start")
 	}
 	if jsonMode {
@@ -82,6 +86,46 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func safeStartResult(result *manager.Result, cfg *config.Config) *manager.Result {
+	if result == nil {
+		return nil
+	}
+	safe := *result
+	safe.Actions = make([]manager.Action, len(result.Actions))
+	for i, action := range result.Actions {
+		safe.Actions[i] = action
+		safe.Actions[i].Error = redactStartText(action.Error, cfg)
+		safe.Actions[i].LogsTail = redactDiagnosticLines(action.LogsTail)
+		for lineIndex, line := range safe.Actions[i].LogsTail {
+			safe.Actions[i].LogsTail[lineIndex] = redactConfiguredSecrets(line, cfg)
+		}
+	}
+	safe.Hint = redactStartText(result.Hint, cfg)
+	return &safe
+}
+
+func redactStartText(value string, cfg *config.Config) string {
+	for _, service := range cfg.Services {
+		for key, secret := range service.Env {
+			if isSensitiveConfigKey(key) && len(secret) >= 12 {
+				value = strings.ReplaceAll(value, secret, "[REDACTED]")
+			}
+		}
+	}
+	return redactDiagnosticLines([]string{value})[0]
+}
+
+func redactConfiguredSecrets(value string, cfg *config.Config) string {
+	for _, service := range cfg.Services {
+		for key, secret := range service.Env {
+			if isSensitiveConfigKey(key) && len(secret) >= 12 {
+				value = strings.ReplaceAll(value, secret, "[REDACTED]")
+			}
+		}
+	}
+	return value
 }
 
 // printHighlights prints a prominent block for services marked highlight:true.
