@@ -96,7 +96,8 @@ export class LocalPluginResolver {
       throw new Error(`Marketplace plugin pin is not approved by Host Agent policy: ${request.pluginId}@${pin.version}`);
     }
 
-    const stored = await createExtensionStore().lookup({
+    const store = createExtensionStore();
+    const stored = await store.lookup({
       name: request.pluginId,
       version: pin.version,
       expectedIntegrity: pin.integrity,
@@ -117,10 +118,17 @@ export class LocalPluginResolver {
       throw new Error(`Marketplace command has an invalid handler declaration: ${request.commandPath}`);
     }
     const pluginRoot = await realpath(stored.packageRoot);
+    const storeEntriesRoot = await realpath(store.entriesDir);
+    if (!pluginRoot.startsWith(storeEntriesRoot + sep)) {
+      throw new Error('Marketplace package root is outside the trusted extension store');
+    }
     const resolvedHandler = resolveCliHandlerPath(pluginRoot, command.handler);
     const realHandler = await realpath(resolvedHandler);
-    if (!realHandler.startsWith(pluginRoot + sep) || !(await stat(realHandler)).isFile()) {
-      throw new Error('Marketplace handler is not a regular file inside the installed package');
+    const distRoot = await realpath(resolve(pluginRoot, 'dist'));
+    if (!distRoot.startsWith(pluginRoot + sep)
+      || !realHandler.startsWith(distRoot + sep)
+      || !(await stat(realHandler)).isFile()) {
+      throw new Error('Marketplace handler is not a regular file inside the installed package dist directory');
     }
 
     const input = request.input && typeof request.input === 'object'

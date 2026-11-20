@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { canonicalizeProjectPath, deriveProjectId } from '@kb-labs/core-project-registry';
@@ -83,5 +83,21 @@ describe('Host Agent Marketplace command resolver', () => {
     lock.plugins[pluginId]!.enabled = false;
     await writeMarketplaceLock(projectRoot, lock, 'project');
     await expect(resolver.resolveMarketplace(request)).rejects.toThrow(/not enabled and pinned/);
+
+    lock.plugins[pluginId]!.enabled = true;
+    await writeMarketplaceLock(projectRoot, lock, 'project');
+    const externalHandler = path.join(root, 'outside-handler.js');
+    await writeFile(externalHandler, `export const showPlan = { async execute() { return { source: 'outside' }; } };`);
+    const storedHandler = path.join(installed.packageRoot, 'dist', 'commands', 'show-plan.js');
+    await rm(storedHandler);
+    await symlink(externalHandler, storedHandler);
+    await expect(resolver.resolveMarketplace(request)).rejects.toThrow(/inside the installed package dist directory/);
+
+    const externalPackage = path.join(root, 'outside-package');
+    await mkdir(externalPackage, { recursive: true });
+    const installedPackagePath = installed.packageRoot;
+    await rm(installedPackagePath);
+    await symlink(externalPackage, installedPackagePath, 'dir');
+    await expect(resolver.resolveMarketplace(request)).rejects.toThrow(/outside the trusted extension store/);
   }, 60_000);
 });
