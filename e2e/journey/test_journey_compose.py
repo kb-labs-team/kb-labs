@@ -357,6 +357,10 @@ if (!configResult.ok) {
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_PUBLISH_URL"],
                              "http://marketplace-registry:5071/api/v1")
             self.assertEqual(runner_environment["KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE"], "journey")
+            self.assertEqual(runner_environment["KB_JOURNEY_REGISTRY_READY_URL"],
+                             "http://marketplace-registry:5071/ready")
+            self.assertEqual(runner_environment["KB_JOURNEY_REGISTRY_INTERNAL_SECRET"],
+                             "journey-marketplace-internal-secret")
             workspace_mount = next(mount for mount in rendered["services"]["runner"]["volumes"]
                                    if mount.get("target") == "/opt/kb-workspace")
             workspace_source = Path(workspace_mount["source"])
