@@ -42,7 +42,7 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
       return reply.code(400).send({ error: 'Bad Request', issues: parsed.error.issues });
     }
 
-    const { pluginId, handlerRef, exportName, input, timeoutMs } = parsed.data;
+    const { projectId, pluginId, commandPath, input, timeoutMs } = parsed.data;
     const executionId = randomUUID();
     const requestId = randomUUID();
     const startTime = Date.now();
@@ -50,7 +50,8 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
     logger.info('Execute request received', {
       executionId,
       pluginId,
-      handlerRef,
+      commandPath,
+      projectId,
       namespaceId: auth.namespaceId,
     });
 
@@ -69,7 +70,8 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
         evidence: {
           namespaceId: auth.namespaceId,
           pluginId,
-          handlerRef,
+          commandPath,
+          projectId,
         },
       });
       return reply.code(503).send({
@@ -85,7 +87,7 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
       namespaceId: auth.namespaceId,
       hostId,
       pluginId,
-      handlerRef,
+      commandPath,
     });
 
     // Auto-cancel on client disconnect.
@@ -126,7 +128,7 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
           hostId,
           'execution',
           'execute',
-          [{ pluginId, handlerRef, exportName, input, executionId, requestId, timeoutMs }],
+          [{ projectId, pluginId, commandPath, input, executionId, requestId, timeoutMs, namespaceId: auth.namespaceId }],
         ),
       );
 

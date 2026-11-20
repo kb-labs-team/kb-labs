@@ -10,7 +10,7 @@ describe('HostAgentTransport', () => {
     const transport = new HostAgentTransport(path.join(directory, 'missing.sock'));
     try {
       await expect(transport.execute({
-        pluginId: '@example/plugin', handlerRef: 'dist/index.js', input: {},
+        projectId: 'project-1', pluginId: '@example/plugin', commandPath: 'example run', input: {},
       })[Symbol.asyncIterator]().next()).rejects.toMatchObject({
         envelope: {
           code: 'KB_HOST_UNREACHABLE',

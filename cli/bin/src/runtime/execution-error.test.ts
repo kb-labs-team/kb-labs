@@ -17,7 +17,7 @@ describe('handleExecutionError', () => {
     vi.spyOn(AuthSessionOwner.prototype, 'load').mockResolvedValue(null);
     const transport = new HttpSseGatewayTransport({ gatewayUrl: 'https://gateway.test', credentialKind: 'either' });
     try {
-      for await (const event of transport.execute({ pluginId: '@example/plugin', handlerRef: 'dist/index.js', input: {} })) {
+      for await (const event of transport.execute({ projectId: 'project-1', pluginId: '@example/plugin', commandPath: 'example run', input: {} })) {
         void event;
       }
     } catch (error) {
@@ -40,7 +40,7 @@ describe('handleExecutionError', () => {
     })));
     const transport = new HttpSseGatewayTransport({ gatewayUrl: 'https://gateway.test', credentialKind: 'either' });
     try {
-      for await (const event of transport.execute({ pluginId: '@example/plugin', handlerRef: 'dist/index.js', input: {} })) {
+      for await (const event of transport.execute({ projectId: 'project-1', pluginId: '@example/plugin', commandPath: 'example run', input: {} })) {
         void event;
       }
     } catch (error) {

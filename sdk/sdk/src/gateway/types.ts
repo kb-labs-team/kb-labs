@@ -66,12 +66,12 @@ export interface GatewayClientConfig {
  * CLI maps its argv/flags into this format.
  */
 export interface GatewayExecuteRequest {
+  /** Stable ID derived from the active canonical project root. */
+  projectId: string;
   /** Plugin ID (from plugin manifest) */
   pluginId: string;
-  /** Handler file reference */
-  handlerRef: string;
-  /** Export name from handler file */
-  exportName?: string;
+  /** Exact logical command path declared by the plugin manifest. */
+  commandPath: string;
   /** Input data (argv, flags) */
   input: unknown;
   /** Timeout in ms */

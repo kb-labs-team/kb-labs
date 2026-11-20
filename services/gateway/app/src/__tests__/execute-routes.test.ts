@@ -106,7 +106,7 @@ describe('POST /api/v1/execute — success', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/execute',
-      payload: { pluginId: 'my-plugin', handlerRef: 'handlers/main.js', input: { foo: 'bar' } },
+      payload: { projectId: "project-001", pluginId: 'my-plugin', commandPath: 'handlers/main.js', input: { foo: 'bar' } },
     });
 
     expect(res.statusCode).toBe(200);
@@ -117,7 +117,7 @@ describe('POST /api/v1/execute — success', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/execute',
-      payload: { pluginId: 'my-plugin', handlerRef: 'handlers/main.js', input: {} },
+      payload: { projectId: "project-001", pluginId: 'my-plugin', commandPath: 'handlers/main.js', input: {} },
     });
 
     const events = parseNdjson(res.body);
@@ -130,7 +130,7 @@ describe('POST /api/v1/execute — success', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/execute',
-      payload: { pluginId: 'p', handlerRef: 'h', input: null },
+      payload: { projectId: "project-001", pluginId: 'p', commandPath: 'h', input: null },
     });
 
     expect(res.headers['x-execution-id']).toBeTruthy();
@@ -141,7 +141,7 @@ describe('POST /api/v1/execute — success', () => {
     await app.inject({
       method: 'POST',
       url: '/api/v1/execute',
-      payload: { pluginId: 'test-plugin', handlerRef: 'handler.js', input: { x: 1 } },
+      payload: { projectId: "project-001", pluginId: 'test-plugin', commandPath: 'handler.js', input: { x: 1 } },
     });
 
     expect(mockDispatcher.firstHostWithCapability).toHaveBeenCalledWith('ns-test', 'execution');
@@ -151,7 +151,7 @@ describe('POST /api/v1/execute — success', () => {
       'execution',
       'execute',
       expect.arrayContaining([
-        expect.objectContaining({ pluginId: 'test-plugin', handlerRef: 'handler.js' }),
+        expect.objectContaining({ projectId: "project-001", pluginId: 'test-plugin', commandPath: 'handler.js', namespaceId: 'ns-test' }),
       ]),
     );
   });
@@ -160,7 +160,7 @@ describe('POST /api/v1/execute — success', () => {
     await app.inject({
       method: 'POST',
       url: '/api/v1/execute',
-      payload: { pluginId: 'p', handlerRef: 'h', input: null },
+      payload: { projectId: "project-001", pluginId: 'p', commandPath: 'h', input: null },
     });
 
     // broadcast is called at least once (for execution:done)
@@ -174,7 +174,7 @@ describe('POST /api/v1/execute — success', () => {
     await app.inject({
       method: 'POST',
       url: '/api/v1/execute',
-      payload: { pluginId: 'p', handlerRef: 'h', input: null },
+      payload: { projectId: "project-001", pluginId: 'p', commandPath: 'h', input: null },
     });
     // After response, execution should have been removed
     expect(executionRegistry.size).toBe(before);
@@ -184,21 +184,35 @@ describe('POST /api/v1/execute — success', () => {
 // ── POST /api/v1/execute — error cases ───────────────────────────────────────
 
 describe('POST /api/v1/execute — error cases', () => {
+  it('rejects caller-supplied handler paths and permission descriptors', async () => {
+    // case: S-010.8
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/execute',
+      payload: {
+        projectId: 'project-001', pluginId: 'p', commandPath: 'p run', input: {},
+        handlerRef: '/tmp/attacker.js', descriptor: { permissions: { fs: { write: ['.'] } } },
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(mockDispatcher.call).not.toHaveBeenCalled();
+  });
+
   it('returns 400 when pluginId is missing', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/execute',
-      payload: { handlerRef: 'h', input: {} },
+      payload: { projectId: "project-001", commandPath: 'h', input: {} },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', correlationId: expect.any(String) } });
   });
 
-  it('returns 400 when handlerRef is missing', async () => {
+  it('returns 400 when commandPath is missing', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/execute',
-      payload: { pluginId: 'p', input: {} },
+      payload: { projectId: "project-001", pluginId: 'p', input: {} },
     });
     expect(res.statusCode).toBe(400);
   });
@@ -209,7 +223,7 @@ describe('POST /api/v1/execute — error cases', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/execute',
-      payload: { pluginId: 'p', handlerRef: 'h', input: null },
+      payload: { projectId: "project-001", pluginId: 'p', commandPath: 'h', input: null },
     });
 
     expect(res.statusCode).toBe(503);
@@ -241,7 +255,7 @@ describe('POST /api/v1/execute — error cases', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/execute',
-      payload: { pluginId: 'p', handlerRef: 'h', input: null },
+      payload: { projectId: "project-001", pluginId: 'p', commandPath: 'h', input: null },
     });
 
     expect(res.statusCode).toBe(200); // headers already sent
@@ -273,7 +287,7 @@ describe('POST /api/v1/execute/:id/cancel', () => {
       namespaceId: 'ns-test',
       hostId: 'host-001',
       pluginId: 'p',
-      handlerRef: 'h',
+      commandPath: 'h',
     });
 
     const res = await app.inject({
@@ -310,7 +324,7 @@ describe('POST /api/v1/execute/:id/cancel', () => {
       namespaceId: 'ns-other', // different namespace
       hostId: 'host-002',
       pluginId: 'p',
-      handlerRef: 'h',
+      commandPath: 'h',
     });
 
     const res = await app.inject({
@@ -334,7 +348,7 @@ describe('POST /api/v1/execute/:id/cancel', () => {
       namespaceId: 'ns-test',
       hostId: 'host-001',
       pluginId: 'p',
-      handlerRef: 'h',
+      commandPath: 'h',
     });
     // Cancel it first
     executionRegistry.cancel('exec-already-cancelled', 'user');
@@ -358,7 +372,7 @@ describe('POST /api/v1/execute/:id/cancel', () => {
       namespaceId: 'ns-test',
       hostId: 'host-001',
       pluginId: 'p',
-      handlerRef: 'h',
+      commandPath: 'h',
     });
 
     const res = await app.inject({
@@ -396,7 +410,7 @@ describe('POST /api/v1/execute — auth guard', () => {
     const res = await appNoAuth.inject({
       method: 'POST',
       url: '/api/v1/execute',
-      payload: { pluginId: 'p', handlerRef: 'h', input: null },
+      payload: { projectId: "project-001", pluginId: 'p', commandPath: 'h', input: null },
     });
     expect(res.statusCode).toBe(401);
   });

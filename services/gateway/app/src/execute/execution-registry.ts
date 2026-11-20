@@ -20,7 +20,7 @@ export interface ActiveExecution {
   namespaceId: string;
   hostId: string;
   pluginId: string;
-  handlerRef: string;
+  commandPath: string;
   controller: AbortController;
   startedAt: number;
   cancelledReason?: CancellationReason;

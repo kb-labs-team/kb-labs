@@ -14,8 +14,14 @@ export const ExecutionConfigSchema = z.object({
   mode: z.enum(['in-process', 'subprocess']).default('in-process'),
   /** Overall execution timeout in ms */
   timeoutMs: z.number().positive().default(120_000),
-  /** Plugin allowlist. Empty/undefined = all plugins allowed. */
+  /** Plugin ID gate applied in addition to the exact Marketplace pin approval below. */
   allowedPlugins: z.array(z.string()).optional(),
+  /** Exact Marketplace pins approved by the local Host Agent operator. */
+  marketplacePins: z.array(z.object({
+    package: z.string().min(1),
+    version: z.string().min(1),
+    integrity: z.string().min(1),
+  }).strict()).default([]),
 });
 
 /** Workspace entry — describes a project directory managed by this agent */

@@ -146,7 +146,9 @@ export async function startDaemon(): Promise<void> {
     allowedPaths: config.workspacePaths,
     executionMode: config.execution.mode,
     timeoutMs: config.execution.timeoutMs,
-    allowedPlugins: config.execution.allowedPlugins,
+    allowedPlugins: config.execution.allowedPlugins ?? [],
+    marketplacePins: config.execution.marketplacePins,
+    namespaceId: config.namespaceId,
   });
 
   gatewayClient.registerHandler('execution', (call) => executionHandler.handle(call));

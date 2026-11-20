@@ -152,7 +152,7 @@ describe('CLI result descriptor boundary', () => {
     expect(result.status, result.stderr || result.stdout).toBe(0);
     expectOneJsonEnvelope(result.stdout, { ok: true, data: { complete: true, remote: true } });
     expect(result.stderr).toContain('fixture Gateway stdout diagnostic');
-    expect(fixture.gatewayRequest).toMatchObject({ pluginId, handlerRef: './handler.js' });
+    expect(fixture.gatewayRequest).toMatchObject({ pluginId, projectId: expect.any(String), commandPath: expect.any(String) });
   });
 
   // case: S-203.1

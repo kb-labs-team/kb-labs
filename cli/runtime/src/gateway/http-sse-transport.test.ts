@@ -16,7 +16,7 @@ describe('HttpSseGatewayTransport credential origin', () => {
     const transport = new HttpSseGatewayTransport({ gatewayUrl: 'https://gateway-b.test', credentialKind: 'either' });
 
     const execution = (async () => {
-      for await (const event of transport.execute({ pluginId: '@example/plugin', handlerRef: 'dist/index.js', input: {} })) { void event; }
+      for await (const event of transport.execute({ projectId: 'project-1', pluginId: '@example/plugin', commandPath: 'example run', input: {} })) { void event; }
     })();
     await expect(execution)
       .rejects.toMatchObject({ envelope: { code: 'KB_AUTH_REQUIRED', details: { gatewayUrl: 'https://gateway-b.test' } } });
