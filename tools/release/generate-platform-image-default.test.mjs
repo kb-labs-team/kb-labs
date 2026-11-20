@@ -12,7 +12,7 @@ const producerPath = fileURLToPath(new URL('./generate-platform-image-default.mj
 const releaseConfigPath = fileURLToPath(new URL('../kb-create/config/platform-release.jsonc', import.meta.url));
 
 // case: S-268.11
-test('image default carries Marketplace sources from the platform release config', async () => {
+test('image default carries Marketplace sources and adapter bindings from the platform release config', async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-image-default-'));
   try {
     const outputPath = path.join(tempRoot, '.kb', 'kb.config.json');
@@ -21,6 +21,7 @@ test('image default carries Marketplace sources from the platform release config
     const generated = JSON.parse(await readFile(outputPath, 'utf8'));
     const release = readPlatformReleaseConfig(releaseConfigPath);
     assert.deepEqual(generated.marketplace?.sources, release.marketplaceSources);
+    assert.deepEqual(generated.platform?.adapters, release.adapters);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -40,4 +41,11 @@ test('image default carries the platform data layout used by adapter runtime pat
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
+});
+
+// case: S-268.11
+test('Registry image gives KB_HOME a writable root under the copied platform data directory', async () => {
+  const dockerfile = await readFile(path.join(workspaceRoot, 'services/marketplace-registry/app/Dockerfile'), 'utf8');
+  assert.match(dockerfile, /KB_HOME=\/app\/\.kb\/data/);
+  assert.match(dockerfile, /mkdir -p \.kb\/data && chown -R kb:nodejs \.kb/);
 });

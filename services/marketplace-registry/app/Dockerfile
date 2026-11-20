@@ -2,7 +2,8 @@
 FROM node:24-slim AS runner
 WORKDIR /app
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    KB_HOME=/app/.kb/data
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser  --system --uid 1001 --ingroup nodejs kb

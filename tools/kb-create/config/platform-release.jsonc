@@ -10,7 +10,9 @@
       "logRingBuffer": "@kb-labs/adapters-log-ringbuffer",
       "logPersistence": "@kb-labs/adapters-log-document",
       "analytics": "@kb-labs/adapters-analytics-sqlite",
-      "serviceTransport": "@kb-labs/adapters-service-transport-http"
+      "serviceTransport": "@kb-labs/adapters-service-transport-http",
+      "llm": "@kb-labs/adapters-openai/llm",
+      "embeddings": "@kb-labs/adapters-openai/embeddings"
     },
     "adapterOptions": {
       "cache": {
