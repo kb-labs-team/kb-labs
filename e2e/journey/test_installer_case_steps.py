@@ -1191,6 +1191,10 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     payload = {"ok": True, "data": {"host": {"state": "stopped"},
                               "running": False, "reachable": False}}
                 elif args[1] == "apply":
+                    platform_root = Path(args[args.index("--platform-root") + 1])
+                    active = platform_root / "versions" / "fixture-version"
+                    active.mkdir(parents=True)
+                    (platform_root / "current").symlink_to(Path("versions") / "fixture-version")
                     payload = {"ok": True, "data": {"operation": "apply"}}
                 else:
                     payload = {"ok": True, "data": {"plan": {"request": {"source": "offline"},
@@ -1203,12 +1207,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].cases, ["S-181.4"])
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
-        self.assertEqual([call[1] for call in calls], ["status", "apply", "plan", "status"])
+        self.assertEqual([call[1] for call in calls], ["status", "apply", "plan", "plan", "plan", "status"])
         self.assertNotIn("--offline", calls[1])
-        self.assertIn("--offline", calls[2])
+        self.assertTrue(all("--offline" in call for call in calls[2:5]))
         cache_root = root.parent / "s181-offline-root"
         self.assertEqual(calls[1][calls[1].index("--platform-root") + 1], str(cache_root))
         self.assertEqual(calls[2][calls[2].index("--platform-root") + 1], str(cache_root))
+        self.assertEqual(calls[3][calls[3].index("--platform-root") + 1], str(cache_root / "current"))
+        self.assertEqual(calls[4][calls[4].index("--platform-root") + 1], str(cache_root / "versions" / "fixture-version"))
 
     def test_platform_cli_resolves_the_requested_roots_executable(self):
         with tempfile.TemporaryDirectory(prefix="journey-platform-cli-") as temp:

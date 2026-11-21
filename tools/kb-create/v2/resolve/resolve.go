@@ -537,7 +537,7 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 			return kindErr
 		}
 		if request.Source == contracts.SourceOffline {
-			layout, err := versionroot.New(request.PlatformRoot)
+			layout, err := versionroot.ForPlatformPath(request.PlatformRoot)
 			if err != nil {
 				return err
 			}
