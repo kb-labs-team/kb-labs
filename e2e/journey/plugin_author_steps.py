@@ -221,11 +221,21 @@ for (const [id, pin] of Object.entries(lock.plugins ?? {})) {
 }
 process.stdout.write(JSON.stringify([...routes]));
 """
+    inspection_env = dict(env)
+    if not inspection_env.get("KB_HOME", "").strip():
+        platform_root = (inspection_env.get("KB_JOURNEY_PLATFORM_ROOT")
+                         or inspection_env.get("KB_PLATFORM_ROOT"))
+        if platform_root:
+            inspection_env["KB_HOME"] = str(
+                Path(platform_root).resolve()
+                / layout_value("sharedStateDirectory")
+                / layout_value("kbHomeDirectory")
+            )
     result = run_with_runner(
         command_runner,
         ["node", "--input-type=module", "-e", script, str(lock_path)],
         cwd=Path(workspace_root),
-        env=env,
+        env=inspection_env,
         timeout=60,
     )
     if result.returncode != 0:
