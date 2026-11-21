@@ -547,22 +547,42 @@ class ServiceJourneyTests(unittest.TestCase):
                     marketplace_calls = []
                     result = graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
                                         lambda: marketplace_calls.append("ran"), record_empty_success=False)
+                    fixture_calls = []
+                    fixture_result = graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
+                                                 lambda: fixture_calls.append("MCP"),
+                                                 record_empty_success=False)
+                    mcp_calls = []
+                    mcp_result = graph.flow("project MCP cross-project isolation", "mcp", "mcp",
+                                             lambda: mcp_calls.append("owner"), cases=["S-140.5"],
+                                             record_empty_success=False)
                 self.assertEqual(result, "SKIPPED")
                 self.assertEqual(marketplace_calls, [])
+                if case_id == "S-140.5":
+                    self.assertEqual(fixture_result, "PASS")
+                    self.assertEqual(fixture_calls, ["MCP"])
+                    self.assertEqual(mcp_result, "PASS")
+                    self.assertEqual(mcp_calls, ["owner"])
+                else:
+                    self.assertEqual(fixture_result, "SKIPPED")
+                    self.assertEqual(fixture_calls, [])
+                    self.assertEqual(mcp_result, "SKIPPED")
+                    self.assertEqual(mcp_calls, [])
 
-        full_journey = Journey("local", "full-selection-still-runs-marketplace")
-        full_graph = FlowGraph(
-            full_journey, {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
-            states={
-                "host-running": {"passed": True, "evidence": "host ready"},
-                "project-registered": {"passed": True, "evidence": "project registered"},
-                "service-api-session": {"passed": True, "evidence": "service API ready"},
-                "marketplace-available": {"passed": True, "evidence": "fixture available"},
-            }, state_producers=STATE_PRODUCERS, groups=SERVICE_GROUPS,
-        )
-        full_calls = []
-        self.assertEqual(full_graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
-                                         lambda: full_calls.append("ran"), record_empty_success=False), "PASS")
+        with patch.dict(os.environ, {}, clear=True):
+            full_journey = Journey("local", "full-selection-still-runs-marketplace")
+            full_graph = FlowGraph(
+                full_journey, {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered"},
+                    "service-api-session": {"passed": True, "evidence": "service API ready"},
+                    "marketplace-available": {"passed": True, "evidence": "fixture available"},
+                }, state_producers=STATE_PRODUCERS, groups=SERVICE_GROUPS,
+            )
+            full_calls = []
+            full_result = full_graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                                          lambda: full_calls.append("ran"), record_empty_success=False)
+        self.assertEqual(full_result, "PASS")
         self.assertEqual(full_calls, ["ran"])
 
     def test_marketplace_claim_selects_its_flow_and_state_producer(self):
