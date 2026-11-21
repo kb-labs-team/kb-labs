@@ -59,7 +59,7 @@
     "build:cli": "tsup --config tsup.config.ts"
   },
   "dependencies": {
-    "simple-git": "^3.36.0",
+    "simple-git": "^4.0.2",
     "chalk": "^5.3.0"
   },
   "devDependencies": {
