@@ -357,6 +357,25 @@ describe("kb-host project routing", () => {
       expect(reinstalledRoute.status, JSON.stringify(reinstalledBody)).toBe(200);
       expect(reinstalledBody).toMatchObject({ ok: true, data: { scope: "root" } });
 
+      // case: S-160.5 — exercise token delivery through the real child
+      // runtime, runtime guard proof, REST setup closure, and CLI executor.
+      const commandExecution = await running.fetchGateway(
+        `/api/v1/projects/${project.id}/rest/commands/execute`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            requestId: "runtime-guard-command-proof",
+            pluginId: "@kb-labs/commit",
+            commandPath: "commit plan delete",
+            input: { argv: [], flags: { json: true } },
+          }),
+        },
+      );
+      expect(commandExecution.status).toBe(200);
+      const commandEvents = (await commandExecution.text()).trim().split("\n").map((line) => JSON.parse(line) as { type: string; exitCode?: number });
+      expect(commandEvents).toContainEqual(expect.objectContaining({ type: "execution:done", exitCode: 0 }));
+
       const health = await readUxSuccessResult<HealthBody>(await running.fetchGateway("/health"));
       expect(health.projectRuntimes.runtimes).toContainEqual(
         expect.objectContaining({ projectId: project.id, state: "ready", restarts: 3 }),

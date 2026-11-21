@@ -12,7 +12,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import { createSensitiveStreamCapture, getRequestSensitiveValues, SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { ErrorEnvelope, SerializedError } from '@kb-labs/core-platform';
 import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import { createStdioChannel, StdioPlatformServer } from '@kb-labs/core-ipc';
@@ -272,13 +272,19 @@ export async function runInSubprocess<T = unknown>(
     });
 
     let completed = false;
-    let stderrBuffer = '';
+    let outputActive = true;
+    const stderrCapture = createSensitiveStreamCapture(getRequestSensitiveValues(), (message) => {
+      if (!outputActive) { return; }
+      options.onLog?.({ level: 'error', message, stream: 'stderr', lineNo: 0, timestamp: new Date().toISOString() });
+    });
     const timeoutId: { timer?: ReturnType<typeof setTimeout> } = {};
     let cancelId: ReturnType<typeof setTimeout> | undefined;
     const channel = createStdioChannel(child.stdout, child.stdin);
     const platformServer = new StdioPlatformServer(channel, platform);
     const finish = () => {
       completed = true;
+      stderrCapture.flush();
+      outputActive = false;
       clearTimeout(timeoutId.timer);
       clearTimeout(cancelId);
       signal?.removeEventListener('abort', abortHandler);
@@ -308,23 +314,8 @@ export async function runInSubprocess<T = unknown>(
 
     channel.onError((error) => fail(error));
 
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrBuffer += chunk.toString('utf8');
-      const lines = stderrBuffer.split(/\r?\n/);
-      stderrBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        options.onLog?.({
-          level: 'error', message: line, stream: 'stderr', lineNo: 0, timestamp: new Date().toISOString(),
-        });
-      }
-    });
-    child.stderr.on('end', () => {
-      if (stderrBuffer.length > 0) {
-        options.onLog?.({
-          level: 'error', message: stderrBuffer, stream: 'stderr', lineNo: 0, timestamp: new Date().toISOString(),
-        });
-      }
-    });
+    child.stderr.on('data', (chunk: Buffer) => stderrCapture.write(chunk));
+    child.stderr.once('end', () => stderrCapture.flush());
 
     // Set timeout
 

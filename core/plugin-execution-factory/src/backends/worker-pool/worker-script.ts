@@ -27,6 +27,7 @@ import { SerializedErrorEnvelopeError, withProcessSensitiveValues } from '@kb-la
 import type { ExecutionError } from '@kb-labs/core-platform';
 import { normalizeExecutionFailure } from '../../utils.js';
 import { createWorkerOutputCapture, redactSensitiveValue } from './output-capture.js';
+import { withWorkerRequestOutputScope } from './request-output-scope.js';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
 import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
 import type { ITransport } from '@kb-labs/core-ipc';
@@ -226,11 +227,6 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
     const jsonMode = Boolean(inputFlags['json']);
     if (jsonMode) { setJsonMode(true); }
 
-    // Capture original write before any interception (used by debug + makeCapture).
-    type WriteFn = (chunk: string | Uint8Array, encoding?: BufferEncoding | ((err?: Error | null) => void), cb?: (err?: Error | null) => void) => boolean;
-    const origStdoutWrite = process.stdout.write.bind(process.stdout) as WriteFn;
-    const origStderrWrite = process.stderr.write.bind(process.stderr) as WriteFn;
-
     // eventEmitter sends log lines to parent pool via IPC.
     // Routes by event name — 'log.line' (ui/shell) vs 'logger.line' (ctx.logger.*).
     // See: services/workflow/docs/adr/0019-log-stream-separation.md
@@ -288,12 +284,8 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     const stdoutCapture = createWorkerOutputCapture('stdout', sendRawLine, sensitiveValues);
     const stderrCapture = createWorkerOutputCapture('stderr', sendRawLine, sensitiveValues);
-    process.stdout.write = stdoutCapture as typeof process.stdout.write;
-    process.stderr.write = stderrCapture as typeof process.stderr.write;
-
     let result!: Awaited<ReturnType<typeof runInProcess>>;
-    try {
-      result = await withProcessSensitiveValues(sensitiveValues, () => runInProcess({
+    result = await withWorkerRequestOutputScope(stdoutCapture, stderrCapture, () => withProcessSensitiveValues(sensitiveValues, () => runInProcess({
         descriptor: request.descriptor,
         platform,
         ui,
@@ -304,13 +296,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
         platformRoot: request.platformRoot,
         environment: request.env,
         adapterMiddlewares,
-      }));
-    } finally {
-      stdoutCapture.flush();
-      stderrCapture.flush();
-      process.stdout.write = origStdoutWrite;
-      process.stderr.write = origStderrWrite;
-    }
+      })));
 
     const elapsedMs = Date.now() - startMs;
 

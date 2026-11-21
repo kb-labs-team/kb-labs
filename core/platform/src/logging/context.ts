@@ -446,6 +446,11 @@ export function withProcessSensitiveValues<T>(values: readonly string[], run: ()
   return requestSensitiveValues.run(values.filter(Boolean), run);
 }
 
+/** Return the request-scoped secrets for boundaries that must redact raw streams. */
+export function getRequestSensitiveValues(): readonly string[] {
+  return requestSensitiveValues.getStore() ?? [];
+}
+
 /** Redact a rendered diagnostic string through the process-owned secret registry. */
 export function redactProcessSensitiveString(value: string): string {
   return getProcessSensitiveValues().redactString(value);

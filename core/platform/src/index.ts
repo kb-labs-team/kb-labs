@@ -183,6 +183,7 @@ export {
   createProcessRootLogContext,
   registerProcessSensitiveValues,
   withProcessSensitiveValues,
+  getRequestSensitiveValues,
   isAgentDiagnosticsEnabled,
   PLATFORM_LOG_FIELDS,
   type IContextLogger,
@@ -193,6 +194,7 @@ export {
   type PlatformLogContext,
   type PluginLogContext,
 } from "./logging/context.js";
+export { createSensitiveStreamCapture, type SensitiveStreamCapture } from "./logging/sensitive-stream.js";
 export { logUnexpectedCliError } from "./logging/unexpected-error.js";
 export {
   logDiagnosticEvent,

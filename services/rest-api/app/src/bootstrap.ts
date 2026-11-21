@@ -17,11 +17,9 @@ import {
 } from "./middleware/metrics.js";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import { consumeProjectRuntimeToken } from "./runtime-token.js";
 
 // System metrics collector instance for cleanup
 let metricsCollector: SystemMetricsCollector | null = null;
-let projectRuntimeToken: string | undefined;
 
 /**
  * Bootstrap REST API server
@@ -57,12 +55,12 @@ export async function setup({
   host,
   projectRoot: repoRoot,
   platformRoot,
+  projectRuntimeToken,
   logger: serviceLogger,
 }: ServiceContext): Promise<() => Promise<void>> {
   const projectRoot = requireProjectContext(repoRoot);
   // Keep the runtime guard credential in the route's closure only. Plugins,
   // workers, subprocesses, and ordinary process logs must not inherit it.
-  projectRuntimeToken ??= consumeProjectRuntimeToken();
   const runtimeToken = projectRuntimeToken;
   // Platform launch has already loaded the layered environment.
   const { config, diagnostics } = await loadRestApiConfig(projectRoot);
@@ -127,12 +125,12 @@ export async function setup({
     });
   });
 
-  const server = await createServer(config, projectRoot, registry, undefined, {
+  const server = await createServer(config, projectRoot, registry, undefined, runtimeToken ? {
     projectId,
     projectRoot,
     platformRoot,
     runtimeToken,
-  });
+  } : undefined);
 
   // Start system metrics collector
   bootstrapLogger.info("Starting system metrics collector");

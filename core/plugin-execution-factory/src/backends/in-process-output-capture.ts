@@ -40,14 +40,20 @@ export async function withInProcessOutputCapture<T>(
   secrets: readonly string[],
   emit: (message: string, stream: 'stdout' | 'stderr') => void,
   run: () => Promise<T>,
+  jsonMode = false,
 ): Promise<T> {
   installRequestScopedStdoutCapture();
   const capture: RequestCapture = {
-    stdout: createWorkerOutputCapture('stdout', emit, secrets),
-    stderr: createWorkerOutputCapture('stderr', emit, secrets),
+    stdout: createWorkerOutputCapture('stdout', (message, stream) => requestCapture.exit(() => emit(message, jsonMode && stream === 'stdout' ? 'stderr' : stream)), secrets),
+    stderr: createWorkerOutputCapture('stderr', (message, stream) => requestCapture.exit(() => emit(message, jsonMode && stream === 'stdout' ? 'stderr' : stream)), secrets),
   };
   return requestCapture.run(capture, async () => {
     try { return await run(); }
     finally { capture.stdout.flush(); capture.stderr.flush(); }
   });
+}
+
+/** Run host callbacks outside the plugin output scope to prevent recursive capture. */
+export function withoutInProcessOutputCapture<T>(run: () => T): T {
+  return requestCapture.exit(run);
 }

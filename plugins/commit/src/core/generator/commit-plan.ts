@@ -1111,7 +1111,7 @@ async function validateAndFixCommits(
  * Retry LLM call with automatic fallback on parse errors
  * Tries up to MAX_LLM_RETRIES times before throwing
  */
-async function retryLLMCall(
+export async function retryLLMCall(
   llmFn: () => Promise<{ content: string; tokensUsed?: number }>,
   phase: string,
   logger: ReturnType<typeof useLogger>,
@@ -1133,6 +1133,7 @@ async function retryLLMCall(
       return result;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      if (lastError.name === 'AbortError') { throw lastError; }
 
       // DEBUG: Log full error details
       await logger.error(`🔍 LLM call failed (attempt ${attempt})`, lastError, {

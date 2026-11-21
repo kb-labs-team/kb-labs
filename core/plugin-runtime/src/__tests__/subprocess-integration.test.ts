@@ -18,6 +18,7 @@ import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { createStdioChannel } from '@kb-labs/core-ipc';
 import { runInSubprocess } from '../sandbox/runner.js';
+import { withProcessSensitiveValues } from '@kb-labs/core-platform';
 import { wrapCliResult } from '../host/cli-wrapper.js';
 import type { PluginContextDescriptor, CommandResult } from '@kb-labs/plugin-contracts';
 import {
@@ -196,6 +197,37 @@ describe('Subprocess Integration Tests', () => {
       rmSync(testDir, { recursive: true, force: true });
     }
   }, 10000);
+
+  // case: S-203.26
+  it('redacts subprocess stderr secrets split across writes and frame boundaries', async () => {
+    const testDir = join(tmpdir(), `subprocess-stderr-redaction-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const secret = 'subprocess-secret-cross-lines';
+    try {
+      const handlerPath = join(testDir, 'stderr-handler.mjs');
+      writeFileSync(handlerPath, `export default { async execute() { process.stderr.write('subprocess-secret'); process.stderr.write('-cross-lines\\r'); return { ok: true }; } };`);
+      const descriptor: PluginContextDescriptor = {
+        hostType: 'cli', pluginId: '@kb-labs/test-subprocess', pluginVersion: '1.0.0',
+        requestId: 'subprocess-stderr-redaction', handlerId: 'test:stderr', permissions: {},
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+      };
+      const logs: string[] = [];
+      const result = await withProcessSensitiveValues([secret], () => runInSubprocess({
+        descriptor,
+        platform: createPlatform(),
+        handlerPath,
+        input: {},
+        timeoutMs: 5000,
+        cwd: testDir,
+        onLog: (entry) => logs.push(entry.message),
+      }));
+      expect(result.data).toEqual({ ok: true });
+      expect(logs.join('')).not.toContain(secret);
+      expect(logs.join('')).toContain('[REDACTED]');
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
 
   it('loads the manifest-selected object export in subprocess mode', async () => {
     const testDir = join(tmpdir(), `sandbox-named-export-${Date.now()}`);

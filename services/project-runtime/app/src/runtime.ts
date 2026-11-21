@@ -198,6 +198,7 @@ export async function createProjectRuntimeConfig(
     defineHostModule({
       id: projectServiceId(spec),
       serviceId: projectServiceId(spec),
+      ...(projectServiceId(spec) === 'rest' ? { projectRuntimeToken: options.token } : {}),
       defaultPort: 0,
       portEnvVar: "KB_PROJECT_RUNTIME_UNUSED_PORT",
       // Project services never bind beyond loopback and take no env override.

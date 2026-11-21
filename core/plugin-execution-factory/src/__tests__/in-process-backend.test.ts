@@ -119,9 +119,13 @@ describe('InProcessBackend — loggerOverride platform handoff', () => {
     const backend = new InProcessBackend({ platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'] });
     const logs: string[] = [];
 
-    await backend.execute(makeRequest(), { onLog: (entry) => logs.push(entry.message) });
+    await backend.execute(makeRequest(), { onLog: (entry) => {
+      logs.push(entry.message);
+      if (logs.length === 1) { process.stderr.write('host loader callback\n'); }
+    } });
 
     expect(logs.join('')).toContain('In-process phase');
+    expect(logs.join('')).not.toContain('host loader callback');
     expect(logs.join('')).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
   });
 
@@ -146,6 +150,26 @@ describe('InProcessBackend — loggerOverride platform handoff', () => {
       'stderr [REDACTED]',
     ]);
     expect(logs.join('')).not.toContain('in-process-secret');
+  });
+
+  it('keeps raw plugin output off stdout in JSON mode and does not recapture the host callback', async () => {
+    vi.mocked(runInProcess).mockImplementation(async () => {
+      console.log('plugin diagnostic');
+      return { data: { ok: true }, executionMeta: {} } as never;
+    });
+    const backend = new InProcessBackend({ platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'] });
+    const logs: Array<{ message: string; stream: string }> = [];
+
+    await backend.execute(makeRequest({ input: { argv: [], flags: { json: true } } }), {
+      onLog: (entry) => {
+        logs.push({ message: entry.message, stream: entry.stream });
+        // A host-side callback that writes while handling output must not be
+        // intercepted as a second plugin write by the same ALS scope.
+        if (logs.length === 1) { process.stderr.write('host callback output\n'); }
+      },
+    });
+
+    expect(logs).toEqual([{ message: 'plugin diagnostic', stream: 'stderr' }]);
   });
 
   // case: S-030.1
