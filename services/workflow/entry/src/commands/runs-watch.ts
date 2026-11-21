@@ -21,6 +21,7 @@ const STATUS_ICON: Record<string, string> = {
   cancelled: '⊘',
   waiting_approval: '⏳',
   waiting_child: '⏳',
+  waiting: '⏳',
   interrupted: '‖',
 };
 
@@ -112,7 +113,8 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
                     for (const stepRecord of job.steps) {
                       if (typeof stepRecord !== 'object' || stepRecord === null || !('id' in stepRecord) || typeof stepRecord.id !== 'string' || !('spec' in stepRecord) || typeof stepRecord.spec !== 'object' || stepRecord.spec === null || !('id' in stepRecord.spec) || typeof stepRecord.spec.id !== 'string') { continue; }
                       stepIds.set(stepRecord.id, stepRecord.spec.id);
-                      const stepStatus = stepRecord.status === 'running' ? 'started' :
+                      const stepStatus = stepRecord.status === 'waiting' ? 'waiting' :
+                        stepRecord.status === 'running' ? 'started' :
                         stepRecord.status === 'success' ? 'succeeded' :
                         stepRecord.status === 'failed' ? 'failed' : undefined;
                       if (stepStatus) {
@@ -129,7 +131,10 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
               const stepId = event.stepId ? stepIds.get(event.stepId) ?? event.stepId : undefined;
               const step = stepId ? ` step:${stepId}` : '';
               const job = event.jobId ? ` job:${event.jobId.slice(0, 8)}` : '';
-              const summary = event.payload?.['summary'] ?? event.payload?.['error'] ?? '';
+              const waitDetails = event.type === 'step.waiting'
+                ? [event.payload?.['reason'], event.payload?.['dependency'], event.payload?.['until']].filter((value): value is string => typeof value === 'string').join(' · ')
+                : '';
+              const summary = waitDetails || event.payload?.['summary'] || event.payload?.['error'] || '';
 
               if (!outputJson) { ctx.ui?.write?.(`${icon} ${event.type}${job}${step}${summary ? `  —  ${summary}` : ''}`); }
 

@@ -1,3 +1,4 @@
+export * from './activity'
 export * from './schemas'
 export * from './types'
 export * from './expressions'

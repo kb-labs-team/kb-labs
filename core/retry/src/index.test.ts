@@ -14,7 +14,31 @@ describe('classifyFailure', () => {
   });
 });
 
+describe('structured workflow failures', () => {
+  it('preserves explicitly retryable external failure details', () => {
+    const input = { kind: 'rate_limit', retryable: true, retryAfterMs: 120000, dependency: 'registry', message: 'unavailable' };
+    expect(classifyFailure(input)).toMatchObject(input);
+  });
+
+  it('rejects non-finite or negative retry-after values', () => {
+    for (const retryAfterMs of [-1, Infinity, NaN]) {
+      const failure = classifyFailure({ kind: 'rate_limit', retryable: true, retryAfterMs, message: 'busy' });
+      expect(failure).toMatchObject({ kind: 'validation', retryable: false });
+    }
+  });
+
+  it('does not retry when the producer explicitly forbids it', () => {
+    const failure = classifyFailure({ kind: 'rate_limit', retryable: false, message: 'unavailable' });
+    expect(decideRetry({ failure, attempt: 0, idempotent: true }).retry).toBe(false);
+  });
+});
+
 describe('decideRetry', () => {
+  it('never shortens an external retry-after to the backoff cap', () => {
+    const failure = classifyFailure({ kind: 'rate_limit', retryable: true, retryAfterMs: 120000, message: 'busy' });
+    expect(decideRetry({ failure, attempt: 0, policy: { maxDelayMs: 1000, respectRetryAfter: true } }).delayMs).toBe(120000);
+  });
+
   it('does not retry command failures under the implicit policy', () => {
     const failure = classifyFailure({ message: 'checks failed', kind: 'command' }, { source: 'command' });
     expect(decideRetry({ failure, attempt: 0 }).retry).toBe(false);

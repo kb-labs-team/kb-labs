@@ -4,6 +4,7 @@
  */
 
 import { z } from 'zod'
+import { ExternalWaitSchema, StepStateSchema } from './schemas'
 import type { ExecutionTarget, IsolationProfile } from './types'
 import type { RunState, StepState } from '@kb-labs/workflow-constants'
 
@@ -419,6 +420,8 @@ export interface JobStepInfo {
   handler?: string;
   /** Step status */
   status: StepState;
+  /** Details of a durable external wait. */
+  wait?: z.infer<typeof ExternalWaitSchema>;
   /** Step progress (0-100) */
   progress?: number;
   /** Step start time */
@@ -552,7 +555,8 @@ export const JobLogsResponseSchema = z.object({
 export const JobStepInfoSchema = z.object({
   name: z.string(),
   handler: z.string().optional(),
-  status: z.enum(['queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'waiting_approval', 'waiting_child']),
+  status: StepStateSchema,
+  wait: ExternalWaitSchema.optional(),
   progress: z.number().min(0).max(100).optional(),
   startedAt: z.string().optional(),
   finishedAt: z.string().optional(),
