@@ -23,7 +23,7 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable
+from typing import Callable, Sequence
 from urllib.parse import urlsplit
 
 from platform_update_steps import _json_command
@@ -940,7 +940,8 @@ def installer_primary_host_guard(root: Path, launcher: str,
     return guard
 
 
-def run_fixture_group(journey: Journey, label: str, run_fixture: Callable[[], Journey]) -> None:
+def run_fixture_group(journey: Journey, label: str, run_fixture: Callable[[], Journey], *,
+                      cases: Sequence[str] = ()) -> None:
     """Run a nested fixture journey inside the owning journey's host guard and keep its rows.
 
     The fixture always runs and always reports its claims: a guard that cannot
@@ -953,7 +954,14 @@ def run_fixture_group(journey: Journey, label: str, run_fixture: Callable[[], Jo
     def run() -> None:
         nonlocal started
         started = True
-        collected.append(run_fixture())
+        fixture = run_fixture()
+        if cases:
+            recorded = {claim for step in fixture.steps for claim in step.cases}
+            missing = sorted(set(cases) - recorded)
+            if missing:
+                raise RuntimeError(
+                    f"fixture {label!r} did not record its declared claims: {', '.join(missing)}")
+        collected.append(fixture)
 
     for attempt in (lambda: journey.step_guard(label, run), run):
         if started:
@@ -2564,7 +2572,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         platform_root=platform_root, run_command=run_command))
     run_fixture_group(journey, "offline generated-secret install", lambda: run_offline_generated_secret_install_step(
         mode=mode, launcher=launcher, stable_index=stable_index,
-        platform_root=platform_root, run_command=run_command))
+        platform_root=platform_root, run_command=run_command), cases=("S-181.7",))
 
     cleanup_generated_fixture_roots(
         (apply_root, platform_root.parent / "s181-stable-root",

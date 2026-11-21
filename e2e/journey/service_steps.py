@@ -515,7 +515,6 @@ class FlowGraph:
         print(f"SKIPPED {name}: not selected", flush=True)
         self.journey.skipped(name, capability)
         self.journey.record_flow(name, "SKIPPED", "not selected")
-
     def _group_produces_needed_state(self, group: str) -> bool:
         return bool(set(self.groups.get(group, {}).get("produces", ())) & self.needed_states)
 
@@ -799,6 +798,15 @@ class FlowGraph:
             return "BLOCKED"
         self.journey.record_flow(name, "PASS")
         return "PASS"
+
+
+def run_selected_smoke(graph: FlowGraph, step_name: str, capability: str,
+                       required_claim: str, check: Callable[[], object]):
+    """Run a smoke check only when its claim or owning/prerequisite step is selected."""
+    if (graph.selection_active and required_claim not in graph.journey.selected_claims
+            and not graph.selects_steps(step_name)):
+        return graph.journey.skipped(step_name, capability)
+    return check()
 
 
 def _step_dict(step: StepResult) -> dict[str, Any]:
