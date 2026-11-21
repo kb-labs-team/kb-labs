@@ -1,6 +1,7 @@
 import { defineConfig } from 'tsup';
 import nodePreset from '@kb-labs/devkit/tsup/node';
 
+// Verify the unchanged master CLI build configuration against the current stream CI.
 const presetExternal = nodePreset.external || [];
 export default defineConfig({
   ...nodePreset,
