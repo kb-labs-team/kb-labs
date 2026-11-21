@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createWorkerOutputCapture } from './output-capture.js';
+import { createWorkerOutputCapture, redactSensitiveValue } from './output-capture.js';
 
 describe('worker plugin output capture', () => {
   // case: S-203.26
@@ -17,5 +17,16 @@ describe('worker plugin output capture', () => {
     expect(lines.join('')).not.toContain('worker-secret-value');
     expect(lines.join('')).toContain('tail');
     expect(callback).toHaveBeenCalledWith(null);
+  });
+
+  it('redacts nested error envelopes before they cross the worker boundary', () => {
+    const secret = 'worker-error-secret';
+    const result = redactSensitiveValue({
+      message: `failed ${secret}`,
+      details: { causes: [{ stack: `inner ${secret}` }] },
+    }, [secret]);
+
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(result).toMatchObject({ message: 'failed [REDACTED]', details: { causes: [{ stack: 'inner [REDACTED]' }] } });
   });
 });
