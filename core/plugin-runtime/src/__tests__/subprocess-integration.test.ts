@@ -197,6 +197,62 @@ describe('Subprocess Integration Tests', () => {
     }
   }, 10000);
 
+  it('loads the manifest-selected object export in subprocess mode', async () => {
+    const testDir = join(tmpdir(), `sandbox-named-export-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    try {
+      const modulePath = join(testDir, 'show-plan.mjs');
+      writeFileSync(modulePath, `export const showPlan = { async execute(ctx) { return { cwd: ctx.cwd, selected: 'showPlan' }; } };`);
+      const descriptor: PluginContextDescriptor = {
+        hostType: 'cli', pluginId: '@kb-labs/commit', pluginVersion: '1.0.0',
+        requestId: 'named-subprocess-export', handlerId: 'commit:plan:show', permissions: {},
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+      };
+      const result = await runInSubprocess({
+        descriptor,
+        platform: createPlatform(),
+        handlerPath: `${modulePath}#showPlan`,
+        input: {},
+        timeoutMs: 5_000,
+        cwd: testDir,
+      });
+      expect(result.data).toEqual({ cwd: testDir, selected: 'showPlan' });
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it('reports a missing manifest-selected export as KB_PLUGIN_LOAD_FAILED', async () => {
+    const testDir = join(tmpdir(), `sandbox-missing-export-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    try {
+      const modulePath = join(testDir, 'show-plan.mjs');
+      writeFileSync(modulePath, `export const other = { async execute() { return { selected: 'other' }; } };`);
+      const descriptor: PluginContextDescriptor = {
+        hostType: 'cli', pluginId: '@kb-labs/commit', pluginVersion: '1.0.0',
+        requestId: 'missing-subprocess-export', handlerId: 'commit:plan:show', permissions: {},
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+      };
+      let failure: unknown;
+      try {
+        await runInSubprocess({
+          descriptor,
+          platform: createPlatform(),
+          handlerPath: `${modulePath}#showPlan`,
+          input: {},
+          timeoutMs: 5_000,
+          cwd: testDir,
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(SerializedErrorEnvelopeError);
+      expect((failure as SerializedErrorEnvelopeError).envelope.code).toBe('KB_PLUGIN_LOAD_FAILED');
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
   // case: S-244.9
   it('multiplexes platform RPC and console logs without corrupting framed stdout', async () => {
     const testDir = join(tmpdir(), `subprocess-stdio-test-${Date.now()}`);
