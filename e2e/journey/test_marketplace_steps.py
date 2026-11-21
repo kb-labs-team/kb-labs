@@ -164,7 +164,10 @@ class MarketplaceStepTests(unittest.TestCase):
                 "installed": [{"id": "journey-npm-only-fixture", "source": "npm", "signatureStatus": "unsigned"}],
                 "marketplaceSources": [{"kind": "registry", "url": "http://registry.test"}],
             }}
+            observed_tokens = []
             def runner(command, **_kwargs):
+                if command[:1] == ["kb"] or command[0].endswith("kb-create"):
+                    observed_tokens.append((command[1:3], _kwargs.get("env", {}).get("KB_JOURNEY_MARKETPLACE_TOKEN")))
                 if command[0].endswith("kb-create") and command[1] == "update":
                     return subprocess.CompletedProcess(command, 0, json.dumps(rendered), "")
                 if command[0].endswith("kb-create"):
@@ -187,7 +190,7 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_REGISTRY": "http://verdaccio.test",
                    "KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://registry.test",
                    "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY": "journey-public-key",
-                   "KB_JOURNEY_MARKETPLACE_TOKEN": "journey-token-secret-value",
+                   "KB_JOURNEY_MARKETPLACE_TOKEN": "",
                    "KB_JOURNEY_KB_CREATE_PATH": str(project / "kb-create")}
             with patch("marketplace_steps._set_marketplace_proxy_faults"), \
                     patch("marketplace_steps._assert_catalogued_marketplace_failure"), \
@@ -201,6 +204,14 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(claims, {f"S-268.{number}" for number in range(2, 9)})
             self.assertTrue(all(step.status == "PASS" for step in journey.steps),
                             [(step.name, step.status, step.message) for step in journey.steps])
+            self.assertTrue(observed_tokens)
+            self.assertTrue(all(token == "" for command, token in observed_tokens
+                                if command[:2] == ["update", "--json"]))
+            self.assertTrue(all(token == "journey-registry-token-reference-test-value"
+                                for command, token in observed_tokens
+                                if command[:1] in (["status"], ["doctor"])))
+            self.assertTrue(all(token == "" for command, token in observed_tokens
+                                if command[:2] == ["marketplace", "install"]))
 
     def test_s268_failure_assertion_reads_catalogue_message_and_hint(self):
         with tempfile.TemporaryDirectory(prefix="kb-s268-error-catalog-") as directory:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import base64
 import io
 import json
 import os
@@ -77,6 +78,23 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
         env = {"HOME": "/tmp/kb-journey-test-home"}
 
         self.assertEqual(marketplace_install_flags(env), ["--marketplace-npm-url", REGISTRY])
+
+    def test_registry_install_config_keeps_token_reference_anonymous_until_redaction_case(self):
+        env = {
+            "HOME": "/tmp/kb-journey-test-home",
+            "KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://registry.test",
+            "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64": base64.b64encode(b"public-key").decode(),
+        }
+
+        flags = marketplace_install_flags(env)
+
+        self.assertEqual(env["KB_JOURNEY_MARKETPLACE_TOKEN"], "")
+        self.assertEqual(env["KB_JOURNEY_MARKETPLACE_PUBLIC_KEY"], "public-key")
+        self.assertEqual(flags[:6], [
+            "--marketplace-registry-url", "http://registry.test",
+            "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
+            "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN",
+        ])
 
     def test_clean_install_requires_the_marketplace_commit_receipt(self):
         self.assertIsNotNone(commit_marketplace_install_record({"marketplaceInstalls": [
