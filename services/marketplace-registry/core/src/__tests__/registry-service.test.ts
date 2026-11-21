@@ -82,6 +82,23 @@ function makeService(extraOpts?: { signingPrivateKey?: string; cache?: ICache })
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('RegistryService.publish', () => {
+  // case: S-268.1
+  it('returns a Gateway path-reference when the public Registry URL is a path', async () => {
+    const svc = new RegistryService({
+      storage: createMemoryStorage(), cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: '/api/v1/marketplace-registry', siteUrl: 'https://kblabs.ru',
+    });
+    await svc.publish(SMALL_TARBALL, makePkg({ name: '@kb-labs/commit', identity: '@kb-labs/commit' }),
+      'journey', 'journey-namespace');
+
+    await expect(svc.resolveIdentity('@kb-labs/commit')).resolves.toMatchObject({
+      status: 'found',
+      package: {
+        downloadUrl: '/api/v1/marketplace-registry/api/v1/packages/journey/%40kb-labs%2Fcommit/1.0.0/tarball',
+      },
+    });
+  });
+
   it('resolves canonical identity and returns Registry ownership results', async () => {
     const svc = makeService();
     await svc.publish(SMALL_TARBALL, makePkg({ name: '@kb-labs/commit', identity: '@kb-labs/commit' }), 'kirill', 'ns-kirill');

@@ -22,7 +22,8 @@ from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import commit_marketplace_install_record
 import runner
-from runner import REGISTRY, marketplace_install_flags
+from runner import (REGISTRY, marketplace_install_flags, registry_gateway_url_from_plan,
+                    registry_install_request)
 import journey_resources
 
 
@@ -96,6 +97,42 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
             "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
             "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN",
         ])
+
+    # case: S-268.1
+    def test_registry_install_source_uses_gateway_route_from_effective_plan_address(self):
+        env = {
+            "HOME": "/tmp/kb-journey-test-home",
+            "KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://marketplace-tamper:8081",
+            "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64": base64.b64encode(b"public-key").decode(),
+        }
+        gateway = registry_gateway_url_from_plan({
+            "plan": {"host": {"healthUrl": "http://127.0.0.1:4317/health"}},
+        })
+        flags = marketplace_install_flags(env, gateway_url=gateway)
+        self.assertEqual(flags[:2], [
+            "--marketplace-registry-url", "http://127.0.0.1:4317/api/v1/marketplace-registry",
+        ])
+
+    # case: S-268.1
+    def test_install_request_configures_route_and_transport_before_apply(self):
+        prepared = registry_install_request({
+            "plan": {
+                "request": {"schema": "kb.create/v2", "marketplaceSources": {"registryUrl": "http://old"}},
+                "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
+                    "serviceTransport": {"services": {"marketplace": {"url": "http://127.0.0.1:5070"}}},
+                })}],
+            },
+        }, gateway_url="http://127.0.0.1:4317", registry_upstream="http://marketplace-tamper:8081")
+        self.assertEqual(prepared["marketplaceSources"]["registryUrl"],
+                         "http://127.0.0.1:4317/api/v1/marketplace-registry")
+        self.assertIn("gateway.internalSecret", prepared["secretInputs"])
+        self.assertEqual(json.loads(prepared["values"]["gateway.marketplaceRegistryRoute"]), {
+            "serviceId": "marketplace-registry", "prefix": "/api/v1/marketplace-registry", "rewritePrefix": "",
+        })
+        self.assertEqual(json.loads(prepared["values"]["platform.adapterOptions"])["serviceTransport"]["services"], {
+            "marketplace": {"url": "http://127.0.0.1:5070"},
+            "marketplace-registry": {"url": "http://marketplace-tamper:8081"},
+        })
 
     def test_clean_install_requires_the_marketplace_commit_receipt(self):
         self.assertIsNotNone(commit_marketplace_install_record({"marketplaceInstalls": [

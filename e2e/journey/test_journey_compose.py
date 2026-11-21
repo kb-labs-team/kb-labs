@@ -186,6 +186,14 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             self.assertEqual(rendered.returncode, 0, rendered.stderr)
             producer_output = json.loads(rendered.stdout)
             overlay = Path(producer_output["composeOverlayPath"])
+            gateway_secret_file = composition / ".kb" / "gateway-internal.env"
+            self.assertEqual(gateway_secret_file.stat().st_mode & 0o777, 0o600)
+            secret = gateway_secret_file.read_text().split("=", 1)[1].strip()
+            overlay_text = overlay.read_text()
+            self.assertNotIn(secret, overlay_text)
+            self.assertNotIn(secret, rendered.stdout)
+            self.assertIn(str(gateway_secret_file), overlay_text)
+            self.assertEqual(overlay_text.count(str(gateway_secret_file)), 2)
             config_override = composition / ".kb" / "kb.config.override.json"
             self.assertTrue(config_override.is_file())
             self.assertFalse((composition / ".kb" / "kb.config.jsonc").exists())
@@ -232,6 +240,7 @@ if (!configResult.ok) {
         self.assertTrue(all(mount.get("read_only") is True for mount in mounts.values()))
         registry_environment = rendered["services"]["marketplace-registry"].get("environment", {})
         self.assertEqual(registry_environment.get("KB_STATE_DAEMON_URL"), "http://marketplace-state:7777")
+        self.assertEqual(registry_environment.get("KB_REGISTRY_URL"), "/api/v1/marketplace-registry")
         return rendered
 
     def test_default_compose_configuration_does_not_require_registry_lane_inputs(self):
