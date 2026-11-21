@@ -1195,11 +1195,29 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
         return run_with_runner(command_runner, command, timeout=timeout, **options)
     project_a = Path(project_root).resolve()
     package = "@kb-labs/commit"
-    install = kb_command([ "marketplace", "install", package, "--json"])
+    install = kb_command(["marketplace", "install", package, "--scope", "project", "--json"])
     installed = runner(install, cwd=str(project_a), env=env, capture_output=True,
                        text=True, timeout=300)
     _output(installed, install)
     plan_preparation_result = _write_mcp_commit_plan(project_a, env)
+
+    review_package = "@kb-labs/review"
+    review_version = _registry_version(review_package, registry, project_a, env, runner)
+    review_install = kb_command(["marketplace", "install", f"{review_package}@{review_version}",
+                                 "--scope", "project", "--json"])
+    review_installed = runner(review_install, cwd=str(project_a), env=env, capture_output=True,
+                              text=True, timeout=300)
+    _output(review_installed, review_install)
+
+    platform_list = kb_command(["marketplace", "plugins", "list", "--scope", "platform", "--json"])
+    platform_list_result = runner(platform_list, cwd=str(project_a), env=env, capture_output=True,
+                                  text=True, timeout=120)
+    platform_plugins = decode_ux_success_result(read_ux_cli_result(platform_list_result))
+    platform_entries = platform_plugins.get("entries") if isinstance(platform_plugins, dict) else None
+    if not isinstance(platform_entries, list):
+        raise RuntimeError("platform plugin list returned no entries while preparing MCP isolation fixture")
+    if any(isinstance(entry, dict) and entry.get("id") == review_package for entry in platform_entries):
+        raise RuntimeError("MCP isolation fixture Review plugin is installed at platform scope")
 
     home = Path(env["HOME"])
     project_b = home / "project-b-mcp"
@@ -1221,19 +1239,20 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     project_b_id, project_b_root = _find_project_registration(payload)
     if not project_b_id or not project_b_root:
         raise RuntimeError("registering MCP isolation project B returned no project ID and canonical path")
-    review_package = "@kb-labs/review"
-    review_version = _registry_version(review_package, registry, project_b, env, runner)
-    review_install = kb_command([ "marketplace", "install", f"{review_package}@{review_version}", "--json"])
-    review_installed = runner(review_install, cwd=str(project_b), env=env, capture_output=True,
-                              text=True, timeout=300)
-    _output(review_installed, review_install)
+    project_list = kb_command(["marketplace", "plugins", "list", "--scope", "project", "--json"])
+    project_list_result = runner(project_list, cwd=str(project_b), env=env, capture_output=True,
+                                 text=True, timeout=120)
+    project_plugins = decode_ux_success_result(read_ux_cli_result(project_list_result))
+    project_entries = project_plugins.get("entries") if isinstance(project_plugins, dict) else None
+    if not isinstance(project_entries, list):
+        raise RuntimeError("project B plugin list returned no entries while preparing MCP isolation fixture")
+    if any(isinstance(entry, dict) and entry.get("id") == review_package for entry in project_entries):
+        raise RuntimeError("MCP isolation fixture Review plugin is installed in project B")
     lock_path = project_b / ".kb" / "marketplace.lock"
     if lock_path.exists():
         lock = json.loads(lock_path.read_text())
         if "@kb-labs/commit" in lock.get("plugins", {}):
             raise RuntimeError("MCP isolation project B unexpectedly has the Commit plugin installed")
-        if "@kb-labs/review" not in lock.get("plugins", {}):
-            raise RuntimeError("MCP isolation project B does not have its Review fixture plugin installed")
     return project_b_id, project_b_root, plan_preparation_result
 
 

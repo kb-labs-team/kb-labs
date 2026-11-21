@@ -340,8 +340,8 @@ def _check_error_result(body: object, expected_code: str, *, argument: str | Non
     return None
 
 
-def unknown_tool(project_id: str, token: str = "") -> str | None:
-    status, body = mcp_call(project_id, 1403, "tool-that-does-not-exist", {}, token)
+def unknown_tool(project_id: str, token: str = "", tool_name: str = "tool-that-does-not-exist") -> str | None:
+    status, body = mcp_call(project_id, 1403, tool_name, {}, token)
     if status != 200:
         return f"unknown tool returned HTTP {status}, expected HTTP 200 tool error result"
     failure = _check_error_result(body, "KB_RUNTIME_MCP_UNKNOWN_TOOL")
@@ -649,25 +649,34 @@ def project_isolation(project_a: str, project_b: str, project_b_root: str, token
     if (not registered_root.is_dir() or not registered_root.is_absolute()
             or str(registered_root.resolve()) != project_b_root):
         return "project B registry root must be an existing canonical directory"
-    status, body, _ = _request(
-        project_service_path(project_b, "mcp"),
-        method="POST",
-        token=token,
-        step="project B MCP tools/list isolation",
-        accept="application/json, text/event-stream",
-        payload={"jsonrpc": "2.0", "id": 1405, "method": "tools/list", "params": {}},
-    )
-    if status != 200:
-        return f"project B tools/list returned HTTP {status}"
-    result = body.get("result") if isinstance(body, dict) else None
-    tools = result.get("tools", []) if isinstance(result, dict) else []
-    if any(isinstance(tool, dict) and tool.get("name") == commit_tool("commit plan apply") for tool in tools):
-        return "project B listed project A's project-scoped commit tool"
-    return unknown_tool(project_b, token)
+    project_only_tool = "kb-labs-review__review_run"
+    catalogs: dict[str, set[str]] = {}
+    for project_id in (project_a, project_b):
+        status, body, _ = _request(
+            project_service_path(project_id, "mcp"),
+            method="POST",
+            token=token,
+            step=f"project {project_id} MCP tools/list isolation",
+            accept="application/json, text/event-stream",
+            payload={"jsonrpc": "2.0", "id": 1405, "method": "tools/list", "params": {}},
+        )
+        if status != 200:
+            return f"project {project_id} tools/list returned HTTP {status}"
+        result = body.get("result") if isinstance(body, dict) else None
+        tools = result.get("tools", []) if isinstance(result, dict) else []
+        if not isinstance(tools, list):
+            return f"project {project_id} tools/list returned no tool catalog"
+        catalogs[project_id] = {tool["name"] for tool in tools
+                                if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
+    if project_only_tool not in catalogs[project_a]:
+        return "project A omitted its project-only Review tool"
+    if project_only_tool in catalogs[project_b]:
+        return "project B listed project A's project-only Review tool"
+    return unknown_tool(project_b, token, project_only_tool)
 
 
 def project_plugin_catalog_isolation(project_a: str, project_b: str, token: str) -> str | None:
-    """Check that a project-only Commit tool appears in A's catalog, not B's."""
+    """Check that a project-only Review tool appears in A's catalog, not B's."""
     catalogs: dict[str, set[str]] = {}
     for project_id in (project_a, project_b):
         with invocation_context(step_id="mcp.project-catalog"):
@@ -685,11 +694,11 @@ def project_plugin_catalog_isolation(project_a: str, project_b: str, token: str)
             return f"project {project_id} tools/list returned no tool catalog"
         catalogs[project_id] = {tool["name"] for tool in tools
                                 if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
-    project_only_tool = commit_tool("commit plan apply")
+    project_only_tool = "kb-labs-review__review_run"
     if project_only_tool not in catalogs[project_a]:
-        return "Project A's catalog omitted its project-only Commit tool"
+        return "Project A's catalog omitted its project-only Review tool"
     if project_only_tool in catalogs[project_b]:
-        return "Project B's catalog included Project A's Commit tool"
+        return "Project B's catalog included Project A's Review tool"
     return None
 
 
