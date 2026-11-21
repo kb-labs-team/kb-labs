@@ -7,7 +7,7 @@ priority: P1
 status: active
 release: false
 modes: [secured]
-surfaces: [http]
+surfaces: [api]
 ---
 
 ## Goal

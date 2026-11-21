@@ -3799,6 +3799,7 @@
     "report missing deterministic LLM capability",
     "apply the deterministic fixture Commit plan",
     "return a successful empty Commit result",
+    "execute the installed Commit command through the secured project runtime",
     "observe Commit generation progress",
     "observe a subsequent Commit generation phase",
     "interrupt active Commit generation",
