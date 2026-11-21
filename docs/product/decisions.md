@@ -467,7 +467,7 @@ Cases: S-053.
 
 ### No self-registration
 
-The first administrator bootstraps the platform and has an offline recovery path (`kb-create doctor --recover`). Users join only through admin invites. Members see no user administration and are denied direct access to it. Machine registration for host agents is not human self-registration: it stays admin-gated and outside the release.
+The first administrator bootstraps the platform and has an offline recovery path (`kb-create doctor --recover`). Users join only through admin invites. Members see no user administration and are denied direct access to it. Machine registration for Workspace Agents is not human self-registration: it stays admin-gated and outside the first release. Workspace Agents serve remote project workspaces that are separate from the KB Labs platform host; local and secured installations use their platform-owned host and do not depend on Workspace Agent installation, registration, or connectivity.
 Cases: S-100, S-104.6, S-105, S-106, S-107, S-108.
 
 ### Roles, invites, reset links and API tokens
@@ -511,7 +511,7 @@ Cases: S-008, S-143, S-144, S-145, S-032 (historical).
 - Commands of installed plugins automatically become project MCP tools.
 - In secured mode, access uses the user's API token with that user's role.
 - Tool failures are `CallToolResult` values with `isError: true`, the ADR-0049 envelope as `structuredContent`, and a `"<code>: <message> — <hint>"` text line; protocol errors stay JSON-RPC errors.
-- Project MCP is release; agent sessions and host-agent registration are not.
+- Project MCP is release; agent sessions and Workspace Agent registration for remote project workspaces are not. Local and secured project execution remains on the platform-owned host and has no Workspace Agent dependency.
 Cases: S-045, S-140, S-141, S-142.
 
 ### Platform update and rollback
