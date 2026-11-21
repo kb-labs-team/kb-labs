@@ -107,6 +107,16 @@ describe('RemoteBackend', () => {
       expect(req.handlerRef).toBe('/host/workspace/dist/handler.js');
     });
 
+    it('does not send a caller-local platform root to a remote runtime', async () => {
+      const transport = makeTransport();
+      const backend = new RemoteBackend({ transport, workspaceRootOnHost: '/host/workspace' });
+
+      await backend.execute(makeRequest({ platformRoot: '/Users/developer/kb-platform' }));
+
+      const req = (transport.execute as ReturnType<typeof vi.fn>).mock.calls[0]![0] as ExecutionRequest;
+      expect(req).not.toHaveProperty('platformRoot');
+    });
+
     it('does not remap relative handlerRef', async () => {
       const transport = makeTransport();
       const backend = new RemoteBackend({ transport, workspaceRootOnHost: '/host/workspace' });

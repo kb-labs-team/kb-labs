@@ -177,15 +177,16 @@ describe('plugin executor adapter errors', () => {
 
     const exitCode = await executePlugin({
       context: { cwd: '/home/test/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
-      env: { KB_PLATFORM_ROOT: '/home/test/kb-platform' },
+      env: {}, platformRoot: '/home/test/kb-platform',
       commandId: 'commit:plan:show', argv: [], flags: {}, manifestCmd,
       platform: {} as Parameters<typeof executePlugin>[0]['platform'],
     });
 
     expect(exitCode).toBe(0);
     expect(executeCommandV3).toHaveBeenCalledWith(expect.objectContaining({
-      env: { KB_PLATFORM_ROOT: '/home/test/kb-platform' },
+      platformRoot: '/home/test/kb-platform',
     }));
+    expect(executeCommandV3.mock.calls.at(-1)?.[0]).not.toHaveProperty('env.KB_PLATFORM_ROOT');
     executeCommandV3.mockReset();
   });
 

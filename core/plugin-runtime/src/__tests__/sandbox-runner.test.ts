@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { runInProcess } from '../sandbox/runner.js';
+import { runInProcess, runInSubprocess } from '../sandbox/runner.js';
 import { wrapCliResult } from '../host/cli-wrapper.js';
 import { PluginError } from '@kb-labs/plugin-contracts';
 import type { PluginContextDescriptor } from '@kb-labs/plugin-contracts';
@@ -67,7 +67,7 @@ describe('Sandbox Runner', () => {
             hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
           },
           platform: mockPlatform, ui: mockUI, handlerPath, input: {}, cwd: testDir,
-          environment: { KB_PLATFORM_ROOT: platformRoot },
+          environment: {}, platformRoot,
         });
         expect(result.data).toBe('platform');
       } finally {
@@ -569,6 +569,46 @@ describe('Sandbox Runner', () => {
 
       // TODO: Create a mock UnixSocket server for unit testing subprocess execution
       expect(true).toBe(true);
+    });
+
+    it('loads platform SDK in subprocess without exposing the host root as plugin env', async () => {
+      const previousPlatformRoot = process.env.KB_PLATFORM_ROOT;
+      const platformRoot = join(testDir, 'platform');
+      const storeRoot = join(testDir, 'store', 'entries', 'plugin@1.0.0', 'node_modules');
+      const writePackage = (root: string, name: string, source: string): void => {
+        const packageDir = join(root, ...name.split('/'));
+        mkdirSync(packageDir, { recursive: true });
+        writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name, type: 'module', exports: './index.mjs' }));
+        writeFileSync(join(packageDir, 'index.mjs'), source);
+      };
+      writePackage(join(platformRoot, 'node_modules'), '@kb-labs/sdk', "import { owner } from '@kb-labs/shared-command-kit'; export const ownerFromSdk = owner;");
+      writePackage(join(platformRoot, 'node_modules'), '@kb-labs/shared-command-kit', "export const owner = 'platform';");
+      writePackage(storeRoot, '@kb-labs/sdk', "import { owner } from '@kb-labs/shared-command-kit'; export const ownerFromSdk = owner;");
+      const pluginRoot = join(testDir, 'store', 'entries', 'plugin@1.0.0', 'node_modules', 'plugin');
+      mkdirSync(pluginRoot, { recursive: true });
+      writeFileSync(join(pluginRoot, 'package.json'), JSON.stringify({ name: 'plugin', type: 'module' }));
+      const handlerPath = join(pluginRoot, 'handler.mjs');
+      writeFileSync(handlerPath, "import { ownerFromSdk } from '@kb-labs/sdk'; export default { execute: async () => `${ownerFromSdk}:${process.env.KB_PLATFORM_ROOT ?? 'hidden'}` };");
+      delete process.env.KB_PLATFORM_ROOT;
+
+      try {
+        const result = await runInSubprocess({
+          descriptor: {
+            hostType: 'cli', pluginId: '@kb-labs/test', pluginVersion: '1.0.0',
+            requestId: 'subprocess-store-entry-resolution', handlerId: 'test:command', permissions: {},
+            hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+          },
+          platform: mockPlatform, handlerPath, input: {}, cwd: testDir,
+          environment: {}, platformRoot, timeoutMs: 10_000,
+        });
+        expect(result.data).toBe('platform:hidden');
+      } finally {
+        if (previousPlatformRoot === undefined) {
+          delete process.env.KB_PLATFORM_ROOT;
+        } else {
+          process.env.KB_PLATFORM_ROOT = previousPlatformRoot;
+        }
+      }
     });
 
     it.skip('should handle subprocess timeout', async () => {
