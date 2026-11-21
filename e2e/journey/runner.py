@@ -41,7 +41,9 @@ from installer_case_steps import (run_doctor_root_isolation_step,
                                   commit_marketplace_install_record,
                                   add_installed_host_stop_case_step)
 from installer_case_steps import parse_install_refusal
-from journey_resources import host_structured_log_problem, case_catalog_root, journey_module, parse_shell_commands, resource_root, workspace_resource
+from journey_resources import (case_catalog_root, host_structured_log_problem, journey_module,
+                               parse_shell_commands, preserved_fixture_roots, remove_tree_preserving,
+                               resource_root, workspace_resource)
 from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
@@ -2604,7 +2606,11 @@ def cleanup() -> None:
         if process.poll() is None:
             process.terminate()
             process.wait(timeout=10)
-    shutil.rmtree(HOME, ignore_errors=True)
+    preserved = preserved_fixture_roots()
+    if preserved:
+        remove_tree_preserving(HOME, preserved)
+    else:
+        shutil.rmtree(HOME, ignore_errors=True)
 
 
 if __name__ == "__main__":

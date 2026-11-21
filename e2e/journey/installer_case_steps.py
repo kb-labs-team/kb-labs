@@ -54,6 +54,7 @@ from invocations import (
 )
 from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
                                active_platform_root,
+                               register_preserved_fixture_root,
                                snapshot_tree, workspace_resource)
 from service_port_assertions import (assert_root_offset, service_ports,
                                      service_transport_ports)
@@ -975,6 +976,8 @@ def run_fixture_group(journey: Journey, label: str, run_fixture: Callable[[], Jo
 def cleanup_generated_fixture_roots(roots: Iterable[Path], preserve_paths: Iterable[Path] = ()) -> None:
     """Remove disposable roots unless cleanup failure left evidence to inspect."""
     preserved = {Path(path).resolve() for path in preserve_paths}
+    for path in preserved:
+        register_preserved_fixture_root(path)
     for root in roots:
         path = Path(root)
         if path.resolve() not in preserved:
@@ -1186,6 +1189,15 @@ def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
     return journey
 
 
+def assert_offline_cache_receipt(receipt: dict, label: str) -> None:
+    plan = receipt.get("plan", {})
+    request = plan.get("request", {})
+    artifacts = plan.get("artifacts", [])
+    if (request.get("source") != "offline" or not artifacts
+            or any(item.get("resolvedFrom") != "cache" or item.get("resolvedUrl") for item in artifacts)):
+        raise RuntimeError(f"{label} receipt did not prove cache-only offline resolution")
+
+
 def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stable_index: Path,
                                              platform_root: Path,
                                              run_command: CommandRunner) -> Journey:
@@ -1269,6 +1281,7 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
                              "S-181.7 offline generated-secret install")
             receipt_path = installed_path(root, "currentLink", ".kb/v2/receipt.json")
             receipt = json.loads(receipt_path.read_text())
+            assert_offline_cache_receipt(receipt, "S-181.7 offline install")
             canonical_root = str(root.resolve())
             if (installed.get("operation") != "apply"
                     or receipt.get("plan", {}).get("request", {}).get("platformRoot") != canonical_root):
@@ -1289,6 +1302,8 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
                                            "--platform-root", str(root)], timeout=1200), "S-181.7 offline reapply")
             if reapplied.get("operation") != "apply" or not receipt_path.is_file():
                 raise RuntimeError("S-181.7 offline reapply did not preserve an active receipt")
+            reapplied_receipt = json.loads(receipt_path.read_text())
+            assert_offline_cache_receipt(reapplied_receipt, "S-181.7 offline reapply")
 
             artifact = artifacts[0]
             digest = artifact["sha256"]
@@ -1343,6 +1358,7 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
                 preserve_paths = set(getattr(journey, "preserve_fixture_roots", set()))
                 preserve_paths.add(root)
                 journey.preserve_fixture_roots = preserve_paths
+                register_preserved_fixture_root(root)
                 raise RuntimeError(
                     f"{operation_error}; disposable root preserved at {root}; cleanup failed: {cleanup_error}"
                 ) from operation_error
@@ -1351,6 +1367,7 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
             preserve_paths = set(getattr(journey, "preserve_fixture_roots", set()))
             preserve_paths.add(root)
             journey.preserve_fixture_roots = preserve_paths
+            register_preserved_fixture_root(root)
             raise RuntimeError(f"disposable root preserved at {root}; cleanup failed: {cleanup_error}") from cleanup_error
 
     journey.step("install and reapply generated secrets from the offline artifact cache",

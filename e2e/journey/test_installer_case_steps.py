@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import jsonl
 import installer_case_steps
+import journey_resources
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import (_add_installed_manifest_requirement, _data, _seed_installed_fixture,
                                   cleanup_installer_fixture_root,
@@ -1279,8 +1280,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     active = target_root / "versions/active"
                     (active / ".kb/v2").mkdir(parents=True)
                     (target_root / layout_value("currentLink")).symlink_to("versions/active")
-                    (active / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {"request": {
-                        "platformRoot": str(target_root.resolve())}}}))
+                    receipt_artifacts = [{"id": item["id"], "resolvedFrom": "cache", "resolvedUrl": ""}
+                                         for item in artifacts]
+                    (active / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {
+                        "request": {"platformRoot": str(target_root.resolve()), "source": "offline"},
+                        "artifacts": receipt_artifacts}}))
                     (active / ".kb/v2/secret-state.json").write_text(json.dumps({"requirements": {
                         "gateway.jwtSecret": "generated fixture value"}}))
                     running = True
@@ -1340,6 +1344,18 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertIn("--offline", install_calls[1])
         self.assertEqual(install_calls[1][-2:], ["--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
         self.assertTrue(all("--offline" in args for args, _ in calls if args[1] == "apply"))
+
+    def test_offline_cache_receipt_rejects_online_source_fallback(self):
+        with self.assertRaisesRegex(RuntimeError, "cache-only offline resolution"):
+            installer_case_steps.assert_offline_cache_receipt({"plan": {
+                "request": {"source": "registry"},
+                "artifacts": [{"resolvedFrom": "cache"}],
+            }}, "fixture")
+        with self.assertRaisesRegex(RuntimeError, "cache-only offline resolution"):
+            installer_case_steps.assert_offline_cache_receipt({"plan": {
+                "request": {"source": "offline"},
+                "artifacts": [{"resolvedFrom": "registry", "resolvedUrl": "https://fixture.test/pkg.tgz"}],
+            }}, "fixture")
 
     def test_offline_generated_secret_journey_cleans_partial_provisioning_and_keeps_original_failure(self):
         from journey_selection import JourneySelection, use_journey_selection
@@ -1494,6 +1510,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertIn("stop command failed", fixture.steps[0].message)
         self.assertEqual(calls, ["install", "status", "stop"])
         self.assertIn(fixture_root, getattr(owner, "preserve_fixture_roots", set()))
+        self.assertIn(fixture_root, journey_resources.PRESERVED_FIXTURE_ROOTS)
+        journey_resources.PRESERVED_FIXTURE_ROOTS.discard(fixture_root)
 
     def test_platform_cli_resolves_the_requested_roots_executable(self):
         with tempfile.TemporaryDirectory(prefix="journey-platform-cli-") as temp:
