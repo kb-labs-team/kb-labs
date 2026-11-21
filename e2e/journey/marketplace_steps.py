@@ -19,6 +19,7 @@ from typing import Callable
 
 from journey_resources import active_platform_root, workspace_resource
 from installed_fixture import layout_value
+from journey_selection import read_journey_selection
 from hermetic_cli import run_hermetic_cli
 from service_steps import Journey
 from invocations import (
@@ -101,9 +102,8 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     publish_env = dict(env)
     publish_env["KB_REGISTRY_URL"] = env.get("KB_REGISTRY_URL", registry_url)
     publish_env["KB_REGISTRY_AUTHOR_HANDLE"] = author_handle
-    selector = env.get("KB_JOURNEY_RUNNER_SELECTOR", "")
     gateway_login = None
-    if selector.endswith(":secured"):
+    if read_journey_selection(env).runner_selector.endswith(":secured"):
         email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
         password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
         if not email or not password:
