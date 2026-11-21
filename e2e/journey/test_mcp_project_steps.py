@@ -201,8 +201,8 @@ class ProjectMcpJourneyTests(unittest.TestCase):
     # case: S-199.3
     def test_project_catalog_isolation_rejects_fake_failure_then_proves_project_scoped_tool(self):
         journey = Journey("local", "project-catalog-isolation")
-        with patch("service_runner.request_mcp", side_effect=[
-            (500, {}, {}), (200, {"result": {"tools": [{"name": commit_tool("commit plan apply")}]}}, {}),
+        with patch("mcp_project_steps.project_service_path", side_effect=lambda project, service: f"/{project}/{service}"), patch("service_runner.request_mcp", side_effect=[
+            (500, {}, {}), (200, {"result": {"tools": [{"name": "kb-labs-review__review_run"}]}}, {}),
         ]):
             journey.step("project catalog isolation", "mcp",
                          lambda: project_plugin_catalog_isolation("prj_a", "prj_b", "token"),
@@ -213,10 +213,10 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         journey = Journey("local", "project-catalog-isolation")
         responses = [
-            (200, {"result": {"tools": [{"name": commit_tool("commit plan apply")}]}}, {}),
+            (200, {"result": {"tools": [{"name": "kb-labs-review__review_run"}]}}, {}),
             (200, {"result": {"tools": [{"name": next(iter(service_tool_names(DEFAULT_ENABLED_SERVICES)))}]}}, {}),
         ]
-        with patch("service_runner.request_mcp", side_effect=responses):
+        with patch("mcp_project_steps.project_service_path", side_effect=lambda project, service: f"/{project}/{service}"), patch("service_runner.request_mcp", side_effect=responses):
             journey.step("project catalog isolation", "mcp",
                          lambda: project_plugin_catalog_isolation("prj_a", "prj_b", "token"),
                          cases=["S-199.3"])
@@ -641,12 +641,16 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
     def test_project_isolation_checks_catalog_then_typed_unknown_call(self):
         response = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown MCP tool", "Call tools/list to discover tools.")
-        with tempfile.TemporaryDirectory() as directory, patch("service_runner.request_mcp", side_effect=[
+        with tempfile.TemporaryDirectory() as directory, patch("mcp_project_steps.project_service_path", side_effect=lambda project, service: f"/{project}/{service}"), patch("service_runner.request_mcp", side_effect=[
+            (200, {"result": {"tools": [{"name": "kb-labs-review__review_run"}]}}, {}),
             (200, {"result": {"tools": [{"name": next(iter(service_tool_names(DEFAULT_ENABLED_SERVICES)))}]}}, {}),
             (200, response, {}),
         ]) as request:
             self.assertIsNone(project_isolation("prj_a", "prj_b", str(Path(directory).resolve()), "token"))
-        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(request.call_args_list[0].kwargs["payload"]["method"], "tools/list")
+        self.assertEqual(request.call_args_list[1].kwargs["payload"]["method"], "tools/list")
+        self.assertEqual(request.call_args_list[2].kwargs["payload"]["params"]["name"], "kb-labs-review__review_run")
 
     def test_project_isolation_requires_the_registered_canonical_root(self):
         with tempfile.TemporaryDirectory() as directory:
