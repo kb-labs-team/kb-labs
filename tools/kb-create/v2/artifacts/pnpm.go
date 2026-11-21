@@ -88,7 +88,7 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 				if errors.As(err, &commandFailure) {
 					failure.Meta = map[string]any{
 						"packageManagerExitCode":   fmt.Sprint(commandFailure.ExitCode),
-						"packageManagerStderrTail": commandFailure.StderrTail,
+						"packageManagerStderrTail": packageManagerStderrTail(commandFailure.StderrTail),
 					}
 				}
 				return failure
@@ -114,6 +114,10 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 		return err
 	}
 	return nil
+}
+
+func packageManagerStderrTail(stderr string) string {
+	return tailText([]byte(diag.RedactText(stderr)), externalCommandStderrTailBytes)
 }
 
 func tailText(content []byte, limit int) string {
