@@ -212,6 +212,15 @@ def run_selected_first_value_smoke(graph: FlowGraph, check: Callable[[], object]
     return check()
 
 
+def run_selected_project_mcp(graph: FlowGraph, check: Callable[[], object]):
+    """Run the agent project-MCP smoke only when the selected journey needs it."""
+    step_name = "project MCP journey"
+    if (graph.selection_active and "S-140.5" not in graph.journey.selected_claims
+            and not graph.selects_steps(step_name)):
+        return graph.journey.skipped(step_name, "mcp")
+    return check()
+
+
 OUTER_GROUP_DEPENDENCIES = {
     "install": (),
     "host": ("platform-installed",),
@@ -1694,7 +1703,10 @@ def _main(*, update_variant_runner=None):
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
 
     if FRONT == "agent" and SCENARIO == "commit":
-        verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local", DEFAULT_ENABLED_SERVICES)
+        run_selected_project_mcp(
+            outer_graph,
+            lambda: verify_project_mcp(
+                env, env.get("KB_ACCESS_MODE", "local") == "local", DEFAULT_ENABLED_SERVICES))
 
     update_group_selected = outer_graph.group_selected("update")
     update_journey = update_group_selected and (

@@ -920,9 +920,10 @@ class DispatchRegistryTests(unittest.TestCase):
             prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
             runner_selector="agent:commit", requested_runners="",
         )
+        graph_groups = {f"isolated-fixture:{name}": spec for name, spec in declarations.items()}
         graph = FlowGraph(Journey("local", "s181-installer-fixture-selection", selection=selection),
-                          {name: spec.get("depends_on", ()) for name, spec in declarations.items()},
-                          groups=declarations)
+                          {name: spec.get("depends_on", ()) for name, spec in graph_groups.items()},
+                          groups=graph_groups)
         self.assertTrue(graph.group_selected(f"isolated-fixture:{run_installer_case_steps.__name__}"))
 
     def test_fixture_claim_prerequisites_use_the_shared_resolver_steps(self):
