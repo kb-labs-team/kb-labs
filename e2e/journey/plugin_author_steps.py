@@ -218,7 +218,7 @@ def preflight_installed_plugin_command(
         raise RuntimeError(
             "installed candidate is missing a contained @kb-labs/core-extension-store module"
         ) from error
-    if package.get("name") != "@kb-labs/core-extension-store":
+    if not isinstance(package, dict) or package.get("name") != "@kb-labs/core-extension-store":
         raise RuntimeError("installed candidate Extension Store package identity does not match")
 
     script = """
