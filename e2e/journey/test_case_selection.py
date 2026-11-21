@@ -68,15 +68,18 @@ class CaseJourneySelectionTests(unittest.TestCase):
         from service_runner import service_selection_groups
         default_groups = service_selection_groups(runner_selector="service-local:explore")
         registry_groups = service_selection_groups(runner_selector="service-marketplace-registry:local")
-        self.assertIn("S-047.1", default_groups["marketplace-lifecycle"]["cases"])
-        self.assertNotIn("publish and install Commit through Registry",
-                         default_groups["marketplace-lifecycle"]["steps"])
-        self.assertNotIn("verify Commit Registry signature and provenance",
-                         default_groups["marketplace-lifecycle"]["steps"])
-        self.assertIn("publish and install Commit through Registry",
-                      registry_groups["marketplace-registry"]["steps"])
-        self.assertIn("verify Commit Registry signature and provenance",
-                      registry_groups["marketplace-registry"]["steps"])
+        default_lifecycle = set(default_groups["marketplace-lifecycle"].get("cases", ()))
+        registry_lifecycle = set(registry_groups["marketplace-lifecycle"].get("cases", ()))
+        default_registry = set(default_groups["marketplace-registry"].get("cases", ()))
+        registry_registry = set(registry_groups["marketplace-registry"].get("cases", ()))
+        self.assertIn("S-047.1", default_lifecycle)
+        self.assertNotIn("S-268.1", default_lifecycle)
+        self.assertNotIn("S-268.1", registry_lifecycle)
+        self.assertTrue(registry_steps <= registry_registry)
+        self.assertNotIn("S-047.1", registry_registry)
+        # Imported declaration closure must not accidentally claim the unrelated MCP case.
+        for cases in (default_lifecycle, registry_lifecycle, default_registry, registry_registry):
+            self.assertNotIn("S-140.1", cases)
 
     def test_hermetic_fixture_stages_declared_lock_at_its_shared_root(self):
         repository = Path(__file__).resolve().parents[2]
@@ -344,6 +347,36 @@ class CaseJourneySelectionTests(unittest.TestCase):
         after = {path.relative_to(root).as_posix(): (path.stat().st_size, path.stat().st_mtime_ns)
                  for path in reports.rglob("*") if path.is_file()} if reports.exists() else None
         self.assertEqual(after, before)
+
+    def test_real_resolve_only_keeps_s181_and_mcp_claim_owners(self):
+        root = Path(__file__).resolve().parents[2]
+        expected = {
+            ("S-181.7", "local"): ("agent:commit", "platform.install"),
+            ("S-181.7", "secured"): ("agent-secured:commit", "platform.install"),
+            ("S-140.5", "local"): ("service-local:explore", "mcp"),
+            ("S-140.5", "secured"): ("service-secured:explore", "mcp"),
+        }
+        for (case_id, mode), (selector, capability) in expected.items():
+            with self.subTest(case=case_id, mode=mode):
+                env = os.environ.copy()
+                env.update({"KB_JOURNEY_CASES": case_id, "KB_JOURNEY_SELECTION_MODE": mode})
+                for key in ("KB_JOURNEY_ONLY", "KB_JOURNEY_SELECTED_STEPS",
+                            "KB_JOURNEY_SELECTED_OWNING_STEPS", "KB_JOURNEY_PREREQUISITE_STEPS"):
+                    env.pop(key, None)
+                result = subprocess.run(
+                    ["bash", "e2e/journey/run.sh", "--resolve-only"], cwd=root, env=env,
+                    capture_output=True, text=True, check=False, timeout=120,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                resolved = json.loads(result.stdout)
+                self.assertEqual(resolved["selection"], [case_id])
+                self.assertEqual(resolved["runners"], [selector])
+                self.assertIn(capability, resolved["capabilities"])
+                if case_id == "S-181.7":
+                    self.assertIn("install and reapply generated secrets from the offline artifact cache",
+                                  resolved["selectedOwningSteps"])
+                else:
+                    self.assertIn("project MCP cross-project isolation", resolved["selectedOwningSteps"])
 
     def test_runner_variant_registration_is_enforced_when_claim_executes(self):
         with patch.dict(os.environ, {

@@ -76,7 +76,8 @@ export class RegistryPackageSource implements MarketplaceSource {
       throw new RegistryPackageError('RESOLUTION_FAILED', 'Missing downloadUrl in ResolvedPackage', pkg.id);
     }
 
-    const resp = await this.fetch(pkg.downloadUrl, pkg.id);
+    const downloadUrl = this.resolveDownloadUrl(pkg.downloadUrl, pkg.id);
+    const resp = await this.fetch(downloadUrl, pkg.id);
     if (!resp.ok) {
       throw new RegistryPackageError(resp.status === 401 || resp.status === 403 ? 'AUTH_FAILED' : 'TRANSPORT_FAILED', `Failed to download ${pkg.id}@${pkg.version}: ${resp.status}`, pkg.id);
     }
@@ -123,6 +124,24 @@ export class RegistryPackageSource implements MarketplaceSource {
     return { id: pkg.id, version: pkg.version, packageRoot, integrity: actualIntegrity };
   }
 
+  /** Resolve path references at the configured source and refuse cross-origin tarball targets. */
+  private resolveDownloadUrl(downloadUrl: string, identity: string): string {
+    let resolved: URL;
+    let source: URL;
+    try {
+      source = new URL(this.baseUrl);
+      resolved = new URL(downloadUrl, source);
+    } catch {
+      throw new RegistryPackageError('RESOLUTION_FAILED', 'Registry returned an invalid tarball URL', identity);
+    }
+    if (resolved.origin !== source.origin) {
+      throw new RegistryPackageError(
+        'RESOLUTION_FAILED', 'Registry tarball URL must use the configured source origin', identity,
+      );
+    }
+    return resolved.toString();
+  }
+
   withShareToken(token: string): RegistryPackageSource {
     return new RegistryPackageSource({
       registryUrl: this.baseUrl,
@@ -163,8 +182,17 @@ export class RegistryPackageSource implements MarketplaceSource {
     if (this.authToken) { headers['Authorization'] = `Bearer ${this.authToken}`; }
     if (this.shareToken) { headers['X-Share-Token'] = this.shareToken; }
     try {
-      return await globalThis.fetch(url, { headers });
+      // Registry credentials are scoped to the configured source origin. Fetch's
+      // default redirect handling would forward them to an untrusted Location.
+      const response = await globalThis.fetch(url, { headers, redirect: 'manual' });
+      if (response.status >= 300 && response.status < 400) {
+        throw new RegistryPackageError(
+          'TRANSPORT_FAILED', 'Registry redirects are not followed for authenticated requests', identity,
+        );
+      }
+      return response;
     } catch (error) {
+      if (error instanceof RegistryPackageError) { throw error; }
       throw new RegistryPackageError('TRANSPORT_FAILED', `Registry request failed: ${error instanceof Error ? error.message : String(error)}`, identity);
     }
   }

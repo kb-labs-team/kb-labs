@@ -5,7 +5,7 @@ from __future__ import annotations
 from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_tool_names
 
 from kb_invocation import kb_command, kb_login_shell, kb_login_shell_sequence
-from installed_fixture import layout_relative, layout_value
+from installed_fixture import active_platform_root, layout_relative, layout_value
 from journey_values import journey_value
 
 import json
@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Callable, Union
+from urllib.parse import urlsplit, urlunsplit
 
 from studio_steps import (create_studio_access_tokens, create_studio_environment,
                           create_studio_member, run_studio_browser_step,
@@ -47,6 +48,7 @@ from journey_resources import (case_catalog_root, host_structured_log_problem, j
 from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
+                           run_selected_smoke,
                            record_runner_exception, replay_steps)
 from journey_dependencies import FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import (JourneySelectionError, active_journey_selection,
@@ -103,7 +105,7 @@ LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
 LAST_COMMAND_CWD: str | None = None
 
 
-def marketplace_install_flags(env: dict[str, str]) -> list[str]:
+def marketplace_install_flags(env: dict[str, str], *, gateway_url: str | None = None) -> list[str]:
     """Configure journey Marketplace sources for anonymous public Registry installs."""
     registry_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
     encoded_key = env.get("KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64", "")
@@ -120,11 +122,57 @@ def marketplace_install_flags(env: dict[str, str]) -> list[str]:
         # exercise anonymous access. S-268.6 injects a non-empty sentinel only
         # for the status/doctor redaction checks.
         env["KB_JOURNEY_MARKETPLACE_TOKEN"] = ""
-        flags.extend(["--marketplace-registry-url", registry_url,
+        source_url = (f"{gateway_url.rstrip('/')}/api/v1/marketplace-registry"
+                      if gateway_url else registry_url)
+        flags.extend(["--marketplace-registry-url", source_url,
                       "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
                       "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN"])
     flags.extend(["--marketplace-npm-url", REGISTRY])
     return flags
+
+
+def registry_gateway_url_from_plan(plan_data: dict) -> str:
+    """Return the effective public Gateway origin recorded by kb-create plan."""
+    health_url = plan_data.get("plan", {}).get("host", {}).get("healthUrl")
+    if not isinstance(health_url, str) or not health_url:
+        raise ValueError("install plan omitted the Gateway health URL")
+    parsed = urlsplit(health_url)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("install plan returned an invalid Gateway health URL")
+    path = parsed.path.removesuffix("/health").rstrip("/")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def registry_install_request(plan_data: dict, *, gateway_url: str, registry_upstream: str) -> dict:
+    """Add the Registry Gateway route to the actual install request, before host/plugin startup."""
+    plan = plan_data.get("plan", {})
+    request = plan.get("request")
+    if not isinstance(request, dict):
+        raise ValueError("install plan omitted its normalized request")
+    request = json.loads(json.dumps(request))
+    sources = request.setdefault("marketplaceSources", {})
+    sources["registryUrl"] = f"{gateway_url.rstrip('/')}/api/v1/marketplace-registry"
+    request["gatewayUrl"] = gateway_url
+    secret_inputs = request.setdefault("secretInputs", [])
+    if "gateway.internalSecret" not in secret_inputs:
+        secret_inputs.append("gateway.internalSecret")
+    values = request.setdefault("values", {})
+    values["gateway.marketplaceRegistryRoute"] = json.dumps({
+        "serviceId": "marketplace-registry",
+        "prefix": "/api/v1/marketplace-registry",
+        "rewritePrefix": "",
+    }, separators=(",", ":"))
+    patches = plan.get("configPatches", [])
+    adapter_options = next((patch.get("json") for patch in patches
+                            if patch.get("path") == "/platform/adapterOptions"), None)
+    if not isinstance(adapter_options, str):
+        raise ValueError("install plan omitted platform.adapterOptions")
+    options = json.loads(adapter_options)
+    transport = options.setdefault("serviceTransport", {})
+    services = transport.setdefault("services", {})
+    services["marketplace-registry"] = {"url": registry_upstream}
+    values["platform.adapterOptions"] = json.dumps(options, separators=(",", ":"))
+    return request
 
 
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
@@ -158,11 +206,12 @@ def runner_scenario(name: str, *, secured: bool) -> dict:
 
 def run_selected_first_value_smoke(graph: FlowGraph, check: Callable[[], object]):
     """Run the Commit execution smoke only when the selected journey needs it."""
-    step_name = "kb commit first value"
-    if (graph.selection_active and "S-054.17" not in graph.journey.selected_claims
-            and not graph.selects_steps(step_name)):
-        return graph.journey.skipped(step_name, "platform.install")
-    return check()
+    return run_selected_smoke(graph, "kb commit first value", "platform.install", check)
+
+
+def run_selected_project_mcp(graph: FlowGraph, check: Callable[[], object]):
+    """Run the agent project-MCP smoke only when the selected journey needs it."""
+    return run_selected_smoke(graph, "project MCP journey", "mcp", check, selected_capability="mcp")
 
 
 OUTER_GROUP_DEPENDENCIES = {
@@ -779,7 +828,9 @@ def mcp_rpc(url: str, method: str, request_id: int, params=None, token=None):
     return json.loads(body)
 
 
-def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: frozenset[str] = DEFAULT_ENABLED_SERVICES):
+def verify_project_mcp(env: dict[str, str], local: bool,
+                       enabled_service_ids: frozenset[str] = DEFAULT_ENABLED_SERVICES,
+                       token: str | None = None):
     registered, _ = run(kb_login_shell(["project", "add", "--json"]),
                         env=env, cwd=PROJECT, timeout=180)
     if not require(registered, step="register project for MCP"):
@@ -788,7 +839,6 @@ def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: fr
         project = decode_ux_success_result(read_ux_cli_result(registered))["project"]
         project_id = project["id"]
         url = f"http://127.0.0.1:4000{project_service_path(project_id, 'mcp')}"
-        token = None
         if not local:
             try:
                 mcp_rpc(url, "tools/list", 0)
@@ -797,9 +847,8 @@ def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: fr
                     raise
             else:
                 raise RuntimeError("secured MCP accepted a request without a token")
-            token = env.get("KB_MCP_TOKEN")
             if not token:
-                raise RuntimeError("secured MCP journey needs KB_MCP_TOKEN from gateway login")
+                raise RuntimeError("secured MCP journey needs the authenticated gateway session token")
         initialized = mcp_rpc(url, "initialize", 1, {
             "protocolVersion": "2025-03-26",
             "capabilities": {},
@@ -820,6 +869,18 @@ def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: fr
             raise RuntimeError(f"diagnostics call had unexpected result: {text}")
     except (KeyError, ValueError, RuntimeError, urllib.error.URLError) as error:
         fail(f"project MCP journey: {error}")
+
+
+def verify_selected_project_mcp(graph: FlowGraph, env: dict[str, str]):
+    """Run MCP smoke using the registered runner mode and its normal API session."""
+    local = graph.journey.mode == "local"
+    token = None
+    if not local:
+        from service_runner import prepare_service_api_session, service_api_token
+
+        prepare_service_api_session(graph, "secured", env=env)
+        token = service_api_token(graph)
+    return verify_project_mcp(env, local, DEFAULT_ENABLED_SERVICES, token=token)
 
 
 def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local"):
@@ -1366,6 +1427,38 @@ def _main(*, update_variant_runner=None):
             args.extend(["--scenario-answers", answers])
         if VARIANT == "relative-path":
             args[args.index(str(PLATFORM))] = os.path.relpath(PLATFORM, Path.cwd())
+        if operation == "install" and env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL"):
+            # Ask the installer for the effective Gateway address instead of
+            # assuming its default port or the runner's network offset.
+            preview_args = list(args)
+            preview_args[1] = "plan"
+            preview, _ = run(preview_args, env=env, timeout=120)
+            try:
+                preview_data = decode_ux_success_result(read_kb_create_cli_result("plan", preview))
+                gateway_url = registry_gateway_url_from_plan(preview_data)
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                gateway_url = None
+            except ValueError:
+                gateway_url = None
+            if preview.returncode != 0 or not gateway_url:
+                fail("Registry journey could not resolve the installed Gateway address from the install plan")
+                cleanup_partial_install(outer_graph, env, launcher)
+                return finalize_run(False)
+            registry_upstream = env["KB_JOURNEY_MARKETPLACE_REGISTRY_URL"]
+            try:
+                request = registry_install_request(
+                    preview_data, gateway_url=gateway_url, registry_upstream=registry_upstream)
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                fail(f"Registry journey could not prepare the install-time Gateway route: {error}")
+                cleanup_partial_install(outer_graph, env, launcher)
+                return finalize_run(False)
+            request_path = HOME / "registry-install-request.json"
+            request_path.write_text(json.dumps(request, indent=2) + "\n", encoding="utf-8")
+            request_path.chmod(0o600)
+            args = [launcher, "install", "--json", "--index",
+                    str(HOME / ".local/share/kb-create/release-index.json"),
+                    "--input", str(request_path), "--registry", REGISTRY,
+                    "--secret-env", "gateway.internalSecret=GATEWAY_INTERNAL_SECRET"]
         result, elapsed = run(args, env=env, timeout=1200)
         TIMES["apply"] = elapsed
         if VARIANT == "relative-path":
@@ -1615,7 +1708,8 @@ def _main(*, update_variant_runner=None):
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
 
     if FRONT == "agent" and SCENARIO == "commit":
-        verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local", DEFAULT_ENABLED_SERVICES)
+        run_selected_project_mcp(
+            outer_graph, lambda: verify_selected_project_mcp(outer_graph, env))
 
     update_group_selected = outer_graph.group_selected("update")
     update_journey = update_group_selected and (

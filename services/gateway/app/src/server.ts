@@ -487,13 +487,18 @@ export async function createServer(
           async () => {
             const probeStart = Date.now();
             try {
+              const metadata = upstream.serviceId === "marketplace-registry" && process.env.GATEWAY_INTERNAL_SECRET
+                ? { "x-internal-secret": process.env.GATEWAY_INTERNAL_SECRET }
+                : undefined;
               const res = await serviceTransport.call(upstream.serviceId, {
                 path: "/health",
+                ...(metadata ? { metadata } : {}),
                 signal: AbortSignal.timeout(2000),
               });
               const latencyMs = Date.now() - probeStart;
-              upstreams[name] = { status: res.ok ? "up" : "down", latencyMs };
-              if (!res.ok) {
+              const healthy = res.ok && res.statusCode >= 200 && res.statusCode < 300;
+              upstreams[name] = { status: healthy ? "up" : "down", latencyMs };
+              if (!healthy) {
                 logDiagnosticEvent(logger, {
                   domain: "service",
                   event: "gateway.upstream.health",

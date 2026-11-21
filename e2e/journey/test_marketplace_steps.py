@@ -1,10 +1,14 @@
 import json
 import ast
+import contextlib
+import io
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 import urllib.request
 from unittest.mock import patch
@@ -26,7 +30,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
 from service_steps import FlowGraph, Journey
-from marketplace_tamper_proxy import tamper_tarball
+from marketplace_tamper_proxy import Handler as MarketplaceProxyHandler, tamper_tarball
 from journey_dependencies import Dependency
 import service_runner
 from test_install_layout import create_test_install_container
@@ -162,7 +166,7 @@ class MarketplaceStepTests(unittest.TestCase):
             }}))
             rendered = {"ok": True, "data": {
                 "installed": [{"id": "journey-npm-only-fixture", "source": "npm", "signatureStatus": "unsigned"}],
-                "marketplaceSources": [{"kind": "registry", "url": "http://registry.test"}],
+                "marketplaceSources": [{"kind": "registry", "url": "http://127.0.0.1:4317/api/v1/marketplace-registry"}],
             }}
             observed_tokens = []
             def runner(command, **_kwargs):
@@ -193,6 +197,7 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_MARKETPLACE_TOKEN": "",
                    "KB_JOURNEY_KB_CREATE_PATH": str(project / "kb-create")}
             with patch("marketplace_steps._set_marketplace_proxy_faults"), \
+                    patch("marketplace_steps._installed_gateway_url", return_value="http://127.0.0.1:4317"), \
                     patch("marketplace_steps._assert_catalogued_marketplace_failure"), \
                     patch("marketplace_steps._json", return_value=rendered["data"]), \
                     patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
@@ -234,6 +239,58 @@ class MarketplaceStepTests(unittest.TestCase):
         self.assertNotEqual(tamper_tarball("/api/v1/packages/acme/plugin/1.0.0/tarball", body), body)
         self.assertEqual(tamper_tarball("/api/v1/packages/acme/plugin", body), body)
 
+    def test_tamper_proxy_forwards_authenticated_registry_publish_post_without_logging_secrets(self):
+        observed = {}
+
+        class Upstream(BaseHTTPRequestHandler):
+            def do_POST(self):
+                observed["path"] = self.path
+                observed["body"] = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                observed["headers"] = {key.lower(): value for key, value in self.headers.items()}
+                self.send_response(201)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"published":true}')
+
+            def log_message(self, _format, *_args):
+                return
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        proxy = ThreadingHTTPServer(("127.0.0.1", 0), MarketplaceProxyHandler)
+        threads = [threading.Thread(target=server.serve_forever, daemon=True)
+                   for server in (upstream, proxy)]
+        for thread in threads:
+            thread.start()
+        payload = b"multipart fixture body"
+        secret_headers = {
+            "Authorization": "Bearer auth-sentinel",
+            "X-Internal-Secret": "internal-secret-sentinel",
+            "X-Kb-Auth-Type": "user",
+            "Content-Type": "multipart/form-data; boundary=fixture",
+        }
+        try:
+            with patch.dict(os.environ, {"MARKETPLACE_TAMPER_UPSTREAM":
+                                         f"http://127.0.0.1:{upstream.server_port}"}), \
+                    contextlib.redirect_stderr(io.StringIO()) as logs:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{proxy.server_port}/api/v1/packages/publish?fixture=1",
+                    data=payload, headers=secret_headers, method="POST")
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    self.assertEqual(response.status, 201)
+                    self.assertEqual(response.read(), b'{"published":true}')
+            self.assertEqual(observed["path"], "/api/v1/packages/publish?fixture=1")
+            self.assertEqual(observed["body"], payload)
+            for name, value in secret_headers.items():
+                self.assertEqual(observed["headers"].get(name.lower()), value)
+            self.assertNotIn("auth-sentinel", logs.getvalue())
+            self.assertNotIn("internal-secret-sentinel", logs.getvalue())
+        finally:
+            for server in (proxy, upstream):
+                server.shutdown()
+                server.server_close()
+            for thread in threads:
+                thread.join(timeout=2)
+
     def test_commit_fixture_publisher_uses_the_real_hub_publish_request(self):
         self.assertEqual(commit_publish_command("/workspace"), [
             "hub", "publish", "--path", "/workspace/plugins/commit", "--json",
@@ -249,11 +306,49 @@ class MarketplaceStepTests(unittest.TestCase):
             (project / ".kb").mkdir(parents=True)
             (project / ".kb" / "kb.config.json").write_text("{}\n")
             workspace = root / "workspace"
+            (workspace / "cli" / "bin" / "dist").mkdir(parents=True)
+            (workspace / "cli" / "bin" / "dist" / "bin.js").write_text("// mocked CLI entry\n")
+            (workspace / ".kb").mkdir()
+            (workspace / ".kb" / "marketplace.lock").write_text(
+                json.dumps({"schema": "kb.marketplace/3", "plugins": {}}))
+            (workspace / "plugins").mkdir()
+            (workspace / "e2e").mkdir()
+            installed_platform = root / "installed-platform"
+            installed_adapter = installed_platform / "node_modules" / "@kb-labs" / "adapters-pino"
+            installed_adapter.mkdir(parents=True)
+            (installed_adapter / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/adapters-pino", "version": "2.120.1",
+            }))
+            (installed_platform / ".kb" / "v2").mkdir(parents=True)
+            (installed_platform / ".kb" / "v2" / "installed-provenance.json").write_text(json.dumps({
+                "schema": "kb.create.installed-provenance/v1", "packages": [{
+                    "name": "@kb-labs/adapters-pino", "version": "2.120.1",
+                    "installedPath": "node_modules/@kb-labs/adapters-pino",
+                }],
+            }))
             calls = []
 
-            def runner(command, *, cwd, env, capture_output, text, timeout):
-                calls.append((tuple(command), cwd, env.copy()))
+            def runner(command, *, cwd, env, capture_output, text, timeout, input=None):
+                calls.append((tuple(command), cwd, env.copy(), input))
+                if command[0] == "node" and command[2:4] == ["auth", "login"]:
+                    self.assertEqual(input, "fixture-admin-password\n")
+                    session_path = Path(env["KB_HOME"]) / "session.json"
+                    session_path.parent.mkdir(parents=True, exist_ok=True)
+                    gateway_url = command[command.index("--gateway-url") + 1]
+                    session_path.write_text(json.dumps({"version": 1, "sessions": [{
+                        "gatewayUrl": gateway_url, "accessToken": "fixture-access-token",
+                        "refreshToken": "fixture-refresh-token", "expiresAt": 4102444800000,
+                    }]}))
+                    session_path.chmod(0o600)
+                    return subprocess.CompletedProcess(command, 0, "Logged in.\n", "")
                 if command[0] == "node":
+                    self.assertTrue((Path(env["KB_HOME"]) / "session.json").is_file())
+                    self.assertEqual((Path(env["KB_PLATFORM_ROOT"]) / "plugins").resolve(),
+                                     (workspace / "plugins").resolve())
+                    self.assertTrue((Path(env["KB_PLATFORM_ROOT"]) / ".kb" / "marketplace.lock").is_file())
+                    staged_adapter = Path(env["KB_PLATFORM_ROOT"]) / "node_modules" / "@kb-labs" / "adapters-pino"
+                    self.assertTrue(staged_adapter.is_symlink())
+                    self.assertEqual(staged_adapter.resolve(), installed_adapter.resolve())
                     return subprocess.CompletedProcess(command, 0, json.dumps({
                         "ok": True, "data": {"version": "2.120.1"},
                     }), "")
@@ -272,21 +367,49 @@ class MarketplaceStepTests(unittest.TestCase):
 
             env = {"HOME": str(root), "KB_JOURNEY_WORKSPACE_ROOT": str(workspace),
                    "KB_JOURNEY_MARKETPLACE_PUBLISH_URL": "http://registry.test/api/v1",
-                   "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey"}
+                   "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey",
+                   "KB_JOURNEY_PLATFORM_ROOT": str(root / "installed-root"),
+                   "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured",
+                   "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
+                   "KB_JOURNEY_ADMIN_PASSWORD": "fixture-admin-password"}
+            def fake_open_http(_opener, request, **_kwargs):
+                if request.full_url.endswith("/ready"):
+                    return 200, json.dumps({"ok": True, "data": {"ready": True, "components": {
+                        "upstream:marketplaceRegistry": {"ready": True, "status": "up"}}}}).encode(), {}
+                return 401, json.dumps({"ok": False, "error": {
+                    "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
+                    "hint": "Log in and retry."}}).encode(), {}
+
             with patch("marketplace_steps.wait_for_marketplace_ready"), \
-                    patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
+                    patch("marketplace_steps._installed_gateway_url", return_value="http://127.0.0.1:4317"), \
+                    patch("marketplace_steps.active_platform_root", return_value=installed_platform), \
+                    patch("marketplace_steps._assert_registry_gateway_config"), \
+                    patch("marketplace_steps.open_http", side_effect=fake_open_http), \
+                    patch("installed_fixture.write_local_access_mode", side_effect=lambda platform_root, _source_config: platform_root), \
+                    patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured"}):
                 journey = Journey("local", "registry-commit-fixture")
                 entry = prepare_registry_commit_project_fixture(journey, project, "http://verdaccio.test",
                                                                  env, runner)
 
+            self.assertIsNotNone(entry, [(step.name, step.status, step.message) for step in journey.steps])
+            self.assertIn("S-268.23", {case for step in journey.steps for case in step.cases})
             self.assertEqual(entry["marketplaceSource"], "registry")
             self.assertEqual(entry["signatureStatus"], "verified")
             workspace_cli = str(workspace / "cli" / "bin" / "dist" / "bin.js")
-            self.assertEqual([call[0] for call in calls if call[0][0] == "node"], [
+            publish_calls = [call for call in calls if call[0][0] == "node" and "hub" in call[0]]
+            self.assertEqual([call[0] for call in publish_calls], [
                 ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/commit"), "--json"),
                 ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"),
                 ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"),
             ])
+            self.assertTrue(all(call[2].get("KB_REGISTRY_URL") ==
+                                "http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1"
+                                for call in publish_calls))
+            login_calls = [call for call in calls if call[0][0] == "node" and call[0][2:4] == ("auth", "login")]
+            self.assertEqual(len(login_calls), 3)
+            self.assertTrue(all(login[2]["HOME"] == publish[2]["HOME"]
+                                and login[2]["KB_HOME"] == publish[2]["KB_HOME"]
+                                for login, publish in zip(login_calls, publish_calls)))
             self.assertEqual(journey.result().status, "PASS")
 
     def test_policy_diagnostic_step_restores_config_and_proves_blocked_fixture_and_first_party_cli(self):

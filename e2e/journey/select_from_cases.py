@@ -203,6 +203,23 @@ def fixture_group_declarations(groups, selector: str, root: Path) -> dict[str, d
             runners = declaration_runners(declaration, source)
             if owner.lineno <= line <= owner.end_lineno and (not selector or selector in runners):
                 claims.update(declaration.get("cases") or ())
+        for node in ast.walk(owner):
+            if not isinstance(node, ast.Call):
+                continue
+            function = node.func
+            call = function.id if isinstance(function, ast.Name) else (
+                function.attr if isinstance(function, ast.Attribute) else "")
+            if call != "run_fixture_group":
+                continue
+            cases_node = next((keyword.value for keyword in node.keywords if keyword.arg == "cases"), None)
+            if cases_node is None:
+                continue
+            if not isinstance(cases_node, (ast.Tuple, ast.List)) or any(
+                    not isinstance(item, ast.Constant) or not isinstance(item.value, str)
+                    for item in cases_node.elts):
+                raise ValueError(
+                    f"{source}:{node.lineno}: fixture claim declaration is not statically resolvable")
+            claims.update(item.value for item in cases_node.elts)
         declarations_by_group[group.__name__] = {"cases": claims, "steps": steps}
 
     result = {}

@@ -12,11 +12,14 @@ surfaces: [cli, api]
 
 ## Goal
 
-An administrator registers a workspace machine with a gateway and verifies that the agent is connected under the chosen host name.
+An administrator registers a workspace machine with a gateway and verifies that the agent is connected under the chosen host name. This scenario is for a project workspace that is remote from the KB Labs platform host (for example, a cloud platform connected to a separately hosted project workspace). Workspace Agent registration and deployment are outside the first release.
+
+For a project on the same local or secured installation, the platform's own host executes project work; that path does not require Workspace Agent installation, registration, or connectivity.
 
 ## Prerequisites
 
-- [ ] The built-in Workspace Agent command group is available; the Gateway is reachable and accepts workspace registration.
+- [ ] The project workspace is remote from the KB Labs platform host; the built-in Workspace Agent command group is available; and the Gateway is reachable and accepts admin-authorized workspace registration.
+- [ ] This remote-workspace scenario does not redefine local or secured execution: those installations use their platform-owned host without a Workspace Agent.
 - [ ] A disposable HOME is used for this scenario so registration credentials do not affect another agent installation.
 
 ## Steps

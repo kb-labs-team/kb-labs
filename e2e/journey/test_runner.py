@@ -22,7 +22,8 @@ from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import commit_marketplace_install_record
 import runner
-from runner import REGISTRY, marketplace_install_flags
+from runner import (REGISTRY, marketplace_install_flags, registry_gateway_url_from_plan,
+                    registry_install_request)
 import journey_resources
 
 
@@ -96,6 +97,42 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
             "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
             "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN",
         ])
+
+    # case: S-268.1
+    def test_registry_install_source_uses_gateway_route_from_effective_plan_address(self):
+        env = {
+            "HOME": "/tmp/kb-journey-test-home",
+            "KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://marketplace-tamper:8081",
+            "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64": base64.b64encode(b"public-key").decode(),
+        }
+        gateway = registry_gateway_url_from_plan({
+            "plan": {"host": {"healthUrl": "http://127.0.0.1:4317/health"}},
+        })
+        flags = marketplace_install_flags(env, gateway_url=gateway)
+        self.assertEqual(flags[:2], [
+            "--marketplace-registry-url", "http://127.0.0.1:4317/api/v1/marketplace-registry",
+        ])
+
+    # case: S-268.1
+    def test_install_request_configures_route_and_transport_before_apply(self):
+        prepared = registry_install_request({
+            "plan": {
+                "request": {"schema": "kb.create/v2", "marketplaceSources": {"registryUrl": "http://old"}},
+                "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
+                    "serviceTransport": {"services": {"marketplace": {"url": "http://127.0.0.1:5070"}}},
+                })}],
+            },
+        }, gateway_url="http://127.0.0.1:4317", registry_upstream="http://marketplace-tamper:8081")
+        self.assertEqual(prepared["marketplaceSources"]["registryUrl"],
+                         "http://127.0.0.1:4317/api/v1/marketplace-registry")
+        self.assertIn("gateway.internalSecret", prepared["secretInputs"])
+        self.assertEqual(json.loads(prepared["values"]["gateway.marketplaceRegistryRoute"]), {
+            "serviceId": "marketplace-registry", "prefix": "/api/v1/marketplace-registry", "rewritePrefix": "",
+        })
+        self.assertEqual(json.loads(prepared["values"]["platform.adapterOptions"])["serviceTransport"]["services"], {
+            "marketplace": {"url": "http://127.0.0.1:5070"},
+            "marketplace-registry": {"url": "http://marketplace-tamper:8081"},
+        })
 
     def test_clean_install_requires_the_marketplace_commit_receipt(self):
         self.assertIsNotNone(commit_marketplace_install_record({"marketplaceInstalls": [
@@ -568,7 +605,45 @@ thread.join()
         )
         case_graph = FlowGraph(Journey("secured", "s054-commit-smoke", selection=case_selection), {})
         runner.run_selected_first_value_smoke(case_graph, lambda: calls.append("S-054.17"))
-        self.assertEqual(calls, ["full", "prerequisite", "S-054.17"])
+        self.assertEqual(calls, ["full", "prerequisite"])
+
+    def test_project_mcp_smoke_is_skipped_for_unrelated_selected_s181_install_claim(self):
+        runner = importlib.import_module("runner")
+        selection = JourneySelection(
+            requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(),
+            capabilities=frozenset({"platform.install", "gateway", "projects"}),
+            runner_selector="agent-secured:commit", requested_runners="",
+        )
+        graph = FlowGraph(Journey("secured", "s181-project-mcp-selection", selection=selection), {})
+        calls = []
+        result = runner.run_selected_project_mcp(graph, lambda: calls.append("project MCP"))
+        self.assertEqual(result.status, "SKIPPED")
+        self.assertEqual(calls, [])
+
+    def test_project_mcp_smoke_runs_for_full_mcp_claim_and_declared_prerequisite(self):
+        runner = importlib.import_module("runner")
+        calls = []
+        full_graph = FlowGraph(Journey("secured", "full-project-mcp-smoke"), {})
+        runner.run_selected_project_mcp(full_graph, lambda: calls.append("full"))
+
+        mcp_selection = JourneySelection(
+            requested=("S-140.5",), claims=frozenset({"S-140.5"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset({"mcp"}),
+            runner_selector="agent-secured:commit", requested_runners="",
+        )
+        mcp_graph = FlowGraph(Journey("secured", "selected-project-mcp-smoke", selection=mcp_selection), {})
+        runner.run_selected_project_mcp(mcp_graph, lambda: calls.append("MCP claim"))
+
+        prerequisite_selection = JourneySelection(
+            requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+            prerequisite_steps=frozenset({"project MCP journey"}), prerequisite_flows=frozenset(),
+            capabilities=frozenset(), runner_selector="agent-secured:commit", requested_runners="",
+        )
+        prerequisite_graph = FlowGraph(
+            Journey("secured", "project-mcp-prerequisite", selection=prerequisite_selection), {})
+        runner.run_selected_project_mcp(prerequisite_graph, lambda: calls.append("prerequisite"))
+        self.assertEqual(calls, ["full", "MCP claim", "prerequisite"])
 
     def test_local_commit_scenario_uses_commit_installer_scenario(self):
         runner = importlib.import_module("runner")
@@ -589,6 +664,46 @@ thread.join()
         self.assertEqual(events, ["login", "project probe"])
         self.assertTrue(graph.states["session"]["passed"])
         self.assertTrue(graph.states["project-registered"]["passed"])
+
+    def test_project_mcp_uses_runner_mode_and_normal_authenticated_session(self):
+        runner = importlib.import_module("runner")
+        service_runner = importlib.import_module("service_runner")
+        graph = FlowGraph(Journey("secured", "mcp-auth-smoke"), {})
+        env = {}
+        with patch.object(runner, "VARIANT", "default"), \
+                patch.object(service_runner, "prepare_service_api_session") as prepare, \
+                patch.object(service_runner, "service_api_token", return_value="test-session-token"), \
+                patch.object(runner, "verify_project_mcp") as verify:
+            runner.verify_selected_project_mcp(graph, env)
+        prepare.assert_called_once_with(graph, "secured", env=env)
+        verify.assert_called_once_with(env, False, runner.DEFAULT_ENABLED_SERVICES,
+                                       token="test-session-token")
+
+    def test_mcp_product_claim_selects_authenticated_smoke(self):
+        runner = importlib.import_module("runner")
+        selection = JourneySelection(
+            requested=("S-140.5",), claims=frozenset({"S-140.5"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            runner_selector="agent-secured:commit", requested_runners="",
+        )
+        graph = FlowGraph(Journey("secured", "secured-mcp-claim", selection=selection), {})
+        calls = []
+        runner.run_selected_project_mcp(graph, lambda: calls.append("secured MCP"))
+        self.assertEqual(calls, ["secured MCP"])
+
+    def test_local_project_mcp_uses_no_secured_session(self):
+        runner = importlib.import_module("runner")
+        service_runner = importlib.import_module("service_runner")
+        graph = FlowGraph(Journey("local", "local-mcp-auth-smoke"), {})
+        env = {}
+        with patch.object(runner, "VARIANT", "secured"), \
+                patch.object(service_runner, "prepare_service_api_session") as prepare, \
+                patch.object(service_runner, "service_api_token") as token, \
+                patch.object(runner, "verify_project_mcp") as verify:
+            runner.verify_selected_project_mcp(graph, env)
+        prepare.assert_not_called()
+        token.assert_not_called()
+        verify.assert_called_once_with(env, True, runner.DEFAULT_ENABLED_SERVICES, token=None)
 
     def test_recovery_reestablishes_host_before_dependent_session(self):
         runner = importlib.import_module("runner")

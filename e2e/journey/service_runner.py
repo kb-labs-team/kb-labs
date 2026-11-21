@@ -21,6 +21,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import traceback
+from typing import MutableMapping
 import urllib.error
 import urllib.request
 import uuid
@@ -761,23 +762,27 @@ def export_project_state_to_child_environment(graph: FlowGraph) -> None:
     )
 
 
-def prepare_service_api_session(graph: FlowGraph, mode: str) -> None:
+def prepare_service_api_session(graph: FlowGraph, mode: str,
+                                env: MutableMapping[str, str] | None = None) -> None:
     """Probe the independent HTTP credential used by service-runner API requests.
 
     The CLI session is restored separately because auth journey steps can log the CLI out;
     this state is the runner's HTTP bearer credential and has its own lifetime.
     """
+    session_env = env if env is not None else os.environ
+    admin_email = session_env.get("KB_JOURNEY_ADMIN_EMAIL", ADMIN_EMAIL)
+    admin_password = session_env.get("KB_JOURNEY_ADMIN_PASSWORD", ADMIN_PASSWORD)
     acquired: dict[str, str | None] = {"token": None}
 
     def acquire() -> str | None:
         if mode == "local":
             return None
-        if not ADMIN_PASSWORD:
+        if not admin_password:
             return "secured profile needs KB_JOURNEY_ADMIN_PASSWORD; provide test credentials in the isolated journey container"
-        store_report_secret(os.environ, "KB_JOURNEY_ADMIN_PASSWORD", ADMIN_PASSWORD,
+        store_report_secret(session_env, "KB_JOURNEY_ADMIN_PASSWORD", admin_password,
                             "service runner admin password")
         status, body, _ = request("/auth/login/cli", method="POST",
-                                  payload={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+                                  payload={"email": admin_email, "password": admin_password})
         if status not in {200, 201}:
             return f"POST /auth/login/cli returned HTTP {status}; check the isolated secured install credentials"
         if not isinstance(body, dict):
@@ -786,7 +791,7 @@ def prepare_service_api_session(graph: FlowGraph, mode: str) -> None:
         if not token:
             return "POST /auth/login/cli returned no access token"
         token = str(token)
-        store_report_secret(os.environ, "KB_JOURNEY_SERVICE_TOKEN", token,
+        store_report_secret(session_env, "KB_JOURNEY_SERVICE_TOKEN", token,
                             "secured service admin access token")
         acquired["token"] = token
         me_status, _, _ = request("/auth/me", token=token)
@@ -942,7 +947,8 @@ def service_selection_groups(root: Path | None = None, runner_selector: str = ""
                   else "marketplace-lifecycle")
     group = dict(groups[group_name])
     group["cases"] = tuple(sorted(set(group.get("cases", ())) | set(declaration["cases"])))
-    group["steps"] = tuple(sorted(set(group.get("steps", ())) | set(declaration["steps"])))
+    # The imported source closure includes unrelated runner owners. Case IDs identify
+    # marketplace flows without making those cross-module step names select this group.
     groups[group_name] = group
     return groups
 STATE_PRODUCERS = {
@@ -1189,11 +1195,29 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
         return run_with_runner(command_runner, command, timeout=timeout, **options)
     project_a = Path(project_root).resolve()
     package = "@kb-labs/commit"
-    install = kb_command([ "marketplace", "install", package, "--json"])
+    install = kb_command(["marketplace", "install", package, "--scope", "project", "--json"])
     installed = runner(install, cwd=str(project_a), env=env, capture_output=True,
                        text=True, timeout=300)
     _output(installed, install)
     plan_preparation_result = _write_mcp_commit_plan(project_a, env)
+
+    review_package = "@kb-labs/review"
+    review_version = _registry_version(review_package, registry, project_a, env, runner)
+    review_install = kb_command(["marketplace", "install", f"{review_package}@{review_version}",
+                                 "--scope", "project", "--json"])
+    review_installed = runner(review_install, cwd=str(project_a), env=env, capture_output=True,
+                              text=True, timeout=300)
+    _output(review_installed, review_install)
+
+    platform_list = kb_command(["marketplace", "plugins", "list", "--scope", "platform", "--json"])
+    platform_list_result = runner(platform_list, cwd=str(project_a), env=env, capture_output=True,
+                                  text=True, timeout=120)
+    platform_plugins = decode_ux_success_result(read_ux_cli_result(platform_list_result))
+    platform_entries = platform_plugins.get("entries") if isinstance(platform_plugins, dict) else None
+    if not isinstance(platform_entries, list):
+        raise RuntimeError("platform plugin list returned no entries while preparing MCP isolation fixture")
+    if any(isinstance(entry, dict) and entry.get("id") == review_package for entry in platform_entries):
+        raise RuntimeError("MCP isolation fixture Review plugin is installed at platform scope")
 
     home = Path(env["HOME"])
     project_b = home / "project-b-mcp"
@@ -1215,19 +1239,20 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     project_b_id, project_b_root = _find_project_registration(payload)
     if not project_b_id or not project_b_root:
         raise RuntimeError("registering MCP isolation project B returned no project ID and canonical path")
-    review_package = "@kb-labs/review"
-    review_version = _registry_version(review_package, registry, project_b, env, runner)
-    review_install = kb_command([ "marketplace", "install", f"{review_package}@{review_version}", "--json"])
-    review_installed = runner(review_install, cwd=str(project_b), env=env, capture_output=True,
-                              text=True, timeout=300)
-    _output(review_installed, review_install)
+    project_list = kb_command(["marketplace", "plugins", "list", "--scope", "project", "--json"])
+    project_list_result = runner(project_list, cwd=str(project_b), env=env, capture_output=True,
+                                 text=True, timeout=120)
+    project_plugins = decode_ux_success_result(read_ux_cli_result(project_list_result))
+    project_entries = project_plugins.get("entries") if isinstance(project_plugins, dict) else None
+    if not isinstance(project_entries, list):
+        raise RuntimeError("project B plugin list returned no entries while preparing MCP isolation fixture")
+    if any(isinstance(entry, dict) and entry.get("id") == review_package for entry in project_entries):
+        raise RuntimeError("MCP isolation fixture Review plugin is installed in project B")
     lock_path = project_b / ".kb" / "marketplace.lock"
     if lock_path.exists():
         lock = json.loads(lock_path.read_text())
         if "@kb-labs/commit" in lock.get("plugins", {}):
             raise RuntimeError("MCP isolation project B unexpectedly has the Commit plugin installed")
-        if "@kb-labs/review" not in lock.get("plugins", {}):
-            raise RuntimeError("MCP isolation project B does not have its Review fixture plugin installed")
     return project_b_id, project_b_root, plan_preparation_result
 
 

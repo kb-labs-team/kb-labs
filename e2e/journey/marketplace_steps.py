@@ -58,6 +58,26 @@ def _installed_gateway_url(env: dict[str, str]) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).rstrip("/")
 
 
+def _assert_registry_gateway_config(env: dict[str, str]) -> None:
+    platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
+    registry_upstream = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL")
+    if not platform_root or not registry_upstream:
+        raise RuntimeError("Registry journey has no installed Gateway route fixture")
+    config_path = active_platform_root(Path(platform_root)) / ".kb" / "kb.config.jsonc"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    route = config.get("gateway", {}).get("upstreams", {}).get("marketplaceRegistry")
+    transport = (config.get("platform", {}).get("adapterOptions", {})
+                 .get("serviceTransport", {}).get("services", {}).get("marketplace-registry"))
+    sources = config.get("marketplace", {}).get("sources", [])
+    if (route != {"serviceId": "marketplace-registry",
+                  "prefix": "/api/v1/marketplace-registry", "rewritePrefix": ""}
+            or not isinstance(transport, dict) or transport.get("url") != registry_upstream
+            or not isinstance(sources, list) or not sources
+            or not isinstance(sources[0], dict)
+            or sources[0].get("url") != f"{_installed_gateway_url(env)}/api/v1/marketplace-registry"):
+        raise RuntimeError("Registry source, Gateway route, and isolated upstream do not form one route")
+
+
 def commit_publish_command(workspace_root: str | Path) -> list[str]:
     return ["hub", "publish", "--path", str(Path(workspace_root) / "plugins" / "commit"), "--json"]
 
@@ -76,10 +96,24 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     publish = _publish_fixture_command(workspace_root, package_path)
     command = ["node", str(workspace_cli), *publish]
     publish_env = dict(env)
-    publish_env["KB_REGISTRY_URL"] = registry_url
+    publish_env["KB_REGISTRY_URL"] = env.get("KB_REGISTRY_URL", registry_url)
     publish_env["KB_REGISTRY_AUTHOR_HANDLE"] = author_handle
+    selector = env.get("KB_JOURNEY_RUNNER_SELECTOR", "")
+    gateway_login = None
+    if selector.endswith(":secured"):
+        email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
+        password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
+        if not email or not password:
+            raise RuntimeError("secured Registry fixture publishing needs the journey administrator credentials")
+        gateway_login = (_installed_gateway_url(env), email, password)
+    journey_platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
+    if not journey_platform_root:
+        raise RuntimeError("Registry fixture publishing needs the active installed platform root")
     return run_hermetic_cli(
         command, cwd=workspace_root, env=publish_env, runner=runner,
+        workspace_root=workspace_root,
+        installed_platform_root=active_platform_root(Path(journey_platform_root)),
+        gateway_login=gateway_login,
     )
 
 
@@ -402,6 +436,8 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
     captured: dict[str, dict] = {}
 
     def install_fixture() -> None:
+        if base_env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL"):
+            _assert_registry_gateway_config(base_env)
         wait_for_marketplace_ready(project, base_env, runner)
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
         version = commit_fixture_source_version(workspace)
@@ -483,8 +519,42 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
     export_project_identity_to_child_environment(base_env, project_root=str(project))
     captured: dict[str, dict] = {}
 
+    def assert_direct_registry_denied() -> None:
+        registry_api = base_env.get("KB_JOURNEY_MARKETPLACE_PUBLISH_URL", "").removesuffix("/api/v1")
+        if not registry_api:
+            raise RuntimeError("journey Registry direct-access check has no service URL")
+        direct_request = urllib.request.Request(
+            f"{registry_api}/api/v1/resolve?identity=%40kb-labs%2Fcommit")
+        status, body, _ = open_http(urllib.request.urlopen, direct_request, timeout=30, env=base_env)
+        direct_payload = read_ux_http_result(body, status)
+        direct_error = direct_payload.get("error") if isinstance(direct_payload, dict) else None
+        if status != 401 or not isinstance(direct_error, dict) or direct_error.get("code") != "KB_AUTH_REQUIRED":
+            raise RuntimeError("direct Registry resolve was not denied without the Gateway internal secret")
+
+    journey.step("direct Registry access is denied without Gateway identity", "marketplace-fixtures",
+                 assert_direct_registry_denied, cases=["S-268.1"], role="lifecycle",
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
+
+    def assert_gateway_registry_ready() -> None:
+        gateway_request = urllib.request.Request(f"{_installed_gateway_url(base_env)}/ready")
+        status, body, _ = open_http(urllib.request.urlopen, gateway_request, timeout=30, env=base_env)
+        payload = read_ux_http_result(body, status)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        components = data.get("components") if isinstance(data, dict) else None
+        registry_component = components.get("upstream:marketplaceRegistry") if isinstance(components, dict) else None
+        if (status != 200 or not isinstance(data, dict) or data.get("ready") is not True
+                or not isinstance(registry_component, dict) or registry_component.get("ready") is not True):
+            raise RuntimeError("Gateway readiness did not report the protected Marketplace Registry upstream as ready")
+
+    journey.step("Gateway reports protected Registry ready", "marketplace-fixtures",
+                 assert_gateway_registry_ready, cases=["S-268.23"], role="lifecycle",
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
+
     def install_fixture() -> None:
+        _assert_registry_gateway_config(base_env)
         wait_for_marketplace_ready(project, base_env, runner)
+        base_env["KB_REGISTRY_URL"] = (
+            f"{_installed_gateway_url(base_env)}/api/v1/marketplace-registry/api/v1")
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
         published = _json(_publish_workspace_fixture(workspace, "plugins/commit", base_env, runner),
                            commit_publish_command(workspace))
@@ -647,7 +717,7 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
         store_report_secret(env, "KB_JOURNEY_MARKETPLACE_TOKEN",
                             "journey-registry-token-reference-test-value",
                             "journey Marketplace Registry redaction test credential")
-        expected_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
+        expected_url = f"{_installed_gateway_url(env)}/api/v1/marketplace-registry"
         token = env.get("KB_JOURNEY_MARKETPLACE_TOKEN", "")
         if not expected_url or not key or not token:
             raise RuntimeError("journey Marketplace source URL or secret references are absent from the installer environment")
