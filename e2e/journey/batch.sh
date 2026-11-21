@@ -114,9 +114,11 @@ run_prepare() {
         esac
         [ ! -d "$package_path/dist" ] || printf './%s/dist\n' "$package_path" >> "$shared/archive-files.txt"
       done < "$shared/workspace-packages.txt"
+      "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/candidate_archive.py" "$ROOT" >> "$shared/archive-files.txt"
       for item in .journey/runner-inputs .journey/release .journey/kb-create-release-index e2e/packages; do
         [ ! -e "$item" ] || printf '%s\n' "./$item" >> "$shared/archive-files.txt"
       done
+      LC_ALL=C sort -u "$shared/archive-files.txt" -o "$shared/archive-files.txt"
     } &&
     tar -cf "$archive" -T "$shared/archive-files.txt"
   ) > "$shared/candidate-package.log" 2>&1; then
