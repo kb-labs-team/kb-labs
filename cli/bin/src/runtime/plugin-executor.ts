@@ -41,6 +41,8 @@ export interface PluginExecutionOptions {
   flags: Record<string, unknown>;
   manifestCmd?: RegisteredCommand;
   platform: PlatformContainer;
+  /** Host-only path used by runtime module resolution; never exposed as plugin env. */
+  platformRoot?: string;
   resultWriter?: CliResultWriter;
 }
 
@@ -53,7 +55,7 @@ export interface PluginExecutionOptions {
 export async function executePlugin(
   options: PluginExecutionOptions,
 ): Promise<number | undefined> {
-  const { context, env, commandId, argv, flags, manifestCmd, platform } = options;
+  const { context, env, commandId, argv, flags, manifestCmd, platform, platformRoot } = options;
   const resultWriter = options.resultWriter ?? missingCliResultWriter;
 
   // No manifest command info - can't execute
@@ -149,10 +151,8 @@ export async function executePlugin(
           permissions,
           quotas,
           configSection: pluginManifest.configSection,
-          ...((gatewayUrl || env.KB_PLATFORM_ROOT) ? { env: {
-            ...(gatewayUrl ? { KB_GATEWAY_URL: gatewayUrl } : {}),
-            ...(env.KB_PLATFORM_ROOT ? { KB_PLATFORM_ROOT: env.KB_PLATFORM_ROOT } : {}),
-          } } : {}),
+          ...(gatewayUrl ? { env: { KB_GATEWAY_URL: gatewayUrl } } : {}),
+          ...(platformRoot ? { platformRoot } : {}),
         });
 
       context.logger?.debug(

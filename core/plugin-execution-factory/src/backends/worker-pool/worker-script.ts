@@ -300,6 +300,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
         handlerPath,
         cwd,
         input: request.input,
+        platformRoot: request.platformRoot,
         environment: request.env,
         adapterMiddlewares,
       });
