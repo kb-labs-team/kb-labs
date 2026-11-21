@@ -69,7 +69,8 @@ run_prepare() {
   trap 'prepare_interrupted=1; exit 143' TERM
   reset_started=$(date +%s)
   reset_rc=0
-  "$SCRIPT_DIR/run.sh" --down > "$shared/reset.log" 2>&1 || reset_rc=$?
+  "$SCRIPT_DIR/tee-stage.sh" "$shared/reset.log" 'Reset journey services' \
+    "$SCRIPT_DIR/run.sh" --down || reset_rc=$?
   reset_seconds=$(($(date +%s) - reset_started))
   if [ "$reset_rc" -ne 0 ]; then
     printf '\n- Failed stage: `reset`\n- Stage log: `reset.log`\n- Result: FAIL\n' >> "$shared/summary.md"
