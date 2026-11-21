@@ -337,9 +337,10 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                 "package": "@kb-labs/commit",
             }},
         }))
-        journey = Journey("local", "commit-case-fixture")
-        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
-                              subprocess.run, self.env)
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}):
+            journey = Journey("local", "commit-case-fixture")
+            run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                                  subprocess.run, self.env)
         result = journey.result()
         expected = {
             *(f"S-014.{step}" for step in range(1, 4)),
@@ -376,9 +377,10 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             }},
         }))
 
-        journey = Journey("local", "commit-case-clean-worktree")
-        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
-                              subprocess.run, self.env)
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}):
+            journey = Journey("local", "commit-case-clean-worktree")
+            run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                                  subprocess.run, self.env)
 
         status = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"],
                                 cwd=self.project, capture_output=True, text=True, check=True)
@@ -397,9 +399,10 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             }},
         }))
 
-        journey = Journey("local", "commit-case-headless-repository")
-        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
-                              subprocess.run, self.env)
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}):
+            journey = Journey("local", "commit-case-headless-repository")
+            run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                                  subprocess.run, self.env)
 
         result = journey.result()
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.project,
