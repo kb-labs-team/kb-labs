@@ -149,7 +149,10 @@ export async function executePlugin(
           permissions,
           quotas,
           configSection: pluginManifest.configSection,
-          ...(gatewayUrl ? { env: { KB_GATEWAY_URL: gatewayUrl } } : {}),
+          ...((gatewayUrl || env.KB_PLATFORM_ROOT) ? { env: {
+            ...(gatewayUrl ? { KB_GATEWAY_URL: gatewayUrl } : {}),
+            ...(env.KB_PLATFORM_ROOT ? { KB_PLATFORM_ROOT: env.KB_PLATFORM_ROOT } : {}),
+          } } : {}),
         });
 
       context.logger?.debug(

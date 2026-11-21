@@ -293,7 +293,11 @@ export async function executeCli(
   // The resolved address is an invocation-local carrier for service-aware
   // built-ins and plugin handlers. It must not become the CLI process's
   // execution-transport switch through process.env.
-  const commandEnv: CliCommandEnv = { ...env, KB_GATEWAY_URL: commandGatewayAddress.gatewayUrl };
+  const commandEnv: CliCommandEnv = {
+    ...env,
+    KB_GATEWAY_URL: commandGatewayAddress.gatewayUrl,
+    ...(platformRoot ? { KB_PLATFORM_ROOT: platformRoot } : {}),
+  };
 
   globalThis.__KB_PLATFORM_CONFIG__ = platformConfig;
   globalThis.__KB_RAW_CONFIG__ = rawConfig;

@@ -142,7 +142,11 @@ export async function runInProcess<T = unknown>(
     // Plugin code can be outside the installed platform tree (for example, a
     // Marketplace store entry). Resolve its platform packages from the one
     // platform copy in this process before importing the handler.
-    const platformRoot = process.env.KB_PLATFORM_ROOT;
+    // The host resolves the platform root per CLI invocation and passes it
+    // through the execution environment. Do not depend on the process-global
+    // value: project commands can run with a correct resolved root that was
+    // never exported into the caller's shell environment.
+    const platformRoot = environment?.KB_PLATFORM_ROOT ?? process.env.KB_PLATFORM_ROOT;
     if (platformRoot) {
       installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
     }
