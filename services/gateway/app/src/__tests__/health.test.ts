@@ -11,6 +11,8 @@
  *     - upstream health probing
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { HttpServiceTransport } from '@kb-labs/adapters-service-transport-http';
 import type { ICache, ILogger, IServiceTransport, ServiceTransportResponse } from '@kb-labs/core-platform';
 import { UxFailureResultJsonSchema } from '@kb-labs/core-platform/error-envelope';
 import type { JwtConfig } from '@kb-labs/gateway-auth';
@@ -155,9 +157,15 @@ async function buildHealthApp(
 
 describe('Gateway /health endpoint', () => {
   let app: Awaited<ReturnType<typeof buildHealthApp>>;
+  let registryServer: FastifyInstance | undefined;
+  let realTransport: HttpServiceTransport | undefined;
 
   afterEach(async () => {
     if (app) {await app.close();}
+    await realTransport?.destroy();
+    await registryServer?.close();
+    registryServer = undefined;
+    realTransport = undefined;
     vi.clearAllMocks();
     vi.unstubAllEnvs();
   });
@@ -368,6 +376,46 @@ describe('Gateway /health endpoint', () => {
     expect(transport.call).toHaveBeenCalledWith('workflow', expect.not.objectContaining({
       metadata: expect.anything(),
     }));
+    expect(response.body).not.toContain(secret);
+  });
+
+  // case: S-268.23
+  it('does not report a redirected Registry health probe as ready through HTTP transport', async () => {
+    mockAdapters = { llm: { complete: vi.fn() } };
+    const secret = 'registry-redirect-test-secret';
+    vi.stubEnv('GATEWAY_INTERNAL_SECRET', secret);
+    let receivedSecret: string | undefined;
+    let redirectTargetRequests = 0;
+    registryServer = Fastify({ logger: false });
+    registryServer.get('/health', (request, reply) => {
+      receivedSecret = request.headers['x-internal-secret'] as string | undefined;
+      return reply.redirect('/login');
+    });
+    registryServer.get('/login', () => {
+      redirectTargetRequests += 1;
+      return { ok: true };
+    });
+    await registryServer.listen({ port: 0, host: '127.0.0.1' });
+    const address = registryServer.server.address();
+    if (!address || typeof address === 'string') {throw new Error('Registry fixture did not bind a TCP port');}
+    realTransport = new HttpServiceTransport({
+      services: { 'marketplace-registry': { url: `http://127.0.0.1:${address.port}` } },
+    });
+    const projectRouting = {
+      acquire: async () => ({ host: '127.0.0.1', port: 1234, headers: {}, release: () => undefined }),
+      status: () => ({ limit: 4, active: 0, runtimes: [] }),
+    };
+    app = await buildHealthApp({
+      upstreams: {
+        marketplaceRegistry: { serviceId: 'marketplace-registry', prefix: '/api/v1/marketplace-registry' },
+      },
+    }, realTransport, undefined, projectRouting);
+
+    const response = await app.inject({ method: 'GET', url: '/ready' });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().ok).toBe(false);
+    expect(receivedSecret).toBe(secret);
+    expect(redirectTargetRequests).toBe(0);
     expect(response.body).not.toContain(secret);
   });
 

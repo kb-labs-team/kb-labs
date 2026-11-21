@@ -3716,6 +3716,9 @@ importers:
         specifier: '>=8.21.0'
         version: 8.21.0
     devDependencies:
+      '@kb-labs/adapters-service-transport-http':
+        specifier: workspace:*
+        version: link:../../../adapters/service-transport-http
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit

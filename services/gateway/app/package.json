@@ -52,6 +52,7 @@
     "ws": "^8.20.1"
   },
   "devDependencies": {
+    "@kb-labs/adapters-service-transport-http": "workspace:*",
     "@kb-labs/devkit": "workspace:*",
     "@kb-labs/shared-testing-e2e": "workspace:*",
     "@types/bcryptjs": "^2.4.6",
