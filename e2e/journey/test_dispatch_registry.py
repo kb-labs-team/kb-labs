@@ -28,7 +28,7 @@ from select_from_cases import (coverage_results, read_coverage_result, selection
 from platform_update_steps import run_platform_update_steps
 from platform_update_variant_steps import run_platform_update_variant_steps
 from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
-from journey_selection import SELECTION_KEYS
+from journey_selection import JourneySelection, SELECTION_KEYS
 from service_steps import FlowGraph, Journey
 
 
@@ -911,8 +911,19 @@ class DispatchRegistryTests(unittest.TestCase):
                   run_missing_project_request_steps)
         declarations = fixture_group_declarations(groups, "agent:commit", root)
         self.assertIn("PC-001.4", declarations[run_installer_case_steps.__name__]["cases"])
+        self.assertIn("S-181.7", declarations[run_installer_case_steps.__name__]["cases"])
         self.assertEqual(declarations[run_apply_scenario_step.__name__]["cases"], ("S-039.1",))
         self.assertIn("run_installer_case_steps", declarations)
+
+        selection = JourneySelection(
+            requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            runner_selector="agent:commit", requested_runners="",
+        )
+        graph = FlowGraph(Journey("local", "s181-installer-fixture-selection", selection=selection),
+                          {name: spec.get("depends_on", ()) for name, spec in declarations.items()},
+                          groups=declarations)
+        self.assertTrue(graph.group_selected(f"isolated-fixture:{run_installer_case_steps.__name__}"))
 
     def test_fixture_claim_prerequisites_use_the_shared_resolver_steps(self):
         from tempfile import TemporaryDirectory
