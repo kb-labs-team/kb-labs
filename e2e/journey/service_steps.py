@@ -801,9 +801,9 @@ class FlowGraph:
 
 
 def run_selected_smoke(graph: FlowGraph, step_name: str, capability: str,
-                       required_claim: str, check: Callable[[], object]):
+                       check: Callable[[], object], *, cases: Iterable[str] = ()):
     """Run a smoke check only when its claim or owning/prerequisite step is selected."""
-    if (graph.selection_active and required_claim not in graph.journey.selected_claims
+    if (graph.selection_active and not set(cases).intersection(graph.journey.selected_claims)
             and not graph.selects_steps(step_name)):
         return graph.journey.skipped(step_name, capability)
     return check()
