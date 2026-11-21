@@ -20,6 +20,45 @@ describe('RegistryPackageSource', () => {
     expect(resolved).toMatchObject({ status: 'found', package: { id: '@kb-labs/test', version: '1.0.0', primaryKind: 'plugin' } });
   });
 
+  // case: S-268.1
+  it('resolves Registry path-reference tarball URLs before handing packages to the extension store', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      status: 'found',
+      package: {
+        id: '@kb-labs/commit', version: '2.120.2', integrity: 'sha512-fixture', primaryKind: 'plugin',
+        downloadUrl: '/api/v1/marketplace-registry/api/v1/packages/journey/%40kb-labs%2Fcommit/2.120.2/tarball',
+      },
+    }), { status: 200 })));
+
+    const resolved = await new RegistryPackageSource({
+      registryUrl: 'http://127.0.0.1:4317/api/v1/marketplace-registry', signingPublicKey: 'test-key',
+    }).resolveIdentity('@kb-labs/commit');
+
+    expect(resolved).toMatchObject({
+      status: 'found',
+      package: {
+        downloadUrl: 'http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1/packages/journey/%40kb-labs%2Fcommit/2.120.2/tarball',
+      },
+    });
+  });
+
+  it('rejects a cross-origin Registry tarball URL during resolution', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      status: 'found',
+      package: {
+        id: '@kb-labs/commit', version: '2.120.2', integrity: 'sha512-fixture', primaryKind: 'plugin',
+        downloadUrl: 'https://attacker.test/commit.tgz',
+      },
+    }), { status: 200 })));
+
+    await expect(new RegistryPackageSource({
+      registryUrl: 'https://registry.test/api/v1/marketplace-registry', signingPublicKey: 'test-key',
+    }).resolveIdentity('@kb-labs/commit')).rejects.toMatchObject({
+      code: 'RESOLUTION_FAILED',
+      message: 'Registry tarball URL must use the configured source origin',
+    });
+  });
+
   // case: S-268.21
   it('sends an explicit Marketplace version pin to Registry resolution', async () => {
     let requestedUrl = '';

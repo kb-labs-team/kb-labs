@@ -61,7 +61,16 @@ export class RegistryPackageSource implements MarketplaceSource {
     }
     const result = await response.json() as import('@kb-labs/marketplace-contracts').MarketplaceSourceResolution;
     if (result.status !== 'found') { return result; }
-    return result;
+    const downloadUrl = result.package.downloadUrl
+      ? this.resolveDownloadUrl(result.package.downloadUrl, result.package.id)
+      : undefined;
+    return {
+      ...result,
+      package: {
+        ...result.package,
+        ...(downloadUrl ? { downloadUrl } : {}),
+      },
+    };
   }
 
   async resolve(spec: string): Promise<ResolvedPackage> {
