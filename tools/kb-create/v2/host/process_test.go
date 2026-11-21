@@ -1108,14 +1108,30 @@ func writeReceipt(t *testing.T, root string, host *contracts.HostSpec) {
 func TestNewRunnerRunsTheHostTheReceiptDeclares(t *testing.T) {
 	root := t.TempDir()
 	writeReceipt(t, root, &contracts.HostSpec{Command: "bin/host", HealthURL: "http://127.0.0.1:9/health"})
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
 	runner, err := NewRunner(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	layout, _ := versionroot.New(root)
 	rootState, stateErr := StateForRoot(layout.InstallRoot())
 	installationID, identityErr := versionroot.InstallationIDForPath(root)
-	if runner.Spec.Command != filepath.Join(layout.PlatformRoot(), "bin/host") || stateErr != nil || identityErr != nil || runner.State != rootState || runner.SecretEnv == nil || runner.Identity.InstallationID != installationID {
+	environment, envErr := runner.environment()
+	rootPinned := false
+	for _, entry := range environment {
+		if entry == "KB_PLATFORM_ROOT="+activeRoot {
+			rootPinned = true
+		}
+	}
+	if runner.Spec.Command != filepath.Join(activeRoot, "bin/host") || filepath.Clean(runner.PlatformRoot) != filepath.Clean(activeRoot) ||
+		filepath.Clean(runner.TreeRoot) != filepath.Clean(activeRoot) || !rootPinned || stateErr != nil || identityErr != nil ||
+		envErr != nil || runner.State != rootState || runner.SecretEnv == nil || runner.Identity.InstallationID != installationID {
 		t.Fatalf("runner: %#v", runner)
 	}
 }

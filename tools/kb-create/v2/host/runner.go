@@ -74,7 +74,12 @@ func NewRunner(platformRoot string) (*ProcessRunner, error) {
 	if err != nil {
 		return nil, err
 	}
-	platformRoot = layout.PlatformRoot()
+	platformRoot, err = layout.Active()
+	if err != nil {
+		return nil, contracts.NewDiag(contracts.CodeReceiptUnavailable,
+			"The active platform generation could not be resolved.",
+			"Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", layout.InstallRoot())+"` before starting the host.", err)
+	}
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		return nil, contracts.NewDiag(contracts.CodeReceiptUnavailable,

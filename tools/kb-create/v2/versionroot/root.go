@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -760,6 +761,260 @@ func (l Layout) Stage() (string, error) {
 	return l.stage(nil)
 }
 
+// StageManagedGeneration makes a disposable copy of the active version tree
+// for a package-graph mutation. The caller must hold the install operation
+// lock until activation or abort. Shared runtime projections are deliberately
+// omitted and linked back only after the candidate is finalized.
+func (l Layout) StageManagedGeneration() (string, error) {
+	return l.stageManaged(nil)
+}
+
+func (l Layout) stageManaged(after func(HandoffPoint) error) (_ string, returnErr error) {
+	if err := l.Validate(); err != nil {
+		return "", err
+	}
+	if err := l.removeAbandonedManagedStages(); err != nil {
+		return "", fmt.Errorf("remove abandoned managed-generation stages: %w", err)
+	}
+	active, err := l.Active()
+	if err != nil {
+		return "", err
+	}
+	if err := l.validateVersionPath(active); err != nil {
+		return "", fmt.Errorf("validate active generation before staging: %w", err)
+	}
+	if err := os.MkdirAll(l.VersionsDir(), 0o700); err != nil {
+		return "", err
+	}
+	stage, err := os.MkdirTemp(l.VersionsDir(), ".stage-managed-")
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if returnErr != nil {
+			if cleanupErr := os.RemoveAll(stage); cleanupErr != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("remove failed managed-generation stage: %w", cleanupErr))
+			}
+		}
+	}()
+	if err := notifyHandoff(after, HandoffManagedStageCreated); err != nil {
+		return "", err
+	}
+	if err := copyManagedTree(active, stage); err != nil {
+		return "", fmt.Errorf("copy active generation to managed stage: %w", err)
+	}
+	if err := notifyHandoff(after, HandoffManagedStageCopied); err != nil {
+		return "", err
+	}
+	if err := l.prepareVersionRoot(stage, false); err != nil {
+		return "", err
+	}
+	if err := l.validateSealedVersionRoot(stage); err != nil {
+		return "", fmt.Errorf("validate staged managed generation: %w", err)
+	}
+	if err := l.validateVersionRootSymlinks(stage); err != nil {
+		return "", fmt.Errorf("validate staged managed-generation links: %w", err)
+	}
+	if err := notifyHandoff(after, HandoffManagedStagePrepared); err != nil {
+		return "", err
+	}
+	return stage, nil
+}
+
+// AbortManagedGeneration removes only a private managed-generation stage.
+// The caller must hold the install operation lock. A finalized generation and
+// the active current link are never accepted here.
+func (l Layout) AbortManagedGeneration(stage string) error {
+	stage, err := filepath.Abs(stage)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(filepath.Base(stage), ".stage-managed-") {
+		return fmt.Errorf("refusing to remove non-managed stage %q", stage)
+	}
+	info, err := os.Lstat(stage)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("managed stage %q is not a real directory", stage)
+	}
+	versions, err := filepath.EvalSymlinks(l.VersionsDir())
+	if err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(stage)
+	if err != nil {
+		return err
+	}
+	inside, err := contracts.PathWithin(versions, resolved)
+	if err != nil {
+		return err
+	}
+	if !inside || filepath.Dir(resolved) != versions || !strings.HasPrefix(filepath.Base(resolved), ".stage-managed-") {
+		return fmt.Errorf("managed stage %q is outside the version roots", stage)
+	}
+	active, err := l.Active()
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(active) == filepath.Clean(resolved) {
+		return fmt.Errorf("refusing to remove the active generation")
+	}
+	if err := os.RemoveAll(resolved); err != nil {
+		return err
+	}
+	return syncDirectory(versions)
+}
+
+func copyManagedTree(source, target string) error {
+	source, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return err
+	}
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return err
+	}
+	var shared []string
+	for _, projection := range contracts.SharedRuntimeProjections() {
+		shared = append(shared, filepath.Clean(filepath.FromSlash(projection.PlatformPath)))
+	}
+	var copyEntry func(string, string, string) error
+	copyEntry = func(src, dst, relative string) error {
+		cleanRelative := filepath.Clean(relative)
+		if cleanRelative != "." {
+			for _, projection := range shared {
+				if cleanRelative == projection || strings.HasPrefix(cleanRelative, projection+string(filepath.Separator)) {
+					return nil
+				}
+			}
+		}
+		info, err := os.Lstat(src)
+		if err != nil {
+			return err
+		}
+		switch {
+		case info.IsDir():
+			if err := os.Mkdir(dst, info.Mode().Perm()); err != nil {
+				return err
+			}
+			entries, err := os.ReadDir(src)
+			if err != nil {
+				return err
+			}
+			for _, entry := range entries {
+				childRelative := entry.Name()
+				if cleanRelative != "." {
+					childRelative = filepath.Join(cleanRelative, entry.Name())
+				}
+				if err := copyEntry(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name()), childRelative); err != nil {
+					return err
+				}
+			}
+			if err := os.Chmod(dst, info.Mode().Perm()); err != nil {
+				return err
+			}
+			return syncDirectory(dst)
+		case info.Mode()&os.ModeSymlink != 0:
+			linkTarget, err := os.Readlink(src)
+			if err != nil {
+				return err
+			}
+			if filepath.IsAbs(linkTarget) {
+				inside, err := contracts.PathWithin(source, filepath.Clean(linkTarget))
+				if err != nil {
+					return err
+				}
+				if inside {
+					relativeTarget, err := filepath.Rel(source, linkTarget)
+					if err != nil {
+						return err
+					}
+					linkTarget = filepath.Join(absTarget, relativeTarget)
+				}
+			}
+			return os.Symlink(linkTarget, dst)
+		case info.Mode().IsRegular():
+			cloned, err := cloneManagedFile(src, dst, info.Mode().Perm())
+			if err != nil {
+				return err
+			}
+			if cloned {
+				return os.Chmod(dst, info.Mode().Perm())
+			}
+			input, err := os.Open(src)
+			if err != nil {
+				return err
+			}
+			defer input.Close()
+			output, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+			if err != nil {
+				return err
+			}
+			_, copyErr := io.Copy(output, input)
+			syncErr := output.Sync()
+			closeErr := output.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			if syncErr != nil {
+				return syncErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+			return os.Chmod(dst, info.Mode().Perm())
+		default:
+			return fmt.Errorf("managed generation contains unsupported filesystem entry %q", src)
+		}
+	}
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := copyEntry(filepath.Join(source, entry.Name()), filepath.Join(absTarget, entry.Name()), entry.Name()); err != nil {
+			return err
+		}
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(absTarget, info.Mode().Perm()); err != nil {
+		return err
+	}
+	return syncDirectory(absTarget)
+}
+
+func (l Layout) removeAbandonedManagedStages() error {
+	entries, err := os.ReadDir(l.VersionsDir())
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".stage-managed-") {
+			continue
+		}
+		path := filepath.Join(l.VersionsDir(), entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("abandoned managed-generation stage %q is not a real directory", path)
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+	}
+	return syncDirectory(l.VersionsDir())
+}
+
 func (l Layout) stage(after func(HandoffPoint) error) (string, error) {
 	if err := l.Validate(); err != nil {
 		return "", err
@@ -845,6 +1100,138 @@ func (l Layout) ActivateUpdate(stage, version, planHash, runningRoot string, met
 	return l.activate(stage, version, planHash, runningRoot, &metadata, nil)
 }
 
+// ActivateManagedGeneration commits a validated package-graph candidate by
+// atomically replacing the install-root current link. The caller must hold the
+// installation operation lock from StageManagedGeneration through activation;
+// expectedActive prevents a stale candidate from replacing a newer generation.
+func (l Layout) ActivateManagedGeneration(stage, expectedActive, runningRoot string) (string, error) {
+	return l.activateManagedGeneration(stage, expectedActive, runningRoot, nil)
+}
+
+func (l Layout) activateManagedGeneration(stage, expectedActive, runningRoot string,
+	after func(HandoffPoint) error) (_ string, returnErr error) {
+	if err := l.Validate(); err != nil {
+		return "", err
+	}
+	active, err := l.Active()
+	if err != nil {
+		return "", err
+	}
+	if expectedActive == "" || filepath.Clean(expectedActive) != filepath.Clean(active) {
+		return "", fmt.Errorf("managed generation is stale: active root changed from %q to %q", expectedActive, active)
+	}
+	stage, err = filepath.Abs(stage)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(filepath.Base(stage), ".stage-managed-") {
+		return "", fmt.Errorf("managed candidate %q is not an owned staging root", stage)
+	}
+	stageInfo, err := os.Lstat(stage)
+	if err != nil {
+		return "", err
+	}
+	if !stageInfo.IsDir() || stageInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("managed candidate %q is not a real staging directory", stage)
+	}
+	versions, err := filepath.EvalSymlinks(l.VersionsDir())
+	if err != nil {
+		return "", err
+	}
+	inside, err := contracts.PathWithin(versions, stage)
+	if err != nil {
+		return "", err
+	}
+	if !inside || filepath.Dir(stage) != versions {
+		return "", fmt.Errorf("managed candidate %q is outside the version roots", stage)
+	}
+	if err := l.validateSealedVersionRoot(stage); err != nil {
+		return "", fmt.Errorf("validate managed candidate: %w", err)
+	}
+	activeReceipt, err := receipt.Read(active)
+	if err != nil {
+		return "", fmt.Errorf("read active generation receipt: %w", err)
+	}
+	candidateReceipt, err := receipt.Read(stage)
+	if err != nil {
+		return "", fmt.Errorf("read managed candidate receipt: %w", err)
+	}
+	if candidateReceipt.InstallationID != activeReceipt.InstallationID ||
+		candidateReceipt.Plan.PlanHash != activeReceipt.Plan.PlanHash ||
+		candidateReceipt.Plan.ServiceGraph.PlatformVersion != activeReceipt.Plan.ServiceGraph.PlatformVersion {
+		return "", fmt.Errorf("managed candidate receipt does not match the active sealed platform identity")
+	}
+	if err := l.validateVersionRootSymlinks(stage); err != nil {
+		return "", fmt.Errorf("validate managed candidate links: %w", err)
+	}
+
+	var idBytes [12]byte
+	if _, err := rand.Read(idBytes[:]); err != nil {
+		return "", fmt.Errorf("create managed-generation identity: %w", err)
+	}
+	target := filepath.Join(versions, "managed-"+hex.EncodeToString(idBytes[:]))
+	if err := os.Rename(stage, target); err != nil {
+		return "", fmt.Errorf("finalize managed generation: %w", err)
+	}
+	switched := false
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		if switched {
+			link, rollbackErr := l.prepareCurrentLink(active)
+			if rollbackErr == nil {
+				rollbackErr = os.Rename(link, l.PlatformRoot())
+				_ = os.Remove(link)
+			}
+			if rollbackErr == nil {
+				rollbackErr = syncDirectory(l.Root)
+			}
+			if rollbackErr != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("restore active generation after managed activation failure: %w", rollbackErr))
+			}
+		}
+		if removeErr := os.RemoveAll(target); removeErr != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("remove failed managed generation: %w", removeErr))
+		}
+	}()
+	if err := l.linkSharedRuntimeState(target); err != nil {
+		return "", fmt.Errorf("link shared state into managed generation: %w", err)
+	}
+	if err := l.validateVersionTreeSymlinks(); err != nil {
+		return "", fmt.Errorf("validate finalized managed generation links: %w", err)
+	}
+	if err := notifyHandoff(after, HandoffManagedTargetFinalized); err != nil {
+		return "", err
+	}
+	link, err := l.prepareCurrentLink(target)
+	if err != nil {
+		return "", err
+	}
+	if err := notifyHandoff(after, HandoffManagedLinkPrepared); err != nil {
+		_ = os.Remove(link)
+		return "", err
+	}
+	if err := os.Rename(link, l.PlatformRoot()); err != nil {
+		_ = os.Remove(link)
+		return "", fmt.Errorf("switch active managed generation: %w", err)
+	}
+	switched = true
+	if err := notifyHandoff(after, HandoffManagedLinkSwitched); err != nil {
+		return "", err
+	}
+	if err := syncDirectory(l.Root); err != nil {
+		return "", fmt.Errorf("sync installation root after managed-generation switch: %w", err)
+	}
+	if err := notifyHandoff(after, HandoffManagedBeforeRetention); err != nil {
+		return "", err
+	}
+	if err := l.RetainManagedGeneration(active, runningRoot); err != nil {
+		return "", fmt.Errorf("retain managed generations: %w", err)
+	}
+	return target, nil
+}
+
 type HandoffPoint string
 
 const (
@@ -869,6 +1256,13 @@ const (
 	HandoffBeforeActiveRootSync         HandoffPoint = "before-active-root-sync"
 	HandoffBeforeUpdateRecoveryWrite    HandoffPoint = "before-update-recovery-write"
 	HandoffBeforeVersionRetention       HandoffPoint = "before-version-retention"
+	HandoffManagedStageCreated          HandoffPoint = "managed-stage-created"
+	HandoffManagedStageCopied           HandoffPoint = "managed-stage-copied"
+	HandoffManagedStagePrepared         HandoffPoint = "managed-stage-prepared"
+	HandoffManagedTargetFinalized       HandoffPoint = "managed-target-finalized"
+	HandoffManagedLinkPrepared          HandoffPoint = "managed-link-prepared"
+	HandoffManagedLinkSwitched          HandoffPoint = "managed-link-switched"
+	HandoffManagedBeforeRetention       HandoffPoint = "managed-before-retention"
 )
 
 // CrashPoints is the ordered source of truth for on-disk install/update
@@ -883,6 +1277,9 @@ func CrashPoints() []HandoffPoint {
 		HandoffUpdateStageCreated, HandoffUpdateReceiptSeeded, HandoffMetadataWritten,
 		HandoffTargetFinalized, HandoffLinkPrepared, HandoffBeforeActiveRootSync,
 		HandoffLinkSwitched, HandoffBeforeUpdateRecoveryWrite, HandoffBeforeVersionRetention,
+		HandoffManagedStageCreated, HandoffManagedStageCopied, HandoffManagedStagePrepared,
+		HandoffManagedTargetFinalized, HandoffManagedLinkPrepared, HandoffManagedLinkSwitched,
+		HandoffManagedBeforeRetention,
 	}
 }
 
@@ -1450,9 +1847,21 @@ func validateContainerSymlinks(root, installRoot string, packageManagerStateRoot
 }
 
 func (l Layout) validateVersionTreeSymlinks() error {
-	return filepath.WalkDir(l.VersionsDir(), func(path string, _ os.DirEntry, walkErr error) error {
+	return l.validateVersionSymlinkTree(l.VersionsDir(), true)
+}
+
+func (l Layout) validateVersionRootSymlinks(root string) error {
+	return l.validateVersionSymlinkTree(root, false)
+}
+
+func (l Layout) validateVersionSymlinkTree(root string, skipManagedStages bool) error {
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if skipManagedStages && path != root && filepath.Dir(path) == root && entry.IsDir() &&
+			strings.HasPrefix(entry.Name(), ".stage-managed-") {
+			return filepath.SkipDir
 		}
 		info, err := os.Lstat(path)
 		if err != nil {
@@ -1881,6 +2290,16 @@ func treeSize(root string) (int64, error) {
 }
 
 func (l Layout) Retain(runningRoot string) error {
+	return l.retain(runningRoot, nil)
+}
+
+// RetainManagedGeneration protects the replaced active root through candidate
+// activation so it remains the recovery target even when no host is running.
+func (l Layout) RetainManagedGeneration(previousRoot, runningRoot string) error {
+	return l.retain(runningRoot, []string{previousRoot})
+}
+
+func (l Layout) retain(runningRoot string, additional []string) error {
 	active, err := l.Active()
 	if err != nil {
 		return err
@@ -1890,7 +2309,9 @@ func (l Layout) Retain(runningRoot string) error {
 		return err
 	}
 	keep := map[string]struct{}{filepath.Clean(active): {}}
-	for _, root := range []string{metadata.LastHealthyRoot, metadata.RecoveryRoot, runningRoot} {
+	roots := []string{metadata.LastHealthyRoot, metadata.RecoveryRoot, runningRoot}
+	roots = append(roots, additional...)
+	for _, root := range roots {
 		if root == "" {
 			continue
 		}

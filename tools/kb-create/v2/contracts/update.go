@@ -9,9 +9,11 @@ type UpdateSummary struct {
 }
 
 type PendingRestart struct {
-	Services         []PendingRestartService `json:"services"`
-	InstalledVersion string                  `json:"installedVersion"`
-	Command          string                  `json:"command"`
+	Services            []PendingRestartService `json:"services"`
+	InstalledVersion    string                  `json:"installedVersion"`
+	InstalledGeneration string                  `json:"installedGeneration,omitempty"`
+	RunningGeneration   string                  `json:"runningGeneration,omitempty"`
+	Command             string                  `json:"command"`
 }
 
 type PendingRestartService struct {

@@ -100,6 +100,184 @@ func TestForPlatformPathResolvesInstallContainerFromEveryActiveRootSpelling(t *t
 	}
 }
 
+// case: S-313.2, S-313.3
+func TestManagedGenerationStagesWithoutSharedStateAndSwitchesAtomically(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "install")
+	layout, oldRoot := initialLayout(t, root, "1.0.0")
+	if err := layout.RecordHealthy(); err != nil {
+		t.Fatal(err)
+	}
+	for relative, contents := range map[string]string{
+		"package.json":                   `{"name":"platform","version":"1.0.0"}`,
+		"pnpm-lock.yaml":                 "lockfileVersion: '9.0'\n",
+		"node_modules/.pnpm/lock.yaml":   "virtualStoreDir: .pnpm\n",
+		".kb/marketplace.lock":           "old adapter pin\n",
+		".kb/marketplace.manifests.json": "old manifest projection\n",
+	} {
+		file := filepath.Join(oldRoot, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shared := filepath.Join(layout.SharedStateDir(), "kb.config.jsonc")
+	if err := os.WriteFile(shared, []byte("{\"platform\":{}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sharedConfig := filepath.Join(oldRoot, ".kb", "kb.config.jsonc")
+	if link, err := filepath.EvalSymlinks(sharedConfig); err != nil || link != shared {
+		t.Fatalf("active shared config link = %q, %v; want %q", link, err, shared)
+	}
+	abandoned := filepath.Join(layout.VersionsDir(), ".stage-managed-interrupted")
+	if err := os.Mkdir(abandoned, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(abandoned, "partial"), []byte("interrupted candidate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stage, err := layout.StageManagedGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(abandoned); !os.IsNotExist(err) {
+		t.Fatalf("interrupted managed stage was not cleaned on retry: %v", err)
+	}
+	if filepath.Dir(stage) != layout.VersionsDir() || !strings.HasPrefix(filepath.Base(stage), ".stage-managed-") {
+		t.Fatalf("managed stage path = %q; want private stage under versions", stage)
+	}
+	for relative, want := range map[string]string{
+		"package.json":                   `{"name":"platform","version":"1.0.0"}`,
+		"pnpm-lock.yaml":                 "lockfileVersion: '9.0'\n",
+		"node_modules/.pnpm/lock.yaml":   "virtualStoreDir: .pnpm\n",
+		".kb/marketplace.lock":           "old adapter pin\n",
+		".kb/marketplace.manifests.json": "old manifest projection\n",
+	} {
+		got, readErr := os.ReadFile(filepath.Join(stage, filepath.FromSlash(relative)))
+		if readErr != nil || string(got) != want {
+			t.Errorf("staged %s = %q, %v; want %q", relative, got, readErr, want)
+		}
+	}
+	if err := ValidateNoSharedRuntimeProjectionEntries(stage); err != nil {
+		t.Fatalf("managed stage contains a shared-state projection: %v", err)
+	}
+
+	// An abandoned candidate is disposable; it cannot change current or shared user config.
+	if err := layout.AbortManagedGeneration(stage); err != nil {
+		t.Fatal(err)
+	}
+	if active, activeErr := layout.Active(); activeErr != nil || active != oldRoot {
+		t.Fatalf("active after abort = %q, %v; want %q", active, activeErr, oldRoot)
+	}
+	if config, readErr := os.ReadFile(shared); readErr != nil || string(config) != "{\"platform\":{}}\n" {
+		t.Fatalf("shared config after abort = %q, %v", config, readErr)
+	}
+
+	stage, err = layout.StageManagedGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, ".kb", "marketplace.lock"), []byte("new adapter pin\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newRoot, err := layout.ActivateManagedGeneration(stage, oldRoot, oldRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newRoot == oldRoot {
+		t.Fatalf("managed activation reused old generation %q", oldRoot)
+	}
+	if active, activeErr := layout.Active(); activeErr != nil || active != newRoot {
+		t.Fatalf("active after managed activation = %q, %v; want %q", active, activeErr, newRoot)
+	}
+	if oldPin, readErr := os.ReadFile(filepath.Join(oldRoot, ".kb", "marketplace.lock")); readErr != nil || string(oldPin) != "old adapter pin\n" {
+		t.Fatalf("old generation pin changed: %q, %v", oldPin, readErr)
+	}
+	if newPin, readErr := os.ReadFile(filepath.Join(newRoot, ".kb", "marketplace.lock")); readErr != nil || string(newPin) != "new adapter pin\n" {
+		t.Fatalf("new generation pin = %q, %v", newPin, readErr)
+	}
+	if configLink, linkErr := filepath.EvalSymlinks(filepath.Join(newRoot, ".kb", "kb.config.jsonc")); linkErr != nil || configLink != shared {
+		t.Fatalf("new generation shared config target = %q, %v; want %q", configLink, linkErr, shared)
+	}
+	if _, statErr := os.Stat(oldRoot); statErr != nil {
+		t.Fatalf("running generation was pruned after switch: %v", statErr)
+	}
+}
+
+// case: S-313.1
+func TestManagedGenerationRejectsStaleAndIncompleteCandidates(t *testing.T) {
+	layout, oldRoot := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+	stage, err := layout.StageManagedGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateManagedGeneration(stage, filepath.Join(layout.VersionsDir(), "stale"), ""); err == nil {
+		t.Fatal("managed activation accepted a stale expected active root")
+	}
+	if active, activeErr := layout.Active(); activeErr != nil || active != oldRoot {
+		t.Fatalf("active after stale activation refusal = %q, %v; want %q", active, activeErr, oldRoot)
+	}
+	if err := os.Remove(receipt.Path(stage)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateManagedGeneration(stage, oldRoot, ""); err == nil {
+		t.Fatal("managed activation accepted a candidate without its receipt")
+	}
+	if active, activeErr := layout.Active(); activeErr != nil || active != oldRoot {
+		t.Fatalf("active after incomplete-stage refusal = %q, %v; want %q", active, activeErr, oldRoot)
+	}
+	if err := layout.AbortManagedGeneration(stage); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// case: S-313.1, S-313.2
+func TestManagedGenerationFaultsBeforeCommitLeaveOldCurrentComplete(t *testing.T) {
+	managedPoints := []HandoffPoint{
+		HandoffManagedStageCreated, HandoffManagedStageCopied, HandoffManagedStagePrepared,
+		HandoffManagedTargetFinalized, HandoffManagedLinkPrepared, HandoffManagedLinkSwitched,
+		HandoffManagedBeforeRetention,
+	}
+	for _, point := range managedPoints {
+		t.Run(string(point), func(t *testing.T) {
+			layout, oldRoot := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+			injected := errors.New("simulated managed-generation interruption")
+			if point == HandoffManagedStageCreated || point == HandoffManagedStageCopied || point == HandoffManagedStagePrepared {
+				stage, err := layout.stageManaged(func(current HandoffPoint) error {
+					if current == point {
+						return injected
+					}
+					return nil
+				})
+				if !errors.Is(err, injected) || stage != "" {
+					t.Fatalf("stage interruption = %q, %v; want empty stage and injected error", stage, err)
+				}
+			} else {
+				stage, err := layout.StageManagedGeneration()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := layout.activateManagedGeneration(stage, oldRoot, oldRoot, func(current HandoffPoint) error {
+					if current == point {
+						return injected
+					}
+					return nil
+				}); !errors.Is(err, injected) {
+					t.Fatalf("activation interruption = %v; want injected error", err)
+				}
+			}
+			if active, err := layout.Active(); err != nil || active != oldRoot {
+				t.Fatalf("current after interrupted managed generation = %q, %v; want old root %q", active, err, oldRoot)
+			}
+			if err := layout.Validate(); err != nil {
+				t.Fatalf("old active installation became invalid after %s: %v", point, err)
+			}
+		})
+	}
+}
+
 // case: S-024.7
 func TestRollbackSnapshotSurvivesVersionRootPruning(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "platform")
@@ -392,6 +570,13 @@ func TestUpdateActivationFailuresAfterLinkSwitchRestorePriorVersionAndMetadata(t
 		t.Fatalf("post-switch activation handoffs are missing from CrashPoints(): %v", points)
 	}
 	points = points[start:]
+	filtered := points[:0]
+	for _, point := range points {
+		if !strings.HasPrefix(string(point), "managed-") {
+			filtered = append(filtered, point)
+		}
+	}
+	points = filtered
 	for _, point := range points {
 		t.Run(string(point), func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "platform")
@@ -475,6 +660,17 @@ func TestCrashPointsEnumeratesEveryProducedHandoff(t *testing.T) {
 	}
 	writeReceipt(t, stage, "2.0.0", "enumeration-update")
 	if _, err := layout.activate(stage, "2.0.0", "enumeration-update", "", &UpdateMetadata{SnapshotID: "enumeration"}, record); err != nil {
+		t.Fatal(err)
+	}
+	stage, err = layout.stageManaged(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.activateManagedGeneration(stage, active, "", record); err != nil {
 		t.Fatal(err)
 	}
 	if points := CrashPoints(); !reflect.DeepEqual(points, observed) {
@@ -1348,6 +1544,9 @@ func TestConcurrentInstallDoesNotDiagnoseLiveStagingAsAbandoned(t *testing.T) {
 // case: PC-001.18
 func TestEveryDeclaredCrashPointCanRetryInstallOrRemoveOwnedLayout(t *testing.T) {
 	for _, point := range CrashPoints() {
+		if strings.HasPrefix(string(point), "managed-") {
+			continue
+		}
 		t.Run(string(point)+"/retry", func(t *testing.T) {
 			layout := interruptAtPoint(t, point)
 			if strings.HasPrefix(string(point), "initial-") {
@@ -1413,7 +1612,7 @@ func TestEveryDeclaredCrashPointCanRetryInstallOrRemoveOwnedLayout(t *testing.T)
 
 func TestPreActivationUpdateHandoffsLeaveSharedStateAndRunningVersionUntouched(t *testing.T) {
 	for _, point := range CrashPoints() {
-		if strings.HasPrefix(string(point), "initial-") || point == HandoffLinkSwitched {
+		if strings.HasPrefix(string(point), "initial-") || strings.HasPrefix(string(point), "managed-") || point == HandoffLinkSwitched {
 			continue
 		}
 		t.Run(string(point), func(t *testing.T) {
