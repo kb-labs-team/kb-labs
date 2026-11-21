@@ -129,6 +129,24 @@ describe('InProcessBackend — loggerOverride platform handoff', () => {
     expect(logs.join('')).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
   });
 
+  // case: S-203.28
+  it('suppresses useLoader output for JSON command results', async () => {
+    vi.mocked(runInProcess).mockImplementation(async () => {
+      const loader = useLoader('JSON phase');
+      loader.start();
+      loader.succeed('JSON phase complete');
+      return { data: 'ok', executionMeta: {} } as never;
+    });
+    const backend = new InProcessBackend({ platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'] });
+    const logs: string[] = [];
+
+    await backend.execute(makeRequest({ input: { flags: { json: true } } }), {
+      onLog: (entry) => logs.push(entry.message),
+    });
+
+    expect(logs).toEqual([]);
+  });
+
   // case: S-203.26
   it('redacts request secrets from raw console and stdout/stderr writes', async () => {
     vi.mocked(runInProcess).mockImplementation(async () => {
