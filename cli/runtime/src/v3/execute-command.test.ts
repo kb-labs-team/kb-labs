@@ -94,12 +94,19 @@ describe('executeCommandV3 plugin command result output', () => {
     const expectedData = { healthy: true, source: 'bundled-subprocess' };
     writeFileSync(handlerPath, `export default { async execute() { return ${JSON.stringify(expectedData)}; } };`);
 
+    const stdout: string[] = [];
     const stderr: string[] = [];
+    const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+      stdout.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write);
     const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: string | Uint8Array) => {
       stderr.push(String(chunk));
       return true;
     }) as typeof process.stderr.write);
-    const json = vi.fn();
+    const json = vi.fn((value: unknown) => {
+      process.stdout.write(`${JSON.stringify(value) ?? 'null'}\n`);
+    });
     const logger = {
       debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, fatal: () => {},
       child: () => logger,
@@ -143,8 +150,12 @@ describe('executeCommandV3 plugin command result output', () => {
       expect(exitCode).toBe(0);
       expect(json).toHaveBeenCalledOnce();
       expect(json.mock.calls[0]?.[0]).toMatchObject({ ok: true, data: expectedData });
+      const machineStdout = stdout.join('');
+      expect(machineStdout.trim().split(/\r?\n/)).toHaveLength(1);
+      expect(JSON.parse(machineStdout)).toMatchObject({ ok: true, data: expectedData });
       expect(stderr.join('')).not.toContain('Usage: node node-engine.mjs');
     } finally {
+      stdoutWrite.mockRestore();
       stderrWrite.mockRestore();
       rmSync(testDir, { recursive: true, force: true });
     }
