@@ -108,6 +108,25 @@ function createRunContext(ui: ReturnType<typeof createCapturedUI>['ui']) {
 }
 
 describe('commit:commit (run)', () => {
+  // case: S-030.3
+  it('does not apply a generated plan after the host execution is cancelled', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled by caller'));
+    const { ui } = createCapturedUI();
+    const ctx = createMockContext({
+      ui,
+      cwd: '/project',
+      signal: controller.signal,
+      platformConfig: { platform: { adapters: { llm: '@kb-labs/adapter-fixture' } } },
+    });
+
+    await runCommand.execute(ctx as never, runInput());
+
+    expect(generateCommitPlan).toHaveBeenCalledOnce();
+    expect(savePlan).not.toHaveBeenCalled();
+    expect(applyCommitPlan).not.toHaveBeenCalled();
+  });
+
   it('CR-01: applies commits — successful result and success message', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createRunContext(ui);

@@ -178,6 +178,21 @@ describe("createContextLogger", () => {
     expect(records[1]?.message).toContain(secret);
   });
 
+  // case: S-203.26
+  it('redacts request-scoped secrets in nested logger fields and nested error causes', async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const logger = createContextLogger(captureLogger(records), {
+      applicationId: 'rest-api', serviceId: 'rest', instanceId: 'test', layer: 'service',
+    });
+    const secret = 'nested-request-secret';
+    await withProcessSensitiveValues([secret], async () => {
+      logger.info('request failed', { fields: { nested: [{ token: secret }] } });
+      logger.error('nested failure', new Error('outer', { cause: { error: new Error(`inner ${secret}`) } }));
+    });
+    expect(JSON.stringify(records)).not.toContain(secret);
+    expect(JSON.stringify(records)).toContain('[REDACTED]');
+  });
+
   it("preserves Pino-compatible fields-first calls from Fastify and plugins", () => {
     const records: Array<Record<string, unknown>> = [];
     const logger = createContextLogger(captureLogger(records), {

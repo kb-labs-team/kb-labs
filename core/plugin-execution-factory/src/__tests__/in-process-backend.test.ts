@@ -29,6 +29,8 @@ import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { InProcessBackend } from '../backends/in-process.js';
 import type { ExecutionRequest } from '../types.js';
 import { useLoader } from '@kb-labs/shared-cli-ui';
+import { createStreamingUI } from '@kb-labs/plugin-runtime';
+import { noopUI } from '@kb-labs/plugin-contracts';
 
 /** Mimics PlatformContainer: processExecutor is a prototype getter, not an own property. */
 class FakePlatformContainer {
@@ -117,6 +119,22 @@ describe('InProcessBackend — loggerOverride platform handoff', () => {
 
     expect(logs.join('')).toContain('In-process phase');
     expect(logs.join('')).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+  });
+
+  // case: S-030.1
+  it('streams the final human plan through the host callback when the base UI is noop', async () => {
+    vi.mocked(runInProcess).mockImplementation(async (input) => {
+      const ui = createStreamingUI(noopUI, input.eventEmitter!);
+      ui.success('Commit plan generated', { sections: [{ header: 'Planned Commits', items: ['feat: host-owned output'] }] });
+      return { data: { applied: false }, executionMeta: {} } as never;
+    });
+    const backend = new InProcessBackend({ platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'] });
+    const output: string[] = [];
+
+    await backend.execute(makeRequest(), { onLog: (entry) => output.push(entry.message) });
+
+    expect(output.join('\n')).toContain('Commit plan generated');
+    expect(output.join('\n')).toContain('feat: host-owned output');
   });
 
   it('preserves a named handler export through in-process dispatch', async () => {

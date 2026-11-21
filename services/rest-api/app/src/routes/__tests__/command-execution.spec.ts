@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IEntityRegistry, ManifestV3 } from '@kb-labs/plugin-contracts';
-import { createProjectCommandExecutionProof, PROJECT_COMMAND_EXECUTION_PROOF_HEADER } from '@kb-labs/shared-daemon';
+import { createProjectCommandExecutionProof, PROJECT_COMMAND_EXECUTION_PROOF_HEADER, PROJECT_RUNTIME_TOKEN_ENV } from '@kb-labs/shared-daemon';
 import { registerProjectCommandExecutionRoute } from '../command-execution.js';
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
@@ -117,6 +117,43 @@ describe('project runtime command execution', () => {
     const events = response.body.trim().split('\n').map((line: string) => JSON.parse(line));
     expect(events).toContainEqual(expect.objectContaining({ type: 'execution:output', data: expect.stringContaining('[REDACTED]') }));
     expect(events).toContainEqual(expect.objectContaining({ type: 'execution:error', error: expect.objectContaining({ message: expect.stringContaining('[REDACTED]') }) }));
+  });
+
+  // case: S-160.1
+  it('does not copy the runtime guard credential into the plugin execution environment', async () => {
+    const previous = process.env[PROJECT_RUNTIME_TOKEN_ENV];
+    process.env[PROJECT_RUNTIME_TOKEN_ENV] = runtimeToken;
+    try {
+      await setup();
+      const response = await app.inject({
+        method: 'POST', url: '/api/v1/commands/execute', headers: trustedHeaders(),
+        payload: { requestId: 'request-env-isolation', pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: {} } },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(execute.mock.calls[0]?.[0].env).not.toHaveProperty(PROJECT_RUNTIME_TOKEN_ENV);
+    } finally {
+      if (previous === undefined) { delete process.env[PROJECT_RUNTIME_TOKEN_ENV]; }
+      else { process.env[PROJECT_RUNTIME_TOKEN_ENV] = previous; }
+    }
+  });
+
+  // case: S-160.5
+  it('rejects duplicate kebab and camel spellings of a secret flag before execution', async () => {
+    await setup();
+    const selectedManifest = { ...manifest, cli: { commands: [{ ...manifest.cli!.commands[0]!, flags: [{ name: 'access-token', type: 'string' as const, secret: true }] }] } };
+    registry = { snapshot: () => ({ partial: false, stale: false, manifests: [{ pluginId: '@kb-labs/fixture', manifest: selectedManifest, pluginRoot }] }) } as unknown as IEntityRegistry;
+    await app.close();
+    app = Fastify();
+    await registerProjectCommandExecutionRoute(app, { registry, projectId: 'prj_fixture', projectRoot: pluginRoot, platformRoot: pluginRoot, runtimeToken });
+    await app.ready();
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/commands/execute', headers: trustedHeaders(),
+      payload: { requestId: 'request-duplicate-secret', pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: { 'access-token': 'first-secret', accessToken: 'second-secret' } } },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(execute).not.toHaveBeenCalled();
+    expect(response.body).not.toContain('first-secret');
+    expect(response.body).not.toContain('second-secret');
   });
 
   it('rejects client-selected handler, environment, permissions, and unbounded arguments before execution', async () => {
