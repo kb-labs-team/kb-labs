@@ -33,4 +33,3 @@ export interface AgentRunUsage {
 export interface AgentRunnerCapabilities {
   reportsUsage: boolean;
 }
-
