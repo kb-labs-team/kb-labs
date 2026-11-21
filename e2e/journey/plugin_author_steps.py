@@ -305,7 +305,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         cases.extend(f"S-015.{step}" for step in range(1, 5))
         cases.append("S-203.1")
         cases.extend(f"S-030.{step}" for step in range(1, 5))
-        cases.extend(f"S-160.{step}" for step in range(1, 5))
+        cases.extend(f"S-160.{step}" for step in range(1, 6))
         for case_id in cases:
             journey.blocked(f"{case_id} Commit and Review flow", "plugin-author",
                             "blocked because Commit/Review fixture preparation failed", cases=[case_id])
@@ -485,6 +485,23 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
 
     journey.step("return a successful empty Commit result", "commit-plugin",
                  s160_no_changes, cases=["S-160.4"], runners=("service-local:explore", "service-secured:explore"))
+
+    def s160_host_command() -> None:
+        result = cli(["commit", "plan", "delete", "--json"], step_id="S-160.5")
+        if result.returncode != 0:
+            raise RuntimeError(f"S-160.5 host command failed: {(result.stdout + result.stderr)[-800:]}")
+        try:
+            envelope = read_ux_cli_result(result)
+        except ValueError as error:
+            raise RuntimeError(f"S-160.5 did not return a CLI result envelope: {error}") from error
+        execution = envelope.get("meta", {}).get("execution") if isinstance(envelope, dict) else None
+        if (not isinstance(execution, dict) or execution.get("owner") != "project-runtime"
+                or not execution.get("projectId")
+                or execution.get("mode") not in {"worker-pool", "subprocess", "in-process", "container"}):
+            raise RuntimeError("S-160.5 command did not report execution by its registered project runtime")
+
+    journey.step("execute the installed Commit command through the secured project runtime", "commit-plugin",
+                 s160_host_command, cases=["S-160.5"], runners=("service-local:explore", "service-secured:explore"))
 
     _stage_case_file(project, env, "s030-progress")
 

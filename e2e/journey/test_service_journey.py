@@ -75,7 +75,7 @@ class UninstallShimResultTest(unittest.TestCase):
 class ServiceJourneyTests(unittest.TestCase):
     def test_commit_claims_select_only_the_marketplace_lifecycle_owner(self):
         root = Path(__file__).resolve().parents[2]
-        cases = ("S-160.3", "S-030.1")
+        cases = ("S-160.3", "S-160.5", "S-030.1")
         from select_from_cases import _case_declarations, selection_from_coverage
         source = "e2e/journey/plugin_author_steps.py"
         declarations = _case_declarations(source, root)
