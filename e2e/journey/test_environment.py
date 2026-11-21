@@ -79,7 +79,11 @@ class ComposeCommandTests(unittest.TestCase):
             (workspace / "e2e").mkdir()
             (workspace / "node_modules" / ".pnpm" / "node_modules" / "test-dependency").mkdir(parents=True)
             (workspace / ".kb" / "marketplace.lock").write_text(
-                json.dumps({"schema": "kb.marketplace/3", "plugins": {}}), encoding="utf-8")
+                json.dumps({"schema": "kb.marketplace/3", "plugins": {
+                    "@kb-labs/workspace-fixture": {"source": "local", "resolvedPath": "plugins/sample"},
+                }, "adapters": {"workspace-adapter": {
+                    "version": "workspace", "resolvedPath": "./adapters/workspace",
+                }}}), encoding="utf-8")
             installed = root / "active-platform"
             adapter = installed / "node_modules" / "@kb-labs" / "adapters-pino"
             adapter.mkdir(parents=True)
@@ -92,6 +96,16 @@ class ComposeCommandTests(unittest.TestCase):
                     "name": "@kb-labs/adapters-pino", "version": "2.120.1",
                     "installedPath": "node_modules/@kb-labs/adapters-pino",
                 }],
+            }), encoding="utf-8")
+            (installed / ".kb" / "marketplace.lock").write_text(json.dumps({
+                "schema": "kb.marketplace/3", "plugins": {}, "adapters": {
+                    "pino-logger": {
+                        "version": "2.120.1",
+                        "resolvedPath": "node_modules/@kb-labs/adapters-pino",
+                        "enabled": True,
+                        "source": "platform",
+                    },
+                },
             }), encoding="utf-8")
             with patch("installed_fixture.write_local_access_mode", side_effect=lambda platform_root, _source_config: platform_root):
                 env = configure_hermetic_cli_fixture(
@@ -107,6 +121,15 @@ class ComposeCommandTests(unittest.TestCase):
             self.assertTrue(staged_adapter.is_symlink())
             self.assertEqual(staged_adapter.resolve(), adapter.resolve())
             self.assertTrue((Path(env["KB_PLATFORM_ROOT"]) / "node_modules" / "test-dependency").is_symlink())
+            lock = json.loads((Path(env["KB_PLATFORM_ROOT"]) / ".kb" / "marketplace.lock").read_text())
+            self.assertEqual(lock["plugins"], {
+                "@kb-labs/workspace-fixture": {"source": "local", "resolvedPath": "plugins/sample"},
+            })
+            self.assertEqual(lock["adapters"]["pino-logger"]["resolvedPath"],
+                             "node_modules/@kb-labs/adapters-pino")
+            self.assertNotIn("workspace-adapter", lock["adapters"])
+            self.assertTrue((Path(env["KB_PLATFORM_ROOT"]) / lock["adapters"]["pino-logger"]["resolvedPath"]
+                             / "package.json").is_file())
 
 
 def stage_cli_root(repository_root: Path, target_root: Path) -> Path:

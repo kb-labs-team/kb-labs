@@ -298,6 +298,50 @@ def _stage_workspace_node_modules(platform_root: Path, workspace_root: Path,
         target.symlink_to(source, target_is_directory=True)
 
 
+def _merge_installed_platform_adapters(platform_root: Path, workspace_lock_path: Path,
+                                        installed_platform_root: Path) -> None:
+    """Use active-install adapter records while retaining workspace plugin entries."""
+    installed_lock_path = installed_platform_root / layout_value("versionStatePaths.kb_marketplace_lock")
+    try:
+        workspace_lock = json.loads(workspace_lock_path.read_text(encoding="utf-8"))
+        installed_lock = json.loads(installed_lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("workspace or active platform marketplace lock is unavailable") from error
+    if not isinstance(workspace_lock, dict) or not isinstance(installed_lock, dict):
+        raise RuntimeError("workspace or active platform marketplace lock is invalid")
+    adapters = installed_lock.get("adapters")
+    if not isinstance(adapters, dict):
+        raise RuntimeError("active platform marketplace lock has no adapter entries")
+
+    staged_adapters: dict[str, dict] = {}
+    for adapter_id, entry in adapters.items():
+        if not isinstance(adapter_id, str) or not isinstance(entry, dict):
+            raise RuntimeError("active platform marketplace adapter entry is invalid")
+        resolved_path = entry.get("resolvedPath")
+        if not isinstance(resolved_path, str) or not resolved_path:
+            raise RuntimeError(f"active platform adapter {adapter_id} has no resolved package path")
+        relative_path = Path(resolved_path)
+        if (relative_path.is_absolute() or ".." in relative_path.parts
+                or len(relative_path.parts) != 3 or relative_path.parts[:2] != ("node_modules", "@kb-labs")
+                or not relative_path.parts[2].startswith("adapters-")):
+            raise RuntimeError(f"active platform adapter {adapter_id} does not resolve to an installed adapter package")
+        package_root = platform_root / relative_path
+        try:
+            manifest = json.loads((package_root / "package.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"staged active platform adapter {adapter_id} is unavailable") from error
+        package_name = manifest.get("name") if isinstance(manifest, dict) else None
+        package_version = manifest.get("version") if isinstance(manifest, dict) else None
+        expected_name = f"@kb-labs/{relative_path.parts[2]}"
+        if (package_name != expected_name or not isinstance(package_version, str)
+                or entry.get("version") != package_version):
+            raise RuntimeError(f"staged active platform adapter {adapter_id} has an invalid package manifest")
+        staged_adapters[adapter_id] = entry
+
+    workspace_lock["adapters"] = staged_adapters
+    workspace_lock_path.write_text(json.dumps(workspace_lock, indent=2) + "\n", encoding="utf-8")
+
+
 def configure_hermetic_cli_fixture(
     home: Path,
     *,
@@ -337,6 +381,9 @@ def configure_hermetic_cli_fixture(
         if source_lock.resolve() != destination_lock.resolve():
             destination_lock.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_lock, destination_lock)
+        if installed_platform_root is not None:
+            _merge_installed_platform_adapters(
+                root, destination_lock, Path(installed_platform_root).resolve())
         plugin_root = root / "plugins"
         source_plugins = workspace_root / "plugins"
         if plugin_root.is_symlink():
