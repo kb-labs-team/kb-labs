@@ -359,6 +359,8 @@ describe("kb-host project routing", () => {
       expect(reinstalledRoute.status, JSON.stringify(reinstalledBody)).toBe(200);
       expect(reinstalledBody).toMatchObject({ ok: true, data: { scope: "root" } });
 
+      // case: S-160.5 — exercise token delivery through the real child
+      // runtime, runtime guard proof, REST setup closure, and CLI executor.
       const commandExecution = await running.fetchGateway(
         `/api/v1/projects/${project.id}/rest/commands/execute`,
         {
@@ -392,7 +394,7 @@ describe("kb-host project routing", () => {
     }
   }, 25_000);
 
-  // case: S-160.5
+  // case: S-311.1
   it("executes the Marketplace-installed Commit tarball through the host-owned project runtime", async () => {
     const project = await registered();
     execFileSync("git", ["init", "--quiet"], { cwd: project.root });
@@ -505,7 +507,7 @@ describe("kb-host project routing", () => {
       const warmResolveMs = Math.round(performance.now() - warmStartedAt);
       expect(warmResolved.entryDir).toBe(installed.entryDir);
       expect(installed.packageRoot).toContain(join("store", "entries", "@kb-labs+commit@"));
-      console.info(`[S-160.5] isolated extension-store resolution: cold=${coldInstallMs}ms warm=${warmResolveMs}ms`);
+      console.info(`[S-311.1] isolated extension-store resolution: cold=${coldInstallMs}ms warm=${warmResolveMs}ms`);
 
       const discoveryPath = join(workspaceRoot, "core/discovery/dist/index.js");
       const discovery = await import(pathToFileURL(discoveryPath).href) as {
@@ -520,6 +522,9 @@ describe("kb-host project routing", () => {
           marketplaceSource: "npm";
           signatureStatus: "unsigned";
         }): unknown;
+        DiscoveryManager: new (options: { root: string; platformRoot: string }) => {
+          discover(): Promise<{ plugins: Array<{ id: string }>; diagnostics: unknown[] }>;
+        };
         writeMarketplaceLock(root: string, lock: unknown, scope: "project"): Promise<void>;
       };
       const lock = discovery.createEmptyLock();
@@ -534,6 +539,12 @@ describe("kb-host project routing", () => {
         signatureStatus: "unsigned",
       });
       await discovery.writeMarketplaceLock(project.root, lock, "project");
+
+      const preflightDiscovery = await new discovery.DiscoveryManager({
+        root: project.root,
+        platformRoot: installedPlatformRoot,
+      }).discover();
+      expect(preflightDiscovery.plugins.map(plugin => plugin.id), JSON.stringify(preflightDiscovery.diagnostics)).toContain("@kb-labs/commit");
 
       const probe = createChildProcessLauncher({ entry: PROJECT_RUNTIME_ENTRY, stopTimeoutMs: 1500 });
       const launcher: RuntimeLauncher = {
@@ -557,8 +568,9 @@ describe("kb-host project routing", () => {
 
       const routePath = `/api/v1/projects/${project.id}/rest/plugins/commit/status`;
       const installedRoute = await running.fetchGateway(routePath);
-      expect(installedRoute.status).toBe(200);
-      expect(await installedRoute.json()).toMatchObject({ ok: true, data: { scope: "root" } });
+      const installedBody = await installedRoute.json();
+      expect(installedRoute.status, JSON.stringify(installedBody)).toBe(200);
+      expect(installedBody).toMatchObject({ ok: true, data: { scope: "root" } });
 
       const commandExecution = await running.fetchGateway(
         `/api/v1/projects/${project.id}/rest/commands/execute`,
