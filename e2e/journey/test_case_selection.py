@@ -345,6 +345,36 @@ class CaseJourneySelectionTests(unittest.TestCase):
                  for path in reports.rglob("*") if path.is_file()} if reports.exists() else None
         self.assertEqual(after, before)
 
+    def test_real_resolve_only_keeps_s181_and_mcp_claim_owners(self):
+        root = Path(__file__).resolve().parents[2]
+        expected = {
+            ("S-181.7", "local"): ("agent:commit", "platform.install"),
+            ("S-181.7", "secured"): ("agent-secured:commit", "platform.install"),
+            ("S-140.5", "local"): ("service-local:explore", "mcp"),
+            ("S-140.5", "secured"): ("service-secured:explore", "mcp"),
+        }
+        for (case_id, mode), (selector, capability) in expected.items():
+            with self.subTest(case=case_id, mode=mode):
+                env = os.environ.copy()
+                env.update({"KB_JOURNEY_CASES": case_id, "KB_JOURNEY_SELECTION_MODE": mode})
+                for key in ("KB_JOURNEY_ONLY", "KB_JOURNEY_SELECTED_STEPS",
+                            "KB_JOURNEY_SELECTED_OWNING_STEPS", "KB_JOURNEY_PREREQUISITE_STEPS"):
+                    env.pop(key, None)
+                result = subprocess.run(
+                    ["bash", "e2e/journey/run.sh", "--resolve-only"], cwd=root, env=env,
+                    capture_output=True, text=True, check=False, timeout=120,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                resolved = json.loads(result.stdout)
+                self.assertEqual(resolved["selection"], [case_id])
+                self.assertEqual(resolved["runners"], [selector])
+                self.assertIn(capability, resolved["capabilities"])
+                if case_id == "S-181.7":
+                    self.assertIn("install and reapply generated secrets from the offline artifact cache",
+                                  resolved["selectedOwningSteps"])
+                else:
+                    self.assertIn("project MCP cross-project isolation", resolved["selectedOwningSteps"])
+
     def test_runner_variant_registration_is_enforced_when_claim_executes(self):
         with patch.dict(os.environ, {
                 "KB_JOURNEY_SELECTED_STEPS": "S-040.3",

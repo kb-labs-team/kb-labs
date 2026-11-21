@@ -605,13 +605,14 @@ thread.join()
         )
         case_graph = FlowGraph(Journey("secured", "s054-commit-smoke", selection=case_selection), {})
         runner.run_selected_first_value_smoke(case_graph, lambda: calls.append("S-054.17"))
-        self.assertEqual(calls, ["full", "prerequisite", "S-054.17"])
+        self.assertEqual(calls, ["full", "prerequisite"])
 
     def test_project_mcp_smoke_is_skipped_for_unrelated_selected_s181_install_claim(self):
         runner = importlib.import_module("runner")
         selection = JourneySelection(
             requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
-            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(),
+            capabilities=frozenset({"platform.install", "gateway", "projects"}),
             runner_selector="agent-secured:commit", requested_runners="",
         )
         graph = FlowGraph(Journey("secured", "s181-project-mcp-selection", selection=selection), {})
@@ -628,7 +629,7 @@ thread.join()
 
         mcp_selection = JourneySelection(
             requested=("S-140.5",), claims=frozenset({"S-140.5"}), owning_steps={},
-            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset({"mcp"}),
             runner_selector="agent-secured:commit", requested_runners="",
         )
         mcp_graph = FlowGraph(Journey("secured", "selected-project-mcp-smoke", selection=mcp_selection), {})

@@ -206,13 +206,12 @@ def runner_scenario(name: str, *, secured: bool) -> dict:
 
 def run_selected_first_value_smoke(graph: FlowGraph, check: Callable[[], object]):
     """Run the Commit execution smoke only when the selected journey needs it."""
-    return run_selected_smoke(graph, "kb commit first value", "platform.install", check,
-                              cases=["S-054.17"])
+    return run_selected_smoke(graph, "kb commit first value", "platform.install", check)
 
 
 def run_selected_project_mcp(graph: FlowGraph, check: Callable[[], object]):
     """Run the agent project-MCP smoke only when the selected journey needs it."""
-    return run_selected_smoke(graph, "project MCP journey", "mcp", check, cases=["S-140.5"])
+    return run_selected_smoke(graph, "project MCP journey", "mcp", check, selected_capability="mcp")
 
 
 OUTER_GROUP_DEPENDENCIES = {
