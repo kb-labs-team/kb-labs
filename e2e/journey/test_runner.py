@@ -607,6 +607,43 @@ thread.join()
         runner.run_selected_first_value_smoke(case_graph, lambda: calls.append("S-054.17"))
         self.assertEqual(calls, ["full", "prerequisite", "S-054.17"])
 
+    def test_project_mcp_smoke_is_skipped_for_unrelated_selected_s181_install_claim(self):
+        runner = importlib.import_module("runner")
+        selection = JourneySelection(
+            requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            runner_selector="agent-secured:commit", requested_runners="",
+        )
+        graph = FlowGraph(Journey("secured", "s181-project-mcp-selection", selection=selection), {})
+        calls = []
+        result = runner.run_selected_project_mcp(graph, lambda: calls.append("project MCP"))
+        self.assertEqual(result.status, "SKIPPED")
+        self.assertEqual(calls, [])
+
+    def test_project_mcp_smoke_runs_for_full_mcp_claim_and_declared_prerequisite(self):
+        runner = importlib.import_module("runner")
+        calls = []
+        full_graph = FlowGraph(Journey("secured", "full-project-mcp-smoke"), {})
+        runner.run_selected_project_mcp(full_graph, lambda: calls.append("full"))
+
+        mcp_selection = JourneySelection(
+            requested=("S-140.5",), claims=frozenset({"S-140.5"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            runner_selector="agent-secured:commit", requested_runners="",
+        )
+        mcp_graph = FlowGraph(Journey("secured", "selected-project-mcp-smoke", selection=mcp_selection), {})
+        runner.run_selected_project_mcp(mcp_graph, lambda: calls.append("MCP claim"))
+
+        prerequisite_selection = JourneySelection(
+            requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+            prerequisite_steps=frozenset({"project MCP journey"}), prerequisite_flows=frozenset(),
+            capabilities=frozenset(), runner_selector="agent-secured:commit", requested_runners="",
+        )
+        prerequisite_graph = FlowGraph(
+            Journey("secured", "project-mcp-prerequisite", selection=prerequisite_selection), {})
+        runner.run_selected_project_mcp(prerequisite_graph, lambda: calls.append("prerequisite"))
+        self.assertEqual(calls, ["full", "MCP claim", "prerequisite"])
+
     def test_local_commit_scenario_uses_commit_installer_scenario(self):
         runner = importlib.import_module("runner")
         setup = runner.runner_scenario("commit", secured=False)
