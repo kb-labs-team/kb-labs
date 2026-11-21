@@ -2,7 +2,7 @@
  * Git history range resolution with tag discovery and shallow clone detection
  */
 
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import type { GitRange } from './types';
 
 /**

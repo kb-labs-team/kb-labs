@@ -1181,6 +1181,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
     def test_offline_plan_step_primes_and_uses_its_own_root_cache(self):
         with tempfile.TemporaryDirectory(prefix="journey-offline-plan-") as temp:
             root = Path(temp)
+            platform_root = root / "primary-platform"
+            platform_root.mkdir()
             index = root / "release-index.json"
             index.write_text("{}")
             calls = []
@@ -1191,6 +1193,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     payload = {"ok": True, "data": {"host": {"state": "stopped"},
                               "running": False, "reachable": False}}
                 elif args[1] == "apply":
+                    platform_root = Path(args[args.index("--platform-root") + 1])
+                    active = platform_root / layout_value("versionRoots.path") / "fixture-version"
+                    active.mkdir(parents=True)
+                    (platform_root / layout_value("currentLink")).symlink_to(
+                        Path(layout_value("versionRoots.path")) / "fixture-version")
                     payload = {"ok": True, "data": {"operation": "apply"}}
                 else:
                     payload = {"ok": True, "data": {"plan": {"request": {"source": "offline"},
@@ -1199,16 +1206,20 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, output, "")
 
             journey = run_offline_plan_step(mode="local", launcher="kb-create", stable_index=index,
-                                            platform_root=root, run_command=run_command)
+                                            platform_root=platform_root, run_command=run_command)
+            cache_root = root / "s181-offline-root"
+            physical_version = (cache_root / layout_value("versionRoots.path") / "fixture-version").resolve(strict=True)
 
         self.assertEqual(journey.steps[0].cases, ["S-181.4"])
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
-        self.assertEqual([call[1] for call in calls], ["status", "apply", "plan", "status"])
+        self.assertEqual([call[1] for call in calls], ["status", "apply", "plan", "plan", "plan", "status"])
         self.assertNotIn("--offline", calls[1])
-        self.assertIn("--offline", calls[2])
-        cache_root = root.parent / "s181-offline-root"
+        self.assertTrue(all("--offline" in call for call in calls[2:5]))
         self.assertEqual(calls[1][calls[1].index("--platform-root") + 1], str(cache_root))
         self.assertEqual(calls[2][calls[2].index("--platform-root") + 1], str(cache_root))
+        self.assertEqual(calls[3][calls[3].index("--platform-root") + 1],
+                         str(cache_root / layout_value("currentLink")))
+        self.assertEqual(calls[4][calls[4].index("--platform-root") + 1], str(physical_version))
 
     def test_platform_cli_resolves_the_requested_roots_executable(self):
         with tempfile.TemporaryDirectory(prefix="journey-platform-cli-") as temp:
@@ -1772,11 +1783,18 @@ class InstallerCaseStepsTest(unittest.TestCase):
     def test_offline_plan_requires_cache_resolution_for_every_artifact(self):
         with tempfile.TemporaryDirectory(prefix="journey-offline-plan-provenance-") as temp:
             root = Path(temp)
+            platform_root = root / "primary-platform"
+            platform_root.mkdir()
             index = root / "release-index.json"
             index.write_text("{}")
 
             def run_command(args):
                 if args[1] == "apply":
+                    platform_root = Path(args[args.index("--platform-root") + 1])
+                    active = platform_root / layout_value("versionRoots.path") / "fixture-version"
+                    active.mkdir(parents=True)
+                    (platform_root / layout_value("currentLink")).symlink_to(
+                        Path(layout_value("versionRoots.path")) / "fixture-version")
                     payload = {"ok": True, "data": {"operation": "apply"}}
                     output = json.dumps(payload)
                 else:
@@ -1788,7 +1806,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, output, "")
 
             journey = run_offline_plan_step(mode="local", launcher="kb-create", stable_index=index,
-                                            platform_root=root, run_command=run_command)
+                                            platform_root=platform_root, run_command=run_command)
 
         self.assertEqual(journey.steps[0].status, "FAIL")
         self.assertIn("network resolution", journey.steps[0].message)

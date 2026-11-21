@@ -44,7 +44,7 @@ jobs:
           # covering every Go module in the workspace (including
           # kb-deploy/kb-monitor, which require go 1.26 as of #435), not
           # just kb-devkit itself.
-          go-version: '1.26.8'
+          go-version: '1.26.11'
 
       - name: Resolve platform version
         id: version

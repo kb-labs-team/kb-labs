@@ -67,7 +67,7 @@ jobs:
       - id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-devkit/go.sum
       - id: dependencies
         name: Install workspace dependencies
@@ -122,7 +122,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-devkit/go.sum
       - name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
@@ -165,7 +165,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-devkit/go.sum
       - name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile

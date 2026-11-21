@@ -22,6 +22,7 @@ import (
 	packageartifacts "github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/semrange"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -537,7 +538,7 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 			return kindErr
 		}
 		if request.Source == contracts.SourceOffline {
-			layout, err := versionroot.New(request.PlatformRoot)
+			layout, err := offlineCacheLayout(request.PlatformRoot)
 			if err != nil {
 				return err
 			}
@@ -598,6 +599,36 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 		}
 	}
 	return nil
+}
+
+// offlineCacheLayout uses the installation-wide cache for an install root or
+// its exact active-version spelling. A path merely nested under a directory
+// named "versions" is not enough to establish that relationship.
+func offlineCacheLayout(platformRoot string) (versionroot.Layout, error) {
+	requested, err := versionroot.New(platformRoot)
+	if err != nil {
+		return versionroot.Layout{}, err
+	}
+	container, err := versionroot.ForPlatformPath(platformRoot)
+	if err != nil {
+		return versionroot.Layout{}, err
+	}
+	if requested.InstallRoot() == container.InstallRoot() {
+		return container, nil
+	}
+	active, err := container.Active()
+	if err != nil || requested.InstallRoot() != active {
+		return requested, nil
+	}
+	installationID, err := versionroot.InstallationIDForPath(container.InstallRoot())
+	if err != nil {
+		return requested, nil
+	}
+	installed, err := receipt.Read(requested.InstallRoot())
+	if err != nil || installed.InstallationID == "" || installed.InstallationID != installationID {
+		return requested, nil
+	}
+	return container, nil
 }
 
 func memberContains(members []catalog.Component, request contracts.ComponentRequest) bool {

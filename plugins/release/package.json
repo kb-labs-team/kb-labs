@@ -55,7 +55,7 @@
   "dependencies": {
     "conventional-commits-parser": "^4.0.0",
     "semver": "^7.6.3",
-    "simple-git": "^3.36.0",
+    "simple-git": "^4.0.2",
     "glob": "^11.0.0",
     "globby": "^11.0.0",
     "npm-packlist": "^10.0.3",

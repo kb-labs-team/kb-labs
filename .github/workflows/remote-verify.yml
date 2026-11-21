@@ -69,7 +69,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         id: setup-go
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-create/go.sum
       - name: Run remote prepare stage
         id: plan
@@ -125,7 +125,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         id: setup-go
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-create/go.sum
       - name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
@@ -213,7 +213,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         id: setup-go
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-create/go.sum
       - name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
@@ -276,7 +276,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         id: setup-go
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-create/go.sum
       - name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
@@ -342,7 +342,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         id: setup-go
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-create/go.sum
       - name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
