@@ -1,4 +1,5 @@
 import type { ILogger, LogLevel } from "../adapters/logger.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 /** Stable identity attached to every platform-owned log record. */
 export interface PlatformLogContext {
@@ -161,12 +162,13 @@ class SensitiveValueRegistry {
   }
 
   public redactString(value: string): string {
-    return [...this.current]
+    return [...this.current, ...(requestSensitiveValues.getStore() ?? [])]
       .sort((left, right) => right.length - left.length)
       .reduce((redacted, sensitive) => redacted.split(sensitive).join('[REDACTED]'), value);
   }
 }
 
+const requestSensitiveValues = new AsyncLocalStorage<readonly string[]>();
 let processSensitiveValues: SensitiveValueRegistry | undefined;
 let processRootContext: PlatformLogContext | undefined;
 const loggerRegistries = new WeakMap<object, SensitiveValueRegistry>();
@@ -427,6 +429,11 @@ export function createProcessRootLogContext(context: PlatformLogContext): Platfo
 /** Register resolved values in the launcher-owned process root registry. */
 export function registerProcessSensitiveValues(values: readonly string[]): void {
   getProcessSensitiveValues().register(values);
+}
+
+/** Apply secret values to logging in one async execution without retaining them process-wide. */
+export function withProcessSensitiveValues<T>(values: readonly string[], run: () => T): T {
+  return requestSensitiveValues.run(values.filter(Boolean), run);
 }
 
 /** Redact a rendered diagnostic string through the process-owned secret registry. */

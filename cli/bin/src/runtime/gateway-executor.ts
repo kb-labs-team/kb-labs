@@ -14,6 +14,7 @@ import { HttpSseGatewayTransport, resolveTransport, TerminalEventRenderer } from
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
 import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { CliResultWriter } from './result-serializer.js';
+import { randomUUID } from 'node:crypto';
 
 export interface GatewayExecutionOptions {
   commandId: string;
@@ -76,6 +77,7 @@ export async function executeViaGateway(
     input: { argv, flags },
   };
   const projectRequest = {
+    requestId: randomUUID(),
     pluginId,
     commandPath,
     input: { argv, flags },
@@ -88,9 +90,10 @@ export async function executeViaGateway(
 
   // Ctrl+C handler — cancel remote execution via Gateway
   const onSigint = () => {
-    if (executionId && !cancelled) {
+    if (!cancelled && (projectId || executionId)) {
       cancelled = true;
-      void client.cancel(executionId, 'user');
+      const cancellationId = projectId && !executionId ? projectRequest.requestId : executionId;
+      if (cancellationId) { void client.cancel(cancellationId, 'user'); }
     }
   };
   process.on('SIGINT', onSigint);
@@ -108,7 +111,9 @@ export async function executeViaGateway(
         executionId = event.executionId;
       }
 
-      renderer.render(event);
+      if (process.env.KB_OUTPUT_MODE !== 'json' || event.type !== 'execution:output') {
+        renderer.render(event);
+      }
 
       if (event.type === 'execution:done') {
         exitCode = event.exitCode ?? 0;
@@ -125,6 +130,10 @@ export async function executeViaGateway(
         resultWriter({ ok: false, error: event.error });
       }
     }
+    if (cancelled) { exitCode = 130; }
+  } catch (error) {
+    if (!cancelled) { throw error; }
+    exitCode = 130;
   } finally {
     process.removeListener('SIGINT', onSigint);
     renderer.finish();

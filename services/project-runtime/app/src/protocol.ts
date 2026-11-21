@@ -1,3 +1,5 @@
+import { PROJECT_RUNTIME_TOKEN_ENV } from "@kb-labs/shared-daemon";
+
 /**
  * @module @kb-labs/project-runtime-app/protocol
  *
@@ -13,7 +15,7 @@ export const RUNTIME_TOKEN_HEADER = "x-kb-runtime-token";
 export const RUNTIME_PROJECT_HEADER = "x-kb-project-id";
 
 /** Environment variable that carries the shared secret into the runtime (never argv). */
-export const RUNTIME_TOKEN_ENV = "KB_PROJECT_RUNTIME_TOKEN";
+export const RUNTIME_TOKEN_ENV = PROJECT_RUNTIME_TOKEN_ENV;
 
 /** Runtime-level liveness/identity endpoint, answered by the runtime itself. */
 export const RUNTIME_HEALTH_PATH = "/__runtime/health";

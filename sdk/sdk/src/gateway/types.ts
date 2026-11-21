@@ -66,6 +66,8 @@ export interface GatewayClientConfig {
  * CLI maps its argv/flags into this format.
  */
 export interface GatewayProjectCommandRequest {
+  /** Client-generated correlation key so cancellation works before the first response event. */
+  requestId: string;
   /** Enabled plugin selected from the host's project catalog. */
   pluginId: string;
   /** Canonical command path selected from the host's project catalog. */

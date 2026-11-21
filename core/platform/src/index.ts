@@ -182,6 +182,7 @@ export {
   createContextLogger,
   createProcessRootLogContext,
   registerProcessSensitiveValues,
+  withProcessSensitiveValues,
   isAgentDiagnosticsEnabled,
   PLATFORM_LOG_FIELDS,
   type IContextLogger,

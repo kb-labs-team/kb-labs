@@ -10,3 +10,9 @@ export {
 } from "./daemon.js";
 export { LOOPBACK_HOST, reserveLoopbackPorts } from "./net.js";
 export { requireEnvironmentSecret } from "./required-secret.js";
+export {
+  PROJECT_COMMAND_EXECUTION_PROOF_HEADER,
+  PROJECT_RUNTIME_TOKEN_ENV,
+  createProjectCommandExecutionProof,
+  matchesProjectCommandExecutionProof,
+} from "./project-command-proof.js";

@@ -4,7 +4,8 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { IEntityRegistry, ManifestV3, PluginContextDescriptor } from '@kb-labs/plugin-contracts';
 import { getHandlerPermissions } from '@kb-labs/plugin-contracts';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, withProcessSensitiveValues } from '@kb-labs/core-platform';
+import { matchesProjectCommandExecutionProof, PROJECT_COMMAND_EXECUTION_PROOF_HEADER } from '@kb-labs/shared-daemon';
 import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
 import { platform } from '@kb-labs/core-runtime';
 
@@ -19,6 +20,7 @@ const GLOBAL_FLAGS = new Set([
 ]);
 
 interface ProjectCommandRequest {
+  requestId: string;
   pluginId: string;
   commandPath: string;
   input: { argv: string[]; flags: Record<string, unknown> };
@@ -30,9 +32,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function validateRequest(value: unknown): ProjectCommandRequest | undefined {
-  if (!isRecord(value) || Object.keys(value).some((key) => !['pluginId', 'commandPath', 'input', 'timeoutMs'].includes(key))) {
+  if (!isRecord(value) || Object.keys(value).some((key) => !['requestId', 'pluginId', 'commandPath', 'input', 'timeoutMs'].includes(key))) {
     return undefined;
   }
+  if (typeof value.requestId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value.requestId)) { return undefined; }
   if (typeof value.pluginId !== 'string' || !/^@?[a-z0-9][a-z0-9._/-]{0,127}$/i.test(value.pluginId)) { return undefined; }
   if (typeof value.commandPath !== 'string' || value.commandPath.length > 256 || value.commandPath.trim() !== value.commandPath || !value.commandPath) { return undefined; }
   if (!isRecord(value.input) || Object.keys(value.input).some((key) => !['argv', 'flags'].includes(key))) { return undefined; }
@@ -58,18 +61,33 @@ function writeEvent(reply: import('fastify').FastifyReply, event: unknown): void
   }
 }
 
+function redactSecrets<T>(value: T, secrets: readonly string[]): T {
+  const redactText = (text: string) => [...secrets].sort((a, b) => b.length - a.length)
+    .reduce((result, secret) => secret ? result.split(secret).join('[REDACTED]') : result, text);
+  const visit = (item: unknown): unknown => {
+    if (typeof item === 'string') { return redactText(item); }
+    if (item instanceof Error) {
+      return { name: item.name, message: redactText(item.message), ...(item.stack ? { stack: redactText(item.stack) } : {}), ...(item.cause !== undefined ? { cause: visit(item.cause) } : {}) };
+    }
+    if (Array.isArray(item)) { return item.map(visit); }
+    if (isRecord(item)) { return Object.fromEntries(Object.entries(item).map(([key, nested]) => [redactText(key), visit(nested)])); }
+    return item;
+  };
+  return visit(value) as T;
+}
+
 /** Project-runtime-only CLI execution endpoint. Catalog and process authority stay in this runtime. */
 export async function registerProjectCommandExecutionRoute(
   app: FastifyInstance,
-  options: { registry: IEntityRegistry; projectId?: string; projectRoot: string; platformRoot: string },
+  options: { registry: IEntityRegistry; projectId?: string; projectRoot: string; platformRoot: string; runtimeToken?: string },
 ): Promise<void> {
   app.post('/api/v1/commands/execute', { config: { ux: 'raw' }, bodyLimit: 64 * 1024, schema: { hide: true } }, async (request, reply) => {
+    if (!options.projectId || !options.runtimeToken || request.headers['x-kb-project-id'] !== options.projectId || !matchesProjectCommandExecutionProof(options.runtimeToken, request.headers[PROJECT_COMMAND_EXECUTION_PROOF_HEADER], { projectId: options.projectId, method: request.method, path: request.url })) {
+      return reply.code(403).send({ ok: false, error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: 'project.runtime.execute' } }) });
+    }
     const body = validateRequest(request.body);
     if (!body) {
       return reply.code(400).send({ ok: false, error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', { details: { field: 'body' } }) });
-    }
-    if (!options.projectId || request.headers['x-kb-project-id'] !== options.projectId) {
-      return reply.code(403).send({ ok: false, error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: 'project.runtime.execute' } }) });
     }
 
     const snapshot = options.registry.snapshot();
@@ -101,9 +119,14 @@ export async function registerProjectCommandExecutionRoute(
       if (flag.type === 'string' && flag.choices && typeof supplied === 'string' && !flag.choices.includes(supplied)) { return reply.code(400).send({ ok: false, error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', { details: { field: `flags.${flag.name}` } }) }); }
     }
 
-    const requestId = randomUUID();
+    const requestId = body.requestId;
     const executionId = `project-${randomUUID()}`;
     const startedAt = Date.now();
+    const controller = new AbortController();
+    const onResponseClose = () => {
+      if (!reply.raw.writableFinished) { controller.abort(new Error('Client disconnected')); }
+    };
+    reply.raw.once('close', onResponseClose);
     const root = await realpath(entry.pluginRoot);
     const handlerParts = declared.handler.split('#');
     const declaredHandler = handlerParts[0] ?? '';
@@ -121,15 +144,25 @@ export async function registerProjectCommandExecutionRoute(
     }
 
     const permissions = getHandlerPermissions(entry.manifest as ManifestV3, 'cli', body.commandPath);
+    const permissionTimeouts = [entry.manifest.permissions?.quotas?.timeoutMs, permissions.quotas?.timeoutMs]
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0);
+    const permissionTimeoutMs = Math.min(...permissionTimeouts, MAX_TIMEOUT_MS);
     const descriptor: PluginContextDescriptor = {
       hostType: 'cli',
       pluginId: body.pluginId,
       pluginVersion: entry.manifest.version,
+      configSection: entry.manifest.configSection,
       permissions,
       requestId,
       executionId,
       hostContext: { host: 'cli', binaryName: 'kb', argv: body.input.argv, flags: commandFlags },
     };
+    const secrets = (declaredFlags.flatMap((flag) => {
+      if (!flag.secret) { return []; }
+      const camel = flag.name.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+      const value = commandFlags[flag.name] ?? commandFlags[camel];
+      return typeof value === 'string' ? [value] : Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+    })).filter(Boolean);
     const executionRequest: ExecutionRequest = {
       executionId,
       descriptor,
@@ -139,33 +172,33 @@ export async function registerProjectCommandExecutionRoute(
       input: { argv: body.input.argv, flags: commandFlags },
       env: process.env,
       platformRoot: options.platformRoot,
-      timeoutMs: Math.min(body.timeoutMs ?? declared.permissions?.quotas?.timeoutMs ?? MAX_TIMEOUT_MS, declared.permissions?.quotas?.timeoutMs ?? MAX_TIMEOUT_MS),
+      timeoutMs: Math.min(body.timeoutMs ?? permissionTimeoutMs, permissionTimeoutMs),
       workspace: { cwd: options.projectRoot },
-      context: { commandPath: body.commandPath },
+      context: { commandPath: body.commandPath, sensitiveValues: secrets },
     };
 
-    const controller = new AbortController();
-    reply.raw.once('close', () => {
-      if (!reply.raw.writableFinished) { controller.abort(new Error('Client disconnected')); }
-    });
+    if (controller.signal.aborted || reply.raw.destroyed) { return reply; }
     reply.hijack();
     reply.raw.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Transfer-Encoding': 'chunked', 'Cache-Control': 'no-cache', 'X-Execution-Id': executionId });
     reply.raw.flushHeaders();
     writeEvent(reply, { type: 'execution:output', requestId, executionId, stream: 'stderr', data: `Executing ${body.pluginId} ${body.commandPath} in project runtime\n`, timestamp: Date.now() });
 
     try {
-      const result = await platform.executionBackend.execute(executionRequest, {
+      const result = await withProcessSensitiveValues(secrets, () => platform.executionBackend.execute(executionRequest, {
         signal: controller.signal,
         uiPromptHint: 'This command needs interactive input. Run it in a supported local interactive context.',
-        onLog: (entry) => writeEvent(reply, { type: 'execution:output', requestId, executionId, stream: entry.stream, data: entry.message.endsWith('\n') ? entry.message : `${entry.message}\n`, timestamp: Date.now() }),
-      });
+        onLog: (entry) => {
+          const data = entry.message.includes('\r') || entry.message.endsWith('\n') ? entry.message : `${entry.message}\n`;
+          writeEvent(reply, { type: 'execution:output', requestId, executionId, stream: entry.stream, data: redactSecrets(data, secrets), timestamp: Date.now() });
+        },
+      }));
       if (controller.signal.aborted) {
         writeEvent(reply, { type: 'execution:cancelled', requestId, executionId, reason: 'user', durationMs: Date.now() - startedAt });
         writeEvent(reply, { type: 'execution:done', requestId, executionId, exitCode: 130, durationMs: Date.now() - startedAt });
       } else if (result.ok) {
-        writeEvent(reply, { type: 'execution:done', requestId, executionId, exitCode: 0, durationMs: Date.now() - startedAt, metadata: { result: result.data ?? null, executionOwner: 'project-runtime', projectId: options.projectId, executionMode: platform.executionBackend.executionMode } });
+        writeEvent(reply, { type: 'execution:done', requestId, executionId, exitCode: 0, durationMs: Date.now() - startedAt, metadata: { result: redactSecrets(result.data ?? null, secrets), executionOwner: 'project-runtime', projectId: options.projectId, executionMode: platform.executionBackend.executionMode } });
       } else {
-        writeEvent(reply, { type: 'execution:error', requestId, executionId, error: result.error.envelope });
+        writeEvent(reply, { type: 'execution:error', requestId, executionId, error: redactSecrets(result.error.envelope, secrets) });
         writeEvent(reply, { type: 'execution:done', requestId, executionId, exitCode: 1, durationMs: Date.now() - startedAt });
       }
     } catch (error) {
@@ -177,6 +210,7 @@ export async function registerProjectCommandExecutionRoute(
         writeEvent(reply, { type: 'execution:done', requestId, executionId, exitCode: 1, durationMs: Date.now() - startedAt });
       }
     } finally {
+      reply.raw.off('close', onResponseClose);
       if (!reply.raw.writableEnded) { reply.raw.end(); }
     }
   });

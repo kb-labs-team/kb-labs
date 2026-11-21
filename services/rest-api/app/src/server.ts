@@ -119,7 +119,7 @@ export async function createServer(
   repoRoot: string,
   registry: IEntityRegistry,
   routeObserver?: (route: RouteOptions) => void,
-  projectExecution?: { projectId?: string; projectRoot: string; platformRoot: string },
+  projectExecution?: { projectId?: string; projectRoot: string; platformRoot: string; runtimeToken?: string },
 ): Promise<FastifyInstance> {
   // HTTP/2 configuration (requires HTTPS)
   const useHttp2 = config.http2?.enabled ?? false;

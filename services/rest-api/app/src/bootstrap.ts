@@ -17,6 +17,7 @@ import {
 } from "./middleware/metrics.js";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import { PROJECT_RUNTIME_TOKEN_ENV } from "@kb-labs/shared-daemon";
 
 // System metrics collector instance for cleanup
 let metricsCollector: SystemMetricsCollector | null = null;
@@ -89,6 +90,7 @@ export async function setup({
   bootstrapLogger.info("Resolved service roots", {
     projectRoot,
     platformRoot,
+    runtimeToken: process.env[PROJECT_RUNTIME_TOKEN_ENV],
   });
   bootstrapLogger.info("Platform adapters initialized");
 

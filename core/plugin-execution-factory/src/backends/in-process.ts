@@ -64,6 +64,7 @@ import {
   HandlerNotFoundError,
   TimeoutError,
 } from '../errors.js';
+import { withLoaderOutputSink } from '@kb-labs/shared-cli-ui';
 
 /**
  * InProcessBackend options.
@@ -253,7 +254,11 @@ export class InProcessBackend implements RawExecutionBackend {
         : this.platform;
 
       const adapterMiddlewares = await this.getMiddlewares();
-      const runResult = await runInProcess({
+      const executionCwd = lease.cwd;
+      let loaderLineNo = 0;
+      const runResult = await withLoaderOutputSink((message) => {
+        options?.onLog?.({ level: 'info', message, stream: 'stdout', lineNo: ++loaderLineNo, timestamp: new Date().toISOString() });
+      }, () => runInProcess({
         descriptor: requestToExecute.descriptor,  // Direct pass-through!
         platform: effectivePlatform,
         ui,
@@ -264,10 +269,10 @@ export class InProcessBackend implements RawExecutionBackend {
         platformRoot: requestToExecute.platformRoot,
         environment: requestToExecute.env,
         signal: executionSignal,
-        cwd: lease.cwd,           // From WorkspaceLease
+        cwd: executionCwd,           // From WorkspaceLease
         outdir: undefined,        // Optional, defaults to cwd/.kb/output
         adapterMiddlewares,
-      });
+      }), Boolean((requestToExecute.input as { flags?: Record<string, unknown> } | undefined)?.flags?.json));
 
       if (timeoutExpired) {
         throw new TimeoutError(`Execution timed out after ${request.timeoutMs}ms`, request.timeoutMs);

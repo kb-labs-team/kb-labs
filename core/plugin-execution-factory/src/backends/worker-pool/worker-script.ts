@@ -23,7 +23,7 @@ import type {
   UIPromptResultMessage,
   ProcessStartedAckMessage,
 } from './types.js';
-import { SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import { SerializedErrorEnvelopeError, withProcessSensitiveValues } from '@kb-labs/core-platform';
 import type { ExecutionError } from '@kb-labs/core-platform';
 import { normalizeExecutionFailure } from '../../utils.js';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
@@ -292,7 +292,10 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     let result!: Awaited<ReturnType<typeof runInProcess>>;
     try {
-      result = await runInProcess({
+      const sensitiveValues = Array.isArray(request.context?.sensitiveValues)
+        ? request.context.sensitiveValues.filter((value): value is string => typeof value === 'string')
+        : [];
+      result = await withProcessSensitiveValues(sensitiveValues, () => runInProcess({
         descriptor: request.descriptor,
         platform,
         ui,
@@ -303,7 +306,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
         platformRoot: request.platformRoot,
         environment: request.env,
         adapterMiddlewares,
-      });
+      }));
     } finally {
       process.stdout.write = origStdoutWrite;
       process.stderr.write = origStderrWrite;

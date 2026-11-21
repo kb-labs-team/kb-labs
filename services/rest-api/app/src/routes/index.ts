@@ -51,7 +51,7 @@ export async function registerRoutes(
   config: RestApiConfig,
   repoRoot: string,
   registry: IEntityRegistry,
-  projectExecution?: { projectId?: string; projectRoot: string; platformRoot: string },
+  projectExecution?: { projectId?: string; projectRoot: string; platformRoot: string; runtimeToken?: string },
 ): Promise<void> {
   // Register route collector hook FIRST, before any routes are registered
   // This allows us to collect all routes for the /routes endpoint

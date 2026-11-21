@@ -77,9 +77,13 @@ export class HttpSseGatewayTransport implements IGatewayClient {
   }
 
   async *executeProject(projectId: string, request: GatewayProjectCommandRequest): AsyncIterable<ExecutionEvent> {
+    const controller = new AbortController();
+    const requestId = request.requestId;
+    this.abortControllers.set(requestId, controller);
+    this.projectRuntimeExecutions.add(requestId);
+    try {
     const creds = await this.getValidCredentials();
     const url = `${this.config.gatewayUrl}/api/v1/projects/${encodeURIComponent(projectId)}/rest/commands/execute`;
-    const controller = new AbortController();
     let response: Response;
     try {
       response = await fetch(url, {
@@ -93,6 +97,7 @@ export class HttpSseGatewayTransport implements IGatewayClient {
         signal: controller.signal,
       });
     } catch {
+      if (controller.signal.aborted) { throw new DOMException('Request aborted', 'AbortError'); }
       throw new ErrorEnvelopeError(createErrorEnvelope('KB_HOST_UNREACHABLE', {
         details: { address: new URL(this.config.gatewayUrl).origin },
         correlationId: randomUUID(),
@@ -101,7 +106,11 @@ export class HttpSseGatewayTransport implements IGatewayClient {
     if (!response.ok) {
       throw await this.auth.decodeFailure('Project runtime execution', response, this.config.gatewayUrl);
     }
-    yield* this.readNdjsonStream(response, controller, true);
+    yield* this.readNdjsonStream(response, controller, true, requestId);
+    } finally {
+      this.abortControllers.delete(requestId);
+      this.projectRuntimeExecutions.delete(requestId);
+    }
   }
 
   async cancel(executionId: string, reason?: string): Promise<void> {
@@ -186,6 +195,7 @@ export class HttpSseGatewayTransport implements IGatewayClient {
     response: Response,
     controller: AbortController,
     projectRuntime = false,
+    requestId?: string,
   ): AsyncIterable<ExecutionEvent> {
     const body = response.body;
     if (!body) {
@@ -233,6 +243,10 @@ export class HttpSseGatewayTransport implements IGatewayClient {
       if (executionId) {
         this.abortControllers.delete(executionId);
         this.projectRuntimeExecutions.delete(executionId);
+      }
+      if (requestId) {
+        this.abortControllers.delete(requestId);
+        this.projectRuntimeExecutions.delete(requestId);
       }
     }
   }
