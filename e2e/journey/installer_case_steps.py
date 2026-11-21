@@ -1206,10 +1206,12 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
 
     def install_and_reapply() -> None:
         root = (platform_root.parent / "s181-offline-generated-secret-root").resolve()
+        gateway_url = unused_loopback_gateway_url()
         root.mkdir(parents=True, exist_ok=True)
         def exercise() -> None:
             plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
-                                               "--platform-channel", "stable", "--platform-root", str(root)],
+                                               "--platform-channel", "stable", "--platform-root", str(root),
+                                               "--gateway-url", gateway_url],
                                  "S-181.7 cache source plan").get("plan", {})
             artifacts = plan.get("artifacts", [])
             if not artifacts:
@@ -1230,6 +1232,7 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
             package_manager_root = root / layout_value("packageManagerStateDirectories.installer.path")
             provisioned = _data(run_command([launcher, "install", "--json", "--index", str(stable_index),
                                              "--platform-channel", "stable", "--platform-root", str(root),
+                                             "--gateway-url", gateway_url,
                                              "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"],
                                             timeout=1200), "S-181.7 same-release online provisioning")
             if provisioned.get("operation") != "apply":
@@ -1276,7 +1279,7 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
 
             installed = _data(run_command([launcher, "install", "--json", "--offline", "--index",
                                            str(stable_index), "--platform-channel", "stable",
-                                           "--platform-root", str(root), "--secret-env",
+                                           "--platform-root", str(root), "--gateway-url", gateway_url, "--secret-env",
                                            "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"], timeout=1200),
                              "S-181.7 offline generated-secret install")
             receipt_path = installed_path(root, "currentLink", ".kb/v2/receipt.json")
@@ -1299,7 +1302,8 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
 
             reapplied = _data(run_command([launcher, "apply", "--json", "--offline", "--index",
                                            str(stable_index), "--platform-channel", "stable",
-                                           "--platform-root", str(root)], timeout=1200), "S-181.7 offline reapply")
+                                           "--platform-root", str(root), "--gateway-url", gateway_url],
+                                          timeout=1200), "S-181.7 offline reapply")
             if reapplied.get("operation") != "apply" or not receipt_path.is_file():
                 raise RuntimeError("S-181.7 offline reapply did not preserve an active receipt")
             reapplied_receipt = json.loads(receipt_path.read_text())
@@ -1312,7 +1316,7 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
             cache_path.unlink()
             refused = run_command([launcher, "apply", "--json", "--offline", "--index",
                                    str(stable_index), "--platform-channel", "stable",
-                                   "--platform-root", str(root)], timeout=1200)
+                                   "--platform-root", str(root), "--gateway-url", gateway_url], timeout=1200)
             envelope, error = _diagnostic(refused, "S-181.7 missing offline artifact")
             detail = error.get("details", {})
             if (refused.returncode == 0 or envelope.get("ok") is not False
