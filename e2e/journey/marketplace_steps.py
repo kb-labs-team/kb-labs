@@ -1064,7 +1064,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("S-192 project setup did not remove the prior Commit pin")
 
     journey.step("prepare clean scopes for the S-010 install", "marketplace",
-                 prepare_clean_scopes_for_s010, role="lifecycle")
+                 prepare_clean_scopes_for_s010)
     journey.step("install exact marketplace plugin into both scopes", "marketplace",
                  install_exact_commit, cases=["S-010.1"],
                  requires=("step:prepare clean scopes for the S-010 install",))

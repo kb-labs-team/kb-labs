@@ -1335,6 +1335,22 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertEqual(resolved["runners"], ["service-secured:explore"])
         self.assertEqual(resolved["prerequisiteSteps"], ["prepare Commit and Review case fixtures"])
         self.assertNotIn("publish next-major Commit update fixture", resolved["prerequisiteSteps"])
+        self.assertNotIn("prepare clean scopes for the S-010 install", resolved["prerequisiteSteps"])
+
+        marketplace_declarations = _case_declarations("e2e/journey/marketplace_steps.py", root)
+        install_line = next(
+            line for line, declaration in marketplace_declarations.items()
+            if declaration["name"] == "install exact marketplace plugin into both scopes"
+        )
+        install_coverage = [{"mode": "secured", "cases": [{
+            "id": "S-010.1", "status": "active", "steps": [{
+                "stepId": "S-010.1", "claims": [{
+                    "kind": "journey", "source": "e2e/journey/marketplace_steps.py", "line": install_line,
+                }],
+            }],
+        }]}]
+        install_selection = selection_from_coverage(install_coverage, "S-010.1", mode="secured")
+        self.assertIn("prepare clean scopes for the S-010 install", install_selection["prerequisiteSteps"])
 
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
         root = Path(__file__).resolve().parents[2]
