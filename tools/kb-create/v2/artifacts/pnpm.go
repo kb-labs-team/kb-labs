@@ -40,6 +40,7 @@ type CommandRunner struct {
 	offline      bool
 	redactions   []string
 	maxCapture   int
+	runTool      func(context.Context, toolchain.Invocation) (toolchain.Result, error)
 }
 
 const externalCommandStderrTailBytes = 4096
@@ -76,7 +77,7 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 			source := "Corepack's default npm registry"
 			if !r.offline {
 				var provision toolchain.Result
-				provision, err = toolchain.Run(ctx, toolchain.Invocation{
+				provision, err = r.run(ctx, toolchain.Invocation{
 					Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env,
 					Operation: toolchain.OperationPackageManager, SafeCaptureOutput: true, Redactions: r.redactions,
 					MaxCapturedOutputBytes: r.maxCapture,
@@ -87,6 +88,10 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 				}
 			}
 			if err != nil {
+				var diagnostic *diag.Diag
+				if errors.As(err, &diagnostic) {
+					return diagnostic
+				}
 				failure := contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s.", toolchain.SupportedPnpm, source), "Check the default npm registry and rerun the install command.", err)
 				var commandFailure *toolchain.CommandError
 				if errors.As(err, &commandFailure) {
@@ -103,7 +108,7 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 	} else {
 		executable = name
 	}
-	result, err := toolchain.Run(ctx, toolchain.Invocation{
+	result, err := r.run(ctx, toolchain.Invocation{
 		Tool: name, Executable: executable, Args: args, Env: env, Operation: toolchain.OperationPackageManager,
 		SafeCaptureOutput: true, Redactions: r.redactions, MaxCapturedOutputBytes: r.maxCapture,
 	})
@@ -119,6 +124,13 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 		return err
 	}
 	return nil
+}
+
+func (r CommandRunner) run(ctx context.Context, invocation toolchain.Invocation) (toolchain.Result, error) {
+	if r.runTool != nil {
+		return r.runTool(ctx, invocation)
+	}
+	return toolchain.Run(ctx, invocation)
 }
 
 func writeCapturedOutput(output io.Writer, result toolchain.Result) {

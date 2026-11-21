@@ -1302,6 +1302,54 @@ func TestPnpmDiagnosticKeepsStdoutOverflowNoticeAlongsideFullStderr(t *testing.T
 }
 
 // case: S-285.18
+func TestCorepackTimeoutPreservesToolchainDiagnosticAndCapturedEvidence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	bin := t.TempDir()
+	corepack := filepath.Join(bin, "corepack")
+	if err := os.WriteFile(corepack, []byte("#!/bin/sh\nprintf '%s\\n' 'corepack registry stalled' >&2\nexec sleep 10\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cache := t.TempDir() // No pinned pnpm is cached, so the real Corepack fallback runs.
+	var transcript bytes.Buffer
+	runner := CommandRunner{
+		corepackHome: cache,
+		runTool: func(_ context.Context, invocation toolchain.Invocation) (toolchain.Result, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			result, err := toolchain.Run(ctx, invocation)
+			var timeout *toolchain.TimeoutError
+			if !errors.As(err, &timeout) {
+				return result, err
+			}
+			values := map[string]string{
+				"tool": "corepack", "argsSummary": "install -g pnpm", "elapsed": timeout.Elapsed.Round(time.Millisecond).String(),
+				"stderrTail": strings.TrimSpace(result.Stderr), "nextCommand": "kb-create install",
+			}
+			diagnostic, diagErr := diag.FromCatalog("KB_TOOLCHAIN_EXTERNAL_TIMEOUT", values, diag.WithMeta(map[string]any{
+				"tool": values["tool"], "argsSummary": values["argsSummary"], "elapsed": values["elapsed"],
+				"stderrTail": values["stderrTail"], "nextCommand": values["nextCommand"],
+			}))
+			if diagErr != nil {
+				return result, diagErr
+			}
+			return result, diagnostic
+		},
+	}
+	err := runner.Run(context.Background(), &transcript, "pnpm", "install")
+	var failure *diag.Diag
+	if !errors.As(err, &failure) {
+		t.Fatalf("Corepack provisioning failure = %v, want catalogued diagnostic", err)
+	}
+	if failure.Code != "KB_TOOLCHAIN_EXTERNAL_TIMEOUT" || failure.Meta["tool"] != "corepack" ||
+		failure.Meta["stderrTail"] != "corepack registry stalled" || !strings.Contains(transcript.String(), "corepack registry stalled") {
+		t.Fatalf("Corepack timeout diagnostic = code %q meta %#v transcript %q", failure.Code, failure.Meta, transcript.String())
+	}
+}
+
+// case: S-285.18
 func TestCommandRunnerRedactsSplitCredentialsFromTranscript(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture requires POSIX")
