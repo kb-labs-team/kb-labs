@@ -10,13 +10,14 @@
  */
 
 import type { IGatewayClient, GatewayExecuteRequest } from '@kb-labs/sdk/gateway';
-import { resolveTransport, TerminalEventRenderer } from '@kb-labs/cli-runtime/gateway';
+import { HttpSseGatewayTransport, resolveTransport, TerminalEventRenderer } from '@kb-labs/cli-runtime/gateway';
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
 import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { CliResultWriter } from './result-serializer.js';
 
 export interface GatewayExecutionOptions {
   commandId: string;
+  projectId?: string;
   argv: string[];
   flags: Record<string, unknown>;
   manifestCmd: RegisteredCommand | undefined;
@@ -37,6 +38,11 @@ export function pluginCommandUnavailable(commandPath: string): ErrorEnvelopeErro
  */
 export async function tryResolveGateway(gatewayUrl: string): Promise<IGatewayClient> {
   return resolveTransport(gatewayUrl);
+}
+
+/** Verified installed local hosts use their authenticated Gateway, never the Workspace Agent socket. */
+export function resolveProjectRuntimeGateway(gatewayUrl: string): IGatewayClient {
+  return new HttpSseGatewayTransport({ gatewayUrl, credentialKind: 'either' });
 }
 
 /**
@@ -62,10 +68,16 @@ export async function executeViaGateway(
   const cliCommand = v3Manifest?.cli?.commands?.find((c) => c.path === commandPath);
   const handlerRef = cliCommand?.handler?.split('#')[0] ?? '';
 
+  const projectId = options.projectId;
   const request: GatewayExecuteRequest = {
     pluginId,
     handlerRef,
     exportName: cliCommand?.handler?.split('#')[1] ?? 'default',
+    input: { argv, flags },
+  };
+  const projectRequest = {
+    pluginId,
+    commandPath,
     input: { argv, flags },
   };
 
@@ -84,7 +96,13 @@ export async function executeViaGateway(
   process.on('SIGINT', onSigint);
 
   try {
-    for await (const event of client.execute(request)) {
+    if (projectId && !client.executeProject) {
+      throw new Error('The selected Gateway transport cannot execute through a project runtime.');
+    }
+    const events = projectId
+      ? client.executeProject!(projectId, projectRequest)
+      : client.execute(request);
+    for await (const event of events) {
       // Track executionId from first event
       if (!executionId && 'executionId' in event) {
         executionId = event.executionId;
@@ -95,7 +113,13 @@ export async function executeViaGateway(
       if (event.type === 'execution:done') {
         exitCode = event.exitCode ?? 0;
         if (process.env.KB_OUTPUT_MODE === 'json' && exitCode === 0) {
-          resultWriter({ ok: true, data: event.metadata?.result ?? null });
+          resultWriter({
+            ok: true,
+            data: event.metadata?.result ?? null,
+            ...(event.metadata?.executionOwner === 'project-runtime' ? {
+              meta: { execution: { owner: event.metadata.executionOwner, projectId: event.metadata.projectId, mode: event.metadata.executionMode } },
+            } : {}),
+          });
         }
       } else if (event.type === 'execution:error' && process.env.KB_OUTPUT_MODE === 'json') {
         resultWriter({ ok: false, error: event.error });

@@ -41,3 +41,77 @@ describe('HttpSseGatewayTransport credential origin', () => {
     );
   });
 });
+
+describe('HttpSseGatewayTransport project runtime execution', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it('sends only the project identity and bounded command data to the authenticated project route', async () => {
+    vi.spyOn(AuthSessionOwner.prototype, 'load').mockResolvedValue({
+      kind: 'session', gatewayUrl: 'https://gateway.test', accessToken: 'session-token',
+      refresh: vi.fn(), save: vi.fn(),
+    });
+    const event = { type: 'execution:done', requestId: 'req-1', executionId: 'exec-1', exitCode: 0, durationMs: 1 };
+    const fetch = vi.fn().mockResolvedValue(new Response(`${JSON.stringify(event)}\n`, { status: 200, headers: { 'Content-Type': 'application/x-ndjson' } }));
+    vi.stubGlobal('fetch', fetch);
+    const transport = new HttpSseGatewayTransport({ gatewayUrl: 'https://gateway.test', credentialKind: 'session' });
+    const received: ExecutionEvent[] = [];
+
+    for await (const item of transport.executeProject!('prj_fixture', {
+      pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: ['--'], flags: { json: true } },
+    })) { received.push(item); }
+
+    expect(fetch).toHaveBeenCalledWith('https://gateway.test/api/v1/projects/prj_fixture/rest/commands/execute', expect.objectContaining({
+      method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer session-token', Accept: 'application/x-ndjson' }),
+      body: JSON.stringify({ pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: ['--'], flags: { json: true } } }),
+      signal: expect.any(AbortSignal),
+    }));
+    expect(received).toEqual([event]);
+  });
+
+  it('maps a stopped installed Gateway to the catalogued host-unreachable error', async () => {
+    vi.spyOn(AuthSessionOwner.prototype, 'load').mockResolvedValue({
+      kind: 'session', gatewayUrl: 'https://gateway.test', accessToken: 'session-token',
+      refresh: vi.fn(), save: vi.fn(),
+    });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('connection refused')));
+    const transport = new HttpSseGatewayTransport({ gatewayUrl: 'https://gateway.test', credentialKind: 'session' });
+    const execution = (async () => {
+      for await (const event of transport.executeProject!('prj_fixture', {
+        pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: {} },
+      })) { void event; }
+    })();
+    await expect(execution).rejects.toMatchObject({ envelope: { code: 'KB_HOST_UNREACHABLE' } });
+  });
+  it('cancels project runtime execution by aborting the streamed project request', async () => {
+    vi.spyOn(AuthSessionOwner.prototype, 'load').mockResolvedValue({
+      kind: 'session', gatewayUrl: 'https://gateway.test', accessToken: 'session-token',
+      refresh: vi.fn(), save: vi.fn(),
+    });
+    let source: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let requestSignal: AbortSignal | undefined;
+    const event = { type: 'execution:output', requestId: 'req-2', executionId: 'project-exec-2', stream: 'stderr', data: 'Analyzing changes...', timestamp: Date.now() };
+    const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      requestSignal = init?.signal as AbortSignal;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          source = controller;
+          controller.enqueue(new TextEncoder().encode(`${JSON.stringify(event)}\n`));
+          requestSignal?.addEventListener('abort', () => controller.close(), { once: true });
+        },
+      });
+      return new Response(body, { status: 200, headers: { 'Content-Type': 'application/x-ndjson' } });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const transport = new HttpSseGatewayTransport({ gatewayUrl: 'https://gateway.test', credentialKind: 'session' });
+    const iterator = transport.executeProject!('prj_fixture', {
+      pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: {} },
+    })[Symbol.asyncIterator]();
+    expect((await iterator.next()).value).toEqual(event);
+
+    await transport.cancel(event.executionId, 'user');
+    expect(requestSignal?.aborted).toBe(true);
+    await iterator.return?.();
+    source?.desiredSize;
+  });
+
+});

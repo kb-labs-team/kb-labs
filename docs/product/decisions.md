@@ -24,6 +24,21 @@ Case: S-268.21.
 
 ## 2026-11-21
 
+### Secured installed project commands execute in the project runtime
+
+When a secured CLI invocation has positively verified the installed Gateway
+identity, no explicit `--gateway-url`, and a registered project scope, the CLI
+sends the plugin identity, canonical command path, bounded arguments, and
+flags to that project's runtime. The runtime resolves the enabled manifest,
+handler, permissions, environment, and canonical package root from its own
+catalog, then executes through its host-owned `platform.executionBackend`.
+Workspace Agent registration is not required. Explicit Gateway overrides and
+unverified targets retain the existing Gateway execution path; local CLI mode
+retains its existing execution path. A stopped secured host returns
+`KB_HOST_UNREACHABLE` before the plugin handler runs. Changing a platform
+adapter binding takes effect after the project runtime reloads. Cases: S-160.1–
+S-160.4, S-203.26.
+
 ### Package-manager output is captured and redacted before use
 
 Package-manager stdout and stderr are untrusted. Each stream is captured

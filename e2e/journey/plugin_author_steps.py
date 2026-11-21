@@ -423,6 +423,11 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         if (not plan or plan.get("metadata", {}).get("llmUsed") is not True or payload.get("applied") is not False
                 or after != before_s160 or after_status != before_s160_status):
             raise RuntimeError("S-160.1 expected JSON preview output without changing Git state")
+        if journey.mode == "secured":
+            envelope = read_ux_cli_result(result)
+            execution = envelope.get("meta", {}).get("execution") if isinstance(envelope, dict) else None
+            if not isinstance(execution, dict) or execution.get("owner") != "project-runtime" or not execution.get("projectId") or execution.get("mode") not in {"worker-pool", "subprocess", "in-process", "container"}:
+                raise RuntimeError("S-160.1 secured execution did not report its host-owned project runtime receipt")
 
     journey.step("preview the deterministic fixture Commit plan", "plugin-author",
                  s160_dry_run, cases=["S-160.1"])

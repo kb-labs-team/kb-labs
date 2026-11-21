@@ -18,6 +18,7 @@ import redaction
 
 _ERROR_FIXTURE = Path(__file__).parent / 'fixtures/plugin-error/package.json'
 _ERROR_CODE = 'KB_PLUGIN_COMMAND_FAILED'
+_HOST_UNAVAILABLE_CODE = 'KB_HOST_UNREACHABLE'
 _ERROR_COMMAND = ['journey-error', 'throw']
 
 
@@ -138,6 +139,30 @@ def run_unexpected_error_steps(journey, *, mode: str, env: Mapping[str, str]) ->
             correlated_records.append(record)
         return None
 
+    def verify_secured_host_stopped() -> str | None:
+        for output_mode, args in (('json', ['--json']), ('human', [])):
+            failed = run_command(
+                [cli, *_ERROR_COMMAND, '--secret', secret, *args],
+                cwd=platform_root, env=env, capture_output=True, text=True,
+                check=False, timeout=120,
+            )
+            output = failed.stdout + failed.stderr
+            if failed.returncode == 0 or _HOST_UNAVAILABLE_CODE not in output:
+                return f"secured host-stopped {output_mode} command did not return {_HOST_UNAVAILABLE_CODE} before plugin execution"
+            if _ERROR_CODE in output:
+                return f"secured host-stopped {output_mode} command claimed a plugin failure without running it"
+            if secret in output:
+                return f"secured host-stopped {output_mode} failure exposed a secret command input"
+            if output_mode == 'json':
+                try:
+                    envelope = json.loads(failed.stdout)
+                except json.JSONDecodeError as error:
+                    return f"secured host-stopped JSON failure returned invalid JSON: {error}"
+                error_envelope = envelope.get('error') if isinstance(envelope, dict) else None
+                if not isinstance(error_envelope, dict) or error_envelope.get('code') != _HOST_UNAVAILABLE_CODE:
+                    return f"secured host-stopped JSON failure returned no {_HOST_UNAVAILABLE_CODE} envelope"
+        return None
+
     journey.step(
         'unexpected CLI error trail with host running',
         'cli',
@@ -166,7 +191,7 @@ def run_unexpected_error_steps(journey, *, mode: str, env: Mapping[str, str]) ->
             journey.step(
                 'unexpected CLI error trail with host stopped',
                 'cli',
-                lambda: verify_state('host-stopped'),
+                lambda: verify_secured_host_stopped() if mode == 'secured' else verify_state('host-stopped'),
                 cases=['S-203.26'],
                 details=lambda: {'correlatedFailureRecords': list(correlated_records)},
             )

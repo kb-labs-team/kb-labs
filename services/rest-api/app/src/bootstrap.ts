@@ -51,6 +51,7 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
 export async function setup({
   platform,
   runtime,
+  projectId,
   host,
   projectRoot: repoRoot,
   platformRoot,
@@ -120,7 +121,11 @@ export async function setup({
     });
   });
 
-  const server = await createServer(config, projectRoot, registry);
+  const server = await createServer(config, projectRoot, registry, undefined, {
+    projectId,
+    projectRoot,
+    platformRoot,
+  });
 
   // Start system metrics collector
   bootstrapLogger.info("Starting system metrics collector");
