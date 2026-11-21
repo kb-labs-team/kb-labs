@@ -102,15 +102,15 @@ describe('installed CLI Node.js engine preflight', () => {
 
 function createInstalledCli(): { root: string; shim: string; platformRoot: string } {
   const root = mkdtempSync(join(tmpdir(), 'kb-cli-installed-engine-'));
-  const packageInstallRoot = join(root, 'node_modules/@kb-labs/cli-bin');
-  const binDirectory = join(root, 'node_modules/.bin');
+  const platformRoot = join(root, 'platform');
+  const packageInstallRoot = join(platformRoot, 'node_modules/@kb-labs/cli-bin');
+  const launcherDirectory = join(root, 'bin');
   mkdirSync(packageInstallRoot, { recursive: true });
-  mkdirSync(binDirectory, { recursive: true });
+  mkdirSync(launcherDirectory, { recursive: true });
   cpSync(join(packageRoot, 'dist'), join(packageInstallRoot, 'dist'), { recursive: true });
   copyFileSync(join(packageRoot, 'package.json'), join(packageInstallRoot, 'package.json'));
   symlinkSync(join(packageRoot, 'node_modules'), join(packageInstallRoot, 'node_modules'), 'dir');
   chmodSync(join(packageInstallRoot, 'dist/bin.js'), 0o755);
-  const platformRoot = join(root, 'platform');
   mkdirSync(join(platformRoot, '.kb/v2'), { recursive: true });
   writeFileSync(join(platformRoot, '.kb/v2/receipt.json'), JSON.stringify({
     id: 'test-receipt',
@@ -119,22 +119,29 @@ function createInstalledCli(): { root: string; shim: string; platformRoot: strin
     verification: { hostHealthUrl: 'http://127.0.0.1:4000/health' },
   }));
   writeFileSync(join(platformRoot, '.kb/kb.config.jsonc'), JSON.stringify({ platform: { adapters: {} } }));
-  const shim = join(binDirectory, 'kb');
-  writeFileSync(shim, `#!/bin/sh
-basedir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec node "$basedir/../@kb-labs/cli-bin/dist/bin.js" "$@"
-`, { mode: 0o755 });
+  const shimTarget = join(platformRoot, '.kb/v2/bin/kb');
+  mkdirSync(dirname(shimTarget), { recursive: true });
+  // Mirrors kb-create/v2/shim.ensureTarget and Ensure: default KB_HOME, absolute CLI entry, then launcher symlink.
+  const cliEntry = join(packageInstallRoot, 'dist/bin.js');
+  const defaultKbHome = join(platformRoot, 'state/home');
+  writeFileSync(shimTarget, `#!/bin/sh\n# kb-create managed shim\nif [ -z \"\${KB_HOME:-}\" ]; then KB_HOME=${shellQuote(defaultKbHome)}; export KB_HOME; fi\nexec node ${shellQuote(cliEntry)} \"$@\"\n`, { mode: 0o750 });
+  const shim = join(launcherDirectory, 'kb');
+  symlinkSync(shimTarget, shim);
   return { root, shim, platformRoot };
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function runInstalledShim(installation: { root: string; shim: string; platformRoot: string }, node: string, args: string[]) {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: installation.root,
-    KB_HOME: join(installation.root, '.kb'),
     KB_PLATFORM_ROOT: installation.platformRoot,
     PATH: `${dirname(node)}:${process.env.PATH ?? ''}`,
   };
+  delete env.KB_HOME;
   delete env.KB_PROJECT_ROOT;
   delete env.KB_PROJECT_ID;
   delete env.KB_NET_OFFSET;
