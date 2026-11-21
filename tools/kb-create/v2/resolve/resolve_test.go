@@ -140,7 +140,7 @@ func TestPlanRefusesSelectedPackageWithoutSealedProvenance(t *testing.T) {
 	}
 }
 
-// case: S-181.4
+// case: S-181.7
 func TestOfflinePlanRejectsMissingOrCorruptArtifactCacheEntry(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -148,6 +148,11 @@ func TestOfflinePlanRejectsMissingOrCorruptArtifactCacheEntry(t *testing.T) {
 	}{{name: "missing"}, {name: "checksum mismatch", data: []byte("wrong bytes")}} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
+			canonicalRoot, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root = canonicalRoot
 			wanted := []byte("sealed package bytes")
 			digest := sha256.Sum256(wanted)
 			hash := hex.EncodeToString(digest[:])
@@ -166,6 +171,19 @@ func TestOfflinePlanRejectsMissingOrCorruptArtifactCacheEntry(t *testing.T) {
 					Profiles: map[string]contracts.ServiceGraph{"default": {}}}}}
 			if _, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: root, Source: contracts.SourceOffline}, source); err == nil {
 				t.Fatal("offline plan accepted an absent or corrupt cache entry")
+			} else {
+				var failure *diag.Diag
+				if !errors.As(err, &failure) {
+					t.Fatalf("offline cache error did not use the typed diagnostic: %T %v", err, err)
+				}
+				actualCachePath, _ := failure.Meta["cachePath"].(string)
+				if failure.Code != contracts.CodeOfflineArtifactMissing || failure.Meta["artifact"] != "platform" || actualCachePath == "" {
+					t.Fatalf("offline cache failure lost its typed artifact/cache path details: meta=%#v (%v)", failure, err)
+				}
+				envelope, envelopeErr := diag.ToEnvelope(failure)
+				if envelopeErr != nil || envelope.Details["cachePath"] != actualCachePath {
+					t.Fatalf("offline cache error envelope = %+v, err=%v", envelope, envelopeErr)
+				}
 			}
 		})
 	}
