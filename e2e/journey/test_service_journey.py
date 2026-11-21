@@ -499,6 +499,72 @@ class ServiceJourneyTests(unittest.TestCase):
                 self.assertTrue(all(headers.get("Authorization") == f"Bearer {token}" if token
                                     else "Authorization" not in headers for headers in seen))
 
+    def test_real_resolver_keeps_unrelated_marketplace_flow_out_of_s140_and_s181(self):
+        root = Path(__file__).resolve().parents[2]
+        cases = {
+            "S-140.5": ("service-local:explore", "mcp", "project MCP cross-project isolation"),
+            "S-181.7": ("agent:commit", "platform.install",
+                        "install and reapply generated secrets from the offline artifact cache"),
+        }
+        for case_id, (runner, capability, owner) in cases.items():
+            with self.subTest(case=case_id):
+                env = os.environ.copy()
+                env.update({"KB_JOURNEY_CASES": case_id, "KB_JOURNEY_SELECTION_MODE": "local"})
+                for key in ("KB_JOURNEY_ONLY", "KB_JOURNEY_SELECTED_STEPS",
+                            "KB_JOURNEY_SELECTED_OWNING_STEPS", "KB_JOURNEY_PREREQUISITE_STEPS",
+                            "KB_JOURNEY_PREREQUISITE_FLOWS", "KB_JOURNEY_SELECTED_CAPABILITIES"):
+                    env.pop(key, None)
+                resolved = subprocess.run(
+                    ["bash", "e2e/journey/run.sh", "--resolve-only"], cwd=root, env=env,
+                    capture_output=True, text=True, check=False, timeout=120,
+                )
+                self.assertEqual(resolved.returncode, 0, resolved.stderr)
+                selection = json.loads(resolved.stdout)
+                self.assertEqual(selection["runners"], [runner])
+                self.assertIn(capability, selection["capabilities"])
+                self.assertIn(owner, selection["selectedOwningSteps"])
+                env.update({
+                    "KB_JOURNEY_CASES": ",".join(selection["selection"]),
+                    "KB_JOURNEY_SELECTED_STEPS": ",".join(selection["steps"]),
+                    "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps(selection["selectedOwningSteps"]),
+                    "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps(selection["prerequisiteSteps"]),
+                    "KB_JOURNEY_PREREQUISITE_FLOWS": json.dumps(selection["prerequisiteFlows"]),
+                    "KB_JOURNEY_SELECTED_CAPABILITIES": ",".join(selection["capabilities"]),
+                    "KB_JOURNEY_RUNNER_SELECTOR": runner,
+                })
+                with patch.dict(os.environ, env, clear=True):
+                    journey = Journey("local", f"real-selection-{case_id}")
+                    groups = service_selection_groups(runner_selector=runner)
+                    graph = FlowGraph(
+                        journey, {name: spec["depends_on"] for name, spec in groups.items()},
+                        states={
+                            "host-running": {"passed": True, "evidence": "host ready"},
+                            "project-registered": {"passed": True, "evidence": "project registered"},
+                            "service-api-session": {"passed": True, "evidence": "service API ready"},
+                            "marketplace-available": {"passed": True, "evidence": "fixture available"},
+                        }, state_producers=STATE_PRODUCERS, groups=groups,
+                    )
+                    marketplace_calls = []
+                    result = graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                                        lambda: marketplace_calls.append("ran"), record_empty_success=False)
+                self.assertEqual(result, "SKIPPED")
+                self.assertEqual(marketplace_calls, [])
+
+        full_journey = Journey("local", "full-selection-still-runs-marketplace")
+        full_graph = FlowGraph(
+            full_journey, {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+            states={
+                "host-running": {"passed": True, "evidence": "host ready"},
+                "project-registered": {"passed": True, "evidence": "project registered"},
+                "service-api-session": {"passed": True, "evidence": "service API ready"},
+                "marketplace-available": {"passed": True, "evidence": "fixture available"},
+            }, state_producers=STATE_PRODUCERS, groups=SERVICE_GROUPS,
+        )
+        full_calls = []
+        self.assertEqual(full_graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                                         lambda: full_calls.append("ran"), record_empty_success=False), "PASS")
+        self.assertEqual(full_calls, ["ran"])
+
     def test_marketplace_claim_selects_its_flow_and_state_producer(self):
         calls = []
         selected = "S-010.1"
