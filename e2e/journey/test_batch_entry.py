@@ -1346,17 +1346,30 @@ exec "$REAL_TAR" "$@"
                            if step.get("name") == f"Run {mode} journey stage")
             self.assertIn('journey-batch-selection.mjs run "$BATCH_SELECTION" --', command)
         self.assertNotIn("docs/**", spec["on"]["pull_request"]["paths"])
-        self.assertEqual(spec["concurrency"]["group"], "journey-batch")
+        self.assertEqual(
+            spec["concurrency"]["group"],
+            "journey-batch-${{ github.event.pull_request.number || github.run_id }}",
+        )
         self.assertFalse(spec["concurrency"]["cancel-in-progress"])
         jobs = spec["jobs"]
         self.assertEqual(set(jobs), {"producer", "local", "secured", "summary"})
         producer_steps = jobs["producer"]["steps"]
         selection_step = next(step for step in producer_steps if step.get("id") == "selection")
         self.assertIn('journey-batch-selection.mjs resolve "$GITHUB_EVENT_NAME" "$GITHUB_REF_NAME"', selection_step["run"])
+        package_cache = next(step for step in producer_steps if step.get("id") == "tgz-cache")
+        self.assertEqual(package_cache["uses"], "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
+        self.assertEqual(package_cache["with"]["path"], "e2e/packages/")
+        self.assertEqual(package_cache["with"]["key"],
+                         "journey-batch-tgz-v2-${{ runner.os }}-${{ github.sha }}")
+        self.assertNotIn("restore-keys", package_cache["with"])
         producer_entry = next(step for step in producer_steps if step.get("name") == "Produce shared build and candidate")
         self.assertEqual(
             producer_entry["run"],
             'node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"',
+        )
+        self.assertEqual(
+            producer_entry["env"]["KB_JOURNEY_PACKAGES_READY"],
+            "${{ steps.tgz-cache.outputs.cache-hit == 'true' && '1' || '0' }}",
         )
         self.assertEqual(jobs["producer"]["timeout-minutes"], 60)
         self.assertEqual(jobs["local"]["needs"], "producer")
