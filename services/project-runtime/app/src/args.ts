@@ -102,7 +102,7 @@ export function parseListen(value: string): RuntimeListenAddress {
 export async function parseRuntimeArgs(
   argv: readonly string[],
   env: NodeJS.ProcessEnv,
-  runtimeToken = readRuntimeTokenFromFd(3),
+  runtimeToken?: string,
 ): Promise<RuntimeArgs> {
   void env;
   const rawRoot = requireFlag(argv, RUNTIME_ARGS.projectRoot);
@@ -158,7 +158,7 @@ export async function parseRuntimeArgs(
   };
 }
 
-function readRuntimeTokenFromFd(fd: number): string | undefined {
+export function readRuntimeTokenFromFd(fd: number): string | undefined {
   try {
     return readFileSync(fd, "utf8").trim() || undefined;
   } catch {
