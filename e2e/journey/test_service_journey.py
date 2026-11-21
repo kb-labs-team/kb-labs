@@ -27,6 +27,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_sel
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             expect_html, install_project_agents_plugin,
                             prepare_mcp_projects, prepare_registry_install_project,
+                            cleanup_registry_install_project,
                             request as request_result,
                             project_plugin_settings_isolation, repository_git_status,
                             _prepare_mcp_projects,
@@ -52,8 +53,9 @@ class RegistryProjectFixtureTest(unittest.TestCase):
             lock = existing_project / ".kb" / "marketplace.lock"
             lock.parent.mkdir()
             lock.write_text(json.dumps({"plugins": {"@kb-labs/commit": {"version": "2.120.1"}}}))
-            env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ID": "prj_existing",
-                   "KB_JOURNEY_PROJECT_ROOT": str(existing_project.resolve())}
+            base_env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ID": "prj_existing",
+                        "KB_JOURNEY_PROJECT_ROOT": str(existing_project.resolve())}
+            env = base_env.copy()
             calls = []
 
             def runner(command, **kwargs):
@@ -78,6 +80,27 @@ class RegistryProjectFixtureTest(unittest.TestCase):
             self.assertFalse((Path(project_root) / ".kb" / "marketplace.lock").exists())
             self.assertIn("@kb-labs/commit", json.loads(lock.read_text())["plugins"])
             self.assertEqual([call[0][1:3] for call in calls], [("init", "-q"), ("project", "add")])
+            self.assertEqual(base_env["KB_JOURNEY_PROJECT_ID"], "prj_existing")
+            self.assertEqual(base_env["KB_JOURNEY_PROJECT_ROOT"], str(existing_project.resolve()))
+
+            def remove_runner(command, **kwargs):
+                calls.append((tuple(command), kwargs.get("cwd"), kwargs.get("env")))
+                return subprocess.CompletedProcess(command, 0, json.dumps({
+                    "ok": True, "data": {"removed": {"id": project_id}},
+                }), "")
+
+            with self.assertRaisesRegex(RuntimeError, "refusing to clean up"):
+                cleanup_registry_install_project(
+                    project_id, project_root, project_root, env, remove_runner)
+            self.assertTrue(Path(project_root).is_dir())
+
+            cleanup_registry_install_project(
+                project_id, project_root, str(existing_project), env, remove_runner)
+
+            self.assertFalse(Path(project_root).exists())
+            self.assertTrue(existing_project.is_dir())
+            self.assertTrue(lock.is_file())
+            self.assertEqual(calls[-1][0], ("kb", "project", "remove", project_id, "--yes", "--json"))
 
 
 class UninstallShimResultTest(unittest.TestCase):

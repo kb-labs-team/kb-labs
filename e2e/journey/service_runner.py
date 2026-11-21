@@ -1137,7 +1137,8 @@ def prepare_registry_install_project(env: dict[str, str], runner=run_command) ->
     if not home_value:
         raise RuntimeError("Registry fixture requires an isolated journey HOME")
     project = (Path(home_value) / "registry-marketplace-project").resolve()
-    export_project_identity_to_child_environment(env, project_id="", project_root="")
+    export_project_identity_to_child_environment(
+        env, project_id="", project_root="", project_b_id="", project_b_root="")
     project.mkdir(parents=True, exist_ok=False)
     init = ["git", "init", "-q", str(project)]
     result = run_with_runner(runner, init, cwd=project.parent, env=env, timeout=30)
@@ -1164,6 +1165,30 @@ def prepare_registry_install_project(env: dict[str, str], runner=run_command) ->
     export_project_identity_to_child_environment(
         env, project_id=project_id, project_root=registered_root)
     return project_id, registered_root
+
+
+def cleanup_registry_install_project(project_id: str, project_root: str,
+                                     preserved_project_root: str, env: dict[str, str],
+                                     runner=run_command) -> None:
+    """Unregister and remove only the isolated Registry fixture project."""
+    home_value = env.get("HOME")
+    if not home_value:
+        raise RuntimeError("Registry fixture cleanup requires an isolated journey HOME")
+    expected_root = (Path(home_value) / "registry-marketplace-project").resolve()
+    target_input = Path(project_root)
+    target = target_input.resolve()
+    preserved = Path(preserved_project_root).resolve()
+    if target != expected_root or target == preserved or target_input.is_symlink():
+        raise RuntimeError("refusing to clean up a project outside the isolated Registry fixture root")
+    remove = kb_command(["project", "remove", project_id, "--yes", "--json"])
+    result = run_with_runner(runner, remove, cwd=target, env=env, timeout=120)
+    _output(result, remove)
+    try:
+        decode_ux_success_result(read_ux_cli_result(result))
+    except (json.JSONDecodeError, ValueError) as error:
+        raise RuntimeError("removing the Registry fixture project returned invalid JSON") from error
+    if target.exists():
+        shutil.rmtree(target)
 
 
 def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> dict[str, object]:
@@ -1440,13 +1465,33 @@ def main() -> int:
             flow_env["KB_JOURNEY_REGISTRY"] = journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
             # Registry checks use a separate registered project so a prior npm pin
             # cannot be mistaken for an immutable Registry version.
-            registry_project_id, registry_project_root = prepare_registry_install_project(flow_env, run_command)
-            entry = prepare_registry_commit_project_fixture(
-                journey, registry_project_root, registry, flow_env, run_command)
-            if entry is None:
-                return "Registry lane did not capture the verified Commit provenance entry"
-            run_ordered_source_journey_steps(journey, registry_project_root, flow_env, run_command)
-            return None
+            registry_env = flow_env.copy()
+            registry_project_id, registry_project_root = prepare_registry_install_project(registry_env, run_command)
+            failure: Exception | str | None = None
+            try:
+                entry = prepare_registry_commit_project_fixture(
+                    journey, registry_project_root, registry, registry_env, run_command)
+                if entry is None:
+                    failure = "Registry lane did not capture the verified Commit provenance entry"
+                else:
+                    run_ordered_source_journey_steps(
+                        journey, registry_project_root, registry_env, run_command)
+            except Exception as error:
+                failure = error
+            try:
+                cleanup_registry_install_project(
+                    registry_project_id, registry_project_root, project_root, registry_env, run_command)
+            except Exception as cleanup_error:
+                if isinstance(failure, Exception):
+                    raise RuntimeError(
+                        f"Registry lane failed ({failure}); its isolated project cleanup also failed ({cleanup_error})"
+                    ) from failure
+                if failure:
+                    return f"{failure}; Registry fixture cleanup failed: {cleanup_error}"
+                raise
+            if isinstance(failure, Exception):
+                raise failure
+            return failure
 
         graph.flow("Registry ordered-source Marketplace assertions", "marketplace-registry",
                    "marketplace-registry", registry_marketplace_lane, record_empty_success=False,
