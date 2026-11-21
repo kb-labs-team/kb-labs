@@ -22,7 +22,7 @@ A team member installs the client, signs into a secured gateway, and runs an aut
 
 | # | Action | Expected |
 |---|---|---|
-| S-005.1 | Run `kb-create apply --index <sealed-index.json> --platform-root <client-root> --service-profile client --json` | Stdout is exactly one parseable JSON document with `ok: true`, the requested client root, `profile: client`, no services, and the shim owner reported under the rules in i03. The client root has no host runtime configuration and no host is started. |
+| S-005.1 | Run `kb-create apply --index <sealed-index.json> --platform-root <client-root> --service-profile client --json` | Stdout is exactly one parseable JSON document with `ok: true`, the requested client root, `profile: client`, no services, and the shim owner reported under the rules in i03. `data.receipt.plan.artifacts` includes `@kb-labs/cli-bin` with the sealed source revision, tarball integrity, content scope, and dist digest. The client root has no host runtime configuration and no host is started. |
 | S-005.2 | Run `<client-root>/.kb/v2/bin/kb auth login --gateway-url <url> --email <member>` and enter the password at the TTY prompt, or use `--password-stdin` for automation | The installed client CLI logs in and stores a session for the secured gateway. |
 | S-005.3 | Run `<client-root>/.kb/v2/bin/kb auth status` | The installed client CLI shows the signed-in member and gateway. |
 | S-005.4 | Send `GET <gateway-url>/auth/permissions` with the member session | HTTP 200 JSON `permissions` contains `projects:read` and excludes `users:read`. |
