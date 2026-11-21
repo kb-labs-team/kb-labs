@@ -64,6 +64,7 @@ from unexpected_error_steps import run_unexpected_error_steps
 from mcp_project_steps import (
     apply_commit_plan,
     commit_tool_schema,
+    cli_mcp_read_parity,
     invalid_arguments,
     local_auth,
     mcp_ux_result_contract,
@@ -621,11 +622,18 @@ def _checks(mode: str, graph: FlowGraph | None = None):
         yield service_check("project MCP refuses host-registration credentials", "mcp",
                             lambda: opaque_host_credential_mcp_rejection(pid(), auth_token()),
                             cases=["S-045.10"], runners=("service-secured:explore",))
-    yield service_check("project MCP commit schema", "mcp", lambda: commit_tool_schema(pid(), auth_token()),
-                        cases=["S-140.1"])
     project_root = (service_project(graph)["root"]
                     if graph is not None and graph.states.get("project-registered", {}).get("passed") is True
                     else "")
+    yield service_check("project MCP commit schema", "mcp", lambda: commit_tool_schema(pid(), auth_token()),
+                        cases=["S-140.1"])
+    if project_root:
+        yield service_check("project MCP and CLI read parity", "mcp",
+                            lambda: cli_mcp_read_parity(pid(), auth_token(), project_root), cases=["S-140.8"])
+    else:
+        yield service_check("project MCP and CLI read parity", "mcp",
+                            lambda: "BLOCKED: project-registered state must provide the disposable commit fixture root",
+                            cases=["S-140.8"])
     if project_root:
         yield service_check("project MCP commit mutation", "mcp",
                             lambda: apply_commit_plan(pid(), auth_token(), project_root), cases=["S-140.2"])

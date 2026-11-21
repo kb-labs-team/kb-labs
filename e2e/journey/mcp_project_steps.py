@@ -464,6 +464,54 @@ def apply_commit_plan(project_id: str, token: str, project_root: str) -> str | N
     return None
 
 
+def cli_mcp_read_parity(project_id: str, token: str, project_root: str) -> str | None:
+    """Compare the same read-only manifest command through CLI and MCP."""
+    cli = run_command(["kb", "commit", "plan", "show", "--json"],
+                      cwd=project_root, env=os.environ, timeout=30)
+    if cli.returncode != 0 or not cli.stdout.strip():
+        return f"CLI commit plan show returned exit {cli.returncode} without JSON output: {cli.stderr[:1000]}"
+    try:
+        cli_result = json.loads(cli.stdout)
+    except json.JSONDecodeError as error:
+        return f"CLI commit plan show did not return JSON: {error}"
+    if not isinstance(cli_result, dict) or cli_result.get("ok") is not True or not cli_result.get("data"):
+        return "CLI commit plan show did not return a successful non-empty result envelope"
+    cli_data = cli_result["data"]
+    if not isinstance(cli_data, dict) or cli_data.get("hasPlan") is not True:
+        return "CLI commit plan show did not report the prepared plan as present"
+    prepared_plan = cli_data.get("plan")
+    if not isinstance(prepared_plan, dict):
+        return "CLI commit plan show did not return the prepared plan"
+    fixture_path = journey_value("KB_JOURNEY_PROJECT_FIXTURES_FILE", "")
+    preparation_result = None
+    if fixture_path and Path(fixture_path).is_file():
+        handoff = json.loads(Path(fixture_path).read_text(encoding="utf-8"))
+        preparation_result = handoff.get("commitPlanPreparationResult")
+    if not isinstance(preparation_result, dict):
+        return "project fixture handoff did not identify the prepared commit plan"
+    prepared_ids = [item.get("id") for item in prepared_plan.get("commits", []) if isinstance(item, dict)]
+    if preparation_result.get("planId") not in prepared_ids:
+        return "CLI result did not contain the commit plan id from the fixture handoff"
+    if cli_data.get("planPath") != preparation_result.get("path"):
+        return "CLI result path did not match the prepared plan path from the fixture handoff"
+
+    status, body = mcp_call(project_id, 1408, commit_tool("commit plan show"), {"json": True}, token)
+    if status != 200:
+        return f"MCP commit plan show returned HTTP {status}"
+    result = body.get("result") if isinstance(body, dict) else None
+    content = result.get("content", []) if isinstance(result, dict) else []
+    text = next((item.get("text", "") for item in content if isinstance(item, dict)), "")
+    if not isinstance(result, dict) or result.get("isError") or not text:
+        return "MCP commit plan show did not return a successful non-empty result"
+    try:
+        mcp_result = json.loads(text)
+    except json.JSONDecodeError as error:
+        return f"MCP commit plan show did not return JSON data like the CLI: {error}"
+    if not isinstance(mcp_result, dict) or mcp_result.get("ok") is not True or mcp_result.get("data") != cli_result["data"]:
+        return "MCP commit plan show result data did not match the CLI result data"
+    return None
+
+
 def project_isolation(project_a: str, project_b: str, project_b_root: str, token: str) -> str | None:
     if project_a == project_b:
         return "project A and project B must be distinct registered projects"
