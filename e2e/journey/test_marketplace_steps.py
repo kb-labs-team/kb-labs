@@ -162,7 +162,7 @@ class MarketplaceStepTests(unittest.TestCase):
             }}))
             rendered = {"ok": True, "data": {
                 "installed": [{"id": "journey-npm-only-fixture", "source": "npm", "signatureStatus": "unsigned"}],
-                "marketplaceSources": [{"kind": "registry", "url": "http://registry.test"}],
+                "marketplaceSources": [{"kind": "registry", "url": "http://127.0.0.1:4317/api/v1/marketplace-registry"}],
             }}
             observed_tokens = []
             def runner(command, **_kwargs):
@@ -193,6 +193,7 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_MARKETPLACE_TOKEN": "",
                    "KB_JOURNEY_KB_CREATE_PATH": str(project / "kb-create")}
             with patch("marketplace_steps._set_marketplace_proxy_faults"), \
+                    patch("marketplace_steps._installed_gateway_url", return_value="http://127.0.0.1:4317"), \
                     patch("marketplace_steps._assert_catalogued_marketplace_failure"), \
                     patch("marketplace_steps._json", return_value=rendered["data"]), \
                     patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
@@ -274,11 +275,16 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_MARKETPLACE_PUBLISH_URL": "http://registry.test/api/v1",
                    "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey"}
             with patch("marketplace_steps.wait_for_marketplace_ready"), \
+                    patch("marketplace_steps._assert_registry_gateway_config"), \
+                    patch("marketplace_steps.open_http", return_value=(401, json.dumps({"ok": False, "error": {
+                        "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
+                        "hint": "Log in and retry."}}).encode(), {})), \
                     patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
                 journey = Journey("local", "registry-commit-fixture")
                 entry = prepare_registry_commit_project_fixture(journey, project, "http://verdaccio.test",
                                                                  env, runner)
 
+            self.assertIsNotNone(entry, [(step.name, step.status, step.message) for step in journey.steps])
             self.assertEqual(entry["marketplaceSource"], "registry")
             self.assertEqual(entry["signatureStatus"], "verified")
             workspace_cli = str(workspace / "cli" / "bin" / "dist" / "bin.js")
