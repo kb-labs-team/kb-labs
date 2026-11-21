@@ -26,7 +26,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_sel
                             configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             expect_html, install_project_agents_plugin,
-                            prepare_mcp_projects,
+                            prepare_mcp_projects, prepare_registry_install_project,
                             request as request_result,
                             project_plugin_settings_isolation, repository_git_status,
                             _prepare_mcp_projects,
@@ -41,6 +41,43 @@ from steps.auth import run_secured_auth_steps
 
 def tearDownModule():
     journey_runner.cleanup()
+
+
+class RegistryProjectFixtureTest(unittest.TestCase):
+    def test_registry_install_project_is_fresh_and_registered_separately(self):
+        with tempfile.TemporaryDirectory(prefix="journey-registry-project-") as directory:
+            home = Path(directory)
+            existing_project = home / "fresh-project"
+            existing_project.mkdir()
+            lock = existing_project / ".kb" / "marketplace.lock"
+            lock.parent.mkdir()
+            lock.write_text(json.dumps({"plugins": {"@kb-labs/commit": {"version": "2.120.1"}}}))
+            env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ID": "prj_existing",
+                   "KB_JOURNEY_PROJECT_ROOT": str(existing_project.resolve())}
+            calls = []
+
+            def runner(command, **kwargs):
+                calls.append((tuple(command), kwargs.get("cwd"), kwargs.get("env")))
+                if command[:3] == ["git", "init", "-q"]:
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                if command[0] == "kb" and command[1:3] == ["project", "add"]:
+                    project = Path(command[3]).resolve()
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
+                        "project": {"id": "prj_registry", "path": str(project)},
+                    }}), "")
+                self.fail(f"unexpected Registry project command: {command}")
+
+            project_id, project_root = prepare_registry_install_project(env, runner)
+
+            self.assertEqual(project_id, "prj_registry")
+            self.assertEqual(env["KB_JOURNEY_PROJECT_ID"], project_id)
+            self.assertEqual(env["KB_JOURNEY_PROJECT_ROOT"], project_root)
+            self.assertEqual(project_root, str((home / "registry-marketplace-project").resolve()))
+            self.assertNotEqual(project_root, str(existing_project.resolve()))
+            self.assertTrue(Path(project_root).is_dir())
+            self.assertFalse((Path(project_root) / ".kb" / "marketplace.lock").exists())
+            self.assertIn("@kb-labs/commit", json.loads(lock.read_text())["plugins"])
+            self.assertEqual([call[0][1:3] for call in calls], [("init", "-q"), ("project", "add")])
 
 
 class UninstallShimResultTest(unittest.TestCase):
