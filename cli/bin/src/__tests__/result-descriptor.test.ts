@@ -1,3 +1,4 @@
+// Verify the unchanged master CLI result-descriptor boundary in the stream CI profile.
 import { spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
