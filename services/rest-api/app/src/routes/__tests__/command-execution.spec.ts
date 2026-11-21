@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IEntityRegistry, ManifestV3 } from '@kb-labs/plugin-contracts';
+import { createProjectCommandExecutionProof } from '@kb-labs/shared-daemon';
 import { registerProjectCommandExecutionRoute } from '../command-execution.js';
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
@@ -16,9 +17,12 @@ const roots: string[] = [];
 let app: ReturnType<typeof Fastify>;
 let pluginRoot: string;
 let registry: IEntityRegistry;
+const proofHeader = 'x-kb-project-command-proof';
+const runtimeToken = 'runtime-proof-test-secret-0123456789';
 const manifest: ManifestV3 = {
   schema: 'kb.plugin/3', id: '@kb-labs/fixture', version: '1.2.3',
-  cli: { commands: [{ path: 'commit preview', describe: 'fixture command', handler: './commands/run.js#default', flags: [{ name: 'dry-run', type: 'boolean' }] }] },
+  configSection: 'commit',
+  cli: { commands: [{ path: 'commit preview', describe: 'fixture command', handler: './commands/run.js#default', flags: [{ name: 'dry-run', type: 'boolean' }, { name: 'secret', type: 'string', secret: true }], permissions: { quotas: { timeoutMs: 2000 } } }] },
 };
 
 async function setup(handler = manifest.cli!.commands[0]!.handler) {
@@ -29,8 +33,12 @@ async function setup(handler = manifest.cli!.commands[0]!.handler) {
   await writeFile(path.join(pluginRoot, 'dist', 'commands', 'run.js'), 'export default {}');
   const selectedManifest = { ...manifest, cli: { commands: [{ ...manifest.cli!.commands[0]!, handler }] } };
   registry = { snapshot: () => ({ partial: false, stale: false, manifests: [{ pluginId: '@kb-labs/fixture', manifest: selectedManifest, pluginRoot }] }) } as unknown as IEntityRegistry;
-  await registerProjectCommandExecutionRoute(app, { registry, projectId: 'prj_fixture', projectRoot: pluginRoot, platformRoot: pluginRoot });
+  await registerProjectCommandExecutionRoute(app, { registry, projectId: 'prj_fixture', projectRoot: pluginRoot, platformRoot: pluginRoot, runtimeToken });
   await app.ready();
+}
+
+function trustedHeaders(projectId = 'prj_fixture') {
+  return { 'x-kb-project-id': projectId, [proofHeader]: createProjectCommandExecutionProof(runtimeToken) };
 }
 
 beforeEach(() => {
@@ -52,8 +60,8 @@ describe('project runtime command execution', () => {
     });
     const response = await app.inject({
       method: 'POST', url: '/api/v1/commands/execute',
-      headers: { 'x-kb-project-id': 'prj_fixture' },
-      payload: { pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: { 'dry-run': true, json: true } } },
+      headers: trustedHeaders(),
+      payload: { requestId: 'request-test-160', pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: { 'dry-run': true, json: true } } },
     });
     expect(response.statusCode).toBe(200);
     const events = response.body.trim().split('\n').map((line: string) => JSON.parse(line));
@@ -64,12 +72,39 @@ describe('project runtime command execution', () => {
       metadata: { result: { output: 'preview' }, executionOwner: 'project-runtime', projectId: 'prj_fixture', executionMode: 'worker-pool' },
     });
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({
-      descriptor: expect.objectContaining({ pluginId: '@kb-labs/fixture', hostType: 'cli', permissions: {} }),
+      descriptor: expect.objectContaining({ pluginId: '@kb-labs/fixture', hostType: 'cli', configSection: 'commit', permissions: { quotas: { timeoutMs: 2000 } } }),
       pluginRoot: await import('node:fs/promises').then(({ realpath }) => realpath(pluginRoot)),
       handlerRef: 'dist/commands/run.js',
       input: { argv: [], flags: { 'dry-run': true, json: true } },
       workspace: { cwd: pluginRoot },
     }), expect.objectContaining({ signal: expect.any(AbortSignal), onLog: expect.any(Function) }));
+  });
+
+  it('rejects direct listener access without proof from the runtime guard', async () => {
+    await setup();
+    const response = await app.inject({ method: 'POST', url: '/api/v1/commands/execute', headers: { 'x-kb-project-id': 'prj_fixture' }, payload: { requestId: 'request-direct', pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: {} } } });
+    expect(response.statusCode).toBe(403);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('redacts secret flags from streamed output and returned errors and applies host manifest context and quotas', async () => {
+    await setup();
+    const secret = 'journey-runtime-secret-7762';
+    execute.mockImplementation(async (request: { descriptor: { configSection?: string }; timeoutMs: number }, options: { onLog: (entry: { stream: 'stderr'; message: string }) => void }) => {
+      options.onLog({ stream: 'stderr', message: `plugin echoed ${secret}` });
+      expect(request.descriptor.configSection).toBe('commit');
+      expect(request.timeoutMs).toBe(2000);
+      return { ok: false, error: { envelope: { code: 'KB_PLUGIN_COMMAND_FAILED', message: `failed with ${secret}`, hint: `remove ${secret}` } } };
+    });
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/commands/execute', headers: trustedHeaders(),
+      payload: { requestId: 'request-secret', pluginId: '@kb-labs/fixture', commandPath: 'commit preview', timeoutMs: 4000, input: { argv: [], flags: { secret } } },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).not.toContain(secret);
+    const events = response.body.trim().split('\n').map((line: string) => JSON.parse(line));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'execution:output', data: expect.stringContaining('[REDACTED]') }));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'execution:error', error: expect.objectContaining({ message: expect.stringContaining('[REDACTED]') }) }));
   });
 
   it('rejects client-selected handler, environment, permissions, and unbounded arguments before execution', async () => {
@@ -81,7 +116,7 @@ describe('project runtime command execution', () => {
       { ...base, permissions: { fs: { write: ['**'] } } },
       { ...base, input: { argv: ['x'.repeat(8193)], flags: {} } },
     ]) {
-      const response = await app.inject({ method: 'POST', url: '/api/v1/commands/execute', headers: { 'x-kb-project-id': 'prj_fixture' }, payload });
+      const response = await app.inject({ method: 'POST', url: '/api/v1/commands/execute', headers: trustedHeaders(), payload: { requestId: 'request-invalid', ...payload } });
       expect(response.statusCode).toBe(400);
     }
     expect(execute).not.toHaveBeenCalled();
@@ -95,8 +130,8 @@ describe('project runtime command execution', () => {
     await symlink(outside, path.join(pluginRoot, 'dist', 'commands', 'escape.js'));
     const response = await app.inject({
       method: 'POST', url: '/api/v1/commands/execute',
-      headers: { 'x-kb-project-id': 'prj_fixture' },
-      payload: { pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: {} } },
+      headers: trustedHeaders(),
+      payload: { requestId: 'request-symlink', pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: {} } },
     });
     expect(response.statusCode).toBe(400);
     expect(execute).not.toHaveBeenCalled();
@@ -118,8 +153,8 @@ describe('project runtime command execution', () => {
     const controller = new AbortController();
     const response = await fetch(`${address}/api/v1/commands/execute`, {
       method: 'POST', signal: controller.signal,
-      headers: { 'content-type': 'application/json', 'x-kb-project-id': 'prj_fixture' },
-      body: JSON.stringify({ pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: {} } }),
+      headers: { 'content-type': 'application/json', ...trustedHeaders() },
+      body: JSON.stringify({ requestId: 'request-cancel', pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: {} } }),
     });
     const reader = response.body!.getReader();
     await reader.read();
@@ -130,7 +165,7 @@ describe('project runtime command execution', () => {
 
   it('rejects a request forwarded for another project', async () => {
     await setup();
-    const response = await app.inject({ method: 'POST', url: '/api/v1/commands/execute', headers: { 'x-kb-project-id': 'prj_other' }, payload: { pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: {} } } });
+    const response = await app.inject({ method: 'POST', url: '/api/v1/commands/execute', headers: trustedHeaders('prj_other'), payload: { requestId: 'request-other', pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: {} } } });
     expect(response.statusCode).toBe(403);
     expect(execute).not.toHaveBeenCalled();
   });
