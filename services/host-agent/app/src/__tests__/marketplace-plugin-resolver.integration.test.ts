@@ -12,10 +12,15 @@ describe('Host Agent Marketplace command resolver', () => {
   const previousKbHome = process.env.KB_HOME;
 
   afterEach(async () => {
-    if (root) await rm(root, { recursive: true, force: true });
+    if (root) {
+      await rm(root, { recursive: true, force: true });
+    }
     root = undefined;
-    if (previousKbHome === undefined) delete process.env.KB_HOME;
-    else process.env.KB_HOME = previousKbHome;
+    if (previousKbHome === undefined) {
+      delete process.env.KB_HOME;
+    } else {
+      process.env.KB_HOME = previousKbHome;
+    }
   });
 
   it('resolves only the exact approved store pin and manifest-declared handler', async () => {
