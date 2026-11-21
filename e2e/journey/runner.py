@@ -48,6 +48,7 @@ from journey_resources import (case_catalog_root, host_structured_log_problem, j
 from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
+                           run_selected_smoke,
                            record_runner_exception, replay_steps)
 from journey_dependencies import FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import (JourneySelectionError, active_journey_selection,
@@ -205,20 +206,12 @@ def runner_scenario(name: str, *, secured: bool) -> dict:
 
 def run_selected_first_value_smoke(graph: FlowGraph, check: Callable[[], object]):
     """Run the Commit execution smoke only when the selected journey needs it."""
-    step_name = "kb commit first value"
-    if (graph.selection_active and "S-054.17" not in graph.journey.selected_claims
-            and not graph.selects_steps(step_name)):
-        return graph.journey.skipped(step_name, "platform.install")
-    return check()
+    return run_selected_smoke(graph, "kb commit first value", "platform.install", "S-054.17", check)
 
 
 def run_selected_project_mcp(graph: FlowGraph, check: Callable[[], object]):
     """Run the agent project-MCP smoke only when the selected journey needs it."""
-    step_name = "project MCP journey"
-    if (graph.selection_active and "S-140.5" not in graph.journey.selected_claims
-            and not graph.selects_steps(step_name)):
-        return graph.journey.skipped(step_name, "mcp")
-    return check()
+    return run_selected_smoke(graph, "project MCP journey", "mcp", "S-140.5", check)
 
 
 OUTER_GROUP_DEPENDENCIES = {
