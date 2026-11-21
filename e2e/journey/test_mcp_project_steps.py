@@ -13,7 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 
 from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_tool_names
-from mcp_project_steps import (apply_commit_plan, commit_tool_schema, invalid_arguments, local_auth,
+from mcp_project_steps import (apply_commit_plan, cli_mcp_read_parity, commit_tool_schema, invalid_arguments, local_auth,
                                mcp_ux_result_contract, project_isolation, project_plugin_catalog_isolation,
                                project_readonly_tool_isolation,
                                run_agent_session_steps,
@@ -506,7 +506,8 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
     def test_invalid_arguments_sends_bad_type_and_checks_field_in_envelope(self):
         response = tool_error("KB_RUNTIME_MCP_INVALID_ARGUMENTS", "Argument force must be boolean", "Pass a boolean value.")
-        with patch("service_runner.request_mcp", return_value=(200, response, {})) as request:
+        with patch("service_runner.request_mcp", return_value=(200, response, {})) as request, \
+             patch("mcp_project_steps.project_service_path", return_value="/mcp"):
             self.assertIsNone(invalid_arguments("prj_a", "token"))
         self.assertEqual(request.call_args.kwargs["payload"]["params"]["arguments"], {"force": "yes"})
 
@@ -608,6 +609,35 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         self.assertEqual(payload["params"]["arguments"], {})
         self.assertEqual(git_log.call_args_list[0].args[0], ["kb", "commit", "plan", "show", "--json"])
         self.assertEqual(git_log.call_args.args[0][-1], "--all")
+
+    def test_cli_mcp_read_parity_requires_prepared_plan_identity_and_matching_data(self):
+        plan_data = {"hasPlan": True, "planPath": "/tmp/prepared/plan.json",
+                     "plan": {"commits": [{"id": "journey-commit"}]}}
+        cli = subprocess.CompletedProcess(args=[], returncode=0,
+            stdout=json.dumps({"ok": True, "data": plan_data}), stderr="")
+        response = {"result": {"isError": False,
+                               "content": [{"text": json.dumps({"ok": True, "data": plan_data})}]}}
+        with tempfile.TemporaryDirectory() as directory:
+            fixture_path = Path(directory) / "fixtures.json"
+            fixture_path.write_text(json.dumps({"commitPlanPreparationResult": {
+                "path": "/tmp/prepared/plan.json", "planId": "journey-commit", "totalCommits": 1,
+            }}), encoding="utf-8")
+            with patch("mcp_project_steps.run_command", return_value=cli) as run_cli, \
+                 patch("service_runner.request_mcp", return_value=(200, response, {})) as request, \
+                 patch("mcp_project_steps.project_service_path", return_value="/mcp"), \
+                 patch("mcp_project_steps.journey_value", return_value=str(fixture_path)):
+                self.assertIsNone(cli_mcp_read_parity("prj_a", "token", "/tmp/project-a"))
+            self.assertEqual(run_cli.call_args.args[0], ["kb", "commit", "plan", "show", "--json"])
+            self.assertEqual(request.call_args.kwargs["payload"]["params"]["name"], commit_tool("commit plan show"))
+            self.assertEqual(request.call_args.kwargs["payload"]["params"]["arguments"], {"json": True})
+
+            wrong_identity = dict(plan_data)
+            wrong_identity["plan"] = {"commits": [{"id": "other-plan"}]}
+            bad_cli = subprocess.CompletedProcess(args=[], returncode=0,
+                stdout=json.dumps({"ok": True, "data": wrong_identity}), stderr="")
+            with patch("mcp_project_steps.run_command", return_value=bad_cli), \
+                 patch("mcp_project_steps.journey_value", return_value=str(fixture_path)):
+                self.assertIn("plan id", cli_mcp_read_parity("prj_a", "token", "/tmp/project-a"))
 
     def test_project_isolation_checks_catalog_then_typed_unknown_call(self):
         response = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown MCP tool", "Call tools/list to discover tools.")

@@ -10,6 +10,15 @@ import type { ServiceContext } from "@kb-labs/shared-daemon";
 import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { RegisteredServiceCommandOperation, ServiceManifest } from "@kb-labs/plugin-contracts";
 
+/** Capture command UI output for the active MCP tool call. */
+export function projectMcpUiProvider(_hostType: string) {
+  const output = callOutput.getStore();
+  return output ? createBufferedUI((text, model) => {
+    output.text.push(text);
+    if (model) {output.structured.push(model);}
+  }).ui : noopUI;
+}
+
 /** Project-runtime module setup. The runtime supplies the project root and port,
  * so the MCP process scope follows the project URL selected by the host. */
 export async function setupProjectMcp(
@@ -60,13 +69,7 @@ export async function bootstrap(): Promise<void> {
     defaultHost: "0.0.0.0",
     hostEnvVar: "KB_MCP_DAEMON_HOST",
     platform: {
-      uiProvider: (_hostType: string) => {
-        const output = callOutput.getStore();
-        return output ? createBufferedUI((text, model) => {
-          output.text.push(text);
-          if (model) {output.structured.push(model);}
-        }).ui : noopUI;
-      },
+      uiProvider: projectMcpUiProvider,
       assemblyHook: makeAssemblyHook(),
     },
     async setup({

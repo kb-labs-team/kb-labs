@@ -87,8 +87,9 @@ describe('kb auth status', () => {
     expectSuccessEnvelope(captured, { authenticated: false, sessions: [{ authenticated: false, path: '/tmp/test-home/.kb/session.json' }] });
   });
 
-  it('ST-02: machine only — top-level authenticated true, session.authenticated false', async () => {
-    mockCredLoad.mockResolvedValueOnce({ gatewayUrl: 'http://localhost:4000', accessToken: 'a', expiresAt: Date.now() + 60_000 });
+  // case: S-216.2
+  it('ST-02: machine only — authenticated true with no human sessions', async () => {
+    mockCredLoad.mockResolvedValueOnce({ gatewayUrl: 'http://localhost:4000', accessToken: 'a', expiresAt: Date.now() + 10 * 60_000 });
     mockCredIsExpired.mockReturnValueOnce(false);
 
     const captured = { errors: [], output: [], json: [] };
@@ -98,13 +99,13 @@ describe('kb auth status', () => {
     expectSuccessEnvelope(captured, {
       authenticated: true,
       gatewayUrl: 'http://localhost:4000',
-      sessions: [{ authenticated: false, path: '/tmp/test-home/.kb/session.json' }],
+      sessions: [],
     });
   });
 
   it('ST-03: session only — top-level authenticated false, session reports its own status', async () => {
     mockCredLoad.mockResolvedValueOnce(null);
-    mockInspect.mockResolvedValueOnce({ machine: null, sessions: [{ gatewayUrl: 'http://localhost:4000', accessToken: 'b', expiresAt: Date.now() + 60_000, email: 'admin@bootstrap.local' }], sessionPath: mockSessionPath(), machineExpired: false, sessionExpired: false });
+    mockInspect.mockResolvedValueOnce({ machine: null, sessions: [{ gatewayUrl: 'http://localhost:4000', accessToken: 'b', expiresAt: Date.now() + 10 * 60_000, email: 'admin@bootstrap.local' }], sessionPath: mockSessionPath(), machineExpired: false, sessionExpired: false });
 
     const captured = { errors: [], output: [], json: [] };
     const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
@@ -113,6 +114,33 @@ describe('kb auth status', () => {
     expectSuccessEnvelope(captured, {
       authenticated: false,
       sessions: [{ authenticated: true, path: '/tmp/test-home/.kb/session.json', gatewayUrl: 'http://localhost:4000', email: 'admin@bootstrap.local', tokenExpired: false, expiresAt: expect.any(String) }],
+    });
+  });
+
+  // case: S-031.1
+  it('reports a session inside the automatic refresh window as expiring', async () => {
+    mockCredLoad.mockResolvedValueOnce(null);
+    mockInspect.mockResolvedValueOnce({ machine: null, sessions: [{
+      gatewayUrl: 'http://localhost:4000',
+      accessToken: 'b',
+      expiresAt: Date.now() + 30_000,
+      email: 'admin@bootstrap.local',
+    }], sessionPath: mockSessionPath(), machineExpired: false, sessionExpired: false });
+
+    const captured = { errors: [], output: [], json: [] };
+    const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
+
+    expect(exitCode).toBe(0);
+    expectSuccessEnvelope(captured, {
+      authenticated: false,
+      sessions: [{
+        authenticated: true,
+        path: '/tmp/test-home/.kb/session.json',
+        gatewayUrl: 'http://localhost:4000',
+        email: 'admin@bootstrap.local',
+        tokenExpired: true,
+        expiresAt: expect.any(String),
+      }],
     });
   });
 

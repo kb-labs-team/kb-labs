@@ -64,8 +64,8 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
     if (!credentials) {
       if (!flags.json) {
         if (sessions.length > 0) {
-          for (const [index, session] of sessions.entries()) {
-            ctx.ui?.write?.(`Session (human): ${session.email ?? session.gatewayUrl} (${session.gatewayUrl})${sessionStatuses[index].tokenExpired ? ' — token expired (will auto-refresh)' : ''}\n`);
+          for (const session of sessionStatuses) {
+            ctx.ui?.write?.(`Session (human): ${session.email ?? session.gatewayUrl} (${session.gatewayUrl})${session.tokenExpired ? ' — token expired (will auto-refresh)' : ''}\n`);
           }
         } else {
           ctx.ui?.write?.('Not authenticated. Run "kb auth login" to configure Gateway connection.\n');
@@ -86,9 +86,9 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
       } else {
         ctx.ui?.write?.(`  Token: valid (expires in ${minutesLeft} min)\n`);
       }
-      for (const [index, session] of sessions.entries()) {
+      for (const session of sessionStatuses) {
         ctx.ui?.write?.(`Session (human): ${session.email ?? session.gatewayUrl} (${session.gatewayUrl})\n`);
-        ctx.ui?.write?.(`  Token: ${sessionStatuses[index].tokenExpired ? 'expired (will auto-refresh)' : 'valid'}\n`);
+        ctx.ui?.write?.(`  Token: ${session.tokenExpired ? 'expired (will auto-refresh)' : 'valid'}\n`);
       }
     }
 

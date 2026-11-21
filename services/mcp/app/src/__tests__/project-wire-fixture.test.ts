@@ -153,9 +153,10 @@ describe('project MCP wire fixture producer', () => {
     await expect(readFile(fixturePath, 'utf8')).resolves.toBe(generated);
     expect(executeCommandV3).toHaveBeenCalledWith(expect.objectContaining({
       pluginId: '@fixture/wire-plugin',
-      commandPath: 'fixture-wire-plugin__echo',
+      commandPath: 'echo',
       flags: { text: 'through real router' },
     }));
+    expect(responses[2]?.body).toContain('output from the external command adapter');
   });
 
   // case: S-045.12

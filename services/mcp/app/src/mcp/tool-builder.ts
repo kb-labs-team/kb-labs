@@ -33,6 +33,8 @@ export interface McpTool {
   pluginId: string;
   pluginRoot: string;
   handlerPath: string;
+  /** Original whitespace-delimited manifest CLI path for execution context. */
+  commandPath: string;
   version: string;
   operationType: string | undefined;
   /** Handler permissions, propagated to executeCommandV3 for governance. */
@@ -116,6 +118,7 @@ function buildTool(entry: RegistrySnapshotManifestEntry, decl: CliCommandDecl): 
     pluginId: entry.pluginId,
     pluginRoot: entry.pluginRoot,
     handlerPath: decl.handler,
+    commandPath: decl.path.trim().replace(/\s+/g, ' '),
     version: entry.manifest.version ?? '0.0.0',
     operationType: decl.operationType,
     permissions: getHandlerPermissions(entry.manifest, 'cli', decl.path),
