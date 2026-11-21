@@ -10,11 +10,13 @@ export async function setup({
   port,
   host,
   logger,
+  publishListenAddress,
 }: ServiceContext, platformDataRoot?: string): Promise<() => Promise<void>> {
   const config = {
     port,
     host,
     logger,
+    publishListenAddress,
   };
   const server = platformDataRoot
     ? createDurableStateDaemon(config, platformDataRoot)

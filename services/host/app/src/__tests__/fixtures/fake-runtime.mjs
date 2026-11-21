@@ -109,7 +109,13 @@ const server = createServer((req, res) => {
 
 const startDelay = behavior.startDelayMs ?? 0;
 setTimeout(() => {
-  server.listen(Number(portText), host);
+  server.listen(Number(portText), host, () => {
+    const address = server.address();
+    process.send?.({
+      type: "kb-project-runtime-ready",
+      address: { host, port: address.port },
+    });
+  });
 }, startDelay);
 
 // Never outlive the test process, even if it dies without cleaning up.

@@ -76,6 +76,22 @@ export class HttpServiceTransport implements IServiceTransport {
     }
   }
 
+  /** Publishes a module's actual ephemeral bind address into this transport. */
+  async publishListenAddress(
+    serviceId: string,
+    address: { host: string; port: number },
+  ): Promise<void> {
+    const previous = this.pools.get(serviceId);
+    this.config.services[serviceId] = {
+      url: `http://${address.host}:${address.port}`,
+    };
+    this.pools.set(serviceId, new Pool(this.config.services[serviceId]!.url, {
+      connections: 10,
+      pipelining: 0,
+    }));
+    await previous?.close();
+  }
+
   connectionInfo(serviceId: string): ServiceConnectionInfo | undefined {
     const svc = this.config.services[serviceId];
     if (!svc) return undefined;

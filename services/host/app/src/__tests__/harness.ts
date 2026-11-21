@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { vi } from "vitest";
 import { platform, resetPlatformRuntime } from "@kb-labs/core-runtime";
 import type { IServiceTransport } from "@kb-labs/core-platform";
-import { reserveLoopbackPorts, runHost } from "@kb-labs/shared-daemon";
+import { runHost } from "@kb-labs/shared-daemon";
 import { createHostConfig, type HostOptions } from "../host.js";
 
 export interface HostFixtureConfig {
@@ -73,8 +73,22 @@ export async function isPortListening(port: number): Promise<boolean> {
 }
 
 export async function reservePort(): Promise<number> {
-  const [port] = await reserveLoopbackPorts(1);
-  return port!;
+  const probe = createServer();
+  await new Promise<void>((resolve, reject) => {
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", resolve);
+  });
+  const address = probe.address();
+  if (!address || typeof address === "string") {
+    await new Promise<void>((resolve) => {
+      probe.close(() => resolve());
+    });
+    throw new Error("Test port probe did not return a TCP address");
+  }
+  await new Promise<void>((resolve, reject) => {
+    probe.close((error) => (error ? reject(error) : resolve()));
+  });
+  return address.port;
 }
 
 /** True when a bind on the loopback port succeeds, i.e. nothing holds it. */
