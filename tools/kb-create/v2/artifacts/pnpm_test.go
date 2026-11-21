@@ -1253,7 +1253,7 @@ func TestPnpmPreservesPackageManagerFailure(t *testing.T) {
 	}
 }
 
-func TestPnpmDiagnosticKeepsExitCodeAndStderrTail(t *testing.T) {
+func TestPnpmDiagnosticKeepsExitCodeAndOmitsRawOutput(t *testing.T) {
 	root := t.TempDir()
 	var transcript strings.Builder
 	manager := mustPnpm(t, PnpmConfig{
@@ -1266,52 +1266,53 @@ func TestPnpmDiagnosticKeepsExitCodeAndStderrTail(t *testing.T) {
 	if !errors.As(err, &failure) {
 		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
 	}
-	if failure.Code != contracts.CodeApplyFailed || failure.Meta["packageManagerExitCode"] == "" {
-		t.Fatalf("pnpm diagnostic = code %q details %#v; want exit code and stderr tail", failure.Code, failure.Meta)
+	if failure.Code != contracts.CodeApplyFailed || failure.Meta["packageManagerExitCode"] == "" || failure.Meta["packageManagerOutput"] != "omitted for safety" {
+		t.Fatalf("pnpm diagnostic = code %q details %#v; want exit code and safe output notice", failure.Code, failure.Meta)
 	}
-	if transcript.Len() == 0 {
-		t.Fatalf("installer transcript dropped pnpm output: %s", transcript.String())
+	if !strings.Contains(transcript.String(), "output omitted for safety") || strings.Contains(transcript.String(), "pnpm") {
+		t.Fatalf("installer transcript did not safely summarize package-manager output: %q", transcript.String())
 	}
 }
 
-func TestCommandRunnerCaptureRedactsCredentialsBeforeTailAndTranscript(t *testing.T) {
+func TestCommandRunnerOmitsSplitCredentialsFromTranscript(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture requires POSIX")
 	}
-	const knownValue = "known-value-crossing-capture-tail"
+	const patternValue = "split-pattern-value"
+	const knownValue = "known value crossing chunk boundary"
 	fixture := filepath.Join(t.TempDir(), "failing-tool")
-	stderr := strings.Repeat("x", 4090) + "TOKEN=pattern-value-crossing-tail" + strings.Repeat("y", 4096-12) + " known=" + knownValue
-	if err := os.WriteFile(fixture, []byte("#!/bin/sh\nprintf '%s\\n' '"+stderr+"' >&2\nexit 47\n"), 0o700); err != nil {
+	script := "#!/bin/sh\nprintf '%s' '{\"access_' >&2\nprintf '%s' 'token\":\"" + patternValue + "\"}' >&2\nprintf '%s' '" + strings.TrimSuffix(knownValue, "chunk boundary") + "' >&2\nprintf '%s\\n' 'chunk boundary' >&2\nexit 47\n"
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	var transcript bytes.Buffer
-	runner := CommandRunner{redactions: []string{knownValue}}
+	runner := CommandRunner{}
 	err := runner.Run(context.Background(), &transcript, fixture)
 	if err == nil {
 		t.Fatal("command unexpectedly succeeded")
 	}
-	if strings.Contains(transcript.String(), "pattern-value-crossing-tail") || strings.Contains(transcript.String(), knownValue) {
-		t.Fatalf("captured package-manager transcript leaked credential: %q", transcript.String())
+	for _, secret := range []string{patternValue, knownValue, "access_token"} {
+		if strings.Contains(transcript.String(), secret) {
+			t.Fatalf("captured package-manager transcript leaked %q: %q", secret, transcript.String())
+		}
+	}
+	if !strings.Contains(transcript.String(), "output omitted for safety") {
+		t.Fatalf("transcript omitted safe failure notice: %q", transcript.String())
 	}
 }
 
 func TestPnpmDiagnosticCauseRetainsPackageManagerRegistryFailure(t *testing.T) {
 	root := t.TempDir()
-	runner := &fakeRunner{err: &externalCommandFailure{
-		exitCode:   1,
-		stderrTail: "ERR_PNPM_FETCH_404 GET http://127.0.0.1:4873/@kb-labs%2fcli-commands: Not Found - 404",
-		cause:      errors.New("exit status 1"),
-	}}
+	runner := &fakeRunner{err: &externalCommandFailure{exitCode: 1, cause: errors.New("exit status 1")}}
 	manager := mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t)})
 	err := manager.run("add", "@kb-labs/cli-bin@2.120.1")
 	var failure *diag.Diag
 	if !errors.As(err, &failure) {
 		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
 	}
-	for _, expected := range []string{"@kb-labs%2fcli-commands", "http://127.0.0.1:4873"} {
-		if !strings.Contains(failure.Cause, expected) {
-			t.Fatalf("typed cause %q does not retain %q", failure.Cause, expected)
-		}
+	if failure.Meta["packageManagerExitCode"] != "1" || failure.Meta["packageManagerOutput"] != "omitted for safety" ||
+		strings.Contains(failure.Cause, "ERR_PNPM") || strings.Contains(failure.Reason, "ERR_PNPM") {
+		t.Fatalf("package-manager diagnostic = %#v", failure)
 	}
 }
 func TestPnpmSkipsReleaseManagedBinary(t *testing.T) {

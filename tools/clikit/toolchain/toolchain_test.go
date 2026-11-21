@@ -221,27 +221,28 @@ func TestExternalToolFailureKeepsExitCodeAndStderrTail(t *testing.T) {
 	}
 }
 
-func TestStderrCaptureRedactsBeforeTailClip(t *testing.T) {
-	tests := []struct {
-		name       string
-		credential string
-		redactions []string
-	}{
-		{name: "credential pattern crossing retained tail", credential: "TOKEN=pattern-crossing-secret"},
-		{name: "known value crossing retained tail", credential: "known-value-crossing-secret", redactions: []string{"known-value-crossing-secret"}},
+func TestDiscardOutputKeepsSubprocessBytesOutOfResultsErrorsAndWriters(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			prefix := strings.Repeat("x", stderrTailLimit+100)
-			suffix := strings.Repeat("y", 100)
-			var capture tailBuffer
-			capture.redactions = test.redactions
-			_, _ = capture.Write([]byte(prefix + test.credential + suffix))
-			got := capture.String()
-			if strings.Contains(got, strings.TrimPrefix(test.credential, "TOKEN=")) || len(got) > stderrTailLimit {
-				t.Fatalf("captured tail leaked credential or exceeded byte bound: len=%d tail=%q", len(got), got)
-			}
-		})
+	tool := filepath.Join(t.TempDir(), "failing-tool")
+	secret := `{"access_token":"split secret value"}`
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\nprintf '%s' '{\"access_' >&1\nprintf '%s' 'token\":\"split secret ' >&1\nprintf '%s' 'value\"}' >&1\nprintf '%s' 'TOKEN=split secret ' >&2\nprintf '%s' 'value' >&2\nexit 47\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	result, err := Run(context.Background(), Invocation{
+		Tool: "fixture", Executable: tool, Operation: OperationPackageManager, DiscardOutput: true,
+		Stdout: &stdout, Stderr: &stderr,
+	})
+	var failure *CommandError
+	if !errors.As(err, &failure) || failure.ExitCode != 47 {
+		t.Fatalf("failure = %#v, want exit code 47", err)
+	}
+	for label, value := range map[string]string{"result stdout": result.Stdout, "result stderr": result.Stderr, "command error": err.Error(), "provided stdout writer": stdout.String(), "provided stderr writer": stderr.String()} {
+		if strings.Contains(value, secret) || strings.Contains(value, "split secret") || strings.Contains(value, "TOKEN=") {
+			t.Fatalf("%s exposed discarded package-manager output: %q", label, value)
+		}
 	}
 }
 

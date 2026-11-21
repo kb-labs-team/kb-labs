@@ -20,15 +20,13 @@ func TestApplyDossierKeepsPackageManagerFailureDetails(t *testing.T) {
 	failure := contracts.NewDiag(contracts.CodeApplyFailed, "package manager failed", "inspect the local log",
 		errors.New("pnpm add failed with value "+secret))
 	failure.Meta = map[string]any{
-		"packageManagerExitCode":   "47",
-		"packageManagerStderrTail": strings.Repeat("x", 4090) + "TOKEN=" + secret + strings.Repeat("y", 4096-12),
+		"packageManagerExitCode": "47",
+		"packageManagerOutput":   "omitted for safety",
 	}
 
 	result := applyDossier(root, "package-manager-failure", logPath, contracts.ResolvedInstallPlan{}, []string{secret}, failure)
-	stderrTail := result.Meta["packageManagerStderrTail"].(string)
 	if result.Code != contracts.CodeApplyFailed || result.Meta["packageManagerExitCode"] != "47" ||
-		len(stderrTail) > 4096 || !strings.Contains(stderrTail, "[REDACTED]") ||
-		strings.Contains(stderrTail, secret) || result.Meta["logPath"] != logPath {
+		result.Meta["packageManagerOutput"] != "omitted for safety" || result.Meta["logPath"] != logPath {
 		t.Fatalf("apply diagnostic = code %q details %#v", result.Code, result.Meta)
 	}
 	if strings.Contains(result.Cause, secret) || strings.Contains(result.Reason, secret) ||
@@ -58,9 +56,7 @@ func TestApplyDossierKeepsPackageManagerFailureDetails(t *testing.T) {
 	if err := json.Unmarshal(data, &dossier); err != nil {
 		t.Fatal(err)
 	}
-	dossierTail, ok := dossier.Error.Meta["packageManagerStderrTail"].(string)
-	if dossier.Error.Meta["packageManagerExitCode"] != "47" || !ok ||
-		len(dossierTail) > 4096 || !strings.Contains(dossierTail, "[REDACTED]") || strings.Contains(dossierTail, secret) ||
+	if dossier.Error.Meta["packageManagerExitCode"] != "47" || dossier.Error.Meta["packageManagerOutput"] != "omitted for safety" ||
 		strings.Contains(dossier.Error.Cause, secret) || strings.Contains(string(data), secret) {
 		t.Fatalf("dossier dropped or leaked package-manager details: %#v", dossier.Error.Meta)
 	}
