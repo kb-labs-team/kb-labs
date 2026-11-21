@@ -23,7 +23,7 @@ A developer runs the commit plugin's potentially long LLM generation, sees progr
 
 | # | Action | Expected |
 |---|---|---|
-| S-030.1 | Run `kb commit commit --dry-run` with the staged changes | In local and secured mode, the CLI displays an active progress indicator and a generation phase message before printing the human-readable final plan; in secured mode progress and the final plan are streamed from the registered project runtime, including with the in-process execution backend. |
+| S-030.1 | Run `kb commit commit` with the staged changes | In local and secured mode, the CLI displays an active progress indicator and a generation phase message before applying the human-readable plan; in secured mode progress and the final plan are streamed from the registered project runtime, including with the in-process execution backend. |
 | S-030.2 | Observe output while generation is still in progress | At least one subsequent phase update is visible before the final result. |
 | S-030.3 | Send Ctrl+C while the command is generating, including after the generation phase but before the plan is applied | Cancellation reaches the host-owned execution signal; the command exits with status 130, restores the terminal prompt, prints no uncaught worker `EPIPE` error, and does not apply or create a commit after cancellation. |
-| S-030.4 | Inspect Git history after cancellation | No commit was created by the interrupted `--dry-run` command. |
+| S-030.4 | Inspect Git history after cancellation | No commit was created by the interrupted command. |
