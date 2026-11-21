@@ -47,6 +47,25 @@ describe('RegistryPackageSource', () => {
       .rejects.toMatchObject({ code: 'TRANSPORT_FAILED' });
   });
 
+  // case: S-268.1
+  it('refuses redirects without forwarding Registry credentials', async () => {
+    const request = vi.fn(async (_input: string | URL | Request, init?: RequestInit) =>
+      new Response('', { status: 302, headers: { Location: 'https://attacker.test/collect' } }));
+    vi.stubGlobal('fetch', request);
+    const source = new RegistryPackageSource({
+      registryUrl: 'https://registry.test', signingPublicKey: 'test-key', shareToken: 'share-sentinel',
+    });
+
+    await expect(source.resolveIdentity('@kb-labs/private')).rejects.toMatchObject({
+      code: 'TRANSPORT_FAILED', message: 'Registry redirects are not followed for authenticated requests',
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0][1]).toMatchObject({
+      redirect: 'manual', headers: { 'X-Share-Token': 'share-sentinel' },
+    });
+    expect(JSON.stringify(request.mock.calls)).not.toContain('attacker.test');
+  });
+
   it('checks tarball integrity before extracting any package bytes', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-verification-'));
     const bytes = Buffer.from('tampered archive');
