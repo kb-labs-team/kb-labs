@@ -21,6 +21,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import traceback
+from typing import MutableMapping
 import urllib.error
 import urllib.request
 import uuid
@@ -761,23 +762,27 @@ def export_project_state_to_child_environment(graph: FlowGraph) -> None:
     )
 
 
-def prepare_service_api_session(graph: FlowGraph, mode: str) -> None:
+def prepare_service_api_session(graph: FlowGraph, mode: str,
+                                env: MutableMapping[str, str] | None = None) -> None:
     """Probe the independent HTTP credential used by service-runner API requests.
 
     The CLI session is restored separately because auth journey steps can log the CLI out;
     this state is the runner's HTTP bearer credential and has its own lifetime.
     """
+    session_env = env if env is not None else os.environ
+    admin_email = session_env.get("KB_JOURNEY_ADMIN_EMAIL", ADMIN_EMAIL)
+    admin_password = session_env.get("KB_JOURNEY_ADMIN_PASSWORD", ADMIN_PASSWORD)
     acquired: dict[str, str | None] = {"token": None}
 
     def acquire() -> str | None:
         if mode == "local":
             return None
-        if not ADMIN_PASSWORD:
+        if not admin_password:
             return "secured profile needs KB_JOURNEY_ADMIN_PASSWORD; provide test credentials in the isolated journey container"
-        store_report_secret(os.environ, "KB_JOURNEY_ADMIN_PASSWORD", ADMIN_PASSWORD,
+        store_report_secret(session_env, "KB_JOURNEY_ADMIN_PASSWORD", admin_password,
                             "service runner admin password")
         status, body, _ = request("/auth/login/cli", method="POST",
-                                  payload={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+                                  payload={"email": admin_email, "password": admin_password})
         if status not in {200, 201}:
             return f"POST /auth/login/cli returned HTTP {status}; check the isolated secured install credentials"
         if not isinstance(body, dict):
@@ -786,7 +791,7 @@ def prepare_service_api_session(graph: FlowGraph, mode: str) -> None:
         if not token:
             return "POST /auth/login/cli returned no access token"
         token = str(token)
-        store_report_secret(os.environ, "KB_JOURNEY_SERVICE_TOKEN", token,
+        store_report_secret(session_env, "KB_JOURNEY_SERVICE_TOKEN", token,
                             "secured service admin access token")
         acquired["token"] = token
         me_status, _, _ = request("/auth/me", token=token)

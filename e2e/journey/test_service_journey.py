@@ -326,6 +326,35 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertTrue(any(token == "synthetic-service-token" for path, token in requests
                             if path != "/auth/me"))
 
+    def test_service_api_session_uses_runner_environment_credentials(self):
+        import service_runner
+
+        env = {
+            "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
+            "KB_JOURNEY_ADMIN_PASSWORD": "synthetic-admin-password",
+        }
+        calls = []
+
+        def fake_request(path, *, payload=None, token="", **_kwargs):
+            calls.append((path, payload, token))
+            if path == "/auth/login/cli":
+                return 200, {"accessToken": "synthetic-session-token"}, {}
+            if path == "/auth/me":
+                return 200, {"userId": "admin"}, {}
+            self.fail(f"unexpected request {path}")
+
+        graph = FlowGraph(Journey("secured", "runner-env-api-session"), {})
+        with patch("service_runner.ADMIN_EMAIL", "wrong-fallback@example.test"), \
+                patch("service_runner.ADMIN_PASSWORD", ""), \
+                patch("service_runner.request", side_effect=fake_request):
+            prepare_service_api_session(graph, "secured", env=env)
+
+        self.assertEqual(calls[0], ("/auth/login/cli", {
+            "email": "journey-admin@example.test", "password": "synthetic-admin-password"}, ""))
+        self.assertEqual(calls[1], ("/auth/me", None, "synthetic-session-token"))
+        self.assertEqual(service_api_token(graph), "synthetic-session-token")
+        self.assertEqual(env["KB_JOURNEY_SERVICE_TOKEN"], "synthetic-session-token")
+
     def test_selected_secured_checks_block_when_service_api_session_fails(self):
         journey, _graph, requests = self._selected_service_checks(
             "secured", lambda path, _token: self.fail(f"check sent unexpected request {path}"),
