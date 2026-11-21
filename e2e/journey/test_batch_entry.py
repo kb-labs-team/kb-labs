@@ -41,6 +41,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         shutil.copy2(REPO / "e2e/journey/journey_dependencies.py", self.root / "e2e/journey/journey_dependencies.py")
         shutil.copytree(REPO / "docs/qa/scenarios", self.root / "docs/qa/scenarios")
         shutil.copy2(REPO / "e2e/journey/preflight.sh", self.root / "e2e/journey/preflight.sh")
+        shutil.copy2(REPO / "e2e/journey/tee-stage.sh", self.root / "e2e/journey/tee-stage.sh")
         shutil.copy2(REPO / "scripts/ci/journey-batch-selection.mjs", self.root / "scripts/ci/journey-batch-selection.mjs")
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         shutil.copy2(
@@ -229,7 +230,7 @@ exec "$REAL_TAR" "$@"
         self.env = {
             **isolated_environment(
                 Path(self.root / "home"), self.bin,
-                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash", "tar"),
+                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash", "tar", "tee"),
             ),
             "CALLS": str(self.calls),
             "REPORTS": str(self.root / ".journey/reports"),
@@ -254,6 +255,21 @@ exec "$REAL_TAR" "$@"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(contents)
         path.chmod(0o755)
+
+    # case: S-262.1
+    def test_tee_stage_streams_output_and_preserves_command_exit_status(self):
+        log = self.root / "stage.log"
+        result = subprocess.run(
+            [str(self.root / "e2e/journey/tee-stage.sh"), str(log), "fixture stage",
+             sys.executable, "-c", "print('live fixture output'); raise SystemExit(9)"],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+
+        self.assertEqual(result.returncode, 9, result.stderr + result.stdout)
+        self.assertIn("fixture stage started", result.stdout)
+        self.assertIn("live fixture output", result.stdout)
+        self.assertIn("fixture stage finished: exit 9", result.stdout)
+        self.assertEqual(log.read_text(), result.stdout)
 
     def _run(self, mode="", failure_kind="infra", missing_base_ref="", fail_build=False):
         env = dict(self.env)
@@ -1290,7 +1306,10 @@ exec "$REAL_TAR" "$@"
         self.assertIn("- Failed stage: `unit`", summary)
         self.assertIn("- Stage log: `unit.log`", summary)
         self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")], ["- Result: FAIL"])
-        self.assertEqual((self.root / "out/shared/unit.log").read_text(), "unit failure fixture\n")
+        unit_log = (self.root / "out/shared/unit.log").read_text()
+        self.assertIn("Journey unit suite started", unit_log)
+        self.assertIn("unit failure fixture\n", unit_log)
+        self.assertIn("Journey unit suite finished: exit 1", unit_log)
 
     # case: S-262.1
     def test_entry_declares_shared_artifacts_before_build_failure(self):
