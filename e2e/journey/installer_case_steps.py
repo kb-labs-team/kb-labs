@@ -1157,7 +1157,8 @@ def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
             _data(run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                "--platform-channel", "stable", "--platform-root", str(root)]),
                   "online cache priming apply")
-            spellings = [root, root / "current", (root / "current").resolve(strict=True)]
+            current_link = root / layout_value("currentLink")
+            spellings = [root, current_link, current_link.resolve(strict=True)]
             for spelling in spellings:
                 plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
                                                    "--platform-channel", "stable", "--offline",

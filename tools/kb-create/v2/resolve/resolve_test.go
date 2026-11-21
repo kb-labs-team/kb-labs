@@ -197,6 +197,59 @@ func TestOfflinePlanUsesSharedCacheFromEveryInstalledRootSpelling(t *testing.T) 
 	}
 }
 
+func TestOfflinePlanDoesNotTreatNestedVersionPathAsInstalledRootAlias(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "install")
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receipt.Write(stage, contracts.InstallReceipt{ID: "fixture", InstallationID: installationID,
+		Plan: contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: contracts.InstallRequest{PlatformRoot: root}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateInitial(stage, "2.0.0", "offline-nested-path"); err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(activeRoot, "unrelated")
+	if err := os.MkdirAll(nested, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	packageBytes := testfixtures.PackageTarball("@kb/platform", "2.0.0", nil)
+	digest := sha256.Sum256(packageBytes)
+	hash := hex.EncodeToString(digest[:])
+	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(cacheRoot, "packages", hash+".tgz")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, packageBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: hash,
+			Tarball: "https://registry.example/platform.tgz", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}}}}
+	_, err = planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: nested, Source: contracts.SourceOffline}, source)
+	if err == nil || !strings.Contains(err.Error(), filepath.Join(nested, "state", "cache", "packages", hash+".tgz")) {
+		t.Fatalf("nested path unexpectedly used the containing install cache: %v", err)
+	}
+}
+
 // case: S-181.4
 func TestOfflinePlanRejectsMissingOrCorruptArtifactCacheEntry(t *testing.T) {
 	for _, test := range []struct {
