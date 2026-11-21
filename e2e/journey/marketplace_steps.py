@@ -107,7 +107,8 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
             raise RuntimeError("secured Registry fixture publishing needs the journey administrator credentials")
         gateway_login = (_installed_gateway_url(env), email, password)
     return run_hermetic_cli(
-        command, cwd=workspace_root, env=publish_env, runner=runner, gateway_login=gateway_login,
+        command, cwd=workspace_root, env=publish_env, runner=runner,
+        workspace_root=workspace_root, gateway_login=gateway_login,
     )
 
 

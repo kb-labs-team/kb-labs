@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from installed_fixture import configure_hermetic_cli_fixture
 
@@ -68,6 +69,23 @@ class ComposeCommandTests(unittest.TestCase):
                 env={"FORCE_COLOR": "1", "PATH": os.environ.get("PATH", "")},
             )
         self.assertNotIn("FORCE_COLOR", env)
+
+    def test_hermetic_workspace_fixture_resolves_local_plugins_from_workspace(self):
+        with tempfile.TemporaryDirectory(prefix="journey-workspace-plugins-") as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            (workspace / ".kb").mkdir(parents=True)
+            (workspace / "plugins" / "sample").mkdir(parents=True)
+            (workspace / "e2e").mkdir()
+            (workspace / ".kb" / "marketplace.lock").write_text(
+                json.dumps({"schema": "kb.marketplace/3", "plugins": {}}), encoding="utf-8")
+            with patch("installed_fixture.write_local_access_mode", side_effect=lambda platform_root, _source_config: platform_root):
+                env = configure_hermetic_cli_fixture(root / "home", env={}, workspace_root=workspace)
+
+            staged_plugins = Path(env["KB_PLATFORM_ROOT"]) / "plugins"
+            self.assertTrue(staged_plugins.is_symlink())
+            self.assertEqual(staged_plugins.resolve(), (workspace / "plugins").resolve())
+            self.assertEqual(env["KB_PROJECT_ROOT"], env["KB_PLATFORM_ROOT"])
 
 
 def stage_cli_root(repository_root: Path, target_root: Path) -> Path:

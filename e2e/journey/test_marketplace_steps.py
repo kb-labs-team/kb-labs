@@ -306,6 +306,13 @@ class MarketplaceStepTests(unittest.TestCase):
             (project / ".kb").mkdir(parents=True)
             (project / ".kb" / "kb.config.json").write_text("{}\n")
             workspace = root / "workspace"
+            (workspace / "cli" / "bin" / "dist").mkdir(parents=True)
+            (workspace / "cli" / "bin" / "dist" / "bin.js").write_text("// mocked CLI entry\n")
+            (workspace / ".kb").mkdir()
+            (workspace / ".kb" / "marketplace.lock").write_text(
+                json.dumps({"schema": "kb.marketplace/3", "plugins": {}}))
+            (workspace / "plugins").mkdir()
+            (workspace / "e2e").mkdir()
             calls = []
 
             def runner(command, *, cwd, env, capture_output, text, timeout, input=None):
@@ -323,6 +330,9 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, "Logged in.\n", "")
                 if command[0] == "node":
                     self.assertTrue((Path(env["KB_HOME"]) / "session.json").is_file())
+                    self.assertEqual((Path(env["KB_PLATFORM_ROOT"]) / "plugins").resolve(),
+                                     (workspace / "plugins").resolve())
+                    self.assertTrue((Path(env["KB_PLATFORM_ROOT"]) / ".kb" / "marketplace.lock").is_file())
                     return subprocess.CompletedProcess(command, 0, json.dumps({
                         "ok": True, "data": {"version": "2.120.1"},
                     }), "")
@@ -357,6 +367,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     patch("marketplace_steps._installed_gateway_url", return_value="http://127.0.0.1:4317"), \
                     patch("marketplace_steps._assert_registry_gateway_config"), \
                     patch("marketplace_steps.open_http", side_effect=fake_open_http), \
+                    patch("installed_fixture.write_local_access_mode", side_effect=lambda platform_root, _source_config: platform_root), \
                     patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured"}):
                 journey = Journey("local", "registry-commit-fixture")
                 entry = prepare_registry_commit_project_fixture(journey, project, "http://verdaccio.test",

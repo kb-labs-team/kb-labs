@@ -264,6 +264,12 @@ def configure_hermetic_cli_fixture(
         if source_lock.resolve() != destination_lock.resolve():
             destination_lock.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_lock, destination_lock)
+        plugin_root = root / "plugins"
+        source_plugins = workspace_root / "plugins"
+        if plugin_root.is_symlink():
+            plugin_root.unlink()
+        if not plugin_root.exists():
+            plugin_root.symlink_to(source_plugins, target_is_directory=True)
         journey_root = root / "e2e"
         journey_source = workspace_root / "e2e"
         if journey_source.is_symlink():
