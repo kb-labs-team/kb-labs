@@ -9,7 +9,9 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveRoots } from '../../../../../core/workspace/src/workspace/root-resolver.js';
+import { createProjectRegistry } from '../../../../../core/project-registry/src/index.js';
 import type { PackageSource, MarketplaceSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
 import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
 import { IntegrityMismatchError } from '@kb-labs/core-extension-store';
@@ -170,6 +172,42 @@ describe('MarketplaceService', () => {
 
   afterEach(async () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  // case: S-287.1
+  it('syncs a pnpm project through the installed root resolver and ignores unbuilt project adapters', async () => {
+    const platformRoot = path.join(tmpDir, 'platform');
+    const projectRoot = path.join(tmpDir, 'project');
+    const bin = path.join(platformRoot, 'node_modules/@kb-labs/cli-bin/dist/bin.js');
+    await fs.mkdir(path.dirname(bin), { recursive: true });
+    await fs.writeFile(bin, '');
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(projectRoot, 'pnpm-workspace.yaml'), 'packages: []\n');
+    await fs.writeFile(path.join(projectRoot, '.kb/kb.config.json'), JSON.stringify({ platform: { mode: 'development' } }));
+    const adapter = path.join(projectRoot, 'adapters/unbuilt');
+    await fs.mkdir(adapter, { recursive: true });
+    await fs.writeFile(path.join(adapter, 'package.json'), JSON.stringify({ name: 'unbuilt-adapter', kb: { adapter: { manifest: './dist/adapter-manifest.js' } } }));
+    const home = path.join(tmpDir, 'home');
+    await createProjectRegistry({ root: home }).add(projectRoot);
+    const roots = await resolveRoots({ moduleUrl: pathToFileURL(bin).href, startDir: projectRoot, env: { KB_HOME: home } });
+    const service = makeMarketplaceService({ platformRoot: roots.platformRoot, projectRoot: roots.projectRoot, source: createMockSource(new Map()) });
+    await service.sync({ scope: 'project', projectRoot }, { include: ['adapters/*'] });
+    expect(roots.platformRoot).toBe(platformRoot);
+    expect(roots.sources.platform).toBe('module');
+    expect(roots.sources.project).toBe('registry');
+    expect(await readMarketplaceLock(projectRoot, new DiagnosticCollector(), 'project')).toMatchObject({ plugins: {} });
+  });
+
+  // case: S-287.2
+  it('surfaces a rejected project lock for doctor, uninstall, update, list and sync', async () => {
+    const projectRoot = path.join(tmpDir, 'project');
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(projectRoot, '.kb/marketplace.lock'), '{invalid');
+    const service = makeMarketplaceService({ platformRoot: tmpDir, projectRoot, source: createMockSource(new Map()) });
+    const ctx = { scope: 'project' as const, projectRoot };
+    for (const operation of [() => service.doctor(ctx), () => service.uninstall(ctx, ['missing']), () => service.update(ctx), () => service.list(ctx), () => service.sync(ctx, { include: [] })]) {
+      await expect(operation()).rejects.toMatchObject({ envelope: { code: 'KB_MARKETPLACE_LOCK_INVALID' } });
+    }
   });
 
   // ── install ──────────────────────────────────────────────────────────
@@ -770,6 +808,20 @@ describe('MarketplaceService', () => {
   // ── uninstall ────────────────────────────────────────────────────────
 
   describe('uninstall', () => {
+    it('rejects an absent project package instead of reporting removal', async () => {
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(projectRoot);
+      const service = makeMarketplaceService({ platformRoot: tmpDir, projectRoot });
+      await expect(service.uninstall({ scope: 'project', projectRoot }, ['missing']))
+        .rejects.toMatchObject({ envelope: createErrorEnvelope('KB_PLUGIN_NOT_INSTALLED', {
+          details: { package: 'missing', scope: 'project', scopeDescription: 'this project' },
+        }) });
+      await expect(service.uninstall({ scope: 'platform' }, ['missing']))
+        .rejects.toMatchObject({ envelope: createErrorEnvelope('KB_PLUGIN_NOT_INSTALLED', {
+          details: { package: 'missing', scope: 'platform', scopeDescription: 'the platform' },
+        }) });
+    });
+
     it('removes plugin from lock and cache', async () => {
       const { dir, integrity } = await createPluginDir(tmpDir, 'to-remove', '@kb-labs/to-remove');
       const removeSpy = vi.fn();

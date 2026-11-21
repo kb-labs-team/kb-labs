@@ -76,6 +76,7 @@ async function main(): Promise<number> {
     {
       assemblyHook: makeAssemblyHook(),
       workspaceDevelopment: isWorkspaceDevelopmentMode(loaded),
+      workspaceRoot: loaded.platformRoot,
       catalog: loaded.catalog,
     },
   );

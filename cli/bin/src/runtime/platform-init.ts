@@ -136,7 +136,7 @@ export async function initializePlatform(
   }
   ensureLifecycleHooksRegistered();
   const workspaceDevelopment = isWorkspaceDevelopmentMode(loadResult);
-  const workspaceRoot = workspaceDevelopment ? projectRoot : undefined;
+  const workspaceRoot = workspaceDevelopment ? platformRoot : undefined;
   const platformInstance = await initPlatform(
       platformConfig,
       adapterProjectRoot,

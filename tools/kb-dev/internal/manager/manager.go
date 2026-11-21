@@ -168,6 +168,7 @@ func (m *Manager) spawnEnvFor(svcCfg config.Service, serviceID, instanceID strin
 	for k, v := range svcEnv {
 		merged[k] = v
 	}
+	merged["KB_PLATFORM_ROOT"] = m.rootDir
 	// Do not overwrite if already set — the service or the launching shell
 	// may have a good reason to pin it to a different value.
 	if _, ok := merged["KB_PROJECT_ROOT"]; !ok {
