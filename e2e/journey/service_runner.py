@@ -909,7 +909,7 @@ SERVICE_GROUPS = {
                                      "produces": ("marketplace-available",)},
     "marketplace": {"capabilities": {"marketplace"},
                      "depends_on": ("host-running", "project-registered", "service-api-session")},
-    "marketplace-lifecycle": {"capabilities": set(),
+    "marketplace-lifecycle": {"capabilities": {"commit-plugin"},
                               "depends_on": ("host-running", "project-registered", "marketplace-available", "service-api-session")},
     "marketplace-registry": {"capabilities": {"marketplace-registry"},
                              "depends_on": ("host-running", "project-registered", "service-api-session")},
