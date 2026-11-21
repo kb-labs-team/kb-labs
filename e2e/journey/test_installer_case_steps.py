@@ -1314,7 +1314,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 error = {"code": "KB_INSTALL_OFFLINE_ARTIFACT_MISSING", "details": {
                     "artifact": artifacts[0]["id"], "cachePath": str(
-                        root / layout_value("sharedRuntimePaths.kb_v2_cache.statePath") / "packages" /
+                        root.resolve() / layout_value("sharedRuntimePaths.kb_v2_cache.statePath") / "packages" /
                         f"{artifacts[0]['sha256']}.tgz")}}
                 return {"ok": False, "error": error}, error
 
@@ -1340,6 +1340,78 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertIn("--offline", install_calls[1])
         self.assertEqual(install_calls[1][-2:], ["--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
         self.assertTrue(all("--offline" in args for args, _ in calls if args[1] == "apply"))
+
+    def test_offline_generated_secret_journey_cleans_partial_provisioning_and_keeps_original_failure(self):
+        from journey_selection import JourneySelection, use_journey_selection
+
+        with tempfile.TemporaryDirectory(prefix="journey-offline-generated-secret-failure-") as temp:
+            parent = Path(temp)
+            main_root = parent / "main-root"
+            main_root.mkdir()
+            index = parent / "release-index.json"
+            index.write_text(json.dumps({
+                "channels": {"stable": "2.0.0"},
+                "platforms": [{"version": "2.0.0", "config": [], "members": [{"config": [
+                    {"id": "gateway.jwtSecret", "secret": True, "generate": True},
+                ]}]}],
+            }))
+            artifact = {"id": "platform", "kind": "platform", "package": "@kb/platform",
+                        "sha256": hashlib.sha256(b"package").hexdigest(),
+                        "resolvedUrl": "https://fixture.test/platform.tgz"}
+            running = False
+            calls = []
+
+            def command(args, *, timeout=300):
+                nonlocal running
+                calls.append(args[1])
+                operation = args[1]
+                root = Path(args[args.index("--platform-root") + 1])
+                if operation == "install":
+                    (root / layout_value("ownershipRecord")).write_text("fixture owner\n")
+                    package_manager = root / layout_value("packageManagerStateDirectories.installer.path")
+                    package_manager.mkdir(parents=True)
+                    (root / "versions/provisioned/.kb/v2").mkdir(parents=True)
+                    (root / layout_value("currentLink")).symlink_to("versions/provisioned")
+                    (root / layout_value("currentLink") / ".kb/v2/receipt.json").write_text("{}")
+                    running = True
+                    return subprocess.CompletedProcess(args, 2, "provision failure", "")
+                if operation == "status":
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "stop":
+                    running = False
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "uninstall":
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                raise AssertionError(f"unexpected cleanup command: {args}")
+
+            def json_command(_runner, args, _label):
+                if args[1] == "plan":
+                    return {"plan": {"artifacts": [artifact]}}
+                _runner(args)
+                if args[1] == "status":
+                    return {"host": {layout_value("sharedStateDirectory"): "running" if running else "stopped"}}
+                return {"operation": args[1]}
+
+            def data(result, _label):
+                if result.args[1] == "install":
+                    raise RuntimeError("original online provisioning failure")
+                return {"operation": "uninstall"}
+
+            selection = JourneySelection(
+                requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+                prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+                runner_selector="service-local:explore", requested_runners="service-local:explore")
+            with use_journey_selection(selection), \
+                    patch.object(installer_case_steps, "_json_command", side_effect=json_command), \
+                    patch.object(installer_case_steps, "_data", side_effect=data):
+                journey = run_offline_generated_secret_install_step(
+                    mode="local", launcher="kb-create", stable_index=index,
+                    platform_root=main_root, run_command=command)
+
+        self.assertEqual(journey.steps[0].status, "FAIL")
+        self.assertIn("original online provisioning failure", journey.steps[0].message)
+        self.assertNotIn("cleanup failed", journey.steps[0].message)
+        self.assertEqual(calls, ["install", "status", "stop", "uninstall"])
 
     def test_platform_cli_resolves_the_requested_roots_executable(self):
         with tempfile.TemporaryDirectory(prefix="journey-platform-cli-") as temp:
