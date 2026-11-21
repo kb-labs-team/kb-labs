@@ -54,6 +54,7 @@ from invocations import (
 )
 from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
                                active_platform_root,
+                               register_preserved_fixture_root,
                                snapshot_tree, workspace_resource)
 from service_port_assertions import (assert_root_offset, service_ports,
                                      service_transport_ports)
@@ -966,6 +967,21 @@ def run_fixture_group(journey: Journey, label: str, run_fixture: Callable[[], Jo
                      lambda failure=failure: failure, role="lifecycle")
     for fixture in collected:
         journey.steps.extend(fixture.steps)
+        preserve_paths = set(getattr(journey, "preserve_fixture_roots", set()))
+        preserve_paths.update(getattr(fixture, "preserve_fixture_roots", set()))
+        if preserve_paths:
+            journey.preserve_fixture_roots = preserve_paths
+
+
+def cleanup_generated_fixture_roots(roots: Iterable[Path], preserve_paths: Iterable[Path] = ()) -> None:
+    """Remove disposable roots unless cleanup failure left evidence to inspect."""
+    preserved = {Path(path).resolve() for path in preserve_paths}
+    for path in preserved:
+        register_preserved_fixture_root(path)
+    for root in roots:
+        path = Path(root)
+        if path.resolve() not in preserved:
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def run_uninstall_decline_step(*, mode: str, args: list[str], receipt_path: Path,
@@ -1170,6 +1186,192 @@ def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
 
     journey.step("resolve a fresh request from the local artifact cache", "platform.install", offline_plan,
                  cases=["S-181.4"])
+    return journey
+
+
+def assert_offline_cache_receipt(receipt: dict, label: str) -> None:
+    plan = receipt.get("plan", {})
+    request = plan.get("request", {})
+    artifacts = plan.get("artifacts", [])
+    if (request.get("source") != "offline" or not artifacts
+            or any(item.get("resolvedFrom") != "cache" or item.get("resolvedUrl") for item in artifacts)):
+        raise RuntimeError(f"{label} receipt did not prove cache-only offline resolution")
+
+
+def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stable_index: Path,
+                                             platform_root: Path,
+                                             run_command: CommandRunner) -> Journey:
+    """Exercise generated-secret install and reapply using the install-owned cache."""
+    journey = Journey(mode, f"offline-generated-secret-install-{mode}")
+
+    def install_and_reapply() -> None:
+        root = (platform_root.parent / "s181-offline-generated-secret-root").resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        def exercise() -> None:
+            plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
+                                               "--platform-channel", "stable", "--platform-root", str(root)],
+                                 "S-181.7 cache source plan").get("plan", {})
+            artifacts = plan.get("artifacts", [])
+            if not artifacts:
+                raise RuntimeError("S-181.7 plan resolved no artifacts to cache")
+            index = json.loads(stable_index.read_text())
+            stable_version = index.get("channels", {}).get("stable")
+            selected = next((release for release in index.get("platforms", [])
+                             if release.get("version") == stable_version), None)
+            declarations = list((selected or {}).get("config", []))
+            declarations.extend(item for member in (selected or {}).get("members", [])
+                                for item in member.get("config", []))
+            generated = [item for item in declarations
+                         if item.get("secret") is True and item.get("generate") is True]
+            if not generated:
+                raise RuntimeError("S-181.7 selected sealed platform does not declare generated secret inputs")
+
+            cache_root = root / layout_value("sharedRuntimePaths.kb_v2_cache.statePath")
+            package_manager_root = root / layout_value("packageManagerStateDirectories.installer.path")
+            provisioned = _data(run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                             "--platform-channel", "stable", "--platform-root", str(root),
+                                             "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"],
+                                            timeout=1200), "S-181.7 same-release online provisioning")
+            if provisioned.get("operation") != "apply":
+                raise RuntimeError("S-181.7 same-release provisioning did not complete through the install apply")
+
+            lifecycle = InstallerHostLifecycle(launcher, run_command)
+            running, _ = lifecycle.state(root)
+            if running:
+                lifecycle.set_running(root, False)
+
+            # The online same-release install creates the product-owned root,
+            # provisions its Corepack/pnpm state, and fills the checksum-verified
+            # V2 cache. Verify those bytes before clearing only installed versions
+            # and generated secrets to return to an empty first-install target.
+            for artifact in artifacts:
+                digest = artifact.get("sha256")
+                if not digest:
+                    raise RuntimeError(f"S-181.7 online plan omitted the checksum for {artifact.get('id')}")
+                cached = (cache_root / "binaries" / digest if artifact.get("kind") == "binary"
+                          else cache_root / "packages" / f"{digest}.tgz")
+                if not cached.is_file() or hashlib.sha256(cached.read_bytes()).hexdigest() != digest:
+                    raise RuntimeError(f"S-181.7 online provisioning did not prime verified cache bytes for {artifact.get('id')}")
+
+            owner_path = root / layout_value("ownershipRecord")
+            state_root = root / layout_value("sharedStateDirectory")
+            if (not owner_path.is_file() or not package_manager_root.is_dir()
+                    or not cache_root.is_dir()):
+                raise RuntimeError("S-181.7 online provisioning omitted product-owned install state")
+
+            def remove_path(path: Path) -> None:
+                if path.is_symlink() or path.is_file():
+                    path.unlink()
+                elif path.exists():
+                    shutil.rmtree(path)
+
+            for path in root.iterdir():
+                if path not in {owner_path, state_root}:
+                    remove_path(path)
+            for path in state_root.iterdir():
+                if path not in {package_manager_root, cache_root}:
+                    remove_path(path)
+            if any(path.name != state_root.name and path != owner_path for path in root.iterdir()):
+                raise RuntimeError("S-181.7 provisioning reset left an active installation entry")
+
+            installed = _data(run_command([launcher, "install", "--json", "--offline", "--index",
+                                           str(stable_index), "--platform-channel", "stable",
+                                           "--platform-root", str(root), "--secret-env",
+                                           "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"], timeout=1200),
+                             "S-181.7 offline generated-secret install")
+            receipt_path = installed_path(root, "currentLink", ".kb/v2/receipt.json")
+            receipt = json.loads(receipt_path.read_text())
+            assert_offline_cache_receipt(receipt, "S-181.7 offline install")
+            canonical_root = str(root.resolve())
+            if (installed.get("operation") != "apply"
+                    or receipt.get("plan", {}).get("request", {}).get("platformRoot") != canonical_root):
+                raise RuntimeError("S-181.7 install did not activate a receipt for the canonical stable root")
+            active = active_platform_root(root)
+            secret_state_path = active / layout_value("sharedRuntimePaths.kb_v2_secret-state_json.platformPath")
+            if not secret_state_path.is_file():
+                raise RuntimeError("S-181.7 generated-secret install omitted the active version secret state")
+            secret_state = json.loads(secret_state_path.read_text())
+            persisted_generated = {item.get("id") for item in generated
+                                   if item.get("id") != "gateway.bootstrap.password"}
+            if not any(secret_state.get("requirements", {}).get(secret_id)
+                       for secret_id in persisted_generated):
+                raise RuntimeError("S-181.7 install did not persist a generated non-bootstrap secret")
+
+            reapplied = _data(run_command([launcher, "apply", "--json", "--offline", "--index",
+                                           str(stable_index), "--platform-channel", "stable",
+                                           "--platform-root", str(root)], timeout=1200), "S-181.7 offline reapply")
+            if reapplied.get("operation") != "apply" or not receipt_path.is_file():
+                raise RuntimeError("S-181.7 offline reapply did not preserve an active receipt")
+            reapplied_receipt = json.loads(receipt_path.read_text())
+            assert_offline_cache_receipt(reapplied_receipt, "S-181.7 offline reapply")
+
+            artifact = artifacts[0]
+            digest = artifact["sha256"]
+            cache_path = (cache_root / "packages" / f"{digest}.tgz" if artifact.get("package")
+                          else cache_root / "binaries" / digest)
+            cache_path.unlink()
+            refused = run_command([launcher, "apply", "--json", "--offline", "--index",
+                                   str(stable_index), "--platform-channel", "stable",
+                                   "--platform-root", str(root)], timeout=1200)
+            envelope, error = _diagnostic(refused, "S-181.7 missing offline artifact")
+            detail = error.get("details", {})
+            if (refused.returncode == 0 or envelope.get("ok") is not False
+                    or error.get("code") != "KB_INSTALL_OFFLINE_ARTIFACT_MISSING"
+                    or error.get("code") == "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION"
+                    or detail.get("artifact") != artifact.get("id")
+                    or detail.get("cachePath") != str(cache_path)):
+                raise RuntimeError(f"S-181.7 missing cache refusal lost its exact diagnostic: {error}")
+
+        operation_error: BaseException | None = None
+        try:
+            exercise()
+        except BaseException as error:
+            operation_error = error
+
+        cleanup_error: BaseException | None = None
+        try:
+            owner_path = root / layout_value("ownershipRecord")
+            if owner_path.is_file():
+                lifecycle = InstallerHostLifecycle(launcher, run_command)
+                try:
+                    running, _ = lifecycle.state(root)
+                except Exception as status_error:
+                    try:
+                        lifecycle.set_running(root, False)
+                    except Exception as stop_error:
+                        raise RuntimeError(f"status failed: {status_error}; stop failed: {stop_error}") from status_error
+                    running = False
+                if running:
+                    lifecycle.set_running(root, False)
+                receipt_path = installed_path(root, "currentLink", ".kb/v2/receipt.json")
+                if receipt_path.is_file():
+                    removed = _data(run_command([launcher, "uninstall", "--yes", "--json",
+                                                 "--platform-root", str(root)], timeout=1200),
+                                    "S-181.7 disposable root cleanup")
+                    if removed.get("operation") != "uninstall":
+                        raise RuntimeError("S-181.7 disposable root cleanup did not uninstall its Gateway row")
+        except BaseException as error:
+            cleanup_error = error
+
+        if operation_error is not None:
+            if cleanup_error is not None:
+                preserve_paths = set(getattr(journey, "preserve_fixture_roots", set()))
+                preserve_paths.add(root)
+                journey.preserve_fixture_roots = preserve_paths
+                register_preserved_fixture_root(root)
+                raise RuntimeError(
+                    f"{operation_error}; disposable root preserved at {root}; cleanup failed: {cleanup_error}"
+                ) from operation_error
+            raise operation_error
+        if cleanup_error is not None:
+            preserve_paths = set(getattr(journey, "preserve_fixture_roots", set()))
+            preserve_paths.add(root)
+            journey.preserve_fixture_roots = preserve_paths
+            register_preserved_fixture_root(root)
+            raise RuntimeError(f"disposable root preserved at {root}; cleanup failed: {cleanup_error}") from cleanup_error
+
+    journey.step("install and reapply generated secrets from the offline artifact cache",
+                 "platform.install", install_and_reapply, cases=["S-181.7"])
     return journey
 
 
@@ -2348,13 +2550,18 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     run_fixture_group(journey, "offline plan", lambda: run_offline_plan_step(
         mode=mode, launcher=launcher, stable_index=stable_index,
         platform_root=platform_root, run_command=run_command))
+    run_fixture_group(journey, "offline generated-secret install", lambda: run_offline_generated_secret_install_step(
+        mode=mode, launcher=launcher, stable_index=stable_index,
+        platform_root=platform_root, run_command=run_command))
 
-    for generated_root in (apply_root, platform_root.parent / "s181-stable-root",
-                           platform_root.parent / "s181-canary-root", secret_root,
-                           explicit_gateway_root, platform_root.parent / "pc001-explicit-gateway-project",
-                           platform_root.parent / "removed-shim-owner",
-                           platform_root.parent / "s181-offline-root"):
-        shutil.rmtree(generated_root, ignore_errors=True)
+    cleanup_generated_fixture_roots(
+        (apply_root, platform_root.parent / "s181-stable-root",
+         platform_root.parent / "s181-canary-root", secret_root,
+         explicit_gateway_root, platform_root.parent / "pc001-explicit-gateway-project",
+         platform_root.parent / "removed-shim-owner",
+         platform_root.parent / "s181-offline-root",
+         platform_root.parent / "s181-offline-generated-secret-root"),
+        getattr(journey, "preserve_fixture_roots", set()))
     run_fixture_group(journey, "installer fixtures", lambda: run_installer_fixture_steps(
         mode=mode, launcher=launcher, platform_root=platform_root,
         stable_index=stable_index, run_command=run_command))

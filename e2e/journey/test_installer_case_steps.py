@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import jsonl
 import installer_case_steps
+import journey_resources
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import (_add_installed_manifest_requirement, _data, _seed_installed_fixture,
                                   cleanup_installer_fixture_root,
@@ -24,7 +25,8 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
                                   run_apply_scenario_step,
                                   run_invalid_request_step,
-                                  run_offline_plan_step, run_repeat_plan_readonly_step,
+                                  run_offline_plan_step, run_offline_generated_secret_install_step,
+                                  run_repeat_plan_readonly_step,
                                   run_platform_cli, run_secondary_root_gateway_isolation_step,
                                   run_stable_layout_contract_refusal_step,
                                   run_gateway_allocation_step, run_port_conflict_step,
@@ -1221,6 +1223,296 @@ class InstallerCaseStepsTest(unittest.TestCase):
                          str(cache_root / layout_value("currentLink")))
         self.assertEqual(calls[4][calls[4].index("--platform-root") + 1], str(physical_version))
 
+    def test_offline_generated_secret_journey_reuses_provisioned_cache_and_reports_missing_artifact(self):
+        from journey_selection import JourneySelection, use_journey_selection
+
+        with tempfile.TemporaryDirectory(prefix="journey-offline-generated-secret-") as temp:
+            parent = Path(temp)
+            platform_root = parent / "main-root"
+            platform_root.mkdir()
+            root = parent / "s181-offline-generated-secret-root"
+            index = parent / "release-index.json"
+            artifacts = [
+                {"id": "platform", "kind": "platform", "package": "@kb/platform", "version": "2.0.0",
+                 "sha256": hashlib.sha256(b"package-tarball").hexdigest(), "resolvedUrl": "https://fixture.test/platform.tgz"},
+                {"id": "kb-create", "kind": "binary", "sha256": hashlib.sha256(b"binary").hexdigest(),
+                 "resolvedUrl": "https://fixture.test/kb-create", "target": "bin/kb-create"},
+            ]
+            index.write_text(json.dumps({
+                "channels": {"stable": "2.0.0"},
+                "platforms": [{"version": "2.0.0", "config": [], "members": [{"config": [
+                    {"id": "gateway.jwtSecret", "secret": True, "generate": True},
+                    {"id": "gateway.bootstrap.password", "secret": True, "generate": True},
+                ]}]}],
+            }))
+            payloads = {item["sha256"]: data for item, data in zip(artifacts, (b"package-tarball", b"binary"))}
+            running = False
+            calls = []
+
+            def command(args, *, timeout=300):
+                nonlocal running
+                calls.append((list(args), timeout))
+                operation = args[1]
+                target_root = Path(args[args.index("--platform-root") + 1])
+                if operation == "install" and "--offline" not in args:
+                    self.assertIn("--secret-env", args)
+                    (target_root / layout_value("ownershipRecord")).write_text("fixture owner\n")
+                    package_manager = target_root / layout_value("packageManagerStateDirectories.installer.path")
+                    package_manager.mkdir(parents=True)
+                    cache = target_root / layout_value("sharedRuntimePaths.kb_v2_cache.statePath")
+                    for artifact in artifacts:
+                        digest = artifact["sha256"]
+                        path = (cache / "binaries" / digest if artifact.get("kind") == "binary"
+                                else cache / "packages" / f"{digest}.tgz")
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(payloads[digest])
+                    (target_root / layout_value("currentLink")).symlink_to("versions/provisioned")
+                    (target_root / "versions/provisioned/.kb/v2").mkdir(parents=True)
+                    running = True
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "install" and "--offline" in args:
+                    self.assertEqual({path.name for path in target_root.iterdir()},
+                                     {layout_value("ownershipRecord"), layout_value("sharedStateDirectory")})
+                    state = target_root / layout_value("sharedStateDirectory")
+                    self.assertTrue((target_root / layout_value("packageManagerStateDirectories.installer.path")).is_dir())
+                    self.assertTrue((state / "cache/packages" / f"{artifacts[0]['sha256']}.tgz").is_file())
+                    self.assertTrue((state / "cache/binaries" / artifacts[1]["sha256"]).is_file())
+                    active = target_root / "versions/active"
+                    (active / ".kb/v2").mkdir(parents=True)
+                    (target_root / layout_value("currentLink")).symlink_to("versions/active")
+                    receipt_artifacts = [{"id": item["id"], "resolvedFrom": "cache", "resolvedUrl": ""}
+                                         for item in artifacts]
+                    (active / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {
+                        "request": {"platformRoot": str(target_root.resolve()), "source": "offline"},
+                        "artifacts": receipt_artifacts}}))
+                    (active / ".kb/v2/secret-state.json").write_text(json.dumps({"requirements": {
+                        "gateway.jwtSecret": "generated fixture value"}}))
+                    running = True
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "apply" and "--offline" in args:
+                    cache = target_root / layout_value("sharedRuntimePaths.kb_v2_cache.statePath")
+                    if not (cache / "packages" / f"{artifacts[0]['sha256']}.tgz").is_file():
+                        return subprocess.CompletedProcess(args, 2, "fixture diagnostic", "")
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "stop":
+                    running = False
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "uninstall":
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "status":
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                raise AssertionError(f"unexpected installer journey command: {args}")
+
+            def json_command(_runner, args, _label):
+                if args[1] == "plan":
+                    return {"plan": {"artifacts": artifacts}}
+                result = _runner(args)
+                if args[1] == "status":
+                    return {"host": {layout_value("sharedStateDirectory"): "running" if running else "stopped"}}
+                return {"operation": args[1]}
+
+            def data(result, _label):
+                return {"operation": "uninstall" if result.args[1] == "uninstall" else "apply"}
+
+            def diagnostic(result, _label):
+                self.assertEqual(result.returncode, 2)
+                error = {"code": "KB_INSTALL_OFFLINE_ARTIFACT_MISSING", "details": {
+                    "artifact": artifacts[0]["id"], "cachePath": str(
+                        root.resolve() / layout_value("sharedRuntimePaths.kb_v2_cache.statePath") / "packages" /
+                        f"{artifacts[0]['sha256']}.tgz")}}
+                return {"ok": False, "error": error}, error
+
+            selection = JourneySelection(
+                requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+                prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+                runner_selector="service-local:explore", requested_runners="service-local:explore")
+            with use_journey_selection(selection), \
+                    patch.object(installer_case_steps, "_json_command", side_effect=json_command), \
+                    patch.object(installer_case_steps, "_data", side_effect=data), \
+                    patch.object(installer_case_steps, "_diagnostic", side_effect=diagnostic):
+                journey = run_offline_generated_secret_install_step(
+                    mode="local", launcher="kb-create", stable_index=index,
+                    platform_root=platform_root, run_command=command)
+
+        self.assertEqual(journey.steps[0].cases, ["S-181.7"])
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        self.assertEqual([args[1] for args, _ in calls],
+                         ["install", "status", "stop", "install", "apply", "apply", "status", "stop", "uninstall"])
+        self.assertTrue(all(timeout == 1200 for args, timeout in calls if args[1] in {"install", "apply"}))
+        install_calls = [args for args, _ in calls if args[1] == "install"]
+        self.assertNotIn("--offline", install_calls[0])
+        self.assertIn("--offline", install_calls[1])
+        self.assertEqual(install_calls[1][-2:], ["--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
+        self.assertTrue(all("--offline" in args for args, _ in calls if args[1] == "apply"))
+
+    def test_offline_cache_receipt_rejects_online_source_fallback(self):
+        with self.assertRaisesRegex(RuntimeError, "cache-only offline resolution"):
+            installer_case_steps.assert_offline_cache_receipt({"plan": {
+                "request": {"source": "registry"},
+                "artifacts": [{"resolvedFrom": "cache"}],
+            }}, "fixture")
+        with self.assertRaisesRegex(RuntimeError, "cache-only offline resolution"):
+            installer_case_steps.assert_offline_cache_receipt({"plan": {
+                "request": {"source": "offline"},
+                "artifacts": [{"resolvedFrom": "registry", "resolvedUrl": "https://fixture.test/pkg.tgz"}],
+            }}, "fixture")
+
+    def test_offline_generated_secret_journey_cleans_partial_provisioning_and_keeps_original_failure(self):
+        from journey_selection import JourneySelection, use_journey_selection
+
+        with tempfile.TemporaryDirectory(prefix="journey-offline-generated-secret-failure-") as temp:
+            parent = Path(temp)
+            main_root = parent / "main-root"
+            main_root.mkdir()
+            index = parent / "release-index.json"
+            index.write_text(json.dumps({
+                "channels": {"stable": "2.0.0"},
+                "platforms": [{"version": "2.0.0", "config": [], "members": [{"config": [
+                    {"id": "gateway.jwtSecret", "secret": True, "generate": True},
+                ]}]}],
+            }))
+            artifact = {"id": "platform", "kind": "platform", "package": "@kb/platform",
+                        "sha256": hashlib.sha256(b"package").hexdigest(),
+                        "resolvedUrl": "https://fixture.test/platform.tgz"}
+            running = False
+            calls = []
+
+            def command(args, *, timeout=300):
+                nonlocal running
+                calls.append(args[1])
+                operation = args[1]
+                root = Path(args[args.index("--platform-root") + 1])
+                if operation == "install":
+                    (root / layout_value("ownershipRecord")).write_text("fixture owner\n")
+                    package_manager = root / layout_value("packageManagerStateDirectories.installer.path")
+                    package_manager.mkdir(parents=True)
+                    (root / "versions/provisioned/.kb/v2").mkdir(parents=True)
+                    (root / layout_value("currentLink")).symlink_to("versions/provisioned")
+                    (root / layout_value("currentLink") / ".kb/v2/receipt.json").write_text("{}")
+                    running = True
+                    return subprocess.CompletedProcess(args, 2, "provision failure", "")
+                if operation == "status":
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "stop":
+                    running = False
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "uninstall":
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                raise AssertionError(f"unexpected cleanup command: {args}")
+
+            def json_command(_runner, args, _label):
+                if args[1] == "plan":
+                    return {"plan": {"artifacts": [artifact]}}
+                _runner(args)
+                if args[1] == "status":
+                    return {"host": {layout_value("sharedStateDirectory"): "running" if running else "stopped"}}
+                return {"operation": args[1]}
+
+            def data(result, _label):
+                if result.args[1] == "install":
+                    raise RuntimeError("original online provisioning failure")
+                return {"operation": "uninstall"}
+
+            selection = JourneySelection(
+                requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+                prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+                runner_selector="service-local:explore", requested_runners="service-local:explore")
+            with use_journey_selection(selection), \
+                    patch.object(installer_case_steps, "_json_command", side_effect=json_command), \
+                    patch.object(installer_case_steps, "_data", side_effect=data):
+                journey = run_offline_generated_secret_install_step(
+                    mode="local", launcher="kb-create", stable_index=index,
+                    platform_root=main_root, run_command=command)
+
+        self.assertEqual(journey.steps[0].status, "FAIL")
+        self.assertIn("original online provisioning failure", journey.steps[0].message)
+        self.assertNotIn("cleanup failed", journey.steps[0].message)
+        self.assertEqual(calls, ["install", "status", "stop", "uninstall"])
+
+    def test_offline_generated_secret_journey_preserves_root_when_stop_fails(self):
+        from journey_selection import JourneySelection, use_journey_selection
+
+        with tempfile.TemporaryDirectory(prefix="journey-offline-generated-secret-stop-failure-") as temp:
+            parent = Path(temp)
+            main_root = parent / "main-root"
+            main_root.mkdir()
+            index = parent / "release-index.json"
+            index.write_text(json.dumps({
+                "channels": {"stable": "2.0.0"},
+                "platforms": [{"version": "2.0.0", "members": [{"config": [
+                    {"id": "gateway.jwtSecret", "secret": True, "generate": True},
+                ]}]}],
+            }))
+            artifact = {"id": "platform", "kind": "platform", "package": "@kb/platform",
+                        "sha256": hashlib.sha256(b"package").hexdigest()}
+            running = False
+            calls = []
+
+            def command(args, *, timeout=300):
+                nonlocal running
+                calls.append(args[1])
+                root = Path(args[args.index("--platform-root") + 1])
+                if args[1] == "install":
+                    (root / layout_value("ownershipRecord")).write_text("fixture owner\n")
+                    (root / "versions/partial/.kb/v2").mkdir(parents=True)
+                    (root / layout_value("currentLink")).symlink_to("versions/partial")
+                    (root / layout_value("currentLink") / ".kb/v2/receipt.json").write_text("{}")
+                    running = True
+                    return subprocess.CompletedProcess(args, 2, "provision failure", "")
+                if args[1] == "status":
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if args[1] == "stop":
+                    return subprocess.CompletedProcess(args, 2, "stop failed", "")
+                if args[1] == "uninstall":
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                raise AssertionError(f"unexpected cleanup command: {args}")
+
+            def json_command(_runner, args, _label):
+                if args[1] == "plan":
+                    return {"plan": {"artifacts": [artifact]}}
+                result = _runner(args)
+                if args[1] == "status":
+                    return {"host": {layout_value("sharedStateDirectory"): "running" if running else "stopped"}}
+                if result.returncode != 0:
+                    raise RuntimeError("stop command failed")
+                return {"operation": args[1]}
+
+            def data(result, _label):
+                if result.args[1] == "install":
+                    raise RuntimeError("original online provisioning failure")
+                return {"operation": "uninstall"}
+
+            selection = JourneySelection(
+                requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+                prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+                runner_selector="service-local:explore", requested_runners="service-local:explore")
+            with use_journey_selection(selection), \
+                    patch.object(installer_case_steps, "_json_command", side_effect=json_command), \
+                    patch.object(installer_case_steps, "_data", side_effect=data):
+                fixture = run_offline_generated_secret_install_step(
+                    mode="local", launcher="kb-create", stable_index=index,
+                    platform_root=main_root, run_command=command)
+
+            fixture_root = (main_root.parent / "s181-offline-generated-secret-root").resolve()
+            self.assertIn(fixture_root, getattr(fixture, "preserve_fixture_roots", set()))
+            self.assertTrue((fixture_root / layout_value("ownershipRecord")).is_file())
+            self.assertTrue((fixture_root / layout_value("currentLink")).is_symlink())
+
+            owner = Journey("local", "s181-parent-cleanup")
+            run_fixture_group(owner, "offline generated-secret install", lambda: fixture)
+            installer_case_steps.cleanup_generated_fixture_roots(
+                [fixture_root], getattr(owner, "preserve_fixture_roots", set()))
+            self.assertTrue(fixture_root.exists(), "parent fixture teardown deleted evidence after stop failure")
+
+        self.assertEqual(fixture.steps[0].status, "FAIL")
+        self.assertIn("original online provisioning failure", fixture.steps[0].message)
+        self.assertIn(str(fixture_root), fixture.steps[0].message)
+        self.assertIn("stop command failed", fixture.steps[0].message)
+        self.assertEqual(calls, ["install", "status", "stop"])
+        self.assertIn(fixture_root, getattr(owner, "preserve_fixture_roots", set()))
+        self.assertIn(fixture_root, journey_resources.PRESERVED_FIXTURE_ROOTS)
+        journey_resources.PRESERVED_FIXTURE_ROOTS.discard(fixture_root)
+
     def test_platform_cli_resolves_the_requested_roots_executable(self):
         with tempfile.TemporaryDirectory(prefix="journey-platform-cli-") as temp:
             root = Path(temp)
@@ -2075,7 +2367,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                       for status in [step.status]}
             owners = {claim: step.name for step in journey.steps for claim in step.cases}
             expected = {"PC-001.2", "PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "PC-001.19", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
-                        "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-025.1", "S-025.2", "S-054.23",
+                        "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-181.7", "S-025.1", "S-025.2", "S-054.23",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",
                         "S-187.4", "S-187.5", "S-187.6", "S-187.9", "S-187.11", "S-187.12", "S-124.14"}

@@ -21,6 +21,7 @@ from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import commit_marketplace_install_record
 import runner
 from runner import REGISTRY, marketplace_install_flags
+import journey_resources
 
 
 class WorkflowHostStateBoundaryTests(unittest.TestCase):
@@ -201,6 +202,31 @@ def build_wizard_pty_fixture(binary: Path) -> None:
 
 
 class RunnerInstallFailureTests(unittest.TestCase):
+    def test_cleanup_preserves_failed_fixture_evidence_inside_home(self):
+        with tempfile.TemporaryDirectory(prefix="journey-cleanup-preserve-") as temporary:
+            home = Path(temporary) / "home"
+            home.mkdir()
+            preserved = home / "kb-platform"
+            partial = preserved / "versions" / "partial"
+            partial.mkdir(parents=True)
+            owner = preserved / "ownership.json"
+            owner.write_text("ownership evidence")
+            pid = partial / "host.pid"
+            pid.write_text("process evidence")
+            disposable = home / "ordinary-fixture"
+            disposable.mkdir()
+            (disposable / "temporary.txt").write_text("remove me")
+
+            with patch.object(runner, "HOME", home), \
+                    patch.object(runner, "ACTIVE_OUTER_GRAPH", None), \
+                    patch.object(journey_resources, "PRESERVED_FIXTURE_ROOTS", set()):
+                journey_resources.register_preserved_fixture_root(preserved)
+                runner.cleanup()
+
+            self.assertTrue(owner.is_file())
+            self.assertEqual(pid.read_text(), "process evidence")
+            self.assertFalse(disposable.exists())
+
     def test_installer_command_forwards_input_to_the_shared_command_runner(self):
         runner = importlib.import_module("runner")
         received = {}

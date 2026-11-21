@@ -7,9 +7,51 @@ import shlex
 import shutil
 import sys
 from pathlib import Path, PurePosixPath
-from typing import Callable, NamedTuple
+from typing import Callable, Iterable, NamedTuple
 
 from journey_values import journey_value
+
+
+PRESERVED_FIXTURE_ROOTS: set[Path] = set()
+
+
+def register_preserved_fixture_root(path: Path) -> None:
+    """Retain a failed disposable install root until teardown evidence is inspected."""
+    PRESERVED_FIXTURE_ROOTS.add(Path(path).resolve())
+
+
+def preserved_fixture_roots() -> frozenset[Path]:
+    return frozenset(PRESERVED_FIXTURE_ROOTS)
+
+
+def remove_tree_preserving(root: Path, preserve_paths: Iterable[Path]) -> None:
+    """Delete a temporary tree while retaining selected descendants and parents."""
+    base = Path(root).resolve()
+    preserved = {Path(path).resolve() for path in preserve_paths}
+    for path in preserved:
+        try:
+            path.relative_to(base)
+        except ValueError as error:
+            raise ValueError(f"preserved fixture path {path} is outside temporary root {base}") from error
+    if base in preserved:
+        return
+
+    def remove_contents(directory: Path) -> None:
+        for child in directory.iterdir():
+            target = child.resolve()
+            if target in preserved:
+                continue
+            if any(path.is_relative_to(target) for path in preserved):
+                if child.is_symlink() or not child.is_dir():
+                    raise ValueError(f"preserved fixture path crosses non-directory {child}")
+                remove_contents(child)
+            elif child.is_symlink() or child.is_file():
+                child.unlink()
+            else:
+                shutil.rmtree(child)
+
+    if base.exists():
+        remove_contents(base)
 
 
 class RunnerImageResource(NamedTuple):

@@ -41,7 +41,9 @@ from installer_case_steps import (run_doctor_root_isolation_step,
                                   commit_marketplace_install_record,
                                   add_installed_host_stop_case_step)
 from installer_case_steps import parse_install_refusal
-from journey_resources import host_structured_log_problem, case_catalog_root, journey_module, parse_shell_commands, resource_root, workspace_resource
+from journey_resources import (case_catalog_root, host_structured_log_problem, journey_module,
+                               parse_shell_commands, preserved_fixture_roots, remove_tree_preserving,
+                               resource_root, workspace_resource)
 from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
@@ -517,12 +519,12 @@ def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
 
 
 def installer_command(args: list[str], *, env: Mapping[str, str], secret: str,
-                      input: str | None = None) -> CompletedProcess[str]:
+                      input: str | None = None, timeout: int = 1200) -> CompletedProcess[str]:
     installer_env = dict(env)
     if "--secret-env" in args:
         store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", secret,
                             "installer scenario password")
-    return run(args, env=installer_env, timeout=1200, input_text=input)[0]
+    return run(args, env=installer_env, timeout=timeout, input_text=input)[0]
 
 
 def _sample_pnpm_rss_for_run(pid: int) -> None:
@@ -1832,9 +1834,10 @@ def _main(*, update_variant_runner=None):
             return run(args, env=installer_env, timeout=1200)[0]
         fixture_env = env
         def installer_command_for_fixture(args: list[str], *, input: str | None = None,
-                                          env: Mapping[str, str] | None = None):
+                                          env: Mapping[str, str] | None = None,
+                                          timeout: int = 1200):
             return installer_command(args, env=env if env is not None else fixture_env,
-                                     secret=installer_secret, input=input)
+                                     secret=installer_secret, input=input, timeout=timeout)
         fixture_groups = ISOLATED_FIXTURE_GROUPS
         fixture_group_keys = {group: f"isolated-fixture:{group.__name__}" for group in fixture_groups}
         selected_groups = tuple(group for group in fixture_groups
@@ -2603,7 +2606,11 @@ def cleanup() -> None:
         if process.poll() is None:
             process.terminate()
             process.wait(timeout=10)
-    shutil.rmtree(HOME, ignore_errors=True)
+    preserved = preserved_fixture_roots()
+    if preserved:
+        remove_tree_preserving(HOME, preserved)
+    else:
+        shutil.rmtree(HOME, ignore_errors=True)
 
 
 if __name__ == "__main__":
