@@ -11,7 +11,7 @@ import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { RegisteredServiceCommandOperation, ServiceManifest } from "@kb-labs/plugin-contracts";
 
 /** Capture command UI output for the active MCP tool call. */
-export function projectMcpUiProvider(_hostType: string) {
+export function projectMcpUiProvider() {
   const output = callOutput.getStore();
   return output ? createBufferedUI((text, model) => {
     output.text.push(text);

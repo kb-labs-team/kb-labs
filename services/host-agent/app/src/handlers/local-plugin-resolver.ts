@@ -74,7 +74,9 @@ export class LocalPluginResolver {
     for (const configuredPath of this.allowedPaths) {
       try {
         const canonical = await canonicalizeProjectPath(configuredPath);
-        if (deriveProjectId(canonical) === request.projectId) matchingRoots.push(canonical);
+        if (deriveProjectId(canonical) === request.projectId) {
+          matchingRoots.push(canonical);
+        }
       } catch {
         // A stale or inaccessible agent workspace cannot authorize execution.
       }
@@ -128,7 +130,9 @@ export class LocalPluginResolver {
       throw new Error(`Stored plugin manifest does not match the project pin: ${request.pluginId}@${pin.version}`);
     }
     const commands = manifest.cli?.commands.filter((command) => command.path === request.commandPath) ?? [];
-    if (commands.length !== 1) throw new Error(`Marketplace command is missing or ambiguous: ${request.commandPath}`);
+    if (commands.length !== 1) {
+      throw new Error(`Marketplace command is missing or ambiguous: ${request.commandPath}`);
+    }
 
     const command = commands[0]!;
     const [handlerReference, exportName] = command.handler.split('#', 2);
