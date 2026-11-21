@@ -26,6 +26,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_sel
                             configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             expect_html, install_project_agents_plugin,
+                            prepare_mcp_projects,
                             request as request_result,
                             project_plugin_settings_isolation, repository_git_status,
                             _prepare_mcp_projects,
@@ -1735,6 +1736,7 @@ raise SystemExit(1)
             root = Path(directory)
             home = root / "home"
             home.mkdir()
+            home = home.resolve()
             project = home / "fresh-project"
             project.mkdir()
             commands = []
@@ -1845,6 +1847,7 @@ raise SystemExit(1)
             root = Path(directory)
             home = root / "home"
             home.mkdir()
+            home = home.resolve()
             project_a = root / "project-a"
             project_a.mkdir()
             subprocess.run(["git", "init", "-q", str(project_a)], check=True)
@@ -1866,6 +1869,8 @@ raise SystemExit(1)
                     return subprocess.CompletedProcess(
                         command, 0,
                         json.dumps({"ok": True, "data": {"project": {"id": "prj_b", "path": registry_project_root}}}), "")
+                if command[:4] == ["kb", "marketplace", "plugins", "list"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"entries": [], "total": 0}}), "")
                 return subprocess.CompletedProcess(command, 0, "{}", "")
 
             with patch("service_runner._registry_version", return_value="2.120.1"):
@@ -1882,6 +1887,9 @@ raise SystemExit(1)
 
         self.assertEqual(project_b_id, "prj_b")
         self.assertEqual(registered_project_roots, [project_b_root])
+        self.assertIn(["kb", "marketplace", "install", "@kb-labs/review@2.120.1", "--scope", "project", "--json"], calls)
+        self.assertIn(["kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"], calls)
+        self.assertIn(["kb", "marketplace", "plugins", "list", "--scope", "project", "--json"], calls)
         self.assertNotIn("KB_JOURNEY_PROJECT_B_ID", env)
         self.assertNotIn("KB_JOURNEY_PROJECT_B_ROOT", env)
         self.assertEqual(handoff, {
@@ -1893,14 +1901,36 @@ raise SystemExit(1)
                 "path": str(plan_path), "planId": "journey-commit", "totalCommits": 1,
             },
         })
-        self.assertEqual(calls[0], ["kb", "marketplace", "install", "@kb-labs/commit", "--json"])
+        self.assertEqual(calls[0], ["kb", "marketplace", "install", "@kb-labs/commit", "--scope", "project", "--json"])
         registration_calls = [call for call in calls if call[:3] == ["kb", "project", "add"]]
         self.assertEqual(len(registration_calls), 1)
-        self.assertEqual(calls[2], ["kb", "marketplace", "install", "@kb-labs/review@2.120.1", "--json"])
+        self.assertEqual(calls[1], ["kb", "marketplace", "install", "@kb-labs/review@2.120.1", "--scope", "project", "--json"])
         self.assertEqual(registration_calls[0][0:3], ["kb", "project", "add"])
         self.assertEqual(registered_project_exists, [True])
         self.assertEqual(plan["gitStatus"]["staged"], ["note.txt"])
         self.assertEqual(plan["commits"][0]["files"], ["note.txt"])
+
+    def test_prepare_mcp_projects_rejects_review_fixture_present_at_platform_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            home.mkdir()
+            project_a = root / "project-a"
+            project_a.mkdir()
+            subprocess.run(["git", "init", "-q", str(project_a)], check=True)
+            (project_a / "note.txt").write_text("journey note\n")
+            subprocess.run(["git", "-C", str(project_a), "add", "note.txt"], check=True)
+            env = {"HOME": str(home.resolve())}
+
+            def fake_runner(command, **kwargs):
+                if command[:4] == ["kb", "marketplace", "plugins", "list"] and "platform" in command:
+                    payload = {"ok": True, "data": {"entries": [{"id": "@kb-labs/review"}], "total": 1}}
+                    return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+                return subprocess.CompletedProcess(command, 0, "{}", "")
+
+            with patch("service_runner._registry_version", return_value="2.120.1"):
+                with self.assertRaisesRegex(RuntimeError, "Review plugin is installed at platform scope"):
+                    prepare_mcp_projects(str(project_a), "http://registry.test", env, fake_runner)
 
     def test_mcp_initialize_checks_protocol_response(self):
         response = {"result": {"protocolVersion": "2025-03-26"}}
