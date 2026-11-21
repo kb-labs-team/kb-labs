@@ -12,6 +12,7 @@ export type StdioFrame =
   | { type: 'execution:cancel'; requestId: string }
   | { type: 'runtime:ready' }
   | { type: 'platform:request'; requestId: string; payload: unknown }
+  | { type: 'platform:cancel'; requestId: string }
   | { type: 'platform:response'; requestId: string; payload: unknown }
   | { type: 'platform:message'; payload: unknown }
   | { type: 'platform:push'; payload: unknown }
@@ -41,6 +42,7 @@ function isStdioFrame(value: unknown): value is StdioFrame {
       return typeof value.requestId === 'string' && 'payload' in value
         && (value.type !== 'execution:result' || value.payloadUndefined === undefined || value.payloadUndefined === true);
     case 'execution:cancel':
+    case 'platform:cancel':
       return typeof value.requestId === 'string';
     case 'runtime:ready':
       return true;

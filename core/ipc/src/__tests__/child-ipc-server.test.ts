@@ -137,7 +137,7 @@ describe('ChildIPCServer', () => {
         expect(mockChild.send).toHaveBeenCalled();
       });
 
-      expect(mockPlatform.llm.complete).toHaveBeenCalledWith('hello world', { temperature: 0.5 });
+      expect(mockPlatform.llm.complete).toHaveBeenCalledWith('hello world', expect.objectContaining({ temperature: 0.5, signal: expect.any(AbortSignal) }));
     });
 
     it('should dispatch vectorStore.search', async () => {

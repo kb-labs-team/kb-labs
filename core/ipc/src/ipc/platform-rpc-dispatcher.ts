@@ -16,6 +16,7 @@ function serializeError(error: unknown): SerializableError {
 /** Owns adapter authorization, dispatch, and event-bus message handling. */
 export class PlatformRPCDispatcher {
   private readonly eventBusSubs = new Map<string, () => void>();
+  private readonly inFlight = new Map<string, AbortController>();
 
   constructor(
     private readonly platform: IPlatformAdapters,
@@ -23,6 +24,13 @@ export class PlatformRPCDispatcher {
   ) {}
 
   async dispatch(message: unknown): Promise<void> {
+    if (typeof message === 'object' && message !== null
+      && 'type' in message && message.type === 'adapter:cancel'
+      && 'requestId' in message && typeof message.requestId === 'string') {
+      this.inFlight.get(message.requestId)?.abort();
+      return;
+    }
+
     if (isEventBusSubscribe(message)) {
       if (!this.platform.eventBus) { return; }
       const { subscriptionId, topic } = message;
@@ -50,6 +58,8 @@ export class PlatformRPCDispatcher {
       return;
     }
 
+    const controller = new AbortController();
+    this.inFlight.set(message.requestId, controller);
     try {
       const adapter = resolveIPCAdapter(this.platform, message.adapter);
       const method = (adapter as Record<string, unknown>)[message.method];
@@ -57,6 +67,11 @@ export class PlatformRPCDispatcher {
         throw new Error(`Method '${message.method}' not found on adapter '${message.adapter}'`);
       }
       const args = message.args.map((arg) => deserialize(arg));
+      if (message.adapter === 'llm' && (message.method === 'complete' || message.method === 'chatWithTools')) {
+        const optionsIndex = 1;
+        const options = args[optionsIndex];
+        args[optionsIndex] = { ...(options && typeof options === 'object' ? options as Record<string, unknown> : {}), signal: controller.signal };
+      }
       const result = await method.apply(adapter, args);
       await this.send({
         type: 'adapter:response',
@@ -69,11 +84,15 @@ export class PlatformRPCDispatcher {
         requestId: message.requestId,
         error: serializeError(error),
       } satisfies AdapterResponse);
+    } finally {
+      this.inFlight.delete(message.requestId);
     }
   }
 
   close(): void {
     for (const unsubscribe of this.eventBusSubs.values()) { unsubscribe(); }
+    for (const controller of this.inFlight.values()) { controller.abort(); }
+    this.inFlight.clear();
     this.eventBusSubs.clear();
   }
 

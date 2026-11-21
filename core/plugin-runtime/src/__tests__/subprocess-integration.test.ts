@@ -285,6 +285,32 @@ describe('Subprocess Integration Tests', () => {
     }
   }, 10_000);
 
+  // case: S-203.26
+  it('redacts messages across subprocess stdout IPC frames', async () => {
+    const testDir = join(tmpdir(), `subprocess-ui-redaction-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const handlerPath = join(testDir, 'ui-redaction-handler.mjs');
+    writeFileSync(handlerPath, `export default { async execute() { process.stdout.write('prefix host-secret-'); process.stdout.write('split\\r'); return { ok: true }; } };`);
+    const descriptor: PluginContextDescriptor = {
+      hostType: 'cli', pluginId: '@kb-labs/test-ui-redaction', pluginVersion: '1.0.0',
+      requestId: 'subprocess-ui-redaction', handlerId: 'test:ui-redaction', permissions: {},
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+    };
+    const logs: string[] = [];
+
+    try {
+      const result = await withProcessSensitiveValues(['host-secret-split'], () => runInSubprocess({
+        descriptor, platform: createPlatform(), handlerPath, input: {}, timeoutMs: 5000, cwd: testDir,
+        onLog: (entry) => logs.push(entry.message),
+      }));
+      expect(result.data).toEqual({ ok: true });
+      expect(logs.join('')).toContain('[REDACTED]');
+      expect(logs.join('')).not.toContain('host-secret-split');
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
   // case: S-244.9
   it('multiplexes platform RPC and console logs without corrupting framed stdout', async () => {
     const testDir = join(tmpdir(), `subprocess-stdio-test-${Date.now()}`);

@@ -6,6 +6,7 @@ import {
   type PendingRequest,
   TransportError,
   TimeoutError,
+  createTransportAbortError,
 } from './transport';
 import { selectTimeout } from './timeout-config';
 import type { StdioChannel } from './stdio-channel';
@@ -24,6 +25,7 @@ export class StdioTransport implements ITransport {
       const pending = this.pending.get(frame.requestId);
       if (!pending) { return; }
       clearTimeout(pending.timer);
+      pending.signal?.removeEventListener('abort', pending.abortHandler!);
       this.pending.delete(frame.requestId);
       pending.resolve(frame.payload);
     });
@@ -32,19 +34,33 @@ export class StdioTransport implements ITransport {
     });
   }
 
-  send(call: AdapterCall): Promise<AdapterResponse> {
+  send(call: AdapterCall, signal?: AbortSignal): Promise<AdapterResponse> {
+    if (signal?.aborted) { return Promise.reject(createTransportAbortError(signal)); }
     if (this.closed) { return Promise.reject(new TransportError('Transport is closed')); }
     const timeout = selectTimeout(call, this.config.timeout);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(call.requestId);
+        pending.signal?.removeEventListener('abort', pending.abortHandler!);
         reject(new TimeoutError(`Adapter call timed out after ${timeout}ms`, timeout));
       }, timeout);
-      this.pending.set(call.requestId, { resolve, reject, timer });
+      const pending = { resolve, reject, timer, signal } as PendingRequest;
+      if (signal) {
+        pending.abortHandler = () => {
+          if (this.pending.get(call.requestId) !== pending) { return; }
+          clearTimeout(timer);
+          this.pending.delete(call.requestId);
+          void this.channel.send({ type: 'platform:cancel', requestId: call.requestId });
+          reject(createTransportAbortError(signal));
+        };
+        signal.addEventListener('abort', pending.abortHandler, { once: true });
+      }
+      this.pending.set(call.requestId, pending);
       this.channel.send({ type: 'platform:request', requestId: call.requestId, payload: call }).catch((error: unknown) => {
         const pending = this.pending.get(call.requestId);
         if (!pending) { return; }
         clearTimeout(pending.timer);
+        pending.signal?.removeEventListener('abort', pending.abortHandler!);
         this.pending.delete(call.requestId);
         reject(new TransportError('Failed to send platform RPC frame', error instanceof Error ? error : undefined));
       });
@@ -68,6 +84,7 @@ export class StdioTransport implements ITransport {
     this.unsubscribePush();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
+      pending.signal?.removeEventListener('abort', pending.abortHandler!);
       pending.reject(new TransportError('Transport closed'));
     }
     this.pending.clear();

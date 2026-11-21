@@ -7,6 +7,7 @@ export class StdioPlatformServer {
   private readonly dispatcher: PlatformRPCDispatcher;
   private readonly unsubscribeRequest: () => void;
   private readonly unsubscribeMessage: () => void;
+  private readonly unsubscribeCancel: () => void;
 
   constructor(private readonly channel: StdioChannel, platform: IPlatformAdapters) {
     this.dispatcher = new PlatformRPCDispatcher(platform, async (message) => {
@@ -30,11 +31,15 @@ export class StdioPlatformServer {
     this.unsubscribeMessage = channel.on('platform:message', (frame) => {
       void this.dispatcher.dispatch(frame.payload);
     });
+    this.unsubscribeCancel = channel.on('platform:cancel', (frame) => {
+      void this.dispatcher.dispatch({ type: 'adapter:cancel', requestId: frame.requestId });
+    });
   }
 
   close(): void {
     this.unsubscribeRequest();
     this.unsubscribeMessage();
+    this.unsubscribeCancel();
     this.dispatcher.close();
   }
 }

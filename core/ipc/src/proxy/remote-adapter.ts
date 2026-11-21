@@ -109,7 +109,7 @@ export abstract class RemoteAdapter<T, TOperation extends string = string> {
    * return this.callRemote('upsert', [vectors], 120000); // 2 min timeout
    * ```
    */
-  protected async callRemote(method: TOperation, args: unknown[], timeout?: number): Promise<unknown> {
+  protected async callRemote(method: TOperation, args: unknown[], timeout?: number, signal?: AbortSignal): Promise<unknown> {
     // Generate unique request ID
     const requestId = randomUUID();
 
@@ -126,7 +126,7 @@ export abstract class RemoteAdapter<T, TOperation extends string = string> {
     };
 
     // Send via transport and await response
-    const response = await this.transport.send(call);
+    const response = await this.transport.send(call, signal);
 
     // Check for error in response
     if (response.error) {

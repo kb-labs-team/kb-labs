@@ -38,6 +38,7 @@ import {
   type PendingRequest,
   TransportError,
   TimeoutError,
+  createTransportAbortError,
 } from './transport';
 import { selectTimeout } from './timeout-config';
 
@@ -78,7 +79,8 @@ export class IPCTransport implements ITransport {
     }
   }
 
-  async send(call: AdapterCall): Promise<AdapterResponse> {
+  async send(call: AdapterCall, signal?: AbortSignal): Promise<AdapterResponse> {
+    if (signal?.aborted) { throw createTransportAbortError(signal); }
     if (this.closed) {
       throw new TransportError('Transport is closed');
     }
@@ -90,17 +92,30 @@ export class IPCTransport implements ITransport {
       // Create timeout timer
       const timer = setTimeout(() => {
         this.pending.delete(call.requestId);
+        pending.signal?.removeEventListener('abort', pending.abortHandler!);
         reject(new TimeoutError(`Adapter call timed out after ${timeout}ms`, timeout));
       }, timeout);
 
       // Store pending request
-      this.pending.set(call.requestId, { resolve, reject, timer });
+      const pending: PendingRequest = { resolve, reject, timer, signal };
+      if (signal) {
+        pending.abortHandler = () => {
+          if (this.pending.get(call.requestId) !== pending) { return; }
+          clearTimeout(timer);
+          this.pending.delete(call.requestId);
+          process.send?.({ type: 'adapter:cancel', requestId: call.requestId });
+          reject(createTransportAbortError(signal));
+        };
+        signal.addEventListener('abort', pending.abortHandler, { once: true });
+      }
+      this.pending.set(call.requestId, pending);
 
       // Try to send message, with backpressure handling
       this.trySendWithBackpressure(call, 0).catch((error) => {
         const pending = this.pending.get(call.requestId);
         if (pending) {
           clearTimeout(pending.timer);
+          pending.signal?.removeEventListener('abort', pending.abortHandler!);
           this.pending.delete(call.requestId);
           reject(error);
         }
@@ -172,6 +187,7 @@ export class IPCTransport implements ITransport {
       const pending = this.pending.get(msg.requestId);
       if (!pending) { return; }
       clearTimeout(pending.timer);
+      pending.signal?.removeEventListener('abort', pending.abortHandler!);
       this.pending.delete(msg.requestId);
       pending.resolve(msg);
       return;
@@ -196,6 +212,7 @@ export class IPCTransport implements ITransport {
     // Reject all pending requests
     for (const [requestId, pending] of this.pending) {
       clearTimeout(pending.timer);
+      pending.signal?.removeEventListener('abort', pending.abortHandler!);
       pending.reject(new TransportError('Transport closed'));
     }
     this.pending.clear();

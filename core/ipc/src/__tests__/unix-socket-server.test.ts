@@ -17,6 +17,8 @@ import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import * as net from 'net';
 import * as fs from 'fs';
 import { IPC_PROTOCOL_VERSION, deserialize, serialize } from '@kb-labs/core-platform/serializable';
+import { UnixSocketTransport } from '../transport/unix-socket-transport';
+import { LLMProxy } from '../proxy/llm-proxy';
 
 describe('UnixSocketServer', () => {
   let server: UnixSocketServer;
@@ -483,6 +485,38 @@ describe('UnixSocketServer', () => {
 
       client1.end();
       client2.end();
+    });
+  });
+
+  describe('cancellation', () => {
+    it('aborts a host LLM request through the Unix socket transport', async () => {
+      let providerSignal: AbortSignal | undefined;
+      const llmAdapter = mockPlatform.llm as unknown as {
+        complete: (_prompt: string, options?: { signal?: AbortSignal }) => Promise<unknown>;
+      };
+      llmAdapter.complete = (
+        _prompt: string,
+        options?: { signal?: AbortSignal },
+      ) => {
+        providerSignal = options?.signal;
+        return new Promise((_resolve, reject) => {
+          providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason ?? new DOMException('aborted', 'AbortError')), { once: true });
+        });
+      };
+      server = new UnixSocketServer(mockPlatform, { socketPath: testSocketPath });
+      await server.start();
+      const transport = new UnixSocketTransport({ socketPath: testSocketPath, autoReconnect: false });
+      const controller = new AbortController();
+      const completion = new LLMProxy(transport).complete('wait for cancellation', { signal: controller.signal });
+      const deadline = Date.now() + 1000;
+      while (!providerSignal && Date.now() < deadline) { await new Promise((resolve) => setTimeout(resolve, 5)); }
+      expect(providerSignal).toBeDefined();
+      controller.abort(new DOMException('cancelled by caller', 'AbortError'));
+      await expect(completion).rejects.toMatchObject({ name: 'AbortError' });
+      const abortDeadline = Date.now() + 1000;
+      while (!providerSignal?.aborted && Date.now() < abortDeadline) { await new Promise((resolve) => setTimeout(resolve, 5)); }
+      expect(providerSignal?.aborted).toBe(true);
+      await transport.close();
     });
   });
 });

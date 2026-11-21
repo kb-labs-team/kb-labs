@@ -51,6 +51,7 @@ export interface UnixSocketServerConfig {
 export class UnixSocketServer {
   private server: net.Server | null = null;
   private clients = new Set<net.Socket>();
+  private readonly inFlight = new Map<net.Socket, Map<string, AbortController>>();
   private socketPath: string;
   private authToken?: string;
   private started = false;
@@ -129,8 +130,12 @@ export class UnixSocketServer {
         }
 
         try {
-          const call = JSON.parse(line) as AdapterCall;
-          this.handleCall(socket, call);
+          const message: unknown = JSON.parse(line);
+          if (isAdapterCancel(message)) {
+            this.handleCancel(socket, message);
+          } else {
+            this.handleCall(socket, message as AdapterCall);
+          }
         } catch (error) {
           this.platform.logger.warn('UnixSocketServer: failed to parse message', { error });
         }
@@ -138,11 +143,15 @@ export class UnixSocketServer {
     });
 
     socket.on('close', () => {
+      for (const controller of this.inFlight.get(socket)?.values() ?? []) { controller.abort(); }
+      this.inFlight.delete(socket);
       this.clients.delete(socket);
     });
 
     socket.on('error', (error) => {
       this.platform.logger.warn('UnixSocketServer: client socket error', { error });
+      for (const controller of this.inFlight.get(socket)?.values() ?? []) { controller.abort(); }
+      this.inFlight.delete(socket);
       this.clients.delete(socket);
     });
   }
@@ -161,6 +170,11 @@ export class UnixSocketServer {
       socket.write(JSON.stringify(response) + '\n', 'utf8');
       return;
     }
+
+    const controller = new AbortController();
+    const socketRequests = this.inFlight.get(socket) ?? new Map<string, AbortController>();
+    this.inFlight.set(socket, socketRequests);
+    socketRequests.set(call.requestId, controller);
 
     // Check protocol version compatibility
     if (call.version !== IPC_PROTOCOL_VERSION) {
@@ -215,6 +229,14 @@ export class UnixSocketServer {
         })
       );
 
+      if (call.adapter === 'llm' && (call.method === 'complete' || call.method === 'chatWithTools')) {
+        const options = args[1];
+        args[1] = {
+          ...(options && typeof options === 'object' ? options as Record<string, unknown> : {}),
+          signal: controller.signal,
+        };
+      }
+
       // Execute method on adapter
       const result = await method.apply(adapter, args);
 
@@ -263,7 +285,16 @@ export class UnixSocketServer {
         error instanceof Error ? error : new Error(String(error)),
         { adapter: call.adapter, method: call.method },
       );
+    } finally {
+      socketRequests.delete(call.requestId);
+      if (socketRequests.size === 0) { this.inFlight.delete(socket); }
     }
+  }
+
+  private handleCancel(socket: net.Socket, message: AdapterCancel): void {
+    const token = message.context?.authToken;
+    if (this.authToken && token !== this.authToken) { return; }
+    this.inFlight.get(socket)?.get(message.requestId)?.abort();
   }
 
   /**
@@ -276,8 +307,10 @@ export class UnixSocketServer {
 
     // Close all client connections
     for (const client of this.clients) {
+      for (const controller of this.inFlight.get(client)?.values() ?? []) { controller.abort(); }
       client.destroy();
     }
+    this.inFlight.clear();
     this.clients.clear();
 
     // Close server
@@ -305,6 +338,18 @@ export class UnixSocketServer {
   isStarted(): boolean {
     return this.started;
   }
+}
+
+interface AdapterCancel {
+  type: 'adapter:cancel';
+  requestId: string;
+  context?: { authToken?: string };
+}
+
+function isAdapterCancel(message: unknown): message is AdapterCancel {
+  return typeof message === 'object' && message !== null
+    && 'type' in message && message.type === 'adapter:cancel'
+    && 'requestId' in message && typeof message.requestId === 'string';
 }
 
 function toSerializableError(error: unknown): SerializableError {

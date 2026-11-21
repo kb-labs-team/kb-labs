@@ -225,7 +225,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
       ? inputFlagsRaw as Record<string, unknown>
       : {};
     const jsonMode = Boolean(inputFlags['json']);
-    if (jsonMode) { setJsonMode(true); }
+    setJsonMode(jsonMode);
 
     // eventEmitter sends log lines to parent pool via IPC.
     // Routes by event name — 'log.line' (ui/shell) vs 'logger.line' (ctx.logger.*).
@@ -318,6 +318,8 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
     process.send!(resultMessage);
   } catch (error) {
     sendError(requestId, normalizeExecutionFailure(error, request).error, sensitiveValues);
+  } finally {
+    setJsonMode(false);
   }
 }
 

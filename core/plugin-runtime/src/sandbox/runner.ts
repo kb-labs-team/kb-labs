@@ -12,7 +12,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { createSensitiveStreamCapture, getRequestSensitiveValues, SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import { createSensitiveStreamCapture, createSensitiveTextStream, getRequestSensitiveValues, SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { ErrorEnvelope, SerializedError } from '@kb-labs/core-platform';
 import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import { createStdioChannel, StdioPlatformServer } from '@kb-labs/core-ipc';
@@ -281,8 +281,28 @@ export async function runInSubprocess<T = unknown>(
     let cancelId: ReturnType<typeof setTimeout> | undefined;
     const channel = createStdioChannel(child.stdout, child.stdin);
     const platformServer = new StdioPlatformServer(channel, platform);
+    let logLineNo = 0;
+    const logCaptures = new Map<'stdout' | 'stderr', { write: (chunk: string) => string; flush: () => string; level: string }>();
+    const emitLogText = (stream: 'stdout' | 'stderr', level: string, message: string) => {
+      if (!outputActive || !message) { return; }
+      options.onLog?.({ level, message, stream, lineNo: ++logLineNo, timestamp: new Date().toISOString() });
+    };
+    const getLogCapture = (stream: 'stdout' | 'stderr', level: string) => {
+      let capture = logCaptures.get(stream);
+      if (!capture) {
+        const redactor = createSensitiveTextStream(getRequestSensitiveValues());
+        capture = { write: (chunk) => redactor.write(chunk), flush: () => redactor.flush(), level };
+        logCaptures.set(stream, capture);
+      }
+      capture.level = level;
+      return capture;
+    };
+    const flushLogCaptures = () => {
+      for (const [stream, capture] of logCaptures) { emitLogText(stream, capture.level, capture.flush()); }
+    };
     const finish = () => {
       completed = true;
+      flushLogCaptures();
       stderrCapture.flush();
       outputActive = false;
       clearTimeout(timeoutId.timer);
@@ -340,14 +360,8 @@ export async function runInSubprocess<T = unknown>(
       fail(error instanceof Error ? error : new Error(String(error)));
     });
     channel.on('log', (frame) => {
-      options.onLog?.({
-        level: frame.level,
-        message: frame.message,
-        stream: frame.stream,
-        lineNo: 0,
-        timestamp: new Date().toISOString(),
-        meta: frame.meta,
-      });
+      const capture = getLogCapture(frame.stream, frame.level);
+      emitLogText(frame.stream, frame.level, capture.write(frame.message));
     });
     channel.on('execution:result', (frame) => {
       if (frame.requestId !== requestId) { fail(new Error('Execution result request id does not match')); return; }

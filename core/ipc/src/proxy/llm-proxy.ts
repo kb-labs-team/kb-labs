@@ -71,7 +71,8 @@ export class LLMProxy extends RemoteAdapter<ILLM> implements ILLM {
    * @returns LLM response with content and token usage
    */
   async complete(prompt: string, options?: LLMOptions): Promise<LLMResponse> {
-    return (await this.callRemote('complete', [prompt, options])) as LLMResponse;
+    const { signal, ...requestOptions } = options ?? {};
+    return (await this.callRemote('complete', [prompt, options ? requestOptions : undefined], undefined, signal)) as LLMResponse;
   }
 
   getProtocolCapabilities(): LLMProtocolCapabilities {
@@ -115,7 +116,8 @@ export class LLMProxy extends RemoteAdapter<ILLM> implements ILLM {
     messages: LLMMessage[],
     options: LLMToolCallOptions
   ): Promise<LLMToolCallResponse> {
-    return (await this.callRemote('chatWithTools', [messages, options])) as LLMToolCallResponse;
+    const { signal, ...requestOptions } = options;
+    return (await this.callRemote('chatWithTools', [messages, requestOptions], undefined, signal)) as LLMToolCallResponse;
   }
 }
 
