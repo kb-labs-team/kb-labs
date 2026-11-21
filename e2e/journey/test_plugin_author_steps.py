@@ -131,7 +131,9 @@ elif args[:3] == ["commit", "commit", "--dry-run"]:
         print(json.dumps({"ok": False, "error": {"code": "KB_ADAPTER_UNAVAILABLE",
             "message": "Adapter llm is not configured.", "hint": "kb adapter bind llm @kb-labs/adapters-openai"}}))
         raise SystemExit(1)
-    print(json.dumps({"ok": True, "data": {"plan": {"metadata": {"llmUsed": True}}, "applied": False}}))
+    print(json.dumps({"ok": True, "data": {"plan": {"metadata": {"llmUsed": True}}, "applied": False},
+                      "meta": {"execution": {"owner": "project-runtime", "projectId": "prj_fixture",
+                                               "mode": "worker-pool"}}}))
 elif args[:2] == ["commit", "commit"]:
     staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root,
                             capture_output=True, text=True, check=True).stdout
@@ -341,8 +343,8 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                 "package": "@kb-labs/commit",
             }},
         }))
-        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}):
-            journey = Journey("local", "commit-case-fixture")
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-secured:explore"}):
+            journey = Journey("secured", "commit-case-fixture")
             run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
                                   subprocess.run, self.env)
         result = journey.result()

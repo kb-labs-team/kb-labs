@@ -84,6 +84,8 @@ class ServiceJourneyTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 records = []
                 for case_id in cases:
+                    if mode == "local" and case_id == "S-160.5":
+                        continue
                     line = next((line for line, declaration in declarations.items()
                                  if case_id in (declaration.get("cases") or ())), None)
                     self.assertIsNotNone(line, f"{case_id} has no owning declaration in {source}")
@@ -93,9 +95,13 @@ class ServiceJourneyTests(unittest.TestCase):
                             "kind": "journey", "source": source, "line": line,
                         }]}],
                     }]})
-                selection = selection_from_coverage(records, ",".join(cases))
+                requested_cases = cases if mode == "secured" else tuple(
+                    case_id for case_id in cases if case_id != "S-160.5"
+                )
+                selection = selection_from_coverage(records, ",".join(requested_cases))
                 self.assertEqual(selection["runners"], [runner])
                 self.assertEqual(selection["capabilities"], ["commit-plugin"])
+                self.assertEqual("S-160.5" in selection["steps"], mode == "secured")
 
                 env = os.environ.copy()
                 env.update({
@@ -122,7 +128,8 @@ class ServiceJourneyTests(unittest.TestCase):
                     executed = []
                     lifecycle = graph.flow(
                         "marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
-                        lambda: executed.extend(cases), record_empty_success=False,
+                        lambda: executed.extend(case for case in cases if case in selection["steps"]),
+                        record_empty_success=False,
                     )
                     unrelated_marketplace = graph.flow(
                         "marketplace service checks", "marketplace", "marketplace",
@@ -136,7 +143,7 @@ class ServiceJourneyTests(unittest.TestCase):
                     )
 
                 self.assertEqual(lifecycle, "PASS")
-                self.assertEqual(executed, list(cases))
+                self.assertEqual(executed, [case for case in cases if case in selection["steps"]])
                 self.assertEqual(unrelated_marketplace, "SKIPPED")
                 self.assertEqual(plugin_author, "SKIPPED")
 

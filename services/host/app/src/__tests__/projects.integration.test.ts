@@ -25,7 +25,7 @@ import {
 } from "./testkit.js";
 import type { HostOptions } from "../host.js";
 import { createChildProcessLauncher } from "../project-runtime/launcher.js";
-import type { RuntimeLauncher, RuntimeProject } from "../project-runtime/manager.js";
+import type { RuntimeLauncher, RuntimeProcess, RuntimeProject } from "../project-runtime/manager.js";
 
 interface ErrorBody {
   error: { code: string; message: string; hint: string; cause?: string; stack?: string; details?: Record<string, unknown> };
@@ -69,6 +69,23 @@ function csrfCookie(response: Response): string {
   const csrf = cookieHeader(response).split("; ").find((cookie) => cookie.startsWith("kb_csrf="));
   if (!csrf) { throw new Error("Auth route did not set a CSRF cookie"); }
   return decodeURIComponent(csrf.slice("kb_csrf=".length));
+}
+
+function runtimeModulePort(outputTail: string, moduleId: string): number | undefined {
+  for (const line of outputTail.split(/\r?\n/u)) {
+    try {
+      const metadataStart = line.indexOf("{");
+      if (metadataStart < 0) continue;
+      const record = JSON.parse(line.slice(metadataStart)) as { event?: unknown; moduleId?: unknown; port?: unknown };
+      if (record.event === "service.starting" && record.moduleId === moduleId
+          && typeof record.port === "number" && Number.isInteger(record.port)) {
+        return record.port;
+      }
+    } catch {
+      // Runtime output also includes non-JSON adapter messages.
+    }
+  }
+  return undefined;
 }
 
 async function configureInstalledPlatformDataRoot(platformRoot: string, stateDataRoot: string, workspaceRoot: string): Promise<void> {
@@ -248,23 +265,28 @@ describe("kb-host project routing", () => {
     }));
     const previousKbHome = process.env.KB_HOME;
     process.env.KB_HOME = kbHome;
+    let projectRuntime: RuntimeProcess | undefined;
     try {
       const probe = createChildProcessLauncher({
         entry: PROJECT_RUNTIME_ENTRY,
         stopTimeoutMs: 1500,
       });
       const launcher: RuntimeLauncher = {
-        launch: (runtimeProject) => createChildProcessLauncher({
-          entry: PROJECT_RUNTIME_ENTRY,
-          env: {
-            KB_PLATFORM_ROOT: installedPlatformRoot,
-            KB_HOME: kbHome,
-            KB_MCP_AUTH_MODE: "local",
-            KB_GATEWAY_URL: `http://127.0.0.1:${running!.gatewayPort}`,
-            KB_STATE_DAEMON_URL: running!.internalUrl("state-daemon"),
+          launch: async runtimeProject => {
+            const runtime = await createChildProcessLauncher({
+              entry: PROJECT_RUNTIME_ENTRY,
+              env: {
+                KB_PLATFORM_ROOT: installedPlatformRoot,
+                KB_HOME: kbHome,
+                KB_MCP_AUTH_MODE: "local",
+                KB_GATEWAY_URL: `http://127.0.0.1:${running!.gatewayPort}`,
+                KB_STATE_DAEMON_URL: running!.internalUrl("state-daemon"),
+              },
+              stopTimeoutMs: 1500,
+            }).launch(runtimeProject);
+            projectRuntime = runtime;
+            return runtime;
           },
-          stopTimeoutMs: 1500,
-        }).launch(runtimeProject),
         probe: probe.probe,
       };
       running = await startTestHost(
@@ -357,8 +379,28 @@ describe("kb-host project routing", () => {
       expect(reinstalledRoute.status, JSON.stringify(reinstalledBody)).toBe(200);
       expect(reinstalledBody).toMatchObject({ ok: true, data: { scope: "root" } });
 
-      // case: S-160.5 — exercise token delivery through the real child
-      // runtime, runtime guard proof, REST setup closure, and CLI executor.
+      const directRestPort = runtimeModulePort(projectRuntime?.outputTail() ?? "", "rest");
+      expect(directRestPort, "the live child runtime must report its REST listener").toBeDefined();
+      const directCommand = await fetch(`http://127.0.0.1:${directRestPort}/api/v1/commands/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-kb-project-id": project.id },
+        body: JSON.stringify({
+          requestId: "direct-rest-without-guard-proof",
+          pluginId: "@kb-labs/commit",
+          commandPath: "commit plan delete",
+          input: { argv: [], flags: { json: true } },
+        }),
+      });
+      expect(directCommand.status).toBe(403);
+      expect(await directCommand.json()).toMatchObject({
+        ok: false,
+        error: { code: "KB_AUTH_FORBIDDEN" },
+      });
+
+      // case: S-311.1 — direct REST-listener calls without runtime guard proof
+      // are rejected at the integration boundary.
+      // case: S-160.5 — exercise token delivery through the real child runtime,
+      // runtime guard proof, REST setup closure, and CLI executor.
       const commandExecution = await running.fetchGateway(
         `/api/v1/projects/${project.id}/rest/commands/execute`,
         {

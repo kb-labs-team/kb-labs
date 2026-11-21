@@ -501,7 +501,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("S-160.5 command did not report execution by its registered project runtime")
 
     journey.step("execute the installed Commit command through the secured project runtime", "commit-plugin",
-                 s160_host_command, cases=["S-160.5"], runners=("service-local:explore", "service-secured:explore"))
+                 s160_host_command, cases=["S-160.5"], runners=("service-secured:explore",))
 
     _stage_case_file(project, env, "s030-progress")
 
