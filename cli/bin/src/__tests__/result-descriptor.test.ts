@@ -61,6 +61,7 @@ describe('CLI result descriptor boundary', () => {
   });
 
   // case: S-203.1
+  // case: S-203.28
   it('keeps local plugin, SDK, console, and inherited child output off machine stdout', async () => {
     fixture = await createCliFixture('local');
     const result = await runCli(fixture, ['stdout', 'fixture', 'run', '--json']);
