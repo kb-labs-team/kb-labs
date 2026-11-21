@@ -24,15 +24,15 @@ Case: S-268.21.
 
 ## 2026-11-21
 
-### Package-manager output is omitted from installer diagnostics
+### Package-manager output is captured and redacted before use
 
-Package-manager stdout and stderr are untrusted and may contain credentials in
-formats or chunk boundaries that generic streaming redaction cannot safely
-recognize. The installer discards those streams before they reach command
-writers, transcripts, error envelopes, or dossiers. Failures retain the process
-exit code and a fixed notice that output was omitted; remediation stays
-non-specific unless a separate structured result establishes the cause. Case:
-PC-001.2.
+Package-manager stdout and stderr are untrusted. Each stream is captured
+separately under a fixed byte limit; known secret values are replaced before
+credential-pattern redaction, and clipping happens only after that complete
+redaction pass. If a stream exceeds the limit, the installer drops that entire
+stream and reports a safe notice rather than retaining an unredacted slice.
+Failures retain the process exit code and bounded redacted stderr evidence.
+Cases: PC-001.2, S-285.18.
 
 ## 2026-10-31
 
