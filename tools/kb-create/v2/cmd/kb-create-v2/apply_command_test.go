@@ -21,7 +21,7 @@ func TestApplyDossierKeepsPackageManagerFailureDetails(t *testing.T) {
 		errors.New("pnpm add failed with value "+secret))
 	failure.Meta = map[string]any{
 		"packageManagerExitCode":   "47",
-		"packageManagerStderrTail": strings.Repeat("x", 5000) + " TOKEN=" + secret,
+		"packageManagerStderrTail": strings.Repeat("x", 4090) + "TOKEN=" + secret + strings.Repeat("y", 4096-12),
 	}
 
 	result := applyDossier(root, "package-manager-failure", logPath, contracts.ResolvedInstallPlan{}, []string{secret}, failure)

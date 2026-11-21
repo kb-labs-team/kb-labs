@@ -1274,6 +1274,27 @@ func TestPnpmDiagnosticKeepsExitCodeAndStderrTail(t *testing.T) {
 	}
 }
 
+func TestCommandRunnerCaptureRedactsCredentialsBeforeTailAndTranscript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	const knownValue = "known-value-crossing-capture-tail"
+	fixture := filepath.Join(t.TempDir(), "failing-tool")
+	stderr := strings.Repeat("x", 4090) + "TOKEN=pattern-value-crossing-tail" + strings.Repeat("y", 4096-12) + " known=" + knownValue
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\nprintf '%s\\n' '"+stderr+"' >&2\nexit 47\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var transcript bytes.Buffer
+	runner := CommandRunner{redactions: []string{knownValue}}
+	err := runner.Run(context.Background(), &transcript, fixture)
+	if err == nil {
+		t.Fatal("command unexpectedly succeeded")
+	}
+	if strings.Contains(transcript.String(), "pattern-value-crossing-tail") || strings.Contains(transcript.String(), knownValue) {
+		t.Fatalf("captured package-manager transcript leaked credential: %q", transcript.String())
+	}
+}
+
 func TestPnpmDiagnosticCauseRetainsPackageManagerRegistryFailure(t *testing.T) {
 	root := t.TempDir()
 	runner := &fakeRunner{err: &externalCommandFailure{

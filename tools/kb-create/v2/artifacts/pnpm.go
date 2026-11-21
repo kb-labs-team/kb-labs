@@ -37,6 +37,7 @@ type CommandRunner struct {
 	corepackHome string
 	registry     string
 	offline      bool
+	redactions   []string
 }
 
 const externalCommandStderrTailBytes = 4096
@@ -71,7 +72,7 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 			source := "Corepack's default npm registry"
 			if !r.offline {
 				var provision toolchain.Result
-				provision, err = toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env, Operation: toolchain.OperationPackageManager})
+				provision, err = toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env, Redactions: r.redactions, Operation: toolchain.OperationPackageManager})
 				if provision.Stdout != "" {
 					_, _ = io.WriteString(output, provision.Stdout)
 				}
@@ -99,7 +100,7 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 	} else {
 		executable = name
 	}
-	result, err := toolchain.Run(ctx, toolchain.Invocation{Tool: name, Executable: executable, Args: args, Env: env, Operation: toolchain.OperationPackageManager})
+	result, err := toolchain.Run(ctx, toolchain.Invocation{Tool: name, Executable: executable, Args: args, Env: env, Redactions: r.redactions, Operation: toolchain.OperationPackageManager})
 	if result.Stdout != "" {
 		_, _ = io.WriteString(output, result.Stdout)
 	}
@@ -153,6 +154,7 @@ type PnpmConfig struct {
 	PreviousReleaseCatalog *catalog.Verified
 	MarketplaceRoot        string
 	Offline                bool
+	Redactions             []string
 	Client                 *http.Client
 	Runner                 Runner
 	// Log receives the complete package-manager transcript. It is deliberately
@@ -389,7 +391,7 @@ func (p Pnpm) run(command string, specs ...string) error {
 		if p.config.PackageManagerRoot == "" {
 			return fmt.Errorf("pnpm package-manager state root is required")
 		}
-		runner = CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry, offline: p.config.Offline}
+		runner = CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry, offline: p.config.Offline, redactions: p.config.Redactions}
 	}
 	log := p.config.Log
 	if log == nil {

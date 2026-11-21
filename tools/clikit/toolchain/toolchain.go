@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/proc"
@@ -109,6 +110,7 @@ type Invocation struct {
 	Args, Env        []string
 	Dir              string
 	Operation        Operation
+	Redactions       []string
 	Stdout, Stderr   io.Writer
 	Stdin            io.Reader
 }
@@ -246,7 +248,7 @@ func startInvocation(ctx context.Context, invocation Invocation) (*runningInvoca
 	if invocation.Env != nil {
 		command.Env = invocation.Env
 	}
-	running := &runningInvocation{ctx: ctx, command: command, invocation: invocation, waitDone: make(chan struct{})}
+	running := &runningInvocation{ctx: ctx, command: command, invocation: invocation, stderr: tailBuffer{redactions: append([]string(nil), invocation.Redactions...)}, waitDone: make(chan struct{})}
 	command.Stdout, command.Stderr = &running.stdout, &running.stderr
 	if invocation.Stdout != nil {
 		command.Stdout = io.MultiWriter(&running.stdout, invocation.Stdout)
@@ -318,17 +320,42 @@ func tailString(value string, limit int) string {
 
 const stderrTailLimit = 4096
 
-type tailBuffer struct{ data []byte }
+type tailBuffer struct {
+	data       []byte
+	redactions []string
+}
+
+func (b *tailBuffer) redact(value string) string {
+	value = diag.RedactText(value)
+	for _, secret := range b.redactions {
+		if secret != "" {
+			value = strings.ReplaceAll(value, secret, "[REDACTED]")
+		}
+	}
+	return value
+}
 
 func (b *tailBuffer) Write(data []byte) (int, error) {
-	b.data = append(b.data, data...)
+	// Redact the entire newly captured chunk together with the retained tail
+	// before clipping. This keeps a credential safe when the final output tail
+	// would otherwise begin in the middle of its key or value.
+	value := b.redact(string(b.data) + string(data))
+	b.data = []byte(value)
 	if len(b.data) > stderrTailLimit {
 		b.data = append([]byte(nil), b.data[len(b.data)-stderrTailLimit:]...)
 	}
 	return len(data), nil
 }
 func (b *tailBuffer) String() string {
-	return strings.ToValidUTF8(string(b.data), "�")
+	value := b.redact(string(b.data))
+	data := []byte(strings.ToValidUTF8(value, "�"))
+	if len(data) > stderrTailLimit {
+		data = data[len(data)-stderrTailLimit:]
+		for len(data) > 0 && !utf8.Valid(data) {
+			data = data[1:]
+		}
+	}
+	return string(data)
 }
 func summarizeArgs(args []string) string { return diag.RedactText(strings.Join(args, " ")) }
 func nextCommand(invocation Invocation) string {

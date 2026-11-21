@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/internal/testdeadline"
@@ -217,6 +218,39 @@ func TestExternalToolFailureKeepsExitCodeAndStderrTail(t *testing.T) {
 	}
 	if failure.ExitCode != 47 || failure.StderrTail != "external-tool-stderr-tail" {
 		t.Fatalf("command failure = %#v", failure)
+	}
+}
+
+func TestStderrCaptureRedactsBeforeTailClip(t *testing.T) {
+	tests := []struct {
+		name       string
+		credential string
+		redactions []string
+	}{
+		{name: "credential pattern crossing retained tail", credential: "TOKEN=pattern-crossing-secret"},
+		{name: "known value crossing retained tail", credential: "known-value-crossing-secret", redactions: []string{"known-value-crossing-secret"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			prefix := strings.Repeat("x", stderrTailLimit+100)
+			suffix := strings.Repeat("y", 100)
+			var capture tailBuffer
+			capture.redactions = test.redactions
+			_, _ = capture.Write([]byte(prefix + test.credential + suffix))
+			got := capture.String()
+			if strings.Contains(got, strings.TrimPrefix(test.credential, "TOKEN=")) || len(got) > stderrTailLimit {
+				t.Fatalf("captured tail leaked credential or exceeded byte bound: len=%d tail=%q", len(got), got)
+			}
+		})
+	}
+}
+
+func TestStderrCaptureKeepsUTF8WithinByteLimit(t *testing.T) {
+	var capture tailBuffer
+	_, _ = capture.Write([]byte(strings.Repeat("界", stderrTailLimit/3+8)))
+	got := capture.String()
+	if !utf8.ValidString(got) || len(got) > stderrTailLimit {
+		t.Fatalf("captured tail is invalid UTF-8 or exceeds byte bound: valid=%v len=%d", utf8.ValidString(got), len(got))
 	}
 }
 

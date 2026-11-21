@@ -305,7 +305,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		return applyCommandResult{}, asDiag(previousErr)
 	}
 	artifactExecutor, err := newArtifactExecutor(layout, operationRoot, planned.Registry, offline, transcript, deps.ArtifactRunner,
-		verifiedRelease, previousRelease, marketplaceRoot)
+		verifiedRelease, previousRelease, marketplaceRoot, redactions)
 	if err != nil {
 		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 			"the shared artifact cache path could not be resolved",
