@@ -966,6 +966,19 @@ def run_fixture_group(journey: Journey, label: str, run_fixture: Callable[[], Jo
                      lambda failure=failure: failure, role="lifecycle")
     for fixture in collected:
         journey.steps.extend(fixture.steps)
+        preserve_paths = set(getattr(journey, "preserve_fixture_roots", set()))
+        preserve_paths.update(getattr(fixture, "preserve_fixture_roots", set()))
+        if preserve_paths:
+            journey.preserve_fixture_roots = preserve_paths
+
+
+def cleanup_generated_fixture_roots(roots: Iterable[Path], preserve_paths: Iterable[Path] = ()) -> None:
+    """Remove disposable roots unless cleanup failure left evidence to inspect."""
+    preserved = {Path(path).resolve() for path in preserve_paths}
+    for root in roots:
+        path = Path(root)
+        if path.resolve() not in preserved:
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def run_uninstall_decline_step(*, mode: str, args: list[str], receipt_path: Path,
@@ -1327,10 +1340,18 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
 
         if operation_error is not None:
             if cleanup_error is not None:
-                raise RuntimeError(f"{operation_error}; cleanup failed: {cleanup_error}") from operation_error
+                preserve_paths = set(getattr(journey, "preserve_fixture_roots", set()))
+                preserve_paths.add(root)
+                journey.preserve_fixture_roots = preserve_paths
+                raise RuntimeError(
+                    f"{operation_error}; disposable root preserved at {root}; cleanup failed: {cleanup_error}"
+                ) from operation_error
             raise operation_error
         if cleanup_error is not None:
-            raise cleanup_error
+            preserve_paths = set(getattr(journey, "preserve_fixture_roots", set()))
+            preserve_paths.add(root)
+            journey.preserve_fixture_roots = preserve_paths
+            raise RuntimeError(f"disposable root preserved at {root}; cleanup failed: {cleanup_error}") from cleanup_error
 
     journey.step("install and reapply generated secrets from the offline artifact cache",
                  "platform.install", install_and_reapply, cases=["S-181.7"])
@@ -2516,13 +2537,14 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         mode=mode, launcher=launcher, stable_index=stable_index,
         platform_root=platform_root, run_command=run_command))
 
-    for generated_root in (apply_root, platform_root.parent / "s181-stable-root",
-                           platform_root.parent / "s181-canary-root", secret_root,
-                           explicit_gateway_root, platform_root.parent / "pc001-explicit-gateway-project",
-                           platform_root.parent / "removed-shim-owner",
-                           platform_root.parent / "s181-offline-root",
-                           platform_root.parent / "s181-offline-generated-secret-root"):
-        shutil.rmtree(generated_root, ignore_errors=True)
+    cleanup_generated_fixture_roots(
+        (apply_root, platform_root.parent / "s181-stable-root",
+         platform_root.parent / "s181-canary-root", secret_root,
+         explicit_gateway_root, platform_root.parent / "pc001-explicit-gateway-project",
+         platform_root.parent / "removed-shim-owner",
+         platform_root.parent / "s181-offline-root",
+         platform_root.parent / "s181-offline-generated-secret-root"),
+        getattr(journey, "preserve_fixture_roots", set()))
     run_fixture_group(journey, "installer fixtures", lambda: run_installer_fixture_steps(
         mode=mode, launcher=launcher, platform_root=platform_root,
         stable_index=stable_index, run_command=run_command))
