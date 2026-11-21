@@ -287,6 +287,7 @@ export class InProcessBackend implements RawExecutionBackend {
             outdir: undefined,
             adapterMiddlewares,
           }),
+          jsonMode,
         )),
         jsonMode,
       );

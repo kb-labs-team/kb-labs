@@ -43,6 +43,14 @@ class JourneyBatchEntryTests(unittest.TestCase):
         self.bin.mkdir()
         (self.root / "e2e/journey").mkdir(parents=True)
         (self.root / "e2e/scripts").mkdir(parents=True)
+        (self.root / "e2e/scripts/pack-extras.json").write_text(
+            '[{"directory":"e2e/journey/fixtures/analytics-emitter"}]\n', encoding="utf-8")
+        declared_extra = self.root / "e2e/journey/fixtures/analytics-emitter/dist"
+        declared_extra.mkdir(parents=True)
+        (declared_extra / "manifest.js").write_text("export const manifest = {};\n", encoding="utf-8")
+        unlisted_extra = self.root / "e2e/journey/fixtures/unlisted/dist"
+        unlisted_extra.mkdir(parents=True)
+        (unlisted_extra / "manifest.js").write_text("export const manifest = {};\n", encoding="utf-8")
         (self.root / "core/fixture/dist").mkdir(parents=True)
         (self.root / "pnpm-workspace.yaml").write_text("packages: []\n")
         (self.root / "package.json").write_text('{"name":"journey-fixture","private":true}\n')
@@ -51,6 +59,7 @@ class JourneyBatchEntryTests(unittest.TestCase):
         (self.root / "tools/kb-devkit").mkdir(parents=True)
         (self.root / "scripts/ci").mkdir(parents=True)
         shutil.copy2(REPO / "e2e/journey/batch.sh", self.root / "e2e/journey/batch.sh")
+        shutil.copy2(REPO / "e2e/journey/candidate_archive.py", self.root / "e2e/journey/candidate_archive.py")
         shutil.copy2(REPO / "e2e/journey/batch_summary.py", self.root / "e2e/journey/batch_summary.py")
         shutil.copy2(REPO / "e2e/journey/dispatch_registry.py", self.root / "e2e/journey/dispatch_registry.py")
         shutil.copy2(REPO / "e2e/journey/invocations.py", self.root / "e2e/journey/invocations.py")
@@ -252,7 +261,7 @@ exec "$REAL_TAR" "$@"
         self.env = {
             **isolated_environment(
                 Path(self.root / "home"), self.bin,
-                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash", "tar", "tee"),
+                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash", "tar", "tee", "sort"),
             ),
             "CALLS": str(self.calls),
             "REPORTS": str(self.root / ".journey/reports"),
@@ -1130,6 +1139,21 @@ exec "$REAL_TAR" "$@"
             self.assertEqual(set(metadata["stageDurationsSeconds"]), {
                 "reset", "build", "unit", "candidate", "local", "secured", "total",
             })
+
+    # case: S-262.1
+    def test_producer_archive_includes_declared_pack_extra_outputs_only(self):
+        producer = self.root / "producer"
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        archive = producer / "shared/build-candidate.tar"
+        listed = subprocess.run(
+            ["tar", "-tf", str(archive)], cwd=self.root, text=True, capture_output=True, check=True,
+        ).stdout.splitlines()
+        self.assertIn("./e2e/journey/fixtures/analytics-emitter/dist/manifest.js", listed)
+        self.assertNotIn("./e2e/journey/fixtures/unlisted/dist/manifest.js", listed)
 
     # case: S-262.2
     def test_summary_preserves_available_evidence_when_mode_metadata_is_missing(self):
