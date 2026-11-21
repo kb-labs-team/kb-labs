@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/toolchain"
+	"github.com/kb-labs/create/v2/contracts"
 )
 
 // case: S-285.9, S-284.20
@@ -43,10 +45,10 @@ printf 'process.stdout.write("product-pnpm-ok")' > "$COREPACK_HOME/v1/pnpm/` + t
 	}
 }
 
-// case: S-285.9
+// case: PC-001.2, S-285.9
 func TestProductCorepackProvisionFailureNamesSource(t *testing.T) {
 	root, bin := t.TempDir(), t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "corepack"), []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "corepack"), []byte("#!/bin/sh\nprintf 'corepack-fixture: registry unavailable\\n' >&2\nexit 47\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", t.TempDir())
@@ -55,6 +57,12 @@ func TestProductCorepackProvisionFailureNamesSource(t *testing.T) {
 	err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry}).Run(context.Background(), &bytes.Buffer{}, "pnpm", "--version")
 	if err == nil || !strings.Contains(err.Error(), toolchain.SupportedPnpm) || !strings.Contains(err.Error(), "Corepack's default npm registry") || strings.Contains(err.Error(), p.config.Registry) || strings.Contains(err.Error(), "workspace root") {
 		t.Fatalf("diagnostic = %v", err)
+	}
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != contracts.CodeApplyFailed ||
+		failure.Meta["packageManagerExitCode"] != "47" ||
+		!strings.Contains(fmt.Sprint(failure.Meta["packageManagerStderrTail"]), "corepack-fixture: registry unavailable") {
+		t.Fatalf("Corepack provisioning details = %#v", err)
 	}
 }
 
