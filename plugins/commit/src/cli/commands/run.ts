@@ -165,19 +165,26 @@ export default defineCommand({
       const analyzeLoader = useLoader('Analyzing changes...');
       analyzeLoader.start();
 
-      const plan = await generateCommitPlan({
-        cwd: scopeCwd,
-        llmComplete,
-        config,
-        allowSecrets: flags['allow-secrets'] ?? false,
-        autoConfirm: flags.yes ?? false,
-        onOutput: (message) => ctx.ui?.write?.(message),
-        onProgress: (message) => analyzeLoader.update({ text: message }),
-        onPauseProgress: () => analyzeLoader.stop(),
-        onResumeProgress: () => analyzeLoader.start(),
-      });
+      let plan: Awaited<ReturnType<typeof generateCommitPlan>>;
+      try {
+        plan = await generateCommitPlan({
+          cwd: scopeCwd,
+          llmComplete,
+          config,
+          signal: ctx.signal,
+          allowSecrets: flags['allow-secrets'] ?? false,
+          autoConfirm: flags.yes ?? false,
+          onOutput: (message) => ctx.ui?.write?.(message),
+          onProgress: (message) => analyzeLoader.update({ text: message }),
+          onPauseProgress: () => analyzeLoader.stop(),
+          onResumeProgress: () => analyzeLoader.start(),
+        });
 
-      throwIfExecutionAborted(ctx.signal);
+        throwIfExecutionAborted(ctx.signal);
+      } catch (error) {
+        analyzeLoader.stop();
+        throw error;
+      }
 
       analyzeLoader.succeed(`Generated commit plan with ${plan.commits.length} commit(s)`);
 

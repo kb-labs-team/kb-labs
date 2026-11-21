@@ -29,4 +29,16 @@ describe('worker plugin output capture', () => {
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(result).toMatchObject({ message: 'failed [REDACTED]', details: { causes: [{ stack: 'inner [REDACTED]' }] } });
   });
+
+  it('redacts across line boundaries and emits bare-CR loader frames promptly', () => {
+    const frames: string[] = [];
+    const secret = 'alpha\nbeta';
+    const write = createWorkerOutputCapture('stderr', (entry) => frames.push(entry), [secret]);
+
+    write('alpha\n');
+    write('beta\rprogress 1\r');
+    expect(frames).toContain('[REDACTED]');
+    expect(frames).toContain('progress 1');
+    expect(frames.join('')).not.toContain(secret);
+  });
 });

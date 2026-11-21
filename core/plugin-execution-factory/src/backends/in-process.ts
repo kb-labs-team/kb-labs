@@ -65,6 +65,7 @@ import {
   TimeoutError,
 } from '../errors.js';
 import { withLoaderOutputSink } from '@kb-labs/shared-cli-ui';
+import { withInProcessOutputCapture } from './in-process-output-capture.js';
 
 /**
  * InProcessBackend options.
@@ -256,8 +257,14 @@ export class InProcessBackend implements RawExecutionBackend {
       const adapterMiddlewares = await this.getMiddlewares();
       const executionCwd = lease.cwd;
       let loaderLineNo = 0;
-      const runResult = await withLoaderOutputSink((message) => {
-        options?.onLog?.({ level: 'info', message, stream: 'stdout', lineNo: ++loaderLineNo, timestamp: new Date().toISOString() });
+      const sensitiveValues = Array.isArray(requestToExecute.context?.sensitiveValues)
+        ? requestToExecute.context.sensitiveValues.filter((value): value is string => typeof value === 'string')
+        : [];
+      const emitCapturedOutput = (message: string, stream: 'stdout' | 'stderr') => {
+        options?.onLog?.({ level: stream === 'stderr' ? 'warn' : 'info', message, stream, lineNo: ++loaderLineNo, timestamp: new Date().toISOString() });
+      };
+      const runResult = await withInProcessOutputCapture(sensitiveValues, emitCapturedOutput, () => withLoaderOutputSink((message) => {
+        emitCapturedOutput(message, 'stdout');
       }, () => runInProcess({
         descriptor: requestToExecute.descriptor,  // Direct pass-through!
         platform: effectivePlatform,
@@ -272,7 +279,7 @@ export class InProcessBackend implements RawExecutionBackend {
         cwd: executionCwd,           // From WorkspaceLease
         outdir: undefined,        // Optional, defaults to cwd/.kb/output
         adapterMiddlewares,
-      }), Boolean((requestToExecute.input as { flags?: Record<string, unknown> } | undefined)?.flags?.json));
+      }), Boolean((requestToExecute.input as { flags?: Record<string, unknown> } | undefined)?.flags?.json)));
 
       if (timeoutExpired) {
         throw new TimeoutError(`Execution timed out after ${request.timeoutMs}ms`, request.timeoutMs);

@@ -114,7 +114,8 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
   // The platform's LLM adapter is registered independently of this plugin's
   // llm.enabled setting, so useLLM() alone stays truthy even when the commit
   // plugin should never call the gateway.
-  const llm = options.llmComplete ? useLLM() : undefined;
+  const availableLLM = options.llmComplete ? useLLM() : undefined;
+  const llm = availableLLM ? withAbortSignal(availableLLM, options.signal) : undefined;
   const startTime = Date.now();
 
   // 1. Get git status — cwd is already the resolved scope directory
@@ -416,7 +417,7 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
       commits = await validateAndFixCommits(commits, summaries, llm, llmUsed, logger, onProgress);
     } catch (error) {
       // CRITICAL: Re-throw SecretsDetectedError immediately - DO NOT fallback to heuristics!
-      if (error instanceof SecretsDetectedError) {
+      if (error instanceof SecretsDetectedError || (error instanceof Error && error.name === 'AbortError') || options.signal?.aborted) {
         throw error;
       }
 
@@ -470,6 +471,41 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
       escalated,
     },
   };
+}
+
+/** Pass the host signal into adapter options and stop waiting promptly on abort. */
+function withAbortSignal<T extends object>(llm: T, signal?: AbortSignal): T {
+  if (!signal) { return llm; }
+  return new Proxy(llm, {
+    get(target, property, receiver) {
+      const method = Reflect.get(target, property, receiver) as unknown;
+      if ((property !== 'complete' && property !== 'chatWithTools') || typeof method !== 'function') {
+        return method;
+      }
+      return (...args: unknown[]) => {
+        if (signal.aborted) {
+          const error = new Error('Commit generation was cancelled.');
+          error.name = 'AbortError';
+          return Promise.reject(error);
+        }
+        const last = args.at(-1);
+        const callArgs = args.slice();
+        if (last && typeof last === 'object' && !Array.isArray(last)) {
+          callArgs[callArgs.length - 1] = { ...(last as Record<string, unknown>), signal };
+        }
+        const pending = Promise.resolve(Reflect.apply(method, target, callArgs));
+        return new Promise((resolve, reject) => {
+          const onAbort = () => {
+            const error = new Error('Commit generation was cancelled.');
+            error.name = 'AbortError';
+            reject(error);
+          };
+          signal.addEventListener('abort', onAbort, { once: true });
+          pending.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+        });
+      };
+    },
+  });
 }
 
 /**

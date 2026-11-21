@@ -51,6 +51,8 @@ export interface GenerateOptions {
   allowSecrets?: boolean;
   /** Auto-confirm all prompts (--yes flag for non-interactive mode) */
   autoConfirm?: boolean;
+  /** Host-owned cancellation signal for generation and LLM adapter calls. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -84,6 +86,7 @@ export type LLMCompleteFunction = (
     systemPrompt?: string;
     temperature?: number;
     maxTokens?: number;
+    signal?: AbortSignal;
   }
 ) => Promise<{
   content: string;

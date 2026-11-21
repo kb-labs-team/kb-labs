@@ -14,7 +14,7 @@ export const RUNTIME_TOKEN_HEADER = "x-kb-runtime-token";
 /** Request header set by the host so a module can tell which project it serves. */
 export const RUNTIME_PROJECT_HEADER = "x-kb-project-id";
 
-/** Environment variable that carries the shared secret into the runtime (never argv). */
+/** Legacy env name stripped by launchers; credentials travel on FD 3. */
 export const RUNTIME_TOKEN_ENV = PROJECT_RUNTIME_TOKEN_ENV;
 
 /** Runtime-level liveness/identity endpoint, answered by the runtime itself. */

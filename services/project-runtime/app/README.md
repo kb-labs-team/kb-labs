@@ -8,7 +8,7 @@ rooted at the project, and runs the project-scoped services (`rest-api`,
 
 ```
 kb-project-runtime --project-root <abs> --project-id <prj_...> --listen 127.0.0.1:PORT [--parent-pid PID]
-env KB_PROJECT_RUNTIME_TOKEN=<secret, >= 16 chars>
+# `kb-host` supplies the runtime guard credential on inherited FD 3. The executable is supervised; running it directly without that pipe fails closed.
 ```
 
 - `--project-id` must be the id derived from the root (ADR-0044).

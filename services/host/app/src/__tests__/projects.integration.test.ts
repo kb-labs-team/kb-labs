@@ -755,7 +755,7 @@ describe("kb-host project routing", () => {
     const a = await registered();
     const subject = await host();
     expect(process.env.KB_STATE_DAEMON_URL).toBeUndefined();
-    const { stateDaemonUrl: stateUrl, gatewayUrl, firstLeaseStatus } = await reply(subject, a.id, "/rest/__host-services");
+    const { stateDaemonUrl: stateUrl, gatewayUrl, firstLeaseStatus, tokenInEnvironment, tokenInProcEnviron } = await reply(subject, a.id, "/rest/__host-services");
 
     if (typeof stateUrl !== "string" || typeof gatewayUrl !== "string" || typeof firstLeaseStatus !== "number") {
       throw new Error("project runtime did not receive usable host service addresses");
@@ -764,6 +764,8 @@ describe("kb-host project routing", () => {
     expect(stateUrl).not.toBe("http://127.0.0.1:7777");
     expect(gatewayUrl).toBe(`http://127.0.0.1:${subject.gatewayPort}`);
     expect(firstLeaseStatus).toBe(404);
+    expect(tokenInEnvironment).toBe(false);
+    expect(tokenInProcEnviron).toBe(false);
   });
 
   // case: S-203.15

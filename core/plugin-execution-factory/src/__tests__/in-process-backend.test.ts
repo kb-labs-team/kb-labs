@@ -125,6 +125,29 @@ describe('InProcessBackend — loggerOverride platform handoff', () => {
     expect(logs.join('')).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
   });
 
+  // case: S-203.26
+  it('redacts request secrets from raw console and stdout/stderr writes', async () => {
+    vi.mocked(runInProcess).mockImplementation(async () => {
+      console.log('console in-process-secret');
+      process.stdout.write('stdout in-process-secret\n');
+      process.stderr.write('stderr in-process-secret\r');
+      return { data: 'ok', executionMeta: {} } as never;
+    });
+    const backend = new InProcessBackend({ platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'] });
+    const logs: string[] = [];
+
+    await backend.execute(makeRequest({ context: { sensitiveValues: ['in-process-secret'] } }), {
+      onLog: (entry) => logs.push(entry.message),
+    });
+
+    expect(logs).toEqual([
+      'console [REDACTED]',
+      'stdout [REDACTED]',
+      'stderr [REDACTED]',
+    ]);
+    expect(logs.join('')).not.toContain('in-process-secret');
+  });
+
   // case: S-030.1
   it('streams the final human plan through the host callback when the base UI is noop', async () => {
     vi.mocked(runInProcess).mockImplementation(async (input) => {
