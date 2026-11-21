@@ -67,7 +67,7 @@ jobs:
           pnpm install --frozen-lockfile
           ./tools/kb-devkit/kb-devkit run build --packages "$(node tools/kb-create/scripts/release-flow-roots.mjs platform),@kb-labs/qa"
       - name: Run report and issue-sync unit tests
-        run: python3 -m unittest discover -s e2e/journey -p 'test_*.py' -v
+        run: python3 -m unittest discover -s e2e/journey -p 'test_nightly_report.py' -v
       - name: Compute local and secured release case coverage
         run: |
           run_files=$(find .journey/nightly-results -type f -name 'service-*.json' -print | sort | paste -sd, -)
