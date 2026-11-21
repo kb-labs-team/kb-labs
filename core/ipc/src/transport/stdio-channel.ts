@@ -102,6 +102,8 @@ export class StdioChannel {
   private readonly dataHandler: (chunk: Buffer) => void;
   private readonly endHandler: () => void;
   private readonly writableErrorHandler: (error: Error) => void;
+  private readonly writableCloseHandler: () => void;
+  private readonly writableFinishHandler: () => void;
   private readonly pendingWrites = new Set<(error: Error) => void>();
   private closed = false;
 
@@ -123,11 +125,15 @@ export class StdioChannel {
       for (const handler of this.errorHandlers) { handler(error); }
       this.markClosed(error);
     };
+    this.writableCloseHandler = () => { this.releaseWritableErrorOwner(); };
+    this.writableFinishHandler = () => { this.releaseWritableErrorOwner(); };
     readable.on('data', this.dataHandler);
     readable.on('end', this.endHandler);
     // Writable streams emit asynchronous errors even when a particular write
     // has a callback. Keep an owner attached for the lifetime of the channel.
     writable.on('error', this.writableErrorHandler);
+    writable.on('close', this.writableCloseHandler);
+    writable.on('finish', this.writableFinishHandler);
   }
 
   send(frame: StdioFrame): Promise<void> {
@@ -189,7 +195,9 @@ export class StdioChannel {
     this.markClosed();
     this.readable.off('data', this.dataHandler);
     this.readable.off('end', this.endHandler);
-    this.writable.off('error', this.writableErrorHandler);
+    // Pending writes can fail asynchronously after the protocol channel has
+    // closed. Retain the error owner until the Writable itself is done.
+    if (this.writable.closed || this.writable.writableFinished) { this.releaseWritableErrorOwner(); }
     this.handlers.clear();
     this.errorHandlers.clear();
     this.closeHandlers.clear();
@@ -200,6 +208,12 @@ export class StdioChannel {
     this.closed = true;
     for (const fail of this.pendingWrites) { fail(error); }
     for (const handler of this.closeHandlers) { handler(); }
+  }
+
+  private releaseWritableErrorOwner(): void {
+    this.writable.off('error', this.writableErrorHandler);
+    this.writable.off('close', this.writableCloseHandler);
+    this.writable.off('finish', this.writableFinishHandler);
   }
 }
 

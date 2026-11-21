@@ -236,17 +236,53 @@ describe('cancellable host adapter RPC', () => {
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
     const channel = createStdioChannel(child.stdout!, child.stdin!);
-    const channelError = new Promise<Error>((resolve) => channel.onError(resolve));
 
     try {
       await new Promise<void>((resolve, reject) => {
-        child.stdout!.once('data', () => resolve());
+        child.once('message', (message: unknown) => { if (message === 'ready') { resolve(); } });
         child.once('error', reject);
         child.once('exit', (code) => { if (code !== 0) { reject(new Error(`Pipe fixture exited with ${code}`)); } });
       });
-      await expect(channel.send({ type: 'runtime:ready' })).rejects.toBeInstanceOf(Error);
-      await expect(channelError).resolves.toBeInstanceOf(Error);
+      await expect(channel.send({ type: 'platform:message', payload: 'x'.repeat(7 * 1024 * 1024) })).rejects.toBeInstanceOf(Error);
       expect(() => channel.close()).not.toThrow();
+    } finally {
+      channel.close();
+      if (child.connected) { child.disconnect(); }
+      child.kill();
+    }
+  });
+
+  it('keeps the real pipe error owner through close while a queued write fails asynchronously', async () => {
+    const child = fork(fileURLToPath(new URL('./fixtures/close-stdin-after-delay-child.cjs', import.meta.url)), [], {
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+    });
+    const baselineErrorListeners = child.stdin!.listenerCount('error');
+    const channel = createStdioChannel(child.stdout!, child.stdin!);
+    let stdinClosed = false;
+    child.on('message', (message: unknown) => { if (message === 'stdin-closed') { stdinClosed = true; } });
+    let writableClosed = false;
+    child.stdin!.once('close', () => { writableClosed = true; });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once('message', (message: unknown) => { if (message === 'ready') { resolve(); } });
+        child.once('error', reject);
+      });
+      const pipeFailure = new Promise<Error>((resolve) => child.stdin!.once('error', resolve));
+      const pendingWrite = channel.send({ type: 'platform:message', payload: 'x'.repeat(7 * 1024 * 1024) });
+      const writeOutcome = pendingWrite.then(
+        () => ({ error: undefined }),
+        (error: Error) => ({ error }),
+      );
+      expect(child.stdin!.writableNeedDrain).toBe(true);
+      channel.close();
+      expect((await writeOutcome).error).toMatchObject({ message: 'Stdio channel is closed' });
+      expect(child.stdin!.listenerCount('error')).toBe(baselineErrorListeners + 2);
+
+      await waitFor(() => stdinClosed);
+      await expect(pipeFailure).resolves.toMatchObject({ code: 'EPIPE' });
+      await waitFor(() => writableClosed);
+      expect(child.stdin!.listenerCount('error')).toBe(baselineErrorListeners);
     } finally {
       channel.close();
       if (child.connected) { child.disconnect(); }
