@@ -137,6 +137,29 @@ function verifyResolvedArtifact(
   return { signatureStatus: 'verified' };
 }
 
+async function readLockOrThrow(root: string, scope: MarketplaceScope, readScope: MarketplaceScope = scope): Promise<MarketplaceLock | null> {
+  const diag = new DiagnosticCollector();
+  const lock = await readMarketplaceLock(root, diag, readScope);
+  const error = diag.getEvents().find(event => event.severity === 'error');
+  if (error) {
+    if (error.code === 'MARKETPLACE_PROVENANCE_REQUIRED' && error.context?.pluginId) {
+      throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_PROVENANCE_REQUIRED', {
+        details: { package: error.context.pluginId, scope },
+      }));
+    }
+    throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_LOCK_INVALID', {
+      details: { path: error.context?.filePath ?? path.join(root, '.kb/marketplace.lock'), reason: error.message, scope },
+    }));
+  }
+  return lock;
+}
+
+function pluginNotInstalled(id: string, scope: MarketplaceScope): ErrorEnvelopeError {
+  return new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_NOT_INSTALLED', {
+    details: { package: id, scope, scopeDescription: scope === 'project' ? 'this project' : 'the platform' },
+  }));
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -201,7 +224,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const installed: InstallResultEntry[] = [];
     const warnings: string[] = [];
     const diagnostics: MarketplaceDiagnostic[] = [];
-    const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
+    const lock = await readLockOrThrow(scopeRoot, ctx.scope);
 
     for (const spec of specs) {
       let source: MarketplaceSource | undefined;
@@ -387,10 +410,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       const entry = await this.getEntry(ctx, id);
 
       if (!entry) {
-        // Package not in lock — nothing to uninstall. Remove any stale cache entries
-        // but do not call source.remove (pnpm would fail on an unknown package).
-        await removeCacheEntry(scopeRoot, id);
-        continue;
+        throw pluginNotInstalled(id, ctx.scope);
       }
 
       // Run pre-uninstall hook
@@ -502,7 +522,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   async update(ctx: ScopeContext, packageIds?: string[]): Promise<InstallResult> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     return this.withScopeMutation(scopeRoot, async () => {
-      const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
+      const lock = await readLockOrThrow(scopeRoot, ctx.scope);
       if (!lock) {
         return { installed: [], warnings: ['No marketplace.lock found'], scope: ctx.scope };
       }
@@ -530,9 +550,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     await this.withScopeMutation(scopeRoot, async () => {
       const ok = await enablePlugin(scopeRoot, packageId, ctx.scope);
       if (!ok) {
-        throw new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_NOT_INSTALLED', {
-          details: { package: packageId },
-        }));
+        throw pluginNotInstalled(packageId, ctx.scope);
       }
     });
   }
@@ -542,9 +560,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     await this.withScopeMutation(scopeRoot, async () => {
       const ok = await disablePlugin(scopeRoot, packageId, ctx.scope);
       if (!ok) {
-        throw new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_NOT_INSTALLED', {
-          details: { package: packageId },
-        }));
+        throw pluginNotInstalled(packageId, ctx.scope);
       }
     });
   }
@@ -602,8 +618,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     // Collect per-scope entries. For 'all' we later apply project-wins.
     const perScope: Array<{ scope: MarketplaceScope; entries: MarketplaceEntryWithId[] }> = [];
     for (const { scope, root } of targets) {
-      const diag = new DiagnosticCollector();
-      const lock = await readMarketplaceLock(root, diag, scope);
+      const lock = await readLockOrThrow(root, scope);
       if (!lock) {
         perScope.push({ scope, entries: [] });
         continue;
@@ -624,8 +639,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
   async getEntry(ctx: ScopeContext, packageId: string): Promise<MarketplaceLockEntry | null> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag, ctx.scope);
+    const lock = await readLockOrThrow(scopeRoot, ctx.scope);
     return lock?.plugins[packageId] ?? lock?.adapters?.[packageId] ?? null;
   }
 
@@ -679,9 +693,8 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     },
   ): Promise<SyncResult> {
     const autoEnable = opts.autoEnable ?? false;
-    const diag = new DiagnosticCollector();
     const readScope = ctx.scope === 'project' ? 'platform' : ctx.scope;
-    const lock = await readMarketplaceLock(scopeRoot, diag, readScope) ?? createEmptyLock();
+    const lock = await readLockOrThrow(scopeRoot, ctx.scope, readScope) ?? createEmptyLock();
     if (ctx.scope === 'project') {
       delete lock.adapters;
     }
@@ -739,7 +752,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       return;
     }
 
-    const primaryKind = await this.detectKind(pkgDir);
+    const primaryKind = scope === 'project'
+      ? await this.strategies.get('plugin')?.detectKind(pkgDir) ?? null
+      : await this.detectKind(pkgDir);
     // Not a KB Labs entity — skip silently during scan (unlike install/link,
     // scanning node_modules legitimately encounters many non-entity packages).
     if (primaryKind === null) { return; }
@@ -796,17 +811,10 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
   async doctor(ctx: ScopeContext): Promise<DoctorReport> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag, ctx.scope);
+    const lock = await readLockOrThrow(scopeRoot, ctx.scope);
     const issues: DoctorIssue[] = [];
 
     if (!lock) {
-      const provenanceError = diag.getEvents().find(event => event.code === 'MARKETPLACE_PROVENANCE_REQUIRED');
-      if (provenanceError?.context?.pluginId) {
-        throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_PROVENANCE_REQUIRED', {
-          details: { package: provenanceError.context.pluginId, scope: ctx.scope },
-        }));
-      }
       return { ok: true, total: 0, issues: [{ severity: 'info', packageId: '', message: 'No marketplace.lock found' }], provenance: [] };
     }
 
