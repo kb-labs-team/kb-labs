@@ -11,6 +11,8 @@ export default defineConfig({
   },
   tsconfig: "tsconfig.build.json", // Используем конфиг без paths, чтобы избежать бандлинга workspace пакетов
   clean: false,
+  // Preserve the launcher's dynamic runtime imports so the Node engine preflight can run first.
+  splitting: true,
   dts: {
     resolve: false,
   },
