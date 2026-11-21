@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
                                configured_marketplace_source_kinds,
                                commit_publish_command,
+                               _prepare_registry_commit_publish_package,
                                _publish_fixture_command,
                                _assert_catalogued_marketplace_failure,
                                prepare_commit_project_fixture,
@@ -292,14 +293,74 @@ class MarketplaceStepTests(unittest.TestCase):
                 thread.join(timeout=2)
 
     def test_commit_fixture_publisher_uses_the_real_hub_publish_request(self):
-        self.assertEqual(commit_publish_command("/workspace"), [
-            "hub", "publish", "--path", "/workspace/plugins/commit", "--json",
+        self.assertEqual(commit_publish_command("/tmp/registry-commit"), [
+            "hub", "publish", "--path", "/tmp/registry-commit", "--json",
         ])
         self.assertEqual(_publish_fixture_command("/workspace", "plugins/qa"), [
             "hub", "publish", "--path", "/workspace/plugins/qa", "--json",
         ])
 
-    def test_registry_commit_fixture_publishes_in_workspace_and_installs_in_lane_project(self):
+    def test_registry_commit_publish_fixture_uses_a_free_higher_version_without_mutating_source(self):
+        with tempfile.TemporaryDirectory(prefix="kb-registry-commit-version-") as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            source = workspace / "plugins" / "commit"
+            (source / "dist").mkdir(parents=True)
+            (source / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/commit", "version": "2.120.1",
+                "kb": {"manifest": "./dist/manifest.js"},
+            }))
+            (source / "README.md").write_text("Commit fixture\n")
+            (source / "dist" / "manifest.js").write_text("export const manifest = {};\n")
+            (source / "dist" / "manifest.json").write_text(json.dumps({
+                "id": "@kb-labs/commit", "version": "0.1.0",
+            }))
+            platform = root / "platform"
+            (platform / "node_modules" / "@kb-labs" / "sdk").mkdir(parents=True)
+            lock_path = platform / ".kb" / "marketplace.lock"
+            lock_path.parent.mkdir(parents=True)
+            lock_path.write_text(json.dumps({"plugins": {
+                "@kb-labs/commit": {"package": "@kb-labs/commit", "version": "2.120.1"},
+            }}))
+            entries = root / "kb-home" / "store" / "entries"
+            for version in ("2.120.1", "2.120.2"):
+                (entries / f"@kb-labs+commit@{version}").mkdir(parents=True)
+            env = {"HOME": str(root), "KB_HOME": str(root / "kb-home"),
+                   "KB_JOURNEY_PLATFORM_ROOT": str(platform)}
+            registry_versions = []
+
+            def resolve_registry(_opener, request, **_kwargs):
+                from urllib.parse import parse_qs, urlparse
+                version = parse_qs(urlparse(request.full_url).query)["version"][0]
+                registry_versions.append(version)
+                if version == "2.120.3":
+                    return 200, json.dumps({"status": "found", "package": {
+                        "id": "@kb-labs/commit", "version": version, "integrity": "sha256-used",
+                    }}).encode(), {}
+                return 200, json.dumps({"status": "not-found-owned"}).encode(), {}
+
+            with patch("marketplace_steps.active_platform_root", return_value=platform), \
+                    patch("marketplace_steps._installed_gateway_url", return_value="http://gateway.test"), \
+                    patch("marketplace_steps.open_http", side_effect=resolve_registry):
+                fixture, version = _prepare_registry_commit_publish_package(
+                    workspace, root / "publish", platform, env)
+
+            original = json.loads((source / "package.json").read_text())
+            fixture_package = json.loads((fixture / "package.json").read_text())
+            self.assertEqual(version, "2.120.4")
+            self.assertEqual(fixture_package, {**original, "version": version})
+            self.assertEqual(original["version"], "2.120.1")
+            self.assertEqual((fixture / "dist" / "manifest.js").read_bytes(),
+                             (source / "dist" / "manifest.js").read_bytes())
+            self.assertEqual(json.loads((fixture / "dist" / "manifest.json").read_text())["id"],
+                             "@kb-labs/commit")
+            self.assertTrue((fixture / "node_modules").is_symlink())
+            self.assertEqual((fixture / "node_modules").resolve(),
+                             (platform / "node_modules").resolve())
+            self.assertEqual(registry_versions, ["2.120.3", "2.120.4"])
+
+
+    def test_registry_commit_fixture_publishes_higher_package_copy_and_installs_verified_integrity(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-registry-fixture-") as directory:
             root = Path(directory)
             project = root / "project"
@@ -311,8 +372,22 @@ class MarketplaceStepTests(unittest.TestCase):
             (workspace / ".kb").mkdir()
             (workspace / ".kb" / "marketplace.lock").write_text(
                 json.dumps({"schema": "kb.marketplace/3", "plugins": {}}))
-            (workspace / "plugins").mkdir()
-            (workspace / "e2e").mkdir()
+            (workspace / "plugins" / "commit" / "dist").mkdir(parents=True)
+            (workspace / "plugins" / "commit" / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/commit", "version": "2.120.1",
+                "kb": {"manifest": "./dist/manifest.js"},
+            }))
+            (workspace / "plugins" / "commit" / "README.md").write_text("Commit fixture\n")
+            (workspace / "plugins" / "commit" / "dist" / "manifest.js").write_text("export const manifest = {};\n")
+            (workspace / "plugins" / "commit" / "dist" / "manifest.json").write_text(json.dumps({
+                "id": "@kb-labs/commit", "version": "0.1.0",
+            }))
+            analytics = workspace / "e2e" / "journey" / "fixtures" / "analytics-emitter"
+            analytics.mkdir(parents=True)
+            (analytics / "package.json").write_text(json.dumps({"name": "@kb-labs/analytics-emitter", "version": "1.0.0"}))
+            qa_plugin = workspace / "plugins" / "qa"
+            qa_plugin.mkdir(parents=True)
+            (qa_plugin / "package.json").write_text(json.dumps({"name": "@kb-labs/qa", "version": "1.0.0"}))
             installed_platform = root / "installed-platform"
             installed_adapter = installed_platform / "node_modules" / "@kb-labs" / "adapters-pino"
             installed_adapter.mkdir(parents=True)
@@ -326,7 +401,12 @@ class MarketplaceStepTests(unittest.TestCase):
                     "installedPath": "node_modules/@kb-labs/adapters-pino",
                 }],
             }))
+            (installed_platform / ".kb" / "marketplace.lock").write_text(json.dumps({"plugins": {
+                "@kb-labs/commit": {"package": "@kb-labs/commit", "version": "2.120.1"},
+            }, "adapters": {"pino": {"resolvedPath": "node_modules/@kb-labs/adapters-pino", "version": "2.120.1"}}}))
             calls = []
+            published_versions = []
+            registry_integrity = "sha256-registry-integrity"
 
             def runner(command, *, cwd, env, capture_output, text, timeout, input=None):
                 calls.append((tuple(command), cwd, env.copy(), input))
@@ -349,18 +429,32 @@ class MarketplaceStepTests(unittest.TestCase):
                     staged_adapter = Path(env["KB_PLATFORM_ROOT"]) / "node_modules" / "@kb-labs" / "adapters-pino"
                     self.assertTrue(staged_adapter.is_symlink())
                     self.assertEqual(staged_adapter.resolve(), installed_adapter.resolve())
-                    return subprocess.CompletedProcess(command, 0, json.dumps({
-                        "ok": True, "data": {"version": "2.120.1"},
-                    }), "")
-                if command[0] == "kb":
+                    if "hub" in command:
+                        package_root = Path(command[command.index("--path") + 1])
+                        package = json.loads((package_root / "package.json").read_text())
+                        package_version = package.get("version", "1.0.0")
+                        if package.get("name") == "@kb-labs/commit":
+                            self.assertTrue((package_root / "node_modules").is_symlink())
+                            self.assertEqual(package_version, "2.120.2")
+                            published_versions.append(package_version)
+                        return subprocess.CompletedProcess(command, 0, json.dumps({
+                            "ok": True, "data": {"version": package_version},
+                        }), "")
+                if command[:3] == ["kb", "config", "set"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
+                        "nextCommand": "kb-create restart --platform-root /platform",
+                    }}), "")
+                if command[:2] == ["kb-create", "restart"]:
+                    return subprocess.CompletedProcess(command, 0, "restarted", "")
+                if command[:3] == ["kb", "marketplace", "install"]:
                     lock = {"schema": "kb.marketplace/3", "plugins": {
-                        "@kb-labs/commit": {"version": "2.120.1", "package": "@kb-labs/commit",
+                        "@kb-labs/commit": {"version": "2.120.2", "package": "@kb-labs/commit",
                             "source": "marketplace", "marketplaceSource": "registry",
-                            "signatureStatus": "verified", "integrity": "sha512-registry", "enabled": True},
+                            "signatureStatus": "verified", "integrity": registry_integrity, "enabled": True},
                     }}
                     (project / ".kb" / "marketplace.lock").write_text(json.dumps(lock))
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
-                        "scope": "project", "installed": [{"id": "@kb-labs/commit", "version": "2.120.1",
+                        "scope": "project", "installed": [{"id": "@kb-labs/commit", "version": "2.120.2",
                             "source": "registry", "signatureStatus": "verified"}],
                     }}), "")
                 self.fail(f"unexpected Registry fixture command: {command}")
@@ -376,6 +470,13 @@ class MarketplaceStepTests(unittest.TestCase):
                 if request.full_url.endswith("/ready"):
                     return 200, json.dumps({"ok": True, "data": {"ready": True, "components": {
                         "upstream:marketplaceRegistry": {"ready": True, "status": "up"}}}}).encode(), {}
+                if "/resolve?" in request.full_url and "version=" in request.full_url:
+                    from urllib.parse import parse_qs, urlparse
+                    version = parse_qs(urlparse(request.full_url).query)["version"][0]
+                    payload = ({"status": "found", "package": {"id": "@kb-labs/commit",
+                                "version": version, "integrity": registry_integrity}}
+                               if version in published_versions else {"status": "not-found-owned"})
+                    return 200, json.dumps(payload).encode(), {}
                 return 401, json.dumps({"ok": False, "error": {
                     "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                     "hint": "Log in and retry."}}).encode(), {}
@@ -397,14 +498,20 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(entry["signatureStatus"], "verified")
             workspace_cli = str(workspace / "cli" / "bin" / "dist" / "bin.js")
             publish_calls = [call for call in calls if call[0][0] == "node" and "hub" in call[0]]
-            self.assertEqual([call[0] for call in publish_calls], [
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/commit"), "--json"),
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"),
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"),
-            ])
+            self.assertEqual(len(publish_calls), 3)
+            commit_path = Path(publish_calls[0][0][publish_calls[0][0].index("--path") + 1])
+            self.assertEqual(publish_calls[0][0][0:4], ("node", workspace_cli, "hub", "publish"))
+            self.assertNotEqual(commit_path, workspace / "plugins/commit")
+            self.assertEqual(published_versions, ["2.120.2"])
+            self.assertEqual(publish_calls[1][0], (
+                "node", workspace_cli, "hub", "publish", "--path",
+                str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"))
+            self.assertEqual(publish_calls[2][0], (
+                "node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"))
             self.assertTrue(all(call[2].get("KB_REGISTRY_URL") ==
                                 "http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1"
                                 for call in publish_calls))
+            self.assertEqual(entry["integrity"], registry_integrity)
             login_calls = [call for call in calls if call[0][0] == "node" and call[0][2:4] == ("auth", "login")]
             self.assertEqual(len(login_calls), 3)
             self.assertTrue(all(login[2]["HOME"] == publish[2]["HOME"]

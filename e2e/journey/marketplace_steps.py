@@ -8,14 +8,17 @@ from project_service_path import project_service_path
 import json
 import hashlib
 import os
+import re
+import shutil
 import tempfile
 import time
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 import urllib.request
 from pathlib import Path
 from typing import Callable
 
 from journey_resources import active_platform_root, workspace_resource
+from installed_fixture import layout_value
 from hermetic_cli import run_hermetic_cli
 from service_steps import Journey
 from invocations import (
@@ -78,8 +81,8 @@ def _assert_registry_gateway_config(env: dict[str, str]) -> None:
         raise RuntimeError("Registry source, Gateway route, and isolated upstream do not form one route")
 
 
-def commit_publish_command(workspace_root: str | Path) -> list[str]:
-    return ["hub", "publish", "--path", str(Path(workspace_root) / "plugins" / "commit"), "--json"]
+def commit_publish_command(package_root: str | Path) -> list[str]:
+    return ["hub", "publish", "--path", str(Path(package_root)), "--json"]
 
 
 def _publish_fixture_command(workspace_root: str | Path, package_path: str) -> list[str]:
@@ -510,6 +513,128 @@ def publish_commit_update_fixture(registry: str, source_version: str, env: dict[
     return update_version
 
 
+def _release_version_tuple(version: str) -> tuple[int, int, int]:
+    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version)
+    if not match:
+        raise RuntimeError("Registry Commit fixture requires a stable semantic package version")
+    return tuple(int(part) for part in match.groups())
+
+
+def _registry_resolve_exact_commit_version(env: dict[str, str], version: str) -> dict | None:
+    gateway_url = _installed_gateway_url(env).rstrip("/")
+    registry_api = f"{gateway_url}/api/v1/marketplace-registry/api/v1"
+    query = urlencode({"identity": "@kb-labs/commit", "version": version})
+    request = urllib.request.Request(f"{registry_api}/resolve?{query}", headers={"Accept": "application/json"})
+    status, body, _ = open_http(urllib.request.urlopen, request, timeout=30, env=env)
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise RuntimeError("Gateway Registry version probe returned invalid JSON") from error
+    if status == 200 and isinstance(payload, dict) and payload.get("status") == "found":
+        package = payload.get("package")
+        if isinstance(package, dict) and package.get("id") == "@kb-labs/commit" and package.get("version") == version:
+            return package
+        raise RuntimeError("Gateway Registry version probe returned a mismatched Commit package")
+    if (status == 200 and isinstance(payload, dict)
+            and payload.get("status") in {"not-found-owned", "not-found-unowned"}):
+        return None
+    raise RuntimeError("Gateway Registry could not confirm whether the Commit fixture version is available")
+
+
+def _registry_commit_base_versions(workspace: Path, platform_root: Path, env: dict[str, str]) -> list[str]:
+    source_version = commit_fixture_source_version(workspace)
+    versions = [source_version]
+    active_root = active_platform_root(platform_root)
+    platform_lock = active_root / layout_value("versionStatePaths.kb_marketplace_lock")
+    if platform_lock.is_file():
+        try:
+            lock = json.loads(platform_lock.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("active platform Marketplace lock is unreadable") from error
+        plugins = lock.get("plugins") if isinstance(lock, dict) else None
+        commit = plugins.get("@kb-labs/commit") if isinstance(plugins, dict) else None
+        pinned_version = commit.get("version") if isinstance(commit, dict) else None
+        if isinstance(pinned_version, str) and pinned_version:
+            versions.append(pinned_version)
+
+    kb_home_value = env.get("KB_HOME", "").strip()
+    kb_home = (Path(kb_home_value).expanduser().resolve() if kb_home_value
+               else (Path(env.get("HOME", str(Path.home()))) / ".kb").resolve())
+    entries = kb_home / "store" / "entries"
+    key_prefix = "@kb-labs+commit@"
+    if entries.is_dir():
+        for entry in entries.glob(f"{key_prefix}*"):
+            version = entry.name[len(key_prefix):]
+            if version:
+                versions.append(version)
+    for version in versions:
+        _release_version_tuple(version)
+    return versions
+
+
+def _next_free_registry_commit_version(workspace: Path, platform_root: Path,
+                                        env: dict[str, str]) -> str:
+    base_versions = _registry_commit_base_versions(workspace, platform_root, env)
+    base = max(base_versions, key=_release_version_tuple)
+    major, minor, patch = _release_version_tuple(base)
+    for _ in range(100):
+        patch += 1
+        candidate = f"{major}.{minor}.{patch}"
+        store_entries = (Path(env.get("KB_HOME", str(Path(env.get("HOME", str(Path.home()))) / ".kb")))
+                         / "store" / "entries")
+        if (store_entries / f"@kb-labs+commit@{candidate}").exists():
+            continue
+        if _registry_resolve_exact_commit_version(env, candidate) is None:
+            return candidate
+    raise RuntimeError("could not find an unused higher Commit version in the Registry and extension store")
+
+
+def _prepare_registry_commit_publish_package(workspace: Path, fixture_parent: Path,
+                                            platform_root: Path, env: dict[str, str]) -> tuple[Path, str]:
+    source_root = workspace / "plugins" / "commit"
+    source_package_path = source_root / "package.json"
+    try:
+        source_package = json.loads(source_package_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("active Commit fixture package manifest is unavailable") from error
+    package_name = source_package.get("name")
+    source_version = source_package.get("version")
+    if package_name != "@kb-labs/commit" or not isinstance(source_version, str):
+        raise RuntimeError("active Commit fixture package identity is invalid")
+    fixture_version = _next_free_registry_commit_version(workspace, platform_root, env)
+    manifest_field = source_package.get("kb", {}).get("manifest") if isinstance(source_package.get("kb"), dict) else None
+    if not isinstance(manifest_field, str):
+        raise RuntimeError("active Commit fixture package does not declare its compiled manifest")
+    manifest_js = (source_root / manifest_field).resolve()
+    manifest_json = manifest_js.with_suffix(".json")
+    if (source_root.resolve() not in manifest_js.parents or not manifest_js.is_file()
+            or not manifest_json.is_file()):
+        raise RuntimeError("active Commit fixture compiled manifest files are unavailable")
+    try:
+        static_manifest = json.loads(manifest_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("active Commit fixture static manifest is invalid") from error
+    if static_manifest.get("id") != package_name:
+        raise RuntimeError("active Commit package name and compiled manifest identity differ")
+
+    fixture_root = fixture_parent / "commit"
+    fixture_root.mkdir(parents=True, exist_ok=False)
+    shutil.copy2(source_package_path, fixture_root / "package.json")
+    for name in ("README.md", "LICENSE"):
+        source = source_root / name
+        if source.is_file():
+            shutil.copy2(source, fixture_root / name)
+    shutil.copytree(source_root / "dist", fixture_root / "dist")
+    installed_node_modules = active_platform_root(platform_root) / "node_modules"
+    if not installed_node_modules.is_dir():
+        raise RuntimeError("active platform package dependencies are unavailable for the Commit publisher")
+    (fixture_root / "node_modules").symlink_to(installed_node_modules, target_is_directory=True)
+    package = json.loads((fixture_root / "package.json").read_text(encoding="utf-8"))
+    package["version"] = fixture_version
+    (fixture_root / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
+    return fixture_root, fixture_version
+
+
 def prepare_registry_commit_project_fixture(journey: Journey, project_root: str | Path, registry: str,
                                             env: dict[str, str] | None = None,
                                             runner: CommandRunner = run_command) -> dict | None:
@@ -556,11 +681,20 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
         base_env["KB_REGISTRY_URL"] = (
             f"{_installed_gateway_url(base_env)}/api/v1/marketplace-registry/api/v1")
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
-        published = _json(_publish_workspace_fixture(workspace, "plugins/commit", base_env, runner),
-                           commit_publish_command(workspace))
+        platform_root = active_platform_root(Path(base_env["KB_JOURNEY_PLATFORM_ROOT"]))
+        with tempfile.TemporaryDirectory(
+                prefix="kb-registry-commit-publish-", dir=base_env.get("HOME")) as fixture_directory:
+            commit_package, expected_version = _prepare_registry_commit_publish_package(
+                workspace, Path(fixture_directory), platform_root, base_env)
+            published = _json(_publish_workspace_fixture(workspace, str(commit_package), base_env, runner),
+                               commit_publish_command(commit_package))
         version = published.get("version")
-        if not isinstance(version, str) or not version:
-            raise RuntimeError("kb hub publish did not return the published Commit version")
+        if version != expected_version:
+            raise RuntimeError("Registry publisher returned a Commit version different from the prepared package")
+        resolved_package = _registry_resolve_exact_commit_version(base_env, version)
+        if (not isinstance(resolved_package, dict) or resolved_package.get("id") != "@kb-labs/commit"
+                or resolved_package.get("version") != version or not resolved_package.get("integrity")):
+            raise RuntimeError("Registry resolve did not return the published Commit package and integrity")
         for fixture_path in ("e2e/journey/fixtures/analytics-emitter", "plugins/qa"):
             publication = _json(_publish_workspace_fixture(workspace, fixture_path, base_env, runner),
                                 _publish_fixture_command(workspace, fixture_path))
@@ -579,6 +713,8 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
                                               signature_status="verified")
         if entry is None:
             raise RuntimeError("Registry fixture install did not record the verified Commit lock entry")
+        if entry.get("integrity") != resolved_package.get("integrity"):
+            raise RuntimeError("Registry install lock integrity differs from the published exact-version resolution")
         captured["entry"] = dict(entry)
 
     journey.step("publish and install Commit through Registry", "marketplace-fixtures", install_fixture,
