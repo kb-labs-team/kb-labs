@@ -31,7 +31,7 @@ import {
   type ServiceContext,
 } from "@kb-labs/shared-daemon";
 import { setup as setupWorkflow } from "@kb-labs/workflow-daemon";
-import { setupProjectMcp } from "@kb-labs/mcp-app/project-module";
+import { projectMcpUiProvider, setupProjectMcp } from "@kb-labs/mcp-app/project-module";
 import { manifest as restManifest } from "@kb-labs/rest-api-app/manifest";
 import { manifest as workflowManifest } from "@kb-labs/workflow-daemon/manifest";
 import { manifest as mcpManifest } from "@kb-labs/mcp-app/manifest";
@@ -257,7 +257,7 @@ export async function createProjectRuntimeConfig(
     startDir: options.projectRoot,
     moduleUrl: options.moduleUrl,
     previousExitCause: options.previousExitCause,
-    platform: { assemblyHook },
+    platform: { assemblyHook, uiProvider: projectMcpUiProvider },
     modules: [...serviceModules, guard],
   };
 }
