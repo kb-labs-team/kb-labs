@@ -31,6 +31,7 @@ from invocations import (
     read_ux_http_result,
     run_command,
     run_with_runner,
+    store_report_secret,
 )
 from plugin_author_steps import preflight_installed_plugin_command, run_commit_case_steps
 from commit_fixture import commit_fixture_source_version
@@ -643,6 +644,9 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
         args[0] = env.get("KB_JOURNEY_KB_CREATE_PATH", args[0])
         result = run_with_runner(runner, args, cwd=project, env=env, timeout=1200)
         _output(result, args)
+        store_report_secret(env, "KB_JOURNEY_MARKETPLACE_TOKEN",
+                            "journey-registry-token-reference-test-value",
+                            "journey Marketplace Registry redaction test credential")
         expected_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
         token = env.get("KB_JOURNEY_MARKETPLACE_TOKEN", "")
         if not expected_url or not key or not token:

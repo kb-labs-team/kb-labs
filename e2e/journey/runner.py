@@ -104,7 +104,7 @@ LAST_COMMAND_CWD: str | None = None
 
 
 def marketplace_install_flags(env: dict[str, str]) -> list[str]:
-    """Configure the journey npm mirror and translate Registry secrets to env references."""
+    """Configure journey Marketplace sources for anonymous public Registry installs."""
     registry_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
     encoded_key = env.get("KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64", "")
     if bool(registry_url) != bool(encoded_key):
@@ -116,8 +116,10 @@ def marketplace_install_flags(env: dict[str, str]) -> list[str]:
         except (ValueError, UnicodeDecodeError) as error:
             raise ValueError("journey Registry public key is not valid base64-encoded UTF-8") from error
         env["KB_JOURNEY_MARKETPLACE_PUBLIC_KEY"] = key
-        store_report_secret(env, "KB_JOURNEY_MARKETPLACE_TOKEN",
-                            "journey-registry-token-reference-test-value", "journey Marketplace Registry token")
+        # Keep the configured reference resolvable while public Registry cases
+        # exercise anonymous access. S-268.6 injects a non-empty sentinel only
+        # for the status/doctor redaction checks.
+        env["KB_JOURNEY_MARKETPLACE_TOKEN"] = ""
         flags.extend(["--marketplace-registry-url", registry_url,
                       "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
                       "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN"])
