@@ -26,6 +26,7 @@ def run_hermetic_cli(
     runner: Callable[..., CompletedProcess[str]] | None = None,
     timeout: float = 300,
     workspace_root: Path | None = None,
+    installed_platform_root: Path | None = None,
     gateway_login: tuple[str, str, str] | None = None,
 ) -> CompletedProcess[str]:
     """Run a host-side CLI with fresh HOME and explicit local access mode."""
@@ -40,7 +41,8 @@ def run_hermetic_cli(
     child_env = dict(os.environ if env is None else env)
     with tempfile.TemporaryDirectory(prefix="kb-journey-home-") as home:
         fixture_env = configure_hermetic_cli_fixture(
-            Path(home), env=child_env, workspace_root=workspace_root)
+            Path(home), env=child_env, workspace_root=workspace_root,
+            installed_platform_root=installed_platform_root)
         fixture_cwd = fixture_env["KB_PROJECT_ROOT"] if workspace_root is not None else cwd
         if gateway_login is not None:
             gateway_url, email, password = gateway_login
