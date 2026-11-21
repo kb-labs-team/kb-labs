@@ -204,8 +204,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
             index = home / "release-index.json"
             index.write_text("{}\n")
             failure_root = platform_root.parent / "pc001-pnpm-failure-root"
+            stderr = "x149-pnpm-fixture: registry unavailable"
             log = home / "apply.log"
-            log.write_text("Package manager failed with exit code 47; package manager output omitted for safety.\n")
+            log.write_text(stderr + "\n")
             diagnostic = home / "apply.json"
             diagnostic.write_text("{}\n")
 
@@ -224,7 +225,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     "correlationId": "a" * 32,
                     "details": {
                         "packageManagerExitCode": "47",
-                        "packageManagerOutput": "omitted for safety",
+                        "packageManagerStderrTail": stderr,
                         "logPath": str(log),
                         "diagnosticPath": str(diagnostic),
                     },
@@ -240,11 +241,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 result = run_command(args, **kwargs)
                 if args[1] == "apply":
                     response = json.loads(result.stdout)
-                    response["error"]["details"].pop("packageManagerOutput")
+                    response["error"]["details"].pop("packageManagerStderrTail")
                     result.stdout = json.dumps(response)
                 return result
 
-            with self.assertRaisesRegex(RuntimeError, "exit code or safe output notice"):
+            with self.assertRaisesRegex(RuntimeError, "exit code or stderr tail"):
                 verify_package_manager_failure_diagnostic(
                     launcher="kb-create", stable_index=index, platform_root=platform_root,
                     registry="http://registry.test", run_command=dropped_stderr,

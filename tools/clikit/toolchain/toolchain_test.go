@@ -221,28 +221,83 @@ func TestExternalToolFailureKeepsExitCodeAndStderrTail(t *testing.T) {
 	}
 }
 
-func TestDiscardOutputKeepsSubprocessBytesOutOfResultsErrorsAndWriters(t *testing.T) {
+// case: S-285.18
+func TestSafeCaptureRedactsWholeSplitStreamsBeforeExposure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture requires POSIX")
 	}
 	tool := filepath.Join(t.TempDir(), "failing-tool")
-	secret := `{"access_token":"split secret value"}`
-	if err := os.WriteFile(tool, []byte("#!/bin/sh\nprintf '%s' '{\"access_' >&1\nprintf '%s' 'token\":\"split secret ' >&1\nprintf '%s' 'value\"}' >&1\nprintf '%s' 'TOKEN=split secret ' >&2\nprintf '%s' 'value' >&2\nexit 47\n"), 0o700); err != nil {
+	const knownSecret = "known secret with spaces"
+	const patternSecret = "split-pattern-secret"
+	script := "#!/bin/sh\nprintf '%s' '{\"access_' >&1\nprintf '%s' 'token\":\"" + patternSecret + "\"}' >&1\nprintf '%s' 'prefix known secret ' >&2\nprintf '%s\\n' 'with spaces suffix' >&2\nexit 47\n"
+	if err := os.WriteFile(tool, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr strings.Builder
 	result, err := Run(context.Background(), Invocation{
-		Tool: "fixture", Executable: tool, Operation: OperationPackageManager, DiscardOutput: true,
-		Stdout: &stdout, Stderr: &stderr,
+		Tool: "fixture", Executable: tool, Operation: OperationPackageManager, SafeCaptureOutput: true,
+		Redactions: []string{knownSecret},
+		Stdout:     &stdout, Stderr: &stderr,
 	})
 	var failure *CommandError
 	if !errors.As(err, &failure) || failure.ExitCode != 47 {
 		t.Fatalf("failure = %#v, want exit code 47", err)
 	}
-	for label, value := range map[string]string{"result stdout": result.Stdout, "result stderr": result.Stderr, "command error": err.Error(), "provided stdout writer": stdout.String(), "provided stderr writer": stderr.String()} {
-		if strings.Contains(value, secret) || strings.Contains(value, "split secret") || strings.Contains(value, "TOKEN=") {
-			t.Fatalf("%s exposed discarded package-manager output: %q", label, value)
+	for label, value := range map[string]string{
+		"result stdout": result.Stdout, "result stderr": result.Stderr,
+		"command error": err.Error(), "stderr tail": failure.StderrTail,
+		"provided stdout writer": stdout.String(), "provided stderr writer": stderr.String(),
+	} {
+		if strings.Contains(value, patternSecret) || strings.Contains(value, knownSecret) {
+			t.Fatalf("%s exposed captured package-manager secret: %q", label, value)
 		}
+	}
+	if !strings.Contains(result.Stdout, "access_token") || !strings.Contains(result.Stdout, "[REDACTED]") ||
+		!strings.Contains(result.Stderr, "prefix ") || !strings.Contains(result.Stderr, "suffix") || !strings.Contains(result.Stderr, "[REDACTED]") {
+		t.Fatalf("safe output lost useful context: stdout=%q stderr=%q", result.Stdout, result.Stderr)
+	}
+	if stdout.String() != result.Stdout || stderr.String() != result.Stderr {
+		t.Fatalf("caller writers did not receive the sanitized results: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+// case: S-285.18
+func TestSafeCaptureDropsWholeStreamWhenLimitIsExceeded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	tool := filepath.Join(t.TempDir(), "oversized-tool")
+	const rawSecret = "overflow-pattern-secret"
+	const knownSecret = "known overflow secret with spaces"
+	stdoutPayload := strings.Repeat("X", 120) + "TOKEN=" + rawSecret + strings.Repeat("Z", 100)
+	stderrPayload := strings.Repeat("Y", 120) + knownSecret + strings.Repeat("W", 100)
+	script := "#!/bin/sh\nprintf '%s' '" + stdoutPayload + "' >&1\nprintf '%s' '" + stderrPayload + "' >&2\nexit 23\n"
+	if err := os.WriteFile(tool, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	result, err := Run(context.Background(), Invocation{
+		Tool: "fixture", Executable: tool, Operation: OperationPackageManager,
+		SafeCaptureOutput: true, MaxCapturedOutputBytes: 128, Redactions: []string{knownSecret},
+		Stdout: &stdout, Stderr: &stderr,
+	})
+	var failure *CommandError
+	if !errors.As(err, &failure) || failure.ExitCode != 23 {
+		t.Fatalf("failure = %#v, want exit code 23", err)
+	}
+	for label, value := range map[string]string{
+		"result stdout": result.Stdout, "result stderr": result.Stderr,
+		"command error": err.Error(), "stdout tail": failure.StdoutTail, "stderr tail": failure.StderrTail,
+		"provided stdout writer": stdout.String(), "provided stderr writer": stderr.String(),
+	} {
+		if strings.Contains(value, strings.Repeat("X", 10)) || strings.Contains(value, strings.Repeat("Y", 10)) ||
+			strings.Contains(value, rawSecret) || strings.Contains(value, knownSecret) || strings.Contains(value, "TOKEN=") {
+			t.Fatalf("%s retained a raw stream prefix after overflow: %q", label, value)
+		}
+	}
+	if !strings.Contains(result.Stdout, "omitted") || !strings.Contains(result.Stderr, "omitted") ||
+		stdout.String() != result.Stdout || stderr.String() != result.Stderr {
+		t.Fatalf("overflow did not produce safe notices: result=%#v stdout=%q stderr=%q", result, stdout.String(), stderr.String())
 	}
 }
 

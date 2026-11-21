@@ -45,28 +45,40 @@ printf 'process.stdout.write("product-pnpm-ok")' > "$COREPACK_HOME/v1/pnpm/` + t
 	}
 }
 
-// case: PC-001.2, S-285.9
+// case: PC-001.2, S-285.9, S-285.18
 func TestProductCorepackProvisionFailureNamesSource(t *testing.T) {
 	root, bin := t.TempDir(), t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "corepack"), []byte("#!/bin/sh\nprintf '%8192s' x >&2\nprintf '\\ncorepack-fixture: registry unavailable TOKEN=synthetic-secret-sentinel\\n' >&2\nexit 47\n"), 0755); err != nil {
+	const knownSecret = "known secret with spaces"
+	script := "#!/bin/sh\nprintf '%8192s' x >&2\nprintf '\\ncorepack-fixture: registry unavailable TOKEN=synthetic-secret-sentinel\\n' >&2\nprintf '%s' '{\"access_' >&2\nsleep 0.02\nprintf '%s' 'token\":\"pattern-secret-sentinel\"}' >&2\nprintf '%s' ' known secret with ' >&2\nsleep 0.02\nprintf '%s\\n' 'spaces' >&2\nexit 47\n"
+	if err := os.WriteFile(filepath.Join(bin, "corepack"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	p := mustPnpm(t, PnpmConfig{PackageManagerRoot: root, Registry: "http://127.0.0.1:1"})
-	err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry}).Run(context.Background(), &bytes.Buffer{}, "pnpm", "--version")
+	p := mustPnpm(t, PnpmConfig{PackageManagerRoot: root, Registry: "http://127.0.0.1:1", Redactions: []string{knownSecret}})
+	var transcript bytes.Buffer
+	err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry, redactions: p.config.Redactions}).Run(context.Background(), &transcript, "pnpm", "--version")
 	if err == nil || !strings.Contains(err.Error(), toolchain.SupportedPnpm) || !strings.Contains(err.Error(), "Corepack's default npm registry") || strings.Contains(err.Error(), p.config.Registry) || strings.Contains(err.Error(), "workspace root") {
 		t.Fatalf("diagnostic = %v", err)
 	}
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != contracts.CodeApplyFailed ||
-		failure.Meta["packageManagerExitCode"] != "47" || failure.Meta["packageManagerOutput"] != "omitted for safety" {
+		failure.Meta["packageManagerExitCode"] != "47" {
 		t.Fatalf("Corepack provisioning details = %#v", err)
 	}
-	for key, value := range failure.Meta {
-		if strings.Contains(fmt.Sprint(value), "synthetic-secret-sentinel") || strings.Contains(fmt.Sprint(value), "registry unavailable") {
-			t.Fatalf("Corepack diagnostic retained raw package-manager output in %s: %v", key, value)
+	stderrTail := fmt.Sprint(failure.Meta["packageManagerStderrTail"])
+	for _, secret := range []string{"synthetic-secret-sentinel", "pattern-secret-sentinel", knownSecret} {
+		if strings.Contains(stderrTail, secret) || strings.Contains(transcript.String(), secret) {
+			t.Fatalf("Corepack output leaked %q: tail=%q transcript=%q", secret, stderrTail, transcript.String())
 		}
+	}
+	for _, evidence := range []string{"corepack-fixture: registry unavailable", `access_token`, `[REDACTED]`} {
+		if !strings.Contains(stderrTail, evidence) || !strings.Contains(transcript.String(), evidence) {
+			t.Fatalf("safe Corepack evidence %q missing: tail=%q transcript=%q", evidence, stderrTail, transcript.String())
+		}
+	}
+	if len(stderrTail) > externalCommandStderrTailBytes {
+		t.Fatalf("Corepack stderr evidence exceeds tail limit: %d", len(stderrTail))
 	}
 }
 
@@ -102,9 +114,9 @@ func TestNativeBuildCacheIsInsidePackageManagerRoot(t *testing.T) {
 	t.Fatalf("package manager environment lacks %q", want)
 }
 
-func TestCorepackStdoutFailureIsOmittedFromProvisioningDiagnostic(t *testing.T) {
+func TestCorepackStdoutFailureIsRedactedAndRetainedInTranscript(t *testing.T) {
 	root, bin := t.TempDir(), t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "corepack"), []byte("#!/bin/sh\nprintf 'HTTP 404 fixture registry\\n'\nexit 1\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "corepack"), []byte("#!/bin/sh\nprintf 'HTTP 404 fixture registry TOKEN=stdout-secret-sentinel\\n'\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", t.TempDir())
@@ -113,8 +125,9 @@ func TestCorepackStdoutFailureIsOmittedFromProvisioningDiagnostic(t *testing.T) 
 	var transcript bytes.Buffer
 	err := (CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry}).Run(context.Background(), &transcript, "pnpm", "--version")
 	var failure *diag.Diag
-	if !errors.As(err, &failure) || strings.Contains(failure.Reason, "HTTP 404 fixture registry") || strings.Contains(failure.Cause, "HTTP 404 fixture registry") ||
-		!strings.Contains(transcript.String(), "output omitted for safety") || strings.Contains(transcript.String(), "HTTP 404 fixture registry") {
+	if !errors.As(err, &failure) || strings.Contains(failure.Cause, "stdout-secret-sentinel") ||
+		!strings.Contains(transcript.String(), "HTTP 404 fixture registry") || !strings.Contains(transcript.String(), `TOKEN="[REDACTED]"`) ||
+		strings.Contains(transcript.String(), "stdout-secret-sentinel") {
 		t.Fatalf("failure = %#v", err)
 	}
 }

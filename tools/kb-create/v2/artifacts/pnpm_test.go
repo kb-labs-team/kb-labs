@@ -1253,65 +1253,98 @@ func TestPnpmPreservesPackageManagerFailure(t *testing.T) {
 	}
 }
 
-func TestPnpmDiagnosticKeepsExitCodeAndOmitsRawOutput(t *testing.T) {
+// case: S-285.18
+func TestPnpmDiagnosticKeepsExitCodeAndStderrEvidence(t *testing.T) {
 	root := t.TempDir()
 	var transcript strings.Builder
+	runner := &fakeRunner{err: &externalCommandFailure{
+		exitCode: 47, stderrTail: "ERR_PNPM_FETCH_404 registry unavailable", cause: errors.New("exit status 47"),
+	}}
 	manager := mustPnpm(t, PnpmConfig{
 		Root:               root,
 		PackageManagerRoot: filepath.Join(root, "state", "package-manager"),
 		Log:                &transcript,
+		Runner:             runner,
 	})
-	err := manager.run("command-that-does-not-exist")
+	err := manager.run("install")
 	var failure *diag.Diag
 	if !errors.As(err, &failure) {
 		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
 	}
-	if failure.Code != contracts.CodeApplyFailed || failure.Meta["packageManagerExitCode"] == "" || failure.Meta["packageManagerOutput"] != "omitted for safety" {
-		t.Fatalf("pnpm diagnostic = code %q details %#v; want exit code and safe output notice", failure.Code, failure.Meta)
+	stderr := fmt.Sprint(failure.Meta["packageManagerStderrTail"])
+	if failure.Code != contracts.CodeApplyFailed || failure.Meta["packageManagerExitCode"] != "47" ||
+		!strings.Contains(stderr, "ERR_PNPM_FETCH_404 registry unavailable") || strings.Contains(stderr, "omitted") {
+		t.Fatalf("pnpm diagnostic = code %q details %#v; want useful bounded stderr", failure.Code, failure.Meta)
 	}
-	if !strings.Contains(transcript.String(), "output omitted for safety") || strings.Contains(transcript.String(), "pnpm") {
-		t.Fatalf("installer transcript did not safely summarize package-manager output: %q", transcript.String())
+	if transcript.Len() != 0 {
+		t.Fatalf("fake runner unexpectedly wrote to transcript: %q", transcript.String())
 	}
 }
 
-func TestCommandRunnerOmitsSplitCredentialsFromTranscript(t *testing.T) {
+// case: S-285.18
+func TestCommandRunnerRedactsSplitCredentialsFromTranscript(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture requires POSIX")
 	}
 	const patternValue = "split-pattern-value"
 	const knownValue = "known value crossing chunk boundary"
 	fixture := filepath.Join(t.TempDir(), "failing-tool")
-	script := "#!/bin/sh\nprintf '%s' '{\"access_' >&2\nprintf '%s' 'token\":\"" + patternValue + "\"}' >&2\nprintf '%s' '" + strings.TrimSuffix(knownValue, "chunk boundary") + "' >&2\nprintf '%s\\n' 'chunk boundary' >&2\nexit 47\n"
+	script := "#!/bin/sh\nprintf '%s' '{\"access_' >&1\nsleep 0.02\nprintf '%s' 'token\":\"" + patternValue + "\"}' >&1\nprintf '%s' 'prefix known secret ' >&2\nsleep 0.02\nprintf '%s\\n' 'with spaces suffix' >&2\nexit 47\n"
 	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	var transcript bytes.Buffer
-	runner := CommandRunner{}
+	runner := CommandRunner{redactions: []string{knownValue}}
 	err := runner.Run(context.Background(), &transcript, fixture)
 	if err == nil {
 		t.Fatal("command unexpectedly succeeded")
 	}
-	for _, secret := range []string{patternValue, knownValue, "access_token"} {
+	for _, secret := range []string{patternValue, knownValue} {
 		if strings.Contains(transcript.String(), secret) {
 			t.Fatalf("captured package-manager transcript leaked %q: %q", secret, transcript.String())
 		}
 	}
-	if !strings.Contains(transcript.String(), "output omitted for safety") {
-		t.Fatalf("transcript omitted safe failure notice: %q", transcript.String())
+	for _, evidence := range []string{"access_token", "prefix ", "suffix", "[REDACTED]"} {
+		if !strings.Contains(transcript.String(), evidence) {
+			t.Fatalf("transcript lost safe package-manager evidence %q: %q", evidence, transcript.String())
+		}
+	}
+}
+
+// case: S-285.18
+func TestCommandRunnerDropsWholeOversizedStreamsFromTranscript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	fixture := filepath.Join(t.TempDir(), "oversized-tool")
+	script := "#!/bin/sh\nprintf '%s' '" + strings.Repeat("X", 256) + "' >&1\nprintf '%s' '" + strings.Repeat("Y", 256) + "' >&2\nexit 47\n"
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var transcript bytes.Buffer
+	err := (CommandRunner{maxCapture: 128}).Run(context.Background(), &transcript, fixture)
+	var failure *externalCommandFailure
+	if !errors.As(err, &failure) || failure.exitCode != 47 {
+		t.Fatalf("failure = %#v, want exit code 47", err)
+	}
+	if !strings.Contains(failure.stderrTail, "omitted") || !strings.Contains(transcript.String(), "omitted") ||
+		strings.Contains(transcript.String(), strings.Repeat("X", 10)) || strings.Contains(transcript.String(), strings.Repeat("Y", 10)) {
+		t.Fatalf("oversized raw stream escaped capture: tail=%q transcript=%q", failure.stderrTail, transcript.String())
 	}
 }
 
 func TestPnpmDiagnosticCauseRetainsPackageManagerRegistryFailure(t *testing.T) {
 	root := t.TempDir()
-	runner := &fakeRunner{err: &externalCommandFailure{exitCode: 1, cause: errors.New("exit status 1")}}
+	const stderr = "ERR_PNPM_FETCH_404 GET https://registry.test/@kb-labs%2fcli-commands: Not Found - 404"
+	runner := &fakeRunner{err: &externalCommandFailure{exitCode: 1, stderrTail: stderr, cause: errors.New("exit status 1")}}
 	manager := mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t)})
 	err := manager.run("add", "@kb-labs/cli-bin@2.120.1")
 	var failure *diag.Diag
 	if !errors.As(err, &failure) {
 		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
 	}
-	if failure.Meta["packageManagerExitCode"] != "1" || failure.Meta["packageManagerOutput"] != "omitted for safety" ||
-		strings.Contains(failure.Cause, "ERR_PNPM") || strings.Contains(failure.Reason, "ERR_PNPM") {
+	if failure.Meta["packageManagerExitCode"] != "1" || failure.Meta["packageManagerStderrTail"] != stderr ||
+		!strings.Contains(failure.Cause, "ERR_PNPM_FETCH_404") {
 		t.Fatalf("package-manager diagnostic = %#v", failure)
 	}
 }

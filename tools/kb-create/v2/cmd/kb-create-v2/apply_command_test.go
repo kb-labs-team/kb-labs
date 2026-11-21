@@ -18,19 +18,21 @@ func TestApplyDossierKeepsPackageManagerFailureDetails(t *testing.T) {
 	root := t.TempDir()
 	logPath := root + "/installer/logs/apply-test.log"
 	failure := contracts.NewDiag(contracts.CodeApplyFailed, "package manager failed", "inspect the local log",
-		errors.New("pnpm add failed with value "+secret))
+		errors.New("pnpm add failed with TOKEN="+secret))
 	failure.Meta = map[string]any{
-		"packageManagerExitCode": "47",
-		"packageManagerOutput":   "omitted for safety",
+		"packageManagerExitCode":   "47",
+		"packageManagerStderrTail": strings.Repeat("x", 5000) + ` TOKEN="` + secret + `"`,
 	}
 
 	result := applyDossier(root, "package-manager-failure", logPath, contracts.ResolvedInstallPlan{}, []string{secret}, failure)
+	stderrTail, ok := result.Meta["packageManagerStderrTail"].(string)
 	if result.Code != contracts.CodeApplyFailed || result.Meta["packageManagerExitCode"] != "47" ||
-		result.Meta["packageManagerOutput"] != "omitted for safety" || result.Meta["logPath"] != logPath {
+		!ok || len(stderrTail) > 4096 || !strings.Contains(stderrTail, `TOKEN="[REDACTED]"`) ||
+		strings.Contains(stderrTail, secret) || result.Meta["logPath"] != logPath {
 		t.Fatalf("apply diagnostic = code %q details %#v", result.Code, result.Meta)
 	}
 	if strings.Contains(result.Cause, secret) || strings.Contains(result.Reason, secret) ||
-		result.Cause != "pnpm add failed with value [REDACTED]" || result.Reason != result.Cause {
+		result.Cause != `pnpm add failed with TOKEN="[REDACTED]"` || result.Reason != result.Cause {
 		t.Fatalf("apply cause was not value-redacted: cause=%q reason=%q", result.Cause, result.Reason)
 	}
 	envelope, err := diag.ToEnvelope(result)
@@ -56,8 +58,9 @@ func TestApplyDossierKeepsPackageManagerFailureDetails(t *testing.T) {
 	if err := json.Unmarshal(data, &dossier); err != nil {
 		t.Fatal(err)
 	}
-	if dossier.Error.Meta["packageManagerExitCode"] != "47" || dossier.Error.Meta["packageManagerOutput"] != "omitted for safety" ||
-		strings.Contains(dossier.Error.Cause, secret) || strings.Contains(string(data), secret) {
+	dossierTail, ok := dossier.Error.Meta["packageManagerStderrTail"].(string)
+	if dossier.Error.Meta["packageManagerExitCode"] != "47" || !ok || len(dossierTail) > 4096 ||
+		strings.Contains(dossierTail, secret) || strings.Contains(dossier.Error.Cause, secret) || strings.Contains(string(data), secret) {
 		t.Fatalf("dossier dropped or leaked package-manager details: %#v", dossier.Error.Meta)
 	}
 }
