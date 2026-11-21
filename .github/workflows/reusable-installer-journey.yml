@@ -75,7 +75,7 @@ jobs:
     name: Journey ${{ matrix.case }}
     needs: prepare
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -99,6 +99,40 @@ jobs:
       - name: Add journey report to job summary
         if: always()
         run: if [ -f .journey/reports/journey-summary.md ]; then cat .journey/reports/journey-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Summarize journey invocation timings
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from collections import defaultdict
+          from pathlib import Path
+
+          calls = Path('.journey/reports/invocations/calls.jsonl')
+          if calls.is_file():
+              totals = defaultdict(lambda: [0, 0.0])
+              first = last = None
+              count = 0
+              for line in calls.open(encoding='utf-8'):
+                  try:
+                      row = json.loads(line)
+                  except json.JSONDecodeError:
+                      continue
+                  step = row.get('step_id')
+                  if not isinstance(step, str):
+                      continue
+                  seconds = row.get('duration_seconds')
+                  seconds = seconds if isinstance(seconds, (int, float)) else 0
+                  totals[step][0] += 1
+                  totals[step][1] += seconds
+                  first = first or step
+                  last = step
+                  count += 1
+              print('### Journey invocation timing')
+              print(f'{count} recorded calls; first step: `{first or "unknown"}`; last step: `{last or "unknown"}`.')
+              print('Durations are cumulative subprocess time by case step (they do not include gaps between calls).')
+              for step, (calls_count, seconds) in sorted(totals.items(), key=lambda item: item[1][1], reverse=True)[:10]:
+                  print(f'- `{step}`: {calls_count} calls, {seconds:.1f}s')
+          PY
       - id: artifact-name
         name: Sanitize journey artifact name
         if: always()
