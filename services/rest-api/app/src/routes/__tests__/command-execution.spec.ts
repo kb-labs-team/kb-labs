@@ -186,6 +186,7 @@ describe('project runtime command execution', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  // case: S-030.3
   it('aborts host backend execution when the project request stream disconnects', async () => {
     await setup();
     let backendAborted = false;
