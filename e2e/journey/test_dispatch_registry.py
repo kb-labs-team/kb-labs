@@ -1315,6 +1315,27 @@ class DispatchRegistryTests(unittest.TestCase):
                 self.assertIn("e2e/journey/service_runner.py", resolved["stepSources"])
                 self.assertIn("project MCP cross-project isolation", resolved["selectedOwningSteps"])
 
+    def test_s160_5_selection_includes_commit_fixture_preparation_only(self):
+        root = Path(__file__).resolve().parents[2]
+        declarations = _case_declarations("e2e/journey/plugin_author_steps.py", root)
+        owner_line = next(
+            line for line, declaration in declarations.items()
+            if declaration["name"] == "execute the installed Commit command through the secured project runtime"
+        )
+        coverage = [{"mode": "secured", "cases": [{
+            "id": "S-160.5", "status": "active", "steps": [{
+                "stepId": "S-160.5", "claims": [{
+                    "kind": "journey", "source": "e2e/journey/plugin_author_steps.py", "line": owner_line,
+                }],
+            }],
+        }]}]
+
+        resolved = selection_from_coverage(coverage, "S-160.5", mode="secured")
+
+        self.assertEqual(resolved["runners"], ["service-secured:explore"])
+        self.assertEqual(resolved["prerequisiteSteps"], ["prepare Commit and Review case fixtures"])
+        self.assertNotIn("publish next-major Commit update fixture", resolved["prerequisiteSteps"])
+
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
         root = Path(__file__).resolve().parents[2]
         results = coverage_results(root)
