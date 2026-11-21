@@ -6,6 +6,11 @@ import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
 import { createErrorEnvelope, createProductErrorEnvelope } from '@kb-labs/core-platform';
 import { executeCommandV3 } from './execute-command.js';
 import { useLoader } from '@kb-labs/shared-cli-ui';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { runInSubprocess } from '@kb-labs/plugin-runtime';
+import type { IPlatformAdapters } from '@kb-labs/core-platform';
 
 describe('executeCommandV3 environment', () => {
   // case: S-010.7
@@ -81,6 +86,69 @@ describe('executeCommandV3 plugin command result output', () => {
       stderrWrite.mockRestore();
     }
   });
+
+  // case: S-243.1
+  it('returns one machine JSON result from the bundled subprocess without the engine helper usage diagnostic', async () => {
+    const testDir = mkdtempSync(join(tmpdir(), 'cli-runtime-subprocess-json-'));
+    const handlerPath = join(testDir, 'healthy-handler.mjs');
+    const expectedData = { healthy: true, source: 'bundled-subprocess' };
+    writeFileSync(handlerPath, `export default { async execute() { return ${JSON.stringify(expectedData)}; } };`);
+
+    const stderr: string[] = [];
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+      stderr.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+    const json = vi.fn();
+    const logger = {
+      debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, trace: () => {}, fatal: () => {},
+      child: () => logger,
+    };
+    const subprocessPlatform = {
+      logger,
+      cache: { get: async (key: string) => key, set: async () => {}, delete: async () => {}, clear: async () => {} },
+    } as unknown as IPlatformAdapters;
+    const execute = vi.fn(async (
+      request: ExecutionRequest,
+      options?: { onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string }) => void },
+    ) => {
+      const result = await runInSubprocess({
+        descriptor: request.descriptor,
+        platform: subprocessPlatform,
+        handlerPath: request.handlerRef,
+        input: request.input,
+        timeoutMs: 5000,
+        cwd: testDir,
+        onLog: options?.onLog,
+      });
+      return { ok: true as const, data: result.data, executionTimeMs: result.executionMeta?.duration ?? 0 };
+    });
+    const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
+
+    try {
+      const exitCode = await executeCommandV3({
+        binaryName: 'kb',
+        pluginId: '@kb-labs/test-subprocess-json',
+        pluginVersion: '1.0.0',
+        commandPath: 'fixture execution healthy',
+        handlerPath,
+        pluginRoot: testDir,
+        argv: [],
+        flags: { json: true },
+        ui: { ...noopUI, json },
+        platform: {} as unknown as PlatformServices,
+        platformContainer,
+      });
+
+      expect(exitCode).toBe(0);
+      expect(json).toHaveBeenCalledOnce();
+      expect(json.mock.calls[0]?.[0]).toMatchObject({ ok: true, data: expectedData });
+      expect(stderr.join('')).not.toContain('Usage: node node-engine.mjs');
+    } finally {
+      stderrWrite.mockRestore();
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 15000);
 
   it('frames the already-normalized backend envelope without logging or reclassifying it', async () => {
     const json = vi.fn();
