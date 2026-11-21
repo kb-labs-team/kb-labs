@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { load } from 'js-yaml';
 import { nativeInstallCommands } from '../../e2e/journey/native-macos-install.mjs';
 import { discoverModules } from './go-module-suite.mjs';
+import { resolveCorepackHome } from './resolve-corepack-home.mjs';
 import { runExternalCheck } from '../checks/lib/run-external-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -17,6 +18,76 @@ test.after(() => {
   for (const directory of temporaryDirectories) rmSync(directory, { recursive: true, force: true });
 });
 const suite = path.join(root, 'scripts/ci/go-module-suite.mjs');
+
+test('coverage hydrates and verifies the workspace-pinned Corepack package manager before DevKit tests', () => {
+  const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+  assert.match(manifest.packageManager, /^pnpm@\d+\.\d+\.\d+$/);
+  for (const scriptName of ['coverage', 'coverage:json']) {
+    const script = manifest.scripts[scriptName];
+    assert.match(script, /^COREPACK_HOME="\$\(node scripts\/ci\/resolve-corepack-home\.mjs\)" && test -n "\$COREPACK_HOME" && export COREPACK_HOME && corepack install 1>&2 && export COREPACK_ENABLE_NETWORK=0 && corepack pnpm --version >\/dev\/null && /);
+    assert.match(script, /kb-devkit run test:coverage/);
+  }
+});
+
+test('coverage preparation stops on resolver failure and keeps setup output off stdout', () => {
+  const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const shell = (scriptName) => manifest.scripts[scriptName].split(' && ./tools/kb-devkit/')[0];
+  const fakeBin = temporaryDirectory('coverage-corepack-shell-');
+  const fakeNode = path.join(fakeBin, 'node');
+  const fakeCorepack = path.join(fakeBin, 'corepack');
+  const marker = path.join(fakeBin, 'corepack-was-called');
+
+  writeFileSync(fakeNode, '#!/bin/sh\nexit 29\n', { mode: 0o700 });
+  writeFileSync(fakeCorepack, `#!/bin/sh\nprintf called > '${marker}'\nexit 0\n`, { mode: 0o700 });
+  const failing = spawnSync('sh', ['-c', shell('coverage')], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH ?? ''}` },
+  });
+  assert.equal(failing.status, 29, failing.stderr || failing.stdout);
+  assert.equal(failing.stdout, '');
+  assert.equal(existsSync(marker), false, 'Corepack must not run after resolver failure');
+
+  writeFileSync(fakeNode, '#!/bin/sh\nprintf \'/tmp/coverage-corepack-cache\'\n', { mode: 0o700 });
+  writeFileSync(fakeCorepack, '#!/bin/sh\nif [ "$1" = install ]; then printf install-output; else printf version-output; fi\n', { mode: 0o700 });
+  for (const scriptName of ['coverage', 'coverage:json']) {
+    const prepared = spawnSync('sh', ['-c', shell(scriptName)], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH ?? ''}` },
+    });
+    assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+    assert.equal(prepared.stdout, '', `${scriptName} must not write setup or version output to stdout`);
+    assert.match(prepared.stderr, /install-output/, `${scriptName} directs Corepack install output to stderr`);
+  }
+});
+
+test('coverage resolves a relative Corepack home once before DevKit changes package cwd', () => {
+  const workspace = temporaryDirectory('coverage-corepack-cwd-');
+  const canonicalWorkspace = realpathSync(workspace);
+  const packageRoot = path.join(canonicalWorkspace, 'tools', 'kb-create');
+  mkdirSync(packageRoot, { recursive: true });
+  const relativeHome = path.join('cache', 'corepack');
+  const xdgCacheHome = path.join(workspace, 'xdg-decoy');
+  const resolveFrom = (cwd, corepackHome) => {
+    const result = spawnSync(process.execPath, [path.join(root, 'scripts/ci/resolve-corepack-home.mjs')], {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, COREPACK_HOME: corepackHome, XDG_CACHE_HOME: xdgCacheHome },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return result.stdout;
+  };
+
+  const workspaceHome = resolveFrom(workspace, relativeHome);
+  const taskHome = resolveFrom(packageRoot, workspaceHome);
+  const unresolvedTaskHome = resolveFrom(packageRoot, relativeHome);
+  assert.ok(path.isAbsolute(workspaceHome));
+  assert.equal(workspaceHome, path.resolve(canonicalWorkspace, relativeHome));
+  assert.equal(taskHome, workspaceHome, 'exported absolute COREPACK_HOME is stable from a package cwd');
+  assert.notEqual(unresolvedTaskHome, workspaceHome, 'the original relative override would resolve differently in a package cwd');
+});
 
 function temporaryDirectory(prefix) {
   const directory = mkdtempSync(path.join(os.tmpdir(), prefix));
