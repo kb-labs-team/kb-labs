@@ -24,6 +24,14 @@ Case: S-268.21.
 
 ## 2026-11-21
 
+### Registry tarball downloads follow the configured source origin
+
+Marketplace resolves a Registry path-reference for package bytes against the
+configured Registry source, preserving a Gateway route prefix. An absolute
+tarball URL is accepted only when its origin matches that source. This keeps
+Registry credentials and trusted Gateway routing within the configured source
+boundary. Cases: S-268.1, S-268.3, S-268.4.
+
 ### Package-manager output is captured and redacted before use
 
 Package-manager stdout and stderr are untrusted. Each stream is captured
