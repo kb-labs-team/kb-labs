@@ -191,6 +191,10 @@ export class Worker extends EventEmitter<WorkerEvents> {
           ...process.env,
           KB_WORKER_ID: this.id,
         };
+        // Defense in depth: this credential belongs only to the runtime guard
+        // and must never cross the worker boundary, even if the launcher has
+        // not yet removed it from its own environment.
+        delete childEnv.KB_PROJECT_RUNTIME_TOKEN;
         if (this.options.platformTransport) {
           childEnv.KB_PLATFORM_TRANSPORT = this.options.platformTransport.type;
           const extraEnv = this.options.platformTransport.getChildEnv?.();

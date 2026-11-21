@@ -1,5 +1,6 @@
 import type { ILogger, LogLevel } from "../adapters/logger.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { setErrorPreviewRedactor } from "../error-envelope/sensitive-redaction.js";
 
 /** Stable identity attached to every platform-owned log record. */
 export interface PlatformLogContext {
@@ -162,8 +163,15 @@ class SensitiveValueRegistry {
   }
 
   public redactString(value: string): string {
-    return [...this.current, ...(requestSensitiveValues.getStore() ?? [])]
-      .sort((left, right) => right.length - left.length)
+    return this.redactWithValues(value, this.activeValues());
+  }
+
+  public activeValues(): readonly string[] {
+    return [...new Set([...this.current, ...(requestSensitiveValues.getStore() ?? [])])];
+  }
+
+  public redactWithValues(value: string, values: readonly string[]): string {
+    return [...values].sort((left, right) => right.length - left.length)
       .reduce((redacted, sensitive) => redacted.split(sensitive).join('[REDACTED]'), value);
   }
 }
@@ -178,6 +186,8 @@ function getProcessSensitiveValues(): SensitiveValueRegistry {
   processSensitiveValues ??= new SensitiveValueRegistry();
   return processSensitiveValues;
 }
+
+setErrorPreviewRedactor((value) => getProcessSensitiveValues().redactString(value));
 
 class ContextLogger implements IContextLogger {
   public readonly context: Readonly<LogContext>;
@@ -378,7 +388,7 @@ class ContextLogger implements IContextLogger {
   }
 
   private redactError(error?: Error): Error | undefined {
-    if (!error || this.sensitiveValues.values.length === 0) {return error;}
+    if (!error || this.sensitiveValues.activeValues().length === 0) {return error;}
     const redacted = new Error(this.redactString(error.message), {
       cause: this.redactValue(error.cause),
     });
@@ -388,7 +398,7 @@ class ContextLogger implements IContextLogger {
   }
 
   private redactRecord(record: Record<string, unknown>): Record<string, unknown> {
-    if (this.sensitiveValues.values.length === 0) {return record;}
+    if (this.sensitiveValues.activeValues().length === 0) {return record;}
     return this.redactValue(record) as Record<string, unknown>;
   }
 

@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import type { IEntityRegistry, ManifestV3, PluginContextDescriptor } from '@kb-labs/plugin-contracts';
 import { getHandlerPermissions } from '@kb-labs/plugin-contracts';
 import { createErrorEnvelope, withProcessSensitiveValues } from '@kb-labs/core-platform';
-import { matchesProjectCommandExecutionProof, PROJECT_COMMAND_EXECUTION_PROOF_HEADER } from '@kb-labs/shared-daemon';
+import { matchesProjectCommandExecutionProof, PROJECT_COMMAND_EXECUTION_PROOF_HEADER, PROJECT_RUNTIME_TOKEN_ENV } from '@kb-labs/shared-daemon';
 import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
 import { platform } from '@kb-labs/core-runtime';
 
@@ -29,6 +29,10 @@ interface ProjectCommandRequest {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function camelCaseFlagName(name: string): string {
+  return name.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
 }
 
 function validateRequest(value: unknown): ProjectCommandRequest | undefined {
@@ -98,13 +102,22 @@ export async function registerProjectCommandExecutionRoute(
     }
 
     const declaredFlags = declared.flags ?? [];
-    const allowedFlags = new Set([...GLOBAL_FLAGS, ...declaredFlags.flatMap((flag) => [flag.name, flag.name.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase())])]);
+    const allowedFlags = new Set([...GLOBAL_FLAGS, ...declaredFlags.flatMap((flag) => [flag.name, camelCaseFlagName(flag.name)])]);
     if (Object.keys(body.input.flags).some((key) => !allowedFlags.has(key))) {
+      return reply.code(400).send({ ok: false, error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', { details: { field: 'flags' } }) });
+    }
+    const duplicatesSecretAlias = declaredFlags.some((flag) => {
+      const camel = camelCaseFlagName(flag.name);
+      return flag.secret && camel !== flag.name
+        && Object.hasOwn(body.input.flags, flag.name)
+        && Object.hasOwn(body.input.flags, camel);
+    });
+    if (duplicatesSecretAlias) {
       return reply.code(400).send({ ok: false, error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', { details: { field: 'flags' } }) });
     }
     const commandFlags = { ...body.input.flags };
     for (const flag of declaredFlags) {
-      const camel = flag.name.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+      const camel = camelCaseFlagName(flag.name);
       const present = Object.hasOwn(commandFlags, flag.name) ? flag.name : camel;
       const supplied = commandFlags[present];
       if (supplied === undefined) { continue; }
@@ -159,10 +172,12 @@ export async function registerProjectCommandExecutionRoute(
     };
     const secrets = (declaredFlags.flatMap((flag) => {
       if (!flag.secret) { return []; }
-      const camel = flag.name.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+      const camel = camelCaseFlagName(flag.name);
       const value = commandFlags[flag.name] ?? commandFlags[camel];
       return typeof value === 'string' ? [value] : Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
     })).filter(Boolean);
+    const pluginEnvironment = { ...process.env };
+    delete pluginEnvironment[PROJECT_RUNTIME_TOKEN_ENV];
     const executionRequest: ExecutionRequest = {
       executionId,
       descriptor,
@@ -170,7 +185,7 @@ export async function registerProjectCommandExecutionRoute(
       handlerRef: path.relative(root, handlerPath),
       exportName: handlerParts[1] || 'default',
       input: { argv: body.input.argv, flags: commandFlags },
-      env: process.env,
+      env: pluginEnvironment,
       platformRoot: options.platformRoot,
       timeoutMs: Math.min(body.timeoutMs ?? permissionTimeoutMs, permissionTimeoutMs),
       workspace: { cwd: options.projectRoot },

@@ -125,6 +125,13 @@ function renderPreview(
   return output;
 }
 
+function throwIfExecutionAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) { return; }
+  const error = new Error('Commit execution was cancelled before the plan could be applied.');
+  error.name = 'AbortError';
+  throw error;
+}
+
 export default defineCommand({
   id: 'commit:commit',
   description: 'Generate and apply commits (default flow)',
@@ -170,6 +177,8 @@ export default defineCommand({
         onResumeProgress: () => analyzeLoader.start(),
       });
 
+      throwIfExecutionAborted(ctx.signal);
+
       analyzeLoader.succeed(`Generated commit plan with ${plan.commits.length} commit(s)`);
 
       if (flags['dry-run']) {
@@ -177,6 +186,10 @@ export default defineCommand({
       }
 
       await savePlan(cwd, plan);
+
+      // A cancellation can arrive while the plan is being persisted. Check
+      // again at the destructive boundary so no commit starts afterward.
+      throwIfExecutionAborted(ctx.signal);
 
       // 3. Apply plan
       const applyLoader = useLoader('Applying commits...');

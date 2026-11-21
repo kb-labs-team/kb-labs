@@ -35,7 +35,9 @@ export function matchesProjectCommandExecutionProof(
   const [timestamp, nonce, signature, ...extra] = received.split(".");
   if (extra.length || !timestamp || !/^\d{13}$/.test(timestamp) || !nonce || !/^[A-Za-z0-9_-]{24}$/.test(nonce) || !signature || !/^[a-f0-9]{64}$/.test(signature)) { return false; }
   const createdAt = Number(timestamp);
-  if (createdAt > now + 5_000 || now - createdAt > PROOF_TTL_MS) { return false; }
+  // Use an exclusive expiry boundary everywhere: a proof is invalid exactly
+  // when its nonce leaves the replay cache, not one millisecond later.
+  if (createdAt > now + 5_000 || now - createdAt >= PROOF_TTL_MS) { return false; }
   const expected = proofSignature(runtimeToken, context, timestamp, nonce);
   const actual = Buffer.from(signature, "hex");
   if (!timingSafeEqual(expected, actual)) { return false; }

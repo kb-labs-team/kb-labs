@@ -49,6 +49,10 @@ export function createStreamingUI(base: UIFacade, emitter: EventEmitterFn): UIFa
     success(message: string, options?: MessageOptions) {
       base.success(message, options);
       emitLines(message, 'info', 'stdout');
+      for (const section of options?.sections ?? []) {
+        if (section.header) { emitLines(section.header, 'info', 'stdout'); }
+        for (const item of section.items) { emitLines(typeof item === 'string' ? item : item.text, 'info', 'stdout'); }
+      }
     },
 
     warn(message: string, options?: MessageOptions) {

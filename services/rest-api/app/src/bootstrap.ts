@@ -17,10 +17,11 @@ import {
 } from "./middleware/metrics.js";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import { PROJECT_RUNTIME_TOKEN_ENV } from "@kb-labs/shared-daemon";
+import { consumeProjectRuntimeToken } from "./runtime-token.js";
 
 // System metrics collector instance for cleanup
 let metricsCollector: SystemMetricsCollector | null = null;
+let projectRuntimeToken: string | undefined;
 
 /**
  * Bootstrap REST API server
@@ -59,6 +60,10 @@ export async function setup({
   logger: serviceLogger,
 }: ServiceContext): Promise<() => Promise<void>> {
   const projectRoot = requireProjectContext(repoRoot);
+  // Keep the runtime guard credential in the route's closure only. Plugins,
+  // workers, subprocesses, and ordinary process logs must not inherit it.
+  projectRuntimeToken ??= consumeProjectRuntimeToken();
+  const runtimeToken = projectRuntimeToken;
   // Platform launch has already loaded the layered environment.
   const { config, diagnostics } = await loadRestApiConfig(projectRoot);
 
@@ -90,7 +95,6 @@ export async function setup({
   bootstrapLogger.info("Resolved service roots", {
     projectRoot,
     platformRoot,
-    runtimeToken: process.env[PROJECT_RUNTIME_TOKEN_ENV],
   });
   bootstrapLogger.info("Platform adapters initialized");
 
@@ -127,6 +131,7 @@ export async function setup({
     projectId,
     projectRoot,
     platformRoot,
+    runtimeToken,
   });
 
   // Start system metrics collector

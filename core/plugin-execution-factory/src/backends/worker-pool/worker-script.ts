@@ -26,6 +26,7 @@ import type {
 import { SerializedErrorEnvelopeError, withProcessSensitiveValues } from '@kb-labs/core-platform';
 import type { ExecutionError } from '@kb-labs/core-platform';
 import { normalizeExecutionFailure } from '../../utils.js';
+import { createWorkerOutputCapture, redactSensitiveValue } from './output-capture.js';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
 import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
 import type { ITransport } from '@kb-labs/core-ipc';
@@ -168,6 +169,9 @@ function createStdoutUI(currentRequestId?: string): UIFacade {
  */
 async function handleExecute(message: ExecuteMessage): Promise<void> {
   const { requestId, request, timeoutMs: _timeoutMs } = message;
+  const sensitiveValues = Array.isArray(request.context?.sensitiveValues)
+    ? request.context.sensitiveValues.filter((value): value is string => typeof value === 'string')
+    : [];
   const startMs = Date.now();
   try {
     // Dynamic import to avoid loading at startup
@@ -282,19 +286,13 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
       }
     };
 
-    const makeCapture = (orig: WriteFn, stream: 'stdout' | 'stderr'): WriteFn =>
-      (chunk, encoding?, cb?) => {
-        sendRawLine(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'), stream);
-        return orig(chunk, encoding as BufferEncoding, cb);
-      };
-    process.stdout.write = makeCapture(origStdoutWrite, 'stdout') as typeof process.stdout.write;
-    process.stderr.write = makeCapture(origStderrWrite, 'stderr') as typeof process.stderr.write;
+    const stdoutCapture = createWorkerOutputCapture('stdout', sendRawLine, sensitiveValues);
+    const stderrCapture = createWorkerOutputCapture('stderr', sendRawLine, sensitiveValues);
+    process.stdout.write = stdoutCapture as typeof process.stdout.write;
+    process.stderr.write = stderrCapture as typeof process.stderr.write;
 
     let result!: Awaited<ReturnType<typeof runInProcess>>;
     try {
-      const sensitiveValues = Array.isArray(request.context?.sensitiveValues)
-        ? request.context.sensitiveValues.filter((value): value is string => typeof value === 'string')
-        : [];
       result = await withProcessSensitiveValues(sensitiveValues, () => runInProcess({
         descriptor: request.descriptor,
         platform,
@@ -308,6 +306,8 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
         adapterMiddlewares,
       }));
     } finally {
+      stdoutCapture.flush();
+      stderrCapture.flush();
       process.stdout.write = origStdoutWrite;
       process.stderr.write = origStderrWrite;
     }
@@ -331,7 +331,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     process.send!(resultMessage);
   } catch (error) {
-    sendError(requestId, normalizeExecutionFailure(error, request).error);
+    sendError(requestId, normalizeExecutionFailure(error, request).error, sensitiveValues);
   }
 }
 
@@ -348,8 +348,8 @@ function handleMiddlewares(message: MiddlewaresInitMessage): void {
 /**
  * Send error message to parent.
  */
-function sendError(requestId: string, error: ExecutionError): void {
-  process.send!({ type: 'error', requestId, error } as ErrorMessage);
+function sendError(requestId: string, error: ExecutionError, sensitiveValues: readonly string[] = []): void {
+  process.send!({ type: 'error', requestId, error: redactSensitiveValue(error, sensitiveValues) } as ErrorMessage);
 }
 
 function handleHealth(): void {
