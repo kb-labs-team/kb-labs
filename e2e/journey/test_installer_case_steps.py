@@ -24,7 +24,8 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
                                   run_apply_scenario_step,
                                   run_invalid_request_step,
-                                  run_offline_plan_step, run_repeat_plan_readonly_step,
+                                  run_offline_plan_step, run_offline_generated_secret_install_step,
+                                  run_repeat_plan_readonly_step,
                                   run_platform_cli, run_secondary_root_gateway_isolation_step,
                                   run_stable_layout_contract_refusal_step,
                                   run_gateway_allocation_step, run_port_conflict_step,
@@ -1221,6 +1222,20 @@ class InstallerCaseStepsTest(unittest.TestCase):
                          str(cache_root / layout_value("currentLink")))
         self.assertEqual(calls[4][calls[4].index("--platform-root") + 1], str(physical_version))
 
+    def test_offline_generated_secret_journey_claims_the_real_install_flow(self):
+        with tempfile.TemporaryDirectory(prefix="journey-offline-generated-secret-") as temp:
+            root = Path(temp)
+            index = root / "release-index.json"
+            index.write_text("{}")
+            journey = run_offline_generated_secret_install_step(
+                mode="local", launcher="kb-create", stable_index=index,
+                platform_root=root / "installed", run_command=lambda args: None)
+
+        self.assertEqual(len(journey.steps), 1)
+        self.assertEqual(journey.steps[0].cases, ["S-181.7"])
+        self.assertEqual(journey.steps[0].name,
+                         "install and reapply generated secrets from the offline artifact cache")
+
     def test_platform_cli_resolves_the_requested_roots_executable(self):
         with tempfile.TemporaryDirectory(prefix="journey-platform-cli-") as temp:
             root = Path(temp)
@@ -2075,7 +2090,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                       for status in [step.status]}
             owners = {claim: step.name for step in journey.steps for claim in step.cases}
             expected = {"PC-001.2", "PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "PC-001.19", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
-                        "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-025.1", "S-025.2", "S-054.23",
+                        "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-181.7", "S-025.1", "S-025.2", "S-054.23",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",
                         "S-187.4", "S-187.5", "S-187.6", "S-187.9", "S-187.11", "S-187.12", "S-124.14"}
