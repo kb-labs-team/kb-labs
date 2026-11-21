@@ -23,6 +23,10 @@ major outside the policy.
 - [ ] An isolated installed platform whose runtime package includes its
   `package.json` with `engines.node`.
 - [ ] A Node.js runtime on a major other than the declared policy major.
+- [ ] For S-260.7, an isolated installed platform in a temporary HOME, with the
+  Node.js below the policy major and the required Node.js major explicitly
+  supplied to the journey runner as `KB_TEST_OLD_NODE` and
+  `KB_TEST_SUPPORTED_NODE`.
 
 ## Steps
 
@@ -34,6 +38,7 @@ major outside the policy.
 | S-260.4 | Submit older and newer Node major versions to installer preflight and the runtime engine boundary. | Both boundaries return `KB_NODE_VERSION_UNSUPPORTED` and render message and hint from the same catalogue entry with `requiredMajor` and `actualVersion`. Claimed by `node-engine.test.ts` (`runtime rejects older and newer majors with catalogue fields`), `toolchain_test.go` (`TestNodePolicyRejectsOlderAndNewerMajorsWithCatalogDiagnostic` and `TestNodeRemediationRendersTheCatalogHint`), and `preflight_test.go` (`TestInstallerPreflightMatchesRuntimeCatalogForOlderAndNewerMajors`). |
 | S-260.5 | Run the workspace Node engine policy check and inspect the delivery Compose config through its invoker. | Every tracked `FROM node:<tag>` stage uses the root policy major. The delivery Dockerfile has no default for its Node major, refuses an empty build argument, and derives the NodeSource URL from it. Compose config refuses an unset `KB_NODE_MAJOR` with a message naming root `package.json` `engines.node`; the documented invoker renders the root major into both target build args and resolves Compose through the shared owner, which supports `docker compose` and `docker-compose` and reports its catalogued missing-tool message instead of silently skipping. Unsupported image tags and unresolved image ARGs still fail with `file:line`. Claimed by `check-node-engine-policy.test.mjs` (`tracked Node image with the matching policy tag passes`; `tracked Node image with a mismatched tag fails with file and line`; `tracked Node image with an unresolved ARG fails with file and line`; `tracked Node image resolves a declared global ARG default`) and `e2e/delivery/scripts/delivery-invoker.test.mjs` (`delivery compose config rejects an unset Node policy argument`; `delivery invoker renders the root Node major to both targets through v2 and standalone Compose`; `delivery invoker reports the shared missing Compose message`). |
 | S-260.6 | Build `@kb-labs/plugin-contracts`, then run the Node policy checker, documentation source sync, and Go policy generator. | Each consumer loads the parser through the package's declared `@kb-labs/plugin-contracts/node-engine-policy` export and uses the shared policy implementation; no consumer depends on the contract package's private source path. |
+| S-260.7 | From an installed platform, invoke the installed `kb` shim with `kb marketplace plugins list --help` using a Node.js major below the policy; repeat with `--json`, then invoke `kb --version` with the supported major. | Both unsupported-major invocations exit non-zero before loading the CLI command graph. Text output reports catalogued `KB_NODE_VERSION_UNSUPPORTED`, the actual and required major, and the catalogue hint. JSON output is a `KB_NODE_VERSION_UNSUPPORTED` error envelope with the same fields. Neither output contains `ERR_MODULE_NOT_FOUND`, a stack trace, or a partial list of module-loading errors. With the supported major, the installed shim exits successfully and prints the installed CLI version. |
 
 ## Pass criteria
 
