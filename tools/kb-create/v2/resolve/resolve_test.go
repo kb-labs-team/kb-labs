@@ -425,6 +425,12 @@ func TestClientProfileResolvesWithoutHostOrServices(t *testing.T) {
 	if len(plan.Artifacts) != 2 || plan.Artifacts[0].Kind != "binary" || plan.Artifacts[0].ID != "kb-create" || plan.Artifacts[1].Package != "@kb-labs/cli-bin" || len(plan.ConfigPatches) != 0 {
 		t.Fatalf("client artifacts/config = %#v / %#v", plan.Artifacts, plan.ConfigPatches)
 	}
+	cliProvenance := plan.Artifacts[1].Provenance
+	if cliProvenance.SourceRevision == "" || cliProvenance.Integrity == "" ||
+		cliProvenance.ContentScope != contracts.ProvenanceScopeDist || cliProvenance.DistSHA256 == "" ||
+		cliProvenance.PackageSHA256 != "" {
+		t.Fatalf("client CLI artifact omitted complete sealed provenance: %#v", cliProvenance)
+	}
 }
 
 func TestDeclaredProviderDefaultWinsWithoutOrderDependence(t *testing.T) {

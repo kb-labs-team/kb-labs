@@ -227,6 +227,9 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if err := annotateArtifactResolution(request, clientArtifacts, options.BinarySource, options.Registry); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
+		if err := attachAndValidatePackageProvenance(source, clientArtifacts); err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
 		plan := contracts.ResolvedInstallPlan{
 			Schema: contracts.ResolvedPlanSchema, BinarySource: options.BinarySource, Registry: options.Registry, Request: request, Artifacts: clientArtifacts,
 			ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version),
@@ -320,25 +323,8 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if err := annotateArtifactResolution(request, artifacts, options.BinarySource, options.Registry); err != nil {
 		return contracts.ResolvedInstallPlan{}, err
 	}
-	provenanceByPackage := make(map[string]catalog.ArtifactProvenance, len(source.Provenance))
-	for _, item := range source.Provenance {
-		provenanceByPackage[item.Package+"@"+item.Version] = item
-	}
-	for index := range artifacts {
-		if artifacts[index].IsBinary() {
-			continue
-		}
-		key := artifacts[index].Package + "@" + artifacts[index].Version
-		if item, ok := provenanceByPackage[key]; ok {
-			artifacts[index].Provenance = contracts.ArtifactProvenance{
-				SourceRevision: item.SourceRevision, Integrity: item.Integrity,
-				DistSHA256: item.DistSHA256, ContentScope: item.ContentScope, PackageSHA256: item.PackageSHA256,
-			}
-		}
-		packagePath := filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(artifacts[index].Package)))
-		if err := packageartifacts.ValidatePackageProvenance(artifacts[index], packagePath); err != nil {
-			return contracts.ResolvedInstallPlan{}, err
-		}
+	if err := attachAndValidatePackageProvenance(source, artifacts); err != nil {
+		return contracts.ResolvedInstallPlan{}, err
 	}
 	bindings = uniqueBindings(bindings)
 	patches, err := configPatches(platform, artifacts, bindings, source, request, allowMissingRequiredInputs)
@@ -673,6 +659,31 @@ func registryKind(source catalog.Catalog, pkg string) string {
 func artifact(c catalog.Component, kind string) contracts.Artifact {
 	return contracts.Artifact{ID: c.ID, Kind: kind, Package: c.Package, Version: c.Version, SHA256: c.SHA256, SizeBytes: c.SizeBytes, Tarball: c.Tarball, Config: c.Config, PlatformRange: c.PlatformRange, SDKRange: c.SDKRange}
 }
+
+func attachAndValidatePackageProvenance(source catalog.Catalog, artifacts []contracts.Artifact) error {
+	provenanceByPackage := make(map[string]catalog.ArtifactProvenance, len(source.Provenance))
+	for _, item := range source.Provenance {
+		provenanceByPackage[item.Package+"@"+item.Version] = item
+	}
+	for index := range artifacts {
+		if artifacts[index].IsBinary() {
+			continue
+		}
+		key := artifacts[index].Package + "@" + artifacts[index].Version
+		if item, ok := provenanceByPackage[key]; ok {
+			artifacts[index].Provenance = contracts.ArtifactProvenance{
+				SourceRevision: item.SourceRevision, Integrity: item.Integrity,
+				DistSHA256: item.DistSHA256, ContentScope: item.ContentScope, PackageSHA256: item.PackageSHA256,
+			}
+		}
+		packagePath := filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(artifacts[index].Package)))
+		if err := packageartifacts.ValidatePackageProvenance(artifacts[index], packagePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func findPlatform(items []catalog.PlatformBundle, version string) (catalog.PlatformBundle, bool) {
 	for _, v := range items {
 		if v.Version == version {
