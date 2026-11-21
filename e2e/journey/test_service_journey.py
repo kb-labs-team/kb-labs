@@ -551,6 +551,8 @@ class ServiceJourneyTests(unittest.TestCase):
                     fixture_result = graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
                                                  lambda: fixture_calls.append("MCP"),
                                                  record_empty_success=False)
+                    graph.probe_state("fixtures-installed", "marketplace-fixtures", "project fixture handoff",
+                                      lambda: None)
                     mcp_calls = []
                     mcp_result = graph.flow("project MCP cross-project isolation", "mcp", "mcp",
                                              lambda: mcp_calls.append("owner"), cases=["S-140.5"],
