@@ -93,7 +93,7 @@ async function execute(requestId: string, message: ExecuteMessage): Promise<void
     // The installed platform root is host execution metadata, not a plugin env
     // permission. Capture it before patchProcessEnv filters process.env for the
     // plugin, then keep it in this host-only local for module resolution.
-    const platformRoot = message.platformRoot ?? process.env.KB_PLATFORM_ROOT;
+    const platformRoot = message.platformRoot;
     platform = await connectToPlatform(channel);
     const sandboxMode = (process.env.KB_SANDBOX_MODE || 'enforce') as SandboxMode;
     restoreSandbox = applySandboxPatches({ permissions: descriptor.permissions, mode: sandboxMode });

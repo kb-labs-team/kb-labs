@@ -224,6 +224,9 @@ export async function runInSubprocess<T = unknown>(
   if (signal?.aborted) { throw new AbortError(); }
 
   const startTime = Date.now();
+  // Capture the trusted host root before merging invocation/plugin environment
+  // values into the child process environment.
+  const platformRoot = options.platformRoot ?? process.env.KB_PLATFORM_ROOT;
 
   return new Promise((resolve, reject) => {
     // Path to bootstrap script
@@ -340,7 +343,7 @@ export async function runInSubprocess<T = unknown>(
       cwd: options.cwd,
       strictFilesystemPermissions: false,
       outdir: options.outdir,
-      platformRoot: options.platformRoot,
+      platformRoot,
     };
     void channel.send({ type: 'execution:start', requestId, payload: executeMsg }).catch((error: unknown) => {
       fail(error instanceof Error ? error : new Error(String(error)));
