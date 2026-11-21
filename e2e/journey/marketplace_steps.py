@@ -98,8 +98,16 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     publish_env = dict(env)
     publish_env["KB_REGISTRY_URL"] = env.get("KB_REGISTRY_URL", registry_url)
     publish_env["KB_REGISTRY_AUTHOR_HANDLE"] = author_handle
+    selector = env.get("KB_JOURNEY_RUNNER_SELECTOR", "")
+    gateway_login = None
+    if selector.endswith(":secured"):
+        email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
+        password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
+        if not email or not password:
+            raise RuntimeError("secured Registry fixture publishing needs the journey administrator credentials")
+        gateway_login = (_installed_gateway_url(env), email, password)
     return run_hermetic_cli(
-        command, cwd=workspace_root, env=publish_env, runner=runner,
+        command, cwd=workspace_root, env=publish_env, runner=runner, gateway_login=gateway_login,
     )
 
 
