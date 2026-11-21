@@ -24,7 +24,7 @@ and receive a stable exit result.
 
 | # | Action | Expected |
 |---|---|---|
-| S-243.1 | Run `kb fixture execution healthy --json` | The CLI prints its JSON success result and exits with code `0`; the child and its IPC server close. |
+| S-243.1 | Run `kb fixture execution healthy --json` | The CLI writes exactly one parseable JSON success envelope to stdout and exits with code `0`; subprocess startup emits no `Usage: node node-engine.mjs` diagnostic; the child and its IPC server close. |
 | S-243.2 | Run `kb fixture execution typed-failure --json` | The CLI prints the catalogued error envelope and exits with code `1`. |
 | S-243.3 | Run `kb fixture execution hold --json` and press Ctrl+C | The CLI reports the catalogued cancellation code, exits nonzero, and the child process and descendants exit. |
 | S-243.4 | Start workflow `plugin-execution-cancel` and run `kb workflow runs cancel RUN_ID --json` | The step is cancelled with the same catalogued cancellation code as CLI cancellation; the subprocess and descendants exit. |
