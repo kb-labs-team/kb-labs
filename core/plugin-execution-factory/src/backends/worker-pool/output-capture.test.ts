@@ -41,4 +41,18 @@ describe('worker plugin output capture', () => {
     expect(frames).toContain('progress 1');
     expect(frames.join('')).not.toContain(secret);
   });
+
+  it('keeps a complete secret whole when it overlaps a partial suffix of another secret', () => {
+    const output: string[] = [];
+    const secrets = ['abcdefghijk', 'jkxyz'];
+    const write = createWorkerOutputCapture('stdout', (entry) => output.push(entry), secrets);
+
+    write('abcdefghijkx');
+    write('yz');
+    write.flush();
+
+    expect(output.join('')).not.toContain(secrets[0]);
+    expect(output.join('')).not.toContain(secrets[1]);
+    expect(output.join('')).toContain('[REDACTED]');
+  });
 });
