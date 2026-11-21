@@ -1200,50 +1200,68 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
         if not generated:
             raise RuntimeError("S-181.7 selected sealed platform does not declare generated secret inputs")
 
-        cache_root = root / layout_value("sharedRuntimePaths.kb_v2_cache.platformPath")
-        owner = root / layout_value("ownershipRecord")
-        if not owner.is_file():
-            # The supported installer path establishes ownership before cache
-            # files can be placed under the root. This first offline attempt
-            # intentionally stops at the precise cache-miss diagnostic.
-            refused_empty = run_command([launcher, "install", "--json", "--offline", "--index",
-                                         str(stable_index), "--platform-channel", "stable",
-                                         "--platform-root", str(root)], timeout=1200)
-            envelope, error = _diagnostic(refused_empty, "S-181.7 empty cache ownership setup")
-            if (error.get("code") != "KB_INSTALL_OFFLINE_ARTIFACT_MISSING"
-                    or not isinstance(error.get("details", {}).get("cachePath"), str)
-                    or not owner.is_file()):
-                raise RuntimeError(f"S-181.7 could not establish an installer-owned empty root: {error}")
+        cache_root = root / layout_value("sharedRuntimePaths.kb_v2_cache.statePath")
+        package_manager_root = root / layout_value("packageManagerStateDirectories.installer.path")
+        provisioned = _data(run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                         "--platform-channel", "stable", "--platform-root", str(root),
+                                         "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"],
+                                        timeout=1200), "S-181.7 same-release online provisioning")
+        if provisioned.get("operation") != "apply":
+            raise RuntimeError("S-181.7 same-release provisioning did not complete through the install apply")
 
+        lifecycle = InstallerHostLifecycle(launcher, run_command)
+        running, _ = lifecycle.state(root)
+        if running:
+            lifecycle.set_running(root, False)
+
+        # The online same-release install creates the product-owned root,
+        # provisions its Corepack/pnpm state, and fills the checksum-verified
+        # V2 cache. Verify those bytes before clearing only installed versions
+        # and generated secrets to return to an empty first-install target.
         for artifact in artifacts:
             digest = artifact.get("sha256")
-            source = artifact.get("resolvedUrl")
-            if not digest or not source:
-                raise RuntimeError(f"S-181.7 online plan omitted the checksum or source URL for {artifact.get('id')}")
-            status, body, _ = open_http(urllib.request.urlopen,
-                                        urllib.request.Request(source), timeout=60, env=os.environ)
-            if status != 200 or hashlib.sha256(body).hexdigest() != digest:
-                raise RuntimeError(f"S-181.7 could not checksum-verify cached artifact {artifact.get('id')}")
-            if artifact.get("package"):
-                target = cache_root / "packages" / f"{digest}.tgz"
-            else:
-                target = cache_root / "binaries" / digest
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(body)
+            if not digest:
+                raise RuntimeError(f"S-181.7 online plan omitted the checksum for {artifact.get('id')}")
+            cached = (cache_root / "binaries" / digest if artifact.get("kind") == "binary"
+                      else cache_root / "packages" / f"{digest}.tgz")
+            if not cached.is_file() or hashlib.sha256(cached.read_bytes()).hexdigest() != digest:
+                raise RuntimeError(f"S-181.7 online provisioning did not prime verified cache bytes for {artifact.get('id')}")
+
+        owner_path = root / layout_value("ownershipRecord")
+        state_root = root / layout_value("sharedStateDirectory")
+        if (not owner_path.is_file() or not package_manager_root.is_dir()
+                or not cache_root.is_dir()):
+            raise RuntimeError("S-181.7 online provisioning omitted product-owned install state")
+
+        def remove_path(path: Path) -> None:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.exists():
+                shutil.rmtree(path)
+
+        for path in root.iterdir():
+            if path not in {owner_path, state_root}:
+                remove_path(path)
+        for path in state_root.iterdir():
+            if path not in {package_manager_root, cache_root}:
+                remove_path(path)
+        if any(path.name != state_root.name and path != owner_path for path in root.iterdir()):
+            raise RuntimeError("S-181.7 provisioning reset left an active installation entry")
 
         installed = _data(run_command([launcher, "install", "--json", "--offline", "--index",
                                        str(stable_index), "--platform-channel", "stable",
-                                       "--platform-root", str(root)], timeout=1200),
+                                       "--platform-root", str(root), "--secret-env",
+                                       "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"], timeout=1200),
                          "S-181.7 offline generated-secret install")
         try:
             receipt_path = installed_path(root, "currentLink", ".kb/v2/receipt.json")
             receipt = json.loads(receipt_path.read_text())
             canonical_root = str(root.resolve())
-            if (installed.get("operation") != "install"
+            if (installed.get("operation") != "apply"
                     or receipt.get("plan", {}).get("request", {}).get("platformRoot") != canonical_root):
                 raise RuntimeError("S-181.7 install did not activate a receipt for the canonical stable root")
             active = active_platform_root(root)
-            secret_state_path = active / layout_value("sharedRuntimePaths.kb_v2_secret_state_json.platformPath")
+            secret_state_path = active / layout_value("sharedRuntimePaths.kb_v2_secret-state_json.platformPath")
             if not secret_state_path.is_file():
                 raise RuntimeError("S-181.7 generated-secret install omitted the active version secret state")
             secret_state = json.loads(secret_state_path.read_text())
@@ -1281,10 +1299,15 @@ def run_offline_generated_secret_install_step(*, mode: str, launcher: str, stabl
                 running, _ = lifecycle.state(root)
                 if running:
                     lifecycle.set_running(root, False)
-            except Exception:
-                # Preserve the S-181.7 assertion that failed; runner teardown
-                # still owns removal of this disposable fixture root.
-                pass
+                receipt_path = installed_path(root, "currentLink", ".kb/v2/receipt.json")
+                if receipt_path.is_file():
+                    removed = _data(run_command([launcher, "uninstall", "--yes", "--json",
+                                                 "--platform-root", str(root)], timeout=1200),
+                                    "S-181.7 disposable root cleanup")
+                    if removed.get("operation") != "uninstall":
+                        raise RuntimeError("S-181.7 disposable root cleanup did not uninstall its Gateway row")
+            except Exception as cleanup_error:
+                raise RuntimeError(f"S-181.7 disposable installation cleanup failed: {cleanup_error}") from cleanup_error
 
     journey.step("install and reapply generated secrets from the offline artifact cache",
                  "platform.install", install_and_reapply, cases=["S-181.7"])

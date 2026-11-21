@@ -1222,19 +1222,124 @@ class InstallerCaseStepsTest(unittest.TestCase):
                          str(cache_root / layout_value("currentLink")))
         self.assertEqual(calls[4][calls[4].index("--platform-root") + 1], str(physical_version))
 
-    def test_offline_generated_secret_journey_claims_the_real_install_flow(self):
-        with tempfile.TemporaryDirectory(prefix="journey-offline-generated-secret-") as temp:
-            root = Path(temp)
-            index = root / "release-index.json"
-            index.write_text("{}")
-            journey = run_offline_generated_secret_install_step(
-                mode="local", launcher="kb-create", stable_index=index,
-                platform_root=root / "installed", run_command=lambda args: None)
+    def test_offline_generated_secret_journey_reuses_provisioned_cache_and_reports_missing_artifact(self):
+        from journey_selection import JourneySelection, use_journey_selection
 
-        self.assertEqual(len(journey.steps), 1)
+        with tempfile.TemporaryDirectory(prefix="journey-offline-generated-secret-") as temp:
+            parent = Path(temp)
+            platform_root = parent / "main-root"
+            platform_root.mkdir()
+            root = parent / "s181-offline-generated-secret-root"
+            index = parent / "release-index.json"
+            artifacts = [
+                {"id": "platform", "kind": "platform", "package": "@kb/platform", "version": "2.0.0",
+                 "sha256": hashlib.sha256(b"package-tarball").hexdigest(), "resolvedUrl": "https://fixture.test/platform.tgz"},
+                {"id": "kb-create", "kind": "binary", "sha256": hashlib.sha256(b"binary").hexdigest(),
+                 "resolvedUrl": "https://fixture.test/kb-create", "target": "bin/kb-create"},
+            ]
+            index.write_text(json.dumps({
+                "channels": {"stable": "2.0.0"},
+                "platforms": [{"version": "2.0.0", "config": [], "members": [{"config": [
+                    {"id": "gateway.jwtSecret", "secret": True, "generate": True},
+                    {"id": "gateway.bootstrap.password", "secret": True, "generate": True},
+                ]}]}],
+            }))
+            payloads = {item["sha256"]: data for item, data in zip(artifacts, (b"package-tarball", b"binary"))}
+            running = False
+            calls = []
+
+            def command(args, *, timeout=300):
+                nonlocal running
+                calls.append((list(args), timeout))
+                operation = args[1]
+                target_root = Path(args[args.index("--platform-root") + 1])
+                if operation == "install" and "--offline" not in args:
+                    self.assertIn("--secret-env", args)
+                    (target_root / layout_value("ownershipRecord")).write_text("fixture owner\n")
+                    package_manager = target_root / layout_value("packageManagerStateDirectories.installer.path")
+                    package_manager.mkdir(parents=True)
+                    cache = target_root / layout_value("sharedRuntimePaths.kb_v2_cache.statePath")
+                    for artifact in artifacts:
+                        digest = artifact["sha256"]
+                        path = (cache / "binaries" / digest if artifact.get("kind") == "binary"
+                                else cache / "packages" / f"{digest}.tgz")
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(payloads[digest])
+                    (target_root / layout_value("currentLink")).symlink_to("versions/provisioned")
+                    (target_root / "versions/provisioned/.kb/v2").mkdir(parents=True)
+                    running = True
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "install" and "--offline" in args:
+                    self.assertEqual({path.name for path in target_root.iterdir()},
+                                     {layout_value("ownershipRecord"), layout_value("sharedStateDirectory")})
+                    state = target_root / layout_value("sharedStateDirectory")
+                    self.assertTrue((target_root / layout_value("packageManagerStateDirectories.installer.path")).is_dir())
+                    self.assertTrue((state / "cache/packages" / f"{artifacts[0]['sha256']}.tgz").is_file())
+                    self.assertTrue((state / "cache/binaries" / artifacts[1]["sha256"]).is_file())
+                    active = target_root / "versions/active"
+                    (active / ".kb/v2").mkdir(parents=True)
+                    (target_root / layout_value("currentLink")).symlink_to("versions/active")
+                    (active / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {"request": {
+                        "platformRoot": str(target_root.resolve())}}}))
+                    (active / ".kb/v2/secret-state.json").write_text(json.dumps({"requirements": {
+                        "gateway.jwtSecret": "generated fixture value"}}))
+                    running = True
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "apply" and "--offline" in args:
+                    cache = target_root / layout_value("sharedRuntimePaths.kb_v2_cache.statePath")
+                    if not (cache / "packages" / f"{artifacts[0]['sha256']}.tgz").is_file():
+                        return subprocess.CompletedProcess(args, 2, "fixture diagnostic", "")
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "stop":
+                    running = False
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "uninstall":
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if operation == "status":
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                raise AssertionError(f"unexpected installer journey command: {args}")
+
+            def json_command(_runner, args, _label):
+                if args[1] == "plan":
+                    return {"plan": {"artifacts": artifacts}}
+                result = _runner(args)
+                if args[1] == "status":
+                    return {"host": {layout_value("sharedStateDirectory"): "running" if running else "stopped"}}
+                return {"operation": args[1]}
+
+            def data(result, _label):
+                return {"operation": "uninstall" if result.args[1] == "uninstall" else "apply"}
+
+            def diagnostic(result, _label):
+                self.assertEqual(result.returncode, 2)
+                error = {"code": "KB_INSTALL_OFFLINE_ARTIFACT_MISSING", "details": {
+                    "artifact": artifacts[0]["id"], "cachePath": str(
+                        root / layout_value("sharedRuntimePaths.kb_v2_cache.statePath") / "packages" /
+                        f"{artifacts[0]['sha256']}.tgz")}}
+                return {"ok": False, "error": error}, error
+
+            selection = JourneySelection(
+                requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+                prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+                runner_selector="service-local:explore", requested_runners="service-local:explore")
+            with use_journey_selection(selection), \
+                    patch.object(installer_case_steps, "_json_command", side_effect=json_command), \
+                    patch.object(installer_case_steps, "_data", side_effect=data), \
+                    patch.object(installer_case_steps, "_diagnostic", side_effect=diagnostic):
+                journey = run_offline_generated_secret_install_step(
+                    mode="local", launcher="kb-create", stable_index=index,
+                    platform_root=platform_root, run_command=command)
+
         self.assertEqual(journey.steps[0].cases, ["S-181.7"])
-        self.assertEqual(journey.steps[0].name,
-                         "install and reapply generated secrets from the offline artifact cache")
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        self.assertEqual([args[1] for args, _ in calls],
+                         ["install", "status", "stop", "install", "apply", "apply", "status", "stop", "uninstall"])
+        self.assertTrue(all(timeout == 1200 for args, timeout in calls if args[1] in {"install", "apply"}))
+        install_calls = [args for args, _ in calls if args[1] == "install"]
+        self.assertNotIn("--offline", install_calls[0])
+        self.assertIn("--offline", install_calls[1])
+        self.assertEqual(install_calls[1][-2:], ["--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
+        self.assertTrue(all("--offline" in args for args, _ in calls if args[1] == "apply"))
 
     def test_platform_cli_resolves_the_requested_roots_executable(self):
         with tempfile.TemporaryDirectory(prefix="journey-platform-cli-") as temp:

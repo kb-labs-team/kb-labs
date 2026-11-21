@@ -45,6 +45,8 @@ def _layout_path_values() -> dict[str, str]:
         "ownershipRecordStagingPrefix": contract["ownershipRecordStagingPrefix"],
         "platformDataRoot.platformPath": contract["platformDataRoot"]["platformPath"],
         "platformDataRoot.statePath": contract["platformDataRoot"]["statePath"],
+        "packageManagerStateDirectories.installer.path":
+            contract["packageManagerStateDirectories"]["installer"]["path"],
     }
     for projection in contract["sharedRuntimePaths"]:
         slug = _path_slug(projection["platformPath"])
