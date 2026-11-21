@@ -111,16 +111,21 @@ describe('commit:commit (run)', () => {
   // case: S-030.3
   it('does not apply a generated plan after the host execution is cancelled', async () => {
     const controller = new AbortController();
-    controller.abort(new Error('cancelled by caller'));
+    vi.mocked(generateCommitPlan).mockImplementation(async () => {
+      controller.abort(new Error('cancelled by caller'));
+      return mockPlan as never;
+    });
     const { ui } = createCapturedUI();
-    const ctx = createMockContext({
+    const ctx = {
+      ...createMockContext({
       ui,
       cwd: '/project',
-      signal: controller.signal,
       platformConfig: { platform: { adapters: { llm: '@kb-labs/adapter-fixture' } } },
-    });
+      }),
+      signal: controller.signal,
+    };
 
-    await runCommand.execute(ctx as never, runInput());
+    await expect(runCommand.execute(ctx as never, runInput())).rejects.toMatchObject({ name: 'AbortError' });
 
     expect(generateCommitPlan).toHaveBeenCalledOnce();
     expect(savePlan).not.toHaveBeenCalled();

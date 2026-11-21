@@ -137,7 +137,7 @@ describe('project runtime command execution', () => {
     }
   });
 
-  // case: S-160.5
+  // case: S-203.26
   it('rejects duplicate kebab and camel spellings of a secret flag before execution', async () => {
     await setup();
     const selectedManifest = { ...manifest, cli: { commands: [{ ...manifest.cli!.commands[0]!, flags: [{ name: 'access-token', type: 'string' as const, secret: true }] }] } };

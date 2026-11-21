@@ -29,7 +29,7 @@ import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { InProcessBackend } from '../backends/in-process.js';
 import type { ExecutionRequest } from '../types.js';
 import { useLoader } from '@kb-labs/shared-cli-ui';
-import { createStreamingUI } from '@kb-labs/plugin-runtime';
+import { createStreamingUI } from '../../../plugin-runtime/src/context/streaming-ui.js';
 import { noopUI } from '@kb-labs/plugin-contracts';
 
 /** Mimics PlatformContainer: processExecutor is a prototype getter, not an own property. */
