@@ -335,6 +335,33 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         expected = platform_root / layout_value("sharedStateDirectory") / layout_value("kbHomeDirectory")
         self.assertEqual(observed.get("kb_home"), str(expected.resolve()))
 
+    def test_group_preflight_preserves_an_explicit_kb_home(self):
+        lock = self.project / ".kb/marketplace.lock"
+        lock.write_text(json.dumps({"plugins": {"@kb-labs/commit": {
+            "enabled": True, "version": "2.120.1", "integrity": "sha512-fixture",
+        }}}))
+        explicit_home = self.root / "explicit-kb-home"
+        env = {
+            **self.env,
+            "KB_HOME": str(explicit_home),
+            "KB_JOURNEY_WORKSPACE_ROOT": str(self.root),
+            "KB_JOURNEY_PLATFORM_ROOT": str(self.root / "kb-platform"),
+        }
+        observed = {}
+
+        def command_runner(_runner, command, **kwargs):
+            if command[:3] == ["node", "--input-type=module", "-e"]:
+                observed["kb_home"] = kwargs["env"].get("KB_HOME")
+                return subprocess.CompletedProcess(command, 0, json.dumps(["commit plan show"]), "")
+            return subprocess.CompletedProcess(command, 0, "registered plugin command", "")
+
+        with patch("plugin_author_steps.run_with_runner", side_effect=command_runner):
+            preflight_installed_plugin_command(
+                ["commit", "plan", "show", "--json"], self.project, env, command_runner, self.kb,
+            )
+
+        self.assertEqual(observed.get("kb_home"), str(explicit_home))
+
     def run_flow(self, *, mode="local", fail_build=False):
         if fail_build:
             self.env["FAIL_PNPM_BUILD"] = "1"
