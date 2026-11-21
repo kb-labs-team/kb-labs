@@ -55,6 +55,7 @@ export async function setup({
   projectRoot: repoRoot,
   platformRoot,
   logger: serviceLogger,
+  publishListenAddress,
 }: ServiceContext): Promise<() => Promise<void>> {
   const projectRoot = requireProjectContext(repoRoot);
   // Platform launch has already loaded the layered environment.
@@ -146,6 +147,11 @@ export async function setup({
   // process (project runtime) can pass its own loopback default.
   const restHost = host;
   const address = await server.listen(getListenOptions(listenPort, restHost));
+  const bound = server.server.address();
+  if (!bound || typeof bound === "string") {
+    throw new Error("REST API did not bind a TCP address.");
+  }
+  await publishListenAddress({ host: restHost, port: bound.port });
 
   bootstrapLogger.info("REST API server listening", { address });
 
