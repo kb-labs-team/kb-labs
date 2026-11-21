@@ -234,6 +234,32 @@ func TestManagedGenerationRejectsStaleAndIncompleteCandidates(t *testing.T) {
 	}
 }
 
+func TestManagedGenerationDoesNotCleanThroughUnownedInstallerParent(t *testing.T) {
+	layout, active := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+	foreign := t.TempDir()
+	linkTarget, err := filepath.Rel(layout.Root, active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignHandoff := filepath.Join(foreign, "current-next")
+	if err := os.Symlink(linkTarget, foreignHandoff); err != nil {
+		t.Fatal(err)
+	}
+	backup := layout.InstallerStateDir() + ".backup"
+	if err := os.Rename(layout.InstallerStateDir(), backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(foreign, layout.InstallerStateDir()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.StageManagedGeneration(); err == nil {
+		t.Fatal("managed staging accepted an installer state parent redirected outside the owned container")
+	}
+	if info, err := os.Lstat(foreignHandoff); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("stale-handoff cleanup modified a file reached through an untrusted parent: %v", err)
+	}
+}
+
 // case: S-313.1, S-313.2
 func TestManagedGenerationRejectsLinksOutsideCandidateBeforeMutation(t *testing.T) {
 	t.Run("absolute link rebases relatively and survives rename", func(t *testing.T) {
@@ -343,25 +369,43 @@ func TestManagedGenerationRejectsLinksOutsideCandidateBeforeMutation(t *testing.
 }
 
 func TestManagedActivationRevalidatesLinksAddedAfterStaging(t *testing.T) {
-	layout, active := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
-	stage, err := layout.StageManagedGeneration()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(stage, "node_modules"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(active, "package.json"), filepath.Join(stage, "node_modules", "escape")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := layout.ActivateManagedGeneration(stage, active, active); err == nil {
-		t.Fatal("managed activation accepted an external link created after staging")
-	}
-	if current, err := layout.Active(); err != nil || current != active {
-		t.Fatalf("current after rejected package-manager graph = %q, %v; want %q", current, err, active)
-	}
-	if err := layout.AbortManagedGeneration(stage); err != nil {
-		t.Fatal(err)
+	for _, linkCase := range []string{"external-generation", "absolute-stage-root", "dangling", "symlink-dotdot"} {
+		t.Run(linkCase, func(t *testing.T) {
+			layout, active := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+			stage, err := layout.StageManagedGeneration()
+			if err != nil {
+				t.Fatal(err)
+			}
+			moduleRoot := filepath.Join(stage, "node_modules")
+			if err := os.MkdirAll(moduleRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			switch linkCase {
+			case "external-generation":
+				err = os.Symlink(filepath.Join(active, "package.json"), filepath.Join(moduleRoot, "escape"))
+			case "absolute-stage-root":
+				err = os.Symlink(filepath.Join(stage, "package.json"), filepath.Join(moduleRoot, "absolute"))
+			case "dangling":
+				err = os.Symlink("missing-package", filepath.Join(moduleRoot, "dangling"))
+			case "symlink-dotdot":
+				if err := os.Symlink("../../another-generation", filepath.Join(moduleRoot, "jump")); err != nil {
+					t.Fatal(err)
+				}
+				err = os.Symlink("jump/../package.json", filepath.Join(moduleRoot, "escape"))
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := layout.ActivateManagedGeneration(stage, active, active); err == nil {
+				t.Fatal("managed activation accepted a package-manager link that is absolute, dangling, or escapes after symlink traversal")
+			}
+			if current, err := layout.Active(); err != nil || current != active {
+				t.Fatalf("current after rejected package-manager graph = %q, %v; want %q", current, err, active)
+			}
+			if err := layout.AbortManagedGeneration(stage); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

@@ -5,8 +5,13 @@
  */
 
 import { bootstrap } from "./bootstrap.js";
+import { runManagedGenerationMutation } from "./managed-generation-mutation.js";
 
-bootstrap(process.cwd()).catch(() => {
+const run = process.argv.includes("--managed-generation-mutation")
+  ? runManagedGenerationMutation()
+  : bootstrap(process.cwd());
+
+run.catch(() => {
   // runService() already emitted the canonical platform/service failure event.
   // Setting exitCode lets its logger flush without duplicating an unstructured stack.
   process.exitCode = 1;

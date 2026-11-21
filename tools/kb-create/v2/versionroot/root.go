@@ -770,6 +770,9 @@ func (l Layout) StageManagedGeneration() (string, error) {
 }
 
 func (l Layout) stageManaged(after func(HandoffPoint) error) (_ string, returnErr error) {
+	if err := l.validateHandoffParentAndOwnership(); err != nil {
+		return "", fmt.Errorf("validate managed-generation handoff owner: %w", err)
+	}
 	if err := l.removeStaleCurrentHandoff(); err != nil {
 		return "", fmt.Errorf("remove abandoned managed-generation handoff: %w", err)
 	}
@@ -828,6 +831,47 @@ func (l Layout) stageManaged(after func(HandoffPoint) error) (_ string, returnEr
 		return "", err
 	}
 	return stage, nil
+}
+
+func (l Layout) validateHandoffParentAndOwnership() error {
+	rootInfo, err := os.Lstat(l.Root)
+	if err != nil {
+		return err
+	}
+	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("install root is not a real directory")
+	}
+	entries, err := os.ReadDir(l.Root)
+	if err != nil {
+		return err
+	}
+	if err := l.validateOwnedContainerEntries(entries, false, true); err != nil {
+		return err
+	}
+	metadata, err := l.readMetadata()
+	if err != nil {
+		return err
+	}
+	owner, err := l.readOwnership()
+	if err != nil || owner.InstallationID != metadata.InstallationID {
+		return fmt.Errorf("install-root ownership record does not match installer state")
+	}
+	relative, err := filepath.Rel(l.Root, l.InstallerStateDir())
+	if err != nil || !filepath.IsLocal(relative) {
+		return fmt.Errorf("installer state directory is outside the install root")
+	}
+	current := l.Root
+	for _, component := range strings.Split(relative, string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("installer state parent %s is not a real directory", current)
+		}
+	}
+	return nil
 }
 
 // AbortManagedGeneration removes only a private managed-generation stage.
@@ -2017,18 +2061,80 @@ func (l Layout) validateManagedCandidateSymlinks(root string) error {
 		if err != nil {
 			return err
 		}
-		if !filepath.IsAbs(linkTarget) {
-			linkTarget = filepath.Join(filepath.Dir(path), linkTarget)
-		}
-		inside, err := contracts.PathWithin(canonicalRoot, filepath.Clean(linkTarget))
-		if err != nil {
+		if err := resolveManagedCandidateLink(canonicalRoot, filepath.Dir(path), linkTarget); err != nil {
 			return fmt.Errorf("resolve managed candidate link %s: %w", path, err)
-		}
-		if !inside {
-			return fmt.Errorf("managed candidate link %s resolves outside its generation", path)
 		}
 		return nil
 	})
+}
+
+func resolveManagedCandidateLink(root, parent, target string) error {
+	if filepath.IsAbs(target) {
+		return fmt.Errorf("absolute symbolic-link targets are not allowed in a managed generation")
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	current, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return err
+	}
+	if !managedPathWithin(canonicalRoot, current) {
+		return fmt.Errorf("symbolic-link parent resolves outside the candidate generation")
+	}
+	queue := strings.Split(target, string(filepath.Separator))
+	linksFollowed := 0
+	for len(queue) > 0 {
+		component := queue[0]
+		queue = queue[1:]
+		switch component {
+		case "", ".":
+			continue
+		case "..":
+			current = filepath.Dir(current)
+			if !managedPathWithin(canonicalRoot, current) {
+				return fmt.Errorf("symbolic-link traversal escapes the candidate generation")
+			}
+			continue
+		}
+		next := filepath.Join(current, component)
+		info, err := os.Lstat(next)
+		if os.IsNotExist(err) {
+			return fmt.Errorf("symbolic-link target is dangling at %s", next)
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			linksFollowed++
+			if linksFollowed > 40 {
+				return fmt.Errorf("symbolic-link target exceeds the resolution limit")
+			}
+			linkTarget, err := os.Readlink(next)
+			if err != nil {
+				return err
+			}
+			if filepath.IsAbs(linkTarget) {
+				return fmt.Errorf("absolute symbolic-link targets are not allowed in a managed generation")
+			}
+			queue = append(strings.Split(linkTarget, string(filepath.Separator)), queue...)
+			continue
+		}
+		if len(queue) > 0 && !info.IsDir() {
+			return fmt.Errorf("symbolic-link traversal passes through non-directory %s", next)
+		}
+		current = next
+		if !managedPathWithin(canonicalRoot, current) {
+			return fmt.Errorf("symbolic-link traversal escapes the candidate generation")
+		}
+	}
+	return nil
+}
+
+func managedPathWithin(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && filepath.IsLocal(relative)
 }
 
 func (l Layout) validateVersionSymlinkTree(root string, skipManagedStages bool) error {
