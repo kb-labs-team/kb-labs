@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/operationlock"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/receipt"
 	"time"
@@ -231,6 +232,388 @@ func TestManagedGenerationRejectsStaleAndIncompleteCandidates(t *testing.T) {
 	if err := layout.AbortManagedGeneration(stage); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// case: S-313.1, S-313.2
+func TestManagedGenerationRejectsLinksOutsideCandidateBeforeMutation(t *testing.T) {
+	t.Run("absolute link rebases relatively and survives rename", func(t *testing.T) {
+		layout, oldRoot := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+		if err := os.MkdirAll(filepath.Join(oldRoot, "lib"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(oldRoot, "lib", "payload"), []byte("inside"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(oldRoot, "lib", "payload"), filepath.Join(oldRoot, "payload-link")); err != nil {
+			t.Fatal(err)
+		}
+		stage, err := layout.StageManagedGeneration()
+		if err != nil {
+			t.Fatal(err)
+		}
+		linkTarget, err := os.Readlink(filepath.Join(stage, "payload-link"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if filepath.IsAbs(linkTarget) {
+			t.Fatalf("managed stage retained an absolute internal link: %q", linkTarget)
+		}
+		newRoot, err := layout.ActivateManagedGeneration(stage, oldRoot, oldRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join(newRoot, "payload-link"))
+		if err != nil || string(got) != "inside" {
+			t.Fatalf("rebased link after stage rename = %q, %v", got, err)
+		}
+	})
+
+	for _, targetKind := range []string{"sibling-generation", "shared-state", "metadata-parent"} {
+		t.Run(targetKind, func(t *testing.T) {
+			layout, active := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+			var linkPath, target string
+			switch targetKind {
+			case "sibling-generation":
+				target = filepath.Join(layout.VersionsDir(), "other", "pkg")
+				if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(target, []byte("other generation"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				linkPath = filepath.Join(active, "plugins", "escape")
+			case "shared-state":
+				target = filepath.Join(layout.SharedStateDir(), "external.json")
+				if err := os.WriteFile(target, []byte("shared"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				linkPath = filepath.Join(active, "plugins", "escape")
+			case "metadata-parent":
+				stateRoot := filepath.Join(layout.SharedStateDir(), "redirected-kb-v2")
+				if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				oldV2 := filepath.Join(active, ".kb", "v2")
+				if err := os.Remove(stateRoot); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+				if err := os.Rename(oldV2, stateRoot); err != nil {
+					t.Fatal(err)
+				}
+				target = stateRoot
+				linkPath = oldV2
+			}
+			if err := os.MkdirAll(filepath.Dir(linkPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, linkPath); err != nil {
+				t.Fatal(err)
+			}
+			var layoutFile string
+			var layoutTime time.Time
+			if targetKind == "metadata-parent" {
+				layoutFile = filepath.Join(target, "platform-layout.json")
+				_, err := os.Stat(layoutFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				layoutTime = time.Unix(1, 0)
+				if err := os.Chtimes(layoutFile, layoutTime, layoutTime); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if stage, err := layout.StageManagedGeneration(); err == nil {
+				_ = layout.AbortManagedGeneration(stage)
+				t.Fatal("managed staging accepted a link to a sibling generation or shared install state")
+			}
+			if activeAfter, err := layout.Active(); err != nil || activeAfter != active {
+				t.Fatalf("current changed after rejected external link: %q, %v; want %q", activeAfter, err, active)
+			}
+			if targetKind == "metadata-parent" {
+				info, err := os.Stat(layoutFile)
+				if err != nil {
+					t.Fatalf("stage metadata target disappeared through an unchecked symlink: %v", err)
+				}
+				if !info.ModTime().Equal(layoutTime) {
+					t.Fatalf("stage metadata was written through an unchecked symlink: mtime %v, want %v", info.ModTime(), layoutTime)
+				}
+			}
+		})
+	}
+}
+
+func TestManagedActivationRevalidatesLinksAddedAfterStaging(t *testing.T) {
+	layout, active := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+	stage, err := layout.StageManagedGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(stage, "node_modules"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(active, "package.json"), filepath.Join(stage, "node_modules", "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateManagedGeneration(stage, active, active); err == nil {
+		t.Fatal("managed activation accepted an external link created after staging")
+	}
+	if current, err := layout.Active(); err != nil || current != active {
+		t.Fatalf("current after rejected package-manager graph = %q, %v; want %q", current, err, active)
+	}
+	if err := layout.AbortManagedGeneration(stage); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// case: S-313.1
+func TestManagedActivationPreservesGenerationWhenCurrentRollbackFails(t *testing.T) {
+	layout, oldRoot := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+	stage, err := layout.StageManagedGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("simulated failure after current switch")
+	var finalized string
+	_, err = layout.activateManagedGeneration(stage, oldRoot, oldRoot, func(point HandoffPoint) error {
+		if point != HandoffManagedLinkSwitched {
+			return nil
+		}
+		active, activeErr := layout.Active()
+		if activeErr != nil {
+			return activeErr
+		}
+		finalized = active
+		if err := os.WriteFile(filepath.Join(layout.InstallerStateDir(), "current-next"), []byte("block rollback"), 0o600); err != nil {
+			return err
+		}
+		return injected
+	})
+	if !errors.Is(err, injected) || !strings.Contains(err.Error(), "restore active generation") {
+		t.Fatalf("activation error = %v, want injected failure and rollback failure", err)
+	}
+	if _, statErr := os.Stat(oldRoot); statErr != nil {
+		t.Fatalf("previous generation was removed after failed rollback: %v", statErr)
+	}
+	if _, statErr := os.Stat(finalized); statErr != nil {
+		t.Fatalf("selected generation was removed after failed rollback: %v", statErr)
+	}
+	if active, activeErr := layout.Active(); activeErr != nil || active != finalized {
+		t.Fatalf("current after failed rollback = %q, %v; want preserved selected generation %q", active, activeErr, finalized)
+	}
+}
+
+func TestRecordHealthyUsesPhysicalRunningGenerationAfterCurrentSwitch(t *testing.T) {
+	layout, runningRoot := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+	stage, err := layout.StageManagedGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.ActivateManagedGeneration(stage, runningRoot, runningRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.RecordHealthyRoot(runningRoot); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := layout.readMetadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.LastHealthyRoot != runningRoot {
+		t.Fatalf("healthy root = %q; want physical root that passed health checks %q", metadata.LastHealthyRoot, runningRoot)
+	}
+	if active, err := layout.Active(); err != nil || active != activeRoot {
+		t.Fatalf("recording old host health changed current to %q, %v; want %q", active, err, activeRoot)
+	}
+	for _, root := range []string{runningRoot, activeRoot} {
+		if _, err := os.Stat(root); err != nil {
+			t.Fatalf("retention removed protected generation %q: %v", root, err)
+		}
+	}
+}
+
+// This subprocess deliberately blocks at a durable handoff and is hard-killed
+// by its parent. It models abrupt process death rather than a returned error.
+func TestManagedGenerationHardKillChild(t *testing.T) {
+	root := os.Getenv("KB_TEST_MANAGED_ROOT")
+	if root == "" {
+		t.Skip("subprocess helper")
+	}
+	layout, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(layout.HostStateDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	release, err := operationlock.Acquire(operationlock.Path(layout.HostStateDir()), "managed-generation-hard-kill-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release.Release()
+	point := HandoffPoint(os.Getenv("KB_TEST_MANAGED_POINT"))
+	marker := os.Getenv("KB_TEST_MANAGED_MARKER")
+	holdAtBoundary := func(current HandoffPoint) error {
+		if current != point {
+			return nil
+		}
+		if err := os.WriteFile(marker, []byte(current), 0o600); err != nil {
+			return err
+		}
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+	switch os.Getenv("KB_TEST_MANAGED_MODE") {
+	case "stage":
+		_, err = layout.stageManaged(holdAtBoundary)
+	case "activate":
+		_, err = layout.activateManagedGeneration(os.Getenv("KB_TEST_MANAGED_STAGE"), os.Getenv("KB_TEST_MANAGED_ACTIVE"), os.Getenv("KB_TEST_MANAGED_RUNNING"), holdAtBoundary)
+	default:
+		t.Fatal("unknown subprocess helper mode")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Fatal("hard-kill boundary unexpectedly returned")
+}
+
+func TestManagedGenerationHardKillBoundariesRecoverUnderOperationLock(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("operation lock is supported only on macOS and Linux")
+	}
+	cases := []struct {
+		name   string
+		mode   string
+		point  HandoffPoint
+		commit bool
+	}{
+		{name: "abandoned-stage", mode: "stage", point: HandoffManagedStageCopied},
+		{name: "finalized-before-current", mode: "activate", point: HandoffManagedLinkPrepared},
+		{name: "current-switched-before-retention", mode: "activate", point: HandoffManagedLinkSwitched, commit: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			layout, oldRoot := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+			stage := ""
+			if testCase.mode == "activate" {
+				var err error
+				stage, err = layout.StageManagedGeneration()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			marker := filepath.Join(t.TempDir(), "ready")
+			command := exec.Command(os.Args[0], "-test.run=^TestManagedGenerationHardKillChild$")
+			var childOutput bytes.Buffer
+			command.Stdout = &childOutput
+			command.Stderr = &childOutput
+			command.Env = append(os.Environ(),
+				"KB_TEST_MANAGED_ROOT="+layout.Root,
+				"KB_TEST_MANAGED_MODE="+testCase.mode,
+				"KB_TEST_MANAGED_POINT="+string(testCase.point),
+				"KB_TEST_MANAGED_MARKER="+marker,
+				"KB_TEST_MANAGED_STAGE="+stage,
+				"KB_TEST_MANAGED_ACTIVE="+oldRoot,
+				"KB_TEST_MANAGED_RUNNING="+oldRoot,
+			)
+			if err := command.Start(); err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(8 * time.Second)
+			for {
+				if _, err := os.Stat(marker); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					_ = command.Process.Kill()
+					_ = command.Wait()
+					t.Fatalf("child did not reach %s; output: %s", testCase.point, childOutput.String())
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if err := command.Process.Kill(); err != nil {
+				t.Fatal(err)
+			}
+			if err := command.Wait(); err == nil {
+				t.Fatal("child hard kill unexpectedly exited successfully")
+			}
+			var abandonedName string
+			if testCase.name == "abandoned-stage" {
+				abandonedName = firstEntryWithPrefix(t, layout.VersionsDir(), ".stage-managed-")
+			} else if testCase.name == "finalized-before-current" {
+				abandonedName = firstEntryWithPrefix(t, layout.VersionsDir(), "managed-")
+			}
+
+			release, err := operationlock.Acquire(operationlock.Path(layout.HostStateDir()), "managed-generation-recovery-test")
+			if err != nil {
+				t.Fatalf("operation lock was not released by killed process: %v", err)
+			}
+			defer release.Release()
+			active, err := layout.Active()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if testCase.commit {
+				if active == oldRoot {
+					t.Fatal("hard-killed post-commit child lost the new current generation")
+				}
+				if _, err := os.Stat(active); err != nil {
+					t.Fatalf("committed current points to an incomplete generation: %v", err)
+				}
+				if err := layout.Validate(); err != nil {
+					t.Fatalf("committed current is invalid after hard kill: %v", err)
+				}
+				if err := layout.RetainManagedGeneration(active, oldRoot); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Stat(oldRoot); err != nil {
+					t.Fatalf("running generation was removed during recovery: %v", err)
+				}
+			} else {
+				if active != oldRoot {
+					t.Fatalf("hard-killed pre-commit child changed current to %q; want %q", active, oldRoot)
+				}
+				retryStage, err := layout.StageManagedGeneration()
+				if err != nil {
+					t.Fatalf("retry after hard kill failed: %v", err)
+				}
+				if err := layout.AbortManagedGeneration(retryStage); err != nil {
+					t.Fatal(err)
+				}
+				if abandonedName != "" && testCase.name == "abandoned-stage" {
+					if _, err := os.Lstat(filepath.Join(layout.VersionsDir(), abandonedName)); !os.IsNotExist(err) {
+						t.Fatalf("abandoned stage survived retry cleanup: %v", err)
+					}
+				}
+				if err := layout.RetainManagedGeneration(active, oldRoot); err != nil {
+					t.Fatal(err)
+				}
+				if abandonedName != "" && testCase.name == "finalized-before-current" {
+					if _, err := os.Lstat(filepath.Join(layout.VersionsDir(), abandonedName)); !os.IsNotExist(err) {
+						t.Fatalf("uncommitted finalized generation survived locked recovery cleanup: %v", err)
+					}
+				}
+				if err := layout.Validate(); err != nil {
+					t.Fatalf("old active generation is invalid after recovery: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func firstEntryWithPrefix(t *testing.T, directory, prefix string) string {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) {
+			return entry.Name()
+		}
+	}
+	return ""
 }
 
 // case: S-313.1, S-313.2

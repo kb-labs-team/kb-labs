@@ -428,7 +428,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	}
 	layout, layoutErr := versionroot.New(r.InstallRoot)
 	if layoutErr == nil && layout.Validate() == nil {
-		if err := layout.RecordHealthy(); err != nil {
+		if err := layout.RecordHealthyRoot(record.TreeRoot); err != nil {
 			r.kill(record.PID)
 			return Info{}, err
 		}
