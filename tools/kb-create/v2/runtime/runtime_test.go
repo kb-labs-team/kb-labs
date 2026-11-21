@@ -721,3 +721,63 @@ func TestDoctorFixSnapshotsSafeDefaultAndVerifies(t *testing.T) {
 		t.Fatalf("config/error = %s / %v", data, readErr)
 	}
 }
+
+// case: S-025.11
+func TestDoctorFixVerifiesConfigThroughInstalledActiveRoot(t *testing.T) {
+	installRoot := t.TempDir()
+	layout, err := versionroot.New(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := planIn(installRoot, "doctor-shared-config")
+	installationID, err := versionroot.InstallationIDForPath(stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed := contracts.InstallReceipt{ID: "doctor-shared-config", InstallationID: installationID, Plan: plan}
+	if err := receiptpkg.Write(stage, installed); err != nil {
+		t.Fatal(err)
+	}
+	sharedConfig := filepath.Join(installRoot, "state", "kb.config.jsonc")
+	if err := os.WriteFile(sharedConfig, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateInitial(stage, "2.0.0", plan.PlanHash); err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
+		t.Fatalf("install root unexpectedly has a config projection: %v", err)
+	}
+	snapshot, err := DoctorFix(activeRoot, doctor.RepairPlan{SafeDefaults: []doctor.Finding{{
+		Path: "/plugin/mode", Default: []byte(`"safe"`),
+	}}}, Dependencies{Clock: fixedClock{time.Unix(13, 0)}})
+	if err != nil {
+		t.Fatalf("doctor fix for installed shared config: %v", err)
+	}
+	if snapshot.ID == "" {
+		t.Fatal("doctor fix did not create a recovery snapshot")
+	}
+	data, err := os.ReadFile(sharedConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("decode shared config: %v", err)
+	}
+	plugin, ok := config["plugin"].(map[string]any)
+	if !ok || plugin["mode"] != "safe" {
+		t.Fatalf("shared config value = %#v; want plugin.mode=safe", config["plugin"])
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
+		t.Fatalf("doctor fix wrote config outside active shared-state projection: %v", err)
+	}
+}
