@@ -48,7 +48,7 @@ printf 'process.stdout.write("product-pnpm-ok")' > "$COREPACK_HOME/v1/pnpm/` + t
 // case: PC-001.2, S-285.9
 func TestProductCorepackProvisionFailureNamesSource(t *testing.T) {
 	root, bin := t.TempDir(), t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "corepack"), []byte("#!/bin/sh\nprintf 'corepack-fixture: registry unavailable\\n' >&2\nexit 47\n"), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "corepack"), []byte("#!/bin/sh\nprintf '%8192s' x >&2\nprintf '\\ncorepack-fixture: registry unavailable TOKEN=synthetic-secret-sentinel\\n' >&2\nexit 47\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", t.TempDir())
@@ -60,9 +60,26 @@ func TestProductCorepackProvisionFailureNamesSource(t *testing.T) {
 	}
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != contracts.CodeApplyFailed ||
-		failure.Meta["packageManagerExitCode"] != "47" ||
-		!strings.Contains(fmt.Sprint(failure.Meta["packageManagerStderrTail"]), "corepack-fixture: registry unavailable") {
+		failure.Meta["packageManagerExitCode"] != "47" {
 		t.Fatalf("Corepack provisioning details = %#v", err)
+	}
+	stderrTail := fmt.Sprint(failure.Meta["packageManagerStderrTail"])
+	if len(stderrTail) > externalCommandStderrTailBytes ||
+		!strings.Contains(stderrTail, "corepack-fixture: registry unavailable") ||
+		!strings.Contains(stderrTail, `TOKEN="[REDACTED]"`) ||
+		strings.Contains(stderrTail, "synthetic-secret-sentinel") {
+		t.Fatalf("Corepack stderr detail is oversized or unsafe: length=%d tail=%q", len(stderrTail), stderrTail)
+	}
+}
+
+// case: PC-001.2
+func TestPackageManagerStderrTailRedactsBeforeBounding(t *testing.T) {
+	const secret = "synthetic-secret-sentinel"
+	value := strings.Repeat("x", externalCommandStderrTailBytes*3) + " TOKEN=" + secret
+	tail := packageManagerStderrTail(value)
+	if len(tail) > externalCommandStderrTailBytes || !strings.Contains(tail, `TOKEN="[REDACTED]"`) ||
+		strings.Contains(tail, secret) {
+		t.Fatalf("package manager stderr tail is oversized or unsafe: length=%d tail=%q", len(tail), tail)
 	}
 }
 
