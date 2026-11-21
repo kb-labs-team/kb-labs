@@ -1978,7 +1978,8 @@ def run_invalid_request_step(*, mode: str, launcher: str, stable_index: Path,
 
 
 def run_apply_scenario_step(*, mode: str, launcher: str, stable_index: Path,
-                            platform_root: Path, run_command: CommandRunner) -> Journey:
+                            platform_root: Path, registry: str,
+                            run_command: CommandRunner) -> Journey:
     """Prove direct JSON apply resolves scenario answers into its receipt."""
     journey = Journey(mode, f"apply-scenario-{mode}")
     apply_root = platform_root.parent / f"s039-apply-scenario-{mode}"
@@ -1987,6 +1988,7 @@ def run_apply_scenario_step(*, mode: str, launcher: str, stable_index: Path,
         answers = json.dumps({"cache": "state-broker"}, separators=(",", ":"))
         result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
                               "--platform-root", str(apply_root), "--service-profile", "default",
+                              "--registry", registry, "--marketplace-npm-url", registry,
                               "--gateway-url", unused_loopback_gateway_url(),
                               "--scenario", "commit", "--scenario-answers", answers])
         try:
@@ -2001,6 +2003,9 @@ def run_apply_scenario_step(*, mode: str, launcher: str, stable_index: Path,
                     or not apply_result.get("logPath")):
                 raise RuntimeError("apply result receipt omitted the isolated root or selected cache provider")
             assert_commit_marketplace_receipt(receipt_value)
+            commit_record = commit_marketplace_install_record(receipt_value)
+            if commit_record is None or commit_record.get("source") != "npm":
+                raise RuntimeError("Commit scenario receipt did not resolve from the configured journey npm fixture")
         finally:
             cleanup_installer_fixture_root(apply_root, launcher, run_command)
 
@@ -2067,11 +2072,13 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         selected_plan["serviceGraph"] = _json_command(
             run_command, [launcher, "plan", "--json", "--index", str(stable_index),
                           "--platform-root", str(apply_root),
-                          "--service-profile", "default", "--scenario", "commit"],
+                          "--service-profile", "default", "--registry", registry,
+                          "--marketplace-npm-url", registry, "--scenario", "commit"],
             "PC-001 selected profile plan").get("plan", {}).get("serviceGraph", {})
         result = _data(run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                    "--platform-root", str(apply_root),
-                                   "--service-profile", "default", "--scenario", "commit"]),
+                                   "--service-profile", "default", "--registry", registry,
+                                   "--marketplace-npm-url", registry, "--scenario", "commit"]),
                       "PC-001 apply")
         if result.get("operation") != "apply" or not result.get("receipt") or not result.get("logPath"):
             raise RuntimeError("apply result omitted operation, receipt, or logPath")
@@ -2079,7 +2086,8 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         index = json.loads(stable_index.read_text())
         pin = next(item for item in index["plugins"] if item["package"] == "@kb-labs/commit")
         record = next(item for item in result["receipt"].get("marketplaceInstalls", []) if item.get("id") == "@kb-labs/commit")
-        if record.get("spec") != f"@kb-labs/commit@{pin['version']}" or record.get("version") != pin["version"]:
+        if (record.get("spec") != f"@kb-labs/commit@{pin['version']}"
+                or record.get("version") != pin["version"] or record.get("source") != "npm"):
             raise RuntimeError("Commit Marketplace receipt does not match the verified release index pin")
         status = _data(run_command([launcher, "status", "--json", "--platform-root", str(apply_root)]),
                        "PC-001 apply status")

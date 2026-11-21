@@ -1883,7 +1883,8 @@ def _main(*, update_variant_runner=None):
                 INSTALLER_CASE_GROUP: run_installer_case_group,
                 APPLY_SCENARIO_GROUP: lambda: run_apply_scenario_step(
                     mode=mode, launcher=launcher, stable_index=stable_index,
-                    platform_root=PLATFORM, run_command=installer_command_for_fixture),
+                    platform_root=PLATFORM, registry=REGISTRY,
+                    run_command=installer_command_for_fixture),
                 INVALID_REQUEST_GROUP: lambda: run_invalid_request_step(
                     mode=mode, launcher=launcher, stable_index=stable_index,
                     platform_root=PLATFORM, run_command=installer_command_for_fixture),
