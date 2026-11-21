@@ -56,7 +56,10 @@ export async function createRegistryServer(opts: RegistryServerOptions): Promise
     logger,
     observability,
     onRequest: createRegistryAuthMiddleware(internalSecret),
+    // The Gateway's trusted service identity may probe health; Registry APIs and
+    // the other operational routes still require an authenticated user identity.
     standardRouteConfig: { registryAccess: 'user' },
+    healthRouteConfig: { registryAccess: 'public' },
     // Preserve the legacy /health contract { status:'ok', service, ts } — e2e RG-H01.
     healthResponse: () => ({ status: 'ok', service: 'marketplace-registry', ts: Date.now() }),
     // /ready must return { ready, components } — e2e RG-H02 asserts body.ready === true.

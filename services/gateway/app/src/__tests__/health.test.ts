@@ -159,6 +159,7 @@ describe('Gateway /health endpoint', () => {
   afterEach(async () => {
     if (app) {await app.close();}
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
   });
 
   // case: S-203.1
@@ -329,6 +330,45 @@ describe('Gateway /health endpoint', () => {
     expect(body.components).not.toHaveProperty('restUpstream');
     expect(body.components).not.toHaveProperty('workflowUpstream');
     expect(body.components.projectRuntimes).toEqual({ ready: true, status: '0/4 active' });
+  });
+
+  // case: S-268.23
+  it('authenticates the protected Registry health probe without sharing the secret with other upstreams', async () => {
+    mockAdapters = { llm: { complete: vi.fn() } };
+    const secret = 'registry-health-test-secret';
+    vi.stubEnv('GATEWAY_INTERNAL_SECRET', secret);
+    const transport: IServiceTransport = {
+      connectionInfo: vi.fn().mockReturnValue({ baseUrl: 'http://localhost' }),
+      call: vi.fn(async (serviceId: string, request: { path: string; metadata?: Record<string, string> }) => ({
+        ok: serviceId !== 'marketplace-registry' || request.metadata?.['x-internal-secret'] === secret,
+        statusCode: serviceId !== 'marketplace-registry' || request.metadata?.['x-internal-secret'] === secret ? 200 : 401,
+        payload: { ok: true },
+      })),
+      stream: vi.fn(),
+    } as unknown as IServiceTransport;
+    const projectRouting = {
+      acquire: async () => ({ host: '127.0.0.1', port: 1234, headers: {}, release: () => undefined }),
+      status: () => ({ limit: 4, active: 0, runtimes: [] }),
+    };
+    app = await buildHealthApp({
+      upstreams: {
+        marketplaceRegistry: { serviceId: 'marketplace-registry', prefix: '/api/v1/marketplace-registry' },
+        workflow: { serviceId: 'workflow', prefix: '/api/v1/workflow' },
+      },
+    }, transport, undefined, projectRouting);
+
+    const response = await app.inject({ method: 'GET', url: '/ready' });
+    const body = response.json().data;
+    expect(response.statusCode).toBe(200);
+    expect(body.components['upstream:marketplaceRegistry']).toEqual({ ready: true, status: 'up' });
+    expect(transport.call).toHaveBeenCalledWith('marketplace-registry', expect.objectContaining({
+      path: '/health',
+      metadata: { 'x-internal-secret': secret },
+    }));
+    expect(transport.call).toHaveBeenCalledWith('workflow', expect.not.objectContaining({
+      metadata: expect.anything(),
+    }));
+    expect(response.body).not.toContain(secret);
   });
 
   it('logs structured diagnostics when upstream health probe fails', async () => {

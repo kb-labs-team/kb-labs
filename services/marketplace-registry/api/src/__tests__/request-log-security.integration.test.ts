@@ -71,3 +71,36 @@ describe('S-252.2 — Registry request log credential redaction', () => {
     expect(serializedLogs).toContain('version=1.2.3');
   });
 });
+
+describe('S-268.23 — Registry health access for Gateway probes', () => {
+  it('accepts the Gateway service identity while refusing anonymous direct health requests', async () => {
+    const logger = {
+      trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn(),
+      flush: vi.fn().mockResolvedValue(undefined), child: vi.fn(),
+    } as unknown as ILogger;
+    const registry = {} as RegistryService;
+    const app = await createRegistryServer({ logger, registry, internalSecret: 'registry-health-test-secret' });
+    try {
+      const anonymous = await app.inject({ method: 'GET', url: '/health' });
+      expect(anonymous.statusCode).toBe(401);
+      expect(anonymous.json().error.code).toBe('KB_AUTH_REQUIRED');
+
+      const gatewayProbe = await app.inject({
+        method: 'GET',
+        url: '/health',
+        headers: { 'x-internal-secret': 'registry-health-test-secret' },
+      });
+      expect(gatewayProbe.statusCode).toBe(200);
+      expect(gatewayProbe.json()).toMatchObject({ status: 'ok', service: 'marketplace-registry' });
+
+      const serviceIdentityOnReady = await app.inject({
+        method: 'GET',
+        url: '/ready',
+        headers: { 'x-internal-secret': 'registry-health-test-secret' },
+      });
+      expect(serviceIdentityOnReady.statusCode).toBe(401);
+    } finally {
+      await app.close();
+    }
+  });
+});

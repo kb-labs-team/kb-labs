@@ -345,18 +345,25 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured",
                    "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
                    "KB_JOURNEY_ADMIN_PASSWORD": "fixture-admin-password"}
+            def fake_open_http(_opener, request, **_kwargs):
+                if request.full_url.endswith("/ready"):
+                    return 200, json.dumps({"ok": True, "data": {"ready": True, "components": {
+                        "upstream:marketplaceRegistry": {"ready": True, "status": "up"}}}}).encode(), {}
+                return 401, json.dumps({"ok": False, "error": {
+                    "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
+                    "hint": "Log in and retry."}}).encode(), {}
+
             with patch("marketplace_steps.wait_for_marketplace_ready"), \
                     patch("marketplace_steps._installed_gateway_url", return_value="http://127.0.0.1:4317"), \
                     patch("marketplace_steps._assert_registry_gateway_config"), \
-                    patch("marketplace_steps.open_http", return_value=(401, json.dumps({"ok": False, "error": {
-                        "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
-                        "hint": "Log in and retry."}}).encode(), {})), \
+                    patch("marketplace_steps.open_http", side_effect=fake_open_http), \
                     patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured"}):
                 journey = Journey("local", "registry-commit-fixture")
                 entry = prepare_registry_commit_project_fixture(journey, project, "http://verdaccio.test",
                                                                  env, runner)
 
             self.assertIsNotNone(entry, [(step.name, step.status, step.message) for step in journey.steps])
+            self.assertIn("S-268.23", {case for step in journey.steps for case in step.cases})
             self.assertEqual(entry["marketplaceSource"], "registry")
             self.assertEqual(entry["signatureStatus"], "verified")
             workspace_cli = str(workspace / "cli" / "bin" / "dist" / "bin.js")
