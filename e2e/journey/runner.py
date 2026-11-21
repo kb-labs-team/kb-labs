@@ -154,6 +154,17 @@ def runner_scenario(name: str, *, secured: bool) -> dict:
         "marketplace_packages": description["secured_marketplace_packages"] if secured else (),
         "command_help_paths": description["command_help_paths"],
     }
+
+
+def run_selected_first_value_smoke(graph: FlowGraph, check: Callable[[], object]):
+    """Run the Commit execution smoke only when the selected journey needs it."""
+    step_name = "kb commit first value"
+    if (graph.selection_active and "S-054.17" not in graph.journey.selected_claims
+            and not graph.selects_steps(step_name)):
+        return graph.journey.skipped(step_name, "platform.install")
+    return check()
+
+
 OUTER_GROUP_DEPENDENCIES = {
     "install": (),
     "host": ("platform-installed",),
@@ -1585,11 +1596,17 @@ def _main(*, update_variant_runner=None):
         write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: first-command-output ==\n{result.stdout[-5000:]}\n", env=env)
     else:
         if FRONT == "agent" and scenario_setup["command_help_paths"]:
-            result, elapsed = run(kb_login_shell(["commit", "commit", "--dry-run", "--json"]),
-                                  env=env, cwd=PROJECT, timeout=300)
-            TIMES["first command"] += elapsed
-            if not require(result, step="kb commit first value"):
-                write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n", env=env)
+            def check_first_value():
+                result, elapsed = run(kb_login_shell(["commit", "commit", "--dry-run", "--json"]),
+                                      env=env, cwd=PROJECT, timeout=300)
+                TIMES["first command"] += elapsed
+                if not require(result, step="kb commit first value"):
+                    write_journey_diagnostic(
+                        f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n",
+                        env=env)
+                return result
+
+            run_selected_first_value_smoke(outer_graph, check_first_value)
         status, _ = run(["git", "status", "--porcelain"], env=env, cwd=PROJECT)
         clean_repo = not (PROJECT / ".kb").exists() and status.stdout.strip() in {"?? note.txt", "A  note.txt"}
         record_case("first CLI commands leave fresh repository untouched", clean_repo,

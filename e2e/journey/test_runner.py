@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import jsonl
 from service_steps import FlowGraph, Journey
+from journey_selection import JourneySelection
 from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import commit_marketplace_install_record
@@ -523,6 +524,51 @@ thread.join()
         self.assertEqual(setup["installer"], "custom")
         self.assertEqual(setup["marketplace_packages"], ("@kb-labs/commit",))
         self.assertEqual(setup["command_help_paths"], (("commit", "commit", "--help"),))
+
+    def test_unrelated_commit_smoke_does_not_block_selected_s181_install_step(self):
+        selection = JourneySelection(
+            requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            runner_selector="agent:commit", requested_runners="",
+        )
+        journey = Journey("secured", "s181-commit-smoke-selection", selection=selection)
+        graph = FlowGraph(journey, {})
+        commit_smoke_calls = []
+        result = runner.run_selected_first_value_smoke(
+            graph, lambda: commit_smoke_calls.append("commit smoke"))
+        self.assertEqual(result.status, "SKIPPED")
+        self.assertEqual(commit_smoke_calls, [])
+
+        s181_calls = []
+        result = graph.dispatch_step("offline generated-secret install", "install", "platform.install",
+                                     lambda: s181_calls.append("S-181.7") or None, cases=["S-181.7"])
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual(s181_calls, ["S-181.7"])
+
+    def test_commit_smoke_runs_for_full_journey_and_declared_prerequisite(self):
+        full_journey = Journey("secured", "full-journey-commit-smoke")
+        full_graph = FlowGraph(full_journey, {})
+        calls = []
+        runner.run_selected_first_value_smoke(full_graph, lambda: calls.append("full"))
+        self.assertEqual(calls, ["full"])
+
+        selection = JourneySelection(
+            requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+            prerequisite_steps=frozenset({"kb commit first value"}), prerequisite_flows=frozenset(),
+            capabilities=frozenset(), runner_selector="agent:commit", requested_runners="",
+        )
+        prerequisite_graph = FlowGraph(Journey("secured", "prereq-commit-smoke", selection=selection), {})
+        runner.run_selected_first_value_smoke(prerequisite_graph, lambda: calls.append("prerequisite"))
+        self.assertEqual(calls, ["full", "prerequisite"])
+
+        case_selection = JourneySelection(
+            requested=("S-054.17",), claims=frozenset({"S-054.17"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            runner_selector="agent:commit", requested_runners="",
+        )
+        case_graph = FlowGraph(Journey("secured", "s054-commit-smoke", selection=case_selection), {})
+        runner.run_selected_first_value_smoke(case_graph, lambda: calls.append("S-054.17"))
+        self.assertEqual(calls, ["full", "prerequisite", "S-054.17"])
 
     def test_local_commit_scenario_uses_commit_installer_scenario(self):
         runner = importlib.import_module("runner")
