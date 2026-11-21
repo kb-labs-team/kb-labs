@@ -22,6 +22,18 @@ visibility and preserves old releases as private without deleting their
 metadata or tarballs. Owners and valid share-token holders retain access.
 Case: S-268.21.
 
+## 2026-11-21
+
+### Package-manager output is captured and redacted before use
+
+Package-manager stdout and stderr are untrusted. Each stream is captured
+separately under a fixed byte limit; known secret values are replaced before
+credential-pattern redaction, and clipping happens only after that complete
+redaction pass. If a stream exceeds the limit, the installer drops that entire
+stream and reports a safe notice rather than retaining an unredacted slice.
+Failures retain the process exit code and bounded redacted stderr evidence.
+Cases: PC-001.2, S-285.18.
+
 ## 2026-10-31
 
 ### SQLite vector search breaks equal-score ties by record ID

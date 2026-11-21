@@ -4,28 +4,47 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/diagnostics"
 )
 
 // case: PC-001.2
 func TestApplyDossierKeepsPackageManagerFailureDetails(t *testing.T) {
-	const secret = "registry-token-value"
+	const secret = "synthetic-secret-sentinel"
 	root := t.TempDir()
 	logPath := root + "/installer/logs/apply-test.log"
 	failure := contracts.NewDiag(contracts.CodeApplyFailed, "package manager failed", "inspect the local log",
-		errors.New("pnpm add exact artifacts: exit status 47"))
+		errors.New("pnpm add failed with TOKEN="+secret))
 	failure.Meta = map[string]any{
 		"packageManagerExitCode":   "47",
-		"packageManagerStderrTail": "registry request used " + secret,
+		"packageManagerStderrTail": strings.Repeat("x", 5000) + ` TOKEN="` + secret + `"`,
 	}
 
 	result := applyDossier(root, "package-manager-failure", logPath, contracts.ResolvedInstallPlan{}, []string{secret}, failure)
+	stderrTail, ok := result.Meta["packageManagerStderrTail"].(string)
 	if result.Code != contracts.CodeApplyFailed || result.Meta["packageManagerExitCode"] != "47" ||
-		result.Meta["packageManagerStderrTail"] != "registry request used [REDACTED]" || result.Meta["logPath"] != logPath {
+		!ok || len(stderrTail) > 4096 || !strings.Contains(stderrTail, `TOKEN="[REDACTED]"`) ||
+		strings.Contains(stderrTail, secret) || result.Meta["logPath"] != logPath {
 		t.Fatalf("apply diagnostic = code %q details %#v", result.Code, result.Meta)
+	}
+	if strings.Contains(result.Cause, secret) || strings.Contains(result.Reason, secret) ||
+		result.Cause != `pnpm add failed with TOKEN="[REDACTED]"` || result.Reason != result.Cause {
+		t.Fatalf("apply cause was not value-redacted: cause=%q reason=%q", result.Cause, result.Reason)
+	}
+	envelope, err := diag.ToEnvelope(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(output), secret) || strings.Contains(envelope.Cause, secret) {
+		t.Fatalf("CLI error envelope leaked synthetic secret: %s", output)
 	}
 	diagnosticPath, ok := result.Meta["diagnosticPath"].(string)
 	if !ok {
@@ -39,8 +58,9 @@ func TestApplyDossierKeepsPackageManagerFailureDetails(t *testing.T) {
 	if err := json.Unmarshal(data, &dossier); err != nil {
 		t.Fatal(err)
 	}
-	if dossier.Error.Meta["packageManagerExitCode"] != "47" ||
-		dossier.Error.Meta["packageManagerStderrTail"] != "registry request used [REDACTED]" {
+	dossierTail, ok := dossier.Error.Meta["packageManagerStderrTail"].(string)
+	if dossier.Error.Meta["packageManagerExitCode"] != "47" || !ok || len(dossierTail) > 4096 ||
+		strings.Contains(dossierTail, secret) || strings.Contains(dossier.Error.Cause, secret) || strings.Contains(string(data), secret) {
 		t.Fatalf("dossier dropped or leaked package-manager details: %#v", dossier.Error.Meta)
 	}
 }

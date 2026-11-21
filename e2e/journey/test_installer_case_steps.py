@@ -198,7 +198,7 @@ def journey_layout_path_violations(journey_root: Path, layout: dict, owner_modul
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
-    def test_package_manager_failure_diagnostic_requires_exit_stderr_and_transcript(self):
+    def test_package_manager_failure_diagnostic_requires_exit_and_safe_transcript(self):
         with tempfile.TemporaryDirectory(prefix="journey-pnpm-failure-") as temporary:
             home = Path(temporary)
             platform_root = home / "kb-platform"
