@@ -91,7 +91,7 @@ jobs:
           # kb-deploy/kb-monitor, which require go 1.26 as of #435), not just
           # kb-create — go-version-file only pins to one module's directive
           # and silently under-provisions the toolchain for the rest.
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: |
             tools/kb-create/go.sum
             tools/kb-dev/go.sum
