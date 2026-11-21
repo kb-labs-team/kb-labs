@@ -7,7 +7,7 @@ priority: P1
 status: planned
 release: false
 modes: [local]
-surfaces: [agent, workflow]
+surfaces: [agent]
 ---
 
 ## Goal
