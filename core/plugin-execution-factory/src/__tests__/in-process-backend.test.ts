@@ -13,10 +13,14 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@kb-labs/plugin-runtime', () => ({
-  runInProcess: vi.fn().mockResolvedValue({ data: 'ok', executionMeta: {} }),
-  resolveAdapterMiddlewares: vi.fn().mockResolvedValue([]),
-}));
+vi.mock('@kb-labs/plugin-runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@kb-labs/plugin-runtime')>();
+  return {
+    ...actual,
+    runInProcess: vi.fn().mockResolvedValue({ data: 'ok', executionMeta: {} }),
+    resolveAdapterMiddlewares: vi.fn().mockResolvedValue([]),
+  };
+});
 
 vi.mock('node:fs', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -29,7 +33,7 @@ import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { InProcessBackend } from '../backends/in-process.js';
 import type { ExecutionRequest } from '../types.js';
 import { useLoader } from '@kb-labs/shared-cli-ui';
-import { createStreamingUI } from '../../../plugin-runtime/src/context/streaming-ui.js';
+import { createStreamingUI } from '@kb-labs/plugin-runtime';
 import { noopUI } from '@kb-labs/plugin-contracts';
 
 /** Mimics PlatformContainer: processExecutor is a prototype getter, not an own property. */
