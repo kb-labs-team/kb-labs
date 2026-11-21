@@ -551,6 +551,7 @@ class MarketplaceStepTests(unittest.TestCase):
                             "code": "KB_AUTH_REQUIRED",
                             "message": catalogued_error_message("KB_AUTH_REQUIRED"),
                             "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4000"),
+                            "details": {"gatewayUrl": "http://127.0.0.1:4000"},
                         },
                     }), "")
                 if args[:2] == ["auth", "login"]:
@@ -575,6 +576,8 @@ class MarketplaceStepTests(unittest.TestCase):
             ])
             self.assertIn(("kb", "marketplace", "plugins", "list", "--json"), calls)
             self.assertIn(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"), calls)
+            marketplace_lists = [call for call in calls if call[:3] == ("kb", "marketplace", "plugins")]
+            self.assertEqual(len(marketplace_lists), 4, marketplace_lists)
             self.assertLess(calls.index(("kb", "auth", "logout", "--json")),
                             calls.index(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json")))
             self.assertIn(("kb", "auth", "login", "--gateway-url", "http://127.0.0.1:4000",
