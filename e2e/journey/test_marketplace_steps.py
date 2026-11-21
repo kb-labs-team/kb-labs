@@ -525,8 +525,17 @@ class MarketplaceStepTests(unittest.TestCase):
             root = Path(directory)
             project = root / "project"
             project.mkdir()
+            platform_root = root / "kb-platform"
+            active_platform = create_test_install_container(platform_root)
+            receipt = active_platform / ".kb" / "v2" / "receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({
+                "verification": {"hostHealthUrl": "http://127.0.0.1:4317/health"},
+            }))
             env = {
                 "HOME": str(root),
+                "KB_JOURNEY_PLATFORM_ROOT": str(platform_root),
+                "GATEWAY_PORT": "4317",
                 "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
                 "KB_JOURNEY_ADMIN_PASSWORD": "fixture-password",
             }
@@ -550,8 +559,8 @@ class MarketplaceStepTests(unittest.TestCase):
                         "error": {
                             "code": "KB_AUTH_REQUIRED",
                             "message": catalogued_error_message("KB_AUTH_REQUIRED"),
-                            "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4000"),
-                            "details": {"gatewayUrl": "http://127.0.0.1:4000"},
+                            "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4317"),
+                            "details": {"gatewayUrl": "http://127.0.0.1:4317"},
                         },
                     }), "")
                 if args[:2] == ["auth", "login"]:
@@ -580,7 +589,7 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(len(marketplace_lists), 4, marketplace_lists)
             self.assertLess(calls.index(("kb", "auth", "logout", "--json")),
                             calls.index(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json")))
-            self.assertIn(("kb", "auth", "login", "--gateway-url", "http://127.0.0.1:4000",
+            self.assertIn(("kb", "auth", "login", "--gateway-url", "http://127.0.0.1:4317",
                            "--email", "admin@example.test", "--password-stdin", "--json"), calls)
             self.assertIn(("kb", "auth", "status", "--json"), calls)
 
