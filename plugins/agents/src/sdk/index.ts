@@ -111,5 +111,5 @@ export type { SpawnOptions, SpawnResult, IAgentSpawner } from './spawner.js';
 export type { ToolErrorAction, LLMErrorAction, AgentErrorHandler } from './error-handler.js';
 
 // SDK — builder class + interfaces
-export type { IAgentRunner, IAgentSDK, RunnerFactory } from './sdk.js';
+export type { AgentRunnerModule, IAgentRunner, IAgentSDK, RunnerFactory } from './sdk.js';
 export { AgentSDK } from './sdk.js';

@@ -114,20 +114,24 @@ function calculateStats(events: DetailedTraceEntry[], taskId?: string): StatsRes
   const errorEvents = normalized.filter((e) => e.type === 'error:captured' || e.type === 'agent:error' || e.type === 'tool:error');
 
   // Calculate LLM stats (handle both new and legacy data structures)
-  const inputTokens = llmEndEvents.reduce((sum, e) => {
-    const tokens = (e.raw as LLMCallRaw).response?.usage?.inputTokens || 0;
-    return sum + tokens;
-  }, 0);
+  const measuredSum = (measurements: Array<number | undefined>): number | undefined =>
+    measurements.length > 0 && measurements.every((tokens): tokens is number => tokens !== undefined)
+      ? measurements.reduce((sum, tokens) => sum + tokens, 0)
+      : undefined;
+  const inputTokens = measuredSum(llmEndEvents.map((e) => {
+    const tokens = (e.raw as LLMCallRaw).response?.usage?.inputTokens;
+    return typeof tokens === 'number' && Number.isFinite(tokens) ? tokens : undefined;
+  }));
 
-  const outputTokens = llmEndEvents.reduce((sum, e) => {
-    const tokens = (e.raw as LLMCallRaw).response?.usage?.outputTokens || 0;
-    return sum + tokens;
-  }, 0);
+  const outputTokens = measuredSum(llmEndEvents.map((e) => {
+    const tokens = (e.raw as LLMCallRaw).response?.usage?.outputTokens;
+    return typeof tokens === 'number' && Number.isFinite(tokens) ? tokens : undefined;
+  }));
 
-  const legacyTotalTokens = llmEndEvents.reduce((sum, e) => {
-    const tokens = (e.data.tokensUsed as number | undefined) || 0;
-    return sum + tokens;
-  }, 0);
+  const legacyTotalTokens = measuredSum(llmEndEvents.map((e) => {
+    const tokens = e.data.tokensUsed;
+    return typeof tokens === 'number' && Number.isFinite(tokens) ? tokens : undefined;
+  }));
 
   const totalCost = llmEndEvents.reduce((sum, e) => {
     const cost = (e.raw as LLMCallRaw).cost?.totalCost || 0;
@@ -172,7 +176,9 @@ function calculateStats(events: DetailedTraceEntry[], taskId?: string): StatsRes
       inputTokens,
       outputTokens,
       // Use explicit tokens if available, otherwise fall back to legacy total
-      totalTokens: (inputTokens + outputTokens) || legacyTotalTokens,
+      totalTokens: inputTokens !== undefined && outputTokens !== undefined
+        ? inputTokens + outputTokens
+        : legacyTotalTokens,
     },
 
     tools: {
@@ -229,9 +235,9 @@ function printHumanReadable(ctx: PluginCommandContextV3, stats: StatsResponse): 
 
   ctx.ui.write('🤖 LLM Usage:\n');
   ctx.ui.write(`  Calls: ${stats.llm.calls}\n`);
-  ctx.ui.write(`  Input tokens: ${stats.llm.inputTokens.toLocaleString()}\n`);
-  ctx.ui.write(`  Output tokens: ${stats.llm.outputTokens.toLocaleString()}\n`);
-  ctx.ui.write(`  Total tokens: ${stats.llm.totalTokens.toLocaleString()}\n`);
+  ctx.ui.write(`  Input tokens: ${stats.llm.inputTokens?.toLocaleString() ?? 'n/a'}\n`);
+  ctx.ui.write(`  Output tokens: ${stats.llm.outputTokens?.toLocaleString() ?? 'n/a'}\n`);
+  ctx.ui.write(`  Total tokens: ${stats.llm.totalTokens?.toLocaleString() ?? 'n/a'}\n`);
   ctx.ui.write('\n');
 
   ctx.ui.write('🔧 Tool Usage:\n');

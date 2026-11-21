@@ -59,6 +59,12 @@ export interface IAgentRunner {
   injectUserContext(message: string): void;
 }
 
+/** Public module surface loaded for a runtime-selected child runner. */
+export interface AgentRunnerModule {
+  runnerCapabilities: import('../contracts/index.js').AgentRunnerCapabilities;
+  createRunner(config: AgentConfig, sdk: AgentSDK): IAgentRunner;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RunnerFactory — injected by agent-core to break circular dep
 // ─────────────────────────────────────────────────────────────────────────────

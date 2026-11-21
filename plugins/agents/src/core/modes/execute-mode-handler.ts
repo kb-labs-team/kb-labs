@@ -57,7 +57,7 @@ function evaluateQualityGate(result: TaskResult): { score: number; reasons: stri
   }
 
   // Tokens used (reasonable range) (+15)
-  if (result.tokensUsed > 1000) {
+  if (result.tokensUsed !== undefined && result.tokensUsed > 1000) {
     score += 15;
   }
 

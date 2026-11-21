@@ -174,7 +174,7 @@ export class PlanModeHandler implements ModeHandler {
         );
         const startedAt = Date.now();
         const result = await researchRunner.execute(request.task);
-        sharedBudget.consume(result.tokensUsed);
+        if (result.tokensUsed !== undefined) { sharedBudget.consume(result.tokensUsed); }
         return {
           success: result.success,
           summary: result.summary,
@@ -252,7 +252,7 @@ export class PlanModeHandler implements ModeHandler {
       );
 
       const planningResult = await planRunner.execute(budgetAwarePrompt);
-      sharedBudget.consume(planningResult.tokensUsed);
+      if (planningResult.tokensUsed !== undefined) { sharedBudget.consume(planningResult.tokensUsed); }
       const plan = planningResult.plan ?? this.buildFallbackPlan(sessionId, task, complexity, reportedPlanText || planningResult.summary, existingPlan);
       const runtimeCompletion = (planningResult.metrics?.runtimeCompletion as {
         blockedByPolicy?: boolean;
