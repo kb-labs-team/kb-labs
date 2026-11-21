@@ -525,9 +525,17 @@ class MarketplaceStepTests(unittest.TestCase):
             root = Path(directory)
             project = root / "project"
             project.mkdir()
+            platform_root = root / "kb-platform"
+            active_platform = create_test_install_container(platform_root)
+            receipt = active_platform / ".kb" / "v2" / "receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({
+                "verification": {"hostHealthUrl": "http://127.0.0.1:4317/health"},
+            }))
             env = {
                 "HOME": str(root),
-                "KB_JOURNEY_BASE_URL": "http://gateway.test",
+                "KB_JOURNEY_PLATFORM_ROOT": str(platform_root),
+                "GATEWAY_PORT": "4317",
                 "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
                 "KB_JOURNEY_ADMIN_PASSWORD": "fixture-password",
             }
@@ -551,7 +559,8 @@ class MarketplaceStepTests(unittest.TestCase):
                         "error": {
                             "code": "KB_AUTH_REQUIRED",
                             "message": catalogued_error_message("KB_AUTH_REQUIRED"),
-                            "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://gateway.test"),
+                            "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4317"),
+                            "details": {"gatewayUrl": "http://127.0.0.1:4317"},
                         },
                     }), "")
                 if args[:2] == ["auth", "login"]:
@@ -559,7 +568,10 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, '{"ok":true}', "")
                 if args[:2] == ["auth", "status"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({
-                        "ok": True, "data": {"session": {"authenticated": session_saved}},
+                        "ok": True, "data": {
+                            "authenticated": False,
+                            "sessions": [{"authenticated": session_saved}],
+                        },
                     }), "")
                 return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command[1:3]}")
 
@@ -571,10 +583,13 @@ class MarketplaceStepTests(unittest.TestCase):
                 {"claimId": "S-010.6", "kind": "journey", "status": "PASS"},
                 {"claimId": "S-041.7", "kind": "journey", "status": "PASS"},
             ])
+            self.assertIn(("kb", "marketplace", "plugins", "list", "--json"), calls)
             self.assertIn(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"), calls)
+            marketplace_lists = [call for call in calls if call[:3] == ("kb", "marketplace", "plugins")]
+            self.assertEqual(len(marketplace_lists), 4, marketplace_lists)
             self.assertLess(calls.index(("kb", "auth", "logout", "--json")),
                             calls.index(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json")))
-            self.assertIn(("kb", "auth", "login", "--gateway-url", "http://gateway.test",
+            self.assertIn(("kb", "auth", "login", "--gateway-url", "http://127.0.0.1:4317",
                            "--email", "admin@example.test", "--password-stdin", "--json"), calls)
             self.assertIn(("kb", "auth", "status", "--json"), calls)
 

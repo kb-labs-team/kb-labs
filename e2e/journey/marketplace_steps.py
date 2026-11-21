@@ -10,6 +10,7 @@ import hashlib
 import os
 import tempfile
 import time
+from urllib.parse import urlsplit, urlunsplit
 import urllib.request
 from pathlib import Path
 from typing import Callable
@@ -36,6 +37,24 @@ from commit_fixture import commit_fixture_source_version
 
 
 CommandRunner = Callable[..., CompletedProcess[str]]
+
+
+def _installed_gateway_url(env: dict[str, str]) -> str:
+    """Read the active install's verified Gateway URL, as the CLI auth gate does."""
+    platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
+    if not platform_root:
+        raise RuntimeError("secured marketplace journey cannot resolve its installed Gateway receipt")
+    receipt_path = active_platform_root(Path(platform_root)) / ".kb" / "v2" / "receipt.json"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("secured marketplace journey cannot read the active Gateway receipt") from error
+    health_url = receipt.get("verification", {}).get("hostHealthUrl")
+    if not isinstance(health_url, str) or not health_url:
+        raise RuntimeError("secured marketplace journey receipt has no verified Gateway URL")
+    parsed = urlsplit(health_url)
+    path = parsed.path.removesuffix("/health").rstrip("/")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).rstrip("/")
 
 
 def commit_publish_command(workspace_root: str | Path) -> list[str]:
@@ -313,8 +332,10 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
     if logout_result.returncode != 0:
         raise RuntimeError("could not clear saved Gateway credentials before unauthenticated marketplace checks")
 
-    def assert_auth_required(step_id: str) -> None:
-        command = kb_command([ "marketplace", "plugins", "list", "--scope", "platform", "--json"])
+    gateway = _installed_gateway_url(env)
+
+    def assert_auth_required(step_id: str, scope_args: list[str]) -> None:
+        command = kb_command(["marketplace", "plugins", "list", *scope_args, "--json"])
         with invocation_context(step_id=step_id):
             result = _run(command, cwd=project, env=env, runner=runner)
         try:
@@ -322,21 +343,26 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         except (json.JSONDecodeError, ValueError) as error:
             raise RuntimeError(f"unauthenticated marketplace list returned an invalid UX result: {error}") from error
         failure = decode_ux_error_result(payload) if result.returncode else None
+        details = failure.get("details") if isinstance(failure, dict) else None
         if (result.returncode == 0 or not isinstance(failure, dict)
                 or failure.get("code") != "KB_AUTH_REQUIRED"
                 or failure.get("message") != catalogued_error_message("KB_AUTH_REQUIRED")
                 or failure.get("hint") != catalogued_error_hint(
-                    "KB_AUTH_REQUIRED", gatewayUrl=env.get("KB_JOURNEY_BASE_URL", "<url>"))):
+                    "KB_AUTH_REQUIRED", gatewayUrl=gateway)
+                or not isinstance(details, dict) or details.get("gatewayUrl") != gateway):
             raise RuntimeError("unauthenticated marketplace list did not return KB_AUTH_REQUIRED with the login hint")
 
+    def assert_both_marketplace_scopes_require_auth() -> None:
+        for scope in ([], ["--scope", "platform"]):
+            assert_auth_required("S-041.7", scope)
+
     journey.step("secured marketplace requires a saved CLI session", "marketplace",
-                 lambda: assert_auth_required("S-041.7"), cases=["S-041.7"])
+                 assert_both_marketplace_scopes_require_auth, cases=["S-041.7"])
 
 
     journey.step("S-010.6 secured marketplace requires the catalogued login error", "marketplace",
-                 lambda: assert_auth_required("S-010.6"), cases=["S-010.6"])
+                 lambda: assert_auth_required("S-010.6", ["--scope", "platform"]), cases=["S-010.6"])
 
-    gateway = env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")
     email = env.get("KB_JOURNEY_ADMIN_EMAIL", "admin@example.com")
     password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
     if not password:
@@ -351,7 +377,8 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
     status = kb_command([ "auth", "status", "--json"])
     with invocation_context(step_id="marketplace.authenticated-session"):
         auth_status = _json(_run(status, cwd=project, env=env, runner=runner), status)
-    session = auth_status.get("session")
+    sessions = auth_status.get("sessions")
+    session = sessions[0] if isinstance(sessions, list) and sessions else None
     if not isinstance(session, dict) or session.get("authenticated") is not True:
         raise RuntimeError("secured marketplace CLI login did not save a user session")
 
