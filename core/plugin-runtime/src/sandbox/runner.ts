@@ -328,6 +328,7 @@ export async function runInSubprocess<T = unknown>(
     const abortHandler = () => {
       if (!completed) {
         void channel.send({ type: 'execution:cancel', requestId: descriptor.requestId ?? '' })
+          .catch(() => {})
           .finally(() => child.stdin.end());
         cancelId = setTimeout(() => fail(new AbortError()), 1000);
       }

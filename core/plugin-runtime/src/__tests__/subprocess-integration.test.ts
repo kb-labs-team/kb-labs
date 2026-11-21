@@ -15,8 +15,8 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { resolve } from 'node:path';
-import { describe, it, expect } from 'vitest';
-import { createStdioChannel } from '@kb-labs/core-ipc';
+import { describe, it, expect, vi } from 'vitest';
+import { createStdioChannel, StdioChannel } from '@kb-labs/core-ipc';
 import { runInSubprocess } from '../sandbox/runner.js';
 import { withProcessSensitiveValues } from '@kb-labs/core-platform';
 import { wrapCliResult } from '../host/cli-wrapper.js';
@@ -316,6 +316,52 @@ describe('Subprocess Integration Tests', () => {
       expect(providerSignal).toBeDefined();
       expect(providerSignal?.aborted).toBe(true);
     } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it('handles Ctrl+C after the subprocess control pipe has closed without an unhandled rejection', async () => {
+    const testDir = join(tmpdir(), `subprocess-cancel-closed-stdio-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const handlerPath = join(testDir, 'closed-stdio-handler.mjs');
+    writeFileSync(handlerPath, `export default { async execute() { console.log('closed-stdio-ready'); await new Promise(() => {}); } };`);
+    const descriptor: PluginContextDescriptor = {
+      hostType: 'cli', pluginId: '@kb-labs/test-closed-stdio', pluginVersion: '1.0.0',
+      requestId: 'subprocess-cancel-closed-stdio', handlerId: 'test:closed-stdio', permissions: {},
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+    };
+    const controller = new AbortController();
+    const unhandled: unknown[] = [];
+    let channel: StdioChannel | undefined;
+    const originalSend = StdioChannel.prototype.send;
+    const sendSpy = vi.spyOn(StdioChannel.prototype, 'send').mockImplementation(function (this: StdioChannel, frame) {
+      channel = this;
+      return originalSend.call(this, frame);
+    });
+    const onUnhandled = (error: unknown) => unhandled.push(error);
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      await expect(runInSubprocess({
+        descriptor,
+        platform: createPlatform(),
+        handlerPath,
+        input: {},
+        signal: controller.signal,
+        timeoutMs: 5000,
+        cwd: testDir,
+        onLog: (entry) => {
+          if (entry.message.includes('closed-stdio-ready')) {
+            channel?.close();
+            setTimeout(() => controller.abort(), 50);
+          }
+        },
+      })).rejects.toMatchObject({ name: 'AbortError' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      sendSpy.mockRestore();
+      process.off('unhandledRejection', onUnhandled);
       rmSync(testDir, { recursive: true, force: true });
     }
   }, 10_000);

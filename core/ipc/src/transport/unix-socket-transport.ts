@@ -62,7 +62,9 @@ export class UnixSocketTransport implements ITransport {
   private socket: net.Socket | null = null;
   private pending = new Map<string, PendingRequest>();
   private closed = false;
-  private connecting = false;
+  private connectionPromise?: Promise<void>;
+  private connectionAbortController?: AbortController;
+  private connectionWaiters = 0;
   private buffer = '';
   private reconnectAttempts = 0;
 
@@ -72,54 +74,77 @@ export class UnixSocketTransport implements ITransport {
    * Connect to Unix socket server.
    * Called lazily on first send() or explicitly.
    */
-  async connect(): Promise<void> {
-    if (this.socket && !this.socket.destroyed) {
-      return; // Already connected
+  connect(): Promise<void> {
+    if (this.connectionPromise) { return this.connectionPromise; }
+    if (this.socket && !this.socket.destroyed && !this.socket.connecting) { return Promise.resolve(); }
+    if (this.closed) { return Promise.reject(new TransportError('Transport is closed')); }
+
+    const controller = new AbortController();
+    this.connectionAbortController = controller;
+    this.connectionPromise = this.connectWithRetry(controller.signal).finally(() => {
+      this.connectionPromise = undefined;
+      if (this.connectionAbortController === controller) { this.connectionAbortController = undefined; }
+    });
+    return this.connectionPromise;
+  }
+
+  private async connectWithRetry(signal: AbortSignal): Promise<void> {
+    const maxRetries = this.config.autoReconnect === false ? 0 : (this.config.maxReconnectAttempts ?? 3);
+    let lastError: unknown;
+    for (let retry = 0; retry <= maxRetries; retry += 1) {
+      if (this.closed || signal.aborted) { throw connectionAbortError(signal); }
+      try {
+        await this.openSocket(signal);
+        this.reconnectAttempts = 0;
+        return;
+      } catch (error) {
+        if (signal.aborted || this.closed) { throw connectionAbortError(signal); }
+        lastError = error;
+        if (retry === maxRetries) { break; }
+        this.reconnectAttempts = retry + 1;
+        await waitForDelay(1000 * this.reconnectAttempts, signal);
+      }
     }
+    const cause = lastError instanceof Error ? lastError : undefined;
+    throw new TransportError(`Unix socket connection failed: ${cause?.message ?? String(lastError)}`, cause);
+  }
 
-    if (this.connecting) {
-      // Wait for existing connection attempt
-      await new Promise((resolve) => {
-        setTimeout(resolve, 100);
-      });
-      return this.connect();
-    }
-
-    this.connecting = true;
-
+  private openSocket(signal: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
-      const socketPath = this.config.socketPath ?? DEFAULT_SOCKET_PATH;
+      const socket = net.connect(this.config.socketPath ?? DEFAULT_SOCKET_PATH);
+      this.socket = socket;
+      let connected = false;
+      let settled = false;
 
-      this.socket = net.connect(socketPath);
+      const failConnect = (error: Error) => {
+        if (settled) { return; }
+        settled = true;
+        signal.removeEventListener('abort', abortHandler);
+        if (this.socket === socket) { this.socket = null; }
+        socket.destroy();
+        reject(error);
+      };
+      const abortHandler = () => failConnect(connectionAbortError(signal));
+      signal.addEventListener('abort', abortHandler, { once: true });
 
-      this.socket.on('connect', () => {
-        this.connecting = false;
+      socket.once('connect', () => {
+        connected = true;
+        settled = true;
+        signal.removeEventListener('abort', abortHandler);
         this.reconnectAttempts = 0;
         resolve();
       });
-
-      this.socket.on('error', (error) => {
-        this.connecting = false;
-
-        // Try reconnect if enabled
-        const maxAttempts = this.config.maxReconnectAttempts ?? 3;
-        if (this.config.autoReconnect !== false && this.reconnectAttempts < maxAttempts) {
-          this.reconnectAttempts++;
-          setTimeout(() => this.connect(), 1000 * this.reconnectAttempts);
-          return;
-        }
-
-        reject(new TransportError(`Unix socket connection failed: ${error.message}`, error));
+      socket.on('error', (error) => {
+        if (!connected) { failConnect(error); }
+        else if (this.socket === socket) { socket.destroy(); }
       });
-
-      this.socket.on('data', (data) => {
-        this.handleData(data);
-      });
-
-      this.socket.on('close', () => {
+      socket.on('data', (data) => this.handleData(data));
+      socket.on('close', () => {
+        if (!connected || this.socket !== socket) { return; }
+        this.socket = null;
+        this.rejectPending(new TransportError('Unix socket connection closed'));
         if (!this.closed && this.config.autoReconnect !== false) {
-          // Unexpected close, try reconnect
-          setTimeout(() => this.connect(), 1000);
+          setTimeout(() => { void this.connect().catch(() => {}); }, 1000);
         }
       });
     });
@@ -131,16 +156,24 @@ export class UnixSocketTransport implements ITransport {
       throw new TransportError('Transport is closed');
     }
 
-    // Ensure connected
-    await this.connect();
+    const timeout = selectTimeout(call, this.config.timeout);
+    const startedAt = Date.now();
+    this.connectionWaiters += 1;
+    try {
+      await waitForConnection(this.connect(), signal, timeout);
+    } catch (error) {
+      this.releaseConnectionWaiter(true);
+      throw error;
+    }
+    this.releaseConnectionWaiter(false);
     if (signal?.aborted) { throw createTransportAbortError(signal); }
 
     if (!this.socket || this.socket.destroyed) {
       throw new TransportError('Socket not available');
     }
 
-    // Smart timeout selection based on operation type
-    const timeout = selectTimeout(call, this.config.timeout);
+    const remainingTimeout = timeout - (Date.now() - startedAt);
+    if (remainingTimeout <= 0) { throw new TimeoutError(`Adapter call timed out after ${timeout}ms`, timeout); }
     const outboundCall: AdapterCall = this.config.authToken
       ? {
         ...call,
@@ -156,7 +189,7 @@ export class UnixSocketTransport implements ITransport {
         this.pending.delete(outboundCall.requestId);
         this.sendCancel(outboundCall.requestId);
         reject(new TimeoutError(`Adapter call timed out after ${timeout}ms`, timeout));
-      }, timeout);
+      }, remainingTimeout);
 
       // Store pending request
       const pending: PendingRequest = { resolve, reject, timer, signal };
@@ -204,6 +237,13 @@ export class UnixSocketTransport implements ITransport {
       ...(this.config.authToken ? { context: { authToken: this.config.authToken } } : {}),
     };
     try { this.socket?.write(`${JSON.stringify(cancel)}\n`, 'utf8'); } catch { /* disconnected sockets abort server-side on close */ }
+  }
+
+  private releaseConnectionWaiter(cancelWhenIdle: boolean): void {
+    this.connectionWaiters = Math.max(0, this.connectionWaiters - 1);
+    if (cancelWhenIdle && this.connectionWaiters === 0) {
+      this.connectionAbortController?.abort(new TransportError('Connection wait was cancelled'));
+    }
   }
 
   /**
@@ -254,12 +294,22 @@ export class UnixSocketTransport implements ITransport {
     pending.resolve(msg);
   }
 
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.signal?.removeEventListener('abort', pending.abortHandler!);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;
     }
 
     this.closed = true;
+    this.connectionAbortController?.abort(new TransportError('Transport is closed'));
 
     // Close socket
     if (this.socket) {
@@ -268,12 +318,7 @@ export class UnixSocketTransport implements ITransport {
     }
 
     // Reject all pending requests
-    for (const [requestId, pending] of this.pending) {
-      clearTimeout(pending.timer);
-      pending.signal?.removeEventListener('abort', pending.abortHandler!);
-      pending.reject(new TransportError('Transport closed'));
-    }
-    this.pending.clear();
+    this.rejectPending(new TransportError('Transport closed'));
   }
 
   isClosed(): boolean {
@@ -290,6 +335,50 @@ export class UnixSocketTransport implements ITransport {
     // Push messages are not supported over Unix socket transport.
     return () => {};
   }
+}
+
+function waitForConnection(connection: Promise<void>, signal: AbortSignal | undefined, timeoutMs: number): Promise<void> {
+  if (signal?.aborted) { return Promise.reject(createTransportAbortError(signal)); }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abortHandler);
+    };
+    const finish = (error?: Error) => {
+      if (settled) { return; }
+      settled = true;
+      cleanup();
+      if (error) { reject(error); } else { resolve(); }
+    };
+    const abortHandler = () => finish(createTransportAbortError(signal));
+    const timer = setTimeout(() => finish(new TimeoutError(`Adapter call timed out after ${timeoutMs}ms`, timeoutMs)), timeoutMs);
+    signal?.addEventListener('abort', abortHandler, { once: true });
+    connection.then(() => finish(), (error: unknown) => finish(error instanceof Error ? error : new Error(String(error))));
+  });
+}
+
+function connectionAbortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) { return signal.reason; }
+  const error = new Error('Unix socket connection attempt was aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+function waitForDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) { return Promise.reject(connectionAbortError(signal)); }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      reject(connectionAbortError(signal));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 /**

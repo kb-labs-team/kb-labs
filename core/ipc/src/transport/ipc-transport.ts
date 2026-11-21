@@ -112,7 +112,7 @@ export class IPCTransport implements ITransport {
       this.pending.set(call.requestId, pending);
 
       // Try to send message, with backpressure handling
-      this.trySendWithBackpressure(call, 0).catch((error) => {
+      this.sendCall(call).catch((error) => {
         const pending = this.pending.get(call.requestId);
         if (pending) {
           clearTimeout(pending.timer);
@@ -124,47 +124,13 @@ export class IPCTransport implements ITransport {
     });
   }
 
-  /**
-   * Try to send IPC message with backpressure handling.
-   * If backpressure detected, waits and retries with exponential backoff.
-   *
-   * Note: Node.js IPC 'drain' event is unreliable, so we use sleep-based backoff instead.
-   *
-   * @param call - Adapter call to send
-   * @param retryCount - Current retry attempt (for exponential backoff)
-   */
-  private async trySendWithBackpressure(call: AdapterCall, retryCount: number): Promise<void> {
+  private async sendCall(call: AdapterCall): Promise<void> {
     if (!this.pending.has(call.requestId)) { return; }
-    const maxRetries = 20;
-    const baseDelayMs = 50;
 
     try {
-      // process.send() is guaranteed to exist (checked in constructor)
-      // Returns false if backpressure detected (buffer full)
-      const sent = process.send!(call);
-
-      if (sent) {
-        // Message sent successfully
-        return;
-      }
-
-      // Backpressure detected
-      if (retryCount >= maxRetries) {
-        throw new TransportError(
-          `Failed to send IPC message after ${maxRetries} retries: persistent backpressure`
-        );
-      }
-
-      // Wait with exponential backoff (sleep instead of drain event)
-      const delay = Math.min(baseDelayMs * Math.pow(1.5, retryCount), 5000); // Cap at 5s
-      await new Promise(resolve => {
-        setTimeout(resolve, delay);
-      });
-
-      if (!this.pending.has(call.requestId)) { return; }
-
-      // Retry sending
-      return this.trySendWithBackpressure(call, retryCount + 1);
+      // `false` means the IPC channel accepted the message but its send queue
+      // is backpressured. Retrying would deliver the same call twice.
+      process.send!(call);
 
     } catch (error) {
       // Synchronous error (e.g., message too large, serialization error, channel closed)

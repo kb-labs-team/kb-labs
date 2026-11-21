@@ -564,5 +564,71 @@ describe('UnixSocketServer', () => {
       await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
       await transport.close();
     });
+
+    it('stops an actual reconnect wait promptly when the caller aborts', async () => {
+      const transport = new UnixSocketTransport({
+        socketPath: testSocketPath,
+        autoReconnect: true,
+        maxReconnectAttempts: 3,
+        timeout: 5000,
+      });
+      const controller = new AbortController();
+      const startedAt = Date.now();
+      const pending = transport.send({
+        type: 'adapter:call', requestId: 'abort-during-reconnect', version: IPC_PROTOCOL_VERSION,
+        adapter: 'cache', method: 'get', args: [serialize('abort-key')],
+      }, controller.signal);
+      setTimeout(() => controller.abort(new DOMException('aborted during reconnect', 'AbortError')), 25);
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      expect(Date.now() - startedAt).toBeLessThan(500);
+      await transport.close();
+    });
+
+    it('completes the original request after an initial connection failure and recovery', async () => {
+      const transport = new UnixSocketTransport({
+        socketPath: testSocketPath,
+        autoReconnect: true,
+        maxReconnectAttempts: 2,
+        timeout: 5000,
+      });
+      vi.mocked(mockPlatform.cache.get).mockResolvedValue('recovered' as never);
+      const pending = transport.send({
+        type: 'adapter:call', requestId: 'recovered-connection', version: IPC_PROTOCOL_VERSION,
+        adapter: 'cache', method: 'get', args: [serialize('recovery-key')],
+      });
+
+      // The first connect receives ECONNREFUSED; start the server before the
+      // transport's bounded retry so the same connect promise can recover.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      server = new UnixSocketServer(mockPlatform, { socketPath: testSocketPath });
+      await server.start();
+      try {
+        const response = await pending;
+        expect(response.error).toBeUndefined();
+        expect(response.result).toBeDefined();
+        if (response.result === undefined) { throw new Error('Recovered response did not include a result'); }
+        expect(deserialize(response.result)).toBe('recovered');
+        expect(mockPlatform.cache.get).toHaveBeenCalledWith('recovery-key');
+      } finally {
+        await transport.close();
+      }
+    }, 10_000);
+
+    it('rejects at the request deadline while connection establishment is pending', async () => {
+      const transport = new UnixSocketTransport({
+        socketPath: testSocketPath,
+        timeout: 25,
+        autoReconnect: true,
+        maxReconnectAttempts: 3,
+      });
+      const startedAt = Date.now();
+      await expect(transport.send({
+        type: 'adapter:call', requestId: 'deadline-during-connect', version: IPC_PROTOCOL_VERSION,
+        adapter: 'cache', method: 'get', args: [serialize('deadline-key')],
+      })).rejects.toMatchObject({ name: 'TimeoutError' });
+      expect(Date.now() - startedAt).toBeLessThan(500);
+      await transport.close();
+    });
   });
 });

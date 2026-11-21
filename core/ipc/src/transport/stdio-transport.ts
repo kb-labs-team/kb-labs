@@ -51,7 +51,7 @@ export class StdioTransport implements ITransport {
           if (this.pending.get(call.requestId) !== pending) { return; }
           clearTimeout(timer);
           this.pending.delete(call.requestId);
-          void this.channel.send({ type: 'platform:cancel', requestId: call.requestId });
+          void this.channel.send({ type: 'platform:cancel', requestId: call.requestId }).catch(() => {});
           reject(createTransportAbortError(signal));
         };
         signal.addEventListener('abort', pending.abortHandler, { once: true });

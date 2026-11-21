@@ -112,6 +112,40 @@ describe('cancellable host adapter RPC', () => {
     }
   });
 
+  it('handles stdio cancellation when the control pipe has already closed', async () => {
+    const childToHost = new PassThrough();
+    const hostToChild = new PassThrough();
+    const childChannel = createStdioChannel(hostToChild, childToHost);
+    const hostChannel = createStdioChannel(childToHost, hostToChild);
+    let providerSignal: AbortSignal | undefined;
+    const platform = {
+      llm: { complete: (_prompt: string, options?: { signal?: AbortSignal }) => {
+        providerSignal = options?.signal;
+        return new Promise((_resolve, reject) => providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason), { once: true }));
+      } },
+    } as unknown as IPlatformAdapters;
+    const server = new StdioPlatformServer(hostChannel, platform);
+    const transport = new StdioTransport(childChannel);
+    const controller = new AbortController();
+
+    try {
+      const call = new LLMProxy(transport).complete('closed pipe', { signal: controller.signal });
+      await waitFor(() => providerSignal !== undefined);
+      childToHost.destroy();
+      controller.abort(new DOMException('caller cancelled', 'AbortError'));
+      await expect(call).rejects.toMatchObject({ name: 'AbortError' });
+      await server.close();
+      expect(providerSignal?.aborted).toBe(true);
+    } finally {
+      await transport.close();
+      await server.close();
+      childChannel.close();
+      hostChannel.close();
+      childToHost.destroy();
+      hostToChild.destroy();
+    }
+  });
+
   it('aborts a pending host LLM RPC when the IPC transport times out', async () => {
     const processSendDescriptor = Object.getOwnPropertyDescriptor(process, 'send');
     const childEmitter = new EventEmitter();
@@ -137,6 +171,49 @@ describe('cancellable host adapter RPC', () => {
 
     try {
       await expect(new LLMProxy(transport).complete('IPC timeout test')).rejects.toMatchObject({ name: 'TimeoutError' });
+      await waitFor(() => providerSignal?.aborted === true);
+      expect(providerSignal?.aborted).toBe(true);
+    } finally {
+      await transport.close();
+      server.stop();
+      if (processSendDescriptor) { Object.defineProperty(process, 'send', processSendDescriptor); }
+      else { Reflect.deleteProperty(process, 'send'); }
+    }
+  });
+
+  it('does not resend an IPC RPC when process.send reports queued backpressure', async () => {
+    const processSendDescriptor = Object.getOwnPropertyDescriptor(process, 'send');
+    const childEmitter = new EventEmitter();
+    const processEmitter = process as unknown as EventEmitter;
+    const child = childEmitter as unknown as ChildProcess & { connected: boolean; send: (message: unknown) => boolean };
+    Object.defineProperty(child, 'connected', { configurable: true, value: true });
+    child.send = (message) => { processEmitter.emit('message', message); return true; };
+    Object.defineProperty(process, 'send', {
+      configurable: true,
+      writable: true,
+      value: (message: unknown) => { queueMicrotask(() => child.emit('message', message)); return false; },
+    });
+    let providerSignal: AbortSignal | undefined;
+    let providerCalls = 0;
+    const platform = {
+      llm: { complete: (_prompt: string, options?: { signal?: AbortSignal }) => {
+        providerCalls += 1;
+        providerSignal = options?.signal;
+        return new Promise((_resolve, reject) => providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason), { once: true }));
+      } },
+    } as unknown as IPlatformAdapters;
+    const server = new ChildIPCServer(platform, child);
+    const transport = new IPCTransport();
+    const controller = new AbortController();
+    server.start();
+
+    try {
+      const call = new LLMProxy(transport).complete('single queued request', { signal: controller.signal });
+      await waitFor(() => providerSignal !== undefined);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(providerCalls).toBe(1);
+      controller.abort(new DOMException('caller cancelled', 'AbortError'));
+      await expect(call).rejects.toMatchObject({ name: 'AbortError' });
       await waitFor(() => providerSignal?.aborted === true);
       expect(providerSignal?.aborted).toBe(true);
     } finally {
