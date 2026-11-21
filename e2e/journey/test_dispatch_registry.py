@@ -1300,6 +1300,21 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertEqual(refusal["runners"], ["service-local:explore", "service-secured:explore"])
         self.assertIn("step:apply a secret through an environment reference", refusal["requires"])
 
+    def test_real_case_selection_resolves_s181_installer_and_mcp_capability(self):
+        coverage = self._coverage()
+        for mode in ("local", "secured"):
+            with self.subTest(case="S-181.7", mode=mode):
+                resolved = selection_from_coverage(coverage, "S-181.7", mode=mode)
+                self.assertEqual(resolved["steps"], ["S-181.7"])
+                self.assertIn("e2e/journey/installer_case_steps.py", resolved["stepSources"])
+                self.assertIn("install and reapply generated secrets from the offline artifact cache",
+                              resolved["selectedOwningSteps"])
+            with self.subTest(case="S-140.5", mode=mode):
+                resolved = selection_from_coverage(coverage, "S-140.5", mode=mode)
+                self.assertIn("mcp", resolved["capabilities"])
+                self.assertIn("e2e/journey/service_runner.py", resolved["stepSources"])
+                self.assertIn("project MCP cross-project isolation", resolved["selectedOwningSteps"])
+
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
         root = Path(__file__).resolve().parents[2]
         results = coverage_results(root)
