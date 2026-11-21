@@ -1,3 +1,4 @@
+import ast
 import os
 import shutil
 import subprocess
@@ -11,6 +12,27 @@ from scoreboard import build_scoreboard
 
 REPO = Path(__file__).resolve().parents[2]
 ENTRY_SHELL = shutil.which("dash") or "sh"
+
+
+def _journey_step_line(source: str, step_name: str, case_id: str) -> int:
+    """Resolve a declared step's current source line without pinning the fixture to line numbers."""
+    tree = ast.parse((REPO / source).read_text(encoding="utf-8"), filename=source)
+    matches = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "step" or not node.args or not isinstance(node.args[0], ast.Constant):
+            continue
+        if node.args[0].value != step_name:
+            continue
+        cases = next((keyword.value for keyword in node.keywords if keyword.arg == "cases"), None)
+        if isinstance(cases, (ast.List, ast.Tuple)) and any(
+            isinstance(item, ast.Constant) and item.value == case_id for item in cases.elts
+        ):
+            matches.append(node.lineno)
+    if len(matches) != 1:
+        raise AssertionError(f"expected one {step_name!r} declaration for {case_id}, found {matches}")
+    return matches[0]
 
 
 class JourneyBatchEntryTests(unittest.TestCase):
@@ -665,7 +687,9 @@ exec "$REAL_TAR" "$@"
         from select_from_cases import selection_from_coverage
         coverage = [{"mode": "local", "cases": [{"id": "S-268", "status": "active", "steps": [{
             "stepId": "S-268.1", "claims": [{"kind": "journey",
-                "source": "e2e/journey/marketplace_steps.py", "line": 497}]}]}]}]
+                "source": "e2e/journey/marketplace_steps.py", "line": _journey_step_line(
+                    "e2e/journey/marketplace_steps.py", "verify Commit Registry signature and provenance", "S-268.1"
+                )}]}]}]}]
         plan = selection_from_coverage(coverage, "S-268.1", mode="local", requested_runners="")
         self.assertEqual(plan["selectedClaimOwners"], {
             "verify Commit Registry signature and provenance": ["S-268.1"]})
@@ -691,24 +715,33 @@ exec "$REAL_TAR" "$@"
         from select_from_cases import selection_from_coverage
         coverage = [{"mode": "secured", "cases": [{"id": "S-141", "status": "active", "steps": [
             {"stepId": "S-141.1", "claims": [{"kind": "journey",
-                "source": "e2e/journey/mcp_project_steps.py", "line": 581}]},
+                "source": "e2e/journey/mcp_project_steps.py", "line": _journey_step_line(
+                    "e2e/journey/mcp_project_steps.py", "create project agent session", "S-141.1"
+                )}]},
             {"stepId": "S-141.2", "claims": [{"kind": "journey",
-                "source": "e2e/journey/service_runner.py", "line": 1378}]},
+                "source": "e2e/journey/mcp_project_steps.py", "line": _journey_step_line(
+                    "e2e/journey/mcp_project_steps.py", "list project agent sessions", "S-141.2"
+                )}]},
         ]}]}]
         plan = selection_from_coverage(coverage, "S-141.1,S-141.2", mode="secured", requested_runners="")
         self.assertEqual(plan["steps"], ["S-141.1", "S-141.2"])
-        self.assertEqual(plan["selectedClaimOwners"], {"create project agent session": ["S-141.1"]})
+        self.assertEqual(plan["selectedClaimOwners"], {
+            "create project agent session": ["S-141.1"],
+            "list project agent sessions": ["S-141.2"],
+        })
         mode_dir = self.root / "two-secured-claims"
         mode_dir.mkdir()
         (mode_dir / "selection-plan.json").write_text(__import__("json").dumps(plan), encoding="utf-8")
         report = {"case_run": {"mode": "secured", "claims": [
             {"claimId": "S-141.1", "status": "PASS"}]}, "steps": [
-                {"name": "create project agent session", "mode": "secured",
+            {"name": "create project agent session", "mode": "secured",
                  "status": "PASS", "cases": ["S-141.1"]}]}
         report_path = mode_dir / "service-secured.json"
         report_path.write_text(__import__("json").dumps(report), encoding="utf-8")
         self.assertFalse(selected_owners_have_evidence(mode_dir, "secured"))
         report["case_run"]["claims"].append({"claimId": "S-141.2", "status": "PASS"})
+        report["steps"].append({"name": "list project agent sessions", "mode": "secured",
+                                "status": "PASS", "cases": ["S-141.2"]})
         report_path.write_text(__import__("json").dumps(report), encoding="utf-8")
         self.assertTrue(selected_owners_have_evidence(mode_dir, "secured"))
 
