@@ -96,7 +96,7 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     publish = _publish_fixture_command(workspace_root, package_path)
     command = ["node", str(workspace_cli), *publish]
     publish_env = dict(env)
-    publish_env["KB_REGISTRY_URL"] = registry_url
+    publish_env["KB_REGISTRY_URL"] = env.get("KB_REGISTRY_URL", registry_url)
     publish_env["KB_REGISTRY_AUTHOR_HANDLE"] = author_handle
     return run_hermetic_cli(
         command, cwd=workspace_root, env=publish_env, runner=runner,
@@ -524,6 +524,8 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
     def install_fixture() -> None:
         _assert_registry_gateway_config(base_env)
         wait_for_marketplace_ready(project, base_env, runner)
+        base_env["KB_REGISTRY_URL"] = (
+            f"{_installed_gateway_url(base_env)}/api/v1/marketplace-registry/api/v1")
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
         published = _json(_publish_workspace_fixture(workspace, "plugins/commit", base_env, runner),
                            commit_publish_command(workspace))

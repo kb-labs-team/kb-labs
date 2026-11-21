@@ -20,9 +20,13 @@ def tamper_tarball(path: str, body: bytes) -> bytes:
 
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
-        if self.path != "/__journey/faults":
-            self.send_error(404)
+        if self.path == "/__journey/faults":
+            self._set_faults()
             return
+
+        self._forward("POST")
+
+    def _set_faults(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
         try:
             faults = json.loads(self.rfile.read(length))
@@ -39,22 +43,33 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
+        self._forward("GET")
+
+    def _forward(self, method: str) -> None:
         request = urlsplit(self.path)
         identity = parse_qs(request.query).get("identity", [""])[0]
         fault = FAULTS.get(identity)
-        if request.path == "/api/v1/resolve" and fault in {"auth", "transport"}:
+        if method == "GET" and request.path == "/api/v1/resolve" and fault in {"auth", "transport"}:
             self.send_response(401 if fault == "auth" else 503)
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
         target = urlsplit(os.environ.get("MARKETPLACE_TAMPER_UPSTREAM", "http://marketplace-registry:5071"))
-        connection = http.client.HTTPConnection(target.hostname, target.port or 80, timeout=30)
-        connection.request("GET", self.path, headers={key: value for key, value in self.headers.items()
-                                                       if key.lower() not in {"host", "connection"}})
-        response = connection.getresponse()
-        body = response.read()
+        connection_type = http.client.HTTPSConnection if target.scheme == "https" else http.client.HTTPConnection
+        connection = connection_type(target.hostname, target.port or (443 if target.scheme == "https" else 80), timeout=30)
+        headers = {key: value for key, value in self.headers.items()
+                   if key.lower() not in {"host", "connection", "transfer-encoding"}}
+        payload = self.rfile.read(int(self.headers.get("Content-Length", "0"))) if method in {"POST", "PUT", "PATCH"} else None
+        try:
+            connection.request(method, self.path, body=payload, headers=headers)
+            response = connection.getresponse()
+            body = response.read()
+        except Exception:
+            connection.close()
+            self.send_error(502, "Registry fixture upstream request failed")
+            return
         response_type = response.getheader("Content-Type", "")
-        if request.path == "/api/v1/resolve" and fault in {"signature", "integrity"} and "json" in response_type:
+        if method == "GET" and request.path == "/api/v1/resolve" and fault in {"signature", "integrity"} and "json" in response_type:
             payload = json.loads(body)
             if fault == "signature":
                 signature = payload.get("package", {}).get("signature", {})
@@ -73,7 +88,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(payload).encode()
         headers = [(key, value) for key, value in response.getheaders()
                    if key.lower() not in {"content-length", "connection", "transfer-encoding"}]
-        if parse_qs(request.query).get("journey-tamper") == ["1"]:
+        if method == "GET" and parse_qs(request.query).get("journey-tamper") == ["1"]:
             body = tamper_tarball(request.path, body)
         self.send_response(response.status)
         for key, value in headers:
