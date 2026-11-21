@@ -541,10 +541,10 @@ def _registry_resolve_exact_commit_version(env: dict[str, str], version: str) ->
     raise RuntimeError("Gateway Registry could not confirm whether the Commit fixture version is available")
 
 
-def _registry_commit_base_versions(workspace: Path, platform_root: Path, env: dict[str, str]) -> list[str]:
+def _registry_commit_base_versions(workspace: Path, active_platform: Path, env: dict[str, str]) -> list[str]:
     source_version = commit_fixture_source_version(workspace)
     versions = [source_version]
-    active_root = active_platform_root(platform_root)
+    active_root = Path(active_platform)
     platform_lock = active_root / layout_value("versionStatePaths.kb_marketplace_lock")
     if platform_lock.is_file():
         try:
@@ -572,9 +572,9 @@ def _registry_commit_base_versions(workspace: Path, platform_root: Path, env: di
     return versions
 
 
-def _next_free_registry_commit_version(workspace: Path, platform_root: Path,
+def _next_free_registry_commit_version(workspace: Path, active_platform: Path,
                                         env: dict[str, str]) -> str:
-    base_versions = _registry_commit_base_versions(workspace, platform_root, env)
+    base_versions = _registry_commit_base_versions(workspace, active_platform, env)
     base = max(base_versions, key=_release_version_tuple)
     major, minor, patch = _release_version_tuple(base)
     for _ in range(100):
@@ -590,7 +590,7 @@ def _next_free_registry_commit_version(workspace: Path, platform_root: Path,
 
 
 def _prepare_registry_commit_publish_package(workspace: Path, fixture_parent: Path,
-                                            platform_root: Path, env: dict[str, str]) -> tuple[Path, str]:
+                                            active_platform: Path, env: dict[str, str]) -> tuple[Path, str]:
     source_root = workspace / "plugins" / "commit"
     source_package_path = source_root / "package.json"
     try:
@@ -601,7 +601,7 @@ def _prepare_registry_commit_publish_package(workspace: Path, fixture_parent: Pa
     source_version = source_package.get("version")
     if package_name != "@kb-labs/commit" or not isinstance(source_version, str):
         raise RuntimeError("active Commit fixture package identity is invalid")
-    fixture_version = _next_free_registry_commit_version(workspace, platform_root, env)
+    fixture_version = _next_free_registry_commit_version(workspace, active_platform, env)
     manifest_field = source_package.get("kb", {}).get("manifest") if isinstance(source_package.get("kb"), dict) else None
     if not isinstance(manifest_field, str):
         raise RuntimeError("active Commit fixture package does not declare its compiled manifest")
@@ -625,7 +625,7 @@ def _prepare_registry_commit_publish_package(workspace: Path, fixture_parent: Pa
         if source.is_file():
             shutil.copy2(source, fixture_root / name)
     shutil.copytree(source_root / "dist", fixture_root / "dist")
-    installed_node_modules = active_platform_root(platform_root) / "node_modules"
+    installed_node_modules = Path(active_platform) / "node_modules"
     if not installed_node_modules.is_dir():
         raise RuntimeError("active platform package dependencies are unavailable for the Commit publisher")
     (fixture_root / "node_modules").symlink_to(installed_node_modules, target_is_directory=True)
@@ -681,11 +681,11 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
         base_env["KB_REGISTRY_URL"] = (
             f"{_installed_gateway_url(base_env)}/api/v1/marketplace-registry/api/v1")
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
-        platform_root = active_platform_root(Path(base_env["KB_JOURNEY_PLATFORM_ROOT"]))
+        active_platform = active_platform_root(Path(base_env["KB_JOURNEY_PLATFORM_ROOT"]))
         with tempfile.TemporaryDirectory(
                 prefix="kb-registry-commit-publish-", dir=base_env.get("HOME")) as fixture_directory:
             commit_package, expected_version = _prepare_registry_commit_publish_package(
-                workspace, Path(fixture_directory), platform_root, base_env)
+                workspace, Path(fixture_directory), active_platform, base_env)
             published = _json(_publish_workspace_fixture(workspace, str(commit_package), base_env, runner),
                                commit_publish_command(commit_package))
         version = published.get("version")

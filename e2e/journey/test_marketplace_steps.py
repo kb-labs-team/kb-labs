@@ -31,6 +31,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
 from service_steps import FlowGraph, Journey
+from installed_fixture import installed_path, layout_value
 from marketplace_tamper_proxy import Handler as MarketplaceProxyHandler, tamper_tarball
 from journey_dependencies import Dependency
 import service_runner
@@ -339,8 +340,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     }}).encode(), {}
                 return 200, json.dumps({"status": "not-found-owned"}).encode(), {}
 
-            with patch("marketplace_steps.active_platform_root", return_value=platform), \
-                    patch("marketplace_steps._installed_gateway_url", return_value="http://gateway.test"), \
+            with patch("marketplace_steps._installed_gateway_url", return_value="http://gateway.test"), \
                     patch("marketplace_steps.open_http", side_effect=resolve_registry):
                 fixture, version = _prepare_registry_commit_publish_package(
                     workspace, root / "publish", platform, env)
@@ -388,7 +388,12 @@ class MarketplaceStepTests(unittest.TestCase):
             qa_plugin = workspace / "plugins" / "qa"
             qa_plugin.mkdir(parents=True)
             (qa_plugin / "package.json").write_text(json.dumps({"name": "@kb-labs/qa", "version": "1.0.0"}))
-            installed_platform = root / "installed-platform"
+            platform_install_root = root / "installed-root"
+            installed_platform = installed_path(platform_install_root, "versionRoots.path") / "2.120.1"
+            current_link = installed_path(platform_install_root, "currentLink")
+            installed_platform.mkdir(parents=True)
+            current_link.parent.mkdir(parents=True, exist_ok=True)
+            current_link.symlink_to(installed_platform.relative_to(platform_install_root))
             installed_adapter = installed_platform / "node_modules" / "@kb-labs" / "adapters-pino"
             installed_adapter.mkdir(parents=True)
             (installed_adapter / "package.json").write_text(json.dumps({
@@ -462,7 +467,7 @@ class MarketplaceStepTests(unittest.TestCase):
             env = {"HOME": str(root), "KB_JOURNEY_WORKSPACE_ROOT": str(workspace),
                    "KB_JOURNEY_MARKETPLACE_PUBLISH_URL": "http://registry.test/api/v1",
                    "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey",
-                   "KB_JOURNEY_PLATFORM_ROOT": str(root / "installed-root"),
+                   "KB_JOURNEY_PLATFORM_ROOT": str(platform_install_root),
                    "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured",
                    "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
                    "KB_JOURNEY_ADMIN_PASSWORD": "fixture-admin-password"}
@@ -483,7 +488,6 @@ class MarketplaceStepTests(unittest.TestCase):
 
             with patch("marketplace_steps.wait_for_marketplace_ready"), \
                     patch("marketplace_steps._installed_gateway_url", return_value="http://127.0.0.1:4317"), \
-                    patch("marketplace_steps.active_platform_root", return_value=installed_platform), \
                     patch("marketplace_steps._assert_registry_gateway_config"), \
                     patch("marketplace_steps.open_http", side_effect=fake_open_http), \
                     patch("installed_fixture.write_local_access_mode", side_effect=lambda platform_root, _source_config: platform_root), \
