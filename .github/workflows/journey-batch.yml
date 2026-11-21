@@ -25,10 +25,11 @@ on:
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
 
-# Keep one batch active to bound runner use without canceling it on a newer PR.
-# GitHub keeps only one pending run per group; a newer pending run can replace it.
+# GitHub keeps one pending run per group, so isolate each PR and each dispatch.
 concurrency:
-  group: journey-batch
+  # A newer run for the same PR can replace its pending predecessor, but PRs,
+  # manual dispatches, and batch pushes cannot replace one another.
+  group: journey-batch-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false
 
 permissions:
