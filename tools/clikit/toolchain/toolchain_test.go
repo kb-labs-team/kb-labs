@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -243,6 +244,60 @@ func TestPnpmResolutionUsesCapturedOuterCorepackCacheAndFailsWithoutDownload(t *
 	if err != nil || got != script {
 		t.Fatalf("cached pnpm = %q, %v; want %q", got, err, script)
 	}
+}
+
+func TestPnpmExecutableUsesScratchCorepackHomeOfflineWithXDGCacheMismatch(t *testing.T) {
+	if os.Getenv("KB_TEST_PNPM_EXECUTABLE_CHILD") == "1" {
+		_, script, err := PnpmExecutable()
+		if err != nil {
+			t.Fatalf("resolve pnpm from explicit Corepack home: %v", err)
+		}
+		if want := os.Getenv("KB_TEST_PNPM_EXECUTABLE_SCRIPT"); script != want {
+			t.Fatalf("resolved pnpm = %q, want explicit Corepack cache file %q", script, want)
+		}
+		if got, err := exec.Command(mustNode(t), script).CombinedOutput(); err != nil || string(got) != "offline-pnpm-cache-hit" {
+			t.Fatalf("run cached pnpm offline = %q, %v", got, err)
+		}
+		return
+	}
+
+	corepackHome := t.TempDir()
+	xdgCacheHome := t.TempDir()
+	script := filepath.Join(corepackHome, "v1", "pnpm", SupportedPnpm, "bin", "pnpm.cjs")
+	if err := os.MkdirAll(filepath.Dir(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, []byte(`process.stdout.write(process.env.COREPACK_ENABLE_NETWORK === '0' ? 'offline-pnpm-cache-hit' : 'network-enabled')`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command(os.Args[0], "-test.run=^TestPnpmExecutableUsesScratchCorepackHomeOfflineWithXDGCacheMismatch$")
+	env := make([]string, 0, len(os.Environ())+5)
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if key != "COREPACK_HOME" && key != "XDG_CACHE_HOME" && key != "COREPACK_ENABLE_NETWORK" && key != "KB_TEST_PNPM_EXECUTABLE_CHILD" && key != "KB_TEST_PNPM_EXECUTABLE_SCRIPT" {
+			env = append(env, entry)
+		}
+	}
+	command.Env = append(env,
+		"KB_TEST_PNPM_EXECUTABLE_CHILD=1",
+		"KB_TEST_PNPM_EXECUTABLE_SCRIPT="+script,
+		"COREPACK_HOME="+corepackHome,
+		"XDG_CACHE_HOME="+xdgCacheHome,
+		"COREPACK_ENABLE_NETWORK=0",
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("PnpmExecutable child failed with COREPACK_HOME overriding XDG_CACHE_HOME: %v\n%s", err, output)
+	}
+}
+
+func mustNode(t *testing.T) string {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatalf("locate Node.js for cached pnpm fixture: %v", err)
+	}
+	return node
 }
 
 func TestPnpmResolutionDiagnosticSupportsInstallerOperationPaths(t *testing.T) {

@@ -24,7 +24,7 @@ test('coverage hydrates and verifies the workspace-pinned Corepack package manag
   assert.match(manifest.packageManager, /^pnpm@\d+\.\d+\.\d+$/);
   for (const scriptName of ['coverage', 'coverage:json']) {
     const script = manifest.scripts[scriptName];
-    assert.match(script, /^corepack install && COREPACK_ENABLE_NETWORK=0 corepack pnpm --version && /);
+    assert.match(script, /^export COREPACK_HOME="\$\{COREPACK_HOME:-\$\{XDG_CACHE_HOME:-\$HOME\/\.cache\}\/node\/corepack\}" && corepack install && export COREPACK_ENABLE_NETWORK=0 && corepack pnpm --version && /);
     assert.match(script, /kb-devkit run test:coverage/);
   }
 });
