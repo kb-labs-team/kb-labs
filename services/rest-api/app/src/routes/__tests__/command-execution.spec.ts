@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IEntityRegistry, ManifestV3 } from '@kb-labs/plugin-contracts';
-import { createProjectCommandExecutionProof } from '@kb-labs/shared-daemon';
+import { createProjectCommandExecutionProof, PROJECT_COMMAND_EXECUTION_PROOF_HEADER } from '@kb-labs/shared-daemon';
 import { registerProjectCommandExecutionRoute } from '../command-execution.js';
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
@@ -17,11 +17,11 @@ const roots: string[] = [];
 let app: ReturnType<typeof Fastify>;
 let pluginRoot: string;
 let registry: IEntityRegistry;
-const proofHeader = 'x-kb-project-command-proof';
 const runtimeToken = 'runtime-proof-test-secret-0123456789';
 const manifest: ManifestV3 = {
   schema: 'kb.plugin/3', id: '@kb-labs/fixture', version: '1.2.3',
   configSection: 'commit',
+  permissions: { quotas: { timeoutMs: 1500 } },
   cli: { commands: [{ path: 'commit preview', describe: 'fixture command', handler: './commands/run.js#default', flags: [{ name: 'dry-run', type: 'boolean' }, { name: 'secret', type: 'string', secret: true }], permissions: { quotas: { timeoutMs: 2000 } } }] },
 };
 
@@ -38,7 +38,7 @@ async function setup(handler = manifest.cli!.commands[0]!.handler) {
 }
 
 function trustedHeaders(projectId = 'prj_fixture') {
-  return { 'x-kb-project-id': projectId, [proofHeader]: createProjectCommandExecutionProof(runtimeToken) };
+  return { 'x-kb-project-id': projectId, [PROJECT_COMMAND_EXECUTION_PROOF_HEADER]: createProjectCommandExecutionProof(runtimeToken, { projectId, method: 'POST', path: '/api/v1/commands/execute' }) };
 }
 
 beforeEach(() => {
@@ -87,13 +87,25 @@ describe('project runtime command execution', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('rejects replaying a runtime guard proof on a second direct listener request', async () => {
+    await setup();
+    const headers = trustedHeaders();
+    const payload = (requestId: string) => ({ requestId, pluginId: '@kb-labs/fixture', commandPath: 'commit preview', input: { argv: [], flags: {} } });
+    const first = await app.inject({ method: 'POST', url: '/api/v1/commands/execute', headers, payload: payload('request-proof-once') });
+    expect(first.statusCode).toBe(200);
+    const replay = await app.inject({ method: 'POST', url: '/api/v1/commands/execute', headers, payload: payload('request-proof-replay') });
+    expect(replay.statusCode).toBe(403);
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it('redacts secret flags from streamed output and returned errors and applies host manifest context and quotas', async () => {
     await setup();
     const secret = 'journey-runtime-secret-7762';
-    execute.mockImplementation(async (request: { descriptor: { configSection?: string }; timeoutMs: number }, options: { onLog: (entry: { stream: 'stderr'; message: string }) => void }) => {
+    execute.mockImplementation(async (request: { descriptor: { configSection?: string }; timeoutMs: number; context?: { sensitiveValues?: string[] } }, options: { onLog: (entry: { stream: 'stderr'; message: string }) => void }) => {
       options.onLog({ stream: 'stderr', message: `plugin echoed ${secret}` });
       expect(request.descriptor.configSection).toBe('commit');
-      expect(request.timeoutMs).toBe(2000);
+      expect(request.timeoutMs).toBe(1500);
+      expect(request.context).toMatchObject({ sensitiveValues: [secret] });
       return { ok: false, error: { envelope: { code: 'KB_PLUGIN_COMMAND_FAILED', message: `failed with ${secret}`, hint: `remove ${secret}` } } };
     });
     const response = await app.inject({

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { setJsonMode, useLoader } from '../loader';
+import { setJsonMode, useLoader, withLoaderOutputSink } from '../loader';
 
 describe('useLoader output streams', () => {
   it('suppresses human loader output in machine mode', () => {
@@ -36,5 +36,25 @@ describe('useLoader output streams', () => {
     } finally {
       stdout.mockRestore();
     }
+  });
+
+  it('routes useLoader output to an async request-scoped sink without mixing concurrent executions', async () => {
+    const first: string[] = [];
+    const second: string[] = [];
+    const run = async (label: string) => {
+      const loader = useLoader(label, { spinner: false, total: 2, current: 1 });
+      loader.start();
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      loader.update({ current: 2 });
+      loader.stop();
+    };
+    await Promise.all([
+      withLoaderOutputSink((text) => first.push(text), () => run('first execution')),
+      withLoaderOutputSink((text) => second.push(text), () => run('second execution')),
+    ]);
+    expect(first.join('')).toContain('first execution');
+    expect(first.join('')).not.toContain('second execution');
+    expect(second.join('')).toContain('second execution');
+    expect(second.join('')).not.toContain('first execution');
   });
 });

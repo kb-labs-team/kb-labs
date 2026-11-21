@@ -28,6 +28,7 @@ import { runInProcess } from '@kb-labs/plugin-runtime';
 import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { InProcessBackend } from '../backends/in-process.js';
 import type { ExecutionRequest } from '../types.js';
+import { useLoader } from '@kb-labs/shared-cli-ui';
 
 /** Mimics PlatformContainer: processExecutor is a prototype getter, not an own property. */
 class FakePlatformContainer {
@@ -99,6 +100,23 @@ describe('InProcessBackend — loggerOverride platform handoff', () => {
 
     const passedPlatform = vi.mocked(runInProcess).mock.calls[0]?.[0]?.platform;
     expect(passedPlatform).toBe(platform);
+  });
+
+  it('streams useLoader progress through the request-scoped execution log callback', async () => {
+    vi.mocked(runInProcess).mockImplementation(async () => {
+      const loader = useLoader('In-process phase');
+      loader.start();
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      loader.stop();
+      return { data: 'ok', executionMeta: {} } as never;
+    });
+    const backend = new InProcessBackend({ platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'] });
+    const logs: string[] = [];
+
+    await backend.execute(makeRequest(), { onLog: (entry) => logs.push(entry.message) });
+
+    expect(logs.join('')).toContain('In-process phase');
+    expect(logs.join('')).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
   });
 
   it('preserves a named handler export through in-process dispatch', async () => {

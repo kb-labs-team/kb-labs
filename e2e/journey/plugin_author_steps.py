@@ -533,7 +533,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             result, _ = run_pty_command(command, cwd=project, env=env, timeout=90,
                                         on_output=interrupt_on_generation)
         transcript = result.stdout
-        if not sent_interrupt or result.returncode == 0 or "EPIPE" in transcript:
+        if not sent_interrupt or result.returncode != 130 or "EPIPE" in transcript:
             raise RuntimeError("S-030.3 did not interrupt active generation cleanly without worker EPIPE")
 
     journey.step("interrupt active Commit generation", "plugin-author", s030_cancel, cases=["S-030.3"])

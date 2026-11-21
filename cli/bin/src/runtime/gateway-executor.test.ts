@@ -79,4 +79,30 @@ describe('secured project runtime command execution', () => {
     await expect(running).resolves.toBe(130);
     expect(cancel).toHaveBeenCalledTimes(1);
   });
+
+  it('handles cancellation after the first output event and exits 130', async () => {
+    const output = { type: 'execution:output', requestId: 'req-active', executionId: 'project-exec-active', stream: 'stderr', data: 'Generating…', timestamp: 1 };
+    let rejectExecution: ((error: Error) => void) | undefined;
+    const executeProject = vi.fn(async function* () {
+      yield output;
+      await new Promise<void>((_resolve, reject) => { rejectExecution = reject; });
+    });
+    const cancel = vi.fn(async (executionId: string) => {
+      expect(executionId).toBe('project-exec-active');
+      rejectExecution?.(new DOMException('aborted', 'AbortError'));
+    });
+    const client = { execute: vi.fn(async function* () {}), executeProject, cancel, subscribe: vi.fn(), ping: vi.fn(), close: vi.fn() } as unknown as IGatewayClient;
+    const listenersBefore = new Set(process.listeners('SIGINT'));
+    const running = executeViaGateway(client, {
+      commandId: 'commit:preview', projectId: 'prj_fixture', argv: [], flags: {},
+      manifestCmd: { manifest: { id: '@kb-labs/fixture', group: 'fixture', segments: ['commit', 'preview'], v3Manifest: { id: '@kb-labs/fixture', cli: { commands: [{ path: 'commit preview', handler: './dist/run.js' }] } } } } as never,
+      resultWriter: vi.fn(),
+    });
+    await vi.waitFor(() => expect(rejectExecution).toBeDefined());
+    const handler = process.listeners('SIGINT').find((listener) => !listenersBefore.has(listener));
+    expect(handler).toBeDefined();
+    (handler as () => void)();
+    await expect(running).resolves.toBe(130);
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createContextLogger, isAgentDiagnosticsEnabled } from "./context.js";
+import { createContextLogger, isAgentDiagnosticsEnabled, withProcessSensitiveValues } from "./context.js";
 import type { ILogger } from "../adapters/logger.js";
 
 function productionTypeScriptFiles(directory: string): string[] {
@@ -160,6 +160,22 @@ describe("createContextLogger", () => {
     logger.info('Running in production with declared-secret-value');
 
     expect(records[0]?.message).toBe('Running in production with [REDACTED]');
+  });
+
+  it('redacts execution-scoped secrets only inside their async request context', async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const logger = createContextLogger(captureLogger(records), {
+      applicationId: 'rest-api', serviceId: 'rest', instanceId: 'test', layer: 'service',
+    });
+    const secret = 'request-scoped-flag-secret';
+    await withProcessSensitiveValues([secret], async () => {
+      await Promise.resolve();
+      logger.error(`handler failed with ${secret}`);
+    });
+    logger.info(`later unrelated request used ${secret}`);
+    expect(records[0]?.message).toContain('[REDACTED]');
+    expect(records[0]?.message).not.toContain(secret);
+    expect(records[1]?.message).toContain(secret);
   });
 
   it("preserves Pino-compatible fields-first calls from Fastify and plugins", () => {
