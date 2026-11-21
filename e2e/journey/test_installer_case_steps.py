@@ -1227,6 +1227,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
         from journey_selection import JourneySelection, use_journey_selection
 
         with tempfile.TemporaryDirectory(prefix="journey-offline-generated-secret-") as temp:
+            gateway_url = "http://127.0.0.1:43817"
             parent = Path(temp)
             platform_root = parent / "main-root"
             platform_root.mkdir()
@@ -1305,6 +1306,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
             def json_command(_runner, args, _label):
                 if args[1] == "plan":
+                    calls.append((list(args), 300))
                     return {"plan": {"artifacts": artifacts}}
                 result = _runner(args)
                 if args[1] == "status":
@@ -1329,7 +1331,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
             with use_journey_selection(selection), \
                     patch.object(installer_case_steps, "_json_command", side_effect=json_command), \
                     patch.object(installer_case_steps, "_data", side_effect=data), \
-                    patch.object(installer_case_steps, "_diagnostic", side_effect=diagnostic):
+                    patch.object(installer_case_steps, "_diagnostic", side_effect=diagnostic), \
+                    patch.object(installer_case_steps, "unused_loopback_gateway_url", return_value=gateway_url):
                 journey = run_offline_generated_secret_install_step(
                     mode="local", launcher="kb-create", stable_index=index,
                     platform_root=platform_root, run_command=command)
@@ -1337,8 +1340,12 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(journey.steps[0].cases, ["S-181.7"])
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
         self.assertEqual([args[1] for args, _ in calls],
-                         ["install", "status", "stop", "install", "apply", "apply", "status", "stop", "uninstall"])
+                         ["plan", "install", "status", "stop", "install", "apply", "apply", "status", "stop", "uninstall"])
         self.assertTrue(all(timeout == 1200 for args, timeout in calls if args[1] in {"install", "apply"}))
+        for args, _ in calls:
+            if args[1] in {"plan", "install", "apply"}:
+                self.assertIn("--gateway-url", args)
+                self.assertEqual(args[args.index("--gateway-url") + 1], gateway_url)
         install_calls = [args for args, _ in calls if args[1] == "install"]
         self.assertNotIn("--offline", install_calls[0])
         self.assertIn("--offline", install_calls[1])
