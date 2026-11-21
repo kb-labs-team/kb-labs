@@ -664,6 +664,46 @@ thread.join()
         self.assertTrue(graph.states["session"]["passed"])
         self.assertTrue(graph.states["project-registered"]["passed"])
 
+    def test_project_mcp_uses_runner_mode_and_normal_authenticated_session(self):
+        runner = importlib.import_module("runner")
+        service_runner = importlib.import_module("service_runner")
+        graph = FlowGraph(Journey("secured", "mcp-auth-smoke"), {})
+        env = {}
+        with patch.object(runner, "VARIANT", "default"), \
+                patch.object(service_runner, "prepare_service_api_session") as prepare, \
+                patch.object(service_runner, "service_api_token", return_value="test-session-token"), \
+                patch.object(runner, "verify_project_mcp") as verify:
+            runner.verify_selected_project_mcp(graph, env)
+        prepare.assert_called_once_with(graph, "secured")
+        verify.assert_called_once_with(env, False, runner.DEFAULT_ENABLED_SERVICES,
+                                       token="test-session-token")
+
+    def test_mcp_product_claim_selects_authenticated_smoke(self):
+        runner = importlib.import_module("runner")
+        selection = JourneySelection(
+            requested=("S-140.5",), claims=frozenset({"S-140.5"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            runner_selector="agent-secured:commit", requested_runners="",
+        )
+        graph = FlowGraph(Journey("secured", "secured-mcp-claim", selection=selection), {})
+        calls = []
+        runner.run_selected_project_mcp(graph, lambda: calls.append("secured MCP"))
+        self.assertEqual(calls, ["secured MCP"])
+
+    def test_local_project_mcp_uses_no_secured_session(self):
+        runner = importlib.import_module("runner")
+        service_runner = importlib.import_module("service_runner")
+        graph = FlowGraph(Journey("local", "local-mcp-auth-smoke"), {})
+        env = {}
+        with patch.object(runner, "VARIANT", "secured"), \
+                patch.object(service_runner, "prepare_service_api_session") as prepare, \
+                patch.object(service_runner, "service_api_token") as token, \
+                patch.object(runner, "verify_project_mcp") as verify:
+            runner.verify_selected_project_mcp(graph, env)
+        prepare.assert_not_called()
+        token.assert_not_called()
+        verify.assert_called_once_with(env, True, runner.DEFAULT_ENABLED_SERVICES, token=None)
+
     def test_recovery_reestablishes_host_before_dependent_session(self):
         runner = importlib.import_module("runner")
         journey = Journey("secured", "recovery-host-session-order")

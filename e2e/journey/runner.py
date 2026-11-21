@@ -829,7 +829,9 @@ def mcp_rpc(url: str, method: str, request_id: int, params=None, token=None):
     return json.loads(body)
 
 
-def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: frozenset[str] = DEFAULT_ENABLED_SERVICES):
+def verify_project_mcp(env: dict[str, str], local: bool,
+                       enabled_service_ids: frozenset[str] = DEFAULT_ENABLED_SERVICES,
+                       token: str | None = None):
     registered, _ = run(kb_login_shell(["project", "add", "--json"]),
                         env=env, cwd=PROJECT, timeout=180)
     if not require(registered, step="register project for MCP"):
@@ -838,7 +840,6 @@ def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: fr
         project = decode_ux_success_result(read_ux_cli_result(registered))["project"]
         project_id = project["id"]
         url = f"http://127.0.0.1:4000{project_service_path(project_id, 'mcp')}"
-        token = None
         if not local:
             try:
                 mcp_rpc(url, "tools/list", 0)
@@ -847,9 +848,8 @@ def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: fr
                     raise
             else:
                 raise RuntimeError("secured MCP accepted a request without a token")
-            token = env.get("KB_MCP_TOKEN")
             if not token:
-                raise RuntimeError("secured MCP journey needs KB_MCP_TOKEN from gateway login")
+                raise RuntimeError("secured MCP journey needs the authenticated gateway session token")
         initialized = mcp_rpc(url, "initialize", 1, {
             "protocolVersion": "2025-03-26",
             "capabilities": {},
@@ -870,6 +870,18 @@ def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: fr
             raise RuntimeError(f"diagnostics call had unexpected result: {text}")
     except (KeyError, ValueError, RuntimeError, urllib.error.URLError) as error:
         fail(f"project MCP journey: {error}")
+
+
+def verify_selected_project_mcp(graph: FlowGraph, env: dict[str, str]):
+    """Run MCP smoke using the registered runner mode and its normal API session."""
+    local = graph.journey.mode == "local"
+    token = None
+    if not local:
+        from service_runner import prepare_service_api_session, service_api_token
+
+        prepare_service_api_session(graph, "secured")
+        token = service_api_token(graph)
+    return verify_project_mcp(env, local, DEFAULT_ENABLED_SERVICES, token=token)
 
 
 def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local"):
@@ -1698,9 +1710,7 @@ def _main(*, update_variant_runner=None):
 
     if FRONT == "agent" and SCENARIO == "commit":
         run_selected_project_mcp(
-            outer_graph,
-            lambda: verify_project_mcp(
-                env, env.get("KB_ACCESS_MODE", "local") == "local", DEFAULT_ENABLED_SERVICES))
+            outer_graph, lambda: verify_selected_project_mcp(outer_graph, env))
 
     update_group_selected = outer_graph.group_selected("update")
     update_journey = update_group_selected and (
