@@ -62,6 +62,7 @@ class MarketplaceStepTests(unittest.TestCase):
             requested_runners="",
         )
         journey = Journey("secured", "s160-excludes-commit-update-fixture", selection=selected)
+        lifecycle_calls = []
 
         journey.step("verify S-192 platform and project pins are absent", "marketplace",
                      lambda: self.fail("unselected S-192 precondition must not execute"),
@@ -71,11 +72,17 @@ class MarketplaceStepTests(unittest.TestCase):
                                cases=("S-192.2",))
         update_fixture = _register_commit_update_fixture_step(
             journey, lambda: self.fail("S-012-only update fixture must not publish"))
+        restore = journey.step("restore Commit project fixture after marketplace lifecycle",
+                               "marketplace-fixtures", lambda: lifecycle_calls.append("restore"),
+                               role="lifecycle")
         owner = journey.step("execute installed Commit command", "commit-plugin", lambda: None,
                              cases=("S-160.5",))
 
         self.assertEqual(install.status, "SKIPPED")
         self.assertEqual(update_fixture.status, "SKIPPED")
+        self.assertEqual(restore.status, "PASS")
+        self.assertEqual(lifecycle_calls, ["restore"])
+        self.assertEqual(selected.prerequisite_steps, frozenset())
         self.assertEqual(owner.status, "PASS")
 
     def test_selected_commit_update_still_runs_its_declared_fixture_prerequisites(self):
