@@ -425,17 +425,6 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
         if base_env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL"):
             _assert_registry_gateway_config(base_env)
         wait_for_marketplace_ready(project, base_env, runner)
-        if base_env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL"):
-            registry_api = base_env.get("KB_JOURNEY_MARKETPLACE_PUBLISH_URL", "").removesuffix("/api/v1")
-            if not registry_api:
-                raise RuntimeError("journey Registry direct-access check has no service URL")
-            direct_request = urllib.request.Request(
-                f"{registry_api}/api/v1/resolve?identity=%40kb-labs%2Fcommit")
-            status, body, _ = open_http(urllib.request.urlopen, direct_request, timeout=30, env=base_env)
-            direct_payload = read_ux_http_result(body, status)
-            direct_error = direct_payload.get("error") if isinstance(direct_payload, dict) else None
-            if status != 401 or not isinstance(direct_error, dict) or direct_error.get("code") != "KB_AUTH_REQUIRED":
-                raise RuntimeError("direct Registry resolve was not denied without the Gateway internal secret")
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
         version = commit_fixture_source_version(workspace)
         command = ["marketplace", "install", f"@kb-labs/commit@{version}", "--json"]
@@ -516,7 +505,24 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
     export_project_identity_to_child_environment(base_env, project_root=str(project))
     captured: dict[str, dict] = {}
 
+    def assert_direct_registry_denied() -> None:
+        registry_api = base_env.get("KB_JOURNEY_MARKETPLACE_PUBLISH_URL", "").removesuffix("/api/v1")
+        if not registry_api:
+            raise RuntimeError("journey Registry direct-access check has no service URL")
+        direct_request = urllib.request.Request(
+            f"{registry_api}/api/v1/resolve?identity=%40kb-labs%2Fcommit")
+        status, body, _ = open_http(urllib.request.urlopen, direct_request, timeout=30, env=base_env)
+        direct_payload = read_ux_http_result(body, status)
+        direct_error = direct_payload.get("error") if isinstance(direct_payload, dict) else None
+        if status != 401 or not isinstance(direct_error, dict) or direct_error.get("code") != "KB_AUTH_REQUIRED":
+            raise RuntimeError("direct Registry resolve was not denied without the Gateway internal secret")
+
+    journey.step("direct Registry access is denied without Gateway identity", "marketplace-fixtures",
+                 assert_direct_registry_denied, cases=["S-268.1"], role="lifecycle",
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
+
     def install_fixture() -> None:
+        _assert_registry_gateway_config(base_env)
         wait_for_marketplace_ready(project, base_env, runner)
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
         published = _json(_publish_workspace_fixture(workspace, "plugins/commit", base_env, runner),
@@ -680,7 +686,7 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
         store_report_secret(env, "KB_JOURNEY_MARKETPLACE_TOKEN",
                             "journey-registry-token-reference-test-value",
                             "journey Marketplace Registry redaction test credential")
-        expected_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
+        expected_url = f"{_installed_gateway_url(env)}/api/v1/marketplace-registry"
         token = env.get("KB_JOURNEY_MARKETPLACE_TOKEN", "")
         if not expected_url or not key or not token:
             raise RuntimeError("journey Marketplace source URL or secret references are absent from the installer environment")

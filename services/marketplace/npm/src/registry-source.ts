@@ -182,8 +182,17 @@ export class RegistryPackageSource implements MarketplaceSource {
     if (this.authToken) { headers['Authorization'] = `Bearer ${this.authToken}`; }
     if (this.shareToken) { headers['X-Share-Token'] = this.shareToken; }
     try {
-      return await globalThis.fetch(url, { headers });
+      // Registry credentials are scoped to the configured source origin. Fetch's
+      // default redirect handling would forward them to an untrusted Location.
+      const response = await globalThis.fetch(url, { headers, redirect: 'manual' });
+      if (response.status >= 300 && response.status < 400) {
+        throw new RegistryPackageError(
+          'TRANSPORT_FAILED', 'Registry redirects are not followed for authenticated requests', identity,
+        );
+      }
+      return response;
     } catch (error) {
+      if (error instanceof RegistryPackageError) { throw error; }
       throw new RegistryPackageError('TRANSPORT_FAILED', `Registry request failed: ${error instanceof Error ? error.message : String(error)}`, identity);
     }
   }

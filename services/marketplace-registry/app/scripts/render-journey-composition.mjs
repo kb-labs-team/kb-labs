@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { generateKeyPairSync } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { generateKeyPairSync, randomBytes } from 'node:crypto';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,9 +35,14 @@ await mkdir(kbRoot, { recursive: true, mode: 0o700 });
 const configOverridePath = path.join(kbRoot, 'kb.config.override.json');
 await writeFile(configOverridePath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 await writeFile(path.join(kbRoot, 'registry.env'), `KB_REGISTRY_SIGNING_KEY='${privatePem.trimEnd()}\n'\n`, { mode: 0o600 });
+const gatewaySecretPath = path.join(kbRoot, 'gateway-internal.env');
+await writeFile(gatewaySecretPath, `GATEWAY_INTERNAL_SECRET=${randomBytes(32).toString('hex')}\n`, { mode: 0o600 });
+await chmod(gatewaySecretPath, 0o600);
 
 const composeOverlay = `services:
   runner:
+    env_file:
+      - ${JSON.stringify(gatewaySecretPath)}
     environment:
       KB_JOURNEY_MARKETPLACE_PUBLISH_URL: ${JSON.stringify(`${registryUrl}/api/v1`)}
       KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE: journey
@@ -60,6 +65,7 @@ const composeOverlay = `services:
       marketplace-state:
         condition: service_started
     env_file:
+      - ${JSON.stringify(gatewaySecretPath)}
       - ${JSON.stringify(path.join(kbRoot, 'registry.env'))}
     environment:
       KB_REGISTRY_HOST: 0.0.0.0
@@ -68,7 +74,6 @@ const composeOverlay = `services:
       # Marketplace client resolves it against the configured Gateway source.
       KB_REGISTRY_URL: /api/v1/marketplace-registry
       KB_STATE_DAEMON_URL: http://marketplace-state:7777
-      GATEWAY_INTERNAL_SECRET: journey-marketplace-internal-secret
     volumes:
       - ${JSON.stringify(`${configOverridePath}:/app/.kb/kb.config.override.json:ro`)}
     networks: [journey]

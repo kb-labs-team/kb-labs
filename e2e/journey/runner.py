@@ -130,27 +130,6 @@ def marketplace_install_flags(env: dict[str, str], *, gateway_url: str | None = 
     return flags
 
 
-def configure_registry_gateway_route(platform_root: Path, registry_upstream_url: str) -> None:
-    """Route Registry API requests through Gateway to the isolated fixture proxy."""
-    config_path = active_platform_root(platform_root) / ".kb" / "kb.config.jsonc"
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    gateway = config.setdefault("gateway", {})
-    upstreams = gateway.setdefault("upstreams", {})
-    upstreams["marketplaceRegistry"] = {
-        "serviceId": "marketplace-registry",
-        "prefix": "/api/v1/marketplace-registry",
-        "rewritePrefix": "",
-    }
-    services = (config.setdefault("platform", {}).setdefault("adapterOptions", {})
-                .setdefault("serviceTransport", {}).setdefault("services", {}))
-    services["marketplace-registry"] = {"url": registry_upstream_url}
-    mode = config_path.stat().st_mode & 0o777
-    temporary = config_path.with_suffix(config_path.suffix + ".registry-tmp")
-    temporary.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    temporary.chmod(mode)
-    temporary.replace(config_path)
-
-
 def registry_gateway_url_from_plan(plan_data: dict) -> str:
     """Return the effective public Gateway origin recorded by kb-create plan."""
     health_url = plan_data.get("plan", {}).get("host", {}).get("healthUrl")
@@ -161,6 +140,38 @@ def registry_gateway_url_from_plan(plan_data: dict) -> str:
         raise ValueError("install plan returned an invalid Gateway health URL")
     path = parsed.path.removesuffix("/health").rstrip("/")
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def registry_install_request(plan_data: dict, *, gateway_url: str, registry_upstream: str) -> dict:
+    """Add the Registry Gateway route to the actual install request, before host/plugin startup."""
+    plan = plan_data.get("plan", {})
+    request = plan.get("request")
+    if not isinstance(request, dict):
+        raise ValueError("install plan omitted its normalized request")
+    request = json.loads(json.dumps(request))
+    sources = request.setdefault("marketplaceSources", {})
+    sources["registryUrl"] = f"{gateway_url.rstrip('/')}/api/v1/marketplace-registry"
+    request["gatewayUrl"] = gateway_url
+    secret_inputs = request.setdefault("secretInputs", [])
+    if "gateway.internalSecret" not in secret_inputs:
+        secret_inputs.append("gateway.internalSecret")
+    values = request.setdefault("values", {})
+    values["gateway.marketplaceRegistryRoute"] = json.dumps({
+        "serviceId": "marketplace-registry",
+        "prefix": "/api/v1/marketplace-registry",
+        "rewritePrefix": "",
+    }, separators=(",", ":"))
+    patches = plan.get("configPatches", [])
+    adapter_options = next((patch.get("json") for patch in patches
+                            if patch.get("path") == "/platform/adapterOptions"), None)
+    if not isinstance(adapter_options, str):
+        raise ValueError("install plan omitted platform.adapterOptions")
+    options = json.loads(adapter_options)
+    transport = options.setdefault("serviceTransport", {})
+    services = transport.setdefault("services", {})
+    services["marketplace-registry"] = {"url": registry_upstream}
+    values["platform.adapterOptions"] = json.dumps(options, separators=(",", ":"))
+    return request
 
 
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
@@ -1419,11 +1430,21 @@ def _main(*, update_variant_runner=None):
                 fail("Registry journey could not resolve the installed Gateway address from the install plan")
                 cleanup_partial_install(outer_graph, env, launcher)
                 return finalize_run(False)
-            registry_source_url = f"{gateway_url}/api/v1/marketplace-registry"
-            registry_flag = args.index("--marketplace-registry-url")
-            args[registry_flag + 1] = registry_source_url
-            if "--gateway-url" not in args:
-                args.extend(["--gateway-url", gateway_url])
+            registry_upstream = env["KB_JOURNEY_MARKETPLACE_REGISTRY_URL"]
+            try:
+                request = registry_install_request(
+                    preview_data, gateway_url=gateway_url, registry_upstream=registry_upstream)
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                fail(f"Registry journey could not prepare the install-time Gateway route: {error}")
+                cleanup_partial_install(outer_graph, env, launcher)
+                return finalize_run(False)
+            request_path = HOME / "registry-install-request.json"
+            request_path.write_text(json.dumps(request, indent=2) + "\n", encoding="utf-8")
+            request_path.chmod(0o600)
+            args = [launcher, "install", "--json", "--index",
+                    str(HOME / ".local/share/kb-create/release-index.json"),
+                    "--input", str(request_path), "--registry", REGISTRY,
+                    "--secret-env", "gateway.internalSecret=GATEWAY_INTERNAL_SECRET"]
         result, elapsed = run(args, env=env, timeout=1200)
         TIMES["apply"] = elapsed
         if VARIANT == "relative-path":
@@ -1600,9 +1621,6 @@ def _main(*, update_variant_runner=None):
         stopped, _ = run([launcher, "stop", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
         if not require(stopped, step="kb-create stop before start lifecycle check"):
             return
-        registry_upstream = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL")
-        if registry_upstream:
-            configure_registry_gateway_route(PLATFORM, registry_upstream)
         result, elapsed = run([launcher, "start", "--platform-root", str(PLATFORM)], env=env, timeout=300)
         TIMES["start"] = elapsed
         started = require(result, step="kb-create start")
