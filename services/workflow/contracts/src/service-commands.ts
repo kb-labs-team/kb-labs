@@ -107,12 +107,22 @@ export const workflowServiceCommands = {
     cronsEnable: {
       kind: 'service',
       name: 'workflow crons enable', description: 'Enable a user workflow cron', flags: cronsToggleFlags,
+      invocation: {
+        operationId: 'workflow.cron.set-enabled',
+        inputs: [{ name: 'id', type: 'string', required: true, source: { kind: 'positional', index: 0 } }],
+        values: { enabled: true },
+      },
       scope: 'project', jsonTest: { noSafeValidPath: 'Requires an authenticated project gateway and a running workflow daemon.' }, category: 'workflow',
       route: { method: 'POST', path: '/crons/{id}/enable', mount: 'project-api' },
     },
     cronsDisable: {
       kind: 'service',
       name: 'workflow crons disable', description: 'Disable a user workflow cron', flags: cronsToggleFlags,
+      invocation: {
+        operationId: 'workflow.cron.set-enabled',
+        inputs: [{ name: 'id', type: 'string', required: true, source: { kind: 'positional', index: 0 } }],
+        values: { enabled: false },
+      },
       scope: 'project', jsonTest: { noSafeValidPath: 'Requires an authenticated project gateway and a running workflow daemon.' }, category: 'workflow',
       route: { method: 'POST', path: '/crons/{id}/disable', mount: 'project-api' },
     },

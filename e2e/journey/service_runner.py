@@ -76,9 +76,11 @@ from mcp_project_steps import (
     secured_auth,
     secured_project_catalog_isolation,
     unknown_tool,
+    workflow_cron_invocation_parity,
 )
 from platform_state_dump import archive_service_logs
 from journey_resources import journey_module, active_platform_root
+from workflow_steps import prepare_workflow_fixtures
 
 
 BASE_URL = journey_value("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -524,6 +526,14 @@ def service_check(name, capability, check, *, cases=(), requires=(), runners=())
     return name, capability, check, list(cases), tuple(requires), tuple(runners)
 
 
+def _workflow_cron_parity(project_id: str, token: str | None, project_root: str) -> str | None:
+    """Prepare only the disposable journey project, then exercise both public surfaces."""
+    prepare_workflow_fixtures(Path(project_root))
+    return workflow_cron_invocation_parity(
+        project_id, token or "", project_root, os.environ.copy(), case_id="S-045.12",
+    )
+
+
 def _checks(mode: str, graph: FlowGraph | None = None):
     def project_data() -> dict:
         value = graph.state_value_if_passed("project-registered") if graph is not None else None
@@ -635,9 +645,24 @@ def _checks(mode: str, graph: FlowGraph | None = None):
                             lambda: "BLOCKED: project-registered state must provide the disposable commit fixture root",
                             cases=["S-140.8"])
     if project_root:
+        if mode == "local":
+            yield service_check("workflow cron CLI and MCP state parity", "workflow",
+                                lambda: _workflow_cron_parity(pid(), auth_token(), project_root),
+                                cases=["S-045.12"], runners=("service-local:explore",))
+        else:
+            yield service_check("workflow cron CLI and MCP state parity", "workflow",
+                                lambda: _workflow_cron_parity(pid(), auth_token(), project_root), cases=[])
         yield service_check("project MCP commit mutation", "mcp",
                             lambda: apply_commit_plan(pid(), auth_token(), project_root), cases=["S-140.2"])
     else:
+        if mode == "local":
+            yield service_check("workflow cron CLI and MCP state parity", "workflow",
+                                lambda: "BLOCKED: project-registered state must provide the isolated workflow fixture root",
+                                cases=["S-045.12"], runners=("service-local:explore",))
+        else:
+            yield service_check("workflow cron CLI and MCP state parity", "workflow",
+                                lambda: "BLOCKED: project-registered state must provide the isolated workflow fixture root",
+                                cases=[])
         yield service_check("project MCP commit mutation", "mcp",
                             lambda: "BLOCKED: project-registered state must provide the disposable commit fixture root",
                             cases=["S-140.2"])

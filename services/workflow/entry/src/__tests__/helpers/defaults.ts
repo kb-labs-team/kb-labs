@@ -78,6 +78,11 @@ export const defaultWorkflowClient: WorkflowDaemonClient = {
   getCronJobs: async () => ({ crons: [], errors: [] }),
 
   setCronEnabled: async (_id: string, enabled: boolean) => ({ enabled }),
+  requestServiceOperation: async (request: { path: string }) => ({
+    ok: true,
+    statusCode: 200,
+    payload: { ok: true, data: { enabled: request.path.endsWith('/enable') } },
+  }),
 
   submitJob: async () => ({ id: 'job-test-123', status: 'queued' }),
 

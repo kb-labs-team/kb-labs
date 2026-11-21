@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ManifestV3, CliCommandDecl } from '@kb-labs/plugin-contracts';
 import type { RegistrySnapshotManifestEntry } from '@kb-labs/plugin-contracts';
-import { buildServiceTools, filterTools, mcpToolName, validateManifests } from '../mcp/tool-builder.js';
+import { buildServiceTools, filterTools, mcpToolName, validateManifests, validateServiceOperations } from '../mcp/tool-builder.js';
 import type { Permits } from '../mcp/authz.js';
 
 const allow: Permits = () => true;
@@ -171,6 +171,27 @@ describe('service command tools', () => {
       commands: [{ kind: 'local', name: 'local lint', description: 'Lint local files', scope: 'project', category: 'workflow', jsonTest: {}, flags: {} }],
     }])).toEqual([]);
   });
+
+  it('adds required string inputs for route placeholders alongside declared flags', () => {
+    const [tool] = buildServiceTools([{
+      schema: 'kb.service/1', id: 'workflow', name: 'Workflow', version: '1',
+      runtime: { entry: 'dist/index.js', port: 1, healthCheck: '/health' },
+      commands: [{
+        kind: 'service',
+        name: 'workflow crons enable', description: 'Enable a workflow cron', scope: 'project', category: 'workflow',
+        jsonTest: {}, flags: { json: { type: 'boolean' } },
+        route: { method: 'POST', path: '/crons/{id}/enable', mount: 'project-api' },
+      }],
+    }]);
+
+    expect(tool?.name).toBe('workflow__workflow_crons_enable');
+    expect(tool?.inputSchema).toMatchObject({
+      type: 'object',
+      properties: { id: { type: 'string' }, json: { type: 'boolean' } },
+      required: ['id'],
+      additionalProperties: false,
+    });
+  });
 });
 
 describe('validateManifests', () => {
@@ -191,5 +212,27 @@ describe('validateManifests', () => {
   it('does not report commands that build successfully', () => {
     const snap = { manifests: [entry('mind', [cmd('mind search', 'read'), cmd('mind ask', 'read')])] };
     expect(validateManifests(snap)).toEqual([]);
+  });
+});
+
+describe('validateServiceOperations', () => {
+  const manifests = [{
+    schema: 'kb.service/1' as const, id: 'workflow', name: 'Workflow', version: '1',
+    projectApi: { serviceId: 'workflow', rewritePrefix: '/api/v1' },
+    runtime: { entry: 'dist/index.js', port: 1, healthCheck: '/health' },
+    commands: [{
+      kind: 'service' as const, name: 'workflow crons enable', description: 'Enable cron',
+      scope: 'project' as const, category: 'workflow', jsonTest: {}, flags: {},
+      invocation: { operationId: 'workflow.cron.set-enabled', inputs: [], values: { enabled: true } },
+      route: { method: 'POST' as const, path: '/crons/{id}/enable', mount: 'project-api' as const },
+    }],
+  }];
+
+  it('requires an exact unique owner and declaration match', () => {
+    const operation = { serviceId: 'workflow', operationId: 'workflow.cron.set-enabled', execute: async () => undefined };
+    expect(() => validateServiceOperations(manifests, [operation])).not.toThrow();
+    expect(() => validateServiceOperations(manifests, [])).toThrow(/no trusted registration/);
+    expect(() => validateServiceOperations(manifests, [operation, operation])).toThrow(/Duplicate/);
+    expect(() => validateServiceOperations(manifests, [{ ...operation, serviceId: 'other' }])).toThrow(/not declared/);
   });
 });

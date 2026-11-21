@@ -19,6 +19,8 @@ import type {
 import type { CliCommandDecl, PermissionSpec } from '@kb-labs/plugin-contracts';
 import type { ServiceManifest } from '@kb-labs/plugin-contracts';
 import type { ServiceCommandRouteDeclaration } from '@kb-labs/plugin-contracts';
+import type { ServiceCommandInvocationDeclaration } from '@kb-labs/plugin-contracts';
+import type { RegisteredServiceCommandOperation } from '@kb-labs/plugin-contracts';
 import type { CommandManifest } from '@kb-labs/cli-commands';
 import type { Permits } from './authz.js';
 
@@ -128,31 +130,85 @@ export interface McpServiceTool {
   description: string;
   inputSchema: {
     type: 'object';
-    properties: Record<string, { type: 'string' | 'boolean' | 'number' | 'array' }>;
+    properties: Record<string, { type: 'string' | 'boolean' | 'number' | 'array'; minLength?: number }>;
     required: string[];
     additionalProperties: false;
   };
   serviceId: string;
+  /** Internal API prefix restored by the host transport, never supplied by an operation. */
+  servicePathPrefix: string;
   route: ServiceCommandRouteDeclaration;
+  invocation?: ServiceCommandInvocationDeclaration;
 }
 
 /** Derive project service tools from the enabled service manifests. */
 export function buildServiceTools(manifests: readonly ServiceManifest[]): McpServiceTool[] {
   return manifests.flatMap((manifest) => (manifest.commands ?? []).flatMap((command) => {
     if (command.kind === 'local') {return [];}
+    const properties = Object.fromEntries(
+      Object.entries(command.flags).map(([key, flag]) => [key, { type: flag.type }]),
+    ) as Record<string, { type: 'string' | 'boolean' | 'number' | 'array' }>;
+    const required = new Set(
+      Object.entries(command.flags).filter(([, flag]) => flag.required).map(([key]) => key),
+    );
+    for (const match of command.route.path.matchAll(/\{([^}]+)\}/g)) {
+      // Route placeholders are part of the command's input contract even when
+      // they are positional CLI arguments rather than declared flags.
+      const name = match[1];
+      if (!name) {continue;}
+      properties[name] = properties[name] ?? { type: 'string' };
+      required.add(name);
+    }
+    const invocationProperties = command.invocation
+      ? Object.fromEntries(command.invocation.inputs.map((input) => [input.name, {
+        type: input.type,
+        ...(input.type === 'string' && input.required ? { minLength: 1 } : {}),
+      }]))
+      : properties;
+    const invocationRequired = command.invocation
+      ? command.invocation.inputs.filter((input) => input.required).map((input) => input.name)
+      : [...required];
     return [{
       name: mcpToolName(manifest.id, command.name),
       description: command.description,
       inputSchema: {
         type: 'object',
-        properties: Object.fromEntries(Object.entries(command.flags).map(([key, flag]) => [key, { type: flag.type }])),
-        required: Object.entries(command.flags).filter(([, flag]) => flag.required).map(([key]) => key),
+        properties: invocationProperties,
+        required: invocationRequired,
         additionalProperties: false,
       },
-      serviceId: manifest.id,
+      serviceId: manifest.projectApi?.serviceId ?? manifest.id,
+      servicePathPrefix: manifest.projectApi?.rewritePrefix === '/' ? '' : manifest.projectApi?.rewritePrefix ?? '',
       route: command.route,
+      invocation: command.invocation,
     }];
   }));
+}
+
+/** Fail startup when trusted operation registrations diverge from declared commands. */
+export function validateServiceOperations(
+  manifests: readonly ServiceManifest[],
+  operations: readonly RegisteredServiceCommandOperation[],
+): void {
+  const declared = new Set<string>();
+  for (const manifest of manifests) {
+    const serviceId = manifest.projectApi?.serviceId ?? manifest.id;
+    for (const command of manifest.commands ?? []) {
+      if (command.kind !== 'local' && command.invocation) {
+        declared.add(`${serviceId}:${command.invocation.operationId}`);
+      }
+    }
+  }
+  const registered = new Set<string>();
+  for (const operation of operations) {
+    const key = `${operation.serviceId}:${operation.operationId}`;
+    if (registered.has(key)) {throw new Error(`Duplicate trusted service operation registration: ${key}.`);}
+    registered.add(key);
+    if (!declared.has(key)) {throw new Error(`Trusted service operation is not declared by an enabled service manifest: ${key}.`);}
+  }
+  for (const key of declared) {
+    if (!registered.has(key)) {throw new Error(`Declared service operation has no trusted registration: ${key}.`);}
+  }
 }
 
 /**
