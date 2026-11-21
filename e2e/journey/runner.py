@@ -517,12 +517,12 @@ def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
 
 
 def installer_command(args: list[str], *, env: Mapping[str, str], secret: str,
-                      input: str | None = None) -> CompletedProcess[str]:
+                      input: str | None = None, timeout: int = 1200) -> CompletedProcess[str]:
     installer_env = dict(env)
     if "--secret-env" in args:
         store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", secret,
                             "installer scenario password")
-    return run(args, env=installer_env, timeout=1200, input_text=input)[0]
+    return run(args, env=installer_env, timeout=timeout, input_text=input)[0]
 
 
 def _sample_pnpm_rss_for_run(pid: int) -> None:
@@ -1832,9 +1832,10 @@ def _main(*, update_variant_runner=None):
             return run(args, env=installer_env, timeout=1200)[0]
         fixture_env = env
         def installer_command_for_fixture(args: list[str], *, input: str | None = None,
-                                          env: Mapping[str, str] | None = None):
+                                          env: Mapping[str, str] | None = None,
+                                          timeout: int = 1200):
             return installer_command(args, env=env if env is not None else fixture_env,
-                                     secret=installer_secret, input=input)
+                                     secret=installer_secret, input=input, timeout=timeout)
         fixture_groups = ISOLATED_FIXTURE_GROUPS
         fixture_group_keys = {group: f"isolated-fixture:{group.__name__}" for group in fixture_groups}
         selected_groups = tuple(group for group in fixture_groups
