@@ -68,15 +68,18 @@ class CaseJourneySelectionTests(unittest.TestCase):
         from service_runner import service_selection_groups
         default_groups = service_selection_groups(runner_selector="service-local:explore")
         registry_groups = service_selection_groups(runner_selector="service-marketplace-registry:local")
-        self.assertIn("S-047.1", default_groups["marketplace-lifecycle"]["cases"])
-        self.assertNotIn("publish and install Commit through Registry",
-                         default_groups["marketplace-lifecycle"]["steps"])
-        self.assertNotIn("verify Commit Registry signature and provenance",
-                         default_groups["marketplace-lifecycle"]["steps"])
-        self.assertIn("publish and install Commit through Registry",
-                      registry_groups["marketplace-registry"]["steps"])
-        self.assertIn("verify Commit Registry signature and provenance",
-                      registry_groups["marketplace-registry"]["steps"])
+        default_lifecycle = set(default_groups["marketplace-lifecycle"].get("cases", ()))
+        registry_lifecycle = set(registry_groups["marketplace-lifecycle"].get("cases", ()))
+        default_registry = set(default_groups["marketplace-registry"].get("cases", ()))
+        registry_registry = set(registry_groups["marketplace-registry"].get("cases", ()))
+        self.assertIn("S-047.1", default_lifecycle)
+        self.assertNotIn("S-268.1", default_lifecycle)
+        self.assertNotIn("S-268.1", registry_lifecycle)
+        self.assertTrue(registry_steps <= registry_registry)
+        self.assertNotIn("S-047.1", registry_registry)
+        # Imported declaration closure must not accidentally claim the unrelated MCP case.
+        for cases in (default_lifecycle, registry_lifecycle, default_registry, registry_registry):
+            self.assertNotIn("S-140.1", cases)
 
     def test_hermetic_fixture_stages_declared_lock_at_its_shared_root(self):
         repository = Path(__file__).resolve().parents[2]
