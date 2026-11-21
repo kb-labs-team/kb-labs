@@ -62,7 +62,7 @@ type IterationContext = {
   iteration: number;
   context: ContextSnapshot;
   response: LLMResponseInfo | null;
-  tokensUsed: number;
+  tokensUsed?: number;
   durationMs: number;
 };
 
@@ -109,7 +109,9 @@ export default defineCommand({
               iteration: currentSnapshot.iteration,
               context: currentSnapshot,
               response: responseData,
-              tokensUsed: (endData.tokensUsed as number | undefined) ?? 0,
+              tokensUsed: typeof endData.tokensUsed === 'number' && Number.isFinite(endData.tokensUsed)
+                ? endData.tokensUsed
+                : undefined,
               durationMs: (endData.durationMs as number | undefined) ?? 0,
             });
             currentSnapshot = null;
@@ -173,7 +175,7 @@ function printTimeline(ctx: PluginCommandContextV3, iterations: IterationContext
 
     // LLM response
     if (it.response) {
-      ctx.ui.write(`\n  🤖 Response: ${it.tokensUsed} tokens, ${it.durationMs}ms\n`);
+      ctx.ui.write(`\n  🤖 Response: ${it.tokensUsed?.toLocaleString() ?? 'n/a'} tokens, ${it.durationMs}ms\n`);
 
       if (it.response.content && it.response.content.length > 0 && it.response.content !== '[Executing tools...]') {
         const preview = it.response.content.slice(0, 200).replace(/\n/g, ' ');

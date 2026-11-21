@@ -249,7 +249,7 @@ export class SpecModeHandler {
       );
 
       const specResult = await specRunner.execute(specPrompt);
-      sharedBudget.consume(specResult.tokensUsed);
+      if (specResult.tokensUsed !== undefined) { sharedBudget.consume(specResult.tokensUsed); }
       // Priority: report tool output > LLM direct output > last long thinking > summary
       const rawSummary = specResult.summary;
       const isSummaryUseless = !rawSummary || rawSummary === 'No answer provided' || rawSummary.length < 50;
@@ -548,7 +548,7 @@ When finished, call the report tool with the complete spec markdown.`;
 
       const budgetAwarePrompt = `${pack.prompt}\n\nCURRENT TOKEN BUDGET: ${sharedBudget.remaining}/${totalBudget} tokens remaining. Prioritize concrete file evidence.`;
       const result = await subRunner.execute(budgetAwarePrompt);
-      sharedBudget.consume(result.tokensUsed);
+      if (result.tokensUsed !== undefined) { sharedBudget.consume(result.tokensUsed); }
       const text = (reported || result.summary || '').trim();
       if (text) {
         outputs.push(`### ${pack.title}\n${text.slice(0, 2500)}`);
@@ -678,7 +678,7 @@ When finished, call the report tool with the complete spec markdown.`;
     );
 
     const result = await repairRunner.execute(repairPrompt);
-    input.sharedBudget.consume(result.tokensUsed);
+    if (result.tokensUsed !== undefined) { input.sharedBudget.consume(result.tokensUsed); }
     const merged = (reported || result.summary || '').trim();
     return merged.length > 0 ? merged : null;
   }

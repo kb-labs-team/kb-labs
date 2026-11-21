@@ -2,6 +2,8 @@
  * Core types and interfaces for agents
  */
 
+import type { AgentRoundOutcome, AgentRunFailure, AgentRunUsage } from './agent-run.js';
+
 /* eslint-disable @typescript-eslint/consistent-type-imports */
 // Using import() in type signatures to avoid circular dependencies
 
@@ -304,6 +306,12 @@ export interface AgentConfig {
   maxIterations: number;
   temperature: number;
   sessionId?: string;
+  /** Runtime-selected runner module id for a spawned child. */
+  runnerId?: string;
+  /** Opaque external runner session supplied for continuation. */
+  vendorSessionId?: string;
+  /** External round role used by the runner coordinator. */
+  runnerRole?: 'worker' | 'review';
   tier?: LLMTier;
   /** Optional analytics adapter from CLI host context. */
   analytics?: { track(event: string, payload: unknown): Promise<void> } | null;
@@ -340,7 +348,15 @@ export interface TaskResult {
   filesModified: string[];
   filesRead: string[];
   iterations: number;
-  tokensUsed: number;
+  tokensUsed?: number;
+  /** Common measured usage; absent fields mean the runner did not report them. */
+  usage?: AgentRunUsage;
+  /** Typed terminal classification shared by native and external runners. */
+  outcome?: AgentRoundOutcome;
+  failure?: AgentRunFailure;
+  runnerId?: string;
+  vendorSessionId?: string;
+  lastMessage?: string;
   error?: string;
   trace?: TraceEntry[];
   /** Enhanced summary from SummaryEnhancerProcessor */
