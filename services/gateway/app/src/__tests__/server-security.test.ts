@@ -142,7 +142,9 @@ describe('S-252.2 — Marketplace share token redacted from Gateway request logs
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ ok: true }));
     });
-    await new Promise<void>((resolve) => registry.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => {
+      registry.listen(0, '127.0.0.1', resolve);
+    });
     const registryAddress = registry.address();
     if (!registryAddress || typeof registryAddress === 'string') { throw new Error('Expected TCP listener'); }
 
@@ -207,7 +209,9 @@ describe('S-252.2 — Marketplace share token redacted from Gateway request logs
       expect(serializedLogs).toContain('version=1.2.3');
     } finally {
       await gateway.close();
-      await new Promise<void>((resolve, reject) => registry.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => {
+        registry.close((error) => error ? reject(error) : resolve());
+      });
     }
   });
 });
