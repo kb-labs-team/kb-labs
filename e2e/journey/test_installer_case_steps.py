@@ -834,7 +834,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     "providerPreferences": {"cache": "state-broker"},
                     "scenarioId": "commit",
                 }, "artifacts": []}, "marketplaceInstalls": [
-                    {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "registry"},
+                    {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit", "version": "1.2.3", "source": "npm"},
                 ]}
                 apply_result = {"operation": "apply", "receipt": receipt, "logPath": "/tmp/apply.log"}
                 return subprocess.CompletedProcess(args, 0,
@@ -843,16 +843,47 @@ class InstallerCaseStepsTest(unittest.TestCase):
             with patch.object(installer_case_steps, "unused_loopback_gateway_url",
                               return_value="http://127.0.0.1:4999"):
                 journey = run_apply_scenario_step(mode="local", launcher="kb-create", stable_index=index,
-                                                  platform_root=platform, run_command=run_command)
+                                                  platform_root=platform, registry="http://verdaccio.test",
+                                                  run_command=run_command)
             claim = next(step for step in journey.steps if step.cases == ["S-039.1"])
             self.assertEqual(claim.status, "PASS", claim.message)
             self.assertEqual(calls[0], [
                 "kb-create", "apply", "--json", "--index", str(index),
                 "--platform-root", str(root / "s039-apply-scenario-local"),
-                "--service-profile", "default", "--gateway-url", "http://127.0.0.1:4999",
+                "--service-profile", "default", "--registry", "http://verdaccio.test",
+                "--marketplace-npm-url", "http://verdaccio.test",
+                "--gateway-url", "http://127.0.0.1:4999",
                 "--scenario", "commit",
                 "--scenario-answers", '{"cache":"state-broker"}',
             ])
+
+    # case: S-039.1
+    def test_apply_scenario_claim_requires_the_configured_npm_fixture_source(self):
+        with tempfile.TemporaryDirectory(prefix="journey-apply-scenario-wrong-source-") as temp:
+            root = Path(temp)
+            apply_root = root / "s039-apply-scenario-local"
+            index = root / "release-index.json"
+            index.write_text("{}")
+
+            def run_command(args):
+                receipt = {"plan": {"request": {
+                    "platformRoot": str(apply_root),
+                    "providerPreferences": {"cache": "state-broker"},
+                    "scenarioId": "commit",
+                }, "artifacts": []}, "marketplaceInstalls": [
+                    {"spec": "@kb-labs/commit@1.2.3", "id": "@kb-labs/commit",
+                     "version": "1.2.3", "source": "registry"},
+                ]}
+                result = {"operation": "apply", "receipt": receipt, "logPath": "/tmp/apply.log"}
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": result}), "")
+
+            journey = run_apply_scenario_step(
+                mode="local", launcher="kb-create", stable_index=index, platform_root=root / "platform",
+                registry="http://verdaccio.test", run_command=run_command,
+            )
+            claim = next(step for step in journey.steps if step.cases == ["S-039.1"])
+            self.assertEqual(claim.status, "FAIL")
+            self.assertIn("configured journey npm fixture", claim.message)
 
     def test_commit_scenario_receipt_rejects_release_index_plugin(self):
         receipt = {"plan": {"request": {"scenarioId": "commit"}, "artifacts": [
@@ -895,7 +926,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     json.dumps({"ok": True, "data": apply_result}), "")
 
             journey = run_apply_scenario_step(mode="local", launcher="kb-create", stable_index=index,
-                                              platform_root=platform, run_command=run_command)
+                                              platform_root=platform, registry="http://verdaccio.test",
+                                              run_command=run_command)
             claim = next(step for step in journey.steps if step.cases == ["S-039.1"])
             self.assertEqual(claim.status, "FAIL")
             self.assertIn("selected cache provider", claim.message)
