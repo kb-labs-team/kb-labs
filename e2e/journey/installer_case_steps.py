@@ -788,7 +788,7 @@ def run_port_conflict_step(*, mode: str, launcher: str, stable_index: Path,
 def verify_package_manager_failure_diagnostic(*, launcher: str, stable_index: Path,
                                               platform_root: Path, registry: str,
                                               run_command: CommandRunner) -> None:
-    """Prove an installed apply exposes the failing package manager's exit and stderr."""
+    """Prove apply retains the package manager exit and omits its raw output."""
     failure_root = platform_root.parent / "pc001-pnpm-failure-root"
     request_path = platform_root.parent / "pc001-pnpm-failure-request.json"
     fake_bin = platform_root.parent / "pc001-pnpm-failure-bin"
@@ -820,14 +820,15 @@ def verify_package_manager_failure_diagnostic(*, launcher: str, stable_index: Pa
         details = error.get("details", error.get("meta", {}))
         if (error.get("code") != "KB_INSTALL_APPLY_FAILED" or not isinstance(details, dict)
                 or details.get("packageManagerExitCode") != "47"
-                or details.get("packageManagerStderrTail") != stderr):
-            raise RuntimeError(f"package-manager failure omitted its exit code or stderr tail: {error}")
+                or details.get("packageManagerOutput") != "omitted for safety"):
+            raise RuntimeError(f"package-manager failure omitted its exit code or safe output notice: {error}")
         log_path = details.get("logPath")
         diagnostic_path = details.get("diagnosticPath")
         if (not isinstance(log_path, str) or not Path(log_path).is_file()
-                or stderr not in Path(log_path).read_text(encoding="utf-8")
+                or stderr in Path(log_path).read_text(encoding="utf-8")
+                or "output omitted for safety" not in Path(log_path).read_text(encoding="utf-8")
                 or not isinstance(diagnostic_path, str) or not Path(diagnostic_path).is_file()):
-            raise RuntimeError("package-manager failure omitted its complete installer log or diagnostic dossier")
+            raise RuntimeError("package-manager failure retained raw output or omitted safe installer evidence")
 
     assert_failure_diagnostic()
 

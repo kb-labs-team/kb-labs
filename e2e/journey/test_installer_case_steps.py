@@ -196,7 +196,7 @@ def journey_layout_path_violations(journey_root: Path, layout: dict, owner_modul
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
-    def test_package_manager_failure_diagnostic_requires_exit_stderr_and_transcript(self):
+    def test_package_manager_failure_diagnostic_requires_exit_and_safe_transcript(self):
         with tempfile.TemporaryDirectory(prefix="journey-pnpm-failure-") as temporary:
             home = Path(temporary)
             platform_root = home / "kb-platform"
@@ -204,9 +204,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
             index = home / "release-index.json"
             index.write_text("{}\n")
             failure_root = platform_root.parent / "pc001-pnpm-failure-root"
-            stderr = "x149-pnpm-fixture: registry unavailable"
             log = home / "apply.log"
-            log.write_text(stderr + "\n")
+            log.write_text("Package manager failed with exit code 47; package manager output omitted for safety.\n")
             diagnostic = home / "apply.json"
             diagnostic.write_text("{}\n")
 
@@ -225,7 +224,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     "correlationId": "a" * 32,
                     "details": {
                         "packageManagerExitCode": "47",
-                        "packageManagerStderrTail": stderr,
+                        "packageManagerOutput": "omitted for safety",
                         "logPath": str(log),
                         "diagnosticPath": str(diagnostic),
                     },
@@ -241,11 +240,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 result = run_command(args, **kwargs)
                 if args[1] == "apply":
                     response = json.loads(result.stdout)
-                    response["error"]["details"].pop("packageManagerStderrTail")
+                    response["error"]["details"].pop("packageManagerOutput")
                     result.stdout = json.dumps(response)
                 return result
 
-            with self.assertRaisesRegex(RuntimeError, "exit code or stderr tail"):
+            with self.assertRaisesRegex(RuntimeError, "exit code or safe output notice"):
                 verify_package_manager_failure_diagnostic(
                     launcher="kb-create", stable_index=index, platform_root=platform_root,
                     registry="http://registry.test", run_command=dropped_stderr,
