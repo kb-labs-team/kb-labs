@@ -8,6 +8,9 @@ export class StdioPlatformServer {
   private readonly unsubscribeRequest: () => void;
   private readonly unsubscribeMessage: () => void;
   private readonly unsubscribeCancel: () => void;
+  private readonly dispatches = new Set<Promise<void>>();
+  private closed = false;
+  private closePromise?: Promise<void>;
 
   constructor(private readonly channel: StdioChannel, platform: IPlatformAdapters) {
     this.dispatcher = new PlatformRPCDispatcher(platform, async (message) => {
@@ -25,21 +28,32 @@ export class StdioPlatformServer {
       }
       throw new Error('Platform RPC dispatcher emitted an unsupported message');
     });
-    this.unsubscribeRequest = channel.on('platform:request', (frame) => {
-      void this.dispatcher.dispatch(frame.payload);
-    });
-    this.unsubscribeMessage = channel.on('platform:message', (frame) => {
-      void this.dispatcher.dispatch(frame.payload);
-    });
+    this.unsubscribeRequest = channel.on('platform:request', (frame) => this.dispatch(frame.payload));
+    this.unsubscribeMessage = channel.on('platform:message', (frame) => this.dispatch(frame.payload));
     this.unsubscribeCancel = channel.on('platform:cancel', (frame) => {
-      void this.dispatcher.dispatch({ type: 'adapter:cancel', requestId: frame.requestId });
+      this.dispatch({ type: 'adapter:cancel', requestId: frame.requestId });
     });
   }
 
-  close(): void {
+  async close(graceMs = 1000): Promise<void> {
+    if (this.closePromise) { await this.closePromise; return; }
+    this.closed = true;
     this.unsubscribeRequest();
     this.unsubscribeMessage();
     this.unsubscribeCancel();
     this.dispatcher.close();
+    const active = Promise.allSettled([...this.dispatches]).then(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    this.closePromise = Promise.race([active, new Promise<void>((resolve) => { timer = setTimeout(resolve, graceMs); })])
+      .finally(() => clearTimeout(timer));
+    await this.closePromise;
+  }
+
+  private dispatch(payload: unknown): void {
+    let operation: Promise<void>;
+    operation = this.dispatcher.dispatch(payload)
+      .catch(() => {})
+      .finally(() => this.dispatches.delete(operation));
+    this.dispatches.add(operation);
   }
 }

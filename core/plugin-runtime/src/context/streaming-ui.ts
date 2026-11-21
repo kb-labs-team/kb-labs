@@ -26,6 +26,31 @@ function redactMessageOptions(options: MessageOptions | undefined, secrets: read
   })) };
 }
 
+function renderMessage(message: string, options: MessageOptions | undefined): string {
+  const lines = [message];
+  for (const [key, value] of Object.entries(options?.summary ?? {})) { lines.push(`${key}: ${String(value)}`); }
+  for (const section of options?.sections ?? []) {
+    if (section.header) { lines.push(section.header); }
+    for (const item of section.items) { lines.push(typeof item === 'string' ? item : item.text); }
+  }
+  if (options?.cause) { lines.push(options.cause); }
+  if (options?.hint) { lines.push(options.hint); }
+  if (options?.command) { lines.push(`$ ${options.command}`); }
+  return lines.join('\n');
+}
+
+function redactStructuredValue(value: unknown, secrets: readonly string[]): unknown {
+  if (typeof value === 'string') { return redactSensitiveText(value, secrets); }
+  if (Array.isArray(value)) { return value.map((item) => redactStructuredValue(item, secrets)); }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      redactSensitiveText(key, secrets),
+      redactStructuredValue(item, secrets),
+    ]));
+  }
+  return value;
+}
+
 export function createStreamingUI(base: UIFacade, emitter: EventEmitterFn, sensitiveValues = getRequestSensitiveValues()): UIFacade {
   let lineNo = 0;
   let writeBuffer = '';
@@ -60,28 +85,31 @@ export function createStreamingUI(base: UIFacade, emitter: EventEmitterFn, sensi
 
     info(message: string, options?: MessageOptions) {
       const safe = redactSensitiveText(message, secrets);
-      base.info(safe, redactMessageOptions(options, secrets));
-      emitLines(safe, 'info', 'stdout');
+      const safeOptions = redactMessageOptions(options, secrets);
+      base.info(safe, safeOptions);
+      emitLines(renderMessage(safe, safeOptions), 'info', 'stdout');
     },
 
     success(message: string, options?: MessageOptions) {
       const safe = redactSensitiveText(message, secrets);
       const safeOptions = redactMessageOptions(options, secrets);
       base.success(safe, safeOptions);
-      emitLines(safe, 'info', 'stdout');
+      emitLines(renderMessage(safe, safeOptions), 'info', 'stdout');
     },
 
     warn(message: string, options?: MessageOptions) {
       const safe = redactSensitiveText(message, secrets);
-      base.warn(safe, redactMessageOptions(options, secrets));
-      emitLines(safe, 'warn', 'stderr');
+      const safeOptions = redactMessageOptions(options, secrets);
+      base.warn(safe, safeOptions);
+      emitLines(renderMessage(safe, safeOptions), 'warn', 'stderr');
     },
 
     error(error: Error | string, options?: MessageOptions) {
       const msg = redactSensitiveText(error instanceof Error ? error.message : error, secrets);
       const safeError = error instanceof Error ? new Error(msg) : msg;
-      base.error(safeError, redactMessageOptions(options, secrets));
-      emitLines(msg, 'error', 'stderr');
+      const safeOptions = redactMessageOptions(options, secrets);
+      base.error(safeError, safeOptions);
+      emitLines(renderMessage(msg, safeOptions), 'error', 'stderr');
     },
 
     spinner(message: string): Spinner {
@@ -112,7 +140,9 @@ export function createStreamingUI(base: UIFacade, emitter: EventEmitterFn, sensi
 
     log(entry: UILogEntry) {
       const safeMessage = redactSensitiveText(entry.message, secrets);
-      const safeFields = entry.fields === undefined ? undefined : JSON.parse(redactSensitiveText(JSON.stringify(entry.fields), secrets)) as Record<string, unknown>;
+      const safeFields = entry.fields === undefined
+        ? undefined
+        : redactStructuredValue(entry.fields, secrets) as Record<string, unknown>;
       base.log({ ...entry, message: safeMessage, ...(safeFields ? { fields: safeFields } : {}) });
       const line = safeFields
         ? `${safeMessage} ${JSON.stringify(safeFields)}`

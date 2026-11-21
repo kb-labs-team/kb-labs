@@ -133,6 +133,7 @@ export class UnixSocketTransport implements ITransport {
 
     // Ensure connected
     await this.connect();
+    if (signal?.aborted) { throw createTransportAbortError(signal); }
 
     if (!this.socket || this.socket.destroyed) {
       throw new TransportError('Socket not available');
@@ -153,6 +154,7 @@ export class UnixSocketTransport implements ITransport {
         const pending = this.pending.get(outboundCall.requestId);
         pending?.signal?.removeEventListener('abort', pending.abortHandler!);
         this.pending.delete(outboundCall.requestId);
+        this.sendCancel(outboundCall.requestId);
         reject(new TimeoutError(`Adapter call timed out after ${timeout}ms`, timeout));
       }, timeout);
 
@@ -163,12 +165,7 @@ export class UnixSocketTransport implements ITransport {
           if (this.pending.get(outboundCall.requestId) !== pending) { return; }
           clearTimeout(timer);
           this.pending.delete(outboundCall.requestId);
-          const cancel = {
-            type: 'adapter:cancel',
-            requestId: outboundCall.requestId,
-            ...(this.config.authToken ? { context: { authToken: this.config.authToken } } : {}),
-          };
-          this.socket?.write(`${JSON.stringify(cancel)}\n`, 'utf8');
+          this.sendCancel(outboundCall.requestId);
           reject(createTransportAbortError(signal));
         };
         signal.addEventListener('abort', pending.abortHandler, { once: true });
@@ -198,6 +195,15 @@ export class UnixSocketTransport implements ITransport {
         });
       }
     });
+  }
+
+  private sendCancel(requestId: string): void {
+    const cancel = {
+      type: 'adapter:cancel',
+      requestId,
+      ...(this.config.authToken ? { context: { authToken: this.config.authToken } } : {}),
+    };
+    try { this.socket?.write(`${JSON.stringify(cancel)}\n`, 'utf8'); } catch { /* disconnected sockets abort server-side on close */ }
   }
 
   /**

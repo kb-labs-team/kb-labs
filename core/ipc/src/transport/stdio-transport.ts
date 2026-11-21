@@ -42,6 +42,7 @@ export class StdioTransport implements ITransport {
       const timer = setTimeout(() => {
         this.pending.delete(call.requestId);
         pending.signal?.removeEventListener('abort', pending.abortHandler!);
+        void this.channel.send({ type: 'platform:cancel', requestId: call.requestId }).catch(() => {});
         reject(new TimeoutError(`Adapter call timed out after ${timeout}ms`, timeout));
       }, timeout);
       const pending = { resolve, reject, timer, signal } as PendingRequest;

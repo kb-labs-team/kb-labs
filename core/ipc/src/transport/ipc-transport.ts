@@ -93,6 +93,7 @@ export class IPCTransport implements ITransport {
       const timer = setTimeout(() => {
         this.pending.delete(call.requestId);
         pending.signal?.removeEventListener('abort', pending.abortHandler!);
+        this.sendCancel(call.requestId);
         reject(new TimeoutError(`Adapter call timed out after ${timeout}ms`, timeout));
       }, timeout);
 
@@ -103,7 +104,7 @@ export class IPCTransport implements ITransport {
           if (this.pending.get(call.requestId) !== pending) { return; }
           clearTimeout(timer);
           this.pending.delete(call.requestId);
-          process.send?.({ type: 'adapter:cancel', requestId: call.requestId });
+          this.sendCancel(call.requestId);
           reject(createTransportAbortError(signal));
         };
         signal.addEventListener('abort', pending.abortHandler, { once: true });
@@ -133,6 +134,7 @@ export class IPCTransport implements ITransport {
    * @param retryCount - Current retry attempt (for exponential backoff)
    */
   private async trySendWithBackpressure(call: AdapterCall, retryCount: number): Promise<void> {
+    if (!this.pending.has(call.requestId)) { return; }
     const maxRetries = 20;
     const baseDelayMs = 50;
 
@@ -159,6 +161,8 @@ export class IPCTransport implements ITransport {
         setTimeout(resolve, delay);
       });
 
+      if (!this.pending.has(call.requestId)) { return; }
+
       // Retry sending
       return this.trySendWithBackpressure(call, retryCount + 1);
 
@@ -175,6 +179,10 @@ export class IPCTransport implements ITransport {
     if (!this.closed && process.send) {
       process.send(msg);
     }
+  }
+
+  private sendCancel(requestId: string): void {
+    try { process.send?.({ type: 'adapter:cancel', requestId }); } catch { /* disconnected parent has already stopped dispatch */ }
   }
 
   onPushMessage(handler: (msg: unknown) => void): () => void {

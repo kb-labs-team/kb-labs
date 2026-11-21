@@ -272,6 +272,7 @@ export async function runInSubprocess<T = unknown>(
     });
 
     let completed = false;
+    let finishPromise: Promise<void> | undefined;
     let outputActive = true;
     const stderrCapture = createSensitiveStreamCapture(getRequestSensitiveValues(), (message) => {
       if (!outputActive) { return; }
@@ -300,7 +301,8 @@ export async function runInSubprocess<T = unknown>(
     const flushLogCaptures = () => {
       for (const [stream, capture] of logCaptures) { emitLogText(stream, capture.level, capture.flush()); }
     };
-    const finish = () => {
+    const finish = (): Promise<void> => {
+      if (finishPromise) { return finishPromise; }
       completed = true;
       flushLogCaptures();
       stderrCapture.flush();
@@ -308,15 +310,18 @@ export async function runInSubprocess<T = unknown>(
       clearTimeout(timeoutId.timer);
       clearTimeout(cancelId);
       signal?.removeEventListener('abort', abortHandler);
-      platformServer.close();
-      channel.close();
-      child.stdin.end();
+      finishPromise = platformServer.close().catch(() => {}).finally(() => {
+        channel.close();
+        child.stdin.end();
+      });
+      return finishPromise;
     };
     const fail = (error: Error) => {
       if (completed) { return; }
-      finish();
-      child.kill('SIGKILL');
-      reject(error);
+      void finish().finally(() => {
+        child.kill('SIGKILL');
+        reject(error);
+      });
     };
 
     // Handle abort signal
@@ -365,12 +370,11 @@ export async function runInSubprocess<T = unknown>(
     });
     channel.on('execution:result', (frame) => {
       if (frame.requestId !== requestId) { fail(new Error('Execution result request id does not match')); return; }
-      finish();
-      resolve({
+      void finish().then(() => resolve({
         ok: true,
         data: (frame.payloadUndefined ? undefined : frame.payload) as T,
         executionMeta: buildExecutionMeta(descriptor, startTime),
-      });
+      }));
     });
     channel.on('execution:error', (frame) => {
       if (frame.requestId !== requestId) { fail(new Error('Execution error request id does not match')); return; }
@@ -386,24 +390,23 @@ export async function runInSubprocess<T = unknown>(
         return;
       }
       const errorPayload = payload as { envelope: ErrorEnvelope; serializedError: SerializedError };
-      finish();
-      reject(new SerializedErrorEnvelopeError(errorPayload.envelope, errorPayload.serializedError));
+      void finish().then(() => reject(new SerializedErrorEnvelopeError(errorPayload.envelope, errorPayload.serializedError)));
     });
 
     // Handle child exit
     child.on('exit', (code) => {
       if (!completed) {
-        finish();
-
-        if (signal?.aborted) {
-          reject(new AbortError());
-        } else {
-          reject(new PluginError(
-            `Plugin process exited with code ${code}`,
-            'KB_PLUGIN_CRASHED',
-            { plugin: descriptor.pluginId }
-          ));
-        }
+        void finish().then(() => {
+          if (signal?.aborted) {
+            reject(new AbortError());
+          } else {
+            reject(new PluginError(
+              `Plugin process exited with code ${code}`,
+              'KB_PLUGIN_CRASHED',
+              { plugin: descriptor.pluginId }
+            ));
+          }
+        });
       }
     });
 

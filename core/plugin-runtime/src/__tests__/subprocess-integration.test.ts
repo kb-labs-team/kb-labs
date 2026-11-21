@@ -285,6 +285,41 @@ describe('Subprocess Integration Tests', () => {
     }
   }, 10_000);
 
+  // case: S-030.3
+  it('aborts a live host RPC and completes channel cleanup when execution times out', async () => {
+    const testDir = join(tmpdir(), `subprocess-rpc-cleanup-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const handlerPath = join(testDir, 'host-rpc-handler.mjs');
+    writeFileSync(handlerPath, `export default { async execute(ctx) { await ctx.platform.llm.complete('long request'); } };`);
+    const descriptor: PluginContextDescriptor = {
+      hostType: 'cli', pluginId: '@kb-labs/test-rpc-cleanup', pluginVersion: '1.0.0',
+      requestId: 'subprocess-rpc-cleanup', handlerId: 'test:rpc-cleanup', permissions: { platform: { llm: true } },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+    };
+    let providerSignal: AbortSignal | undefined;
+    const platform = {
+      ...createPlatform(),
+      llm: {
+        complete: (_prompt: string, options?: { signal?: AbortSignal }) => {
+          providerSignal = options?.signal;
+          return new Promise((_resolve, reject) => {
+            providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason ?? new DOMException('closed', 'AbortError')), { once: true });
+          });
+        },
+      },
+    } as unknown as IPlatformAdapters;
+
+    try {
+      await expect(runInSubprocess({
+        descriptor, platform, handlerPath, input: {}, timeoutMs: 250, cwd: testDir,
+      })).rejects.toThrow(/timed out/);
+      expect(providerSignal).toBeDefined();
+      expect(providerSignal?.aborted).toBe(true);
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
   // case: S-203.26
   it('redacts messages across subprocess stdout IPC frames', async () => {
     const testDir = join(tmpdir(), `subprocess-ui-redaction-${Date.now()}`);

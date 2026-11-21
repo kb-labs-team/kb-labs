@@ -64,6 +64,29 @@ describe('createStreamingUI', () => {
     expect(vi.mocked(base.write).mock.calls.flat().join('')).not.toContain('cross-write-secret');
   });
 
+  // case: S-203.26
+  it('recursively redacts structured keys and values before JSON serialization', async () => {
+    const base = createMockUI();
+    const events: Array<{ line: string }> = [];
+    const emitter: EventEmitterFn = async (_name, payload) => { events.push(payload as { line: string }); };
+    const secret = 'multi\n"quoted"\\path';
+
+    await withProcessSensitiveValues([secret], async () => {
+      const ui = createStreamingUI(base, emitter);
+      ui.log({
+        level: 'info',
+        message: 'structured fields',
+        fields: { nested: [{ [secret]: secret }] },
+      } as never);
+    });
+
+    const safeFields = vi.mocked(base.log).mock.calls[0]?.[0]?.fields;
+    expect(safeFields).toEqual({ nested: [{ '[REDACTED]': '[REDACTED]' }] });
+    const emittedFields = JSON.parse(events[0]!.line.slice(events[0]!.line.indexOf('{')));
+    expect(emittedFields).toEqual(safeFields);
+    expect(events.join('')).not.toContain(secret);
+  });
+
   it('delegates all calls to the base UI', () => {
     const base = createMockUI();
     const emitter: EventEmitterFn = vi.fn(async () => {});

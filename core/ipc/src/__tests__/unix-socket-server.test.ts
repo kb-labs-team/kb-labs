@@ -518,5 +518,51 @@ describe('UnixSocketServer', () => {
       expect(providerSignal?.aborted).toBe(true);
       await transport.close();
     });
+
+    it('aborts a host LLM request when the Unix socket transport times out', async () => {
+      let providerSignal: AbortSignal | undefined;
+      const llmAdapter = mockPlatform.llm as unknown as {
+        complete: (_prompt: string, options?: { signal?: AbortSignal }) => Promise<unknown>;
+      };
+      llmAdapter.complete = (_prompt, options) => {
+        providerSignal = options?.signal;
+        return new Promise((_resolve, reject) => {
+          providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason), { once: true });
+        });
+      };
+      server = new UnixSocketServer(mockPlatform, { socketPath: testSocketPath });
+      await server.start();
+      const transport = new UnixSocketTransport({ socketPath: testSocketPath, autoReconnect: false, timeout: 30 });
+
+      try {
+        await expect(new LLMProxy(transport).complete('Unix timeout test')).rejects.toMatchObject({ name: 'TimeoutError' });
+        const abortDeadline = Date.now() + 1000;
+        while (!providerSignal?.aborted && Date.now() < abortDeadline) { await new Promise((resolve) => setTimeout(resolve, 5)); }
+        expect(providerSignal?.aborted).toBe(true);
+      } finally {
+        await transport.close();
+      }
+    });
+
+    it('does not send a request if aborted while connecting', async () => {
+      const transport = new UnixSocketTransport({ socketPath: testSocketPath, autoReconnect: false });
+      let releaseConnect!: () => void;
+      const connectStarted = new Promise<void>((resolve) => {
+        vi.spyOn(transport, 'connect').mockImplementation(() => new Promise<void>((resolveConnect) => {
+          releaseConnect = resolveConnect;
+          resolve();
+        }));
+      });
+      const controller = new AbortController();
+      const pending = transport.send({
+        type: 'adapter:call', requestId: 'aborted-during-connect', version: IPC_PROTOCOL_VERSION,
+        adapter: 'llm', method: 'complete', args: [],
+      }, controller.signal);
+      await connectStarted;
+      controller.abort(new DOMException('cancelled while connecting', 'AbortError'));
+      releaseConnect();
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      await transport.close();
+    });
   });
 });
