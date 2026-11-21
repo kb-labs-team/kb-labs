@@ -27,6 +27,26 @@ describe('VibeProxy provider errors', () => {
     }
   });
 
+
+  it('aborts an active provider request when the execution signal is cancelled', async () => {
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+      requestSignal = init?.signal as AbortSignal;
+      return new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener('abort', () => reject(requestSignal?.reason), { once: true });
+      });
+    }));
+    const adapter = new VibeProxyLLM({ baseURL: 'http://provider.test', apiKey: 'fixture-key', model: 'fixture-model' });
+    const controller = new AbortController();
+    const pending = adapter.complete('cancel this request', { signal: controller.signal });
+
+    await vi.waitFor(() => expect(requestSignal).toBeDefined());
+    controller.abort(new DOMException('cancelled', 'AbortError'));
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
   // case: S-189.5
   it('preserves an authentication response status for Gateway error classification', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({

@@ -127,6 +127,10 @@ elif args[:3] == ["commit", "commit", "--dry-run"]:
         print(json.dumps({"ok": False, "error": {"code": "KB_ADAPTER_UNAVAILABLE",
             "message": "Adapter llm is not configured.", "hint": "kb adapter bind llm @kb-labs/adapters-openai"}}))
         raise SystemExit(1)
+    print(json.dumps({"ok": True, "data": {"plan": {"metadata": {"llmUsed": True}}, "applied": False}}))
+elif args[:2] == ["commit", "commit"]:
+    staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root,
+                            capture_output=True, text=True, check=True).stdout
     if "s030-cancel.ts" in staged:
         tty.setraw(sys.stdin.fileno())
         print("⠋ Analyzing changes...", flush=True)
@@ -139,9 +143,10 @@ elif args[:3] == ["commit", "commit", "--dry-run"]:
         print("⠙ Analyzing with native tools...", flush=True)
         print("Re-analyzing with diff context (Phase 2)...", flush=True)
         print("Plan generated", flush=True)
+        subprocess.run(["git", "commit", "-m", "feat(journey): apply streamed commit plan"],
+                       cwd=root, capture_output=True, text=True, check=True)
+        print("Commits created successfully", flush=True)
         raise SystemExit(0)
-    print(json.dumps({"ok": True, "data": {"plan": {"metadata": {"llmUsed": True}}, "applied": False}}))
-elif args[:2] == ["commit", "commit"]:
     changes = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"],
                              cwd=root, capture_output=True, text=True, check=True).stdout
     if not changes:

@@ -12,6 +12,7 @@ export type StdioFrame =
   | { type: 'execution:cancel'; requestId: string }
   | { type: 'runtime:ready' }
   | { type: 'platform:request'; requestId: string; payload: unknown }
+  | { type: 'platform:cancel'; requestId: string }
   | { type: 'platform:response'; requestId: string; payload: unknown }
   | { type: 'platform:message'; payload: unknown }
   | { type: 'platform:push'; payload: unknown }
@@ -41,6 +42,7 @@ function isStdioFrame(value: unknown): value is StdioFrame {
       return typeof value.requestId === 'string' && 'payload' in value
         && (value.type !== 'execution:result' || value.payloadUndefined === undefined || value.payloadUndefined === true);
     case 'execution:cancel':
+    case 'platform:cancel':
       return typeof value.requestId === 'string';
     case 'runtime:ready':
       return true;
@@ -99,6 +101,10 @@ export class StdioChannel {
   private readonly closeHandlers = new Set<() => void>();
   private readonly dataHandler: (chunk: Buffer) => void;
   private readonly endHandler: () => void;
+  private readonly writableErrorHandler: (error: Error) => void;
+  private readonly writableCloseHandler: () => void;
+  private readonly writableFinishHandler: () => void;
+  private readonly pendingWrites = new Set<(error: Error) => void>();
   private closed = false;
 
   constructor(private readonly readable: Readable, private readonly writable: Writable) {
@@ -114,23 +120,52 @@ export class StdioChannel {
       }
     };
     this.endHandler = () => { this.markClosed(); };
+    this.writableErrorHandler = (error) => {
+      if (this.closed) { return; }
+      for (const handler of this.errorHandlers) { handler(error); }
+      this.markClosed(error);
+    };
+    this.writableCloseHandler = () => { this.releaseWritableErrorOwner(); };
+    this.writableFinishHandler = () => { this.releaseWritableErrorOwner(); };
     readable.on('data', this.dataHandler);
     readable.on('end', this.endHandler);
+    // Writable streams emit asynchronous errors even when a particular write
+    // has a callback. Keep an owner attached for the lifetime of the channel.
+    writable.on('error', this.writableErrorHandler);
+    writable.on('close', this.writableCloseHandler);
+    writable.on('finish', this.writableFinishHandler);
   }
 
   send(frame: StdioFrame): Promise<void> {
     if (this.closed || this.writable.destroyed) { return Promise.reject(new Error('Stdio channel is closed')); }
     const data = encodeStdioFrame(frame);
-    if (this.writable.write(data)) { return Promise.resolve(); }
     return new Promise<void>((resolve, reject) => {
-      const onDrain = () => { cleanup(); resolve(); };
-      const onError = (error: Error) => { cleanup(); reject(error); };
-      const cleanup = () => {
-        this.writable.off('drain', onDrain);
-        this.writable.off('error', onError);
+      let settled = false;
+      const settle = (error?: Error) => {
+        if (settled) { return; }
+        settled = true;
+        this.pendingWrites.delete(fail);
+        if (error) { reject(error); } else { resolve(); }
       };
-      this.writable.once('drain', onDrain);
-      this.writable.once('error', onError);
+      const fail = (error: Error) => settle(error);
+      this.pendingWrites.add(fail);
+      try {
+        // The per-write callback observes asynchronous EPIPE/closed-pipe
+        // failures. The return value only reports queue backpressure; retrying
+        // would duplicate the frame, so completion is tracked by this callback.
+        this.writable.write(data, (error?: Error | null) => {
+          if (error) {
+            this.writableErrorHandler(error);
+            settle(error);
+          } else {
+            settle();
+          }
+        });
+      } catch (error) {
+        const writeError = error instanceof Error ? error : new Error(String(error));
+        this.writableErrorHandler(writeError);
+        settle(writeError);
+      }
     });
   }
 
@@ -160,15 +195,25 @@ export class StdioChannel {
     this.markClosed();
     this.readable.off('data', this.dataHandler);
     this.readable.off('end', this.endHandler);
+    // Pending writes can fail asynchronously after the protocol channel has
+    // closed. Retain the error owner until the Writable itself is done.
+    if (this.writable.closed || this.writable.writableFinished) { this.releaseWritableErrorOwner(); }
     this.handlers.clear();
     this.errorHandlers.clear();
     this.closeHandlers.clear();
   }
 
-  private markClosed(): void {
+  private markClosed(error = new Error('Stdio channel is closed')): void {
     if (this.closed) { return; }
     this.closed = true;
+    for (const fail of this.pendingWrites) { fail(error); }
     for (const handler of this.closeHandlers) { handler(); }
+  }
+
+  private releaseWritableErrorOwner(): void {
+    this.writable.off('error', this.writableErrorHandler);
+    this.writable.off('close', this.writableCloseHandler);
+    this.writable.off('finish', this.writableFinishHandler);
   }
 }
 

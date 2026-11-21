@@ -357,6 +357,25 @@ describe("kb-host project routing", () => {
       expect(reinstalledRoute.status, JSON.stringify(reinstalledBody)).toBe(200);
       expect(reinstalledBody).toMatchObject({ ok: true, data: { scope: "root" } });
 
+      // case: S-160.5 — exercise token delivery through the real child
+      // runtime, runtime guard proof, REST setup closure, and CLI executor.
+      const commandExecution = await running.fetchGateway(
+        `/api/v1/projects/${project.id}/rest/commands/execute`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            requestId: "runtime-guard-command-proof",
+            pluginId: "@kb-labs/commit",
+            commandPath: "commit plan delete",
+            input: { argv: [], flags: { json: true } },
+          }),
+        },
+      );
+      expect(commandExecution.status).toBe(200);
+      const commandEvents = (await commandExecution.text()).trim().split("\n").map((line) => JSON.parse(line) as { type: string; exitCode?: number });
+      expect(commandEvents).toContainEqual(expect.objectContaining({ type: "execution:done", exitCode: 0 }));
+
       const health = await readUxSuccessResult<HealthBody>(await running.fetchGateway("/health"));
       expect(health.projectRuntimes.runtimes).toContainEqual(
         expect.objectContaining({ projectId: project.id, state: "ready", restarts: 3 }),
@@ -755,7 +774,7 @@ describe("kb-host project routing", () => {
     const a = await registered();
     const subject = await host();
     expect(process.env.KB_STATE_DAEMON_URL).toBeUndefined();
-    const { stateDaemonUrl: stateUrl, gatewayUrl, firstLeaseStatus } = await reply(subject, a.id, "/rest/__host-services");
+    const { stateDaemonUrl: stateUrl, gatewayUrl, firstLeaseStatus, tokenInEnvironment, tokenInProcEnviron } = await reply(subject, a.id, "/rest/__host-services");
 
     if (typeof stateUrl !== "string" || typeof gatewayUrl !== "string" || typeof firstLeaseStatus !== "number") {
       throw new Error("project runtime did not receive usable host service addresses");
@@ -764,6 +783,8 @@ describe("kb-host project routing", () => {
     expect(stateUrl).not.toBe("http://127.0.0.1:7777");
     expect(gatewayUrl).toBe(`http://127.0.0.1:${subject.gatewayPort}`);
     expect(firstLeaseStatus).toBe(404);
+    expect(tokenInEnvironment).toBe(false);
+    expect(tokenInProcEnviron).toBe(false);
   });
 
   // case: S-203.15

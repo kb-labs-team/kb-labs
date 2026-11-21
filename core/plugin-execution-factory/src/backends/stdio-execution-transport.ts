@@ -38,34 +38,38 @@ export class StdioExecutionTransport implements IExecutionTransport {
     const requestId = request.executionId;
     return new Promise((resolveResult, reject) => {
       let settled = false;
+      let finishPromise: Promise<void> | undefined;
       const unsubscribers: Array<() => void> = [];
       const abortHandler = () => {
         if (settled) { return; }
-        void this.channel.send({ type: 'execution:cancel', requestId }).finally(() => this.writable.end());
+        void this.channel.send({ type: 'execution:cancel', requestId }).catch(() => {});
         fail(new AbortError());
       };
       const finish = () => {
+        if (finishPromise) { return finishPromise; }
         settled = true;
         for (const unsubscribe of unsubscribers) { unsubscribe(); }
         options?.signal?.removeEventListener('abort', abortHandler);
-        this.platformServer.close();
-        this.channel.close();
+        finishPromise = this.platformServer.close().catch(() => {}).then(() => this.channel.close());
+        return finishPromise;
       };
       const fail = (error: Error) => {
         if (settled) { return; }
-        finish();
-        reject(error);
+        void finish().then(() => {
+          if (error instanceof AbortError) { this.writable.end(); }
+          reject(error);
+        });
       };
       unsubscribers.push(this.channel.on('execution:result', (frame) => {
         if (frame.requestId !== requestId) { fail(new Error('Execution result request id does not match')); return; }
-        finish();
-        resolveResult({ data: frame.payloadUndefined ? undefined : frame.payload });
+        const data = frame.payloadUndefined ? undefined : frame.payload;
+        void finish().then(() => resolveResult({ data }));
       }));
       unsubscribers.push(this.channel.on('execution:error', (frame) => {
         if (frame.requestId !== requestId) { fail(new Error('Execution error request id does not match')); return; }
         if (!isExecutionErrorPayload(frame.payload)) { fail(new Error('Execution error frame has an invalid payload')); return; }
-        finish();
-        reject(new SerializedErrorEnvelopeError(frame.payload.envelope, frame.payload.serializedError));
+        const errorPayload = frame.payload;
+        void finish().then(() => reject(new SerializedErrorEnvelopeError(errorPayload.envelope, errorPayload.serializedError)));
       }));
       unsubscribers.push(this.channel.onError(fail));
       unsubscribers.push(this.channel.onClose(() => fail(new Error('Child control stream closed before execution completed'))));

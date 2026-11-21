@@ -69,7 +69,7 @@ describe('container stdio dispatch integration', () => {
       expect(spawnSync('docker', ['inspect', name], { encoding: 'utf8' }).status).not.toBe(0);
     } finally {
       unsubscribeLog();
-      rpcServer.close();
+      await rpcServer.close();
       channel.close();
       child.stdin.end();
       if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); }

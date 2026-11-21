@@ -23,7 +23,7 @@ A developer runs the commit plugin's potentially long LLM generation, sees progr
 
 | # | Action | Expected |
 |---|---|---|
-| S-030.1 | Run `kb commit commit --dry-run` with the staged changes | The CLI displays an active progress indicator and a generation phase message before printing the plan. |
+| S-030.1 | Run `kb commit commit` with the staged changes | In local and secured mode, the CLI displays an active progress indicator and a generation phase message before applying the human-readable plan; in secured mode progress and the final plan are streamed from the registered project runtime, including with the in-process execution backend. |
 | S-030.2 | Observe output while generation is still in progress | At least one subsequent phase update is visible before the final result. |
-| S-030.3 | Send Ctrl+C while the command is generating | The command exits in response to the interrupt, restores the terminal prompt, and does not print an uncaught worker `EPIPE` error. |
-| S-030.4 | Inspect Git history after cancellation | No commit was created by the interrupted `--dry-run` command. |
+| S-030.3 | Send Ctrl+C while the command is generating, including while its LLM adapter call is pending and after the generation phase but before the plan is applied | Cancellation reaches the host-owned execution signal, the OpenAI or VibeProxy provider request, including a host-owned adapter RPC forwarded from a worker or subprocess, and the pending generation path; Commit does not retry or fall back after cancellation. The command exits with status 130, stops its progress loader in a finally path, restores the terminal prompt, prints no uncaught worker `EPIPE` error, and does not apply or create a commit after cancellation. |
+| S-030.4 | Inspect Git history after cancellation | No commit was created by the interrupted command. |

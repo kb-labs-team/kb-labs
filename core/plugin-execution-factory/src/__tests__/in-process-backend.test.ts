@@ -13,10 +13,14 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@kb-labs/plugin-runtime', () => ({
-  runInProcess: vi.fn().mockResolvedValue({ data: 'ok', executionMeta: {} }),
-  resolveAdapterMiddlewares: vi.fn().mockResolvedValue([]),
-}));
+vi.mock('@kb-labs/plugin-runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@kb-labs/plugin-runtime')>();
+  return {
+    ...actual,
+    runInProcess: vi.fn().mockResolvedValue({ data: 'ok', executionMeta: {} }),
+    resolveAdapterMiddlewares: vi.fn().mockResolvedValue([]),
+  };
+});
 
 vi.mock('node:fs', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -28,6 +32,9 @@ import { runInProcess } from '@kb-labs/plugin-runtime';
 import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { InProcessBackend } from '../backends/in-process.js';
 import type { ExecutionRequest } from '../types.js';
+import { useLoader } from '@kb-labs/shared-cli-ui';
+import { createStreamingUI } from '@kb-labs/plugin-runtime';
+import { noopUI } from '@kb-labs/plugin-contracts';
 
 /** Mimics PlatformContainer: processExecutor is a prototype getter, not an own property. */
 class FakePlatformContainer {
@@ -99,6 +106,86 @@ describe('InProcessBackend — loggerOverride platform handoff', () => {
 
     const passedPlatform = vi.mocked(runInProcess).mock.calls[0]?.[0]?.platform;
     expect(passedPlatform).toBe(platform);
+  });
+
+  it('streams useLoader progress through the request-scoped execution log callback', async () => {
+    vi.mocked(runInProcess).mockImplementation(async () => {
+      const loader = useLoader('In-process phase');
+      loader.start();
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      loader.stop();
+      return { data: 'ok', executionMeta: {} } as never;
+    });
+    const backend = new InProcessBackend({ platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'] });
+    const logs: string[] = [];
+
+    await backend.execute(makeRequest(), { onLog: (entry) => {
+      logs.push(entry.message);
+      if (logs.length === 1) { process.stderr.write('host loader callback\n'); }
+    } });
+
+    expect(logs.join('')).toContain('In-process phase');
+    expect(logs.join('')).not.toContain('host loader callback');
+    expect(logs.join('')).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+  });
+
+  // case: S-203.26
+  it('redacts request secrets from raw console and stdout/stderr writes', async () => {
+    vi.mocked(runInProcess).mockImplementation(async () => {
+      console.log('console in-process-secret');
+      process.stdout.write('stdout in-process-secret\n');
+      process.stderr.write('stderr in-process-secret\r');
+      return { data: 'ok', executionMeta: {} } as never;
+    });
+    const backend = new InProcessBackend({ platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'] });
+    const logs: string[] = [];
+
+    await backend.execute(makeRequest({ context: { sensitiveValues: ['in-process-secret'] } }), {
+      onLog: (entry) => logs.push(entry.message),
+    });
+
+    expect(logs).toEqual([
+      'console [REDACTED]',
+      'stdout [REDACTED]',
+      'stderr [REDACTED]',
+    ]);
+    expect(logs.join('')).not.toContain('in-process-secret');
+  });
+
+  it('keeps raw plugin output off stdout in JSON mode and does not recapture the host callback', async () => {
+    vi.mocked(runInProcess).mockImplementation(async () => {
+      console.log('plugin diagnostic');
+      return { data: { ok: true }, executionMeta: {} } as never;
+    });
+    const backend = new InProcessBackend({ platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'] });
+    const logs: Array<{ message: string; stream: string }> = [];
+
+    await backend.execute(makeRequest({ input: { argv: [], flags: { json: true } } }), {
+      onLog: (entry) => {
+        logs.push({ message: entry.message, stream: entry.stream });
+        // A host-side callback that writes while handling output must not be
+        // intercepted as a second plugin write by the same ALS scope.
+        if (logs.length === 1) { process.stderr.write('host callback output\n'); }
+      },
+    });
+
+    expect(logs).toEqual([{ message: 'plugin diagnostic', stream: 'stderr' }]);
+  });
+
+  // case: S-030.1
+  it('streams the final human plan through the host callback when the base UI is noop', async () => {
+    vi.mocked(runInProcess).mockImplementation(async (input) => {
+      const ui = createStreamingUI(noopUI, input.eventEmitter!);
+      ui.success('Commit plan generated', { sections: [{ header: 'Planned Commits', items: ['feat: host-owned output'] }] });
+      return { data: { applied: false }, executionMeta: {} } as never;
+    });
+    const backend = new InProcessBackend({ platform: new FakePlatformContainer() as unknown as ConstructorParameters<typeof InProcessBackend>[0]['platform'] });
+    const output: string[] = [];
+
+    await backend.execute(makeRequest(), { onLog: (entry) => output.push(entry.message) });
+
+    expect(output.join('\n')).toContain('Commit plan generated');
+    expect(output.join('\n')).toContain('feat: host-owned output');
   });
 
   it('preserves a named handler export through in-process dispatch', async () => {

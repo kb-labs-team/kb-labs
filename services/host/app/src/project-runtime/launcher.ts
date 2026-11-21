@@ -5,8 +5,8 @@
  *
  * - Address: a loopback ephemeral port chosen here; nothing is written in
  *   config and no `KB_NET_OFFSET` is involved.
- * - Secret: a fresh random token per process, passed through the environment
- *   (argv is visible to every local user) and demanded by the runtime on
+ * - Secret: a fresh random token per process, passed through a private pipe
+ *   (never argv or the initial process environment) and demanded by the runtime on
  *   every request.
  * - No orphans: the child leads its own process group, and `stop()` signals
  *   the whole group (a taskkill tree on Windows), so processes the runtime
@@ -268,11 +268,15 @@ export function createChildProcessLauncher(
       for (const name of STRIPPED_ENV) {
         delete env[name];
       }
+      // Old launchers or caller-provided base environments must never place
+      // the guard credential in the child's initial environment (visible via
+      // /proc/<pid>/environ on Linux).
+      delete env[RUNTIME_TOKEN_ENV];
       Object.assign(env, options.env, {
         KB_PROJECT_ROOT: project.root,
-        [RUNTIME_TOKEN_ENV]: token,
         ...(previousExitCause ? { KB_RUNTIME_PREVIOUS_EXIT_CAUSE: previousExitCause } : {}),
       });
+      delete env[RUNTIME_TOKEN_ENV];
 
       const child = spawn(
         options.execPath ?? process.execPath,
@@ -291,7 +295,7 @@ export function createChildProcessLauncher(
         {
           cwd: project.root,
           env,
-          stdio: ["ignore", "pipe", "pipe"],
+          stdio: ["ignore", "pipe", "pipe", "pipe"],
           detached: !isWindows(),
           windowsHide: true,
         },
@@ -300,6 +304,15 @@ export function createChildProcessLauncher(
         child.once("spawn", () => resolve());
         child.once("error", reject);
       });
+      // FD 3 is a one-shot credential channel. The runtime reads until EOF,
+      // closes it, and never exposes the token through process.env or argv.
+      const credentialPipe = child.stdio[3];
+      if (!credentialPipe || typeof credentialPipe === "number" || !("end" in credentialPipe) || typeof credentialPipe.end !== "function") {
+        child.kill();
+        throw new Error("Project runtime credential pipe was not created");
+      }
+      credentialPipe.on("error", () => undefined);
+      credentialPipe.end(`${token}\n`);
       // After a successful spawn, later errors (a failed kill) are not fatal.
       child.on("error", () => undefined);
       return new ChildRuntime(

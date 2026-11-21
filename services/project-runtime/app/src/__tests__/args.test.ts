@@ -61,6 +61,7 @@ describe("parseRuntimeArgs", () => {
         "--parent-pid", "4242",
       ],
       { [RUNTIME_TOKEN_ENV]: TOKEN },
+      TOKEN,
     );
 
     expect(args).toEqual({
@@ -78,6 +79,7 @@ describe("parseRuntimeArgs", () => {
     const args = await parseRuntimeArgs(
       ["--project-root", `${root}/`, "--project-id", id, "--listen", "127.0.0.1:5123"],
       { [RUNTIME_TOKEN_ENV]: TOKEN },
+      TOKEN,
     );
 
     expect(args.projectRoot).toBe(root);
@@ -91,6 +93,7 @@ describe("parseRuntimeArgs", () => {
       parseRuntimeArgs(
         ["--project-root", root, "--project-id", "prj_0000000000000000", "--listen", "127.0.0.1:5123"],
         { [RUNTIME_TOKEN_ENV]: TOKEN },
+        TOKEN,
       ),
     ).rejects.toThrow(/does not match the project root/);
   });
@@ -101,29 +104,29 @@ describe("parseRuntimeArgs", () => {
     const env = { [RUNTIME_TOKEN_ENV]: TOKEN };
 
     await expect(
-      parseRuntimeArgs(["--project-root", "relative/dir", ...base], env),
+      parseRuntimeArgs(["--project-root", "relative/dir", ...base], env, TOKEN),
     ).rejects.toThrow(/absolute path/);
     await writeFile(join(root, "file.txt"), "x");
     await expect(
-      parseRuntimeArgs(["--project-root", join(root, "file.txt"), ...base], env),
+      parseRuntimeArgs(["--project-root", join(root, "file.txt"), ...base], env, TOKEN),
     ).rejects.toThrow(/not a directory/);
     await expect(
-      parseRuntimeArgs(["--project-root", join(root, "missing"), ...base], env),
+      parseRuntimeArgs(["--project-root", join(root, "missing"), ...base], env, TOKEN),
     ).rejects.toThrow(/not a directory/);
   });
 
-  it("requires the secret in the environment, and a long enough one", async () => {
+  it("requires a valid token supplied out of band, ignoring environment values", async () => {
     const { root, id } = await project();
     const argv = ["--project-root", root, "--project-id", id, "--listen", "127.0.0.1:5123"];
 
-    await expect(parseRuntimeArgs(argv, {})).rejects.toThrow(RUNTIME_TOKEN_ENV);
+    await expect(parseRuntimeArgs(argv, {}, undefined)).rejects.toThrow(/FD 3/);
     await expect(
-      parseRuntimeArgs(argv, { [RUNTIME_TOKEN_ENV]: "short" }),
+      parseRuntimeArgs(argv, { [RUNTIME_TOKEN_ENV]: TOKEN }, "short"),
     ).rejects.toThrow(/at least 16/);
   });
 
   it("names the missing flag", async () => {
-    await expect(parseRuntimeArgs([], { [RUNTIME_TOKEN_ENV]: TOKEN })).rejects.toThrow(
+    await expect(parseRuntimeArgs([], { [RUNTIME_TOKEN_ENV]: TOKEN }, TOKEN)).rejects.toThrow(
       "--project-root is required",
     );
   });

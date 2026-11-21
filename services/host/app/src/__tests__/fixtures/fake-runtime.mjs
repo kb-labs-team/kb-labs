@@ -1,5 +1,5 @@
 // A stand-in for `kb-project-runtime` that speaks the same wire contract
-// (args, KB_PROJECT_RUNTIME_TOKEN, x-kb-runtime-token, /__runtime/health,
+// (args, FD 3 credential, x-kb-runtime-token, /__runtime/health,
 // /<module>/<path> forwarding) without launching a platform. Behavior is
 // driven by `fake-runtime.json` in the project root so each test project can
 // misbehave differently.
@@ -17,7 +17,7 @@ function arg(name) {
 const projectRoot = arg("--project-root");
 const projectId = arg("--project-id");
 const [host, portText] = arg("--listen").split(":");
-const token = process.env.KB_PROJECT_RUNTIME_TOKEN;
+const token = readFileSync(3, "utf8").trim();
 
 let behavior = {};
 try {
@@ -57,11 +57,17 @@ const server = createServer((req, res) => {
     if (url.pathname === "/rest/api/v1/__host-services") {
       const stateDaemonUrl = process.env.KB_STATE_DAEMON_URL;
       const gatewayUrl = process.env.KB_GATEWAY_URL;
+      let tokenInProcEnviron = false;
+      try {
+        tokenInProcEnviron = readFileSync("/proc/self/environ", "utf8").includes("KB_PROJECT_RUNTIME_TOKEN=");
+      } catch {
+        // Linux-only assertion; the environment check still runs elsewhere.
+      }
       const firstLeaseStatus = stateDaemonUrl
         ? (await fetch(`${stateDaemonUrl}/state/${encodeURIComponent("kb:integration-lease-probe")}`)).status
         : null;
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ stateDaemonUrl: stateDaemonUrl ?? null, gatewayUrl: gatewayUrl ?? null, firstLeaseStatus }));
+      res.end(JSON.stringify({ stateDaemonUrl: stateDaemonUrl ?? null, gatewayUrl: gatewayUrl ?? null, firstLeaseStatus, tokenInEnvironment: Boolean(process.env.KB_PROJECT_RUNTIME_TOKEN), tokenInProcEnviron }));
       return;
     }
     if (url.pathname === "/rest/api/v1/__crash") {

@@ -423,6 +423,11 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         if (not plan or plan.get("metadata", {}).get("llmUsed") is not True or payload.get("applied") is not False
                 or after != before_s160 or after_status != before_s160_status):
             raise RuntimeError("S-160.1 expected JSON preview output without changing Git state")
+        if journey.mode == "secured":
+            envelope = read_ux_cli_result(result)
+            execution = envelope.get("meta", {}).get("execution") if isinstance(envelope, dict) else None
+            if not isinstance(execution, dict) or execution.get("owner") != "project-runtime" or not execution.get("projectId") or execution.get("mode") not in {"worker-pool", "subprocess", "in-process", "container"}:
+                raise RuntimeError("S-160.1 secured execution did not report its host-owned project runtime receipt")
 
     journey.step("preview the deterministic fixture Commit plan", "plugin-author",
                  s160_dry_run, cases=["S-160.1"])
@@ -485,7 +490,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
 
     def s030_progress() -> str:
         seen: list[str] = []
-        command = kb_command([ "commit", "commit", "--dry-run"], executable=str(kb_path))
+        command = kb_command([ "commit", "commit"], executable=str(kb_path))
         with invocation_context(step_id="S-030.1"):
             result, _ = run_pty_command(command, cwd=project, env=env, timeout=90,
                                         on_output=lambda output: seen.append(output) or None)
@@ -494,8 +499,9 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             r"Analyzing changes|Analyzing with native tools|Re-analyzing with diff context|Plan generated|Generated commit plan",
             text, re.I,
         )]
-        if result.returncode != 0 or len(phases) < 3 or not re.search(r"[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]", text):
-            raise RuntimeError("S-030.1 did not show active generation progress before a final plan")
+        if (result.returncode != 0 or len(phases) < 3 or not re.search(r"[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]", text)
+                or "Commits created successfully" not in text):
+            raise RuntimeError("S-030.1 did not show active generation progress and the applied human plan")
         return text
 
     progress_text = ""
@@ -517,7 +523,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
 
     def s030_cancel() -> None:
         sent_interrupt = False
-        command = kb_command([ "commit", "commit", "--dry-run"], executable=str(kb_path))
+        command = kb_command([ "commit", "commit"], executable=str(kb_path))
         def interrupt_on_generation(output: str) -> str | None:
             nonlocal sent_interrupt
             if not sent_interrupt and re.search(r"Analyzing with native tools|Re-analyzing with diff context", output, re.I):
@@ -528,15 +534,15 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             result, _ = run_pty_command(command, cwd=project, env=env, timeout=90,
                                         on_output=interrupt_on_generation)
         transcript = result.stdout
-        if not sent_interrupt or result.returncode == 0 or "EPIPE" in transcript:
-            raise RuntimeError("S-030.3 did not interrupt active generation cleanly without worker EPIPE")
+        if not sent_interrupt or result.returncode != 130 or "EPIPE" in transcript:
+            raise RuntimeError("S-030.3 did not cancel host-owned generation cleanly before apply")
 
     journey.step("interrupt active Commit generation", "plugin-author", s030_cancel, cases=["S-030.3"])
 
     def s030_history() -> None:
         after = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
         if before_cancel != after:
-            raise RuntimeError("S-030.4 found a Git commit created by the interrupted dry-run")
+            raise RuntimeError("S-030.4 found a Git commit created after cancellation")
 
     journey.step("verify cancellation did not create a commit", "plugin-author",
                  s030_history, cases=["S-030.4"])

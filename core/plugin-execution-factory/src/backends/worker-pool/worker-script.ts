@@ -23,9 +23,11 @@ import type {
   UIPromptResultMessage,
   ProcessStartedAckMessage,
 } from './types.js';
-import { SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import { SerializedErrorEnvelopeError, withProcessSensitiveValues } from '@kb-labs/core-platform';
 import type { ExecutionError } from '@kb-labs/core-platform';
 import { normalizeExecutionFailure } from '../../utils.js';
+import { createWorkerOutputCapture, redactSensitiveValue } from './output-capture.js';
+import { withWorkerRequestOutputScope } from './request-output-scope.js';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
 import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
 import type { ITransport } from '@kb-labs/core-ipc';
@@ -168,6 +170,9 @@ function createStdoutUI(currentRequestId?: string): UIFacade {
  */
 async function handleExecute(message: ExecuteMessage): Promise<void> {
   const { requestId, request, timeoutMs: _timeoutMs } = message;
+  const sensitiveValues = Array.isArray(request.context?.sensitiveValues)
+    ? request.context.sensitiveValues.filter((value): value is string => typeof value === 'string')
+    : [];
   const startMs = Date.now();
   try {
     // Dynamic import to avoid loading at startup
@@ -220,12 +225,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
       ? inputFlagsRaw as Record<string, unknown>
       : {};
     const jsonMode = Boolean(inputFlags['json']);
-    if (jsonMode) { setJsonMode(true); }
-
-    // Capture original write before any interception (used by debug + makeCapture).
-    type WriteFn = (chunk: string | Uint8Array, encoding?: BufferEncoding | ((err?: Error | null) => void), cb?: (err?: Error | null) => void) => boolean;
-    const origStdoutWrite = process.stdout.write.bind(process.stdout) as WriteFn;
-    const origStderrWrite = process.stderr.write.bind(process.stderr) as WriteFn;
+    setJsonMode(jsonMode);
 
     // eventEmitter sends log lines to parent pool via IPC.
     // Routes by event name — 'log.line' (ui/shell) vs 'logger.line' (ctx.logger.*).
@@ -282,17 +282,10 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
       }
     };
 
-    const makeCapture = (orig: WriteFn, stream: 'stdout' | 'stderr'): WriteFn =>
-      (chunk, encoding?, cb?) => {
-        sendRawLine(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'), stream);
-        return orig(chunk, encoding as BufferEncoding, cb);
-      };
-    process.stdout.write = makeCapture(origStdoutWrite, 'stdout') as typeof process.stdout.write;
-    process.stderr.write = makeCapture(origStderrWrite, 'stderr') as typeof process.stderr.write;
-
+    const stdoutCapture = createWorkerOutputCapture('stdout', sendRawLine, sensitiveValues);
+    const stderrCapture = createWorkerOutputCapture('stderr', sendRawLine, sensitiveValues);
     let result!: Awaited<ReturnType<typeof runInProcess>>;
-    try {
-      result = await runInProcess({
+    result = await withWorkerRequestOutputScope(stdoutCapture, stderrCapture, () => withProcessSensitiveValues(sensitiveValues, () => runInProcess({
         descriptor: request.descriptor,
         platform,
         ui,
@@ -303,11 +296,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
         platformRoot: request.platformRoot,
         environment: request.env,
         adapterMiddlewares,
-      });
-    } finally {
-      process.stdout.write = origStdoutWrite;
-      process.stderr.write = origStderrWrite;
-    }
+      })));
 
     const elapsedMs = Date.now() - startMs;
 
@@ -328,7 +317,9 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     process.send!(resultMessage);
   } catch (error) {
-    sendError(requestId, normalizeExecutionFailure(error, request).error);
+    sendError(requestId, normalizeExecutionFailure(error, request).error, sensitiveValues);
+  } finally {
+    setJsonMode(false);
   }
 }
 
@@ -345,8 +336,8 @@ function handleMiddlewares(message: MiddlewaresInitMessage): void {
 /**
  * Send error message to parent.
  */
-function sendError(requestId: string, error: ExecutionError): void {
-  process.send!({ type: 'error', requestId, error } as ErrorMessage);
+function sendError(requestId: string, error: ExecutionError, sensitiveValues: readonly string[] = []): void {
+  process.send!({ type: 'error', requestId, error: redactSensitiveValue(error, sensitiveValues) } as ErrorMessage);
 }
 
 function handleHealth(): void {

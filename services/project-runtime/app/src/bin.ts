@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { parseRuntimeArgs, RuntimeArgsError } from "./args.js";
+import { parseRuntimeArgs, readRuntimeTokenFromFd, RuntimeArgsError } from "./args.js";
 import { createProjectRuntimeConfig } from "./runtime.js";
 import { runHost } from "@kb-labs/shared-daemon";
 import { watchParent } from "./watchdog.js";
@@ -9,7 +9,7 @@ import {
 } from "@kb-labs/core-project-registry";
 
 async function main(): Promise<void> {
-  const args = await parseRuntimeArgs(process.argv.slice(2), process.env);
+  const args = await parseRuntimeArgs(process.argv.slice(2), process.env, readRuntimeTokenFromFd(3));
 
   // The platform resolves its roots from the environment first; make the
   // environment agree with the project this runtime was started for.

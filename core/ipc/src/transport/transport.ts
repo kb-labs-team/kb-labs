@@ -79,7 +79,7 @@ export interface ITransport {
    * @throws TimeoutError if timeout exceeded
    * @throws SerializationError if message cannot be serialized
    */
-  send(call: AdapterCall): Promise<AdapterResponse>;
+  send(call: AdapterCall, signal?: AbortSignal): Promise<AdapterResponse>;
 
   /**
    * Send a fire-and-forget message (no response expected).
@@ -183,4 +183,13 @@ export interface PendingRequest {
   resolve: (response: AdapterResponse) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  signal?: AbortSignal;
+  abortHandler?: () => void;
+}
+
+export function createTransportAbortError(signal?: AbortSignal): Error {
+  if (signal?.reason instanceof Error) { return signal.reason; }
+  const error = new Error('Adapter call aborted');
+  error.name = 'AbortError';
+  return error;
 }
