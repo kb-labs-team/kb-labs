@@ -313,6 +313,19 @@ class MarketplaceStepTests(unittest.TestCase):
                 json.dumps({"schema": "kb.marketplace/3", "plugins": {}}))
             (workspace / "plugins").mkdir()
             (workspace / "e2e").mkdir()
+            installed_platform = root / "installed-platform"
+            installed_adapter = installed_platform / "node_modules" / "@kb-labs" / "adapters-pino"
+            installed_adapter.mkdir(parents=True)
+            (installed_adapter / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/adapters-pino", "version": "2.120.1",
+            }))
+            (installed_platform / ".kb" / "v2").mkdir(parents=True)
+            (installed_platform / ".kb" / "v2" / "installed-provenance.json").write_text(json.dumps({
+                "schema": "kb.create.installed-provenance/v1", "packages": [{
+                    "name": "@kb-labs/adapters-pino", "version": "2.120.1",
+                    "installedPath": "node_modules/@kb-labs/adapters-pino",
+                }],
+            }))
             calls = []
 
             def runner(command, *, cwd, env, capture_output, text, timeout, input=None):
@@ -333,6 +346,9 @@ class MarketplaceStepTests(unittest.TestCase):
                     self.assertEqual((Path(env["KB_PLATFORM_ROOT"]) / "plugins").resolve(),
                                      (workspace / "plugins").resolve())
                     self.assertTrue((Path(env["KB_PLATFORM_ROOT"]) / ".kb" / "marketplace.lock").is_file())
+                    staged_adapter = Path(env["KB_PLATFORM_ROOT"]) / "node_modules" / "@kb-labs" / "adapters-pino"
+                    self.assertTrue(staged_adapter.is_symlink())
+                    self.assertEqual(staged_adapter.resolve(), installed_adapter.resolve())
                     return subprocess.CompletedProcess(command, 0, json.dumps({
                         "ok": True, "data": {"version": "2.120.1"},
                     }), "")
@@ -352,6 +368,7 @@ class MarketplaceStepTests(unittest.TestCase):
             env = {"HOME": str(root), "KB_JOURNEY_WORKSPACE_ROOT": str(workspace),
                    "KB_JOURNEY_MARKETPLACE_PUBLISH_URL": "http://registry.test/api/v1",
                    "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey",
+                   "KB_JOURNEY_PLATFORM_ROOT": str(root / "installed-root"),
                    "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured",
                    "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
                    "KB_JOURNEY_ADMIN_PASSWORD": "fixture-admin-password"}
@@ -365,6 +382,7 @@ class MarketplaceStepTests(unittest.TestCase):
 
             with patch("marketplace_steps.wait_for_marketplace_ready"), \
                     patch("marketplace_steps._installed_gateway_url", return_value="http://127.0.0.1:4317"), \
+                    patch("marketplace_steps.active_platform_root", return_value=installed_platform), \
                     patch("marketplace_steps._assert_registry_gateway_config"), \
                     patch("marketplace_steps.open_http", side_effect=fake_open_http), \
                     patch("installed_fixture.write_local_access_mode", side_effect=lambda platform_root, _source_config: platform_root), \

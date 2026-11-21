@@ -106,9 +106,14 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
         if not email or not password:
             raise RuntimeError("secured Registry fixture publishing needs the journey administrator credentials")
         gateway_login = (_installed_gateway_url(env), email, password)
+    journey_platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
+    if not journey_platform_root:
+        raise RuntimeError("Registry fixture publishing needs the active installed platform root")
     return run_hermetic_cli(
         command, cwd=workspace_root, env=publish_env, runner=runner,
-        workspace_root=workspace_root, gateway_login=gateway_login,
+        workspace_root=workspace_root,
+        installed_platform_root=active_platform_root(Path(journey_platform_root)),
+        gateway_login=gateway_login,
     )
 
 
