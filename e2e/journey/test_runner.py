@@ -674,7 +674,7 @@ thread.join()
                 patch.object(service_runner, "service_api_token", return_value="test-session-token"), \
                 patch.object(runner, "verify_project_mcp") as verify:
             runner.verify_selected_project_mcp(graph, env)
-        prepare.assert_called_once_with(graph, "secured")
+        prepare.assert_called_once_with(graph, "secured", env=env)
         verify.assert_called_once_with(env, False, runner.DEFAULT_ENABLED_SERVICES,
                                        token="test-session-token")
 
