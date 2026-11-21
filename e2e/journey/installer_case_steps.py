@@ -1157,13 +1157,16 @@ def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
             _data(run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                "--platform-channel", "stable", "--platform-root", str(root)]),
                   "online cache priming apply")
-            plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
-                                               "--platform-channel", "stable", "--offline",
-                                               "--platform-root", str(root)], "offline plan").get("plan", {})
-            artifacts = plan.get("artifacts", [])
-            if (plan.get("request", {}).get("source") != "offline" or not artifacts
-                    or any(item.get("resolvedFrom") != "cache" or item.get("resolvedUrl") for item in artifacts)):
-                raise RuntimeError("offline plan omitted cache provenance or claimed registry/network resolution")
+            current_link = root / layout_value("currentLink")
+            spellings = [root, current_link, current_link.resolve(strict=True)]
+            for spelling in spellings:
+                plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
+                                                   "--platform-channel", "stable", "--offline",
+                                                   "--platform-root", str(spelling)], "offline plan").get("plan", {})
+                artifacts = plan.get("artifacts", [])
+                if (plan.get("request", {}).get("source") != "offline" or not artifacts
+                        or any(item.get("resolvedFrom") != "cache" or item.get("resolvedUrl") for item in artifacts)):
+                    raise RuntimeError(f"offline plan for {spelling} omitted cache provenance or claimed registry/network resolution")
 
     journey.step("resolve a fresh request from the local artifact cache", "platform.install", offline_plan,
                  cases=["S-181.4"])
