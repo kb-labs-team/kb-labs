@@ -1,9 +1,9 @@
 const RUN_STATES = ['queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'dlq'] as const
 const JOB_STATES = [
   'queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'interrupted',
-  'waiting_approval', 'waiting_child',
+  'waiting_approval', 'waiting_child', 'waiting',
 ] as const
-const STEP_STATES = [...RUN_STATES, 'waiting_approval', 'waiting_child'] as const
+const STEP_STATES = [...RUN_STATES, 'waiting_approval', 'waiting_child', 'waiting'] as const
 const JOB_PRIORITIES = ['high', 'normal', 'low'] as const
 
 export { RUN_STATES, JOB_STATES, STEP_STATES, JOB_PRIORITIES }
@@ -51,6 +51,7 @@ export const EVENT_NAMES = {
     failed: 'step.failed',
     cancelled: 'step.cancelled',
     skipped: 'step.skipped',
+    waiting: 'step.waiting',
     waitingApproval: 'step.waitingApproval',
     waitingChild: 'step.waitingChild',
   },

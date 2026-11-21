@@ -1,3 +1,4 @@
+import { WORKFLOW_ACTIVITY_META_KEY } from '@kb-labs/workflow-contracts'
 /**
  * Unit tests for the shell built-in output extraction.
  *
@@ -435,7 +436,7 @@ describe('shellHandler — execution-boundary cancellation', () => {
         command: `node -e "process.stderr.write('discovery diagnostic\\n')"`,
       })
 
-      expect(result).toMatchObject({ exitCode: 0, ok: true, stderr: 'discovery diagnostic\n' })
+      expect(result.workflowStepResult).toMatchObject({ exitCode: 0, ok: true, stderr: 'discovery diagnostic\n' })
       expect(ctx.api.events.emit).toHaveBeenCalledWith('log.line', {
         stream: 'stderr',
         line: 'discovery diagnostic',
@@ -485,7 +486,7 @@ describe('shellHandler environment isolation', () => {
         env: { DECLARED_VALUE: 'declared' },
       })
 
-      expect(result.stdout).toBe('absent')
+      expect(result.workflowStepResult.stdout).toBe('absent')
       expect(JSON.stringify(logger.messages)).not.toContain(sentinel)
       expect(ctx.api.events.emit).toHaveBeenCalledWith('log.line', expect.objectContaining({ line: 'absent' }))
     } finally {
@@ -672,7 +673,7 @@ describe('shellHandler — durable per-line log persistence (batched)', () => {
 
       // The live-streaming path must still fire once per line, unchanged.
       const lineEmits = (ctx.api.events.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (call) => call[0] === 'log.line',
+        (call) => call[0] === 'log.line' && call[1]?.meta?.[WORKFLOW_ACTIVITY_META_KEY] !== true,
       )
       expect(lineEmits).toHaveLength(3)
     } finally {
@@ -699,7 +700,7 @@ describe('shellHandler — durable per-line log persistence (batched)', () => {
 
       // Still exactly one live-stream emit per line.
       const lineEmits = (ctx.api.events.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (call) => call[0] === 'log.line',
+        (call) => call[0] === 'log.line' && call[1]?.meta?.[WORKFLOW_ACTIVITY_META_KEY] !== true,
       )
       expect(lineEmits).toHaveLength(120)
     } finally {

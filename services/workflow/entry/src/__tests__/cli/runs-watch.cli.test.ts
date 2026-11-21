@@ -55,6 +55,22 @@ afterEach(() => {
 });
 
 describe('workflow:runs watch', () => {
+  // case: S-290.2
+  it('renders the reason, dependency, and until time for an external wait', async () => {
+    mockFetchWithSse([{
+      type: 'step.waiting',
+      stepId: 'step-uuid',
+      payload: { status: 'waiting', reason: 'upstream deploy', dependency: 'release/api', until: '2026-11-10T12:30:00.000Z' },
+    }]);
+
+    const { ui, captured } = createCapturedUI();
+    await runsWatchCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: {}, argv: ['r-001'] }));
+
+    expect(captured.writes.join('\n')).toContain('upstream deploy');
+    expect(captured.writes.join('\n')).toContain('release/api');
+    expect(captured.writes.join('\n')).toContain('2026-11-10T12:30:00.000Z');
+  });
+
   // case: S-027.2
   it('renders active snapshot steps and later step transitions with their workflow IDs', async () => {
     mockFetchWithSse([
