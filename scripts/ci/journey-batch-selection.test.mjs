@@ -41,6 +41,14 @@ test('PR and dispatch run the full gating batch, never an empty --cases', () => 
   }
 });
 
+test('journey runs use independent concurrency groups for each PR and dispatch', () => {
+  assert.equal(
+    workflow.concurrency.group,
+    'journey-batch-${{ github.event.pull_request.number || github.run_id }}',
+  );
+  assert.equal(workflow.concurrency['cancel-in-progress'], false);
+});
+
 // case: S-262.8
 test('only an explicit case selection skips the shared generic unit suite', () => {
   const targeted = resolveSelection('push', `batch/t1/cases/${encode('S-268.1')}`);
