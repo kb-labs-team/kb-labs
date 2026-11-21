@@ -1386,7 +1386,8 @@ def main() -> int:
             return None
 
         graph.flow("Registry ordered-source Marketplace assertions", "marketplace-registry",
-                   "marketplace-registry", registry_marketplace_lane, record_empty_success=False)
+                   "marketplace-registry", registry_marketplace_lane, record_empty_success=False,
+                   runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
         export_project_state_to_child_environment(graph)
         declared_steps = list(checks(args.mode, graph))
         run_service_steps(journey, declared_steps, args.mode, graph=graph)

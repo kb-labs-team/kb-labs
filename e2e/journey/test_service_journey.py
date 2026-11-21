@@ -534,6 +534,25 @@ class ServiceJourneyTests(unittest.TestCase):
             {"claimId": "S-010.1", "kind": "journey", "status": "PASS"},
         ])
 
+    def test_registry_marketplace_flow_is_scoped_to_registry_runners(self):
+        service_runner_path = Path(__file__).with_name("service_runner.py")
+        tree = ast.parse(service_runner_path.read_text(encoding="utf-8"))
+        calls = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute)
+                 and node.func.attr == "flow"
+                 and node.args
+                 and isinstance(node.args[0], ast.Constant)
+                 and node.args[0].value == "Registry ordered-source Marketplace assertions"]
+
+        self.assertEqual(len(calls), 1)
+        runners = next(keyword.value for keyword in calls[0].keywords if keyword.arg == "runners")
+        self.assertIsInstance(runners, ast.Tuple)
+        self.assertEqual(
+            tuple(element.value for element in runners.elts if isinstance(element, ast.Constant)),
+            ("service-marketplace-registry:local", "service-marketplace-registry:secured"),
+        )
+
     def test_flow_exception_and_blocked_only_run_have_named_first_failure(self):
         selected = "S-010.1"
         with patch.dict(os.environ, {
