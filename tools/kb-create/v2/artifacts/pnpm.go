@@ -83,7 +83,15 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 				}
 			}
 			if err != nil {
-				return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s.", toolchain.SupportedPnpm, source), "Check the default npm registry and rerun the install command.", err)
+				failure := contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s.", toolchain.SupportedPnpm, source), "Check the default npm registry and rerun the install command.", err)
+				var commandFailure *toolchain.CommandError
+				if errors.As(err, &commandFailure) {
+					failure.Meta = map[string]any{
+						"packageManagerExitCode":   fmt.Sprint(commandFailure.ExitCode),
+						"packageManagerStderrTail": commandFailure.StderrTail,
+					}
+				}
+				return failure
 			}
 		}
 		executable = node
