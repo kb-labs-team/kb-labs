@@ -1,6 +1,7 @@
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
-import type { ChildProcess } from 'node:child_process';
+import { fork, type ChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import { ChildIPCServer, IPCTransport, LLMProxy, createStdioChannel, StdioPlatformServer, StdioTransport } from '../index.js';
@@ -156,7 +157,10 @@ describe('cancellable host adapter RPC', () => {
     Object.defineProperty(process, 'send', {
       configurable: true,
       writable: true,
-      value: (message: unknown) => { queueMicrotask(() => child.emit('message', message)); return true; },
+      value: (message: unknown, _handle: unknown, _options: unknown, callback?: (error: Error | null) => void) => {
+        queueMicrotask(() => { child.emit('message', message); callback?.(null); });
+        return true;
+      },
     });
     let providerSignal: AbortSignal | undefined;
     const platform = {
@@ -191,7 +195,10 @@ describe('cancellable host adapter RPC', () => {
     Object.defineProperty(process, 'send', {
       configurable: true,
       writable: true,
-      value: (message: unknown) => { queueMicrotask(() => child.emit('message', message)); return false; },
+      value: (message: unknown, _handle: unknown, _options: unknown, callback?: (error: Error | null) => void) => {
+        queueMicrotask(() => { child.emit('message', message); callback?.(null); });
+        return false;
+      },
     });
     let providerSignal: AbortSignal | undefined;
     let providerCalls = 0;
@@ -221,6 +228,61 @@ describe('cancellable host adapter RPC', () => {
       server.stop();
       if (processSendDescriptor) { Object.defineProperty(process, 'send', processSendDescriptor); }
       else { Reflect.deleteProperty(process, 'send'); }
+    }
+  });
+
+  it('rejects a write on a real child pipe closed by the receiving process', async () => {
+    const child = fork(fileURLToPath(new URL('./fixtures/close-stdin-child.cjs', import.meta.url)), [], {
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+    });
+    const channel = createStdioChannel(child.stdout!, child.stdin!);
+    const channelError = new Promise<Error>((resolve) => channel.onError(resolve));
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.stdout!.once('data', () => resolve());
+        child.once('error', reject);
+        child.once('exit', (code) => { if (code !== 0) { reject(new Error(`Pipe fixture exited with ${code}`)); } });
+      });
+      await expect(channel.send({ type: 'runtime:ready' })).rejects.toBeInstanceOf(Error);
+      await expect(channelError).resolves.toBeInstanceOf(Error);
+      expect(() => channel.close()).not.toThrow();
+    } finally {
+      channel.close();
+      if (child.connected) { child.disconnect(); }
+      child.kill();
+    }
+  });
+
+  it('rejects process IPC sends through the callback after a real child disconnects', async () => {
+    const processSendDescriptor = Object.getOwnPropertyDescriptor(process, 'send');
+    const child = fork(fileURLToPath(new URL('./fixtures/disconnect-ipc-child.cjs', import.meta.url)), [], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+    const ready = new Promise<void>((resolve, reject) => {
+      child.once('message', (message: unknown) => {
+        if (message === 'ready') { resolve(); } else { reject(new Error('IPC fixture sent an unexpected message')); }
+      });
+      child.once('error', reject);
+    });
+    const disconnected = new Promise<void>((resolve) => child.once('disconnect', resolve));
+    const transport = new IPCTransport({ timeout: 5_000 });
+    Object.defineProperty(process, 'send', {
+      configurable: true,
+      writable: true,
+      value: child.send.bind(child),
+    });
+
+    try {
+      await ready;
+      await disconnected;
+      await expect(new LLMProxy(transport).complete('disconnected child')).rejects.toMatchObject({ name: 'TransportError' });
+    } finally {
+      await transport.close();
+      if (processSendDescriptor) { Object.defineProperty(process, 'send', processSendDescriptor); }
+      else { Reflect.deleteProperty(process, 'send'); }
+      if (child.connected) { child.disconnect(); }
+      child.kill();
     }
   });
 });

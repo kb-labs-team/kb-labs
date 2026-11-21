@@ -127,28 +127,34 @@ export class IPCTransport implements ITransport {
   private async sendCall(call: AdapterCall): Promise<void> {
     if (!this.pending.has(call.requestId)) { return; }
 
-    try {
-      // `false` means the IPC channel accepted the message but its send queue
-      // is backpressured. Retrying would deliver the same call twice.
-      process.send!(call);
-
-    } catch (error) {
-      // Synchronous error (e.g., message too large, serialization error, channel closed)
-      if (error instanceof TransportError) {
-        throw error;
+    await new Promise<void>((resolve, reject) => {
+      try {
+        // `false` means queued under backpressure, not rejected. The callback
+        // owns asynchronous disconnect/EPIPE errors; never retry this message.
+        process.send!(call, undefined, undefined, (error) => {
+          if (!error) { resolve(); return; }
+          reject(new TransportError(`Failed to send IPC message: ${error.message}`, error));
+        });
+      } catch (error) {
+        // Synchronous error (e.g., serialization failure or closed channel).
+        const cause = error instanceof Error ? error : new Error(String(error));
+        reject(new TransportError(`Failed to send IPC message: ${cause.message}`, cause));
       }
-      throw new TransportError(`Failed to send IPC message: ${error}`, error as Error);
-    }
+    });
   }
 
   sendMessage(msg: unknown): void {
     if (!this.closed && process.send) {
-      process.send(msg);
+      // Push messages are best-effort. The callback prevents Node from
+      // surfacing a later channel error as an unhandled process error.
+      process.send(msg, undefined, undefined, () => {});
     }
   }
 
   private sendCancel(requestId: string): void {
-    try { process.send?.({ type: 'adapter:cancel', requestId }); } catch { /* disconnected parent has already stopped dispatch */ }
+    try {
+      process.send?.({ type: 'adapter:cancel', requestId }, undefined, undefined, () => {});
+    } catch { /* disconnected parent has already stopped dispatch */ }
   }
 
   onPushMessage(handler: (msg: unknown) => void): () => void {
