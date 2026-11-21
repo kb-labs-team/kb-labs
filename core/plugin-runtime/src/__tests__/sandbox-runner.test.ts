@@ -57,7 +57,7 @@ describe('Sandbox Runner', () => {
       writeFileSync(join(pluginRoot, 'package.json'), JSON.stringify({ name: 'plugin', type: 'module' }));
       const handlerPath = join(pluginRoot, 'handler.mjs');
       writeFileSync(handlerPath, "import { ownerFromSdk } from '@kb-labs/sdk'; export default { execute: async () => ownerFromSdk };");
-      process.env.KB_PLATFORM_ROOT = platformRoot;
+      delete process.env.KB_PLATFORM_ROOT;
 
       try {
         const result = await runInProcess({
@@ -67,6 +67,7 @@ describe('Sandbox Runner', () => {
             hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
           },
           platform: mockPlatform, ui: mockUI, handlerPath, input: {}, cwd: testDir,
+          environment: { KB_PLATFORM_ROOT: platformRoot },
         });
         expect(result.data).toBe('platform');
       } finally {
