@@ -18,6 +18,17 @@ test.after(() => {
 });
 const suite = path.join(root, 'scripts/ci/go-module-suite.mjs');
 
+test('coverage hydrates and verifies the workspace-pinned Corepack package manager before DevKit tests', () => {
+  const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+  assert.match(manifest.packageManager, /^pnpm@\d+\.\d+\.\d+$/);
+  for (const scriptName of ['coverage', 'coverage:json']) {
+    const script = manifest.scripts[scriptName];
+    assert.match(script, /^corepack install && COREPACK_ENABLE_NETWORK=0 corepack pnpm --version && /);
+    assert.match(script, /kb-devkit run test:coverage/);
+  }
+});
+
 function temporaryDirectory(prefix) {
   const directory = mkdtempSync(path.join(os.tmpdir(), prefix));
   temporaryDirectories.push(directory);
