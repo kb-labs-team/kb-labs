@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import tarfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,6 +40,32 @@ from test_install_layout import create_test_install_container
 from invocations import catalogued_error_hint, catalogued_error_message, invocation_context, open_http, run_command
 import jsonl
 from commit_fixture import commit_fixture_source_version
+
+
+def _workspace_pack_result(command, cwd):
+    package_root = Path(cwd)
+    output_dir = Path(command[command.index("--pack-destination") + 1])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    package = json.loads((package_root / "package.json").read_text(encoding="utf-8"))
+    for section in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        values = package.get(section)
+        if isinstance(values, dict):
+            package[section] = {
+                name: ("2.120.1" if isinstance(spec, str) and spec.startswith("workspace:") else spec)
+                for name, spec in values.items()
+            }
+    version = package["version"]
+    tarball = output_dir / f"kb-labs-commit-{version}.tgz"
+    with tarfile.open(tarball, "w:gz") as archive:
+        package_bytes = json.dumps(package).encode("utf-8")
+        info = tarfile.TarInfo("package/package.json")
+        info.size = len(package_bytes)
+        archive.addfile(info, io.BytesIO(package_bytes))
+        for name in ("README.md", "LICENSE", "dist"):
+            source = package_root / name
+            if source.exists():
+                archive.add(source, arcname=f"package/{name}", recursive=True)
+    return subprocess.CompletedProcess(command, 0, f"{tarball}\n", "")
 
 
 def _release_entity(identity: str) -> dict:
@@ -310,6 +337,7 @@ class MarketplaceStepTests(unittest.TestCase):
             (source / "package.json").write_text(json.dumps({
                 "name": "@kb-labs/commit", "version": "2.120.1",
                 "kb": {"manifest": "./dist/manifest.js"},
+                "devDependencies": {"@kb-labs/devkit": "workspace:*"},
             }))
             (source / "README.md").write_text("Commit fixture\n")
             (source / "dist" / "manifest.js").write_text("export const manifest = {};\n")
@@ -330,6 +358,11 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_PLATFORM_ROOT": str(platform)}
             registry_versions = []
 
+            def pack_runner(command, *, cwd, capture_output, text, timeout, env=None):
+                self.assertEqual(command[:2], ["pnpm", "pack"])
+                self.assertEqual(Path(cwd), source)
+                return _workspace_pack_result(command, cwd)
+
             def resolve_registry(_opener, request, **_kwargs):
                 from urllib.parse import parse_qs, urlparse
                 version = parse_qs(urlparse(request.full_url).query)["version"][0]
@@ -343,12 +376,16 @@ class MarketplaceStepTests(unittest.TestCase):
             with patch("marketplace_steps._installed_gateway_url", return_value="http://gateway.test"), \
                     patch("marketplace_steps.open_http", side_effect=resolve_registry):
                 fixture, version = _prepare_registry_commit_publish_package(
-                    workspace, root / "publish", platform, env)
+                    workspace, root / "publish", platform, env, pack_runner)
 
             original = json.loads((source / "package.json").read_text())
             fixture_package = json.loads((fixture / "package.json").read_text())
             self.assertEqual(version, "2.120.4")
-            self.assertEqual(fixture_package, {**original, "version": version})
+            self.assertEqual(fixture_package["name"], original["name"])
+            self.assertEqual(fixture_package["version"], version)
+            self.assertEqual(fixture_package["kb"], original["kb"])
+            self.assertEqual(fixture_package["devDependencies"], {"@kb-labs/devkit": "2.120.1"})
+            self.assertNotIn("workspace:", json.dumps(fixture_package))
             self.assertEqual(original["version"], "2.120.1")
             self.assertEqual((fixture / "dist" / "manifest.js").read_bytes(),
                              (source / "dist" / "manifest.js").read_bytes())
@@ -358,6 +395,39 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual((fixture / "node_modules").resolve(),
                              (platform / "node_modules").resolve())
             self.assertEqual(registry_versions, ["2.120.3", "2.120.4"])
+
+    def test_workspace_pack_materializes_workspace_dev_dependencies_for_registry_fixture(self):
+        with tempfile.TemporaryDirectory(prefix="kb-registry-workspace-pack-") as directory:
+            root = Path(directory)
+            (root / "package.json").write_text(json.dumps({
+                "name": "registry-pack-fixture", "private": True, "packageManager": "pnpm@11.4.0",
+            }))
+            (root / "pnpm-workspace.yaml").write_text("packages:\n  - plugins/*\n", encoding="utf-8")
+            commit = root / "plugins" / "commit"
+            devkit = root / "plugins" / "devkit"
+            commit.mkdir(parents=True)
+            devkit.mkdir(parents=True)
+            (devkit / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/devkit", "version": "2.120.1",
+            }))
+            (commit / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/commit", "version": "2.120.1",
+                "devDependencies": {"@kb-labs/devkit": "workspace:*"},
+            }))
+            install = subprocess.run(["pnpm", "install", "--offline"], cwd=root,
+                                     capture_output=True, text=True, timeout=90)
+            self.assertEqual(install.returncode, 0, install.stderr[-1000:])
+            output = root / "packed"
+            output.mkdir()
+            packed = subprocess.run(["pnpm", "pack", "--pack-destination", str(output)], cwd=commit,
+                                    capture_output=True, text=True, timeout=90)
+            self.assertEqual(packed.returncode, 0, packed.stderr[-1000:])
+            tarball = Path(packed.stdout.strip().splitlines()[-1])
+            if not tarball.is_absolute():
+                tarball = commit / tarball
+            with tarfile.open(tarball, "r:gz") as archive:
+                package = json.loads(archive.extractfile("package/package.json").read())
+            self.assertEqual(package["devDependencies"]["@kb-labs/devkit"], "2.120.1")
 
 
     def test_registry_commit_fixture_publishes_higher_package_copy_and_installs_verified_integrity(self):
@@ -415,6 +485,8 @@ class MarketplaceStepTests(unittest.TestCase):
 
             def runner(command, *, cwd, env, capture_output, text, timeout, input=None):
                 calls.append((tuple(command), cwd, env.copy(), input))
+                if command[:2] == ["pnpm", "pack"]:
+                    return _workspace_pack_result(command, cwd)
                 if command[0] == "node" and command[2:4] == ["auth", "login"]:
                     self.assertEqual(input, "fixture-admin-password\n")
                     session_path = Path(env["KB_HOME"]) / "session.json"
