@@ -1131,6 +1131,41 @@ def _find_project_registration(payload: object) -> tuple[str, str]:
     return "", ""
 
 
+def prepare_registry_install_project(env: dict[str, str], runner=run_command) -> tuple[str, str]:
+    """Register a clean journey project for the Registry install and provenance checks."""
+    home_value = env.get("HOME")
+    if not home_value:
+        raise RuntimeError("Registry fixture requires an isolated journey HOME")
+    project = (Path(home_value) / "registry-marketplace-project").resolve()
+    export_project_identity_to_child_environment(env, project_id="", project_root="")
+    project.mkdir(parents=True, exist_ok=False)
+    init = ["git", "init", "-q", str(project)]
+    result = run_with_runner(runner, init, cwd=project.parent, env=env, timeout=30)
+    if result.returncode != 0:
+        raise CalledProcessError(result.returncode, init, output=result.stdout, stderr=result.stderr)
+    register = kb_command(["project", "add", str(project), "--json"])
+    result = run_with_runner(runner, register, cwd=project, env=env, timeout=120)
+    _output(result, register)
+    try:
+        payload = decode_ux_success_result(read_ux_cli_result(result))
+    except (json.JSONDecodeError, ValueError) as error:
+        raise RuntimeError("registering the Registry fixture project returned invalid JSON") from error
+    project_id, registered_root = _find_project_registration(payload)
+    if not project_id or registered_root != str(project):
+        raise RuntimeError("registering the Registry fixture project returned no canonical project identity")
+    lock_path = Path(registered_root) / ".kb" / "marketplace.lock"
+    if lock_path.exists():
+        try:
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("new Registry fixture project has an unreadable Marketplace lock") from error
+        if "@kb-labs/commit" in lock.get("plugins", {}):
+            raise RuntimeError("new Registry fixture project already has a Commit pin")
+    export_project_identity_to_child_environment(
+        env, project_id=project_id, project_root=registered_root)
+    return project_id, registered_root
+
+
 def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> dict[str, object]:
     """Prepare the staged note commit required by S-140.2 in the isolated KB state."""
     def git(*args: str) -> CompletedProcess[str]:
@@ -1403,11 +1438,14 @@ def main() -> int:
                                     "Registry Marketplace lane service API bearer")
             flow_env["KB_JOURNEY_PLATFORM_ROOT"] = journey_value("KB_JOURNEY_PLATFORM_ROOT", required=True)
             flow_env["KB_JOURNEY_REGISTRY"] = journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
-            # This runner has its own installed project/platform lifecycle; its Marketplace lock is not the shared npm fixture lock.
-            entry = prepare_registry_commit_project_fixture(journey, project_root, registry, flow_env, run_command)
+            # Registry checks use a separate registered project so a prior npm pin
+            # cannot be mistaken for an immutable Registry version.
+            registry_project_id, registry_project_root = prepare_registry_install_project(flow_env, run_command)
+            entry = prepare_registry_commit_project_fixture(
+                journey, registry_project_root, registry, flow_env, run_command)
             if entry is None:
                 return "Registry lane did not capture the verified Commit provenance entry"
-            run_ordered_source_journey_steps(journey, project_root, flow_env, run_command)
+            run_ordered_source_journey_steps(journey, registry_project_root, flow_env, run_command)
             return None
 
         graph.flow("Registry ordered-source Marketplace assertions", "marketplace-registry",
