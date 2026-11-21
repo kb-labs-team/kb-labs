@@ -1359,10 +1359,8 @@ exec "$REAL_TAR" "$@"
         package_cache = next(step for step in producer_steps if step.get("id") == "tgz-cache")
         self.assertEqual(package_cache["uses"], "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
         self.assertEqual(package_cache["with"]["path"], "e2e/packages/")
-        self.assertEqual(
-            package_cache["with"]["key"],
-            "journey-tgz-v1-${{ runner.os }}-${{ hashFiles('**/dist/**/*.js', '**/dist/**/*.d.ts', '**/package.json') }}",
-        )
+        self.assertEqual(package_cache["with"]["key"],
+                         "journey-batch-tgz-v2-${{ runner.os }}-${{ github.sha }}")
         self.assertNotIn("restore-keys", package_cache["with"])
         producer_entry = next(step for step in producer_steps if step.get("name") == "Produce shared build and candidate")
         self.assertEqual(
