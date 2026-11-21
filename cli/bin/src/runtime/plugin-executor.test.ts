@@ -159,6 +159,37 @@ describe('plugin executor adapter errors', () => {
     }
   });
 
+  // case: S-010.4
+  it('passes the resolved platform root to the plugin runtime for platform SDK resolution', async () => {
+    executeCommandV3.mockResolvedValue(0);
+    const manifestCmd = {
+      pkgRoot: '/home/test/kb-platform/state/home/store/entries/@kb-labs+commit/node_modules/@kb-labs/commit',
+      manifest: {
+        id: '@kb-labs/commit',
+        segments: ['commit', 'plan', 'show'],
+        v3Manifest: {
+          id: '@kb-labs/commit',
+          version: '2.120.1',
+          cli: { commands: [{ path: 'commit plan show', handler: 'dist/cli/commands/run.js' }] },
+        },
+      },
+    } as unknown as RegisteredCommand;
+
+    const exitCode = await executePlugin({
+      context: { cwd: '/home/test/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
+      env: {}, platformRoot: '/home/test/kb-platform',
+      commandId: 'commit:plan:show', argv: [], flags: {}, manifestCmd,
+      platform: {} as Parameters<typeof executePlugin>[0]['platform'],
+    });
+
+    expect(exitCode).toBe(0);
+    expect(executeCommandV3).toHaveBeenCalledWith(expect.objectContaining({
+      platformRoot: '/home/test/kb-platform',
+    }));
+    expect(executeCommandV3.mock.calls.at(-1)?.[0]).not.toHaveProperty('env.KB_PLATFORM_ROOT');
+    executeCommandV3.mockReset();
+  });
+
   // case: S-203.15
   it('passes the gateway address supplied by the CLI bootstrap to the plugin backend', async () => {
     executeCommandV3.mockResolvedValue(0);

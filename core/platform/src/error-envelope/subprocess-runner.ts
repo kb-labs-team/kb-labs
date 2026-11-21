@@ -33,6 +33,9 @@ export interface SubprocessRunOptions {
   /** Explicit environment values for this execution. */
   environment?: Record<string, string | undefined>;
 
+  /** Host-only platform root for runtime module resolution. */
+  platformRoot?: string;
+
   /** Timeout in milliseconds */
   timeoutMs?: number;
 

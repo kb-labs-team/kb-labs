@@ -658,6 +658,7 @@ export async function executeCli(
           flagsObj,
           cliContext,
           platform,
+          platformRoot,
           presenter,
           resultWriter,
           runWithMiddleware: async (run) => {
@@ -680,6 +681,7 @@ interface DispatchPluginParams {
   flagsObj: ReturnType<typeof parseArgs>["flagsObj"];
   cliContext: CliExecutionContext;
   platform: PlatformContainer;
+  platformRoot?: string;
   presenter: Presenter;
   resultWriter: CliResultWriter;
   runWithMiddleware: (run: () => Promise<number>) => Promise<number>;
@@ -744,6 +746,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
       flags: typedCommandFlags,
       manifestCmd: p.manifestCmd,
       platform: p.platform,
+      platformRoot: p.platformRoot,
       resultWriter: p.resultWriter,
     });
 

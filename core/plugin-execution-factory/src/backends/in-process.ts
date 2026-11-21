@@ -261,6 +261,7 @@ export class InProcessBackend implements RawExecutionBackend {
         eventEmitter,
         handlerPath: `${handlerPath}${exportSelector}`,
         input: requestToExecute.input,
+        platformRoot: requestToExecute.platformRoot,
         environment: requestToExecute.env,
         signal: executionSignal,
         cwd: lease.cwd,           // From WorkspaceLease

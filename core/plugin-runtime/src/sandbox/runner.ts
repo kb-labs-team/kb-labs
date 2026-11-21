@@ -65,6 +65,8 @@ export interface RunInProcessOptions {
   cwd: string;
   outdir?: string;
   environment?: Record<string, string | undefined>;
+  /** Host-only platform root for resolving platform peers from store entries. */
+  platformRoot?: string;
   /** Resolved adapter middlewares to apply before governance. */
   adapterMiddlewares?: LoadedMiddleware[];
 }
@@ -79,6 +81,8 @@ export interface RunInSubprocessOptions {
   cwd: string;
   outdir?: string;
   environment?: Record<string, string | undefined>;
+  /** Host-only platform root sent over IPC, never exposed through plugin env. */
+  platformRoot?: string;
   onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
 }
 
@@ -93,7 +97,7 @@ export interface RunInSubprocessOptions {
 export async function runInProcess<T = unknown>(
   options: RunInProcessOptions
 ): Promise<RunResult<T>> {
-  const { descriptor, platform, ui, pluginInvoker, eventEmitter, handlerPath, input, signal, cwd, outdir, environment, adapterMiddlewares } = options;
+  const { descriptor, platform, ui, pluginInvoker, eventEmitter, handlerPath, input, signal, cwd, outdir, environment, platformRoot: hostPlatformRoot, adapterMiddlewares } = options;
   const startTime = Date.now();
 
   // Create context
@@ -142,7 +146,10 @@ export async function runInProcess<T = unknown>(
     // Plugin code can be outside the installed platform tree (for example, a
     // Marketplace store entry). Resolve its platform packages from the one
     // platform copy in this process before importing the handler.
-    const platformRoot = process.env.KB_PLATFORM_ROOT;
+    // The host passes this root as execution metadata, not plugin environment.
+    // Do not depend on the process-global value: project commands can run with
+    // a correct resolved root that was never exported into the caller's shell.
+    const platformRoot = hostPlatformRoot ?? process.env.KB_PLATFORM_ROOT;
     if (platformRoot) {
       installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
     }
@@ -217,6 +224,9 @@ export async function runInSubprocess<T = unknown>(
   if (signal?.aborted) { throw new AbortError(); }
 
   const startTime = Date.now();
+  // Capture the trusted host root before merging invocation/plugin environment
+  // values into the child process environment.
+  const platformRoot = options.platformRoot ?? process.env.KB_PLATFORM_ROOT;
 
   return new Promise((resolve, reject) => {
     // Path to bootstrap script
@@ -333,6 +343,7 @@ export async function runInSubprocess<T = unknown>(
       cwd: options.cwd,
       strictFilesystemPermissions: false,
       outdir: options.outdir,
+      platformRoot,
     };
     void channel.send({ type: 'execution:start', requestId, payload: executeMsg }).catch((error: unknown) => {
       fail(error instanceof Error ? error : new Error(String(error)));

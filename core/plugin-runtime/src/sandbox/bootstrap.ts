@@ -90,6 +90,10 @@ async function execute(requestId: string, message: ExecuteMessage): Promise<void
       throw new Error('Execution start frame request id does not match its payload');
     }
     const { descriptor, handlerPath, input, cwd, outdir, strictFilesystemPermissions } = message;
+    // The installed platform root is host execution metadata, not a plugin env
+    // permission. Capture it before patchProcessEnv filters process.env for the
+    // plugin, then keep it in this host-only local for module resolution.
+    const platformRoot = message.platformRoot;
     platform = await connectToPlatform(channel);
     const sandboxMode = (process.env.KB_SANDBOX_MODE || 'enforce') as SandboxMode;
     restoreSandbox = applySandboxPatches({ permissions: descriptor.permissions, mode: sandboxMode });
@@ -128,7 +132,6 @@ async function execute(requestId: string, message: ExecuteMessage): Promise<void
     if (descriptor.pluginId && descriptor.pluginVersion && platform.analytics) {
       platform.analytics.setSource?.({ product: descriptor.pluginId, version: descriptor.pluginVersion });
     }
-    const platformRoot = process.env.KB_PLATFORM_ROOT;
     if (platformRoot) {
       installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
     }

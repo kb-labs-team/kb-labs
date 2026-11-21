@@ -23,6 +23,8 @@ export interface ExecuteCommandV3Options {
   binaryName: string;
   /** Explicit plugin environment values for this invocation. */
   env?: Record<string, string | undefined>;
+  /** Host-only platform root for resolving platform peers from store plugins. */
+  platformRoot?: string;
   /**
    * Plugin ID (e.g., "@kb-labs/my-plugin")
    */
@@ -219,6 +221,7 @@ export async function executeCommandV3(
       handlerRef: handlerPath,
       input,
       env,
+      platformRoot: options.platformRoot,
       timeoutMs: quotas?.timeoutMs,
       // Pass cwd so worker-pool backend sets ctx.cwd to the invocation directory,
       // not the platform installation directory (worker-script.ts reads workspace.cwd)
