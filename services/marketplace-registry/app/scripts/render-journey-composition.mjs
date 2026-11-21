@@ -64,7 +64,9 @@ const composeOverlay = `services:
     environment:
       KB_REGISTRY_HOST: 0.0.0.0
       KB_REGISTRY_PORT: "5071"
-      KB_REGISTRY_URL: http://marketplace-tamper:8081
+      # Registry metadata emits a Gateway-relative public tarball path; the
+      # Marketplace client resolves it against the configured Gateway source.
+      KB_REGISTRY_URL: /api/v1/marketplace-registry
       KB_STATE_DAEMON_URL: http://marketplace-state:7777
       GATEWAY_INTERNAL_SECRET: journey-marketplace-internal-secret
     volumes:

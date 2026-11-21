@@ -5,7 +5,7 @@ from __future__ import annotations
 from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_tool_names
 
 from kb_invocation import kb_command, kb_login_shell, kb_login_shell_sequence
-from installed_fixture import layout_relative, layout_value
+from installed_fixture import active_platform_root, layout_relative, layout_value
 from journey_values import journey_value
 
 import json
@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Callable, Union
+from urllib.parse import urlsplit, urlunsplit
 
 from studio_steps import (create_studio_access_tokens, create_studio_environment,
                           create_studio_member, run_studio_browser_step,
@@ -103,7 +104,7 @@ LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
 LAST_COMMAND_CWD: str | None = None
 
 
-def marketplace_install_flags(env: dict[str, str]) -> list[str]:
+def marketplace_install_flags(env: dict[str, str], *, gateway_url: str | None = None) -> list[str]:
     """Configure journey Marketplace sources for anonymous public Registry installs."""
     registry_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
     encoded_key = env.get("KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64", "")
@@ -120,11 +121,46 @@ def marketplace_install_flags(env: dict[str, str]) -> list[str]:
         # exercise anonymous access. S-268.6 injects a non-empty sentinel only
         # for the status/doctor redaction checks.
         env["KB_JOURNEY_MARKETPLACE_TOKEN"] = ""
-        flags.extend(["--marketplace-registry-url", registry_url,
+        source_url = (f"{gateway_url.rstrip('/')}/api/v1/marketplace-registry"
+                      if gateway_url else registry_url)
+        flags.extend(["--marketplace-registry-url", source_url,
                       "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
                       "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN"])
     flags.extend(["--marketplace-npm-url", REGISTRY])
     return flags
+
+
+def configure_registry_gateway_route(platform_root: Path, registry_upstream_url: str) -> None:
+    """Route Registry API requests through Gateway to the isolated fixture proxy."""
+    config_path = active_platform_root(platform_root) / ".kb" / "kb.config.jsonc"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    gateway = config.setdefault("gateway", {})
+    upstreams = gateway.setdefault("upstreams", {})
+    upstreams["marketplaceRegistry"] = {
+        "serviceId": "marketplace-registry",
+        "prefix": "/api/v1/marketplace-registry",
+        "rewritePrefix": "",
+    }
+    services = (config.setdefault("platform", {}).setdefault("adapterOptions", {})
+                .setdefault("serviceTransport", {}).setdefault("services", {}))
+    services["marketplace-registry"] = {"url": registry_upstream_url}
+    mode = config_path.stat().st_mode & 0o777
+    temporary = config_path.with_suffix(config_path.suffix + ".registry-tmp")
+    temporary.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    temporary.chmod(mode)
+    temporary.replace(config_path)
+
+
+def registry_gateway_url_from_plan(plan_data: dict) -> str:
+    """Return the effective public Gateway origin recorded by kb-create plan."""
+    health_url = plan_data.get("plan", {}).get("host", {}).get("healthUrl")
+    if not isinstance(health_url, str) or not health_url:
+        raise ValueError("install plan omitted the Gateway health URL")
+    parsed = urlsplit(health_url)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("install plan returned an invalid Gateway health URL")
+    path = parsed.path.removesuffix("/health").rstrip("/")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
@@ -1366,6 +1402,28 @@ def _main(*, update_variant_runner=None):
             args.extend(["--scenario-answers", answers])
         if VARIANT == "relative-path":
             args[args.index(str(PLATFORM))] = os.path.relpath(PLATFORM, Path.cwd())
+        if operation == "install" and env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL"):
+            # Ask the installer for the effective Gateway address instead of
+            # assuming its default port or the runner's network offset.
+            preview_args = list(args)
+            preview_args[1] = "plan"
+            preview, _ = run(preview_args, env=env, timeout=120)
+            try:
+                preview_data = decode_ux_success_result(read_kb_create_cli_result("plan", preview))
+                gateway_url = registry_gateway_url_from_plan(preview_data)
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                gateway_url = None
+            except ValueError:
+                gateway_url = None
+            if preview.returncode != 0 or not gateway_url:
+                fail("Registry journey could not resolve the installed Gateway address from the install plan")
+                cleanup_partial_install(outer_graph, env, launcher)
+                return finalize_run(False)
+            registry_source_url = f"{gateway_url}/api/v1/marketplace-registry"
+            registry_flag = args.index("--marketplace-registry-url")
+            args[registry_flag + 1] = registry_source_url
+            if "--gateway-url" not in args:
+                args.extend(["--gateway-url", gateway_url])
         result, elapsed = run(args, env=env, timeout=1200)
         TIMES["apply"] = elapsed
         if VARIANT == "relative-path":
@@ -1542,6 +1600,9 @@ def _main(*, update_variant_runner=None):
         stopped, _ = run([launcher, "stop", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
         if not require(stopped, step="kb-create stop before start lifecycle check"):
             return
+        registry_upstream = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL")
+        if registry_upstream:
+            configure_registry_gateway_route(PLATFORM, registry_upstream)
         result, elapsed = run([launcher, "start", "--platform-root", str(PLATFORM)], env=env, timeout=300)
         TIMES["start"] = elapsed
         started = require(result, step="kb-create start")

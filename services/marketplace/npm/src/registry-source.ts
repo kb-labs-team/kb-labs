@@ -76,7 +76,8 @@ export class RegistryPackageSource implements MarketplaceSource {
       throw new RegistryPackageError('RESOLUTION_FAILED', 'Missing downloadUrl in ResolvedPackage', pkg.id);
     }
 
-    const resp = await this.fetch(pkg.downloadUrl, pkg.id);
+    const downloadUrl = this.resolveDownloadUrl(pkg.downloadUrl, pkg.id);
+    const resp = await this.fetch(downloadUrl, pkg.id);
     if (!resp.ok) {
       throw new RegistryPackageError(resp.status === 401 || resp.status === 403 ? 'AUTH_FAILED' : 'TRANSPORT_FAILED', `Failed to download ${pkg.id}@${pkg.version}: ${resp.status}`, pkg.id);
     }
@@ -121,6 +122,24 @@ export class RegistryPackageSource implements MarketplaceSource {
     }
 
     return { id: pkg.id, version: pkg.version, packageRoot, integrity: actualIntegrity };
+  }
+
+  /** Resolve path references at the configured source and refuse cross-origin tarball targets. */
+  private resolveDownloadUrl(downloadUrl: string, identity: string): string {
+    let resolved: URL;
+    let source: URL;
+    try {
+      source = new URL(this.baseUrl);
+      resolved = new URL(downloadUrl, source);
+    } catch {
+      throw new RegistryPackageError('RESOLUTION_FAILED', 'Registry returned an invalid tarball URL', identity);
+    }
+    if (resolved.origin !== source.origin) {
+      throw new RegistryPackageError(
+        'RESOLUTION_FAILED', 'Registry tarball URL must use the configured source origin', identity,
+      );
+    }
+    return resolved.toString();
   }
 
   withShareToken(token: string): RegistryPackageSource {
