@@ -1410,6 +1410,11 @@
       "processExitClass": "operation-failure",
       "message": "Artifact {artifact} is unavailable from the local cache.",
       "hint": "Run without --offline to download the artifact, or restore its checksum-verified entry in the V2 cache.",
+      "structuredDetailFields": ["cachePath"],
+      "requiredStructuredDetailFields": ["cachePath"],
+      "structuredDetailSchemas": {
+        "cachePath": {"type": "string", "minLength": 1}
+      },
       "httpStatus": 500
     },
     {
