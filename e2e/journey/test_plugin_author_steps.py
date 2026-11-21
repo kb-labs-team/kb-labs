@@ -35,7 +35,7 @@ from pathlib import Path
 
 args = sys.argv[1:]
 root = Path.cwd()
-declared_plugin_commands = {("commit", "commit"), ("review", "run")}
+declared_plugin_commands = {("commit", "commit"), ("commit", "plan", "delete"), ("review", "run")}
 help_args = args[:-2] if args[-2:] == ["--help", "--json"] else args[:-1]
 is_help = args[-2:] == ["--help", "--json"] or args[-1:] == ["--help"]
 if is_help and tuple(help_args) in declared_plugin_commands:
@@ -120,6 +120,10 @@ elif args[:3] == ["adapter", "unbind", "llm"]:
 elif args[:3] == ["adapter", "bind", "llm"]:
     (root / ".kb/llm-unbound").unlink(missing_ok=True)
     print(json.dumps({"ok": True, "data": {}}))
+elif args[:3] == ["commit", "plan", "delete"] and "--json" in args:
+    print(json.dumps({"ok": True, "data": {"success": True}, "meta": {"execution": {
+        "owner": "project-runtime", "projectId": "prj_fixture", "mode": "worker-pool"
+    }}}))
 elif args[:3] == ["commit", "commit", "--dry-run"]:
     staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root,
                             capture_output=True, text=True, check=True).stdout
@@ -127,7 +131,9 @@ elif args[:3] == ["commit", "commit", "--dry-run"]:
         print(json.dumps({"ok": False, "error": {"code": "KB_ADAPTER_UNAVAILABLE",
             "message": "Adapter llm is not configured.", "hint": "kb adapter bind llm @kb-labs/adapters-openai"}}))
         raise SystemExit(1)
-    print(json.dumps({"ok": True, "data": {"plan": {"metadata": {"llmUsed": True}}, "applied": False}}))
+    print(json.dumps({"ok": True, "data": {"plan": {"metadata": {"llmUsed": True}}, "applied": False},
+                      "meta": {"execution": {"owner": "project-runtime", "projectId": "prj_fixture",
+                                               "mode": "worker-pool"}}}))
 elif args[:2] == ["commit", "commit"]:
     staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root,
                             capture_output=True, text=True, check=True).stdout
@@ -337,16 +343,17 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                 "package": "@kb-labs/commit",
             }},
         }))
-        journey = Journey("local", "commit-case-fixture")
-        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
-                              subprocess.run, self.env)
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-secured:explore"}):
+            journey = Journey("secured", "commit-case-fixture")
+            run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                                  subprocess.run, self.env)
         result = journey.result()
         expected = {
             *(f"S-014.{step}" for step in range(1, 4)),
             *(f"S-015.{step}" for step in range(1, 5)),
             "S-203.1",
             *(f"S-030.{step}" for step in range(1, 5)),
-            *(f"S-160.{step}" for step in range(1, 5)),
+            *(f"S-160.{step}" for step in range(1, 6)),
         }
         claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
         self.assertTrue(expected.issubset(claims))
@@ -360,6 +367,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual({step: claims[step] for step in ("S-160.1", "S-160.2", "S-160.3", "S-160.4")}, {
             "S-160.1": "PASS", "S-160.2": "PASS", "S-160.3": "PASS", "S-160.4": "PASS",
         }, result.steps)
+        self.assertEqual(claims["S-160.5"], "PASS", result.steps)
         self.assertEqual({step: claims[step] for step in ("S-030.1", "S-030.2", "S-030.3", "S-030.4")}, {
             "S-030.1": "PASS", "S-030.2": "PASS", "S-030.3": "PASS", "S-030.4": "PASS",
         })
@@ -376,9 +384,10 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             }},
         }))
 
-        journey = Journey("local", "commit-case-clean-worktree")
-        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
-                              subprocess.run, self.env)
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}):
+            journey = Journey("local", "commit-case-clean-worktree")
+            run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                                  subprocess.run, self.env)
 
         status = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"],
                                 cwd=self.project, capture_output=True, text=True, check=True)
@@ -397,9 +406,10 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             }},
         }))
 
-        journey = Journey("local", "commit-case-headless-repository")
-        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
-                              subprocess.run, self.env)
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}):
+            journey = Journey("local", "commit-case-headless-repository")
+            run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                                  subprocess.run, self.env)
 
         result = journey.result()
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.project,

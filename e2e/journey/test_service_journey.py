@@ -133,6 +133,80 @@ class UninstallShimResultTest(unittest.TestCase):
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_commit_claims_select_only_the_marketplace_lifecycle_owner(self):
+        root = Path(__file__).resolve().parents[2]
+        cases = ("S-160.3", "S-160.5", "S-030.1")
+        from select_from_cases import _case_declarations, selection_from_coverage
+        source = "e2e/journey/plugin_author_steps.py"
+        declarations = _case_declarations(source, root)
+        for mode, runner in (("local", "service-local:explore"),
+                             ("secured", "service-secured:explore")):
+            with self.subTest(mode=mode):
+                records = []
+                for case_id in cases:
+                    if mode == "local" and case_id == "S-160.5":
+                        continue
+                    line = next((line for line, declaration in declarations.items()
+                                 if case_id in (declaration.get("cases") or ())), None)
+                    self.assertIsNotNone(line, f"{case_id} has no owning declaration in {source}")
+                    records.append({"mode": mode, "cases": [{
+                        "id": case_id.rsplit(".", 1)[0], "status": "active", "release": True,
+                        "steps": [{"stepId": case_id, "claims": [{
+                            "kind": "journey", "source": source, "line": line,
+                        }]}],
+                    }]})
+                requested_cases = cases if mode == "secured" else tuple(
+                    case_id for case_id in cases if case_id != "S-160.5"
+                )
+                selection = selection_from_coverage(records, ",".join(requested_cases))
+                self.assertEqual(selection["runners"], [runner])
+                self.assertEqual(selection["capabilities"], ["commit-plugin"])
+                self.assertEqual("S-160.5" in selection["steps"], mode == "secured")
+
+                env = os.environ.copy()
+                env.update({
+                    "KB_JOURNEY_CASES": ",".join(selection["selection"]),
+                    "KB_JOURNEY_SELECTED_STEPS": ",".join(selection["steps"]),
+                    "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps(selection["selectedOwningSteps"]),
+                    "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps(selection["prerequisiteSteps"]),
+                    "KB_JOURNEY_PREREQUISITE_FLOWS": json.dumps(selection["prerequisiteFlows"]),
+                    "KB_JOURNEY_SELECTED_CAPABILITIES": ",".join(selection["capabilities"]),
+                    "KB_JOURNEY_RUNNER_SELECTOR": runner,
+                })
+                with patch.dict(os.environ, env, clear=True):
+                    journey = Journey(mode, f"selected-commit-lifecycle-{mode}")
+                    groups = service_selection_groups(runner_selector=runner)
+                    graph = FlowGraph(
+                        journey, {name: spec["depends_on"] for name, spec in groups.items()},
+                        states={
+                            "host-running": {"passed": True, "evidence": "host ready"},
+                            "project-registered": {"passed": True, "evidence": "project registered"},
+                            "service-api-session": {"passed": True, "evidence": "service API ready"},
+                            "marketplace-available": {"passed": True, "evidence": "Commit fixture available"},
+                        }, state_producers=STATE_PRODUCERS, groups=groups,
+                    )
+                    executed = []
+                    lifecycle = graph.flow(
+                        "marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                        lambda: executed.extend(case for case in cases if case in selection["steps"]),
+                        record_empty_success=False,
+                    )
+                    unrelated_marketplace = graph.flow(
+                        "marketplace service checks", "marketplace", "marketplace",
+                        lambda: self.fail("unrelated Marketplace checks must stay out of the Commit selection"),
+                        record_empty_success=False,
+                    )
+                    plugin_author = graph.flow(
+                        "plugin author flow", "plugin-author", "plugin-author",
+                        lambda: self.fail("the generic scaffold flow must stay out of the Commit selection"),
+                        cases=["S-014.1", "S-015.1", "S-003.1"], record_empty_success=False,
+                    )
+
+                self.assertEqual(lifecycle, "PASS")
+                self.assertEqual(executed, [case for case in cases if case in selection["steps"]])
+                self.assertEqual(unrelated_marketplace, "SKIPPED")
+                self.assertEqual(plugin_author, "SKIPPED")
+
     def test_cron_parity_check_prepares_fixture_and_captures_environment(self):
         graph = FlowGraph(
             Journey("local", "cron-parity-callback"),

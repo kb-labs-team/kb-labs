@@ -386,10 +386,22 @@ def configure_hermetic_cli_fixture(
                 root, destination_lock, Path(installed_platform_root).resolve())
         plugin_root = root / "plugins"
         source_plugins = workspace_root / "plugins"
-        if plugin_root.is_symlink():
-            plugin_root.unlink()
-        if not plugin_root.exists():
-            plugin_root.symlink_to(source_plugins, target_is_directory=True)
+        # In a staged workspace checkout the platform root and workspace root
+        # are the same directory. Keep its existing plugins link in that case;
+        # unlinking it and linking the path back to itself creates an ELOOP.
+        same_plugins_path = plugin_root.absolute() == source_plugins.absolute()
+        if not same_plugins_path:
+            try:
+                same_plugins_path = plugin_root.resolve() == source_plugins.resolve()
+            except (OSError, RuntimeError):
+                # A pre-existing bad link is repaired by the normal replacement
+                # below; do not let its resolution failure mask the setup error.
+                pass
+        if not same_plugins_path:
+            if plugin_root.is_symlink():
+                plugin_root.unlink()
+            if not plugin_root.exists():
+                plugin_root.symlink_to(source_plugins, target_is_directory=True)
         journey_root = root / "e2e"
         journey_source = workspace_root / "e2e"
         if journey_source.is_symlink():
