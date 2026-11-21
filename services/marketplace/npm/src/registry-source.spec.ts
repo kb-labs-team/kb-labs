@@ -66,6 +66,41 @@ describe('RegistryPackageSource', () => {
     }
   });
 
+  // case: S-268.1
+  it('resolves Registry path references against its source and rejects cross-origin absolute URLs', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-gateway-tarball-'));
+    let requestedUrl = '';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      requestedUrl = String(input);
+      return new Response('tampered bytes', { status: 200 });
+    }));
+    const source = new RegistryPackageSource({
+      registryUrl: 'http://127.0.0.1:4317/api/v1/marketplace-registry',
+      signingPublicKey: 'test-key',
+    });
+
+    try {
+      await expect(source.install({
+        id: 'author/plugin', version: '1.0.0', integrity: 'sha256-not-the-tarball', source: 'marketplace',
+        primaryKind: 'plugin', downloadUrl: '/api/v1/marketplace-registry/api/v1/packages/author/plugin/1.0.0/tarball',
+      }, root)).rejects.toMatchObject({ code: 'INTEGRITY_MISMATCH' });
+      expect(requestedUrl).toBe(
+        'http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1/packages/author/plugin/1.0.0/tarball',
+      );
+
+      await expect(source.install({
+        id: 'author/plugin', version: '1.0.0', integrity: 'sha256-not-the-tarball', source: 'marketplace',
+        primaryKind: 'plugin', downloadUrl: 'http://marketplace-tamper:8081/api/v1/packages/author/plugin/1.0.0/tarball',
+      }, root)).rejects.toMatchObject({ code: 'RESOLUTION_FAILED' });
+      expect(requestedUrl).toBe(
+        'http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1/packages/author/plugin/1.0.0/tarball',
+      );
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   // case: S-220.11
   it('restores an existing package when registry archive extraction fails', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-rollback-'));

@@ -232,6 +232,7 @@ if (!configResult.ok) {
         self.assertTrue(all(mount.get("read_only") is True for mount in mounts.values()))
         registry_environment = rendered["services"]["marketplace-registry"].get("environment", {})
         self.assertEqual(registry_environment.get("KB_STATE_DAEMON_URL"), "http://marketplace-state:7777")
+        self.assertEqual(registry_environment.get("KB_REGISTRY_URL"), "/api/v1/marketplace-registry")
         return rendered
 
     def test_default_compose_configuration_does_not_require_registry_lane_inputs(self):
