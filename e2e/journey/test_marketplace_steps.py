@@ -23,6 +23,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                _publish_fixture_command,
                                _assert_catalogued_marketplace_failure,
                                prepare_commit_project_fixture,
+                               _register_commit_update_fixture_step,
                                prepare_registry_commit_project_fixture,
                                publish_commit_update_fixture,
                                run_ordered_source_journey_steps,
@@ -31,6 +32,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
 from service_steps import FlowGraph, Journey
+from journey_selection import JourneySelection
 from marketplace_tamper_proxy import Handler as MarketplaceProxyHandler, tamper_tarball
 from journey_dependencies import Dependency
 import service_runner
@@ -48,6 +50,66 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_unselected_commit_update_fixture_is_not_an_unconditional_lifecycle_step(self):
+        selected = JourneySelection(
+            requested=("S-160.5",),
+            claims=frozenset({"S-160.5"}),
+            owning_steps={"execute installed Commit command": ("S-160.5",)},
+            prerequisite_steps=frozenset(),
+            prerequisite_flows=frozenset(),
+            capabilities=frozenset({"commit-plugin"}),
+            runner_selector="service-secured:explore",
+            requested_runners="",
+        )
+        journey = Journey("secured", "s160-excludes-commit-update-fixture", selection=selected)
+
+        journey.step("verify S-192 platform and project pins are absent", "marketplace",
+                     lambda: self.fail("unselected S-192 precondition must not execute"),
+                     cases=("S-192.7",))
+        install = journey.step("install Commit into the project for the route lifecycle", "marketplace",
+                               lambda: self.fail("unselected S-192 install must not execute"),
+                               cases=("S-192.2",))
+        update_fixture = _register_commit_update_fixture_step(
+            journey, lambda: self.fail("S-012-only update fixture must not publish"))
+        owner = journey.step("execute installed Commit command", "commit-plugin", lambda: None,
+                             cases=("S-160.5",))
+
+        self.assertEqual(install.status, "SKIPPED")
+        self.assertEqual(update_fixture.status, "SKIPPED")
+        self.assertEqual(owner.status, "PASS")
+
+    def test_selected_commit_update_still_runs_its_declared_fixture_prerequisites(self):
+        selection = JourneySelection(
+            requested=("S-012.1",),
+            claims=frozenset({"S-012.1"}),
+            owning_steps={"update installed Commit version": ("S-012.1",)},
+            prerequisite_steps=frozenset({
+                "verify S-192 platform and project pins are absent",
+                "install Commit into the project for the route lifecycle",
+                "publish next-major Commit update fixture",
+            }),
+            prerequisite_flows=frozenset(),
+            capabilities=frozenset({"marketplace"}),
+            runner_selector="service-secured:explore",
+            requested_runners="",
+        )
+        journey = Journey("secured", "s012-runs-commit-update-fixture", selection=selection)
+        executions = []
+        verify = journey.step("verify S-192 platform and project pins are absent", "marketplace",
+                              lambda: executions.append("verify"), cases=("S-192.7",))
+        install = journey.step("install Commit into the project for the route lifecycle", "marketplace",
+                               lambda: executions.append("install"), cases=("S-192.2",),
+                               requires=("step:verify S-192 platform and project pins are absent",))
+        update_fixture = _register_commit_update_fixture_step(
+            journey, lambda: executions.append("publish"))
+        owner = journey.step("update installed Commit version", "marketplace",
+                             lambda: executions.append("update"), cases=("S-012.1",),
+                             requires=("step:publish next-major Commit update fixture",))
+
+        self.assertEqual([verify.status, install.status, update_fixture.status, owner.status],
+                         ["PASS"] * 4)
+        self.assertEqual(executions, ["verify", "install", "publish", "update"])
+
     def test_not_found_source_expectations_come_from_kb_create_status(self):
         self.assertEqual(configured_marketplace_source_kinds({"marketplaceSources": [
             {"kind": "registry", "url": "https://registry.example"}, {"kind": "npm"},
