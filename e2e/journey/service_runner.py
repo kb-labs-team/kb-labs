@@ -947,7 +947,8 @@ def service_selection_groups(root: Path | None = None, runner_selector: str = ""
                   else "marketplace-lifecycle")
     group = dict(groups[group_name])
     group["cases"] = tuple(sorted(set(group.get("cases", ())) | set(declaration["cases"])))
-    group["steps"] = tuple(sorted(set(group.get("steps", ())) | set(declaration["steps"])))
+    # The imported source closure includes unrelated runner owners. Case IDs identify
+    # marketplace flows without making those cross-module step names select this group.
     groups[group_name] = group
     return groups
 STATE_PRODUCERS = {
