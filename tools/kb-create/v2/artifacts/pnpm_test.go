@@ -1282,6 +1282,26 @@ func TestPnpmDiagnosticKeepsExitCodeAndStderrEvidence(t *testing.T) {
 }
 
 // case: S-285.18
+func TestPnpmDiagnosticKeepsStdoutOverflowNoticeAlongsideFullStderr(t *testing.T) {
+	const stderr = "ERR_PNPM_FETCH_404 " + "useful stderr evidence " + "tail marker"
+	runner := &fakeRunner{err: &externalCommandFailure{
+		exitCode: 47, stderrTail: strings.Repeat("E", externalCommandStderrTailBytes-len(stderr)) + stderr,
+		stdoutOmitted: true, cause: errors.New("exit status 47"),
+	}}
+	manager := mustPnpm(t, PnpmConfig{Root: t.TempDir(), Runner: runner, ReleaseCatalog: testReleaseCatalog(t)})
+	err := manager.run("install")
+	var failure *diag.Diag
+	if !errors.As(err, &failure) {
+		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
+	}
+	tail, _ := failure.Meta["packageManagerStderrTail"].(string)
+	if len(tail) > externalCommandStderrTailBytes || !strings.Contains(tail, "captured stdout omitted") ||
+		!strings.Contains(tail, "tail marker") || !strings.Contains(tail, strings.Repeat("E", 10)) {
+		t.Fatalf("diagnostic lost stdout omission marker or stderr evidence: len=%d tail=%q", len(tail), tail)
+	}
+}
+
+// case: S-285.18
 func TestCommandRunnerRedactsSplitCredentialsFromTranscript(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture requires POSIX")
@@ -1324,7 +1344,7 @@ func TestCommandRunnerDropsWholeOversizedStreamsFromTranscript(t *testing.T) {
 	var transcript bytes.Buffer
 	err := (CommandRunner{maxCapture: 128}).Run(context.Background(), &transcript, fixture)
 	var failure *externalCommandFailure
-	if !errors.As(err, &failure) || failure.exitCode != 47 {
+	if !errors.As(err, &failure) || failure.exitCode != 47 || !failure.stdoutOmitted || !failure.stderrOmitted {
 		t.Fatalf("failure = %#v, want exit code 47", err)
 	}
 	if !strings.Contains(failure.stderrTail, "omitted") || !strings.Contains(transcript.String(), "omitted") ||

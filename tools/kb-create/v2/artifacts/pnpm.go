@@ -45,9 +45,11 @@ type CommandRunner struct {
 const externalCommandStderrTailBytes = 4096
 
 type externalCommandFailure struct {
-	exitCode   int
-	stderrTail string
-	cause      error
+	exitCode      int
+	stderrTail    string
+	stdoutOmitted bool
+	stderrOmitted bool
+	cause         error
 }
 
 func (f *externalCommandFailure) Error() string { return f.cause.Error() }
@@ -90,7 +92,7 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 				if errors.As(err, &commandFailure) {
 					failure.Meta = map[string]any{
 						"packageManagerExitCode":   fmt.Sprint(commandFailure.ExitCode),
-						"packageManagerStderrTail": packageManagerStderrTail(commandFailure.StderrTail),
+						"packageManagerStderrTail": packageManagerStderrTail(commandFailure.StderrTail, commandFailure.StdoutOmitted, commandFailure.StderrOmitted),
 					}
 				}
 				return failure
@@ -109,7 +111,10 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 	if err != nil {
 		var commandFailure *toolchain.CommandError
 		if errors.As(err, &commandFailure) {
-			return &externalCommandFailure{exitCode: commandFailure.ExitCode, stderrTail: commandFailure.StderrTail, cause: err}
+			return &externalCommandFailure{
+				exitCode: commandFailure.ExitCode, stderrTail: commandFailure.StderrTail,
+				stdoutOmitted: commandFailure.StdoutOmitted, stderrOmitted: commandFailure.StderrOmitted, cause: err,
+			}
 		}
 		return err
 	}
@@ -123,8 +128,30 @@ func writeCapturedOutput(output io.Writer, result toolchain.Result) {
 	}
 }
 
-func packageManagerStderrTail(stderr string) string {
-	return tailText([]byte(stderr), externalCommandStderrTailBytes)
+func packageManagerStderrTail(stderr string, stdoutOmitted, stderrOmitted bool) string {
+	var notices []string
+	if stdoutOmitted {
+		notices = append(notices, "captured stdout omitted because it exceeded the safe limit")
+	}
+	if stderrOmitted {
+		notices = append(notices, "captured stderr omitted because it exceeded the safe limit")
+	}
+	if len(notices) == 0 {
+		return tailText([]byte(stderr), externalCommandStderrTailBytes)
+	}
+	notice := strings.Join(notices, "; ")
+	if len(notice) >= externalCommandStderrTailBytes {
+		return tailText([]byte(notice), externalCommandStderrTailBytes)
+	}
+	available := externalCommandStderrTailBytes - len(notice) - 1
+	if stderrOmitted {
+		stderr = ""
+	}
+	tail := tailText([]byte(stderr), available)
+	if tail == "" {
+		return notice
+	}
+	return tail + "\n" + notice
 }
 
 func tailText(content []byte, limit int) string {
@@ -429,7 +456,7 @@ func (p Pnpm) run(command string, specs ...string) error {
 				cause)
 			failure.Meta = map[string]any{
 				"packageManagerExitCode":   fmt.Sprint(commandFailure.exitCode),
-				"packageManagerStderrTail": packageManagerStderrTail(commandFailure.stderrTail),
+				"packageManagerStderrTail": packageManagerStderrTail(commandFailure.stderrTail, commandFailure.stdoutOmitted, commandFailure.stderrOmitted),
 			}
 			return failure
 		}

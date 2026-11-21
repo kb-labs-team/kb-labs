@@ -127,13 +127,17 @@ type Result struct {
 	Stdout, Stderr string
 	ExitCode       int
 	Elapsed        time.Duration
+	StdoutOmitted  bool
+	StderrOmitted  bool
 }
 
 type CommandError struct {
-	ExitCode   int
-	StderrTail string
-	StdoutTail string
-	Err        error
+	ExitCode      int
+	StderrTail    string
+	StdoutTail    string
+	Err           error
+	StdoutOmitted bool
+	StderrOmitted bool
 }
 
 func (e *CommandError) Error() string {
@@ -310,6 +314,8 @@ func (r *runningInvocation) finish(started time.Time, operationTimeout time.Dura
 		sort.SliceStable(redactions, func(i, j int) bool { return len(redactions[i]) > len(redactions[j]) })
 		result.Stdout = r.safeStdout.String(redactions)
 		result.Stderr = r.safeStderr.String(redactions)
+		result.StdoutOmitted = r.safeStdout.exceeded
+		result.StderrOmitted = r.safeStderr.exceeded
 	}
 	if err == nil {
 		return result, nil
@@ -318,11 +324,13 @@ func (r *runningInvocation) finish(started time.Time, operationTimeout time.Dura
 		if callerBound {
 			return result, &TimeoutError{Bound: BoundCaller, Budget: callerDeadline.Sub(started), Elapsed: result.Elapsed}
 		}
+		stderrTail := tailString(strings.TrimRight(result.Stderr, "\r\n"), stderrTailLimit)
+		stderrTail = appendCaptureOmissionNotice(stderrTail, result.StdoutOmitted, result.StderrOmitted, stderrTailLimit)
 		values := map[string]string{
 			"tool":        diag.RedactText(r.invocation.Tool),
 			"argsSummary": summarizeArgs(r.invocation.Args),
 			"elapsed":     result.Elapsed.Round(time.Millisecond).String(),
-			"stderrTail":  diag.RedactText(strings.TrimRight(result.Stderr, "\r\n")),
+			"stderrTail":  diag.RedactText(stderrTail),
 			"nextCommand": nextCommand(r.invocation),
 		}
 		diagnostic, diagErr := diag.FromCatalog("KB_TOOLCHAIN_EXTERNAL_TIMEOUT", values, diag.WithMeta(map[string]any{
@@ -337,7 +345,38 @@ func (r *runningInvocation) finish(started time.Time, operationTimeout time.Dura
 	if errors.As(err, &exit) {
 		result.ExitCode = exit.ExitCode()
 	}
-	return result, &CommandError{ExitCode: result.ExitCode, StdoutTail: diag.RedactText(strings.TrimRight(tailString(result.Stdout, stderrTailLimit), "\r\n")), StderrTail: diag.RedactText(strings.TrimRight(tailString(result.Stderr, stderrTailLimit), "\r\n")), Err: err}
+	return result, &CommandError{
+		ExitCode: result.ExitCode, StdoutTail: diag.RedactText(strings.TrimRight(tailString(result.Stdout, stderrTailLimit), "\r\n")),
+		StderrTail: diag.RedactText(strings.TrimRight(tailString(result.Stderr, stderrTailLimit), "\r\n")), Err: err,
+		StdoutOmitted: result.StdoutOmitted, StderrOmitted: result.StderrOmitted,
+	}
+}
+
+func appendCaptureOmissionNotice(stderrTail string, stdoutOmitted, stderrOmitted bool, limit int) string {
+	var notices []string
+	if stdoutOmitted {
+		notices = append(notices, "captured stdout omitted because it exceeded the safe limit")
+	}
+	if stderrOmitted {
+		notices = append(notices, "captured stderr omitted because it exceeded the safe limit")
+	}
+	if len(notices) == 0 {
+		return tailString(stderrTail, limit)
+	}
+	notice := strings.Join(notices, "; ")
+	if len(notice) >= limit {
+		return tailString(notice, limit)
+	}
+	available := limit - len(notice) - 1
+	if !stderrOmitted {
+		stderrTail = tailString(stderrTail, available)
+	} else {
+		stderrTail = ""
+	}
+	if stderrTail == "" {
+		return notice
+	}
+	return stderrTail + "\n" + notice
 }
 
 const safeOutputCaptureLimitBytes = 1 << 20
@@ -384,6 +423,9 @@ func (b *boundedCapture) String(redactions []string) string {
 	value = diag.RedactText(value)
 	value = strings.ToValidUTF8(value, "�")
 	if len(value) > b.limit {
+		clear(b.data)
+		b.data = nil
+		b.exceeded = true
 		return b.omittedNotice()
 	}
 	return value

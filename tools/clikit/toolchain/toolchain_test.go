@@ -301,6 +301,34 @@ func TestSafeCaptureDropsWholeStreamWhenLimitIsExceeded(t *testing.T) {
 	}
 }
 
+// case: S-285.18
+func TestSafeCaptureTimeoutBoundsStderrAndKeepsStdoutOverflowNotice(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	tool := filepath.Join(t.TempDir(), "timeout-tool")
+	const captureLimit = 16 * 1024
+	stdoutPayload := strings.Repeat("O", captureLimit+1)
+	stderrPayload := strings.Repeat("E", 12*1024)
+	script := "#!/bin/sh\nprintf '%s' '" + stdoutPayload + "' >&1\nprintf '%s' '" + stderrPayload + "' >&2\nsleep 5\n"
+	if err := os.WriteFile(tool, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	result, err := run(context.Background(), Invocation{
+		Tool: "fixture", Executable: tool, Args: []string{"--fixture"}, Operation: OperationPackageManager,
+		SafeCaptureOutput: true, MaxCapturedOutputBytes: captureLimit,
+	}, testdeadline.Scale(t, 500*time.Millisecond))
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != "KB_TOOLCHAIN_EXTERNAL_TIMEOUT" {
+		t.Fatalf("timeout error = %#v", err)
+	}
+	tail, _ := failure.Meta["stderrTail"].(string)
+	if len(tail) > stderrTailLimit || !strings.Contains(tail, "stdout omitted") || !strings.Contains(tail, strings.Repeat("E", 10)) ||
+		result.StdoutOmitted != true || result.StderrOmitted {
+		t.Fatalf("timeout lost bounded stderr or stdout omission: len=%d result=%#v tail=%q", len(tail), result, tail)
+	}
+}
+
 func TestStderrCaptureKeepsUTF8WithinByteLimit(t *testing.T) {
 	var capture tailBuffer
 	_, _ = capture.Write([]byte(strings.Repeat("界", stderrTailLimit/3+8)))
