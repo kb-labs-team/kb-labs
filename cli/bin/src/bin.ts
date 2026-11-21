@@ -22,9 +22,10 @@
 
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { closeSync, fstatSync, openSync, readSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync, unlinkSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { writeAllSync, writeCliResult, writeCliResultTo } from './runtime/result-serializer.js';
 
 const INTERNAL_RESULT_CHANNEL = '--__kb_internal_result_channel=';
@@ -194,7 +195,49 @@ if (process.argv.includes('--json')) {
 // `node_modules/@kb-labs/*` in installed mode (independent of process.cwd()).
 const BIN_MODULE_URL = import.meta.url;
 
+async function reportUnsupportedNodeEngine(): Promise<boolean> {
+  // Resolve the installed runtime's metadata without evaluating its entry point. The CLI
+  // dependency graph can fail to load under an unsupported Node major before its own guard runs.
+  const runtimeEntryUrl = import.meta.resolve('@kb-labs/plugin-runtime');
+  const manifestUrl = new URL('../package.json', runtimeEntryUrl);
+  const manifest = JSON.parse(readFileSync(fileURLToPath(manifestUrl), 'utf8')) as {
+    name?: string;
+    engines?: { node?: string };
+  };
+  if (manifest.name !== '@kb-labs/plugin-runtime' || !manifest.engines?.node) {
+    throw new Error('installed @kb-labs/plugin-runtime package.json is missing its engines.node policy');
+  }
+  const { parseNodeEnginePolicy } = await import('@kb-labs/plugin-contracts/node-engine-policy');
+  const { requiredMajor } = parseNodeEnginePolicy(manifest.engines.node, 'platform');
+  const actualVersion = process.versions.node;
+  const actualMajor = Number(actualVersion.split('.')[0]);
+  if (actualMajor === requiredMajor) {return false;}
+
+  const { createErrorEnvelope } = await import('@kb-labs/core-platform/error-envelope');
+  const envelope = createErrorEnvelope('KB_NODE_VERSION_UNSUPPORTED', {
+    details: { requiredMajor: String(requiredMajor), actualVersion },
+  });
+  if (process.argv.includes('--json')) {
+    writeCliResult({ ok: false, error: envelope });
+  } else {
+    process.stderr.write(`${envelope.message} [${envelope.code}]\nHint: ${envelope.hint}\n`);
+  }
+  return true;
+}
+
 (async () => {
+  let unsupportedNodeEngine: boolean;
+  try {
+    unsupportedNodeEngine = await reportUnsupportedNodeEngine();
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    await reportCliResultFailure(`could not verify the installed Node.js engine policy: ${cause}`);
+    process.exit(1);
+  }
+  if (unsupportedNodeEngine) {
+    process.exit(1);
+  }
+
   let cliModules: [
     typeof import('./index.js'),
     typeof import('@kb-labs/core-runtime'),
