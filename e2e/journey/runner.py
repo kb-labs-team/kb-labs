@@ -879,7 +879,7 @@ def verify_selected_project_mcp(graph: FlowGraph, env: dict[str, str]):
     if not local:
         from service_runner import prepare_service_api_session, service_api_token
 
-        prepare_service_api_session(graph, "secured")
+        prepare_service_api_session(graph, "secured", env=env)
         token = service_api_token(graph)
     return verify_project_mcp(env, local, DEFAULT_ENABLED_SERVICES, token=token)
 
