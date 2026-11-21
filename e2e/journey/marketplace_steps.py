@@ -529,6 +529,21 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
                  assert_direct_registry_denied, cases=["S-268.1"], role="lifecycle",
                  runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
 
+    def assert_gateway_registry_ready() -> None:
+        gateway_request = urllib.request.Request(f"{_installed_gateway_url(base_env)}/ready")
+        status, body, _ = open_http(urllib.request.urlopen, gateway_request, timeout=30, env=base_env)
+        payload = read_ux_http_result(body, status)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        components = data.get("components") if isinstance(data, dict) else None
+        registry_component = components.get("upstream:marketplaceRegistry") if isinstance(components, dict) else None
+        if (status != 200 or not isinstance(data, dict) or data.get("ready") is not True
+                or not isinstance(registry_component, dict) or registry_component.get("ready") is not True):
+            raise RuntimeError("Gateway readiness did not report the protected Marketplace Registry upstream as ready")
+
+    journey.step("Gateway reports protected Registry ready", "marketplace-fixtures",
+                 assert_gateway_registry_ready, cases=["S-268.23"], role="lifecycle",
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
+
     def install_fixture() -> None:
         _assert_registry_gateway_config(base_env)
         wait_for_marketplace_ready(project, base_env, runner)
