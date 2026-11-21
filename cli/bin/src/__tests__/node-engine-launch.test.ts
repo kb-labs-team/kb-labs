@@ -31,7 +31,7 @@ describe('installed CLI Node.js engine preflight', () => {
   it('keeps installed command modules out of eager entry-point imports', () => {
     const bundledEntry = readFileSync(cliEntry, 'utf8');
     expect(bundledEntry).not.toMatch(/^import\s+.*from ['"]@kb-labs\//m);
-    expect(bundledEntry).toContain("import('@kb-labs/plugin-contracts/node-engine-policy')");
+    expect(bundledEntry).toMatch(/import\(["']@kb-labs\/plugin-contracts\/node-engine-policy["']\)/);
   });
 
   // case: S-260.7
