@@ -109,6 +109,12 @@ describe('NpmPackageSource', () => {
     vi.unstubAllEnvs();
   });
 
+  it('exposes the configured registry for extension-store dependencies', () => {
+    const source = new NpmPackageSource({ registryUrl: 'https://user:token@npm.fixture.example/path/?token=secret#fragment' });
+
+    expect(source.dependencyRegistryUrl).toBe('https://npm.fixture.example/path');
+  });
+
   async function createInstallRoot(): Promise<{ root: string; home: string }> {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-marketplace-pnpm-install-'));
     const home = path.join(root, 'home');

@@ -18,7 +18,7 @@ async function createInstallerFixture(): Promise<{ dir: string; pnpmPath: string
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'extension-store-pnpm-'));
   tempDirs.push(dir);
   const pnpmPath = path.join(dir, 'pnpm.mjs');
-  await fs.writeFile(pnpmPath, `#!${process.execPath}\nimport fs from 'node:fs';\nimport path from 'node:path';\nconst project = process.cwd();\nconst manifest = JSON.parse(fs.readFileSync(path.join(project, 'package.json'), 'utf8'));\nconst name = Object.keys(manifest.dependencies)[0];\nconst target = path.join(project, 'node_modules', ...name.split('/'));\nfs.mkdirSync(target, { recursive: true });\nfs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({ name, version: '1.2.3' }));\nfs.writeFileSync(path.join(project, 'observed-spec.txt'), manifest.dependencies[name]);\nfs.writeFileSync(path.join(project, 'observed-args.txt'), process.argv.slice(2).join(' '));\nfs.writeFileSync(path.join(project, 'observed-corepack-home.txt'), process.env.COREPACK_HOME ?? '');\nfs.writeFileSync(path.join(project, 'observed-package-manager.txt'), manifest.packageManager ?? '');\n`, { mode: 0o755 });
+  await fs.writeFile(pnpmPath, `#!${process.execPath}\nimport fs from 'node:fs';\nimport path from 'node:path';\nconst project = process.cwd();\nconst manifest = JSON.parse(fs.readFileSync(path.join(project, 'package.json'), 'utf8'));\nconst name = Object.keys(manifest.dependencies)[0];\nconst target = path.join(project, 'node_modules', ...name.split('/'));\nfs.mkdirSync(target, { recursive: true });\nfs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({ name, version: '1.2.3' }));\nfs.writeFileSync(path.join(project, 'observed-spec.txt'), manifest.dependencies[name]);\nfs.writeFileSync(path.join(project, 'observed-args.txt'), process.argv.slice(2).join(' '));\nfs.writeFileSync(path.join(project, 'observed-args.json'), JSON.stringify(process.argv.slice(2)));\nfs.writeFileSync(path.join(project, 'observed-corepack-home.txt'), process.env.COREPACK_HOME ?? '');\nfs.writeFileSync(path.join(project, 'observed-package-manager.txt'), manifest.packageManager ?? '');\n`, { mode: 0o755 });
   return { dir, pnpmPath };
 }
 
@@ -46,6 +46,23 @@ it('uses the release-pinned Corepack pnpm when no standalone pnpm is on PATH', a
 });
 
 describe('PnpmInstaller registry tarball integrity', () => {
+  it('uses the configured npm source when installing transitive dependencies', async () => {
+    const { dir, pnpmPath } = await createInstallerFixture();
+    const projectDir = path.join(dir, 'project');
+
+    await new PnpmInstaller({ pnpmPath }).install({
+      name: '@kb-labs/demo',
+      version: '1.2.3',
+      spec: 'https://npm.fixture.example/demo-1.2.3.tgz',
+      registryUrl: 'https://npm.fixture.example',
+      projectDir,
+      casDir: path.join(dir, 'store'),
+    });
+
+    const args = JSON.parse(await fs.readFile(path.join(projectDir, 'observed-args.json'), 'utf8')) as string[];
+    expect(args).toContain('--registry=https://npm.fixture.example');
+  });
+
   it('verifies the registry bytes and preserves their integrity for direct tarball specs', async () => {
     const { dir, pnpmPath } = await createInstallerFixture();
     const packageDir = path.join(dir, 'package');

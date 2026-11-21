@@ -259,7 +259,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         (ctx.scope === 'project' || resolved.primaryKind === 'plugin');
       const marketplaceState = usesExtensionStore ? [] : await snapshotMarketplaceState(scopeRoot);
       const result = usesExtensionStore
-        ? await this.installInStore(resolved)
+        ? await this.installInStore(resolved, source.dependencyRegistryUrl)
         : await source.install(resolved, scopeRoot, opts);
 
       let canonicalId: string | null | undefined;
@@ -569,6 +569,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
   private async installInStore(
     resolved: Awaited<ReturnType<PackageSource['resolve']>>,
+    registryUrl?: string,
   ): Promise<InstalledPackage> {
     const store = this.extensionStore;
     if (!store) {
@@ -580,6 +581,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       kind: 'plugin',
       ...(resolved.downloadUrl ? { spec: resolved.downloadUrl } : {}),
       ...(resolved.integrity ? { expectedIntegrity: resolved.integrity } : {}),
+      ...(registryUrl ? { registryUrl } : {}),
     });
     return {
       id: entry.entry.name,
