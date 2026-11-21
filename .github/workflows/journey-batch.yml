@@ -81,11 +81,18 @@ jobs:
         with:
           mode: ${{ github.ref == 'refs/heads/master' && 'off' || 'read-write' }}
           namespace: journey
+      - id: tgz-cache
+        name: Restore packed package cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: e2e/packages/
+          key: journey-tgz-v1-${{ runner.os }}-${{ hashFiles('**/dist/**/*.js', '**/dist/**/*.d.ts', '**/package.json') }}
       - uses: ./.github/actions/install-goreleaser
       - id: batch
         name: Produce shared build and candidate
         env:
           BATCH_SELECTION: ${{ steps.selection.outputs.selection }}
+          KB_JOURNEY_PACKAGES_READY: ${{ steps.tgz-cache.outputs.cache-hit == 'true' && '1' || '0' }}
           DEVKIT_CACHE_HIT: ${{ steps.devkit-cas.outputs.cache-hit }}
           DEVKIT_CACHE_MODE: ${{ steps.devkit-cas.outputs.cache-mode }}
           DEVKIT_CACHE_STORE_PATH: ${{ steps.devkit-cas.outputs.store-path }}
