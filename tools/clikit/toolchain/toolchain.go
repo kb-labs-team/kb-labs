@@ -14,6 +14,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -110,11 +111,16 @@ type Invocation struct {
 	Args, Env        []string
 	Dir              string
 	Operation        Operation
-	// DiscardOutput prevents child stdout and stderr from reaching captured
-	// results or caller-provided writers.
-	DiscardOutput  bool
-	Stdout, Stderr io.Writer
-	Stdin          io.Reader
+	// SafeCaptureOutput buffers each stream up to MaxCapturedOutputBytes,
+	// redacts the complete stream, then exposes only the sanitized result.
+	SafeCaptureOutput bool
+	// Redactions are known secret values replaced before pattern redaction.
+	Redactions []string
+	// MaxCapturedOutputBytes may lower the default safe capture limit; larger
+	// values are clamped to that default.
+	MaxCapturedOutputBytes int
+	Stdout, Stderr         io.Writer
+	Stdin                  io.Reader
 }
 
 type Result struct {
@@ -132,9 +138,7 @@ type CommandError struct {
 
 func (e *CommandError) Error() string {
 	tail := diag.RedactText(strings.Trim(strings.Join([]string{e.StdoutTail, e.StderrTail}, "\n"), "\n"))
-	if len(tail) > stderrTailLimit {
-		tail = tail[len(tail)-stderrTailLimit:]
-	}
+	tail = tailString(tail, stderrTailLimit)
 	if strings.TrimSpace(tail) == "" {
 		return e.Err.Error()
 	}
@@ -223,7 +227,12 @@ func run(ctx context.Context, invocation Invocation, operationTimeout time.Durat
 	if err != nil {
 		return Result{}, &CommandError{Err: err}
 	}
-	return running.finish(started, operationTimeout)
+	result, err := running.finish(started, operationTimeout)
+	if invocation.SafeCaptureOutput {
+		writeSanitized(invocation.Stdout, result.Stdout)
+		writeSanitized(invocation.Stderr, result.Stderr)
+	}
+	return result, err
 }
 
 // runningInvocation is a started external tool with its output captured but no
@@ -236,6 +245,8 @@ type runningInvocation struct {
 	invocation Invocation
 	stdout     bytes.Buffer
 	stderr     tailBuffer
+	safeStdout *boundedCapture
+	safeStderr *boundedCapture
 	waitDone   chan struct{}
 	waitErr    error
 }
@@ -251,8 +262,14 @@ func startInvocation(ctx context.Context, invocation Invocation) (*runningInvoca
 		command.Env = invocation.Env
 	}
 	running := &runningInvocation{ctx: ctx, command: command, invocation: invocation, waitDone: make(chan struct{})}
-	if invocation.DiscardOutput {
-		command.Stdout, command.Stderr = io.Discard, io.Discard
+	if invocation.SafeCaptureOutput {
+		limit := invocation.MaxCapturedOutputBytes
+		if limit <= 0 || limit > safeOutputCaptureLimitBytes {
+			limit = safeOutputCaptureLimitBytes
+		}
+		running.safeStdout = &boundedCapture{limit: limit, stream: "stdout"}
+		running.safeStderr = &boundedCapture{limit: limit, stream: "stderr"}
+		command.Stdout, command.Stderr = running.safeStdout, running.safeStderr
 	} else {
 		command.Stdout, command.Stderr = &running.stdout, &running.stderr
 		if invocation.Stdout != nil {
@@ -288,6 +305,12 @@ func (r *runningInvocation) finish(started time.Time, operationTimeout time.Dura
 	<-r.waitDone
 	err := r.waitErr
 	result := Result{Stdout: r.stdout.String(), Stderr: r.stderr.String(), Elapsed: time.Since(started)}
+	if r.invocation.SafeCaptureOutput {
+		redactions := append([]string(nil), r.invocation.Redactions...)
+		sort.SliceStable(redactions, func(i, j int) bool { return len(redactions[i]) > len(redactions[j]) })
+		result.Stdout = r.safeStdout.String(redactions)
+		result.Stderr = r.safeStderr.String(redactions)
+	}
 	if err == nil {
 		return result, nil
 	}
@@ -314,14 +337,74 @@ func (r *runningInvocation) finish(started time.Time, operationTimeout time.Dura
 	if errors.As(err, &exit) {
 		result.ExitCode = exit.ExitCode()
 	}
-	return result, &CommandError{ExitCode: result.ExitCode, StdoutTail: diag.RedactText(strings.TrimRight(tailString(result.Stdout, stderrTailLimit), "\r\n")), StderrTail: diag.RedactText(strings.TrimRight(result.Stderr, "\r\n")), Err: err}
+	return result, &CommandError{ExitCode: result.ExitCode, StdoutTail: diag.RedactText(strings.TrimRight(tailString(result.Stdout, stderrTailLimit), "\r\n")), StderrTail: diag.RedactText(strings.TrimRight(tailString(result.Stderr, stderrTailLimit), "\r\n")), Err: err}
+}
+
+const safeOutputCaptureLimitBytes = 1 << 20
+
+type boundedCapture struct {
+	data     []byte
+	limit    int
+	stream   string
+	exceeded bool
+}
+
+func (b *boundedCapture) omittedNotice() string {
+	return "captured " + b.stream + " omitted because it exceeded the safe limit"
+}
+
+func (b *boundedCapture) Write(data []byte) (int, error) {
+	if b.exceeded {
+		return len(data), nil
+	}
+	if len(data) > b.limit-len(b.data) {
+		clear(b.data)
+		b.data = nil
+		b.exceeded = true
+		return len(data), nil
+	}
+	b.data = append(b.data, data...)
+	return len(data), nil
+}
+
+func (b *boundedCapture) String(redactions []string) string {
+	if b.exceeded {
+		return b.omittedNotice()
+	}
+	defer func() {
+		clear(b.data)
+		b.data = nil
+	}()
+	value := string(b.data)
+	for _, secret := range redactions {
+		if secret != "" {
+			value = strings.ReplaceAll(value, secret, "[REDACTED]")
+		}
+	}
+	value = diag.RedactText(value)
+	value = strings.ToValidUTF8(value, "�")
+	if len(value) > b.limit {
+		return b.omittedNotice()
+	}
+	return value
+}
+
+func writeSanitized(writer io.Writer, value string) {
+	if writer != nil && value != "" {
+		_, _ = io.WriteString(writer, value)
+	}
 }
 
 func tailString(value string, limit int) string {
+	value = strings.ToValidUTF8(value, "�")
 	if len(value) > limit {
-		value = value[len(value)-limit:]
+		data := []byte(value[len(value)-limit:])
+		for len(data) > 0 && !utf8.Valid(data) {
+			data = data[1:]
+		}
+		value = string(data)
 	}
-	return strings.ToValidUTF8(value, "�")
+	return value
 }
 
 const stderrTailLimit = 4096

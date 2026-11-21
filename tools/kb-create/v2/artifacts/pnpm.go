@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/toolchain"
@@ -37,13 +38,16 @@ type CommandRunner struct {
 	corepackHome string
 	registry     string
 	offline      bool
+	redactions   []string
+	maxCapture   int
 }
 
-const packageManagerOutputNotice = "package manager output omitted for safety"
+const externalCommandStderrTailBytes = 4096
 
 type externalCommandFailure struct {
-	exitCode int
-	cause    error
+	exitCode   int
+	stderrTail string
+	cause      error
 }
 
 func (f *externalCommandFailure) Error() string { return f.cause.Error() }
@@ -69,7 +73,13 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 			}
 			source := "Corepack's default npm registry"
 			if !r.offline {
-				_, err = toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env, Operation: toolchain.OperationPackageManager, DiscardOutput: true})
+				var provision toolchain.Result
+				provision, err = toolchain.Run(ctx, toolchain.Invocation{
+					Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env,
+					Operation: toolchain.OperationPackageManager, SafeCaptureOutput: true, Redactions: r.redactions,
+					MaxCapturedOutputBytes: r.maxCapture,
+				})
+				writeCapturedOutput(output, provision)
 				if err == nil {
 					node, script, err = toolchain.PnpmExecutableAt(r.corepackHome)
 				}
@@ -78,10 +88,9 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 				failure := contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s.", toolchain.SupportedPnpm, source), "Check the default npm registry and rerun the install command.", err)
 				var commandFailure *toolchain.CommandError
 				if errors.As(err, &commandFailure) {
-					writePackageManagerOutputNotice(output, commandFailure.ExitCode)
 					failure.Meta = map[string]any{
-						"packageManagerExitCode": fmt.Sprint(commandFailure.ExitCode),
-						"packageManagerOutput":   "omitted for safety",
+						"packageManagerExitCode":   fmt.Sprint(commandFailure.ExitCode),
+						"packageManagerStderrTail": packageManagerStderrTail(commandFailure.StderrTail),
 					}
 				}
 				return failure
@@ -92,22 +101,42 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 	} else {
 		executable = name
 	}
-	_, err := toolchain.Run(ctx, toolchain.Invocation{Tool: name, Executable: executable, Args: args, Env: env, Operation: toolchain.OperationPackageManager, DiscardOutput: true})
+	result, err := toolchain.Run(ctx, toolchain.Invocation{
+		Tool: name, Executable: executable, Args: args, Env: env, Operation: toolchain.OperationPackageManager,
+		SafeCaptureOutput: true, Redactions: r.redactions, MaxCapturedOutputBytes: r.maxCapture,
+	})
+	writeCapturedOutput(output, result)
 	if err != nil {
 		var commandFailure *toolchain.CommandError
 		if errors.As(err, &commandFailure) {
-			writePackageManagerOutputNotice(output, commandFailure.ExitCode)
-			return &externalCommandFailure{exitCode: commandFailure.ExitCode, cause: err}
+			return &externalCommandFailure{exitCode: commandFailure.ExitCode, stderrTail: commandFailure.StderrTail, cause: err}
 		}
 		return err
 	}
 	return nil
 }
 
-func writePackageManagerOutputNotice(output io.Writer, exitCode int) {
+func writeCapturedOutput(output io.Writer, result toolchain.Result) {
 	if output != nil {
-		_, _ = fmt.Fprintf(output, "Package manager failed with exit code %d; %s.\n", exitCode, packageManagerOutputNotice)
+		_, _ = io.WriteString(output, result.Stdout)
+		_, _ = io.WriteString(output, result.Stderr)
 	}
+}
+
+func packageManagerStderrTail(stderr string) string {
+	return tailText([]byte(stderr), externalCommandStderrTailBytes)
+}
+
+func tailText(content []byte, limit int) string {
+	value := strings.ToValidUTF8(diag.RedactText(string(content)), "�")
+	data := []byte(value)
+	if len(data) > limit {
+		data = data[len(data)-limit:]
+		for len(data) > 0 && !utf8.Valid(data) {
+			data = data[1:]
+		}
+	}
+	return strings.TrimRight(string(data), "\r\n")
 }
 
 func packageManagerEnvironment(base, overrides []string) []string {
@@ -136,10 +165,10 @@ type PnpmConfig struct {
 	PreviousReleaseCatalog *catalog.Verified
 	MarketplaceRoot        string
 	Offline                bool
+	Redactions             []string
 	Client                 *http.Client
 	Runner                 Runner
-	// Log receives safe package-manager failure notices. Raw package-manager
-	// stdout and stderr are discarded before they can enter any output channel.
+	// Log receives package-manager output after bounded capture and redaction.
 	Log io.Writer
 }
 
@@ -371,7 +400,7 @@ func (p Pnpm) run(command string, specs ...string) error {
 		if p.config.PackageManagerRoot == "" {
 			return fmt.Errorf("pnpm package-manager state root is required")
 		}
-		runner = CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry, offline: p.config.Offline}
+		runner = CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry, offline: p.config.Offline, redactions: p.config.Redactions}
 	}
 	log := p.config.Log
 	if log == nil {
@@ -391,13 +420,16 @@ func (p Pnpm) run(command string, specs ...string) error {
 		var commandFailure *externalCommandFailure
 		if errors.As(err, &commandFailure) {
 			cause := fmt.Errorf("pnpm %s exact artifacts: %w", command, err)
+			if stderrTail := strings.TrimSpace(commandFailure.stderrTail); stderrTail != "" {
+				cause = fmt.Errorf("%w; pnpm stderr tail: %s", cause, stderrTail)
+			}
 			failure := contracts.NewDiag(contracts.CodeApplyFailed,
 				"The package manager could not apply the exact artifacts.",
-				"Review the resolved plan and package-manager configuration, then rerun `kb-create install`. Raw package-manager output was omitted for safety.",
+				"Read the installer log and fix the reported pnpm failure, then rerun `kb-create install`.",
 				cause)
 			failure.Meta = map[string]any{
-				"packageManagerExitCode": fmt.Sprint(commandFailure.exitCode),
-				"packageManagerOutput":   "omitted for safety",
+				"packageManagerExitCode":   fmt.Sprint(commandFailure.exitCode),
+				"packageManagerStderrTail": packageManagerStderrTail(commandFailure.stderrTail),
 			}
 			return failure
 		}

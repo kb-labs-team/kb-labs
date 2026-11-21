@@ -1166,7 +1166,7 @@
         "diagnosticPath",
         "logPath",
         "packageManagerExitCode",
-        "packageManagerOutput"
+        "packageManagerStderrTail"
       ],
       "httpStatus": 500
     },
