@@ -308,9 +308,21 @@ class MarketplaceStepTests(unittest.TestCase):
             workspace = root / "workspace"
             calls = []
 
-            def runner(command, *, cwd, env, capture_output, text, timeout):
-                calls.append((tuple(command), cwd, env.copy()))
+            def runner(command, *, cwd, env, capture_output, text, timeout, input=None):
+                calls.append((tuple(command), cwd, env.copy(), input))
+                if command[0] == "node" and command[2:4] == ["auth", "login"]:
+                    self.assertEqual(input, "fixture-admin-password\n")
+                    session_path = Path(env["KB_HOME"]) / "session.json"
+                    session_path.parent.mkdir(parents=True, exist_ok=True)
+                    gateway_url = command[command.index("--gateway-url") + 1]
+                    session_path.write_text(json.dumps({"version": 1, "sessions": [{
+                        "gatewayUrl": gateway_url, "accessToken": "fixture-access-token",
+                        "refreshToken": "fixture-refresh-token", "expiresAt": 4102444800000,
+                    }]}))
+                    session_path.chmod(0o600)
+                    return subprocess.CompletedProcess(command, 0, "Logged in.\n", "")
                 if command[0] == "node":
+                    self.assertTrue((Path(env["KB_HOME"]) / "session.json").is_file())
                     return subprocess.CompletedProcess(command, 0, json.dumps({
                         "ok": True, "data": {"version": "2.120.1"},
                     }), "")
@@ -329,14 +341,17 @@ class MarketplaceStepTests(unittest.TestCase):
 
             env = {"HOME": str(root), "KB_JOURNEY_WORKSPACE_ROOT": str(workspace),
                    "KB_JOURNEY_MARKETPLACE_PUBLISH_URL": "http://registry.test/api/v1",
-                   "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey"}
+                   "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey",
+                   "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured",
+                   "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
+                   "KB_JOURNEY_ADMIN_PASSWORD": "fixture-admin-password"}
             with patch("marketplace_steps.wait_for_marketplace_ready"), \
                     patch("marketplace_steps._installed_gateway_url", return_value="http://127.0.0.1:4317"), \
                     patch("marketplace_steps._assert_registry_gateway_config"), \
                     patch("marketplace_steps.open_http", return_value=(401, json.dumps({"ok": False, "error": {
                         "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                         "hint": "Log in and retry."}}).encode(), {})), \
-                    patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
+                    patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured"}):
                 journey = Journey("local", "registry-commit-fixture")
                 entry = prepare_registry_commit_project_fixture(journey, project, "http://verdaccio.test",
                                                                  env, runner)
@@ -345,14 +360,20 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(entry["marketplaceSource"], "registry")
             self.assertEqual(entry["signatureStatus"], "verified")
             workspace_cli = str(workspace / "cli" / "bin" / "dist" / "bin.js")
-            self.assertEqual([call[0] for call in calls if call[0][0] == "node"], [
+            publish_calls = [call for call in calls if call[0][0] == "node" and "hub" in call[0]]
+            self.assertEqual([call[0] for call in publish_calls], [
                 ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/commit"), "--json"),
                 ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"),
                 ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"),
             ])
             self.assertTrue(all(call[2].get("KB_REGISTRY_URL") ==
                                 "http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1"
-                                for call in calls if call[0][0] == "node"))
+                                for call in publish_calls))
+            login_calls = [call for call in calls if call[0][0] == "node" and call[0][2:4] == ("auth", "login")]
+            self.assertEqual(len(login_calls), 3)
+            self.assertTrue(all(login[2]["HOME"] == publish[2]["HOME"]
+                                and login[2]["KB_HOME"] == publish[2]["KB_HOME"]
+                                for login, publish in zip(login_calls, publish_calls)))
             self.assertEqual(journey.result().status, "PASS")
 
     def test_policy_diagnostic_step_restores_config_and_proves_blocked_fixture_and_first_party_cli(self):
