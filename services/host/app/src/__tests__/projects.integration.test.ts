@@ -399,7 +399,7 @@ describe("kb-host project routing", () => {
         error: { code: "KB_AUTH_FORBIDDEN" },
       });
 
-      // case: S-311.1 — direct REST-listener calls without runtime guard proof
+      // case: S-312.1 — direct REST-listener calls without runtime guard proof
       // are rejected at the integration boundary.
       // case: S-160.5 — exercise token delivery through the real child runtime,
       // runtime guard proof, REST setup closure, and CLI executor.

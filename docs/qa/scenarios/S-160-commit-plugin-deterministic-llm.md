@@ -30,4 +30,4 @@ A developer uses the marketplace-installed commit plugin to generate and preview
 | S-160.4 | After S-160.3 leaves the repository clean, run `kb commit commit --json` again | The command succeeds with an empty plan, `applied: false`, and no applied commits; HEAD, index, and working tree remain unchanged. |
 | S-160.5 | With `@kb-labs/commit` installed in a secured project runtime, call the project command execution route through the runtime guard for `commit plan delete --json` | The actual child runtime's REST route accepts the guard-generated proof, resolves the enabled plugin command from its own registry, runs it through the host-owned backend, and returns `execution:done` with exit code 0. |
 
-The direct-listener proof boundary is covered separately at integration level by [S-311](S-311-project-runtime-direct-listener-proof.md); it is not claimed as a user journey step.
+The direct-listener proof boundary is covered separately at integration level by [S-312](S-312-project-runtime-direct-listener-proof.md); it is not claimed as a user journey step.

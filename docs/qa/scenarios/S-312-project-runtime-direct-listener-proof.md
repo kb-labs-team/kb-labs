@@ -1,5 +1,5 @@
 ---
-id: S-311
+id: S-312
 title: Project runtime rejects command calls without guard proof
 persona: solo-developer
 area: platform
@@ -23,4 +23,4 @@ Keep the project runtime command endpoint private to the host runtime guard. Thi
 
 | # | Action | Expected |
 |---|---|---|
-| S-311.1 | POST a valid command request directly to the project REST listener without the runtime guard proof | The listener returns HTTP 403 with `KB_AUTH_FORBIDDEN`; it does not execute the command. The equivalent request sent through the host runtime guard is covered by [S-160.5](S-160-commit-plugin-deterministic-llm.md). |
+| S-312.1 | POST a valid command request directly to the project REST listener without the runtime guard proof | The listener returns HTTP 403 with `KB_AUTH_FORBIDDEN`; it does not execute the command. The equivalent request sent through the host runtime guard is covered by [S-160.5](S-160-commit-plugin-deterministic-llm.md). |
