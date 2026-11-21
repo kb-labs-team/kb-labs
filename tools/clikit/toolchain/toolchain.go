@@ -110,9 +110,11 @@ type Invocation struct {
 	Args, Env        []string
 	Dir              string
 	Operation        Operation
-	Redactions       []string
-	Stdout, Stderr   io.Writer
-	Stdin            io.Reader
+	// DiscardOutput prevents child stdout and stderr from reaching captured
+	// results or caller-provided writers.
+	DiscardOutput  bool
+	Stdout, Stderr io.Writer
+	Stdin          io.Reader
 }
 
 type Result struct {
@@ -248,13 +250,17 @@ func startInvocation(ctx context.Context, invocation Invocation) (*runningInvoca
 	if invocation.Env != nil {
 		command.Env = invocation.Env
 	}
-	running := &runningInvocation{ctx: ctx, command: command, invocation: invocation, stderr: tailBuffer{redactions: append([]string(nil), invocation.Redactions...)}, waitDone: make(chan struct{})}
-	command.Stdout, command.Stderr = &running.stdout, &running.stderr
-	if invocation.Stdout != nil {
-		command.Stdout = io.MultiWriter(&running.stdout, invocation.Stdout)
-	}
-	if invocation.Stderr != nil {
-		command.Stderr = io.MultiWriter(&running.stderr, invocation.Stderr)
+	running := &runningInvocation{ctx: ctx, command: command, invocation: invocation, waitDone: make(chan struct{})}
+	if invocation.DiscardOutput {
+		command.Stdout, command.Stderr = io.Discard, io.Discard
+	} else {
+		command.Stdout, command.Stderr = &running.stdout, &running.stderr
+		if invocation.Stdout != nil {
+			command.Stdout = io.MultiWriter(&running.stdout, invocation.Stdout)
+		}
+		if invocation.Stderr != nil {
+			command.Stderr = io.MultiWriter(&running.stderr, invocation.Stderr)
+		}
 	}
 	process, err := child.StartManaged(command, child.ProcessGroup, proc.ChildProcessObserver())
 	if err != nil {
@@ -320,35 +326,17 @@ func tailString(value string, limit int) string {
 
 const stderrTailLimit = 4096
 
-type tailBuffer struct {
-	data       []byte
-	redactions []string
-}
-
-func (b *tailBuffer) redact(value string) string {
-	value = diag.RedactText(value)
-	for _, secret := range b.redactions {
-		if secret != "" {
-			value = strings.ReplaceAll(value, secret, "[REDACTED]")
-		}
-	}
-	return value
-}
+type tailBuffer struct{ data []byte }
 
 func (b *tailBuffer) Write(data []byte) (int, error) {
-	// Redact the entire newly captured chunk together with the retained tail
-	// before clipping. This keeps a credential safe when the final output tail
-	// would otherwise begin in the middle of its key or value.
-	value := b.redact(string(b.data) + string(data))
-	b.data = []byte(value)
+	b.data = append(b.data, data...)
 	if len(b.data) > stderrTailLimit {
 		b.data = append([]byte(nil), b.data[len(b.data)-stderrTailLimit:]...)
 	}
 	return len(data), nil
 }
 func (b *tailBuffer) String() string {
-	value := b.redact(string(b.data))
-	data := []byte(strings.ToValidUTF8(value, "�"))
+	data := []byte(strings.ToValidUTF8(string(b.data), "�"))
 	if len(data) > stderrTailLimit {
 		data = data[len(data)-stderrTailLimit:]
 		for len(data) > 0 && !utf8.Valid(data) {

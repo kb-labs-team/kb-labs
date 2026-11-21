@@ -283,7 +283,7 @@ func runRecoveryMutation(ctx context.Context, input recoveryRuntimeInput, root s
 			registry = activeReceipt.Plan.Registry
 		}
 		executor, executorErr := newArtifactExecutor(layout, activeRoot, registry, false, transcript, input.ArtifactRunner,
-			activeRelease, nil, platformRoot, nil)
+			activeRelease, nil, platformRoot)
 		if executorErr != nil {
 			return recoveryMutationResult{}, asDiag(executorErr)
 		}

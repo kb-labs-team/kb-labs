@@ -22,6 +22,18 @@ visibility and preserves old releases as private without deleting their
 metadata or tarballs. Owners and valid share-token holders retain access.
 Case: S-268.21.
 
+## 2026-11-21
+
+### Package-manager output is omitted from installer diagnostics
+
+Package-manager stdout and stderr are untrusted and may contain credentials in
+formats or chunk boundaries that generic streaming redaction cannot safely
+recognize. The installer discards those streams before they reach command
+writers, transcripts, error envelopes, or dossiers. Failures retain the process
+exit code and a fixed notice that output was omitted; remediation stays
+non-specific unless a separate structured result establishes the cause. Case:
+PC-001.2.
+
 ## 2026-10-31
 
 ### SQLite vector search breaks equal-score ties by record ID

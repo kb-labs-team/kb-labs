@@ -31,8 +31,6 @@ type Dossier struct {
 	LogPath             string               `json:"logPath,omitempty"`
 }
 
-const packageManagerStderrTailLimit = 4096
-
 func Redact(value string, secrets []string) string {
 	result := value
 	for _, secret := range secrets {
@@ -51,11 +49,7 @@ func Write(directory string, dossier Dossier, secrets []string) (string, error) 
 		dossier.Error.Cause = Redact(dossier.Error.Cause, secrets)
 		for key, value := range dossier.Error.Meta {
 			if text, ok := value.(string); ok {
-				text = Redact(text, secrets)
-				if key == "packageManagerStderrTail" {
-					text = tail(text, packageManagerStderrTailLimit)
-				}
-				dossier.Error.Meta[key] = text
+				dossier.Error.Meta[key] = Redact(text, secrets)
 			}
 		}
 	}
@@ -77,12 +71,4 @@ func Write(directory string, dossier Dossier, secrets []string) (string, error) 
 		return "", err
 	}
 	return path, nil
-}
-
-func tail(value string, limit int) string {
-	content := []byte(value)
-	if len(content) > limit {
-		content = content[len(content)-limit:]
-	}
-	return strings.ToValidUTF8(string(content), "�")
 }

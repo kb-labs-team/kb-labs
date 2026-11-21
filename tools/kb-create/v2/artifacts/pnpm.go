@@ -37,15 +37,13 @@ type CommandRunner struct {
 	corepackHome string
 	registry     string
 	offline      bool
-	redactions   []string
 }
 
-const externalCommandStderrTailBytes = 4096
+const packageManagerOutputNotice = "package manager output omitted for safety"
 
 type externalCommandFailure struct {
-	exitCode   int
-	stderrTail string
-	cause      error
+	exitCode int
+	cause    error
 }
 
 func (f *externalCommandFailure) Error() string { return f.cause.Error() }
@@ -71,14 +69,7 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 			}
 			source := "Corepack's default npm registry"
 			if !r.offline {
-				var provision toolchain.Result
-				provision, err = toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env, Redactions: r.redactions, Operation: toolchain.OperationPackageManager})
-				if provision.Stdout != "" {
-					_, _ = io.WriteString(output, provision.Stdout)
-				}
-				if provision.Stderr != "" {
-					_, _ = io.WriteString(output, provision.Stderr)
-				}
+				_, err = toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env, Operation: toolchain.OperationPackageManager, DiscardOutput: true})
 				if err == nil {
 					node, script, err = toolchain.PnpmExecutableAt(r.corepackHome)
 				}
@@ -87,9 +78,10 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 				failure := contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s.", toolchain.SupportedPnpm, source), "Check the default npm registry and rerun the install command.", err)
 				var commandFailure *toolchain.CommandError
 				if errors.As(err, &commandFailure) {
+					writePackageManagerOutputNotice(output, commandFailure.ExitCode)
 					failure.Meta = map[string]any{
-						"packageManagerExitCode":   fmt.Sprint(commandFailure.ExitCode),
-						"packageManagerStderrTail": packageManagerStderrTail(commandFailure.StderrTail),
+						"packageManagerExitCode": fmt.Sprint(commandFailure.ExitCode),
+						"packageManagerOutput":   "omitted for safety",
 					}
 				}
 				return failure
@@ -100,32 +92,22 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 	} else {
 		executable = name
 	}
-	result, err := toolchain.Run(ctx, toolchain.Invocation{Tool: name, Executable: executable, Args: args, Env: env, Redactions: r.redactions, Operation: toolchain.OperationPackageManager})
-	if result.Stdout != "" {
-		_, _ = io.WriteString(output, result.Stdout)
-	}
-	if result.Stderr != "" {
-		_, _ = io.WriteString(output, result.Stderr)
-	}
+	_, err := toolchain.Run(ctx, toolchain.Invocation{Tool: name, Executable: executable, Args: args, Env: env, Operation: toolchain.OperationPackageManager, DiscardOutput: true})
 	if err != nil {
 		var commandFailure *toolchain.CommandError
 		if errors.As(err, &commandFailure) {
-			return &externalCommandFailure{exitCode: commandFailure.ExitCode, stderrTail: commandFailure.StderrTail, cause: err}
+			writePackageManagerOutputNotice(output, commandFailure.ExitCode)
+			return &externalCommandFailure{exitCode: commandFailure.ExitCode, cause: err}
 		}
 		return err
 	}
 	return nil
 }
 
-func packageManagerStderrTail(stderr string) string {
-	return tailText([]byte(diag.RedactText(stderr)), externalCommandStderrTailBytes)
-}
-
-func tailText(content []byte, limit int) string {
-	if len(content) > limit {
-		content = content[len(content)-limit:]
+func writePackageManagerOutputNotice(output io.Writer, exitCode int) {
+	if output != nil {
+		_, _ = fmt.Fprintf(output, "Package manager failed with exit code %d; %s.\n", exitCode, packageManagerOutputNotice)
 	}
-	return strings.TrimRight(strings.ToValidUTF8(string(content), "�"), "\r\n")
 }
 
 func packageManagerEnvironment(base, overrides []string) []string {
@@ -154,12 +136,10 @@ type PnpmConfig struct {
 	PreviousReleaseCatalog *catalog.Verified
 	MarketplaceRoot        string
 	Offline                bool
-	Redactions             []string
 	Client                 *http.Client
 	Runner                 Runner
-	// Log receives the complete package-manager transcript. It is deliberately
-	// file-oriented: raw package-manager output must never pollute human or JSON
-	// command output.
+	// Log receives safe package-manager failure notices. Raw package-manager
+	// stdout and stderr are discarded before they can enter any output channel.
 	Log io.Writer
 }
 
@@ -391,7 +371,7 @@ func (p Pnpm) run(command string, specs ...string) error {
 		if p.config.PackageManagerRoot == "" {
 			return fmt.Errorf("pnpm package-manager state root is required")
 		}
-		runner = CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry, offline: p.config.Offline, redactions: p.config.Redactions}
+		runner = CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry, offline: p.config.Offline}
 	}
 	log := p.config.Log
 	if log == nil {
@@ -411,16 +391,13 @@ func (p Pnpm) run(command string, specs ...string) error {
 		var commandFailure *externalCommandFailure
 		if errors.As(err, &commandFailure) {
 			cause := fmt.Errorf("pnpm %s exact artifacts: %w", command, err)
-			if stderrTail := strings.TrimSpace(commandFailure.stderrTail); stderrTail != "" {
-				cause = fmt.Errorf("%w; pnpm stderr tail: %s", cause, stderrTail)
-			}
 			failure := contracts.NewDiag(contracts.CodeApplyFailed,
 				"The package manager could not apply the exact artifacts.",
-				"Read the installer log and fix the reported pnpm failure, then rerun `kb-create install`.",
+				"Review the resolved plan and package-manager configuration, then rerun `kb-create install`. Raw package-manager output was omitted for safety.",
 				cause)
 			failure.Meta = map[string]any{
-				"packageManagerExitCode":   fmt.Sprint(commandFailure.exitCode),
-				"packageManagerStderrTail": commandFailure.stderrTail,
+				"packageManagerExitCode": fmt.Sprint(commandFailure.exitCode),
+				"packageManagerOutput":   "omitted for safety",
 			}
 			return failure
 		}
