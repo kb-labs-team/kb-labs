@@ -1,6 +1,18 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { homedir, userInfo } from 'node:os';
+import {
+  chmodSync,
+  cpSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -33,40 +45,37 @@ describe('installed CLI Node.js engine preflight', () => {
 
     expect(existsSync(cliEntry), `built CLI entry missing: ${cliEntry}`).toBe(true);
     const actualVersion = execFileSync(olderNode, ['--version'], { encoding: 'utf8' }).trim().replace(/^v/, '');
-    const text = spawnSync(olderNode, [cliEntry, 'marketplace', 'plugins', 'list', '--help'], {
-      cwd: packageRoot,
-      encoding: 'utf8',
-      timeout: 15000,
-    });
+    const installation = createInstalledCli();
+    try {
+      const text = runInstalledShim(installation, olderNode, ['marketplace', 'plugins', 'list', '--help']);
 
-    expect(text.error, text.stderr).toBeUndefined();
-    expect(text.status, text.stderr).not.toBe(0);
-    const textOutput = `${text.stdout}${text.stderr}`;
-    expect(textOutput).toContain(`Node.js ${actualVersion} is unsupported`);
-    expect(textOutput).toContain(`requires major ${requiredMajor}`);
-    expect(textOutput).toContain('KB_NODE_VERSION_UNSUPPORTED');
-    expect(textOutput).toContain(`nvm install ${requiredMajor} && nvm use ${requiredMajor}`);
-    expect(textOutput).not.toContain('ERR_MODULE_NOT_FOUND');
-    expect(textOutput).not.toContain(' at file:');
+      expect(text.error, text.stderr).toBeUndefined();
+      expect(text.status, text.stderr).not.toBe(0);
+      const textOutput = `${text.stdout}${text.stderr}`;
+      expect(textOutput).toContain(`Node.js ${actualVersion} is unsupported`);
+      expect(textOutput).toContain(`requires major ${requiredMajor}`);
+      expect(textOutput).toContain('KB_NODE_VERSION_UNSUPPORTED');
+      expect(textOutput).toContain(`nvm install ${requiredMajor} && nvm use ${requiredMajor}`);
+      expect(textOutput).not.toContain('ERR_MODULE_NOT_FOUND');
+      expect(textOutput).not.toContain(' at file:');
 
-    const json = spawnSync(olderNode, [cliEntry, 'marketplace', 'plugins', 'list', '--help', '--json'], {
-      cwd: packageRoot,
-      encoding: 'utf8',
-      timeout: 15000,
-    });
-    expect(json.error, json.stderr).toBeUndefined();
-    expect(json.status, json.stderr).not.toBe(0);
-    expect(json.stderr).not.toContain('ERR_MODULE_NOT_FOUND');
-    const result = JSON.parse(json.stdout);
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        code: 'KB_NODE_VERSION_UNSUPPORTED',
-        details: { requiredMajor: String(requiredMajor), actualVersion },
-      },
-    });
-    expect(result.error.message).toContain(`requires major ${requiredMajor}`);
-    expect(result.error.hint).toContain(`nvm install ${requiredMajor} && nvm use ${requiredMajor}`);
+      const json = runInstalledShim(installation, olderNode, ['marketplace', 'plugins', 'list', '--help', '--json']);
+      expect(json.error, json.stderr).toBeUndefined();
+      expect(json.status, json.stderr).not.toBe(0);
+      expect(json.stderr).not.toContain('ERR_MODULE_NOT_FOUND');
+      const result = JSON.parse(json.stdout);
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: 'KB_NODE_VERSION_UNSUPPORTED',
+          details: { requiredMajor: String(requiredMajor), actualVersion },
+        },
+      });
+      expect(result.error.message).toContain(`requires major ${requiredMajor}`);
+      expect(result.error.hint).toContain(`nvm install ${requiredMajor} && nvm use ${requiredMajor}`);
+    } finally {
+      rmSync(installation.root, { recursive: true, force: true });
+    }
   }, 40000);
 
   // case: S-260.7
@@ -78,17 +87,64 @@ describe('installed CLI Node.js engine preflight', () => {
       return;
     }
 
-    const result = spawnSync(supportedNode, [cliEntry, '--version'], {
-      cwd: packageRoot,
-      encoding: 'utf8',
-      timeout: 15000,
-    });
-    expect(result.error, result.stderr).toBeUndefined();
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe(cliVersion);
-    expect(result.stderr).not.toContain('KB_NODE_VERSION_UNSUPPORTED');
+    const installation = createInstalledCli();
+    try {
+      const result = runInstalledShim(installation, supportedNode, ['--version']);
+      expect(result.error, result.stderr).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe(cliVersion);
+      expect(result.stderr).not.toContain('KB_NODE_VERSION_UNSUPPORTED');
+    } finally {
+      rmSync(installation.root, { recursive: true, force: true });
+    }
   }, 20000);
 });
+
+function createInstalledCli(): { root: string; shim: string; platformRoot: string } {
+  const root = mkdtempSync(join(tmpdir(), 'kb-cli-installed-engine-'));
+  const packageInstallRoot = join(root, 'node_modules/@kb-labs/cli-bin');
+  const binDirectory = join(root, 'node_modules/.bin');
+  mkdirSync(packageInstallRoot, { recursive: true });
+  mkdirSync(binDirectory, { recursive: true });
+  cpSync(join(packageRoot, 'dist'), join(packageInstallRoot, 'dist'), { recursive: true });
+  copyFileSync(join(packageRoot, 'package.json'), join(packageInstallRoot, 'package.json'));
+  symlinkSync(join(packageRoot, 'node_modules'), join(packageInstallRoot, 'node_modules'), 'dir');
+  chmodSync(join(packageInstallRoot, 'dist/bin.js'), 0o755);
+  const platformRoot = join(root, 'platform');
+  mkdirSync(join(platformRoot, '.kb/v2'), { recursive: true });
+  writeFileSync(join(platformRoot, '.kb/v2/receipt.json'), JSON.stringify({
+    id: 'test-receipt',
+    installationId: 'test-installation',
+    plan: { request: { gatewayUrl: 'http://127.0.0.1:4000' }, serviceGraph: { platformVersion: cliVersion } },
+    verification: { hostHealthUrl: 'http://127.0.0.1:4000/health' },
+  }));
+  writeFileSync(join(platformRoot, '.kb/kb.config.jsonc'), JSON.stringify({ platform: { adapters: {} } }));
+  const shim = join(binDirectory, 'kb');
+  writeFileSync(shim, `#!/bin/sh
+basedir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec node "$basedir/../@kb-labs/cli-bin/dist/bin.js" "$@"
+`, { mode: 0o755 });
+  return { root, shim, platformRoot };
+}
+
+function runInstalledShim(installation: { root: string; shim: string; platformRoot: string }, node: string, args: string[]) {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: installation.root,
+    KB_HOME: join(installation.root, '.kb'),
+    KB_PLATFORM_ROOT: installation.platformRoot,
+    PATH: `${dirname(node)}:${process.env.PATH ?? ''}`,
+  };
+  delete env.KB_PROJECT_ROOT;
+  delete env.KB_PROJECT_ID;
+  delete env.KB_NET_OFFSET;
+  return spawnSync(installation.shim, args, {
+    cwd: installation.root,
+    encoding: 'utf8',
+    timeout: 15000,
+    env,
+  });
+}
 
 function findNode(requiredMajor: number, relation: 'older' | 'supported'): string | undefined {
   const explicit = process.env[relation === 'older' ? 'KB_TEST_OLD_NODE' : 'KB_TEST_SUPPORTED_NODE'];
