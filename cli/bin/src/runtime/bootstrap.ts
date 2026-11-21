@@ -166,8 +166,6 @@ export async function executeCli(
   process.env.KB_LOG_STREAM = "stderr";
   if (global.json) { process.env.KB_OUTPUT_MODE = "json"; }
 
-  loadEnvFile(cwd);
-
   let configResolution:
     | { ok: true; value: Awaited<ReturnType<typeof loadPlatformConfiguration>> }
     | { ok: false; error: unknown };
@@ -208,6 +206,10 @@ export async function executeCli(
   if (!configResolution.ok) {
     return reportInitializationError(configResolution.error, global, jsonPresenterFactory, textPresenterFactory, correlationId);
   }
+  // Pin the launcher-resolved root before loading project environment. Later
+  // project configuration loads must retain the same platform owner.
+  process.env.KB_PLATFORM_ROOT = configResolution.value.platformRoot;
+  loadEnvFile(cwd);
   let loadedConfig = configResolution.value;
   const protection = registryStore.protectionFor(authRoute);
   const authExempt = !protection.requiresSession

@@ -29,7 +29,6 @@ type LoadPlatformConfigResult = {
     roots: unknown;
     fields?: Record<string, 'platform' | 'project' | 'both'>;
     ignoredProjectFields?: string[];
-    platformDirOverride?: string;
   };
 };
 

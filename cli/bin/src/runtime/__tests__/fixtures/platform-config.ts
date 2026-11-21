@@ -1,5 +1,6 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 import { loadPlatformConfig, type LoadPlatformConfigResult } from '@kb-labs/core-runtime';
 
@@ -28,6 +29,10 @@ export async function createPlatformConfigFixture(
   const developmentManifest = path.join(options.home, 'core', 'runtime', 'package.json');
   await mkdir(path.dirname(developmentManifest), { recursive: true });
   await writeFile(developmentManifest, JSON.stringify({ name: '@kb-labs/core-runtime', version: 'test' }));
+  const layoutPath = 'tools/kb-create/v2/contracts/platform-layout.json';
+  const layoutDestination = path.join(options.home, layoutPath);
+  await mkdir(path.dirname(layoutDestination), { recursive: true });
+  await copyFile(fileURLToPath(new URL(`../../../../../../${layoutPath}`, import.meta.url)), layoutDestination);
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
