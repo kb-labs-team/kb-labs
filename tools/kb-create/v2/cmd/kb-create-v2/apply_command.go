@@ -88,15 +88,13 @@ func executeApply(ctx context.Context, applyInput applyCommandInput, deps comman
 	return applyPlan(ctx, applyInput, deps)
 }
 
-// generatedSecretReplanRequest resolves initial-install artifacts from the stable
-// install-root cache while retaining the staging path for all subsequent writes.
-func generatedSecretReplanRequest(request contracts.InstallRequest, installRoot, stagingRoot string, initialInstall bool) (contracts.InstallRequest, contracts.InstallRequest) {
+// generatedSecretReplanRequest resolves artifacts from the stable install-root
+// cache while retaining the active or initial staging root for subsequent writes.
+func generatedSecretReplanRequest(request contracts.InstallRequest, installRoot, operationRoot string) (contracts.InstallRequest, contracts.InstallRequest) {
 	plannedRequest := request
 	restoredRequest := request
-	if initialInstall {
-		plannedRequest.PlatformRoot = installRoot
-		restoredRequest.PlatformRoot = stagingRoot
-	}
+	plannedRequest.PlatformRoot = installRoot
+	restoredRequest.PlatformRoot = operationRoot
 	return plannedRequest, restoredRequest
 }
 
@@ -206,7 +204,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			"The install request could not include generated secrets.", "rerun `kb-create install` with the selected platform manifest", err)
 	}
 	if changed {
-		replanRequest, restoredRequest := generatedSecretReplanRequest(request, installRoot, initialStage, initialInstall)
+		replanRequest, restoredRequest := generatedSecretReplanRequest(request, installRoot, request.PlatformRoot)
 		encoded, marshalErr := json.Marshal(replanRequest)
 		if marshalErr != nil {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "the install request could not be encoded", "rerun `kb-create apply` with the same request", marshalErr)
