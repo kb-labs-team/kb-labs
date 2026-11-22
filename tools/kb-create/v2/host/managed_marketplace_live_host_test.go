@@ -17,6 +17,51 @@ import (
 )
 
 // case: S-269.10
+func TestManagedAdapterInstallSharesPlatformWriterLock(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "managed-install")
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, root, &contracts.HostSpec{Command: fakeHostBinary})
+	active, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Acquire through the same host state API used by kb-create's platform
+	// lifecycle writers, then verify the Marketplace mutation cannot stage or
+	// activate a candidate concurrently.
+	state, err := StateForRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := state.AcquireOperation("platform-writer-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	_, err = layout.RunManagedMarketplaceMutation(context.Background(), active, versionroot.ManagedMarketplaceMutation{
+		Operation: versionroot.ManagedMarketplaceInstall,
+		Specs:     []string{"@kb-labs/sample-adapter@2.0.0"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "acquire installation operation lock") {
+		t.Fatalf("managed adapter install error = %v; want refusal on the platform writer lock", err)
+	}
+	if selected, activeErr := layout.Active(); activeErr != nil || filepath.Clean(selected) != filepath.Clean(active) {
+		t.Fatalf("active generation after lock refusal = %q, %v; want %s", selected, activeErr, active)
+	}
+	entries, err := os.ReadDir(layout.VersionsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("generation entries after lock refusal = %v; want only the active generation", entries)
+	}
+}
+
+// case: S-269.10
 func TestLiveHostAndActiveGenerationSurviveFailedManagedAdapterInstall(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("Node.js 24 is required by the installed Marketplace helper")
