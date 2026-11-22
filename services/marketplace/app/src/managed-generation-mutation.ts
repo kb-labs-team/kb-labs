@@ -152,9 +152,14 @@ export async function runManagedGenerationMutation(): Promise<void> {
     const lockPath = path.join(platformRoot, ".kb", "marketplace.lock");
     const lock = JSON.parse(await fs.readFile(lockPath, "utf8")) as unknown;
     if (!record(lock) || !record(lock.adapters)) throw new Error("managed adapter update requires an existing adapter lock");
-    const marketplaceAdapterIds = Object.entries(lock.adapters)
-      .filter(([, entry]) => record(entry) && entry.source === "marketplace")
-      .map(([id]) => id);
+    const marketplaceAdapters = Object.entries(lock.adapters)
+      .filter(([, entry]) => record(entry) && entry.source === "marketplace");
+    const selected = request.packageIds === undefined
+      ? marketplaceAdapters
+      : marketplaceAdapters.filter(([id]) => request.packageIds!.includes(id));
+    const registryAdapter = selected.find(([, entry]) => record(entry) && entry.marketplaceSource !== "npm");
+    if (registryAdapter) throw new Error(`managed adapter update currently supports npm-backed adapters only; ${registryAdapter[0]} uses ${String(record(registryAdapter[1]) ? registryAdapter[1].marketplaceSource : "unknown")}`);
+    const marketplaceAdapterIds = marketplaceAdapters.map(([id]) => id);
     updatePackageIds = request.packageIds ?? marketplaceAdapterIds;
     if (updatePackageIds.length === 0 || updatePackageIds.some(id => !marketplaceAdapterIds.includes(id))) {
       throw new Error("managed Marketplace update accepts only installed platform adapters");

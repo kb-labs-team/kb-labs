@@ -3,6 +3,8 @@ package versionroot
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -345,6 +347,9 @@ func validateManagedMarketplaceMutation(mutation ManagedMarketplaceMutation) err
 		if len(mutation.Specs) != 0 || mutation.Dev {
 			return fmt.Errorf("Marketplace adapter update accepts package IDs only")
 		}
+		if mutation.PackageIDs != nil && len(mutation.PackageIDs) == 0 {
+			return fmt.Errorf("Marketplace adapter update package IDs must be omitted or contain at least one ID")
+		}
 		if len(mutation.PackageIDs) > 32 {
 			return fmt.Errorf("Marketplace adapter update accepts at most 32 package IDs")
 		}
@@ -594,6 +599,21 @@ func verifyManagedMarketplaceMutation(active, stage string, mutation ManagedMark
 		return fmt.Errorf("staged Marketplace lock is invalid")
 	}
 	seen := map[string]struct{}{}
+	activeAdapterEnabled := map[string]bool{}
+	if mutation.Operation == ManagedMarketplaceUpdate {
+		var activeLock struct {
+			Adapters map[string]lockEntry `json:"adapters"`
+		}
+		activeData, readErr := os.ReadFile(filepath.Join(active, ".kb", "marketplace.lock"))
+		if readErr != nil || json.Unmarshal(activeData, &activeLock) != nil {
+			return fmt.Errorf("active Marketplace adapter lock is invalid for update")
+		}
+		for id, entry := range activeLock.Adapters {
+			if entry.Enabled != nil {
+				activeAdapterEnabled[id] = *entry.Enabled
+			}
+		}
+	}
 	for _, installed := range result.Installed {
 		if (installed.PrimaryKind != "adapter" && installed.PrimaryKind != "plugin") || installed.PackageID == "" || installed.Version == "" || installed.ResolvedVersion != installed.Version {
 			return fmt.Errorf("Marketplace helper returned an invalid plugin or adapter install result")
@@ -632,7 +652,7 @@ func verifyManagedMarketplaceMutation(active, stage string, mutation ManagedMark
 		if installed.PrimaryKind == "plugin" {
 			entry, ok = lock.Plugins[installed.PackageID]
 		}
-		if !ok || entry.Version != installed.Version || entry.ResolvedPath == "" || entry.Integrity == "" || filepath.IsAbs(entry.ResolvedPath) || entry.Source != "marketplace" || entry.Enabled == nil || !*entry.Enabled || (entry.MarketplaceSource != "npm" && entry.MarketplaceSource != "registry") || (entry.SignatureStatus != "verified" && entry.SignatureStatus != "unsigned") {
+		if !ok || entry.Version != installed.Version || entry.ResolvedPath == "" || entry.Integrity == "" || filepath.IsAbs(entry.ResolvedPath) || entry.Source != "marketplace" || entry.Enabled == nil || (mutation.Operation == ManagedMarketplaceInstall && !*entry.Enabled) || (mutation.Operation == ManagedMarketplaceUpdate && activeAdapterEnabled[installed.PackageID] != *entry.Enabled) || (entry.MarketplaceSource != "npm" && entry.MarketplaceSource != "registry") || (entry.SignatureStatus != "verified" && entry.SignatureStatus != "unsigned") {
 			return fmt.Errorf("staged Marketplace lock does not contain the reported package %q", installed.PackageID)
 		}
 		if installed.PrimaryKind == "plugin" && (entry.Package != installed.PackageID || entry.PrimaryKind != "plugin") {
@@ -704,8 +724,9 @@ func verifyManagedMarketplaceMutation(active, stage string, mutation ManagedMark
 
 func managedMarketplaceUpdateTargets(active string, mutation ManagedMarketplaceMutation) (map[string]string, error) {
 	type lockEntry struct {
-		Source  string `json:"source"`
-		Version string `json:"version"`
+		Source            string `json:"source"`
+		Version           string `json:"version"`
+		MarketplaceSource string `json:"marketplaceSource"`
 	}
 	var lock struct {
 		Schema   string               `json:"schema"`
@@ -720,9 +741,12 @@ func managedMarketplaceUpdateTargets(active string, mutation ManagedMarketplaceM
 		return nil, fmt.Errorf("active Marketplace lock is invalid for adapter update")
 	}
 	requested := make(map[string]string)
-	if len(mutation.PackageIDs) == 0 {
+	if mutation.PackageIDs == nil {
 		for id, entry := range lock.Adapters {
 			if entry.Source == "marketplace" && entry.Version != "" {
+				if entry.MarketplaceSource != "npm" {
+					return nil, fmt.Errorf("managed Marketplace adapter update currently supports npm-backed adapters only; %q uses %q", id, entry.MarketplaceSource)
+				}
 				if _, plugin := lock.Plugins[id]; plugin {
 					return nil, fmt.Errorf("managed Marketplace update accepts installed Marketplace adapters only")
 				}
@@ -737,6 +761,9 @@ func managedMarketplaceUpdateTargets(active string, mutation ManagedMarketplaceM
 			entry, exists := lock.Adapters[id]
 			if !exists || entry.Source != "marketplace" {
 				return nil, fmt.Errorf("managed Marketplace update accepts installed Marketplace adapters only")
+			}
+			if entry.MarketplaceSource != "npm" {
+				return nil, fmt.Errorf("managed Marketplace adapter update currently supports npm-backed adapters only; %q uses %q", id, entry.MarketplaceSource)
 			}
 			if _, plugin := lock.Plugins[id]; plugin {
 				return nil, fmt.Errorf("managed Marketplace update accepts installed Marketplace adapters only")
@@ -1247,6 +1274,12 @@ func firstMarketplaceUpdateTarget(targets map[string]string) string {
 }
 
 func managedMarketplaceInstallIsNoop(active, stage string, mutation ManagedMarketplaceMutation, result managedMarketplaceInstallResult) (bool, error) {
+	// A byte-identical generation is only a no-op if the installed active
+	// package itself is still valid. Otherwise this candidate may be repairing
+	// a damaged package and must be activated even when metadata is unchanged.
+	if err := verifyManagedMarketplaceInstall(active, mutation, result); err != nil {
+		return false, nil
+	}
 	if err := verifyManagedMarketplaceMutation(active, stage, mutation, result); err != nil {
 		return false, nil
 	}
@@ -1260,6 +1293,98 @@ func managedMarketplaceInstallIsNoop(active, stage string, mutation ManagedMarke
 			return false, errors.Join(activeErr, stageErr)
 		}
 		if !bytes.Equal(activeBytes, stageBytes) {
+			return false, nil
+		}
+	}
+	activeEntries, err := managedMarketplaceAPIEntries(active, result)
+	if err != nil {
+		return false, nil
+	}
+	stageEntries, err := managedMarketplaceAPIEntries(stage, result)
+	if err != nil || len(activeEntries) != len(stageEntries) {
+		return false, nil
+	}
+	for index := range activeEntries {
+		activePackage := filepath.Join(active, activeEntries[index].PackageRoot)
+		stagePackage := filepath.Join(stage, stageEntries[index].PackageRoot)
+		equal, compareErr := managedMarketplacePackageTreesEqual(activePackage, stagePackage)
+		if compareErr != nil {
+			return false, compareErr
+		}
+		if !equal {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func managedMarketplacePackageTreesEqual(left, right string) (bool, error) {
+	resolvedLeft, err := filepath.EvalSymlinks(left)
+	if err != nil {
+		return false, err
+	}
+	resolvedRight, err := filepath.EvalSymlinks(right)
+	if err != nil {
+		return false, err
+	}
+	left, right = resolvedLeft, resolvedRight
+	entries := func(root string) (map[string]string, error) {
+		result := map[string]string{}
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if path == root {
+				return nil
+			}
+			relative, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			info, err := os.Lstat(path)
+			if err != nil {
+				return err
+			}
+			value := fmt.Sprintf("%s:%o", info.Mode().Type(), info.Mode().Perm())
+			if info.Mode()&os.ModeSymlink != 0 {
+				target, err := os.Readlink(path)
+				if err != nil {
+					return err
+				}
+				value += ":" + target
+			} else if info.Mode().IsRegular() {
+				file, err := os.Open(path)
+				if err != nil {
+					return err
+				}
+				digest := sha256.New()
+				if _, err := io.Copy(digest, file); err != nil {
+					_ = file.Close()
+					return err
+				}
+				if err := file.Close(); err != nil {
+					return err
+				}
+				value += ":" + hex.EncodeToString(digest.Sum(nil))
+			}
+			result[relative] = value
+			return nil
+		})
+		return result, err
+	}
+	leftEntries, err := entries(left)
+	if err != nil {
+		return false, err
+	}
+	rightEntries, err := entries(right)
+	if err != nil {
+		return false, err
+	}
+	if len(leftEntries) != len(rightEntries) {
+		return false, nil
+	}
+	for path, value := range leftEntries {
+		if rightEntries[path] != value {
 			return false, nil
 		}
 	}

@@ -38,6 +38,7 @@ describe("managed Marketplace mutation boundary", () => {
       { operation: "install", specs: ["@kb-labs/commit@1.2.3"], permissions: ["*" ] },
       { operation: "uninstall", packageIds: ["@kb-labs/commit"] },
       { operation: "update", packageIds: ["@kb-labs/commit", "@kb-labs/commit"] },
+      { operation: "update", packageIds: [] },
       { operation: "update", packageIds: ["@kb-labs/commit@1.2.3"] },
       { operation: "install", specs: Array.from({ length: 33 }, () => "@kb-labs/commit@1.2.3") },
     ]) expect(() => parseManagedGenerationMutation(request)).toThrow();

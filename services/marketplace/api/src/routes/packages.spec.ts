@@ -431,6 +431,12 @@ describe('Marketplace API error boundary', () => {
     expect(update.json()).toEqual(expectedUpdateResult);
     expect(dispatchManagedPlatformMutation).toHaveBeenLastCalledWith({ operation: 'update', packageIds: ['@kb-labs/sample-adapter'] });
     expect(directWrites.update).not.toHaveBeenCalled();
+    const emptyUpdate = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/update', headers,
+      payload: { packageIds: [], scope: 'platform' },
+    });
+    expect(emptyUpdate.statusCode).toBe(400);
+    expect(dispatchManagedPlatformMutation).toHaveBeenCalledTimes(3);
 
     const deniedRequests: InjectOptions[] = [
       { method: 'POST', url: '/api/v1/marketplace/packages/uninstall', headers, payload: { packageIds: ['@kb-labs/sample-adapter'], scope: 'platform' } },

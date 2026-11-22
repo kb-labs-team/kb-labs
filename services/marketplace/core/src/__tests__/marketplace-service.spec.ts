@@ -466,6 +466,7 @@ describe('MarketplaceService', () => {
       const install = vi.spyOn(source, 'install');
       const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: 'platform' }, [packageId]);
+      await service.disable({ scope: 'platform' }, packageId);
       version = '1.1.0';
 
       const result = await service.update({ scope: 'platform' }, [packageId]);
@@ -473,7 +474,7 @@ describe('MarketplaceService', () => {
       expect(install).toHaveBeenCalledTimes(2);
       expect(result.installed).toMatchObject([{ id: packageId, version: '1.1.0', primaryKind: 'adapter', scope: 'platform' }]);
       expect((await readMarketplaceLock(tmpDir, new DiagnosticCollector()))?.adapters?.[packageId])
-        .toMatchObject({ version: '1.1.0', integrity: computeIntegrity('1.1.0'), source: 'marketplace' });
+        .toMatchObject({ version: '1.1.0', integrity: computeIntegrity('1.1.0'), source: 'marketplace', enabled: false });
     });
 
     it('warns for unknown requested packages and leaves existing pins unchanged', async () => {

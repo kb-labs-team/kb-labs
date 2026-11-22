@@ -168,7 +168,7 @@ export function registerPackagesRoutes(app: FastifyInstance, mutationAuth: Marke
       body: {
         type: 'object',
         properties: {
-          packageIds: { type: 'array', items: { type: 'string' }, description: 'Specific ids to update; omit for "all installed"' },
+          packageIds: { type: 'array', minItems: 1, maxItems: 32, items: { type: 'string' }, description: 'Specific ids to update; omit for "all installed"' },
           ...scopeBodySchemaFragment,
         },
       },

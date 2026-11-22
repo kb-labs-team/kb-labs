@@ -508,12 +508,16 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
 
       const updateSpecs = new Map<string, string>();
+      const adapterEnabledState = new Map<string, boolean>();
       for (const [id, entry] of Object.entries(lock.plugins)) {
         if (entry.source !== 'local') updateSpecs.set(id, entry.package);
       }
       if (ctx.scope === 'platform') {
         for (const [id, entry] of Object.entries(lock.adapters ?? {})) {
-          if (entry.source === 'marketplace') updateSpecs.set(id, id);
+          if (entry.source === 'marketplace') {
+            updateSpecs.set(id, id);
+            adapterEnabledState.set(id, entry.enabled);
+          }
         }
       }
       const ids = packageIds ?? [...updateSpecs.keys()];
@@ -526,6 +530,21 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       });
 
       const result = await this.installInScope(ctx, scopeRoot, specs, undefined, true);
+      if (ctx.scope === 'platform' && result.installed.length > 0) {
+        const updatedLock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
+        if (updatedLock) {
+          let changed = false;
+          for (const item of result.installed) {
+            const previousEnabled = adapterEnabledState.get(item.id);
+            const entry = updatedLock.adapters?.[item.id];
+            if (previousEnabled !== undefined && entry && entry.enabled !== previousEnabled) {
+              entry.enabled = previousEnabled;
+              changed = true;
+            }
+          }
+          if (changed) await writeMarketplaceLock(scopeRoot, updatedLock);
+        }
+      }
       return { ...result, warnings: [...warnings, ...result.warnings] };
     });
   }
