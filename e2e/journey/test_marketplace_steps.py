@@ -198,6 +198,14 @@ class MarketplaceStepTests(unittest.TestCase):
                 "marketplaceSources": [{"kind": "registry", "url": "http://127.0.0.1:4317/api/v1/marketplace-registry"}],
             }}
             observed_tokens = []
+            integrity_publish_calls = []
+            catalogued_failures = []
+            def publish_integrity_package(_workspace, package_path, publish_env, _runner):
+                integrity_publish_calls.append((package_path, publish_env.get("KB_REGISTRY_URL")))
+                return subprocess.CompletedProcess([], 0, json.dumps({
+                    "ok": True, "data": {"version": "2.120.3"},
+                }), "")
+
             def runner(command, **_kwargs):
                 if command[:1] == ["kb"] or command[0].endswith("kb-create"):
                     observed_tokens.append((command[1:3], _kwargs.get("env", {}).get("KB_JOURNEY_MARKETPLACE_TOKEN")))
@@ -227,8 +235,19 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_KB_CREATE_PATH": str(project / "kb-create")}
             with patch("marketplace_steps._set_marketplace_proxy_faults"), \
                     patch("marketplace_steps._installed_gateway_url", return_value="http://127.0.0.1:4317"), \
-                    patch("marketplace_steps._assert_catalogued_marketplace_failure"), \
-                    patch("marketplace_steps._json", return_value=rendered["data"]), \
+                    patch("marketplace_steps.active_platform_root", side_effect=lambda path: Path(path)), \
+                    patch("marketplace_steps._assert_catalogued_marketplace_failure",
+                          side_effect=lambda _project, _env, _runner, package, code:
+                          catalogued_failures.append((package, code))), \
+                    patch("marketplace_steps._prepare_registry_commit_publish_package",
+                          return_value=(project / "fresh-commit", "2.120.3")), \
+                    patch("marketplace_steps._publish_workspace_fixture",
+                          side_effect=publish_integrity_package), \
+                    patch("marketplace_steps._registry_resolve_exact_commit_version",
+                          return_value={"id": "@kb-labs/commit", "version": "2.120.3",
+                                        "integrity": "sha512-integrity-test"}), \
+                    patch("marketplace_steps._json", side_effect=lambda _result, command:
+                          {"version": "2.120.3"} if command[:2] == ["hub", "publish"] else rendered["data"]), \
                     patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
                 journey = Journey("local", "s268-wiring")
                 journey.step("publish and install Commit through Registry", "marketplace-fixtures", lambda: None,
@@ -238,6 +257,14 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(claims, {f"S-268.{number}" for number in range(2, 9)})
             self.assertTrue(all(step.status == "PASS" for step in journey.steps),
                             [(step.name, step.status, step.message) for step in journey.steps])
+            self.assertEqual(integrity_publish_calls, [
+                (str(project / "fresh-commit"),
+                 "http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1"),
+            ])
+            self.assertEqual(catalogued_failures[2:4], [
+                ("@kb-labs/commit", "KB_MARKETPLACE_SIGNATURE_INVALID"),
+                ("@kb-labs/commit", "KB_MARKETPLACE_INTEGRITY_MISMATCH"),
+            ])
             self.assertTrue(observed_tokens)
             self.assertTrue(all(token == "" for command, token in observed_tokens
                                 if command[:2] == ["update", "--json"]))
