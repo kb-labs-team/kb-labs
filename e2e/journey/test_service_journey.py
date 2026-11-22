@@ -207,6 +207,68 @@ class ServiceJourneyTests(unittest.TestCase):
                 self.assertEqual(unrelated_marketplace, "SKIPPED")
                 self.assertEqual(plugin_author, "SKIPPED")
 
+    def test_adapter_manifest_doctor_claim_selects_its_outer_flow(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/adapter_defaults_steps.py"
+        from select_from_cases import _case_declarations, selection_from_coverage
+
+        declarations = _case_declarations(source, root)
+        line = next((line for line, declaration in declarations.items()
+                     if "S-054.13" in (declaration.get("cases") or ())), None)
+        self.assertIsNotNone(line, f"S-054.13 has no owning declaration in {source}")
+        cases = ("S-025.11", "S-054.13")
+        records = [{"mode": "secured", "cases": [{
+            "id": case_id.rsplit(".", 1)[0], "status": "active", "release": True,
+            "steps": [{"stepId": case_id, "claims": [{
+                "kind": "journey", "source": source, "line": line,
+            }]}],
+        }]} for case_id in cases]
+        selection = selection_from_coverage(records, ",".join(cases))
+        runner = "agent-secured:commit"
+        self.assertEqual(selection["runners"], [runner])
+        self.assertIn("doctor reports missing manifests read-only and repairs only with fix",
+                      selection["selectedOwningSteps"])
+
+        env = os.environ.copy()
+        env.update({
+            "KB_JOURNEY_CASES": ",".join(selection["selection"]),
+            "KB_JOURNEY_SELECTED_STEPS": ",".join(selection["steps"]),
+            "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps(selection["selectedOwningSteps"]),
+            "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps(selection["prerequisiteSteps"]),
+            "KB_JOURNEY_PREREQUISITE_FLOWS": json.dumps(selection["prerequisiteFlows"]),
+            "KB_JOURNEY_SELECTED_CAPABILITIES": ",".join(selection["capabilities"]),
+            "KB_JOURNEY_RUNNER_SELECTOR": runner,
+        })
+        with patch.dict(os.environ, env, clear=True):
+            journey = Journey("secured", "selected-adapter-doctor")
+            groups = service_selection_groups(root, runner_selector=runner)
+            adapter_group = groups["adapters"]
+            self.assertTrue(set(cases).issubset(adapter_group["cases"]))
+            self.assertIn("doctor reports missing manifests read-only and repairs only with fix",
+                          adapter_group["steps"])
+            graph = FlowGraph(
+                journey, {name: spec["depends_on"] for name, spec in groups.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered"},
+                },
+                groups=groups,
+            )
+            executed = []
+            status = graph.flow(
+                "adapter defaults flow", "adapters", "adapter",
+                lambda: executed.append(journey.step(
+                    "doctor reports missing manifests read-only and repairs only with fix",
+                    "installerStateDirectory", lambda: None, cases=cases,
+                )),
+                cases=["S-054.1", "S-048.1"], record_empty_success=False,
+            )
+
+        self.assertEqual(status, "PASS")
+        self.assertEqual(len(executed), 1)
+        self.assertEqual(executed[0].status, "PASS")
+        self.assertEqual(executed[0].cases, list(cases))
+
     def test_cron_parity_check_prepares_fixture_and_captures_environment(self):
         graph = FlowGraph(
             Journey("local", "cron-parity-callback"),
