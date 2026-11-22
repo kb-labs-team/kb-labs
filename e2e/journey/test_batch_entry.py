@@ -199,14 +199,22 @@ exit 0
         self._script(self.bin / "batch-python", f'''#!/bin/sh
 case "$1" in
   *select_from_cases.py)
-    if [ "${{2:-}}" = "--case-ids-for-area" ]; then
+    if [ "${{2:-}}" = "--claim-step-ids-for-area" ]; then
       [ "${{3:-}}" = marketplace ] || exit 2
-      printf 'S-268.1,S-268.2\\n'
+      case "${{4:-}}" in
+        local) printf '%s\\n' "${{AREA_CLAIMS_LOCAL:-S-268.1,S-268.2}}" ;;
+        secured) printf '%s\\n' "${{AREA_CLAIMS_SECURED:-S-268.1,S-268.2}}" ;;
+        *) exit 2 ;;
+      esac
       exit 0
     fi
-    if [ "${{2:-}}" = "--uncovered-case-ids-for-area" ]; then
+    if [ "${{2:-}}" = "--uncovered-step-ids-for-area" ]; then
       [ "${{3:-}}" = marketplace ] || exit 2
-      printf 'S-026\\n'
+      case "${{4:-}}" in
+        local) printf '%s\\n' "${{AREA_UNCOVERED_LOCAL:-S-026.1}}" ;;
+        secured) printf '%s\\n' "${{AREA_UNCOVERED_SECURED:-S-026.1}}" ;;
+        *) exit 2 ;;
+      esac
       exit 0
     fi
     mode="$KB_JOURNEY_SELECTION_MODE"
@@ -916,7 +924,7 @@ exec "$REAL_TAR" "$@"
             metadata = json.loads((self.root / f"{mode}-artifact/{mode}/batch-metadata.json").read_text())
             self.assertEqual(metadata["requestedArea"], "marketplace")
             self.assertEqual(metadata["requestedSelection"], ["S-268.1", "S-268.2"])
-            self.assertEqual(metadata["requestedAreaUncoveredCases"], ["S-026"])
+            self.assertEqual(metadata["requestedAreaUncoveredSteps"], ["S-026.1"])
 
         summary = subprocess.run(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
@@ -928,7 +936,61 @@ exec "$REAL_TAR" "$@"
         rendered = (self.root / "summary/shared/summary.md").read_text()
         self.assertIn("- Product area: `marketplace`", rendered)
         self.assertIn("Product area coverage: NOT COVERED", rendered)
-        self.assertIn("S-026", rendered)
+        self.assertIn("S-026.1", rendered)
+
+    # case: S-262.18
+    def test_product_area_uses_mode_specific_claimable_steps(self):
+        import json
+
+        for mode, selected in (("local", ["S-268.1", "S-268.2"]),
+                               ("secured", ["S-268.1"])):
+            fixture = self.scoreboard_fixtures[mode]
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard["selection"] = selected
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=dict(self.env, BATCH_SELECTION="area:marketplace"),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+
+        local = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--area", "marketplace"],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_LOCAL='["marketplace-registry"]'),
+            text=True, capture_output=True, check=False,
+        )
+        secured = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "secured",
+             str(producer), str(self.root / "secured-artifact"), "--area", "marketplace"],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_SECURED='["marketplace-registry"]',
+                                    AREA_CLAIMS_SECURED="S-268.1",
+                                    AREA_UNCOVERED_SECURED="S-026.1,S-268.2"),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(local.returncode, 0, local.stderr + local.stdout)
+        self.assertEqual(secured.returncode, 0, secured.stderr + secured.stdout)
+        local_metadata = json.loads((self.root / "local-artifact/local/batch-metadata.json").read_text())
+        secured_metadata = json.loads((self.root / "secured-artifact/secured/batch-metadata.json").read_text())
+        self.assertEqual(local_metadata["requestedSelection"], ["S-268.1", "S-268.2"])
+        self.assertEqual(secured_metadata["requestedSelection"], ["S-268.1"])
+        self.assertEqual(secured_metadata["requestedAreaUncoveredSteps"], ["S-026.1", "S-268.2"])
+        self.assertEqual(secured_metadata["requestedAreaCoverage"], "NOT_COVERED")
+
+        summary = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
+             str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
+             str(self.root / "secured-artifact"), "--selection", "@area:marketplace"],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(summary.returncode, 0, summary.stderr)
+        rendered = (self.root / "summary/shared/summary.md").read_text()
+        self.assertIn("local area steps: selected `S-268.1`, `S-268.2`", rendered)
+        self.assertIn("secured area steps: selected `S-268.1`; NOT COVERED `S-026.1`, `S-268.2`", rendered)
+        self.assertIn("- Result: PARTIAL", rendered)
         self.assertIn("- Result: PARTIAL", rendered)
         self.assertNotIn("- Result: PASS", rendered)
 
