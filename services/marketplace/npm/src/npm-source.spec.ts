@@ -27,7 +27,7 @@ function getCorepackHome(): string {
 
 async function createLocalRegistry(root: string): Promise<{
   url: string;
-  publish: (name: string, options?: { dependencies?: Record<string, string>; includeIntegrity?: boolean; integrity?: string }) => Promise<void>;
+  publish: (name: string, options?: { dependencies?: Record<string, string>; includeIntegrity?: boolean; integrity?: string }) => Promise<{ tarball: Buffer; integrity: string }>;
   close: () => Promise<void>;
 }> {
   const packages = new Map<string, RegistryPackage>();
@@ -93,6 +93,7 @@ async function createLocalRegistry(root: string): Promise<{
         dependencies: options.dependencies ?? {},
         includeIntegrity: options.includeIntegrity ?? true,
       });
+      return { tarball, integrity };
     },
     close: () => new Promise<void>((resolve, reject) => {
       server.close((error) => {
@@ -292,12 +293,15 @@ describe('NpmPackageSource', () => {
       await registry.publish(packageId);
       await isolatePnpmEnvironment(home, registry.url, path.join(root, 'pnpm-store'));
       const sealedPackage = '@kb-labs/sealed-runtime';
-      const sealedDigest = 'sealed-runtime-digest';
+      const sealedArchive = Buffer.from('sealed runtime fixture');
+      const sealedDigest = crypto.createHash('sha256').update(sealedArchive).digest('hex');
       const receiptPath = path.join(root, '.kb', 'v2', 'receipt.json');
       await fs.mkdir(path.dirname(receiptPath), { recursive: true });
       const cacheRoot = path.join(root, 'pnpm-store', 'sealed-cache');
-      await fs.mkdir(cacheRoot, { recursive: true });
+      await fs.mkdir(path.join(cacheRoot, 'packages'), { recursive: true });
+      await fs.writeFile(path.join(cacheRoot, 'packages', `${sealedDigest}.tgz`), sealedArchive);
       await fs.symlink(cacheRoot, path.join(root, '.kb', 'v2', 'cache'), 'dir');
+      const canonicalCacheRoot = await fs.realpath(cacheRoot);
       const receipt = JSON.stringify({ plan: { artifacts: [
         { package: sealedPackage, sha256: sealedDigest, tarball: 'registry/sealed-runtime.tgz', kind: 'sdk' },
       ] } }) + '\n';
@@ -305,7 +309,7 @@ describe('NpmPackageSource', () => {
       const workspacePath = path.join(root, 'pnpm-workspace.yaml');
       const workspace = (await fs.readFile(workspacePath, 'utf8')).replace(
         'overrides:\n  unrelated-package: 1.0.0',
-        `overrides:\n  "${sealedPackage}": "file:${path.join(cacheRoot, 'packages', `${sealedDigest}.tgz`).replaceAll('\\', '/')}"\n  unrelated-package: 1.0.0`,
+        `overrides:\n  "${sealedPackage}": "file:${path.join(canonicalCacheRoot, 'packages', `${sealedDigest}.tgz`).replaceAll('\\', '/')}"\n  unrelated-package: 1.0.0`,
       );
       await fs.writeFile(workspacePath, workspace);
       const sealedInstalledPackage = path.join(root, 'node_modules', ...sealedPackage.split('/'), 'package.json');
@@ -467,11 +471,18 @@ describe('NpmPackageSource', () => {
       await fs.mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
       cacheRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-marketplace-shared-cache-'));
       await fs.symlink(cacheRoot, path.join(root, '.kb', 'v2', 'cache'), 'dir');
+      cacheRoot = await fs.realpath(cacheRoot);
+      await fs.mkdir(path.join(cacheRoot, 'packages'), { recursive: true });
+      const workflowDigest = crypto.createHash('sha256').update('workflow archive').digest('hex');
+      const gatewayDigest = crypto.createHash('sha256').update('gateway archive').digest('hex');
+      await fs.mkdir(path.join(cacheRoot, 'packages'), { recursive: true });
+      await fs.writeFile(path.join(cacheRoot, 'packages', `${workflowDigest}.tgz`), 'workflow archive');
+      await fs.writeFile(path.join(cacheRoot, 'packages', `${gatewayDigest}.tgz`), 'gateway archive');
       await fs.writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
         id: 'sealed-platform',
         plan: { artifacts: [
-          { id: 'workflow', package: '@kb-labs/workflow-daemon', sha256: 'abc123', tarball: 'registry/workflow.tgz' },
-          { id: 'gateway', package: '@kb-labs/gateway-app', sha256: 'def456', tarball: 'registry/gateway.tgz' },
+          { id: 'workflow', package: '@kb-labs/workflow-daemon', sha256: workflowDigest, tarball: 'registry/workflow.tgz' },
+          { id: 'gateway', package: '@kb-labs/gateway-app', sha256: gatewayDigest, tarball: 'registry/gateway.tgz' },
           { id: 'binary-tool', kind: 'binary', package: 'tool', sha256: 'xyz', tarball: 'registry/tool.tgz' },
         ] },
       }));
@@ -497,8 +508,8 @@ describe('NpmPackageSource', () => {
       expect(JSON.parse(await fs.readFile(packageFile, 'utf8')).dependencies).toEqual({});
       await fs.writeFile(workspaceFile, [
         'overrides:',
-        `  "@kb-labs/workflow-daemon": file:${path.join(cacheRoot, 'packages', 'abc123.tgz').replaceAll('\\', '/')}`,
-        `  "@kb-labs/gateway-app": file:${path.join(cacheRoot, 'packages', 'def456.tgz').replaceAll('\\', '/')}`,
+        `  "@kb-labs/workflow-daemon": file:${path.join(cacheRoot, 'packages', `${workflowDigest}.tgz`).replaceAll('\\', '/')}`,
+        `  "@kb-labs/gateway-app": file:${path.join(cacheRoot, 'packages', `${gatewayDigest}.tgz`).replaceAll('\\', '/')}`,
         '',
       ].join('\n'));
       await expect(assertSealedPlatformOverrides(root, '@kb-labs/adapters-analytics-file', '2.120.1'))
@@ -506,6 +517,60 @@ describe('NpmPackageSource', () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true });
       if (cacheRoot) { await fs.rm(cacheRoot, { recursive: true, force: true }); }
+    }
+  });
+
+  it('installs in a managed candidate using the canonical shared sealed cache without a stage projection', async () => {
+    const installRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'kb-marketplace-managed-candidate-')));
+    const candidate = path.join(installRoot, 'versions', '.stage-managed-fixture');
+    const home = path.join(installRoot, 'test-home');
+    const registry = await createLocalRegistry(installRoot);
+    const cacheRoot = path.join(installRoot, 'state', 'cache');
+    try {
+      await fs.mkdir(path.join(candidate, '.kb', 'v2'), { recursive: true });
+      await fs.mkdir(path.join(cacheRoot, 'packages'), { recursive: true });
+      const sealedPackage = '@kb-labs/sealed-runtime';
+      const sealed = await registry.publish(sealedPackage);
+      const sealedDigest = crypto.createHash('sha256').update(sealed.tarball).digest('hex');
+      await fs.writeFile(path.join(cacheRoot, 'packages', `${sealedDigest}.tgz`), sealed.tarball);
+      await fs.writeFile(path.join(candidate, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+        plan: { artifacts: [{ package: sealedPackage, sha256: sealedDigest, tarball: 'registry/sealed-runtime.tgz', kind: 'sdk' }] },
+      }));
+      const adapterPackage = '@kb-labs/managed-candidate-adapter';
+      await registry.publish(adapterPackage, { dependencies: { [sealedPackage]: '1.0.0' } });
+      await fs.writeFile(path.join(candidate, 'package.json'), JSON.stringify({
+        name: 'kb-platform', version: '1.0.0', packageManager: 'pnpm@11.4.0', dependencies: {},
+      }));
+      const workspacePath = path.join(candidate, 'pnpm-workspace.yaml');
+      const workspace = [
+        'minimumReleaseAge: 10080',
+        'minimumReleaseAgeExclude: []',
+        'overrides:',
+        `  "${sealedPackage}": "file:${path.join(cacheRoot, 'packages', `${sealedDigest}.tgz`).replaceAll('\\', '/')}"`,
+        '',
+      ].join('\n');
+      await fs.writeFile(workspacePath, workspace);
+      await expect(assertSealedPlatformOverrides(candidate, '@kb-labs/candidate-adapter', '1.0.0', path.join(installRoot, 'wrong-cache')))
+        .rejects.toMatchObject({ code: 'KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING' });
+      await fs.writeFile(workspacePath, workspace.replace(sealedDigest, 'tampered-pin'));
+      await expect(assertSealedPlatformOverrides(candidate, '@kb-labs/candidate-adapter', '1.0.0', cacheRoot))
+        .rejects.toMatchObject({ code: 'KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING' });
+      await fs.writeFile(workspacePath, workspace);
+      await isolatePnpmEnvironment(home, registry.url, path.join(installRoot, 'pnpm-store'));
+
+      const source = new NpmPackageSource({ registryUrl: registry.url, sealedArtifactCacheRoot: cacheRoot });
+      const resolved = await source.resolve(`${adapterPackage}@1.0.0`);
+      const installed = await source.install(resolved, candidate);
+      await source.commitInstall(adapterPackage, candidate);
+
+      expect(installed).toMatchObject({ id: adapterPackage, version: '1.0.0' });
+      const lock = await fs.readFile(path.join(candidate, 'pnpm-lock.yaml'), 'utf8');
+      expect(lock).toContain(`tarball: file:../../state/cache/packages/${sealedDigest}.tgz`);
+      expect(lock).toContain(`'${sealedPackage}@file:../../state/cache/packages/${sealedDigest}.tgz'`);
+      await expect(fs.lstat(path.join(candidate, '.kb', 'v2', 'cache'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await registry.close();
+      await fs.rm(installRoot, { recursive: true, force: true });
     }
   });
 

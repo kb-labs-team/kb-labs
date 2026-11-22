@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { serializeManagedGenerationFailure } from "./managed-generation-mutation.js";
 import { parseManagedGenerationMutation } from "./managed-generation-request.js";
 
 describe("managed Marketplace mutation boundary", () => {
@@ -7,6 +8,22 @@ describe("managed Marketplace mutation boundary", () => {
       .toEqual({ operation: "install", specs: ["@kb-labs/commit@1.2.3"] });
     expect(parseManagedGenerationMutation({ operation: "install", specs: ["@kb-labs/commit@1.2.3"] }))
       .toEqual({ operation: "install", specs: ["@kb-labs/commit@1.2.3"] });
+  });
+
+  it("emits bounded typed helper diagnostics with referenced secrets redacted", () => {
+    const error = Object.assign(new Error(`registry rejected token fixture-secret ${"x".repeat(3000)}`), {
+      code: "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING",
+      hint: "restore fixture-secret and retry",
+    });
+    const diagnostic = JSON.parse(serializeManagedGenerationFailure(error, ["fixture-secret"])) as { schema: number; code: string; message: string; hint: string };
+    expect(diagnostic).toMatchObject({
+      schema: 1,
+      code: "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING",
+      hint: "restore [redacted] and retry",
+    });
+    expect(diagnostic.message).toContain("[redacted]");
+    expect(diagnostic.message).not.toContain("fixture-secret");
+    expect(diagnostic.message.length).toBeLessThanOrEqual(2048);
   });
 
   it("rejects roots, environment, arbitrary scope, handlers and oversized requests", () => {

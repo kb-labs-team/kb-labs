@@ -917,12 +917,8 @@ func (l Layout) AbortManagedGeneration(stage string) error {
 	if filepath.Clean(active) == filepath.Clean(resolved) {
 		return fmt.Errorf("refusing to remove the active generation")
 	}
-	live, err := l.managedStageOwnerLive(resolved)
-	if err != nil {
-		return fmt.Errorf("verify managed-generation stage owner before cleanup: %w", err)
-	}
-	if live {
-		return fmt.Errorf("refusing to remove managed-generation stage with a live Marketplace helper process group")
+	if err := l.stopManagedStageOwner(resolved); err != nil {
+		return fmt.Errorf("stop managed-generation stage owner before cleanup: %w", err)
 	}
 	if err := os.RemoveAll(resolved); err != nil {
 		return err
@@ -1078,12 +1074,8 @@ func (l Layout) removeAbandonedManagedStages() error {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("abandoned managed-generation stage %q is not a real directory", path)
 		}
-		live, err := l.managedStageOwnerLive(path)
-		if err != nil {
-			return fmt.Errorf("verify abandoned managed-generation stage owner for %q: %w", path, err)
-		}
-		if live {
-			return fmt.Errorf("managed-generation stage %q still has a live Marketplace helper process group", path)
+		if err := l.stopManagedStageOwner(path); err != nil {
+			return fmt.Errorf("stop abandoned managed-generation stage owner for %q: %w", path, err)
 		}
 		if err := os.RemoveAll(path); err != nil {
 			return err

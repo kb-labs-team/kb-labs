@@ -10,10 +10,33 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function referencedMarketplaceEnvironment(value: unknown, names = new Set<string>()): string[] {
-  if (typeof value === "string") for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) names.add(match[1]!);
-  else if (Array.isArray(value)) for (const item of value) referencedMarketplaceEnvironment(item, names);
-  else if (record(value)) for (const item of Object.values(value)) referencedMarketplaceEnvironment(item, names);
+const requestSecretValues = new Set<string>();
+
+export function serializeManagedGenerationFailure(error: unknown, sensitiveValues = [...requestSecretValues]): string {
+  const value = record(error) ? error : {};
+  const candidateCode = typeof value.code === "string" ? value.code : "";
+  const code = /^[A-Z0-9_]{1,96}$/.test(candidateCode) ? candidateCode : "KB_MANAGED_MARKETPLACE_MUTATION_FAILED";
+  let message = error instanceof Error ? error.message : "Managed Marketplace operation failed";
+  let hint = typeof value.hint === "string" ? value.hint : "";
+  for (const secret of [...sensitiveValues].sort((left, right) => right.length - left.length)) {
+    message = message.replaceAll(secret, "[redacted]");
+    hint = hint.replaceAll(secret, "[redacted]");
+  }
+  requestSecretValues.clear();
+  return JSON.stringify({ schema: 1, code, message: message.slice(0, 2048), ...(hint ? { hint: hint.slice(0, 1024) } : {}) }) + "\n";
+}
+
+function referencedMarketplaceEnvironment(value: unknown): string[] {
+  const names = new Set<string>();
+  const sources = Array.isArray(value) ? value : [];
+  for (const source of sources) {
+    if (!record(source)) continue;
+    for (const field of ["authToken", "signingPublicKey"] as const) {
+      const setting = source[field];
+      if (typeof setting !== "string") continue;
+      for (const match of setting.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) names.add(match[1]!);
+    }
+  }
   return [...names].sort();
 }
 
@@ -44,11 +67,29 @@ export async function assertManagedCandidateRoots(platformRoot: string, configRo
   }
 }
 
+async function validateManagedArtifactCacheRoot(platformRoot: string, providedPath: string | undefined): Promise<string> {
+  if (!providedPath) throw new Error("managed Marketplace artifact cache is not configured by the installer");
+  const candidate = path.resolve(platformRoot);
+  const installRoot = path.dirname(path.dirname(candidate));
+  const stateRoot = path.join(installRoot, "state");
+  const expected = path.join(stateRoot, "cache");
+  const [stateInfo, cacheInfo] = await Promise.all([fs.lstat(stateRoot), fs.lstat(expected)]);
+  if (!stateInfo.isDirectory() || stateInfo.isSymbolicLink() || !cacheInfo.isDirectory() || cacheInfo.isSymbolicLink()) {
+    throw new Error("managed Marketplace artifact cache must be a physical install-owned directory");
+  }
+  const [providedReal, expectedReal] = await Promise.all([fs.realpath(providedPath), fs.realpath(expected)]);
+  if (path.resolve(providedPath) !== providedReal || providedReal !== expectedReal) {
+    throw new Error("managed Marketplace artifact cache reference does not match the installed cache");
+  }
+  return providedReal;
+}
+
 export async function runManagedGenerationMutation(): Promise<void> {
   const platformRoot = process.env.KB_PLATFORM_ROOT;
   const configRoot = process.env.KB_MARKETPLACE_CONFIG_ROOT;
   if (!platformRoot || !configRoot || !process.env.KB_HOME) throw new Error("managed Marketplace roots are not configured by the installer");
   await assertManagedCandidateRoots(platformRoot, configRoot);
+  const artifactCacheRoot = await validateManagedArtifactCacheRoot(platformRoot, process.env.KB_MANAGED_ARTIFACT_CACHE_ROOT);
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of process.stdin) {
@@ -68,12 +109,16 @@ export async function runManagedGenerationMutation(): Promise<void> {
   if (Object.keys(providedEnvironment).some(name => !environmentNames.includes(name)) || environmentNames.some(name => typeof providedEnvironment[name] !== "string")) {
     throw new Error("managed Marketplace credentials do not match configured source references");
   }
+  for (const name of environmentNames) {
+    const secret = providedEnvironment[name];
+    if (typeof secret === "string" && secret.length > 0) requestSecretValues.add(secret);
+  }
   const marketplace = interpolateConfig(rawMarketplace, true, providedEnvironment as NodeJS.ProcessEnv) as { sources?: MarketplaceSourcesConfig } | undefined;
   const configured = marketplace?.sources;
   if (!configured?.[0]) throw new Error("marketplace.sources is not configured");
   const sources = [
     ...(configured[0].kind === "registry" ? [new RegistryPackageSource({ registryUrl: configured[0].url, signingPublicKey: configured[0].signingPublicKey, authToken: configured[0].authToken })] : []),
-    ...configured.flatMap(source => source?.kind === "npm" ? [new NpmPackageSource({ registryUrl: source.url })] : []),
+    ...configured.flatMap(source => source?.kind === "npm" ? [new NpmPackageSource({ registryUrl: source.url, sealedArtifactCacheRoot: artifactCacheRoot })] : []),
   ];
   const service = new MarketplaceService({
     platformRoot,
@@ -120,9 +165,11 @@ export async function runManagedGenerationMutation(): Promise<void> {
 }
 
 export async function listManagedGenerationEnvRefs(): Promise<void> {
+  const platformRoot = process.env.KB_PLATFORM_ROOT;
   const configRoot = process.env.KB_MARKETPLACE_CONFIG_ROOT;
-  if (!process.env.KB_PLATFORM_ROOT || !configRoot) throw new Error("managed Marketplace roots are not configured by the installer");
-  await assertManagedCandidateRoots(process.env.KB_PLATFORM_ROOT, configRoot);
+  if (!platformRoot || !configRoot) throw new Error("managed Marketplace roots are not configured by the installer");
+  await assertManagedCandidateRoots(platformRoot, configRoot);
+  await validateManagedArtifactCacheRoot(platformRoot, process.env.KB_MANAGED_ARTIFACT_CACHE_ROOT);
   const raw = await readRawKbConfig(configRoot);
   const data = record(raw?.data) ? raw.data : {};
   const marketplace = record(data.marketplace) ? data.marketplace : {};

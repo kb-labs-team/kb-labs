@@ -44,6 +44,8 @@ export class PlatformArtifactPinsError extends Error {
 
 export interface NpmPackageSourceOptions {
   registryUrl: string;
+  /** Canonical shared artifact cache supplied by the managed installer while operating on a private stage. */
+  sealedArtifactCacheRoot?: string;
 }
 
 export class PackageInstallError extends Error {
@@ -60,10 +62,12 @@ export class PackageInstallError extends Error {
 export class NpmPackageSource implements MarketplaceSource {
   readonly kind = 'npm' as const;
   private readonly registryUrl: string;
+  private readonly sealedArtifactCacheRoot?: string;
   private readonly pendingInstalls = new Map<string, PackageManagerFileSnapshot[]>();
 
   constructor(options: NpmPackageSourceOptions) {
     this.registryUrl = options.registryUrl.replace(/\/$/, '');
+    this.sealedArtifactCacheRoot = options.sealedArtifactCacheRoot;
   }
 
   async resolveIdentity(identity: string) {
@@ -138,7 +142,7 @@ export class NpmPackageSource implements MarketplaceSource {
     root: string,
     opts?: { dev?: boolean },
   ): Promise<InstalledPackage> {
-    await assertSealedPlatformOverrides(root, pkg.id, pkg.version);
+    await assertSealedPlatformOverrides(root, pkg.id, pkg.version, this.sealedArtifactCacheRoot);
     if (pkg.integrity) { await verifyCatalogTarball(pkg); }
     const spec = pkg.version === 'latest' ? pkg.id : `${pkg.id}@${pkg.version}`;
     const args = ['add', spec, `--registry=${this.registryUrl}`];
@@ -224,7 +228,7 @@ function installKey(root: string, packageId: string): string {
 }
 
 /** Check that kb-create owns and has written every sealed archive override. */
-export async function assertSealedPlatformOverrides(root: string, packageId: string, version: string): Promise<void> {
+export async function assertSealedPlatformOverrides(root: string, packageId: string, version: string, sealedArtifactCacheRoot?: string): Promise<void> {
   const receiptPath = path.join(root, '.kb', 'v2', 'receipt.json');
   const workspacePath = path.join(root, 'pnpm-workspace.yaml');
   try {
@@ -265,18 +269,43 @@ export async function assertSealedPlatformOverrides(root: string, packageId: str
   }
   let cacheRoot: string;
   try {
-    cacheRoot = await fs.realpath(path.join(root, '.kb', 'v2', 'cache'));
+    if (sealedArtifactCacheRoot) {
+      const candidate = path.resolve(root);
+      if (!path.basename(candidate).startsWith('.stage-managed-') || path.basename(path.dirname(candidate)) !== 'versions') {
+        throw new PlatformArtifactPinsError(root, packageId, version);
+      }
+      const installRoot = path.dirname(path.dirname(candidate));
+      const expectedCacheRoot = path.join(installRoot, 'state', 'cache');
+      const [providedReal, expectedReal] = await Promise.all([fs.realpath(sealedArtifactCacheRoot), fs.realpath(expectedCacheRoot)]);
+      if (path.resolve(sealedArtifactCacheRoot) !== providedReal || providedReal !== expectedReal) {
+        throw new PlatformArtifactPinsError(root, packageId, version);
+      }
+      cacheRoot = providedReal;
+    } else {
+      cacheRoot = await fs.realpath(path.join(root, '.kb', 'v2', 'cache'));
+    }
   } catch (error) {
+    if (error instanceof PlatformArtifactPinsError) throw error;
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new PlatformArtifactPinsError(root, packageId, version);
     }
     throw error;
   }
+  const packagesRoot = path.join(cacheRoot, 'packages');
+  const packagesInfo = await fs.lstat(packagesRoot).catch(() => undefined);
+  if (!packagesInfo?.isDirectory() || packagesInfo.isSymbolicLink()) throw new PlatformArtifactPinsError(root, packageId, version);
   for (const [name, sha256] of sealed) {
     const override = overrides.get(name, true);
     const archive = path.join(cacheRoot, 'packages', `${sha256}.tgz`).split(path.sep).join('/');
     const spec = `file:${archive}`;
     if (!isScalar(override) || override.value !== spec) {
+      throw new PlatformArtifactPinsError(root, packageId, version);
+    }
+    const archivePath = path.join(packagesRoot, `${sha256}.tgz`);
+    const archiveInfo = await fs.lstat(archivePath).catch(() => undefined);
+    if (!archiveInfo?.isFile() || archiveInfo.isSymbolicLink()) throw new PlatformArtifactPinsError(root, packageId, version);
+    const archiveBytes = await fs.readFile(archivePath);
+    if (crypto.createHash('sha256').update(archiveBytes).digest('hex') !== sha256) {
       throw new PlatformArtifactPinsError(root, packageId, version);
     }
   }
