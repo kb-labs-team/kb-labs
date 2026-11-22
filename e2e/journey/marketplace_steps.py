@@ -179,6 +179,14 @@ def _transitive_npm_fixture_ids(suffix: str) -> tuple[str, str]:
             f"journey-transitive-dependency-{suffix}")
 
 
+def _transitive_npm_fixture_dependencies(dependency_id: str, sdk_version: str) -> dict[str, dict[str, str]]:
+    """Keep the private npm dependency distinct from the platform-provided SDK peer."""
+    return {
+        "dependencies": {dependency_id: "1.0.0"},
+        "peerDependencies": {"@kb-labs/sdk": sdk_version},
+    }
+
+
 def _output(result: CompletedProcess[str], command: list[str]) -> str:
     if result.returncode != 0:
         detail = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
@@ -1184,7 +1192,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                     "manifest": "./dist/manifest.js",
                     "requiredOutputs": ["./dist/manifest.json", "./dist/commands/show.js"],
                 },
-                "dependencies": {dependency_id: version, "@kb-labs/sdk": sdk_version},
+                **_transitive_npm_fixture_dependencies(dependency_id, sdk_version),
                 "license": "UNLICENSED",
             }), encoding="utf-8")
             (plugin_dir / "dist" / "manifest.js").write_text(
