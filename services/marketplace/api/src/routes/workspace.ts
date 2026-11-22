@@ -10,8 +10,9 @@
 import '../types.js';
 import type { FastifyInstance } from 'fastify';
 import { parseMutatingScope, scopeBodySchemaFragment } from '../scope-parser.js';
+import { authorizeMarketplaceMutation, type MarketplaceMutationAuth } from './mutation-auth.js';
 
-export function registerWorkspaceRoutes(app: FastifyInstance): void {
+export function registerWorkspaceRoutes(app: FastifyInstance, mutationAuth: MarketplaceMutationAuth): void {
   // POST /workspace/sync — scan for plugins/adapters and populate lock
   app.post('/workspace/sync', {
     schema: {
@@ -46,6 +47,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance): void {
       autoEnable?: boolean;
     } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
+    if (!authorizeMarketplaceMutation(request, reply, mutationAuth)) return;
     const result = await app.observability.observeOperation(
       'marketplace.sync',
       () => app.marketplace.sync(ctx, {

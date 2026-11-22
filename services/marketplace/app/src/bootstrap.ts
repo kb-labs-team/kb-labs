@@ -5,7 +5,7 @@
 
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { getListenOptions } from "@kb-labs/shared-http";
-import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
+import { requireEnvironmentSecret, runService, type ServiceContext } from "@kb-labs/shared-daemon";
 import { readKbConfig, type MarketplaceSourcesConfig } from "@kb-labs/core-config";
 import { createErrorEnvelope, ErrorEnvelopeError } from "@kb-labs/core-platform/error-envelope";
 import { createServer } from "@kb-labs/marketplace-api";
@@ -51,6 +51,17 @@ export async function setup({
       : []),
   ];
 
+  const configData = isRecord(kbConfig?.data) ? kbConfig.data : {};
+  const gatewayConfig = isRecord(configData.gateway) ? configData.gateway : {};
+  const gatewayAccess = isRecord(gatewayConfig.access) ? gatewayConfig.access : {};
+  const gatewayAuth = isRecord(gatewayConfig.auth) ? gatewayConfig.auth : {};
+  const authRequired = gatewayAccess.mode === "local"
+    ? gatewayAuth.enabled === true
+    : true;
+  const internalSecret = authRequired
+    ? requireEnvironmentSecret("GATEWAY_INTERNAL_SECRET")
+    : process.env.GATEWAY_INTERNAL_SECRET;
+
   const service = new MarketplaceService({
     platformRoot,
     logger,
@@ -70,7 +81,7 @@ export async function setup({
     },
   });
 
-  const server = await createServer({ service, port, logger });
+  const server = await createServer({ service, port, logger, auth: { required: authRequired, internalSecret } });
   await server.listen(getListenOptions(port, host));
 
   logger.info(`Marketplace service listening on http://${host}:${port}`);

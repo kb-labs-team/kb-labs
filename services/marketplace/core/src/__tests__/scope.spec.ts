@@ -1,4 +1,4 @@
-import { lstatSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -21,7 +21,7 @@ describe('marketplace project scope', () => {
     mkdirSync(platformRoot);
     mkdirSync(projectRoot);
 
-    expect(resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot })).toBe(projectRoot);
+    expect(resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot })).toBe(realpathSync(projectRoot));
   });
 
   // case: S-269.11
@@ -33,6 +33,7 @@ describe('marketplace project scope', () => {
     const alias = join(sandbox, 'project-alias');
     mkdirSync(join(platformRoot, '.kb', 'v2'), { recursive: true });
     mkdirSync(projectRoot, { recursive: true });
+    symlinkSync(join('versions', '1.0.0'), join(installRoot, 'current'), 'dir');
     writeFileSync(join(platformRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({ installationId: 'install-a' }));
     symlinkSync(projectRoot, alias, 'dir');
 

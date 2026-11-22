@@ -1,7 +1,7 @@
 ---
 title: "Production Readiness"
 description: "Checklist for moving a KB Labs deployment from dev to production."
-updatedAt: "2026-10-01"
+updatedAt: "2026-11-22"
 order: 6
 ---
 
@@ -41,7 +41,7 @@ See [Configuration → Profiles](/configuration/profiles).
 ### Environment variables
 
 - [ ] **`GATEWAY_JWT_SECRET`** — 32+ byte random value from a secret manager. **Mandatory.** Without it, the gateway runs with an insecure default and warns at startup.
-- [ ] **`GATEWAY_INTERNAL_SECRET`** — separate 32+ byte secret shared by the gateway, REST API, and marketplace-registry. Required in every mode. kb-create generates and preserves it for local and secured installs; team deployments must provide it through the deployment secret manager.
+- [ ] **`GATEWAY_INTERNAL_SECRET`** — separate 32+ byte secret shared by the gateway, REST API, Marketplace API, and marketplace-registry. Required in every mode. kb-create generates and preserves it for local and secured installs; team deployments must provide it through the deployment secret manager.
 - [ ] **`NODE_ENV=production`** on every service process.
 - [ ] **`KB_LOG_LEVEL=info`** (or `warn` in very quiet deployments). Never `debug` or `trace` in prod — they flood log aggregators.
 - [ ] **`KB_TENANT_ID`** — if you're single-tenant, set it to a meaningful identifier for billing and attribution.

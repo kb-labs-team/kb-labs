@@ -37,7 +37,7 @@ describe('marketplace observability surfaces', () => {
   });
 
   it('returns health and versioned observability documents', async () => {
-    const server = await createServer({ service: {} as any, logger });
+    const server = await createServer({ service: {} as any, logger, auth: { required: false } });
     servers.push(server);
 
     const healthResponse = await server.inject({ method: 'GET', url: '/health' });
@@ -64,7 +64,7 @@ describe('marketplace observability surfaces', () => {
   });
 
   it('renders canonical metrics as prometheus text', async () => {
-    const server = await createServer({ service: {} as any, logger });
+    const server = await createServer({ service: {} as any, logger, auth: { required: false } });
     servers.push(server);
 
     const response = await server.inject({ method: 'GET', url: '/metrics' });
@@ -80,7 +80,7 @@ describe('marketplace observability surfaces', () => {
       sync: async () => ({ scanned: 2, added: 1, updated: 0 }),
     } as any;
 
-    const server = await createServer({ service, logger });
+    const server = await createServer({ service, logger, auth: { required: false } });
     servers.push(server);
 
     const listResponse = await server.inject({

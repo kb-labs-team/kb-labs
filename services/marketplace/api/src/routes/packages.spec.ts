@@ -9,7 +9,7 @@ import type { PackageSource, MarketplaceSource, ResolvedPackage, InstalledPackag
 import { MarketplaceService, MarketplaceVersionError } from '@kb-labs/marketplace-core';
 import { NpmPackageSource, PackageInstallError, RegistryPackageSource } from '@kb-labs/marketplace-npm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createServer } from '../server.js';
+import { createServer, type CreateServerOptions } from '../server.js';
 
 function makeMarketplaceService(options: { platformRoot: string; logger: ILogger; source: PackageSource; notFound?: boolean }): MarketplaceService {
   const { withShareToken: _withShareToken, ...base } = options.source;
@@ -56,6 +56,10 @@ function makeContextLogger(): { logger: IContextLogger; errors: CapturedLog[] } 
     }),
     errors,
   };
+}
+
+function createLocalServer(options: Omit<CreateServerOptions, 'auth'>): Promise<Awaited<ReturnType<typeof createServer>>> {
+  return createServer({ ...options, auth: { required: false } });
 }
 
 function createFailingSource(failure: Error, throwsDuringResolve: boolean): PackageSource {
@@ -113,6 +117,21 @@ describe('Marketplace API error boundary', () => {
     expect(direct.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
     expect(install).not.toHaveBeenCalled();
 
+    const forgedHeaders = await secured.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      headers: {
+        'x-kb-auth-type': 'machine',
+        'x-kb-auth-user-id': 'forged-writer',
+        'x-kb-auth-namespace-id': 'tenant-a',
+        'x-kb-auth-tier': 'pro',
+        'x-kb-auth-permissions': JSON.stringify([PERMISSIONS.PLUGINS_WRITE]),
+      },
+      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
+    });
+    expect(forgedHeaders.statusCode).toBe(401);
+    expect(install).not.toHaveBeenCalled();
+
     const readOnly = await secured.inject({
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
@@ -158,6 +177,15 @@ describe('Marketplace API error boundary', () => {
     expect(localInstall).toHaveBeenCalledTimes(1);
   });
 
+  it('refuses secured startup without the Gateway internal secret', async () => {
+    const { logger } = makeContextLogger();
+    await expect(createServer({
+      service: {} as unknown as MarketplaceService,
+      logger,
+      auth: { required: true },
+    })).rejects.toThrow('secured Marketplace API requires GATEWAY_INTERNAL_SECRET');
+  });
+
   // case: S-051.2
   it('keeps Marketplace plugin-not-found and logs source outcomes', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'marketplace-not-found-'));
@@ -169,7 +197,7 @@ describe('Marketplace API error boundary', () => {
       source: createFailingSource(new Error('source must not install'), true),
       notFound: true,
     });
-    const server = await createServer({ service, logger });
+    const server = await createLocalServer({ service, logger });
     servers.push(server);
 
     const response = await server.inject({
@@ -225,7 +253,7 @@ describe('Marketplace API error boundary', () => {
       logger,
       source: new NpmPackageSource({ registryUrl: `http://127.0.0.1:${address.port}` }),
     });
-    const server = await createServer({ service, logger });
+    const server = await createLocalServer({ service, logger });
     servers.push(server);
 
     const response = await server.inject({
@@ -270,7 +298,7 @@ describe('Marketplace API error boundary', () => {
       }],
       resolveSelectedAdapterSlot: async () => null,
     });
-    const server = await createServer({ service, logger });
+    const server = await createLocalServer({ service, logger });
     servers.push(server);
 
     const response = await server.inject({
@@ -302,7 +330,7 @@ describe('Marketplace API error boundary', () => {
       logger,
       source: createFailingSource(packageManagerError, false),
     });
-    const server = await createServer({ service, logger });
+    const server = await createLocalServer({ service, logger });
     servers.push(server);
 
     const response = await server.inject({
@@ -346,7 +374,7 @@ describe('Marketplace API error boundary', () => {
       logger,
       source: createFailingSource(packageManagerError, false),
     });
-    const server = await createServer({ service, logger });
+    const server = await createLocalServer({ service, logger });
     servers.push(server);
 
     const response = await server.inject({
@@ -385,7 +413,7 @@ describe('Marketplace API error boundary', () => {
       logger,
       source: createFailingSource(packageManagerError, false),
     });
-    const server = await createServer({ service, logger });
+    const server = await createLocalServer({ service, logger });
     servers.push(server);
 
     const response = await server.inject({
@@ -421,7 +449,7 @@ describe('Marketplace API error boundary', () => {
       logger,
       source: createFailingSource(versionError, true),
     });
-    const server = await createServer({ service, logger });
+    const server = await createLocalServer({ service, logger });
     servers.push(server);
 
     const response = await server.inject({
@@ -463,7 +491,7 @@ describe('Marketplace API error boundary', () => {
       logger,
       source: createFailingSource(versionError, true),
     });
-    const server = await createServer({ service, logger });
+    const server = await createLocalServer({ service, logger });
     servers.push(server);
 
     const response = await server.inject({
@@ -499,7 +527,7 @@ describe('Marketplace API error boundary', () => {
       logger,
       source: createFailingSource(new Error('unused'), true),
     });
-    const server = await createServer({ service, logger });
+    const server = await createLocalServer({ service, logger });
     servers.push(server);
 
     const response = await server.inject({
@@ -527,7 +555,7 @@ describe('Marketplace API error boundary', () => {
       logger,
       source: createFailingSource(new Error('private adapter loader detail'), true),
     });
-    const server = await createServer({ service, logger });
+    const server = await createLocalServer({ service, logger });
     servers.push(server);
 
     const response = await server.inject({
@@ -576,7 +604,7 @@ describe('Marketplace API error boundary', () => {
     };
     const { logger, errors } = makeContextLogger();
     const service = makeMarketplaceService({ platformRoot: root, logger, source });
-    const server = await createServer({ service, logger });
+    const server = await createLocalServer({ service, logger });
     servers.push(server);
 
     const response = await server.inject({

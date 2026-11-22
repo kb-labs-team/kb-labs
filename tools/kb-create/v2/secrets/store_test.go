@@ -462,7 +462,7 @@ func TestEnsureGeneratedInternalSecretBindsEveryProtectedService(t *testing.T) {
 	plan := &contracts.ResolvedInstallPlan{
 		Artifacts: []contracts.Artifact{{Config: []contracts.ConfigRequirement{{
 			ID: "gateway.internalSecret", Secret: true, Generate: true, Env: "GATEWAY_INTERNAL_SECRET",
-			Services: []string{"gateway", "rest", "marketplace-registry"},
+			Services: []string{"gateway", "rest", "marketplace", "marketplace-registry"},
 		}}}},
 	}
 	if err := EnsureGenerated(plan, store); err != nil {
@@ -474,7 +474,7 @@ func TestEnsureGeneratedInternalSecretBindsEveryProtectedService(t *testing.T) {
 	}
 	if err := store.BindEnvironments([]contracts.ConfigPatch{{
 		Owner: "manifest:gateway.internalSecret", Environment: "GATEWAY_INTERNAL_SECRET",
-		Services: []string{"gateway", "rest", "marketplace-registry"},
+		Services: []string{"gateway", "rest", "marketplace", "marketplace-registry"},
 	}}); err != nil {
 		t.Fatal(err)
 	}

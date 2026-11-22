@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "e84e1455fe8129f6f2397ac9cc8d2c32f12a2324d01cef83931387a4fcefa5ba",
+  "digest": "5f631b0393d936f35f014d0135146ccc362c74bc9955315ac8cd42fbef3d21da",
   "channels": {
     "stable": "2.120.1"
   },
@@ -333,7 +333,8 @@
               "env": "GATEWAY_INTERNAL_SECRET",
               "services": [
                 "gateway",
-                "rest"
+                "rest",
+                "marketplace"
               ],
               "hint": "Shared gateway-to-service authentication secret; kb-create generates and preserves it"
             },

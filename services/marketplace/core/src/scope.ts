@@ -9,7 +9,7 @@
  */
 
 import * as path from 'node:path';
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, lstatSync, realpathSync } from 'node:fs';
 import type {
   MarketplaceScope,
   ScopeContext,
@@ -66,14 +66,41 @@ export function resolveScopeRoot(roots: ServiceRoots, ctx: ScopeContext): string
     );
   }
 
-  if (path.resolve(candidate) === path.resolve(roots.platformRoot)) {
+  const physicalCandidate = realpathSync(candidate);
+  const physicalPlatformRoot = realpathSync(roots.platformRoot);
+  if (physicalCandidate === physicalPlatformRoot) {
     throw new ScopeResolutionError(
       'SCOPE_PROJECT_EQUALS_PLATFORM',
       'projectRoot must not equal platformRoot; use scope="platform" for platform-level operations.',
     );
   }
 
-  return path.resolve(candidate);
+  const managedInstallRoot = managedInstallRootFor(physicalPlatformRoot);
+  if (managedInstallRoot && isPathInside(managedInstallRoot, physicalCandidate)) {
+    throw new ScopeResolutionError(
+      'SCOPE_PROJECT_ROOT_INSIDE_PLATFORM_INSTALL',
+      'Project root must not be inside the managed platform installation.',
+    );
+  }
+
+  return physicalCandidate;
+}
+
+function managedInstallRootFor(physicalPlatformRoot: string): string | undefined {
+  const versionsDirectory = path.dirname(physicalPlatformRoot);
+  if (path.basename(versionsDirectory) !== 'versions') return undefined;
+  const installRoot = path.dirname(versionsDirectory);
+  try {
+    if (!lstatSync(path.join(installRoot, 'current')).isSymbolicLink()) return undefined;
+    return realpathSync(installRoot);
+  } catch {
+    return undefined;
+  }
+}
+
+function isPathInside(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 /**

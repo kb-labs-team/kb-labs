@@ -670,8 +670,8 @@ func TestPlanProjectsGeneratedSecretWithoutUserInput(t *testing.T) {
 		Platforms: []catalog.PlatformBundle{{
 			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
 			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
-			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway"}, {ID: "rest"}, {ID: "marketplace-registry"}}}},
-			Config:   []catalog.ConfigRequirement{{ID: "gateway.internalSecret", Secret: true, Generate: true, Env: "GATEWAY_INTERNAL_SECRET", Services: []string{"gateway", "rest", "marketplace-registry"}}},
+			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway"}, {ID: "rest"}, {ID: "marketplace"}, {ID: "marketplace-registry"}}}},
+			Config:   []catalog.ConfigRequirement{{ID: "gateway.internalSecret", Secret: true, Generate: true, Env: "GATEWAY_INTERNAL_SECRET", Services: []string{"gateway", "rest", "marketplace", "marketplace-registry"}}},
 		}},
 	}
 	plan, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
@@ -684,7 +684,7 @@ func TestPlanProjectsGeneratedSecretWithoutUserInput(t *testing.T) {
 	if len(plan.ConfigPatches) != 2 || plan.ConfigPatches[1].Environment != "GATEWAY_INTERNAL_SECRET" {
 		t.Fatalf("generated secret env patch = %#v", plan.ConfigPatches)
 	}
-	if !reflect.DeepEqual(plan.ConfigPatches[1].Services, []string{"gateway", "rest", "marketplace-registry"}) {
+	if !reflect.DeepEqual(plan.ConfigPatches[1].Services, []string{"gateway", "rest", "marketplace", "marketplace-registry"}) {
 		t.Fatalf("generated secret service targets = %v", plan.ConfigPatches[1].Services)
 	}
 }

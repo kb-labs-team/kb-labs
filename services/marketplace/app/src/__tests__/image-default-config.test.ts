@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@kb-labs/plugin-runtime", () => ({ makeAssemblyHook: vi.fn() }));
 vi.mock("@kb-labs/shared-http", () => ({ getListenOptions: vi.fn(() => ({})) }));
-vi.mock("@kb-labs/shared-daemon", () => ({ runService: vi.fn() }));
+vi.mock("@kb-labs/shared-daemon", () => ({ runService: vi.fn(), requireEnvironmentSecret: vi.fn(() => "fixture-internal-secret") }));
 vi.mock("@kb-labs/marketplace-api", () => ({ createServer: mocks.createServer }));
 vi.mock("@kb-labs/marketplace-core", () => ({ MarketplaceService: mocks.MarketplaceService }));
 vi.mock("@kb-labs/core-extension-store", () => ({ createExtensionStore: mocks.createExtensionStore }));
@@ -38,7 +38,7 @@ describe("Marketplace image default config", () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "kb-marketplace-image-default-"));
     const configPath = path.join(tempRoot, ".kb", "kb.config.json");
     execFileSync(process.execPath, [producerPath, configPath], { cwd: workspaceRoot });
-    const generatedConfig = JSON.parse(await fs.readFile(configPath, "utf8")) as { marketplace: { sources: Array<{ url: string }> } };
+    const generatedConfig = JSON.parse(await fs.readFile(configPath, "utf8")) as { marketplace: { sources: Array<{ url: string }> }; gateway: { access: { mode: string } } };
     mocks.createServer.mockResolvedValue({ listen: vi.fn(), close: vi.fn() });
     mocks.MarketplaceService.mockImplementation(function (options) { return options; });
     mocks.createExtensionStore.mockReturnValue({});
@@ -57,6 +57,9 @@ describe("Marketplace image default config", () => {
 
     expect(mocks.MarketplaceService).toHaveBeenCalledWith(expect.objectContaining({
       sources: [expect.objectContaining({ options: { registryUrl: generatedConfig.marketplace.sources[0]?.url } })],
+    }));
+    expect(mocks.createServer).toHaveBeenCalledWith(expect.objectContaining({
+      auth: { required: true, internalSecret: "fixture-internal-secret" },
     }));
   });
 });

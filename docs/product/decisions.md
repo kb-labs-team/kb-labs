@@ -1,5 +1,18 @@
 # Product decisions log
 
+## 2026-11-22
+
+### Marketplace writes require Gateway authorization in secured mode
+
+Marketplace API mutations verify Gateway's signed forwarded identity before
+calling any writer. Secured mutations require `plugins:write`, the existing
+permission for installing and managing marketplace extensions; there is no
+adapter-specific permission. Direct Marketplace service calls without the
+Gateway identity are rejected. Local mode keeps its no-login flow through the
+loopback Gateway. Project scope resolves physical paths and refuses any target
+inside a managed platform installation, including symlink aliases. Cases:
+S-269.11, S-104.3.
+
 ## 2026-11-19
 
 ### Agent CLI token budgets use command, configuration, then default precedence
@@ -692,7 +705,7 @@ Cases: S-010.1, S-054.11.
 
 ### The gateway-to-service secret is required and installer-managed
 
-`GATEWAY_INTERNAL_SECRET` is required by the gateway, REST API, and marketplace-registry in every mode because each service boundary denies requests without the shared value. A fresh local or secured kb-create install generates it in the private secret store, passes it to every protected service, and retains the same value through update and rollback. Container and team deployments provide the required variable through their deployment secret configuration; startup fails with `KB_CONFIG_SECRET_MISSING` when it is absent. Users of kb-create never enter this secret manually.
+`GATEWAY_INTERNAL_SECRET` is required by the gateway, REST API, Marketplace API, and marketplace-registry in every mode because each service boundary denies requests without the shared value. A fresh local or secured kb-create install generates it in the private secret store, passes it to every protected service, and retains the same value through update and rollback. Container and team deployments provide the required variable through their deployment secret configuration; startup fails with `KB_CONFIG_SECRET_MISSING` when it is absent. Users of kb-create never enter this secret manually.
 Cases: S-038.1 to S-038.7.
 
 ### Superseding decision: kb-create owns sealed artifact overrides

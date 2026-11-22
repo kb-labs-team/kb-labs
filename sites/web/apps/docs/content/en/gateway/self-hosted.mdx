@@ -1,7 +1,7 @@
 ---
 title: "Self-Hosted Deployments"
 description: "Running the gateway in your own network — TLS, secrets, reverse proxies, scaling."
-updatedAt: "2026-10-02"
+updatedAt: "2026-11-22"
 order: 5
 ---
 
@@ -28,7 +28,7 @@ Set these on the gateway process and provide `GATEWAY_INTERNAL_SECRET` to every 
 | Env var | Why |
 |---|---|
 | `GATEWAY_JWT_SECRET` | HMAC signing key for all JWTs. Without it the gateway runs with an insecure default and will warn loudly. |
-| `GATEWAY_INTERNAL_SECRET` | Required shared secret for gateway-to-service authentication, including `/internal/dispatch`, REST API adapter calls, and marketplace-registry requests. kb-create generates and preserves it for local and secured installs. |
+| `GATEWAY_INTERNAL_SECRET` | Required shared secret for gateway-to-service authentication, including `/internal/dispatch`, REST API adapter calls, Marketplace API mutations, and marketplace-registry requests. kb-create generates and preserves it for local and secured installs. |
 | `NODE_ENV=production` | Disables Swagger UI and verbose dev logging. |
 | `PORT` | Override the default 4000 if needed. |
 

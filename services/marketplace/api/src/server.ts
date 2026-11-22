@@ -18,12 +18,15 @@ import { MarketplaceInstallRollbackError, MarketplaceVersionError, type Marketpl
 import { ScopeResolutionError, AdapterScopeError, InvalidEntityError, PackageClassificationError } from '@kb-labs/marketplace-core';
 import { PackageInstallError, PackageMetadataError, PlatformArtifactPinsError, RegistryPackageError } from '@kb-labs/marketplace-npm';
 import { ScopeRequestError } from './scope-parser.js';
+import type { MarketplaceMutationAuth } from './routes/mutation-auth.js';
 
 export interface CreateServerOptions {
   service: MarketplaceService;
   logger: IContextLogger;
   port?: number;
   host?: string;
+  /** Verified Gateway identity policy for every mutating Marketplace route. */
+  auth: MarketplaceMutationAuth;
 }
 
 /**
@@ -47,6 +50,10 @@ function wrapObservability(collector: HttpObservabilityCollector): Observability
 
 export async function createServer(opts: CreateServerOptions): Promise<FastifyInstance> {
   const logger = opts.logger;
+  const mutationAuth = opts.auth;
+  if (mutationAuth.required && !mutationAuth.internalSecret) {
+    throw new Error('secured Marketplace API requires GATEWAY_INTERNAL_SECRET');
+  }
 
   const collector = new HttpObservabilityCollector({
     serviceId: 'marketplace',
@@ -102,7 +109,7 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
       app.decorate('marketplace', opts.service);
       app.decorate('observability', collector);
 
-      await collector.observeOperation('marketplace.bootstrap', () => registerRoutes(app));
+      await collector.observeOperation('marketplace.bootstrap', () => registerRoutes(app, mutationAuth));
     },
   });
 }
