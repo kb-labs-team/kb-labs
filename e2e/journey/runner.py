@@ -40,6 +40,7 @@ from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_apply_scenario_step,
                                   run_uninstall_decline_step, run_missing_project_request_steps,
                                   commit_marketplace_install_record,
+                                  first_admin_credential_disclosed_once,
                                   requested_commit_marketplace_install_satisfied,
                                   add_installed_host_stop_case_step)
 from installer_case_steps import parse_install_refusal
@@ -1529,12 +1530,8 @@ def _main(*, update_variant_runner=None):
                     password = credential.get("password", "")
                     store_report_secret(env, "KB_JOURNEY_ADMIN_PASSWORD", password,
                                         "installed first-admin password")
-                    first_admin_shown_once = (
-                        credential.get("email") == "journey-admin@example.test"
-                        and credential.get(layout_value('sharedStateDirectory')) == "disclosed"
-                        and bool(password)
-                        and result.stdout.count(password) == 1
-                    )
+                    first_admin_shown_once = first_admin_credential_disclosed_once(
+                        credential, result.stdout)
                     if first_admin_shown_once:
                         env["KB_JOURNEY_ADMIN_EMAIL"] = credential["email"]
                 if not first_admin_shown_once:
