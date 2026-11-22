@@ -2331,7 +2331,8 @@ def _main(*, update_variant_runner=None):
                 fail(f"service runner result could not provide state probes: {error}")
         if not service_report.exists():
             detail = missing_service_report_detail(result, service_report, service_env)
-            CASE_JOURNEY.step("service runner result report", "journey.runner",
+            report_step_name = f"{mode} service runner result report"
+            CASE_JOURNEY.step(report_step_name, "journey.runner",
                               lambda: detail, role="lifecycle")
             fail(f"{mode} service journey: {detail}")
             block_outer_dependents(outer_graph, ["marketplace", "marketplace-fixtures", "adapters",
