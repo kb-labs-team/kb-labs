@@ -1,3 +1,4 @@
+import base64
 import json
 import ast
 import contextlib
@@ -22,6 +23,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                configured_marketplace_source_kinds,
                                commit_publish_command,
                                _prepare_registry_commit_publish_package,
+                               _publish_npm_fixture_package,
                                _publish_fixture_command,
                                _assert_catalogued_marketplace_failure,
                                prepare_commit_project_fixture,
@@ -79,6 +81,69 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_npm_fixture_publish_registers_a_local_user_and_uses_scoped_credentials(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = root / "fixture"
+            package.mkdir()
+            calls = []
+
+            class Response:
+                status = 201
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return None
+
+            def opener(request, timeout):
+                calls.append((request, timeout))
+                return Response()
+
+            def runner(command, *, cwd, env, timeout):
+                calls.append((command, cwd, env, timeout))
+                return subprocess.CompletedProcess(command, 0, "{}", "")
+
+            _publish_npm_fixture_package(package, "http://verdaccio:4873", root,
+                                         {"PATH": "/usr/bin"}, runner, http_opener=opener)
+
+            request, request_timeout = calls[0]
+            self.assertEqual(request.method, "PUT")
+            self.assertEqual(request.full_url,
+                             "http://verdaccio:4873/-/user/org.couchdb.user:kb-journey")
+            self.assertEqual(request_timeout, 10)
+            command, cwd, publish_env, timeout = calls[1]
+            self.assertEqual(command, ["npm", "publish", str(package), "--json",
+                                       "--registry=http://verdaccio:4873"])
+            self.assertEqual(Path(cwd), root)
+            self.assertEqual(timeout, 300)
+            self.assertEqual(publish_env["PATH"], "/usr/bin")
+            npmrc = Path(publish_env["npm_config_userconfig"])
+            auth = base64.b64encode(b"kb-journey:kb-journey").decode()
+            self.assertEqual(npmrc.read_text(),
+                             f"//verdaccio:4873/:_auth={auth}\n"
+                             "//verdaccio:4873/:always-auth=true\n"
+                             "registry=http://verdaccio:4873/\n")
+
+    def test_npm_fixture_publish_stops_when_verdaccio_user_registration_fails(self):
+        class Response:
+            status = 500
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+        with tempfile.TemporaryDirectory() as temp:
+            package = Path(temp) / "fixture"
+            package.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "user registration failed \(status 500\)"):
+                _publish_npm_fixture_package(
+                    package, "http://verdaccio:4873", Path(temp), {},
+                    lambda *_args, **_kwargs: self.fail("npm publish must not run"),
+                    http_opener=lambda *_args, **_kwargs: Response())
     # case: S-268.6
     def test_marketplace_update_config_resolves_through_active_version(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-config-layout-") as directory:

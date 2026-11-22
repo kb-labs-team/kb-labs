@@ -5,6 +5,7 @@ from kb_invocation import kb_command
 
 from project_service_path import project_service_path
 
+import base64
 import json
 import hashlib
 import os
@@ -131,6 +132,45 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
 def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandRunner,
          input: str | None = None) -> CompletedProcess[str]:
     return run_with_runner(runner, command, cwd=cwd, env=env, timeout=300, input=input)
+
+
+def _publish_npm_fixture_package(package_dir: Path, registry: str, cwd: Path,
+                                 env: dict[str, str], runner: CommandRunner, *,
+                                 http_opener: Callable[..., object] = urllib.request.urlopen) -> None:
+    """Register a throwaway Verdaccio user and publish with registry-scoped auth."""
+    parsed_registry = urlsplit(registry)
+    if parsed_registry.scheme not in {"http", "https"} or not parsed_registry.netloc:
+        raise RuntimeError("S-010.8 requires an HTTP npm fixture registry")
+
+    username = "kb-journey"
+    password = "kb-journey"
+    user_url = f"{registry.rstrip('/')}/-/user/org.couchdb.user:{username}"
+    body = json.dumps({"name": username, "password": password, "email": "kb-journey@local"}).encode()
+    request = urllib.request.Request(
+        user_url, data=body, headers={"Content-Type": "application/json"}, method="PUT")
+    try:
+        with http_opener(request, timeout=10) as response:
+            status = getattr(response, "status", None)
+            if status is None:
+                status = response.getcode()
+    except urllib.error.HTTPError as error:
+        status = error.code
+    if status not in (200, 201, 409):
+        raise RuntimeError(f"S-010.8 Verdaccio user registration failed (status {status})")
+
+    auth = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
+    userconfig = cwd / ".kb-journey-npmrc"
+    userconfig.write_text(
+        f"//{parsed_registry.netloc}/:_auth={auth}\n"
+        f"//{parsed_registry.netloc}/:always-auth=true\n"
+        f"registry={registry.rstrip('/')}/\n",
+        encoding="utf-8",
+    )
+    userconfig.chmod(0o600)
+    publish_env = dict(env)
+    publish_env["npm_config_userconfig"] = str(userconfig)
+    command = ["npm", "publish", str(package_dir), "--json", f"--registry={registry}"]
+    _output(_run(command, cwd=cwd, env=publish_env, runner=runner), command)
 
 
 def _output(result: CompletedProcess[str], command: list[str]) -> str:
@@ -1177,8 +1217,8 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
             ]
             _output(_run(manifest_command, cwd=project, env=base_env, runner=runner), manifest_command)
             for package_dir in (dependency_dir, plugin_dir):
-                publish = ["npm", "publish", str(package_dir), "--json", f"--registry={registry}"]
-                _output(_run(publish, cwd=project, env=base_env, runner=runner), publish)
+                _publish_npm_fixture_package(package_dir, registry, fixture_root,
+                                             base_env, runner)
 
             install = ["marketplace", "install", f"{plugin_id}@{version}", "--scope", "project", "--json"]
             installed_result = _json(cli(install), install)
