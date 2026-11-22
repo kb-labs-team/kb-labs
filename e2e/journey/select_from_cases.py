@@ -240,7 +240,10 @@ def journey_source_group_declaration(source: str, root: Path,
                                      selector: str = "") -> dict[str, tuple[str, ...]]:
     """Resolve every step and claim registered by a journey module and its local imports."""
     sources = _imported_journey_sources({source}, root)
-    registrations = _source_step_declarations(sources, root)
+    # Keep this declaration scoped to the source's import closure. The broader
+    # registry also scans every runner entry point, which can assign an unrelated
+    # lane's step names to this group and make that flow run for the wrong cases.
+    registrations = _source_step_declarations_cached(tuple(sorted(sources)), root)
     cases: set[str] = set()
     steps: set[str] = set()
     mode = RUNNERS[selector].mode if selector else ""
