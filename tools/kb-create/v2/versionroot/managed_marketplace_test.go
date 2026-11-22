@@ -46,6 +46,18 @@ func TestManagedMarketplaceMutationExposesInstallAndBoundedAdapterUpdateOnly(t *
 	if err := validateManagedMarketplaceMutation(nullIDs); err == nil {
 		t.Fatal("explicit packageIds:null was treated as omission")
 	}
+	for _, raw := range []string{
+		`{"operation":"update","PackageIds":null}`,
+		`{"operation":"update","packageId":"@kb-labs/sample-adapter"}`,
+		`{"operation":"update","packageIDs":null}`,
+		`{"operation":"update","unrecognized":true}`,
+		`{"operation":"install","packageIds":null,"specs":["@kb-labs/sample@1.0.0"]}`,
+	} {
+		var mutation ManagedMarketplaceMutation
+		if err := json.Unmarshal([]byte(raw), &mutation); err == nil {
+			t.Errorf("managed owner accepted non-canonical/unknown field in %s", raw)
+		}
+	}
 	for _, mutation := range []ManagedMarketplaceMutation{
 		{Operation: ManagedMarketplaceUpdate, Specs: []string{"@kb-labs/sample-adapter@1.2.3"}},
 		{Operation: ManagedMarketplaceUpdate, PackageIDs: []string{"@kb-labs/sample-adapter", "@kb-labs/sample-adapter"}},

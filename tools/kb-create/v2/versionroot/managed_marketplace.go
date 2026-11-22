@@ -47,13 +47,35 @@ type ManagedMarketplaceMutation struct {
 }
 
 func (mutation *ManagedMarketplaceMutation) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if fields == nil {
+		return fmt.Errorf("managed Marketplace mutation must be an object")
+	}
+	var operation ManagedMarketplaceOperation
+	if rawOperation, ok := fields["operation"]; !ok || json.Unmarshal(rawOperation, &operation) != nil {
+		return fmt.Errorf("managed Marketplace mutation operation is required")
+	}
+	allowed := map[string]struct{}{"operation": {}}
+	switch operation {
+	case ManagedMarketplaceInstall:
+		allowed["specs"] = struct{}{}
+		allowed["dev"] = struct{}{}
+	case ManagedMarketplaceUpdate:
+		allowed["packageIds"] = struct{}{}
+	default:
+		return fmt.Errorf("unsupported managed Marketplace operation %q", operation)
+	}
+	for key := range fields {
+		if _, ok := allowed[key]; !ok {
+			return fmt.Errorf("unsupported managed Marketplace mutation field %q", key)
+		}
+	}
 	type wire ManagedMarketplaceMutation
 	var decoded wire
 	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
 	*mutation = ManagedMarketplaceMutation(decoded)
@@ -345,7 +367,7 @@ func managedMarketplaceAPIEntries(stage string, result managedMarketplaceInstall
 func validateManagedMarketplaceMutation(mutation ManagedMarketplaceMutation) error {
 	switch mutation.Operation {
 	case ManagedMarketplaceInstall:
-		if len(mutation.Specs) == 0 || len(mutation.Specs) > 32 || len(mutation.PackageIDs) != 0 {
+		if len(mutation.Specs) == 0 || len(mutation.Specs) > 32 || mutation.packageIDsProvided || len(mutation.PackageIDs) != 0 {
 			return fmt.Errorf("Marketplace install requires between 1 and 32 package specs")
 		}
 		seen := map[string]struct{}{}
