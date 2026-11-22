@@ -33,7 +33,10 @@ export async function setup({
   const repoRoot = platformRoot;
 
   const kbConfig = await readKbConfig(repoRoot, { required: true });
-  const configData = kbConfig?.data as { gateway?: { access?: { mode?: string } }; platform?: { deployment?: { topology?: string } } } | undefined;
+  const configData = kbConfig?.data as {
+    gateway?: { access?: { mode?: string }; auth?: { enabled?: boolean } };
+    platform?: { deployment?: { topology?: string } };
+  } | undefined;
   const marketplace = (kbConfig?.data as { marketplace?: { sources?: MarketplaceSourcesConfig } } | undefined)?.marketplace;
   const sourcesConfig = marketplace?.sources;
   if (!sourcesConfig?.[0]) {
@@ -74,6 +77,7 @@ export async function setup({
   });
 
   const projectScopeAllowed = configData?.gateway?.access?.mode === 'local'
+    && configData.gateway.auth?.enabled !== true
     && configData.platform?.deployment?.topology === 'local';
   const server = await createServer({ service, port, logger, auth: { internalSecret, projectScopeAllowed } });
   await server.listen(getListenOptions(port, host));

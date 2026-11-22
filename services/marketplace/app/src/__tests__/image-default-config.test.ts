@@ -99,7 +99,7 @@ describe("Marketplace image default config", () => {
     const configPath = path.join(tempRoot, ".kb", "kb.config.json");
     execFileSync(process.execPath, [producerPath, configPath], { cwd: workspaceRoot });
     const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
-      gateway: { access: { mode: string } };
+      gateway: { access: { mode: string }; auth?: { enabled?: boolean } };
       platform: { deployment: { topology: string } };
     };
     config.gateway.access.mode = "local";
@@ -120,6 +120,14 @@ describe("Marketplace image default config", () => {
       auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: true },
     }));
 
+    config.gateway.auth = { enabled: true };
+    await fs.writeFile(configPath, JSON.stringify(config));
+    await setup(context);
+    expect(mocks.createServer).toHaveBeenLastCalledWith(expect.objectContaining({
+      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: false },
+    }));
+
+    config.gateway.auth.enabled = false;
     config.platform.deployment.topology = "k8s";
     await fs.writeFile(configPath, JSON.stringify(config));
     await setup(context);

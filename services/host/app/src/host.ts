@@ -288,9 +288,10 @@ export async function createHostConfig(
         });
         const configData = effective?.data as {
           platform?: { deployment?: { topology?: string } };
-          gateway?: { access?: { mode?: string } };
+          gateway?: { access?: { mode?: string }; auth?: { enabled?: boolean } };
         } | undefined;
         const projectScopeAllowed = configData?.gateway?.access?.mode === "local"
+          && configData.gateway.auth?.enabled !== true
           && configData.platform?.deployment?.topology === "local";
         const platformConfig = configData?.platform;
         if (platformConfig && typeof platformConfig === "object" && !Array.isArray(platformConfig)) {
