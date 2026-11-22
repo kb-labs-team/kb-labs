@@ -640,6 +640,117 @@ func TestManagedMarketplaceOwnerRunsInstalledHelperInCandidateAndSwitchesOnlyOnS
 	}
 }
 
+// case: S-269.10
+func TestManagedMarketplaceFailedPnpmMutationPreservesActiveGeneration(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("Node.js is required for the installed-helper transaction test")
+	}
+	layout, active := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+	seedManagedGraphFixture(t, active, "@kb-labs/sample@1.0.0", "npm", "1.0.0", false, false, false)
+	if err := os.WriteFile(filepath.Join(active, ".kb", "kb.config.jsonc"), []byte(`{"marketplace":{"sources":[{"kind":"npm","url":"https://registry.example.test"}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installFakeManagedPnpm(t, layout)
+	pnpmScript := filepath.Join(contracts.PackageManagerStateDirectory(layout.Root), "corepack", "v1", "pnpm", toolchain.SupportedPnpm, "bin", "pnpm.cjs")
+	pnpmFailure := `const fs=require("node:fs");if(process.argv.includes("--fixture-fail-after-partial-mutation")){const pkg=JSON.parse(fs.readFileSync("package.json","utf8"));pkg.dependencies["@kb-labs/sample"]="^2.0.0";fs.writeFileSync("package.json",JSON.stringify(pkg));fs.writeFileSync("pnpm-lock.yaml","lockfileVersion: '9.0'\nimporters: {}\n");fs.writeFileSync("partial-pnpm-mutation.marker","written");fs.rmSync("node_modules/.modules.yaml",{force:true});fs.rmSync("node_modules/.bin/kb",{force:true});fs.rmSync("node_modules/.bin/kb-host",{force:true});fs.writeFileSync(require("node:path").join(process.env.COREPACK_HOME,"failed-pnpm-mutation.marker"),"partial graph mutation reached");process.stderr.write("simulated pnpm failure after mutating staged package graph\n");process.exit(42);}process.exit(31);`
+	if err := os.WriteFile(pnpmScript, []byte(pnpmFailure), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(active, "node_modules", "@kb-labs", "marketplace-app")
+	if err := os.MkdirAll(filepath.Join(helper, "dist"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(helper, "package.json"), []byte(`{"name":"@kb-labs/marketplace-app","kb":{"managedGenerationMutation":1}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	helperScript := `if(process.argv[2]==="--managed-generation-mutation-env-refs"){process.stdout.write(JSON.stringify({schema:1,environment:[]})+"\n");process.exit(0);}const cp=require("node:child_process");let request="";process.stdin.on("data",b=>request+=b);process.stdin.on("end",()=>{const envelope=JSON.parse(request);if(envelope.mutation.operation!=="install")process.exit(31);const result=cp.spawnSync("pnpm",["--fixture-fail-after-partial-mutation"],{encoding:"utf8"});if(result.status!==0){process.stderr.write(JSON.stringify({schema:1,code:"KB_MARKETPLACE_INSTALL_FAILED",message:"The staged package graph could not be completed.",hint:"Retry the install after checking registry access."})+"\n");process.exit(1);}process.exit(32);});`
+	helperEntry := filepath.Join(helper, "dist", "bin.js")
+	if err := os.WriteFile(helperEntry, []byte(helperScript+"\n// --managed-generation-mutation capability\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{"package.json", "pnpm-lock.yaml", "node_modules/.modules.yaml", ".kb/marketplace.lock", "node_modules/@kb-labs/sample/package.json", "node_modules/@kb-labs/sample/manifest.mjs", "node_modules/.bin/kb", "node_modules/.bin/kb-host"}
+	snapshot := make(map[string]string, len(paths))
+	for _, relative := range paths {
+		path := filepath.Join(active, filepath.FromSlash(relative))
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("active %s missing before update: %v", relative, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read active %s before update: %v", relative, err)
+		}
+		link := ""
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err = os.Readlink(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		snapshot[relative] = fmt.Sprintf("%#o\x00%s\x00%s", info.Mode(), link, data)
+	}
+
+	_, err := layout.RunManagedMarketplaceMutation(context.Background(), active, ManagedMarketplaceMutation{
+		Operation: ManagedMarketplaceInstall,
+		Specs:     []string{"@kb-labs/sample@2.0.0"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "KB_MARKETPLACE_INSTALL_FAILED") || !strings.Contains(err.Error(), "Retry the install after checking registry access.") {
+		t.Fatalf("failed package-manager update error = %v; expected typed Marketplace failure with hint", err)
+	}
+	mutationMarker := filepath.Join(contracts.PackageManagerStateDirectory(layout.Root), "corepack", "failed-pnpm-mutation.marker")
+	if marker, readErr := os.ReadFile(mutationMarker); readErr != nil || string(marker) != "partial graph mutation reached" {
+		t.Fatalf("fixture pnpm did not reach its partial-mutation failure point: %q, %v", marker, readErr)
+	}
+	selected, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Clean(selected) != filepath.Clean(active) {
+		t.Fatalf("failed update changed active generation: got %q want %q", selected, active)
+	}
+	for _, relative := range paths {
+		path := filepath.Join(active, filepath.FromSlash(relative))
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("failed update damaged active %s: %v", relative, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read active %s after update: %v", relative, err)
+		}
+		link := ""
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err = os.Readlink(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		got := fmt.Sprintf("%#o\x00%s\x00%s", info.Mode(), link, data)
+		if got != snapshot[relative] {
+			t.Fatalf("failed update changed active %s", relative)
+		}
+	}
+	if err := verifyManagedMarketplaceCoreGraph(active, active, ManagedMarketplaceMutation{Operation: ManagedMarketplaceInstall}, managedMarketplaceInstallResult{Schema: 1, Operation: ManagedMarketplaceInstall}); err != nil {
+		t.Fatalf("previous active package graph is no longer healthy after failed update: %v", err)
+	}
+	for _, command := range []string{"kb", "kb-host"} {
+		probe := exec.Command(filepath.Join(active, "node_modules", ".bin", command), "--version")
+		output, err := probe.CombinedOutput()
+		if err != nil || strings.TrimSpace(string(output)) != "1.0.0" {
+			t.Fatalf("previous %s projection stopped working after failed update: output=%q err=%v", command, output, err)
+		}
+	}
+	entries, err := os.ReadDir(layout.VersionsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".stage-managed-") {
+			t.Fatalf("failed candidate was not cleaned: %s", entry.Name())
+		}
+	}
+}
+
 func TestManagedMarketplaceOwnerHardKillPreservesLiveCandidate(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skip("managed operation locking is supported on Linux and macOS")
