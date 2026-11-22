@@ -34,7 +34,6 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                register_transitive_npm_dependency_step,
                                _transitive_npm_fixture_ids,
                                _transitive_npm_fixture_dependencies,
-                               _register_commit_update_fixture_step,
                                run_marketplace_steps, validate_commit_status_response,
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
@@ -195,10 +194,48 @@ class MarketplaceStepTests(unittest.TestCase):
         )
         journey = Journey("local", "s0108-unselected-update-fixture", selection=selection)
 
-        result = _register_commit_update_fixture_step(journey, lambda: self.fail("must be skipped"))
-
+        result = journey.step(
+            "publish next-major Commit update fixture",
+            "marketplace-fixtures",
+            lambda: self.fail("must be skipped"),
+            requires=("step:install Commit into the project for the route lifecycle",),
+        )
         self.assertEqual(result.status, "SKIPPED")
         self.assertEqual(result.message, "not selected")
+
+    # case: S-012.1
+    def test_commit_update_fixture_runs_when_its_case_is_selected(self):
+        selector = "service-local:explore"
+        selection = JourneySelection(
+            requested=("S-012.1",),
+            claims=frozenset({"S-012.1"}),
+            owning_steps={"S-012.1": "publish next-major Commit update fixture"},
+            prerequisite_steps=frozenset({
+                "install Commit into the project for the route lifecycle",
+                "publish next-major Commit update fixture",
+            }),
+            prerequisite_flows=frozenset(),
+            capabilities=frozenset({"marketplace"}),
+            runner_selector=selector,
+            requested_runners=selector,
+        )
+        journey = Journey("local", "s0121-update-fixture", selection=selection)
+        prerequisite = journey.step(
+            "install Commit into the project for the route lifecycle",
+            "marketplace",
+            lambda: None,
+            cases=["S-192.2"],
+        )
+
+        result = journey.step(
+            "publish next-major Commit update fixture",
+            "marketplace-fixtures",
+            lambda: None,
+            requires=("step:install Commit into the project for the route lifecycle",),
+        )
+
+        self.assertEqual(prerequisite.status, "PASS")
+        self.assertEqual(result.status, "PASS")
 
     # case: S-010.8
     def test_transitive_dependency_install_step_runs_for_local_and_secured_service_owners(self):
