@@ -2445,6 +2445,7 @@ func TestRestartFailureRestoresPreviousVersionAndReportsRecoveryDetails(t *testi
 }
 
 // case: S-223.2
+// case: S-269.12
 func TestRestartRecoveryDirectCallerReturnsSameCataloguedResult(t *testing.T) {
 	inst := newInstallation(t)
 	active, err := receipt.Read(platformRootForTest(t, inst.root))
@@ -2483,8 +2484,13 @@ func TestRestartRecoveryDirectCallerReturnsSameCataloguedResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	previous.Spec.Env = map[string]string{host.MarketplaceOwnerBinaryEnv: inst.launcher}
+	var ownerBinaries []string
 	outcome, restartErr := host.RestartWithRecovery(context.Background(), inst.root, previous,
-		func(ctx context.Context, current *host.ProcessRunner) (host.Info, error) { return current.Start(ctx) })
+		func(ctx context.Context, current *host.ProcessRunner) (host.Info, error) {
+			ownerBinaries = append(ownerBinaries, current.Spec.Env[host.MarketplaceOwnerBinaryEnv])
+			return current.Start(ctx)
+		})
 	if outcome.Runner != nil {
 		t.Cleanup(func() { _, _ = outcome.Runner.Stop(context.Background()) })
 	}
@@ -2495,6 +2501,9 @@ func TestRestartRecoveryDirectCallerReturnsSameCataloguedResult(t *testing.T) {
 	if failure.Meta["recoveryStage"] != "restored-last-healthy" || failure.Meta["nextCommand"] == "" ||
 		outcome.Runner == nil || outcome.Runner.Identity.PlatformVersion != "1.0.0" {
 		t.Fatalf("direct restart recovery = outcome %#v, diagnostic %#v", outcome, failure.Meta)
+	}
+	if len(ownerBinaries) != 2 || ownerBinaries[0] != inst.launcher || ownerBinaries[1] != inst.launcher {
+		t.Fatalf("restart/recovery owner binaries = %#v, want the trusted launcher at both starts", ownerBinaries)
 	}
 }
 

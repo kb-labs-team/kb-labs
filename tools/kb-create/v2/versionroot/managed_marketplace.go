@@ -41,6 +41,28 @@ type ManagedMarketplaceMutation struct {
 	Dev       bool                        `json:"dev,omitempty"`
 }
 
+// ManagedMarketplaceMutationResult carries the Marketplace API response fields
+// after the candidate has been activated. Package roots are rewritten to the
+// activated generation, never returned as stale staging paths.
+type ManagedMarketplaceMutationResult struct {
+	Installed  []ManagedMarketplaceInstallResult `json:"installed"`
+	Warnings   []string                          `json:"warnings"`
+	Scope      string                            `json:"scope"`
+	ActiveRoot string                            `json:"-"`
+}
+
+type ManagedMarketplaceInstallResult struct {
+	Spec            string   `json:"spec"`
+	ID              string   `json:"id"`
+	Version         string   `json:"version"`
+	PrimaryKind     string   `json:"primaryKind"`
+	Provides        []string `json:"provides"`
+	PackageRoot     string   `json:"packageRoot"`
+	Scope           string   `json:"scope"`
+	Source          string   `json:"source"`
+	SignatureStatus string   `json:"signatureStatus"`
+}
+
 // OperationLockPath is the per-installation kernel lock shared by generation
 // activation and platform lifecycle writers. Keep lock ownership rooted in the
 // installation container so callers cannot accidentally serialize on the
@@ -53,6 +75,7 @@ type managedMarketplaceInstallResult struct {
 	Schema    int                              `json:"schema"`
 	Operation ManagedMarketplaceOperation      `json:"operation"`
 	Installed []managedMarketplaceInstallEntry `json:"installed"`
+	Warnings  []string                         `json:"warnings"`
 }
 
 type managedMarketplaceInstallEntry struct {
@@ -102,51 +125,80 @@ type managedHelperFailure struct {
 // package resolution, package graph changes, validation, Marketplace lock and
 // manifest-cache writes inside a disposable stage. Only a successful helper
 // exit and a second physical-tree validation can switch current.
-func (l Layout) RunManagedMarketplaceMutation(ctx context.Context, runningRoot string, mutation ManagedMarketplaceMutation) (string, error) {
+func (l Layout) RunManagedMarketplaceMutation(ctx context.Context, runningRoot string, mutation ManagedMarketplaceMutation) (ManagedMarketplaceMutationResult, error) {
 	if ctx == nil {
-		return "", fmt.Errorf("managed Marketplace mutation context is required")
+		return ManagedMarketplaceMutationResult{}, fmt.Errorf("managed Marketplace mutation context is required")
 	}
 	if err := validateManagedMarketplaceMutation(mutation); err != nil {
-		return "", err
+		return ManagedMarketplaceMutationResult{}, err
 	}
 	if strings.TrimSpace(runningRoot) == "" {
-		return "", fmt.Errorf("physical running or active generation root is required for retention")
+		return ManagedMarketplaceMutationResult{}, fmt.Errorf("physical running or active generation root is required for retention")
 	}
 	lock, err := operationlock.Acquire(l.OperationLockPath(), "managed-marketplace-mutation")
 	if err != nil {
-		return "", fmt.Errorf("acquire installation operation lock: %w", err)
+		return ManagedMarketplaceMutationResult{}, fmt.Errorf("acquire installation operation lock: %w", err)
 	}
 	defer lock.Release()
+	return l.runManagedMarketplaceMutationLocked(ctx, runningRoot, mutation)
+}
+
+// RunManagedMarketplaceMutationWithHeldLease is for an installation lifecycle
+// transaction that already owns this process's kernel lease. It never drops
+// or reacquires that lease, and refuses the call unless the exact install lock
+// is held by this process.
+func (l Layout) RunManagedMarketplaceMutationWithHeldLease(ctx context.Context, runningRoot string, mutation ManagedMarketplaceMutation) (result ManagedMarketplaceMutationResult, err error) {
+	lease := operationlock.Held(l.OperationLockPath())
+	if lease == nil {
+		return ManagedMarketplaceMutationResult{}, fmt.Errorf("managed Marketplace mutation requires the current process to hold the installation operation lock")
+	}
+	err = lease.With(func() error {
+		result, err = l.runManagedMarketplaceMutationLocked(ctx, runningRoot, mutation)
+		return err
+	})
+	return result, err
+}
+
+func (l Layout) runManagedMarketplaceMutationLocked(ctx context.Context, runningRoot string, mutation ManagedMarketplaceMutation) (ManagedMarketplaceMutationResult, error) {
+	if ctx == nil {
+		return ManagedMarketplaceMutationResult{}, fmt.Errorf("managed Marketplace mutation context is required")
+	}
+	if err := validateManagedMarketplaceMutation(mutation); err != nil {
+		return ManagedMarketplaceMutationResult{}, err
+	}
+	if strings.TrimSpace(runningRoot) == "" {
+		return ManagedMarketplaceMutationResult{}, fmt.Errorf("physical running or active generation root is required for retention")
+	}
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return ManagedMarketplaceMutationResult{}, err
 	}
 
 	active, err := l.Active()
 	if err != nil {
-		return "", err
+		return ManagedMarketplaceMutationResult{}, err
 	}
 	runningRoot, err = l.resolveVersionPath(runningRoot)
 	if err != nil {
-		return "", fmt.Errorf("resolve protected running generation: %w", err)
+		return ManagedMarketplaceMutationResult{}, fmt.Errorf("resolve protected running generation: %w", err)
 	}
 	if err := l.validateVersionPath(runningRoot); err != nil {
-		return "", fmt.Errorf("validate protected running generation: %w", err)
+		return ManagedMarketplaceMutationResult{}, fmt.Errorf("validate protected running generation: %w", err)
 	}
 	activeReceipt, err := receipt.Read(active)
 	if err != nil {
-		return "", err
+		return ManagedMarketplaceMutationResult{}, err
 	}
 	runningReceipt, err := receipt.Read(runningRoot)
 	if err != nil {
-		return "", err
+		return ManagedMarketplaceMutationResult{}, err
 	}
 	if activeReceipt.InstallationID != runningReceipt.InstallationID {
-		return "", fmt.Errorf("protected running generation belongs to a different installation")
+		return ManagedMarketplaceMutationResult{}, fmt.Errorf("protected running generation belongs to a different installation")
 	}
 
 	stage, err := l.StageManagedGeneration()
 	if err != nil {
-		return "", fmt.Errorf("stage Marketplace mutation: %w", err)
+		return ManagedMarketplaceMutationResult{}, fmt.Errorf("stage Marketplace mutation: %w", err)
 	}
 	result, err := runMarketplaceStageHelper(ctx, l, active, stage, mutation)
 	if err != nil {
@@ -154,32 +206,39 @@ func (l Layout) RunManagedMarketplaceMutation(ctx context.Context, runningRoot s
 		if cleanupErr := l.AbortManagedGeneration(stage); cleanupErr != nil {
 			failure = errors.Join(failure, fmt.Errorf("remove failed Marketplace stage: %w", cleanupErr))
 		}
-		return "", failure
+		return ManagedMarketplaceMutationResult{}, failure
 	}
 	if err := verifyManagedMarketplaceInstall(stage, mutation, result); err != nil {
 		if cleanupErr := l.AbortManagedGeneration(stage); cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("remove invalid Marketplace stage: %w", cleanupErr))
 		}
-		return "", err
+		return ManagedMarketplaceMutationResult{}, err
 	}
 	if err := verifyManagedMarketplaceCoreGraph(active, stage, mutation, result); err != nil {
 		if cleanupErr := l.AbortManagedGeneration(stage); cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("remove invalid Marketplace stage: %w", cleanupErr))
 		}
-		return "", err
+		return ManagedMarketplaceMutationResult{}, err
+	}
+	entries, err := managedMarketplaceAPIEntries(stage, result)
+	if err != nil {
+		if cleanupErr := l.AbortManagedGeneration(stage); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove invalid Marketplace stage: %w", cleanupErr))
+		}
+		return ManagedMarketplaceMutationResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		if cleanupErr := l.AbortManagedGeneration(stage); cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("remove canceled Marketplace stage: %w", cleanupErr))
 		}
-		return "", err
+		return ManagedMarketplaceMutationResult{}, err
 	}
 	activeAfterHelper, err := l.Active()
 	if err != nil {
 		if cleanupErr := l.AbortManagedGeneration(stage); cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("remove uncommitted Marketplace stage: %w", cleanupErr))
 		}
-		return "", err
+		return ManagedMarketplaceMutationResult{}, err
 	}
 	if filepath.Clean(activeAfterHelper) != filepath.Clean(active) {
 		cleanupErr := l.AbortManagedGeneration(stage)
@@ -187,22 +246,75 @@ func (l Layout) RunManagedMarketplaceMutation(ctx context.Context, runningRoot s
 		if cleanupErr != nil {
 			failure = errors.Join(failure, fmt.Errorf("remove stale Marketplace stage: %w", cleanupErr))
 		}
-		return "", failure
+		return ManagedMarketplaceMutationResult{}, failure
 	}
 	noop, noopErr := managedMarketplaceInstallIsNoop(active, stage, mutation, result)
 	if noopErr != nil {
 		if cleanupErr := l.AbortManagedGeneration(stage); cleanupErr != nil {
 			noopErr = errors.Join(noopErr, fmt.Errorf("remove invalid Marketplace stage: %w", cleanupErr))
 		}
-		return "", noopErr
+		return ManagedMarketplaceMutationResult{}, noopErr
 	}
+	activeRoot := active
 	if noop {
 		if err := l.AbortManagedGeneration(stage); err != nil {
-			return "", fmt.Errorf("remove no-op Marketplace candidate: %w", err)
+			return ManagedMarketplaceMutationResult{}, fmt.Errorf("remove no-op Marketplace candidate: %w", err)
 		}
-		return active, nil
+	} else {
+		activeRoot, err = l.ActivateManagedGeneration(stage, active, runningRoot)
+		if err != nil {
+			return ManagedMarketplaceMutationResult{}, err
+		}
 	}
-	return l.ActivateManagedGeneration(stage, active, runningRoot)
+	for index := range entries {
+		entries[index].PackageRoot = filepath.Join(activeRoot, entries[index].PackageRoot)
+	}
+	warnings := result.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	}
+	return ManagedMarketplaceMutationResult{Installed: entries, Warnings: warnings, Scope: "platform", ActiveRoot: activeRoot}, nil
+}
+
+func managedMarketplaceAPIEntries(stage string, result managedMarketplaceInstallResult) ([]ManagedMarketplaceInstallResult, error) {
+	type lockEntry struct {
+		ResolvedPath      string   `json:"resolvedPath"`
+		Version           string   `json:"version"`
+		Provides          []string `json:"provides"`
+		MarketplaceSource string   `json:"marketplaceSource"`
+		SignatureStatus   string   `json:"signatureStatus"`
+	}
+	var lock struct {
+		Plugins  map[string]lockEntry `json:"plugins"`
+		Adapters map[string]lockEntry `json:"adapters"`
+	}
+	data, err := os.ReadFile(filepath.Join(stage, ".kb", "marketplace.lock"))
+	if err != nil {
+		return nil, fmt.Errorf("read staged Marketplace result: %w", err)
+	}
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return nil, fmt.Errorf("parse staged Marketplace result: %w", err)
+	}
+	entries := make([]ManagedMarketplaceInstallResult, 0, len(result.Installed))
+	for _, installed := range result.Installed {
+		entry, ok := lock.Adapters[installed.PackageID]
+		if installed.PrimaryKind == "plugin" {
+			entry, ok = lock.Plugins[installed.PackageID]
+		}
+		if !ok || entry.Version != installed.Version || entry.ResolvedPath == "" {
+			return nil, fmt.Errorf("staged Marketplace result is missing package %q", installed.PackageID)
+		}
+		provides := append([]string(nil), entry.Provides...)
+		if len(provides) == 0 {
+			provides = []string{installed.PrimaryKind}
+		}
+		entries = append(entries, ManagedMarketplaceInstallResult{
+			Spec: installed.RequestedSpec, ID: installed.PackageID, Version: installed.Version,
+			PrimaryKind: installed.PrimaryKind, Provides: provides, PackageRoot: filepath.FromSlash(entry.ResolvedPath),
+			Scope: "platform", Source: entry.MarketplaceSource, SignatureStatus: entry.SignatureStatus,
+		})
+	}
+	return entries, nil
 }
 
 func validateManagedMarketplaceMutation(mutation ManagedMarketplaceMutation) error {
@@ -411,16 +523,20 @@ func verifyManagedMarketplaceInstall(stage string, mutation ManagedMarketplaceMu
 		requestedSpecs[spec] = struct{}{}
 	}
 	type lockEntry struct {
-		Version           string `json:"version"`
-		ResolvedPath      string `json:"resolvedPath"`
-		Integrity         string `json:"integrity"`
-		Source            string `json:"source"`
-		Enabled           *bool  `json:"enabled"`
-		MarketplaceSource string `json:"marketplaceSource"`
-		SignatureStatus   string `json:"signatureStatus"`
+		Version           string   `json:"version"`
+		ResolvedPath      string   `json:"resolvedPath"`
+		Integrity         string   `json:"integrity"`
+		Source            string   `json:"source"`
+		Package           string   `json:"package"`
+		PrimaryKind       string   `json:"primaryKind"`
+		Provides          []string `json:"provides"`
+		Enabled           *bool    `json:"enabled"`
+		MarketplaceSource string   `json:"marketplaceSource"`
+		SignatureStatus   string   `json:"signatureStatus"`
 	}
 	var lock struct {
 		Schema   string               `json:"schema"`
+		Plugins  map[string]lockEntry `json:"plugins"`
 		Adapters map[string]lockEntry `json:"adapters"`
 	}
 	data, err := os.ReadFile(filepath.Join(stage, ".kb", "marketplace.lock"))
@@ -432,8 +548,8 @@ func verifyManagedMarketplaceInstall(stage string, mutation ManagedMarketplaceMu
 	}
 	seen := map[string]struct{}{}
 	for _, installed := range result.Installed {
-		if installed.PrimaryKind != "adapter" || installed.PackageID == "" || installed.Version == "" || installed.ResolvedVersion != installed.Version {
-			return fmt.Errorf("Marketplace helper returned an invalid adapter install result")
+		if (installed.PrimaryKind != "adapter" && installed.PrimaryKind != "plugin") || installed.PackageID == "" || installed.Version == "" || installed.ResolvedVersion != installed.Version {
+			return fmt.Errorf("Marketplace helper returned an invalid plugin or adapter install result")
 		}
 		requestedName, requestedVersion, ok := splitMarketplaceSpec(installed.RequestedSpec)
 		if !ok || requestedName != installed.PackageID || (requestedVersion != "" && requestedVersion != installed.Version) {
@@ -451,8 +567,14 @@ func verifyManagedMarketplaceInstall(stage string, mutation ManagedMarketplaceMu
 		}
 		seen[installed.PackageID] = struct{}{}
 		entry, ok := lock.Adapters[installed.PackageID]
+		if installed.PrimaryKind == "plugin" {
+			entry, ok = lock.Plugins[installed.PackageID]
+		}
 		if !ok || entry.Version != installed.Version || entry.ResolvedPath == "" || entry.Integrity == "" || filepath.IsAbs(entry.ResolvedPath) || entry.Source != "marketplace" || entry.Enabled == nil || !*entry.Enabled || (entry.MarketplaceSource != "npm" && entry.MarketplaceSource != "registry") || (entry.SignatureStatus != "verified" && entry.SignatureStatus != "unsigned") {
-			return fmt.Errorf("staged Marketplace lock does not contain the reported adapter %q", installed.PackageID)
+			return fmt.Errorf("staged Marketplace lock does not contain the reported package %q", installed.PackageID)
+		}
+		if installed.PrimaryKind == "plugin" && (entry.Package != installed.PackageID || entry.PrimaryKind != "plugin") {
+			return fmt.Errorf("staged Marketplace plugin lock entry does not match %q", installed.PackageID)
 		}
 		relativePath := filepath.FromSlash(entry.ResolvedPath)
 		if !filepath.IsLocal(relativePath) || relativePath == "." {
@@ -461,7 +583,7 @@ func verifyManagedMarketplaceInstall(stage string, mutation ManagedMarketplaceMu
 		packagePath := filepath.Join(stage, relativePath)
 		resolvedPackage, err := filepath.EvalSymlinks(packagePath)
 		if err != nil {
-			return fmt.Errorf("resolve staged adapter package %q: %w", installed.PackageID, err)
+			return fmt.Errorf("resolve staged package %q: %w", installed.PackageID, err)
 		}
 		resolvedStage, err := filepath.EvalSymlinks(stage)
 		if err != nil {
@@ -469,17 +591,18 @@ func verifyManagedMarketplaceInstall(stage string, mutation ManagedMarketplaceMu
 		}
 		inside, err := contracts.PathWithin(resolvedStage, resolvedPackage)
 		if err != nil || !inside || filepath.Clean(resolvedPackage) == filepath.Clean(resolvedStage) {
-			return fmt.Errorf("staged adapter package %q resolves outside its candidate generation", installed.PackageID)
+			return fmt.Errorf("staged package %q resolves outside its candidate generation", installed.PackageID)
 		}
 		packageManifest, err := os.ReadFile(filepath.Join(resolvedPackage, "package.json"))
 		if err != nil {
-			return fmt.Errorf("read installed adapter package manifest %q: %w", installed.PackageID, err)
+			return fmt.Errorf("read installed package manifest %q: %w", installed.PackageID, err)
 		}
 		var actual struct {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 			KB      struct {
-				Adapter struct {
+				Manifest string `json:"manifest"`
+				Adapter  struct {
 					Manifest string `json:"manifest"`
 				} `json:"adapter"`
 			} `json:"kb"`
@@ -487,13 +610,17 @@ func verifyManagedMarketplaceInstall(stage string, mutation ManagedMarketplaceMu
 		if err := json.Unmarshal(packageManifest, &actual); err != nil || actual.Name != installed.PackageID || actual.Version != installed.Version {
 			return fmt.Errorf("installed package manifest does not match adapter %q at version %s", installed.PackageID, installed.Version)
 		}
-		if actual.KB.Adapter.Manifest == "" || !filepath.IsLocal(filepath.FromSlash(actual.KB.Adapter.Manifest)) {
-			return fmt.Errorf("installed adapter %q does not declare a contained manifest path", installed.PackageID)
+		manifest := actual.KB.Adapter.Manifest
+		if installed.PrimaryKind == "plugin" {
+			manifest = actual.KB.Manifest
 		}
-		manifestPath := filepath.Join(resolvedPackage, filepath.FromSlash(actual.KB.Adapter.Manifest))
+		if manifest == "" || !filepath.IsLocal(filepath.FromSlash(manifest)) {
+			return fmt.Errorf("installed package %q does not declare a contained manifest path", installed.PackageID)
+		}
+		manifestPath := filepath.Join(resolvedPackage, filepath.FromSlash(manifest))
 		resolvedManifest, err := filepath.EvalSymlinks(manifestPath)
 		if err != nil {
-			return fmt.Errorf("resolve installed adapter manifest %q: %w", installed.PackageID, err)
+			return fmt.Errorf("resolve installed package manifest %q: %w", installed.PackageID, err)
 		}
 		manifestInside, err := contracts.PathWithin(resolvedPackage, resolvedManifest)
 		if err != nil || !manifestInside {
@@ -558,7 +685,7 @@ func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation Manage
 	requestedSources := map[string]string{}
 	requestedVersions := map[string]string{}
 	for _, installed := range result.Installed {
-		entry, err := readManagedMarketplaceLockEntry(candidate, installed.PackageID)
+		entry, err := readManagedMarketplaceLockEntry(candidate, installed.PackageID, installed.PrimaryKind)
 		if err != nil {
 			return err
 		}
@@ -771,20 +898,24 @@ type managedMarketplaceLockEntry struct {
 	MarketplaceSource string `json:"marketplaceSource"`
 }
 
-func readManagedMarketplaceLockEntry(root, packageID string) (managedMarketplaceLockEntry, error) {
+func readManagedMarketplaceLockEntry(root, packageID, primaryKind string) (managedMarketplaceLockEntry, error) {
 	data, err := os.ReadFile(filepath.Join(root, ".kb", "marketplace.lock"))
 	if err != nil {
 		return managedMarketplaceLockEntry{}, fmt.Errorf("read staged Marketplace lock: %w", err)
 	}
 	var lock struct {
+		Plugins  map[string]managedMarketplaceLockEntry `json:"plugins"`
 		Adapters map[string]managedMarketplaceLockEntry `json:"adapters"`
 	}
 	if err := json.Unmarshal(data, &lock); err != nil {
 		return managedMarketplaceLockEntry{}, fmt.Errorf("parse staged Marketplace lock: %w", err)
 	}
 	entry, ok := lock.Adapters[packageID]
+	if primaryKind == "plugin" {
+		entry, ok = lock.Plugins[packageID]
+	}
 	if !ok || (entry.MarketplaceSource != "npm" && entry.MarketplaceSource != "registry") {
-		return managedMarketplaceLockEntry{}, fmt.Errorf("staged Marketplace lock has no supported source for adapter %q", packageID)
+		return managedMarketplaceLockEntry{}, fmt.Errorf("staged Marketplace lock has no supported source for package %q", packageID)
 	}
 	return entry, nil
 }

@@ -409,11 +409,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		applied.Plan.Request.PlatformRoot = platformRoot
 	}
 	if specs := applied.Plan.Request.MarketplaceInstallSpecs; len(specs) > 0 {
-		installer := deps.Marketplace
-		if installer == nil {
-			installer = marketplace.GatewayInstallClient{}
-		}
-		if marketplaceFailure := installMarketplaceScenarioPlugins(applyCtx, platformRoot, &applied, installer); marketplaceFailure != nil {
+		if marketplaceFailure := installMarketplaceScenarioPlugins(applyCtx, platformRoot, &applied, deps.Marketplace); marketplaceFailure != nil {
 			return applyCommandResult{}, marketplaceFailure
 		}
 	}
@@ -511,13 +507,39 @@ func installMarketplaceScenarioPlugins(ctx context.Context, platformRoot string,
 	if err != nil {
 		return contracts.HostSpecDiagnostic("the applied Gateway address could not be used for Marketplace installation", "run `kb-create doctor --json` to inspect the installed host", err.Error(), err)
 	}
-	installs, err := installer.Install(ctx, origin, specs)
-	if err != nil {
-		var failure *marketplace.InstallFailure
-		if errors.As(err, &failure) {
-			return contracts.MarketplaceInstallDiagnostic(failure.Spec, failure.Source, failure)
+	var installs []contracts.MarketplaceInstallRecord
+	if installer == nil {
+		layout, layoutErr := versionroot.ForPlatformPath(platformRoot)
+		if layoutErr != nil {
+			return contracts.MarketplaceInstallDiagnostic(strings.Join(specs, ", "), "managed installation owner", layoutErr)
 		}
-		return contracts.MarketplaceInstallDiagnostic(strings.Join(specs, ", "), "Marketplace response", err)
+		if validateErr := layout.Validate(); validateErr != nil {
+			return contracts.MarketplaceInstallDiagnostic(strings.Join(specs, ", "), "managed installation owner", validateErr)
+		}
+		result, ownerErr := layout.RunManagedMarketplaceMutationWithHeldLease(ctx, platformRoot, versionroot.ManagedMarketplaceMutation{
+			Operation: versionroot.ManagedMarketplaceInstall,
+			Specs:     specs,
+		})
+		if ownerErr != nil {
+			return contracts.MarketplaceInstallDiagnostic(strings.Join(specs, ", "), "managed installation owner", ownerErr)
+		}
+		installs = make([]contracts.MarketplaceInstallRecord, 0, len(result.Installed))
+		for _, item := range result.Installed {
+			installs = append(installs, contracts.MarketplaceInstallRecord{
+				ID: item.ID, Spec: item.Spec, Version: item.Version, PrimaryKind: item.PrimaryKind,
+				Source: item.Source, SignatureStatus: item.SignatureStatus,
+			})
+		}
+	} else {
+		var err error
+		installs, err = installer.Install(ctx, origin, specs)
+		if err != nil {
+			var failure *marketplace.InstallFailure
+			if errors.As(err, &failure) {
+				return contracts.MarketplaceInstallDiagnostic(failure.Spec, failure.Source, failure)
+			}
+			return contracts.MarketplaceInstallDiagnostic(strings.Join(specs, ", "), "Marketplace response", err)
+		}
 	}
 	applied.MarketplaceInstalls = installs
 	if err := receipt.Write(platformRoot, *applied); err != nil {
@@ -619,6 +641,9 @@ func (starter installedHostStarter) Start(ctx context.Context, spec contracts.Ho
 		return nil, err
 	}
 	command := hostCommand{PlatformRoot: starter.root, Executable: starter.executable, Version: buildVersion}
+	if err := configureMarketplaceOwnerBinary(runner, starter.executable); err != nil {
+		return nil, err
+	}
 	if _, failure := command.start(ctx, runner, runner.State); failure != nil {
 		return nil, failure
 	}

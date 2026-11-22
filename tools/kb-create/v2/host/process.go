@@ -197,6 +197,8 @@ type ProcessRunner struct {
 const startupStderrLimit = 8 * 1024
 const startupStderrLines = 40
 
+const MarketplaceOwnerBinaryEnv = "KB_CREATE_OWNER_BINARY"
+
 type tailBuffer struct {
 	mu    sync.Mutex
 	limit int

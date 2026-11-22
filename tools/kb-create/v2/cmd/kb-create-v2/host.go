@@ -83,29 +83,46 @@ func (c hostCommand) setup(runnerOperation string) (*host.ProcessRunner, host.St
 	if err != nil {
 		return nil, host.State{}, asDiag(err)
 	}
-	ownerBinary := c.Executable
-	if ownerBinary == "" {
-		ownerBinary, err = os.Executable()
-		if err != nil {
-			return nil, host.State{}, asDiag(err)
-		}
-	}
-	ownerBinary, err = filepath.EvalSymlinks(ownerBinary)
-	if err != nil {
+	if err := configureMarketplaceOwnerBinary(runner, c.Executable); err != nil {
 		return nil, host.State{}, contracts.NewDiag("KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE", "The trusted Marketplace owner executable could not be resolved.", "Run `kb-create doctor` and retry after repairing the installation.", err)
 	}
-	ownerBinary, err = filepath.Abs(ownerBinary)
-	if err != nil {
-		return nil, host.State{}, asDiag(err)
-	}
-	if runner.Spec.Env == nil {
-		runner.Spec.Env = make(map[string]string)
-	}
-	runner.Spec.Env["KB_CREATE_OWNER_BINARY"] = ownerBinary
 	if _, err := (secrets.Store{PlatformRoot: c.PlatformRoot}).BootstrapCompleted(); err != nil {
 		return nil, host.State{}, asDiag(err)
 	}
 	return runner, runner.State, nil
+}
+
+func configureMarketplaceOwnerBinary(runner *host.ProcessRunner, executable string) error {
+	if runner == nil {
+		return fmt.Errorf("managed Host runner is required")
+	}
+	if executable == "" {
+		var err error
+		executable, err = os.Executable()
+		if err != nil {
+			return err
+		}
+	}
+	executable, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		return err
+	}
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(executable)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("trusted Marketplace owner executable is not a regular file")
+	}
+	if runner.Spec.Env == nil {
+		runner.Spec.Env = make(map[string]string)
+	}
+	runner.Spec.Env[host.MarketplaceOwnerBinaryEnv] = executable
+	return nil
 }
 
 func (c hostCommand) run(ctx context.Context, runnerOperation string, action func(context.Context, *host.ProcessRunner, host.State) (hostCommandResult, *diag.Diag)) (hostCommandResult, *diag.Diag) {
@@ -481,6 +498,9 @@ func (h lifecycleHost) Halt(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if err := configureMarketplaceOwnerBinary(runner, h.command.Executable); err != nil {
+		return false, err
+	}
 	result, err := halt(ctx, runner, runner.State)
 	return result.WasRunning, err
 }
@@ -488,6 +508,9 @@ func (h lifecycleHost) Halt(ctx context.Context) (bool, error) {
 func (h lifecycleHost) Resume(ctx context.Context) error {
 	runner, err := host.NewRunner(h.command.PlatformRoot)
 	if err != nil {
+		return err
+	}
+	if err := configureMarketplaceOwnerBinary(runner, h.command.Executable); err != nil {
 		return err
 	}
 	_, err = h.command.spawnSupervisor(ctx, runner, runner.State)

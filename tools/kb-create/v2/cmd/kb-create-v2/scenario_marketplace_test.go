@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/marketplace"
 	"github.com/kb-labs/create/v2/receipt"
 )
@@ -120,6 +121,37 @@ func TestScenarioMarketplaceFailureKeepsVerifiedInstallReceiptAndHost(t *testing
 	_ = health.Body.Close()
 	if _, err := os.Stat(root); err != nil {
 		t.Fatalf("installed platform root disappeared: %v", err)
+	}
+}
+
+// case: S-269.12
+func TestManagedScenarioInstallReusesApplyLeaseWithoutDroppingIt(t *testing.T) {
+	inst := newInstallation(t)
+	platformRoot := platformRootForTest(t, inst.root)
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := state.AcquireOperation("apply")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	applied := contracts.InstallReceipt{
+		Plan:         contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{MarketplaceInstallSpecs: []string{"@kb-labs/sample-plugin@1.0.0"}}},
+		Verification: contracts.Verification{HostHealthURL: "http://127.0.0.1:4000/health"},
+	}
+	failure := installMarketplaceScenarioPlugins(context.Background(), platformRoot, &applied, nil)
+	if failure == nil {
+		t.Fatal("scenario install unexpectedly succeeded without the installed Marketplace helper")
+	}
+	if strings.Contains(failure.Error(), "operation already in progress") {
+		t.Fatalf("scenario install tried to reacquire the apply lock: %v", failure)
+	}
+	secondRelease, lockErr := state.AcquireOperation("second-apply")
+	if lockErr == nil {
+		secondRelease()
+		t.Fatal("scenario install dropped the apply lease while the transaction was active")
 	}
 }
 

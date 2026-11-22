@@ -35,6 +35,26 @@ func TestManagedMarketplaceMutationExposesOnlyVerifiedAdapterInstall(t *testing.
 	}
 }
 
+// case: S-269.12
+func TestManagedMarketplaceMutationUsesExistingLifecycleLeaseWithoutReacquiring(t *testing.T) {
+	layout, active := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+	lease, err := operationlock.Acquire(layout.OperationLockPath(), "apply")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	_, err = layout.RunManagedMarketplaceMutationWithHeldLease(context.Background(), active, ManagedMarketplaceMutation{
+		Operation: ManagedMarketplaceInstall,
+		Specs:     []string{"@kb-labs/sample-plugin@1.0.0"},
+	})
+	if err == nil || strings.Contains(err.Error(), "operation already in progress") {
+		t.Fatalf("lock-held Marketplace mutation error = %v; want a later helper/stage error, not a lock reacquire failure", err)
+	}
+	if operationlock.Held(layout.OperationLockPath()) != lease {
+		t.Fatal("Marketplace mutation released or replaced the lifecycle lease")
+	}
+}
+
 func TestMarketplaceCredentialChannelOnlyIncludesReferencedSafeVariables(t *testing.T) {
 	values, err := marketplaceCredentialValues(
 		[]string{"KB_REGISTRY_TOKEN", "MISSING_REGISTRY_TOKEN"},
@@ -163,6 +183,55 @@ func TestManagedMarketplacePostconditionRequiresValidEnabledAdapterAndManifest(t
 				t.Fatal("invalid adapter postcondition was accepted")
 			}
 		})
+	}
+}
+
+// case: S-269.12
+func TestManagedMarketplacePostconditionAcceptsPluginAndBuildsMarketplaceInstallResult(t *testing.T) {
+	stage := t.TempDir()
+	packageID := "@kb-labs/postcondition-plugin"
+	packageRoot := filepath.Join(stage, "node_modules", filepath.FromSlash(packageID))
+	if err := os.MkdirAll(packageRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "manifest.mjs"), []byte("export const manifest = {};\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), []byte(`{"name":"@kb-labs/postcondition-plugin","version":"2.0.0","kb":{"manifest":"manifest.mjs"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutation := ManagedMarketplaceMutation{Operation: ManagedMarketplaceInstall, Specs: []string{packageID + "@2.0.0"}}
+	result := managedMarketplaceInstallResult{
+		Schema: 1, Operation: ManagedMarketplaceInstall,
+		Installed: []managedMarketplaceInstallEntry{{RequestedSpec: packageID + "@2.0.0", PackageID: packageID, Version: "2.0.0", ResolvedVersion: "2.0.0", PrimaryKind: "plugin"}},
+	}
+	lockPath := filepath.Join(stage, ".kb", "marketplace.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lock, _ := json.Marshal(map[string]any{
+		"schema": "kb.marketplace/3",
+		"plugins": map[string]any{packageID: map[string]any{
+			"source": "marketplace", "package": packageID, "version": "2.0.0", "integrity": "sha512-Zml4dHVyZQ==",
+			"primaryKind": "plugin", "provides": []string{"plugin", "cli-command"}, "resolvedPath": filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(packageID))),
+			"enabled": true, "marketplaceSource": "registry", "signatureStatus": "verified",
+		}},
+		"adapters": map[string]any{},
+	})
+	if err := os.WriteFile(lockPath, lock, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyManagedMarketplaceInstall(stage, mutation, result); err != nil {
+		t.Fatalf("valid plugin postcondition was rejected: %v", err)
+	}
+	entries, err := managedMarketplaceAPIEntries(stage, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Spec != packageID+"@2.0.0" || entries[0].ID != packageID || entries[0].PrimaryKind != "plugin" ||
+		entries[0].Provides[1] != "cli-command" || entries[0].PackageRoot != filepath.Join("node_modules", filepath.FromSlash(packageID)) ||
+		entries[0].Scope != "platform" || entries[0].Source != "registry" || entries[0].SignatureStatus != "verified" {
+		t.Fatalf("managed plugin API result = %#v", entries)
 	}
 }
 
@@ -581,6 +650,7 @@ func (o reusedManagedStageObserver) LiveMembers(int, child.ProcessIdentity) ([]c
 	return o.members, nil
 }
 
+// case: S-269.12
 func TestManagedMarketplaceOwnerRunsInstalledHelperInCandidateAndSwitchesOnlyOnSuccess(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("Node.js is required for the installed-helper transaction test")
@@ -607,7 +677,7 @@ func TestManagedMarketplaceOwnerRunsInstalledHelperInCandidateAndSwitchesOnlyOnS
 				t.Fatal(err)
 			}
 
-			_, err := layout.RunManagedMarketplaceMutation(context.Background(), active, ManagedMarketplaceMutation{
+			result, err := layout.RunManagedMarketplaceMutation(context.Background(), active, ManagedMarketplaceMutation{
 				Operation: ManagedMarketplaceInstall,
 				Specs:     []string{"@kb-labs/example@1.0.0"},
 			})
@@ -626,6 +696,12 @@ func TestManagedMarketplaceOwnerRunsInstalledHelperInCandidateAndSwitchesOnlyOnS
 			}
 			if err != nil {
 				t.Fatal(err)
+			}
+			if len(result.Installed) != 1 || result.Scope != "platform" || result.Installed[0].Spec != "@kb-labs/example@1.0.0" ||
+				result.Installed[0].ID != "@kb-labs/example" || result.Installed[0].PrimaryKind != "adapter" ||
+				result.Installed[0].PackageRoot != filepath.Join(selected, "node_modules", "@kb-labs", "example") ||
+				result.Installed[0].Source != "npm" || result.Installed[0].SignatureStatus != "unsigned" {
+				t.Fatalf("managed Marketplace result = %#v; want Marketplace API install record under the activated generation", result)
 			}
 			if selected == active {
 				t.Fatal("successful helper did not activate its candidate")

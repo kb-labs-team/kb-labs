@@ -17,12 +17,6 @@ type marketplaceOwnerRequest struct {
 	Mutation versionroot.ManagedMarketplaceMutation `json:"mutation"`
 }
 
-type marketplaceOwnerResult struct {
-	OK         bool   `json:"ok"`
-	Operation  string `json:"operation"`
-	ActiveRoot string `json:"activeRoot"`
-}
-
 // executeMarketplaceOwnerMutation is the narrow server-side bridge from the
 // authenticated Marketplace API to the Go installation owner. It accepts no
 // root or environment values in the JSON payload; roots come from trusted
@@ -59,9 +53,9 @@ func executeMarketplaceOwnerMutation(ctx context.Context, platformRoot string, i
 	}
 	// The Host remains attached to the physical generation it started from;
 	// protect that root even if another control plane has already advanced current.
-	activeRoot, err := layout.RunManagedMarketplaceMutation(ctx, platformRoot, request.Mutation)
+	result, err := layout.RunManagedMarketplaceMutation(ctx, platformRoot, request.Mutation)
 	if err != nil {
 		return nil, contracts.NewDiag("KB_MARKETPLACE_INSTALL_FAILED", "The managed Marketplace installation did not activate.", "The prior active generation remains selected; inspect the Marketplace error and retry after correcting it.", err)
 	}
-	return marketplaceOwnerResult{OK: true, Operation: string(request.Mutation.Operation), ActiveRoot: activeRoot}, nil
+	return result, nil
 }

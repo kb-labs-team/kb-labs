@@ -142,13 +142,13 @@ export async function runManagedGenerationMutation(): Promise<void> {
       }
       break;
     }
-    if (!resolved || primaryKind === undefined || !identity) throw new Error("managed adapter package is not present in configured sources");
-    if (primaryKind !== "adapter") throw new Error("managed generation install accepts adapter packages only");
+    if (!resolved || primaryKind === undefined || !identity) throw new Error("managed package is not present in configured sources");
+    if (primaryKind !== "adapter" && primaryKind !== "plugin") throw new Error("managed generation install accepts plugin and adapter packages only");
     resolvedBySpec.set(spec, identity);
   }
   const result = await service.install(scope, request.specs, { dev: request.dev });
-  if (result.installed.length !== request.specs.length || result.installed.some(item => item.primaryKind !== "adapter" || item.scope !== "platform")) {
-    throw new Error("Marketplace helper did not install every requested platform adapter");
+  if (result.installed.length !== request.specs.length || result.installed.some(item => (item.primaryKind !== "adapter" && item.primaryKind !== "plugin") || item.scope !== "platform")) {
+    throw new Error("Marketplace helper did not install every requested platform package");
   }
   const installed = [];
   for (const item of result.installed) {
@@ -158,10 +158,10 @@ export async function runManagedGenerationMutation(): Promise<void> {
     const resolvedPackageRoot = await fs.realpath(item.packageRoot);
     const resolvedStage = await fs.realpath(platformRoot);
     const relative = path.relative(resolvedStage, resolvedPackageRoot);
-    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("installed adapter package escaped the candidate generation");
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("installed package escaped the candidate generation");
     installed.push({ requestedSpec: item.spec, packageId: item.id, version: item.version, resolvedVersion: expected.version, primaryKind: item.primaryKind });
   }
-  process.stdout.write(JSON.stringify({ schema: 1, operation: "install", installed }) + "\n");
+  process.stdout.write(JSON.stringify({ schema: 1, operation: "install", installed, warnings: result.warnings }) + "\n");
 }
 
 export async function listManagedGenerationEnvRefs(): Promise<void> {

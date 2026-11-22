@@ -28,6 +28,7 @@ func RestartWithRecovery(ctx context.Context, root string, previous *ProcessRunn
 	if err != nil {
 		return RestartOutcome{}, recoveryFailure(root, root, "load target host", "", "", err, false)
 	}
+	inheritMarketplaceOwner(previous, active)
 	info, err := start(ctx, active)
 	if err == nil {
 		layout, layoutErr := versionroot.ForPlatformPath(root)
@@ -54,6 +55,7 @@ func RestartWithRecovery(ctx context.Context, root string, previous *ProcessRunn
 	if runnerErr != nil {
 		return RestartOutcome{}, recoveryFailure(root, active.TreeRoot, "load restored host", failedRoot, metadata.SnapshotID, runnerErr, false)
 	}
+	inheritMarketplaceOwner(previous, restored)
 	restoredInfo, startErr := start(ctx, restored)
 	if startErr != nil {
 		return RestartOutcome{}, recoveryFailure(root, active.TreeRoot, "start restored host", failedRoot, metadata.SnapshotID, startErr, false)
@@ -68,6 +70,20 @@ func RestartWithRecovery(ctx context.Context, root string, previous *ProcessRunn
 		"version": restored.Identity.PlatformVersion, "runningVersion": restored.Identity.PlatformVersion, "snapshotId": metadata.SnapshotID, "logPath": filepath.Join(layout.InstallRoot(), metadata.LogPath),
 		"nextCommand": contracts.ShellCommand("kb-create", "status", "--platform-root", root), "failureReason": "target host did not pass its health check"}
 	return RestartOutcome{Stopped: stopped, Info: restoredInfo, Runner: restored}, failure
+}
+
+func inheritMarketplaceOwner(previous, next *ProcessRunner) {
+	if previous == nil || next == nil || previous.Spec.Env == nil {
+		return
+	}
+	ownerBinary := previous.Spec.Env[MarketplaceOwnerBinaryEnv]
+	if ownerBinary == "" {
+		return
+	}
+	if next.Spec.Env == nil {
+		next.Spec.Env = make(map[string]string)
+	}
+	next.Spec.Env[MarketplaceOwnerBinaryEnv] = ownerBinary
 }
 
 func recoveryFailure(root, attemptedRoot, stage, recoveryRoot, snapshotID string, cause error, restoredHealthy bool) *diag.Diag {
