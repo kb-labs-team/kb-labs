@@ -33,6 +33,7 @@ test('a pushed cases ref yields its decoded non-empty case list; other batch ref
   assert.equal(selectionIds('full'), '');
 });
 
+// case: S-262.18
 test('a pushed area ref selects that QA catalog area as a partial run', () => {
   const selection = resolveSelection('push', 'batch/t1/areas/marketplace');
   assert.equal(selection, 'area:marketplace');
