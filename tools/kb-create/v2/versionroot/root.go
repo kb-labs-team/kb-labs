@@ -809,6 +809,9 @@ func (l Layout) stageManaged(after func(HandoffPoint) error) (_ string, returnEr
 	if err := copyManagedTree(active, stage); err != nil {
 		return "", fmt.Errorf("copy active generation to managed stage: %w", err)
 	}
+	if err := rewriteManagedBinShimRoots(stage, []string{active}, stage); err != nil {
+		return "", fmt.Errorf("rebase executable shims into managed stage: %w", err)
+	}
 	if err := notifyHandoff(after, HandoffManagedStageCopied); err != nil {
 		return "", err
 	}
@@ -927,6 +930,99 @@ func (l Layout) AbortManagedGeneration(stage string) error {
 		return err
 	}
 	return syncDirectory(versions)
+}
+
+// rewriteManagedBinShimRoots rebases pnpm's regular executable shims when a
+// physical generation is copied or renamed. pnpm writes absolute package
+// targets into these small launcher files, unlike symlinks which remain
+// relative to their package tree.
+func rewriteManagedBinShimRoots(root string, oldRoots []string, newRoot string) error {
+	binDir := filepath.Join(root, "node_modules", ".bin")
+	info, err := os.Lstat(binDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("managed executable projection directory is not a physical directory")
+	}
+	newRoot, err = filepath.Abs(newRoot)
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(binDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(binDir, entry.Name())
+		fileInfo, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if fileInfo.Mode()&os.ModeSymlink != 0 || !fileInfo.Mode().IsRegular() || fileInfo.Size() == 0 || fileInfo.Size() > 1024*1024 {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rewritten := data
+		for _, oldRoot := range oldRoots {
+			oldRoot, err = filepath.Abs(oldRoot)
+			if err != nil {
+				return err
+			}
+			rewritten = replaceManagedShimRoot(rewritten, oldRoot, newRoot)
+		}
+		if bytes.Equal(data, rewritten) {
+			continue
+		}
+		temporary, err := os.CreateTemp(binDir, ".kb-shim-")
+		if err != nil {
+			return err
+		}
+		temporaryPath := temporary.Name()
+		if err := temporary.Chmod(fileInfo.Mode().Perm()); err != nil {
+			_ = temporary.Close()
+			_ = os.Remove(temporaryPath)
+			return err
+		}
+		if _, err := temporary.Write(rewritten); err != nil {
+			_ = temporary.Close()
+			_ = os.Remove(temporaryPath)
+			return err
+		}
+		if err := temporary.Sync(); err != nil {
+			_ = temporary.Close()
+			_ = os.Remove(temporaryPath)
+			return err
+		}
+		if err := temporary.Close(); err != nil {
+			_ = os.Remove(temporaryPath)
+			return err
+		}
+		if err := os.Rename(temporaryPath, path); err != nil {
+			_ = os.Remove(temporaryPath)
+			return err
+		}
+		if err := syncDirectory(binDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func replaceManagedShimRoot(data []byte, oldRoot, newRoot string) []byte {
+	search := append(append([]byte(nil), []byte(oldRoot)...), byte(filepath.Separator))
+	replacement := append(append([]byte(nil), []byte(newRoot)...), byte(filepath.Separator))
+	data = bytes.ReplaceAll(data, search, replacement)
+	if bytes.Equal(data, []byte(oldRoot)) {
+		return []byte(newRoot)
+	}
+	return data
 }
 
 func copyManagedTree(source, target string) error {
@@ -1315,6 +1411,9 @@ func (l Layout) activateManagedGeneration(stage, expectedActive, runningRoot str
 			}
 		}
 	}()
+	if err := rewriteManagedBinShimRoots(target, []string{stage, expectedActive}, target); err != nil {
+		return "", fmt.Errorf("rebase executable shims into finalized generation: %w", err)
+	}
 	if err := syncDirectory(versions); err != nil {
 		return "", fmt.Errorf("sync version roots after finalizing managed generation: %w", err)
 	}

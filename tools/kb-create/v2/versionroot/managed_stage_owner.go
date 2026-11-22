@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kb-labs/clikit/proc"
@@ -105,10 +106,10 @@ func (l Layout) managedStageOwnerLive(stage string) (bool, error) {
 	if err != nil || !exists {
 		return false, err
 	}
-	root := child.ProcessIdentity{PID: owner.PID, Identity: owner.Identity, StartedAt: owner.StartedAt}
-	members, err := proc.ChildProcessObserver().LiveMembers(owner.PID, root)
+	observer := proc.ChildProcessObserver()
+	members, err := observeManagedStageOwnerGroup(observer, owner)
 	if err != nil {
-		return true, fmt.Errorf("verify managed stage process group: %w", err)
+		return true, err
 	}
 	if len(members) != 0 {
 		return true, nil
@@ -123,25 +124,35 @@ func (l Layout) managedStageOwnerLive(stage string) (bool, error) {
 }
 
 func (l Layout) stopManagedStageOwner(stage string) error {
+	return l.stopManagedStageOwnerWith(stage, proc.ChildProcessObserver(), func(observer child.ProcessObserver, identity child.ProcessIdentity, signal syscall.Signal) error {
+		return child.SignalIdentity(observer, identity, signal)
+	})
+}
+
+type managedProcessSignaler func(child.ProcessObserver, child.ProcessIdentity, syscall.Signal) error
+
+func (l Layout) stopManagedStageOwnerWith(stage string, observer child.ProcessObserver, signal managedProcessSignaler) error {
 	owner, exists, err := l.readManagedStageOwner(stage)
 	if err != nil || !exists {
 		return err
 	}
-	root := child.ProcessIdentity{PID: owner.PID, Identity: owner.Identity, StartedAt: owner.StartedAt}
-	observer := proc.ChildProcessObserver()
-	members, err := observer.LiveMembers(owner.PID, root)
+	members, err := observeManagedStageOwnerGroup(observer, owner)
 	if err != nil {
 		return fmt.Errorf("verify managed stage process group before stopping it: %w", err)
 	}
 	if len(members) != 0 {
-		if err := child.TerminateTree(owner.PID); err != nil {
+		known := map[int]string{owner.PID: owner.Identity}
+		for _, member := range members {
+			known[member.PID] = member.Identity
+		}
+		if err := signalManagedStageMembers(observer, owner, known, syscall.SIGTERM, signal); err != nil {
 			return fmt.Errorf("request managed Marketplace helper shutdown: %w", err)
 		}
-		if err := waitManagedStageGroupExit(observer, owner.PID, root, 400*time.Millisecond); err != nil {
-			if killErr := child.KillTree(owner.PID); killErr != nil {
-				return errors.Join(err, fmt.Errorf("kill managed Marketplace helper process group: %w", killErr))
+		if err := waitManagedStageGroupExit(observer, owner.PID, owner, known, syscall.SIGTERM, signal, 400*time.Millisecond); err != nil {
+			if killErr := signalManagedStageMembers(observer, owner, known, syscall.SIGKILL, signal); killErr != nil {
+				return errors.Join(err, fmt.Errorf("kill managed Marketplace helper process identities: %w", killErr))
 			}
-			if err := waitManagedStageGroupExit(observer, owner.PID, root, 3*time.Second); err != nil {
+			if err := waitManagedStageGroupExit(observer, owner.PID, owner, known, syscall.SIGKILL, signal, 3*time.Second); err != nil {
 				return err
 			}
 		}
@@ -150,6 +161,94 @@ func (l Layout) stopManagedStageOwner(stage string) error {
 		return err
 	}
 	return syncDirectory(filepath.Dir(stage))
+}
+
+func observeManagedStageOwnerGroup(observer child.ProcessObserver, owner managedStageOwner) ([]child.ProcessMember, error) {
+	root := child.ProcessIdentity{PID: owner.PID, Identity: owner.Identity, StartedAt: owner.StartedAt}
+	members, err := observer.LiveMembers(owner.PID, root)
+	if err != nil {
+		return nil, fmt.Errorf("inspect managed Marketplace process group: %w", err)
+	}
+	observed, rootErr := observer.RootIdentity(owner.PID)
+	if rootErr != nil {
+		if len(members) != 0 {
+			return nil, fmt.Errorf("process-group identity is ambiguous after its owner exited; preserving the managed candidate")
+		}
+		return nil, nil
+	}
+	if observed.PID != owner.PID || observed.Identity != owner.Identity || !observed.StartedAt.Equal(owner.StartedAt) {
+		if len(members) != 0 {
+			return nil, fmt.Errorf("process-group ID was reused or owner identity changed; preserving the managed candidate")
+		}
+		return nil, nil
+	}
+	return members, nil
+}
+
+func signalManagedStageMembers(observer child.ProcessObserver, owner managedStageOwner, known map[int]string, signalNumber syscall.Signal, signal managedProcessSignaler) error {
+	rootIdentity := child.ProcessIdentity{PID: owner.PID, Identity: owner.Identity, StartedAt: owner.StartedAt}
+	members, err := observer.LiveMembers(owner.PID, rootIdentity)
+	if err != nil {
+		return fmt.Errorf("inspect owned process identities before signal: %w", err)
+	}
+	if len(members) == 0 {
+		return nil
+	}
+	anchored := false
+	for _, member := range members {
+		if known[member.PID] == member.Identity {
+			anchored = true
+			break
+		}
+	}
+	if !anchored {
+		return fmt.Errorf("process-group identity cannot be tied to the recorded owner; refusing to signal")
+	}
+	for _, member := range members {
+		known[member.PID] = member.Identity
+		identity, err := observer.RootIdentity(member.PID)
+		if err != nil {
+			continue
+		}
+		if identity.PID != member.PID || identity.Identity != member.Identity {
+			continue
+		}
+		if err := signal(observer, identity, signalNumber); err != nil && !errors.Is(err, syscall.ESRCH) && !errors.Is(err, os.ErrProcessDone) {
+			return err
+		}
+	}
+	return nil
+}
+
+func waitManagedStageGroupExit(observer child.ProcessObserver, groupID int, owner managedStageOwner, known map[int]string, signalNumber syscall.Signal, signal managedProcessSignaler, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		root := child.ProcessIdentity{PID: owner.PID, Identity: owner.Identity, StartedAt: owner.StartedAt}
+		members, err := observer.LiveMembers(groupID, root)
+		if err != nil {
+			return fmt.Errorf("verify managed Marketplace helper process group exit: %w", err)
+		}
+		if len(members) == 0 {
+			return nil
+		}
+		anchored := false
+		for _, member := range members {
+			if known[member.PID] == member.Identity {
+				anchored = true
+				break
+			}
+		}
+		if !anchored {
+			return fmt.Errorf("process-group ID changed while stopping owner; refusing further signals")
+		}
+		if err := signalManagedStageMembers(observer, owner, known, signalNumber, signal); err != nil {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("managed Marketplace helper process group did not stop within %s", timeout)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 func (l Layout) readManagedStageOwner(stage string) (managedStageOwner, bool, error) {
@@ -166,21 +265,4 @@ func (l Layout) readManagedStageOwner(stage string) (managedStageOwner, bool, er
 		return managedStageOwner{}, true, fmt.Errorf("managed stage owner record is invalid")
 	}
 	return owner, true, nil
-}
-
-func waitManagedStageGroupExit(observer child.ProcessObserver, pid int, identity child.ProcessIdentity, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		members, err := observer.LiveMembers(pid, identity)
-		if err != nil {
-			return fmt.Errorf("verify managed Marketplace helper process group exit: %w", err)
-		}
-		if len(members) == 0 {
-			return nil
-		}
-		if !time.Now().Before(deadline) {
-			return fmt.Errorf("managed Marketplace helper process group did not stop within %s", timeout)
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/marketplace/install_spec"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/semrange"
 	"gopkg.in/yaml.v3"
 )
 
@@ -147,7 +148,7 @@ func (l Layout) RunManagedMarketplaceMutation(ctx context.Context, runningRoot s
 		}
 		return "", err
 	}
-	if err := verifyManagedMarketplaceCoreGraph(active, stage, mutation); err != nil {
+	if err := verifyManagedMarketplaceCoreGraph(active, stage, mutation, result); err != nil {
 		if cleanupErr := l.AbortManagedGeneration(stage); cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("remove invalid Marketplace stage: %w", cleanupErr))
 		}
@@ -506,7 +507,7 @@ func splitMarketplaceSpec(spec string) (name, version string, ok bool) {
 	return spec, "", true
 }
 
-func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation ManagedMarketplaceMutation) error {
+func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation ManagedMarketplaceMutation, result managedMarketplaceInstallResult) error {
 	type packageManifest struct {
 		Name            string            `json:"name"`
 		Dependencies    map[string]string `json:"dependencies"`
@@ -521,6 +522,12 @@ func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation Manage
 		if err := json.Unmarshal(data, &manifest); err != nil {
 			return packageManifest{}, err
 		}
+		if manifest.Dependencies == nil {
+			manifest.Dependencies = map[string]string{}
+		}
+		if manifest.DevDependencies == nil {
+			manifest.DevDependencies = map[string]string{}
+		}
 		return manifest, nil
 	}
 	activePackage, err := readPackage(active)
@@ -534,29 +541,51 @@ func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation Manage
 	if activePackage.Name == "" || activePackage.Name != candidatePackage.Name {
 		return fmt.Errorf("candidate package graph changed the platform package identity")
 	}
+	requestedSources := map[string]string{}
+	requestedVersions := map[string]string{}
+	for _, installed := range result.Installed {
+		entry, err := readManagedMarketplaceLockEntry(candidate, installed.PackageID)
+		if err != nil {
+			return err
+		}
+		requestedSources[installed.PackageID] = entry.MarketplaceSource
+		requestedVersions[installed.PackageID] = installed.Version
+	}
 	for name, version := range activePackage.Dependencies {
 		if candidatePackage.Dependencies[name] != version {
-			return fmt.Errorf("candidate package graph changed existing dependency %q", name)
+			if requestedSources[name] != "npm" {
+				return fmt.Errorf("candidate package graph changed existing dependency %q", name)
+			}
 		}
 	}
 	for name, version := range activePackage.DevDependencies {
 		if candidatePackage.DevDependencies[name] != version {
-			return fmt.Errorf("candidate package graph changed existing dev dependency %q", name)
+			if requestedSources[name] != "npm" {
+				return fmt.Errorf("candidate package graph changed existing dev dependency %q", name)
+			}
 		}
 	}
-	for _, spec := range mutation.Specs {
-		name, version, _ := splitMarketplaceSpec(spec)
-		if candidatePackage.Dependencies[name] != version && candidatePackage.DevDependencies[name] != version {
-			return fmt.Errorf("candidate package graph does not pin requested adapter %q", name)
+	for name, source := range requestedSources {
+		dependencySpecifier := candidatePackage.Dependencies[name]
+		if dependencySpecifier == "" {
+			dependencySpecifier = candidatePackage.DevDependencies[name]
 		}
+		if source == "npm" {
+			if dependencySpecifier == "" {
+				return fmt.Errorf("candidate package graph does not include npm adapter %q", name)
+			}
+			if !specifierContainsVersion(dependencySpecifier, requestedVersions[name]) {
+				return fmt.Errorf("candidate package graph does not resolve requested adapter %q to %s", name, requestedVersions[name])
+			}
+		}
+	}
+
+	type lockDependency struct {
+		Specifier string `yaml:"specifier"`
 	}
 	type lockImporter struct {
-		Dependencies map[string]struct {
-			Specifier string `yaml:"specifier"`
-		} `yaml:"dependencies"`
-		DevDependencies map[string]struct {
-			Specifier string `yaml:"specifier"`
-		} `yaml:"devDependencies"`
+		Dependencies    map[string]lockDependency `yaml:"dependencies"`
+		DevDependencies map[string]lockDependency `yaml:"devDependencies"`
 	}
 	var lock struct {
 		LockfileVersion string                  `yaml:"lockfileVersion"`
@@ -573,74 +602,178 @@ func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation Manage
 	if !ok {
 		return fmt.Errorf("candidate package-manager lock has no platform importer")
 	}
-	for name, version := range activePackage.Dependencies {
-		if importer.Dependencies[name].Specifier != version {
-			return fmt.Errorf("candidate package-manager lock changed existing dependency %q", name)
+	for name, specifier := range candidatePackage.Dependencies {
+		if importer.Dependencies[name].Specifier != specifier {
+			return fmt.Errorf("candidate package-manager lock does not match dependency %q", name)
 		}
 	}
-	for name, version := range activePackage.DevDependencies {
-		if importer.DevDependencies[name].Specifier != version {
-			return fmt.Errorf("candidate package-manager lock changed existing dev dependency %q", name)
+	for name, specifier := range candidatePackage.DevDependencies {
+		if importer.DevDependencies[name].Specifier != specifier {
+			return fmt.Errorf("candidate package-manager lock does not match dev dependency %q", name)
 		}
 	}
+	if err := validateManagedPnpmModules(candidate); err != nil {
+		return err
+	}
+
 	for _, name := range []string{"@kb-labs/cli-bin", "@kb-labs/host-app"} {
-		dependencyVersion := candidatePackage.Dependencies[name]
-		if dependencyVersion == "" {
-			dependencyVersion = candidatePackage.DevDependencies[name]
+		for _, root := range []string{active, candidate} {
+			if err := validateManagedExecutableProjection(root, name); err != nil {
+				return err
+			}
 		}
-		if dependencyVersion == "" {
-			return fmt.Errorf("candidate package graph is missing required executable package %q", name)
+	}
+	return nil
+}
+
+type managedMarketplaceLockEntry struct {
+	MarketplaceSource string `json:"marketplaceSource"`
+}
+
+func readManagedMarketplaceLockEntry(root, packageID string) (managedMarketplaceLockEntry, error) {
+	data, err := os.ReadFile(filepath.Join(root, ".kb", "marketplace.lock"))
+	if err != nil {
+		return managedMarketplaceLockEntry{}, fmt.Errorf("read staged Marketplace lock: %w", err)
+	}
+	var lock struct {
+		Adapters map[string]managedMarketplaceLockEntry `json:"adapters"`
+	}
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return managedMarketplaceLockEntry{}, fmt.Errorf("parse staged Marketplace lock: %w", err)
+	}
+	entry, ok := lock.Adapters[packageID]
+	if !ok || (entry.MarketplaceSource != "npm" && entry.MarketplaceSource != "registry") {
+		return managedMarketplaceLockEntry{}, fmt.Errorf("staged Marketplace lock has no supported source for adapter %q", packageID)
+	}
+	return entry, nil
+}
+
+func specifierContainsVersion(specifier, resolvedVersion string) bool {
+	version, err := semrange.ParseVersion(resolvedVersion)
+	if err != nil {
+		return false
+	}
+	rangeValue, err := semrange.ParseRange(specifier)
+	return err == nil && rangeValue.Satisfies(version)
+}
+
+func validateManagedPnpmModules(root string) error {
+	modulesPath := filepath.Join(root, "node_modules", ".modules.yaml")
+	info, err := os.Lstat(modulesPath)
+	if err != nil {
+		return fmt.Errorf("candidate package-manager modules metadata is missing: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() == 0 || info.Size() > 4*1024*1024 {
+		return fmt.Errorf("candidate package-manager modules metadata is not a bounded regular file")
+	}
+	data, err := os.ReadFile(modulesPath)
+	if err != nil {
+		return err
+	}
+	var metadata map[string]any
+	if err := yaml.Unmarshal(data, &metadata); err != nil {
+		return fmt.Errorf("candidate package-manager modules metadata is invalid: %w", err)
+	}
+	if metadata["layoutVersion"] == nil || metadata["storeDir"] == nil || metadata["virtualStoreDir"] == nil {
+		return fmt.Errorf("candidate package-manager modules metadata omits required layout fields")
+	}
+	virtualStore, ok := metadata["virtualStoreDir"].(string)
+	if !ok || virtualStore == "" {
+		return fmt.Errorf("candidate package-manager virtual store path is invalid")
+	}
+	nodeModules := filepath.Join(root, "node_modules")
+	virtualPath := virtualStore
+	if !filepath.IsAbs(virtualPath) {
+		virtualPath = filepath.Join(nodeModules, virtualPath)
+	}
+	virtualPath, err = filepath.EvalSymlinks(virtualPath)
+	if err != nil {
+		return fmt.Errorf("resolve candidate package-manager virtual store: %w", err)
+	}
+	inside, err := contracts.PathWithin(nodeModules, virtualPath)
+	if err != nil || !inside {
+		return fmt.Errorf("candidate package-manager virtual store escapes node_modules")
+	}
+	if info, err := os.Stat(virtualPath); err != nil || !info.IsDir() {
+		return fmt.Errorf("candidate package-manager virtual store is unavailable")
+	}
+	return nil
+}
+
+func validateManagedExecutableProjection(root, packageID string) error {
+	commandName := map[string]string{"@kb-labs/cli-bin": "kb", "@kb-labs/host-app": "kb-host"}[packageID]
+	manifestPath := filepath.Join(root, "node_modules", filepath.FromSlash(packageID), "package.json")
+	manifestData, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("generation executable package %q is unavailable: %w", packageID, err)
+	}
+	var executable struct {
+		Name    string            `json:"name"`
+		Version string            `json:"version"`
+		Bin     map[string]string `json:"bin"`
+	}
+	if err := json.Unmarshal(manifestData, &executable); err != nil || executable.Name != packageID || executable.Version == "" {
+		return fmt.Errorf("generation executable package %q is invalid", packageID)
+	}
+	binPath, ok := executable.Bin[commandName]
+	if !ok || !filepath.IsLocal(filepath.FromSlash(binPath)) {
+		return fmt.Errorf("generation executable package %q does not declare %s", packageID, commandName)
+	}
+	packageRoot := filepath.Join(root, "node_modules", filepath.FromSlash(packageID))
+	resolvedPackage, err := filepath.EvalSymlinks(packageRoot)
+	if err != nil {
+		return fmt.Errorf("resolve generation executable package %q: %w", packageID, err)
+	}
+	resolvedEntry, err := filepath.EvalSymlinks(filepath.Join(packageRoot, filepath.FromSlash(binPath)))
+	if err != nil {
+		return fmt.Errorf("resolve generation executable %s: %w", commandName, err)
+	}
+	inside, err := contracts.PathWithin(root, resolvedPackage)
+	if err != nil || !inside {
+		return fmt.Errorf("generation executable package %q escapes its root", packageID)
+	}
+	inside, err = contracts.PathWithin(resolvedPackage, resolvedEntry)
+	if err != nil || !inside {
+		return fmt.Errorf("generation executable %s escapes its package", commandName)
+	}
+	projection := filepath.Join(root, "node_modules", ".bin", commandName)
+	info, err := os.Lstat(projection)
+	if err != nil {
+		return fmt.Errorf("generation executable projection %s is missing: %w", commandName, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		resolvedProjection, err := filepath.EvalSymlinks(projection)
+		if err != nil || filepath.Clean(resolvedProjection) != filepath.Clean(resolvedEntry) {
+			return fmt.Errorf("generation executable projection %s does not target its declared package binary", commandName)
 		}
-		manifestPath := filepath.Join(candidate, "node_modules", filepath.FromSlash(name), "package.json")
-		manifestData, err := os.ReadFile(manifestPath)
-		if err != nil {
-			return fmt.Errorf("candidate executable package %q is unavailable: %w", name, err)
-		}
-		var executable struct {
-			Name    string            `json:"name"`
-			Version string            `json:"version"`
-			Bin     map[string]string `json:"bin"`
-		}
-		if err := json.Unmarshal(manifestData, &executable); err != nil || executable.Name != name || executable.Version == "" {
-			return fmt.Errorf("candidate executable package %q is invalid", name)
-		}
-		commandName := map[string]string{"@kb-labs/cli-bin": "kb", "@kb-labs/host-app": "kb-host"}[name]
-		binPath, ok := executable.Bin[commandName]
-		if !ok || !filepath.IsLocal(filepath.FromSlash(binPath)) {
-			return fmt.Errorf("candidate executable package %q does not declare %s", name, commandName)
-		}
-		packageRoot := filepath.Join(candidate, "node_modules", filepath.FromSlash(name))
-		resolvedPackage, err := filepath.EvalSymlinks(packageRoot)
-		if err != nil {
-			return fmt.Errorf("resolve candidate executable package %q: %w", name, err)
-		}
-		resolvedEntry, err := filepath.EvalSymlinks(filepath.Join(packageRoot, filepath.FromSlash(binPath)))
-		if err != nil {
-			return fmt.Errorf("resolve candidate executable %s: %w", commandName, err)
-		}
-		inside, err := contracts.PathWithin(candidate, resolvedPackage)
-		if err != nil || !inside {
-			return fmt.Errorf("candidate executable package %q escapes the generation", name)
-		}
-		inside, err = contracts.PathWithin(resolvedPackage, resolvedEntry)
-		if err != nil || !inside {
-			return fmt.Errorf("candidate executable %s escapes its package", commandName)
-		}
-		oldLinkPath := filepath.Join(active, "node_modules", ".bin", commandName)
-		newLinkPath := filepath.Join(candidate, "node_modules", ".bin", commandName)
-		oldTarget, oldErr := os.Readlink(oldLinkPath)
-		newTarget, newErr := os.Readlink(newLinkPath)
-		if oldErr != nil || newErr != nil || oldTarget != newTarget {
-			return fmt.Errorf("candidate package graph changed the %s executable projection", commandName)
-		}
-		resolvedLink, err := filepath.EvalSymlinks(newLinkPath)
-		if err != nil {
-			return fmt.Errorf("candidate %s executable projection is broken: %w", commandName, err)
-		}
-		inside, err = contracts.PathWithin(candidate, resolvedLink)
-		if err != nil || !inside {
-			return fmt.Errorf("candidate %s executable projection escapes the generation", commandName)
-		}
+		return nil
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 || info.Size() == 0 || info.Size() > 1024*1024 {
+		return fmt.Errorf("generation executable projection %s is not a bounded executable file", commandName)
+	}
+	data, err := os.ReadFile(projection)
+	if err != nil {
+		return err
+	}
+	const marker = "cmd-shim-target="
+	markerIndex := bytes.Index(data, []byte(marker))
+	if markerIndex < 0 {
+		return fmt.Errorf("generation executable shim %s omits its package target", commandName)
+	}
+	lineEnd := bytes.IndexByte(data[markerIndex:], '\n')
+	if lineEnd < 0 {
+		lineEnd = len(data) - markerIndex
+	}
+	target := strings.TrimSpace(string(data[markerIndex+len(marker) : markerIndex+lineEnd]))
+	if target == "" {
+		return fmt.Errorf("generation executable shim %s has an empty package target", commandName)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(projection), target)
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil || filepath.Clean(resolvedTarget) != filepath.Clean(resolvedEntry) {
+		return fmt.Errorf("generation executable shim %s does not target its declared package binary", commandName)
 	}
 	return nil
 }

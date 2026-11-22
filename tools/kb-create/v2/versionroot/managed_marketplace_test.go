@@ -3,12 +3,14 @@ package versionroot
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -111,13 +113,17 @@ func TestManagedMarketplacePostconditionRequiresValidEnabledAdapterAndManifest(t
 	mutation := ManagedMarketplaceMutation{Operation: ManagedMarketplaceInstall, Specs: []string{packageID + "@1.0.0"}}
 	result := managedMarketplaceInstallResult{Schema: 1, Operation: ManagedMarketplaceInstall, Installed: []managedMarketplaceInstallEntry{{RequestedSpec: packageID + "@1.0.0", PackageID: packageID, Version: "1.0.0", ResolvedVersion: "1.0.0", PrimaryKind: "adapter"}}}
 	lockPath := filepath.Join(stage, ".kb", "marketplace.lock")
-	writeLock := func(source string, enabled bool, resolvedPath string) {
+	writeLock := func(source string, enabled bool, resolvedPath string, marketplaceSource ...string) {
 		t.Helper()
+		selectedSource := "npm"
+		if len(marketplaceSource) > 0 {
+			selectedSource = marketplaceSource[0]
+		}
 		if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		data, _ := json.Marshal(map[string]any{"schema": "kb.marketplace/3", "plugins": map[string]any{}, "adapters": map[string]any{
-			packageID: map[string]any{"source": source, "version": "1.0.0", "integrity": "sha512-fixture", "resolvedPath": resolvedPath, "enabled": enabled, "marketplaceSource": "npm", "signatureStatus": "unsigned"},
+			packageID: map[string]any{"source": source, "version": "1.0.0", "integrity": "sha512-fixture", "resolvedPath": resolvedPath, "enabled": enabled, "marketplaceSource": selectedSource, "signatureStatus": "unsigned"},
 		}})
 		if err := os.WriteFile(lockPath, data, 0o600); err != nil {
 			t.Fatal(err)
@@ -126,6 +132,10 @@ func TestManagedMarketplacePostconditionRequiresValidEnabledAdapterAndManifest(t
 	writeLock("marketplace", true, filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(packageID))))
 	if err := verifyManagedMarketplaceInstall(stage, mutation, result); err != nil {
 		t.Fatalf("valid adapter postcondition was rejected: %v", err)
+	}
+	writeLock("marketplace", true, filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(packageID))), "registry")
+	if err := verifyManagedMarketplaceInstall(stage, mutation, result); err != nil {
+		t.Fatalf("valid Registry adapter postcondition was rejected: %v", err)
 	}
 	for _, test := range []struct {
 		name, source string
@@ -152,6 +162,121 @@ func TestManagedMarketplacePostconditionRequiresValidEnabledAdapterAndManifest(t
 				t.Fatal("invalid adapter postcondition was accepted")
 			}
 		})
+	}
+}
+
+// case: S-269.10
+func TestManagedMarketplaceCoreGraphAcceptsRealInstallVariantsAndRequiresModulesMetadata(t *testing.T) {
+	for _, test := range []struct {
+		name, request, source, oldVersion, installedVersion string
+		binAsFile, omitModules, invalidModules, wantError   bool
+	}{
+		{name: "unversioned-npm-install-with-pnpm-file-shims", request: "@kb-labs/sample", source: "npm", installedVersion: "1.2.3", binAsFile: true},
+		{name: "npm-update-of-existing-adapter", request: "@kb-labs/sample", source: "npm", oldVersion: "1.0.0", installedVersion: "2.0.0"},
+		{name: "registry-adapter-without-package-json-dependency", request: "@kb-labs/sample@1.2.3", source: "registry", installedVersion: "1.2.3"},
+		{name: "missing-pnpm-modules-metadata", request: "@kb-labs/sample@1.2.3", source: "registry", installedVersion: "1.2.3", omitModules: true, wantError: true},
+		{name: "invalid-pnpm-modules-metadata", request: "@kb-labs/sample@1.2.3", source: "registry", installedVersion: "1.2.3", invalidModules: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			active := filepath.Join(t.TempDir(), "active")
+			candidate := filepath.Join(t.TempDir(), "candidate")
+			if test.oldVersion != "" {
+				seedManagedGraphFixture(t, active, "@kb-labs/sample@"+test.oldVersion, "npm", test.oldVersion, false, false, false)
+			} else {
+				seedManagedGraphFixture(t, active, "", "", "", false, false, false)
+			}
+			seedManagedGraphFixture(t, candidate, test.request, test.source, test.installedVersion, test.binAsFile, test.omitModules, test.invalidModules)
+			mutation := ManagedMarketplaceMutation{Operation: ManagedMarketplaceInstall, Specs: []string{test.request}}
+			result := managedMarketplaceInstallResult{Schema: 1, Operation: ManagedMarketplaceInstall, Installed: []managedMarketplaceInstallEntry{{RequestedSpec: test.request, PackageID: "@kb-labs/sample", Version: test.installedVersion, ResolvedVersion: test.installedVersion, PrimaryKind: "adapter"}}}
+			err := verifyManagedMarketplaceCoreGraph(active, candidate, mutation, result)
+			if test.wantError && err == nil {
+				t.Fatal("invalid package-manager metadata was accepted")
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("valid install variant was rejected: %v", err)
+			}
+		})
+	}
+}
+
+func seedManagedGraphFixture(t *testing.T, root, adapterSpec, marketplaceSource, installedVersion string, binAsFile, omitModules, invalidModules bool) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "node_modules", ".pnpm"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !omitModules {
+		modules := "layoutVersion: 5\nstoreDir: /tmp/pnpm-store\nvirtualStoreDir: .pnpm\n"
+		if invalidModules {
+			modules = "layoutVersion: 5\nvirtualStoreDir: .pnpm\n"
+		}
+		if err := os.WriteFile(filepath.Join(root, "node_modules", ".modules.yaml"), []byte(modules), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dependencies := map[string]string{"@kb-labs/cli-bin": "1.0.0", "@kb-labs/host-app": "1.0.0"}
+	if adapterSpec != "" && marketplaceSource == "npm" {
+		name, _, _ := splitMarketplaceSpec(adapterSpec)
+		dependencies[name] = "^" + installedVersion
+	}
+	manifest, _ := json.Marshal(map[string]any{"name": "managed-fixture", "version": "1.0.0", "dependencies": dependencies})
+	if err := os.WriteFile(filepath.Join(root, "package.json"), manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var lock strings.Builder
+	lock.WriteString("lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n")
+	for name, version := range dependencies {
+		fmt.Fprintf(&lock, "      '%s':\n        specifier: %s\n", name, version)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), []byte(lock.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, executable := range []struct{ name, command string }{{"@kb-labs/cli-bin", "kb"}, {"@kb-labs/host-app", "kb-host"}} {
+		packageRoot := filepath.Join(root, "node_modules", filepath.FromSlash(executable.name))
+		entry := filepath.Join(packageRoot, "dist", "bin.js")
+		if err := os.MkdirAll(filepath.Dir(entry), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		packageData, _ := json.Marshal(map[string]any{"name": executable.name, "version": "1.0.0", "bin": map[string]string{executable.command: "dist/bin.js"}})
+		if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), packageData, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(entry, []byte("#!/usr/bin/env node\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		linkPath := filepath.Join(root, "node_modules", ".bin", executable.command)
+		if err := os.MkdirAll(filepath.Dir(linkPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if binAsFile {
+			shim := "#!/bin/sh\n# cmd-shim-target=" + entry + "\nexec node \"$0\" \"$@\"\n"
+			if err := os.WriteFile(linkPath, []byte(shim), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.Symlink(filepath.Join("..", filepath.FromSlash(executable.name), "dist", "bin.js"), linkPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if adapterSpec != "" {
+		name, _, _ := splitMarketplaceSpec(adapterSpec)
+		packageRoot := filepath.Join(root, "node_modules", filepath.FromSlash(name))
+		if err := os.MkdirAll(packageRoot, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		packageData, _ := json.Marshal(map[string]any{"name": name, "version": installedVersion, "kb": map[string]any{"adapter": map[string]any{"manifest": "manifest.mjs"}}})
+		if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), packageData, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(packageRoot, "manifest.mjs"), []byte("export const manifest = {};\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(root, ".kb"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		lockEntry := map[string]any{"source": "marketplace", "version": installedVersion, "integrity": "sha512-fixture", "resolvedPath": filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(name))), "enabled": true, "marketplaceSource": marketplaceSource, "signatureStatus": "unsigned"}
+		data, _ := json.Marshal(map[string]any{"schema": "kb.marketplace/3", "plugins": map[string]any{}, "adapters": map[string]any{name: lockEntry}})
+		if err := os.WriteFile(filepath.Join(root, ".kb", "marketplace.lock"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -183,6 +308,90 @@ func TestManagedStageRetryCleansAtomicOwnerRegistrationTemporary(t *testing.T) {
 	if err := layout.AbortManagedGeneration(retry); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestManagedStageCleanupRefusesReusedProcessGroupIdentity(t *testing.T) {
+	installRoot := t.TempDir()
+	layout, err := New(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := filepath.Join(layout.VersionsDir(), ".stage-managed-stale-owner")
+	if err := os.MkdirAll(stage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	owner := managedStageOwner{PID: 7001, Identity: "original-start", StartedAt: time.Unix(100, 0)}
+	ownerData, _ := json.Marshal(owner)
+	if err := os.WriteFile(layout.managedStageOwnerPath(stage), ownerData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	observer := reusedManagedStageObserver{
+		root:    child.ProcessIdentity{PID: owner.PID, Identity: "reused-start", StartedAt: time.Unix(200, 0)},
+		members: []child.ProcessMember{{PID: owner.PID, Identity: "reused-start"}},
+	}
+	signals := 0
+	err = layout.stopManagedStageOwnerWith(stage, observer, func(child.ProcessObserver, child.ProcessIdentity, syscall.Signal) error {
+		signals++
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("cleanup error = %v, want fail-closed owner identity mismatch", err)
+	}
+	if signals != 0 {
+		t.Fatalf("cleanup sent %d signals to a reused process group", signals)
+	}
+	if _, err := os.Stat(stage); err != nil {
+		t.Fatalf("ambiguous candidate was deleted: %v", err)
+	}
+}
+
+func TestManagedPnpmShimsRebaseAcrossStageAndActivationRename(t *testing.T) {
+	root := t.TempDir()
+	active := filepath.Join(root, "versions", "active")
+	stage := filepath.Join(root, "versions", ".stage-managed-123")
+	target := filepath.Join(root, "versions", "managed-123")
+	binDir := filepath.Join(stage, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(binDir, "kb-host")
+	data := []byte("#!/bin/sh\n# cmd-shim-target=" + filepath.Join(active, "node_modules", "@kb-labs", "host-app", "dist", "bin.js") + "\n")
+	if err := os.WriteFile(shim, data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteManagedBinShimRoots(stage, []string{active}, stage); err != nil {
+		t.Fatal(err)
+	}
+	stageData, err := os.ReadFile(shim)
+	if err != nil || !strings.Contains(string(stageData), filepath.Join(stage, "node_modules")) || strings.Contains(string(stageData), active) {
+		t.Fatalf("staged executable shim was not rebased: %s (%v)", stageData, err)
+	}
+	if err := os.Rename(stage, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteManagedBinShimRoots(target, []string{stage, active}, target); err != nil {
+		t.Fatal(err)
+	}
+	targetData, err := os.ReadFile(filepath.Join(target, "node_modules", ".bin", "kb-host"))
+	if err != nil || !strings.Contains(string(targetData), filepath.Join(target, "node_modules")) || strings.Contains(string(targetData), stage) || strings.Contains(string(targetData), active) {
+		t.Fatalf("finalized executable shim was not rebased: %s (%v)", targetData, err)
+	}
+}
+
+type reusedManagedStageObserver struct {
+	root    child.ProcessIdentity
+	members []child.ProcessMember
+}
+
+func (o reusedManagedStageObserver) RootIdentity(pid int) (child.ProcessIdentity, error) {
+	if pid != o.root.PID {
+		return child.ProcessIdentity{}, fmt.Errorf("unexpected PID %d", pid)
+	}
+	return o.root, nil
+}
+
+func (o reusedManagedStageObserver) LiveMembers(int, child.ProcessIdentity) ([]child.ProcessMember, error) {
+	return o.members, nil
 }
 
 func TestManagedMarketplaceOwnerRunsInstalledHelperInCandidateAndSwitchesOnlyOnSuccess(t *testing.T) {
@@ -392,6 +601,12 @@ func installFakeManagedPnpm(t *testing.T, layout Layout) {
 
 func seedManagedCoreCommandGraph(t *testing.T, root string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "node_modules", ".pnpm"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "node_modules", ".modules.yaml"), []byte("layoutVersion: 5\nstoreDir: /tmp/pnpm-store\nvirtualStoreDir: .pnpm\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	manifest := map[string]any{
 		"name":         "kb-platform-fixture",
 		"version":      "1.0.0",
