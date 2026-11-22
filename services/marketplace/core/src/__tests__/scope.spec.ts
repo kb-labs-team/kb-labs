@@ -56,6 +56,17 @@ describe('marketplace project scope', () => {
     expect(() => resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot })).toThrow(/managed platform installation/);
 
     rmSync(join(projectRoot, '.kb'));
+    mkdirSync(join(projectRoot, '.kb'));
+    const platformLock = join(platformRoot, '.kb', 'marketplace.lock');
+    writeFileSync(platformLock, '{}');
+    symlinkSync(platformLock, join(projectRoot, '.kb', 'marketplace.lock'), 'file');
+    expect(() => resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot })).toThrow(/managed platform installation/);
+
+    rmSync(join(projectRoot, '.kb'), { recursive: true });
+    symlinkSync(join(platformRoot, '.kb', 'missing'), join(projectRoot, '.kb'), 'dir');
+    expect(() => resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot })).toThrow(/Cannot safely resolve project write target/);
+
+    rmSync(join(projectRoot, '.kb'));
     symlinkSync(platformRoot, join(projectRoot, 'node_modules'), 'dir');
     expect(() => resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot })).toThrow(/managed platform installation/);
 

@@ -143,7 +143,7 @@ git history of the lock; the older release will be reinstalled from registry.
 | Secret | Service | Required in prod | How to generate |
 |--------|---------|-----------------|-----------------|
 | `GATEWAY_JWT_SECRET` | gateway | **Yes — gateway refuses to start without it** | `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"` |
-| `GATEWAY_INTERNAL_SECRET` | gateway, REST API, marketplace-registry | **Yes — all modes** | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` for team deployments; kb-create generates and preserves it automatically |
+| `GATEWAY_INTERNAL_SECRET` | gateway, REST API, Marketplace API, marketplace-registry | **Yes — all modes** | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` for team deployments; kb-create generates and preserves it automatically |
 | `OPENAI_API_KEY` | llm-openai adapter | Only if using OpenAI | From platform.openai.com |
 
 > **`GATEWAY_JWT_SECRET`**: gateway bootstrap throws a fatal error if this is not set when `NODE_ENV=production`.

@@ -142,10 +142,14 @@ function isolateEnvironment(home: string): () => void {
     "KB_STATE_DAEMON_URL",
     "GATEWAY_PORT",
     "GATEWAY_HOST",
+    "GATEWAY_INTERNAL_SECRET",
   ] as const;
   const saved = new Map(keys.map((key) => [key, process.env[key]]));
   process.env.HOME = home;
   process.env.USERPROFILE = home;
+  // Local Marketplace requests still pass through Gateway. The host fixture
+  // gives the gateway and internal services a test-only shared credential.
+  process.env.GATEWAY_INTERNAL_SECRET = "host-test-internal-secret";
   for (const key of keys.slice(2)) {
     delete process.env[key];
   }

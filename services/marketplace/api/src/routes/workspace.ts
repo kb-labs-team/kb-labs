@@ -47,7 +47,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, mutationAuth: Mark
       autoEnable?: boolean;
     } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
-    if (!authorizeMarketplaceMutation(request, reply, mutationAuth)) return;
+    if (!authorizeMarketplaceMutation(request, reply, mutationAuth, ctx.scope)) return;
     const result = await app.observability.observeOperation(
       'marketplace.sync',
       () => app.marketplace.sync(ctx, {

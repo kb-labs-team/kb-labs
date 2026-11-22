@@ -1,6 +1,8 @@
 export const GATEWAY     = process.env.GATEWAY_URL     ?? 'http://localhost:4000'
 export const REST        = process.env.REST_URL        ?? 'http://localhost:5050'
-export const MARKETPLACE = process.env.MARKETPLACE_URL ?? 'http://localhost:5070'
+// Marketplace HTTP requests must pass through Gateway so its resolved
+// identity reaches the service; 5070 is intentionally not a client endpoint.
+export const MARKETPLACE = process.env.MARKETPLACE_URL ?? 'http://localhost:4000'
 export const REGISTRY    = process.env.REGISTRY_URL    ?? 'http://localhost:5071'
 export const WORKFLOW    = process.env.WORKFLOW_URL    ?? 'http://localhost:7778'
 export const STATE       = process.env.STATE_URL       ?? 'http://localhost:7777'

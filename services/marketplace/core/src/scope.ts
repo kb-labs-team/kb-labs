@@ -76,7 +76,10 @@ export function resolveScopeRoot(roots: ServiceRoots, ctx: ScopeContext): string
   }
 
   const managedInstallRoot = managedInstallRootFor(physicalPlatformRoot);
-  if (managedInstallRoot && isPathInside(managedInstallRoot, physicalCandidate)) {
+  if (managedInstallRoot && (
+    isPathInside(managedInstallRoot, physicalCandidate) ||
+    hasWriteTargetInsideManagedInstall(physicalCandidate, managedInstallRoot)
+  )) {
     throw new ScopeResolutionError(
       'SCOPE_PROJECT_ROOT_INSIDE_PLATFORM_INSTALL',
       'Project root must not be inside the managed platform installation.',
@@ -84,6 +87,43 @@ export function resolveScopeRoot(roots: ServiceRoots, ctx: ScopeContext): string
   }
 
   return physicalCandidate;
+}
+
+function hasWriteTargetInsideManagedInstall(projectRoot: string, managedInstallRoot: string): boolean {
+  const writeTargets = [
+    '.kb',
+    '.kb/marketplace.lock',
+    '.kb/marketplace.manifests.json',
+    'node_modules',
+    'package.json',
+    'pnpm-lock.yaml',
+    'pnpm-workspace.yaml',
+  ];
+  for (const relativeTarget of writeTargets) {
+    const target = path.join(projectRoot, relativeTarget);
+    try {
+      lstatSync(target);
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+      throw new ScopeResolutionError(
+        'SCOPE_PROJECT_WRITE_TARGET_UNRESOLVED',
+        `Cannot safely resolve project write target: "${target}".`,
+      );
+    }
+    let physicalTarget: string;
+    try {
+      physicalTarget = realpathSync(target);
+    } catch {
+      // A dangling or unreadable link at a path the installer may write is
+      // not safe to treat as a missing file.
+      throw new ScopeResolutionError(
+        'SCOPE_PROJECT_WRITE_TARGET_UNRESOLVED',
+        `Cannot safely resolve project write target: "${target}".`,
+      );
+    }
+    if (isPathInside(managedInstallRoot, physicalTarget)) return true;
+  }
+  return false;
 }
 
 function managedInstallRootFor(physicalPlatformRoot: string): string | undefined {
@@ -100,7 +140,7 @@ function managedInstallRootFor(physicalPlatformRoot: string): string | undefined
 
 function isPathInside(parent: string, candidate: string): boolean {
   const relative = path.relative(parent, candidate);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 /**

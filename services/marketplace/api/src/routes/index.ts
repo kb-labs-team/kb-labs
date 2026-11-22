@@ -13,6 +13,6 @@ export async function registerRoutes(server: FastifyInstance, mutationAuth: Mark
   await server.register(async (app) => {
     registerPackagesRoutes(app, mutationAuth);
     registerWorkspaceRoutes(app, mutationAuth);
-    registerDiagnosticsRoutes(app);
+    registerDiagnosticsRoutes(app, mutationAuth);
   }, { prefix: '/api/v1/marketplace' });
 }

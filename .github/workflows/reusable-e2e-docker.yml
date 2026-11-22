@@ -272,7 +272,7 @@ jobs:
         env:
           GATEWAY_URL:     http://localhost:4000
           REST_URL:        http://localhost:5050
-          MARKETPLACE_URL: http://localhost:5070
+          MARKETPLACE_URL: http://localhost:4000
           REGISTRY_URL:    http://localhost:5071
           WORKFLOW_URL:    http://localhost:7778
           STATE_URL:       http://localhost:7777

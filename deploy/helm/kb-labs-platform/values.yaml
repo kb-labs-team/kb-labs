@@ -113,5 +113,6 @@ marketplaceLock: {}
 secretRefs: []
 
 # Pre-existing Kubernetes Secret containing the required GATEWAY_INTERNAL_SECRET
-# key. Required whenever the gateway or an internal upstream is enabled.
+# key. Required whenever the gateway or an internal upstream is enabled,
+# including Marketplace API.
 internalSecretSecretName: ""

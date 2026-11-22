@@ -9,8 +9,9 @@
 import '../types.js';
 import type { FastifyInstance } from 'fastify';
 import { parseMutatingScope, scopeBodySchemaFragment } from '../scope-parser.js';
+import { authorizeMarketplaceRead, type MarketplaceMutationAuth } from './mutation-auth.js';
 
-export function registerDiagnosticsRoutes(app: FastifyInstance): void {
+export function registerDiagnosticsRoutes(app: FastifyInstance, mutationAuth: MarketplaceMutationAuth): void {
   app.get('/diagnostics', {
     schema: {
       tags: ['Marketplace'],
@@ -22,6 +23,7 @@ export function registerDiagnosticsRoutes(app: FastifyInstance): void {
     },
   }, async (request, reply) => {
     const ctx = parseMutatingScope(request.query as Record<string, unknown>);
+    if (!authorizeMarketplaceRead(request, reply, mutationAuth, ctx.scope)) return;
     const report = await app.observability.observeOperation(
       'marketplace.doctor',
       () => app.marketplace.doctor(ctx),

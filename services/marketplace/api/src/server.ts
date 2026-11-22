@@ -51,8 +51,8 @@ function wrapObservability(collector: HttpObservabilityCollector): Observability
 export async function createServer(opts: CreateServerOptions): Promise<FastifyInstance> {
   const logger = opts.logger;
   const mutationAuth = opts.auth;
-  if (mutationAuth.required && !mutationAuth.internalSecret) {
-    throw new Error('secured Marketplace API requires GATEWAY_INTERNAL_SECRET');
+  if (!mutationAuth.internalSecret) {
+    throw new Error('Marketplace API requires GATEWAY_INTERNAL_SECRET in every mode');
   }
 
   const collector = new HttpObservabilityCollector({

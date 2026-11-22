@@ -2,16 +2,17 @@
 
 ## 2026-11-22
 
-### Marketplace writes require Gateway authorization in secured mode
+### Marketplace writes require Gateway authorization in every mode
 
-Marketplace API mutations verify Gateway's signed forwarded identity before
-calling any writer. Secured mutations require `plugins:write`, the existing
-permission for installing and managing marketplace extensions; there is no
-adapter-specific permission. Direct Marketplace service calls without the
-Gateway identity are rejected. Local mode keeps its no-login flow through the
-loopback Gateway. Project scope resolves physical paths and refuses any target
-inside a managed platform installation, including symlink aliases. Cases:
-S-269.11, S-104.3.
+Marketplace API mutations require the shared internal secret and a Gateway-
+verified forwarded identity before calling any writer, in local and secured
+modes. Local no-login requests retain the Gateway's `LOCAL_ADMIN` identity;
+direct Marketplace calls fail closed. Project mutations require `plugins:write`;
+platform graph mutations require the existing `platform-settings:write`, since
+`plugins:write` is also granted to tenant members and cannot authorize changes
+to the shared platform installation. Project scope resolves actual write
+targets and refuses managed-install aliases through `.kb`, package-manager
+state files, or `node_modules`. Cases: S-269.11, S-038.1, S-038.3.
 
 ## 2026-11-19
 

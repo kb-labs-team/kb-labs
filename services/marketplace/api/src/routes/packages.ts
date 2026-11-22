@@ -22,7 +22,7 @@
 import '../types.js';
 import type { FastifyInstance } from 'fastify';
 import type { EntityKind } from '@kb-labs/plugin-contracts';
-import { authorizeMarketplaceMutation, type MarketplaceMutationAuth } from './mutation-auth.js';
+import { authorizeMarketplaceMutation, authorizeMarketplaceRead, type MarketplaceMutationAuth } from './mutation-auth.js';
 import {
   parseMutatingScope,
   parseQueryScope,
@@ -47,6 +47,7 @@ export function registerPackagesRoutes(app: FastifyInstance, mutationAuth: Marke
   }, async (request, reply) => {
     const query = request.query as Record<string, unknown>;
     const ctx = parseQueryScope(query);
+    if (!authorizeMarketplaceRead(request, reply, mutationAuth, ctx.scope)) return;
     const kind = typeof query.kind === 'string' ? (query.kind as EntityKind) : undefined;
     const entries = await app.observability.observeOperation(
       'marketplace.list',
@@ -74,7 +75,7 @@ export function registerPackagesRoutes(app: FastifyInstance, mutationAuth: Marke
   }, async (request, reply) => {
     const body = request.body as { specs: string[]; dev?: boolean; token?: string } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
-    if (!authorizeMarketplaceMutation(request, reply, mutationAuth)) return;
+    if (!authorizeMarketplaceMutation(request, reply, mutationAuth, ctx.scope)) return;
     const result = await app.observability.observeOperation(
       'marketplace.install',
       () => app.marketplace.install(ctx, body.specs, { dev: body.dev, shareToken: body.token }),
@@ -99,7 +100,7 @@ export function registerPackagesRoutes(app: FastifyInstance, mutationAuth: Marke
   }, async (request, reply) => {
     const body = request.body as { packageIds: string[] } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
-    if (!authorizeMarketplaceMutation(request, reply, mutationAuth)) return;
+    if (!authorizeMarketplaceMutation(request, reply, mutationAuth, ctx.scope)) return;
     await app.observability.observeOperation(
       'marketplace.uninstall',
       () => app.marketplace.uninstall(ctx, body.packageIds),
@@ -124,7 +125,7 @@ export function registerPackagesRoutes(app: FastifyInstance, mutationAuth: Marke
   }, async (request, reply) => {
     const body = request.body as { packageId: string } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
-    if (!authorizeMarketplaceMutation(request, reply, mutationAuth)) return;
+    if (!authorizeMarketplaceMutation(request, reply, mutationAuth, ctx.scope)) return;
     await app.observability.observeOperation(
       'marketplace.enable',
       () => app.marketplace.enable(ctx, body.packageId),
@@ -149,7 +150,7 @@ export function registerPackagesRoutes(app: FastifyInstance, mutationAuth: Marke
   }, async (request, reply) => {
     const body = request.body as { packageId: string } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
-    if (!authorizeMarketplaceMutation(request, reply, mutationAuth)) return;
+    if (!authorizeMarketplaceMutation(request, reply, mutationAuth, ctx.scope)) return;
     await app.observability.observeOperation(
       'marketplace.disable',
       () => app.marketplace.disable(ctx, body.packageId),
@@ -173,7 +174,7 @@ export function registerPackagesRoutes(app: FastifyInstance, mutationAuth: Marke
   }, async (request, reply) => {
     const body = (request.body ?? {}) as { packageIds?: string[] } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
-    if (!authorizeMarketplaceMutation(request, reply, mutationAuth)) return;
+    if (!authorizeMarketplaceMutation(request, reply, mutationAuth, ctx.scope)) return;
     const result = await app.observability.observeOperation(
       'marketplace.update',
       () => app.marketplace.update(ctx, body.packageIds),
@@ -199,7 +200,7 @@ export function registerPackagesRoutes(app: FastifyInstance, mutationAuth: Marke
   }, async (request, reply) => {
     const body = request.body as { path: string; manifest?: unknown } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
-    if (!authorizeMarketplaceMutation(request, reply, mutationAuth)) return;
+    if (!authorizeMarketplaceMutation(request, reply, mutationAuth, ctx.scope)) return;
     const result = await app.observability.observeOperation(
       'marketplace.link',
       () => app.marketplace.link(ctx, body.path, body.manifest),
@@ -224,7 +225,7 @@ export function registerPackagesRoutes(app: FastifyInstance, mutationAuth: Marke
   }, async (request, reply) => {
     const body = request.body as { packageId: string } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
-    if (!authorizeMarketplaceMutation(request, reply, mutationAuth)) return;
+    if (!authorizeMarketplaceMutation(request, reply, mutationAuth, ctx.scope)) return;
     await app.observability.observeOperation(
       'marketplace.unlink',
       () => app.marketplace.unlink(ctx, body.packageId),

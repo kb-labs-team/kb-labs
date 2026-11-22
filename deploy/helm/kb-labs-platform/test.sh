@@ -103,8 +103,8 @@ case "$OUT" in
 esac
 OUT="$(helm template t . --set image.tag=1.0.0 --set internalSecretSecretName=internal-secret 2>&1)"
 SECRET_ENV_COUNT="$(printf '%s\n' "$OUT" | grep -c 'name: GATEWAY_INTERNAL_SECRET' || true)"
-if [ "$SECRET_ENV_COUNT" -eq 2 ] && printf '%s\n' "$OUT" | grep -q 'name: internal-secret'; then
-  pass "gateway and REST API receive GATEWAY_INTERNAL_SECRET by default"
+if [ "$SECRET_ENV_COUNT" -eq 3 ] && printf '%s\n' "$OUT" | grep -q 'name: internal-secret'; then
+  pass "gateway, REST API, and Marketplace API receive GATEWAY_INTERNAL_SECRET by default"
 else
   fail "gateway, REST API, and marketplace-registry receive GATEWAY_INTERNAL_SECRET" "found $SECRET_ENV_COUNT secret env entries"
 fi

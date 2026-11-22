@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createContextLogger, type ILogger } from '@kb-labs/core-platform';
+import { PERMISSIONS } from '@kb-labs/core-contracts';
 import {
   checkCanonicalObservabilityMetrics,
   validateServiceObservabilityDescribe,
@@ -23,6 +24,14 @@ const logger = createContextLogger(loggerBase, {
   instanceId: 'test',
   layer: 'service',
 });
+const localGatewayHeaders = {
+  'x-internal-secret': 'health-test-secret',
+  'x-kb-auth-type': 'machine',
+  'x-kb-auth-user-id': 'local-admin',
+  'x-kb-auth-namespace-id': 'local',
+  'x-kb-auth-tier': 'enterprise',
+  'x-kb-auth-permissions': JSON.stringify(Object.values(PERMISSIONS)),
+};
 
 describe('marketplace observability surfaces', () => {
   const servers: Array<Awaited<ReturnType<typeof createServer>>> = [];
@@ -37,7 +46,7 @@ describe('marketplace observability surfaces', () => {
   });
 
   it('returns health and versioned observability documents', async () => {
-    const server = await createServer({ service: {} as any, logger, auth: { required: false } });
+    const server = await createServer({ service: {} as any, logger, auth: { internalSecret: 'health-test-secret' } });
     servers.push(server);
 
     const healthResponse = await server.inject({ method: 'GET', url: '/health' });
@@ -64,7 +73,7 @@ describe('marketplace observability surfaces', () => {
   });
 
   it('renders canonical metrics as prometheus text', async () => {
-    const server = await createServer({ service: {} as any, logger, auth: { required: false } });
+    const server = await createServer({ service: {} as any, logger, auth: { internalSecret: 'health-test-secret' } });
     servers.push(server);
 
     const response = await server.inject({ method: 'GET', url: '/metrics' });
@@ -80,12 +89,13 @@ describe('marketplace observability surfaces', () => {
       sync: async () => ({ scanned: 2, added: 1, updated: 0 }),
     } as any;
 
-    const server = await createServer({ service, logger, auth: { required: false } });
+    const server = await createServer({ service, logger, auth: { internalSecret: 'health-test-secret' } });
     servers.push(server);
 
     const listResponse = await server.inject({
       method: 'GET',
       url: '/api/v1/marketplace/packages',
+      headers: localGatewayHeaders,
     });
     expect(listResponse.statusCode).toBe(200);
 
@@ -93,6 +103,7 @@ describe('marketplace observability surfaces', () => {
       const doctorResponse = await server.inject({
         method: 'GET',
         url: '/api/v1/marketplace/diagnostics',
+        headers: localGatewayHeaders,
       });
       expect(doctorResponse.statusCode).toBe(200);
     }
@@ -101,6 +112,7 @@ describe('marketplace observability surfaces', () => {
       const syncResponse = await server.inject({
         method: 'POST',
         url: '/api/v1/marketplace/workspace/sync',
+        headers: localGatewayHeaders,
         payload: { include: ['plugins/*'] },
       });
       expect(syncResponse.statusCode).toBe(200);

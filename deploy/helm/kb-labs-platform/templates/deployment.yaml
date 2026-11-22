@@ -1,6 +1,6 @@
 {{- range $name, $svc := .Values.services }}
 {{- if $svc.enabled }}
-{{- if or (eq $name "gateway") (eq $name "rest-api") (eq $name "marketplace-registry") }}
+{{- if or (eq $name "gateway") (eq $name "rest-api") (eq $name "marketplace") (eq $name "marketplace-registry") }}
 {{- if not $.Values.internalSecretSecretName }}
 {{- fail (printf "GATEWAY_INTERNAL_SECRET is required: create a Kubernetes Secret with key GATEWAY_INTERNAL_SECRET and set internalSecretSecretName") }}
 {{- end }}
@@ -43,13 +43,13 @@ spec:
         - name: {{ $name }}
           image: {{ include "kb-labs-platform.image" (dict "Values" $.Values "svc" $svc) }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
-          {{- if or (eq $name "gateway") (eq $name "rest-api") (eq $name "marketplace-registry") (eq $name "state-daemon") }}
+          {{- if or (eq $name "gateway") (eq $name "rest-api") (eq $name "marketplace") (eq $name "marketplace-registry") (eq $name "state-daemon") }}
           env:
             {{- if eq $name "state-daemon" }}
             - name: KB_STATE_DAEMON_PORT
               value: {{ $svc.port | quote }}
             {{- end }}
-            {{- if or (eq $name "gateway") (eq $name "rest-api") (eq $name "marketplace-registry") }}
+            {{- if or (eq $name "gateway") (eq $name "rest-api") (eq $name "marketplace") (eq $name "marketplace-registry") }}
             - name: GATEWAY_INTERNAL_SECRET
               valueFrom:
                 secretKeyRef:

@@ -9,11 +9,12 @@ const mocks = vi.hoisted(() => ({
   createServer: vi.fn(),
   MarketplaceService: vi.fn(),
   createExtensionStore: vi.fn(),
+  requireEnvironmentSecret: vi.fn(() => "fixture-internal-secret"),
 }));
 
 vi.mock("@kb-labs/plugin-runtime", () => ({ makeAssemblyHook: vi.fn() }));
 vi.mock("@kb-labs/shared-http", () => ({ getListenOptions: vi.fn(() => ({})) }));
-vi.mock("@kb-labs/shared-daemon", () => ({ runService: vi.fn(), requireEnvironmentSecret: vi.fn(() => "fixture-internal-secret") }));
+vi.mock("@kb-labs/shared-daemon", () => ({ runService: vi.fn(), requireEnvironmentSecret: mocks.requireEnvironmentSecret }));
 vi.mock("@kb-labs/marketplace-api", () => ({ createServer: mocks.createServer }));
 vi.mock("@kb-labs/marketplace-core", () => ({ MarketplaceService: mocks.MarketplaceService }));
 vi.mock("@kb-labs/core-extension-store", () => ({ createExtensionStore: mocks.createExtensionStore }));
@@ -59,7 +60,36 @@ describe("Marketplace image default config", () => {
       sources: [expect.objectContaining({ options: { registryUrl: generatedConfig.marketplace.sources[0]?.url } })],
     }));
     expect(mocks.createServer).toHaveBeenCalledWith(expect.objectContaining({
-      auth: { required: true, internalSecret: "fixture-internal-secret" },
+      auth: { internalSecret: "fixture-internal-secret" },
     }));
+  });
+
+  // case: S-038.1, S-038.3
+  it("requires the Gateway secret in local mode before starting", async () => {
+    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "kb-marketplace-local-secret-"));
+    const configPath = path.join(tempRoot, ".kb", "kb.config.json");
+    execFileSync(process.execPath, [producerPath, configPath], { cwd: workspaceRoot });
+    const localConfig = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      gateway: { access: { mode: string }; auth: { enabled?: boolean } };
+    };
+    localConfig.gateway.access.mode = "local";
+    localConfig.gateway.auth.enabled = false;
+    await fs.writeFile(configPath, JSON.stringify(localConfig));
+    mocks.requireEnvironmentSecret.mockImplementation(() => {
+      throw new Error("KB_CONFIG_SECRET_MISSING: GATEWAY_INTERNAL_SECRET");
+    });
+
+    const { setup } = await import("../bootstrap.js");
+    const context = {
+      logger: { info: vi.fn() },
+      port: 5070,
+      host: "127.0.0.1",
+      platformRoot: tempRoot,
+      netOffset: 0,
+      platform: {},
+      runtime: {},
+    } as unknown as Parameters<typeof setup>[0];
+    await expect(setup(context)).rejects.toThrow("KB_CONFIG_SECRET_MISSING: GATEWAY_INTERNAL_SECRET");
+    expect(mocks.createServer).not.toHaveBeenCalled();
   });
 });

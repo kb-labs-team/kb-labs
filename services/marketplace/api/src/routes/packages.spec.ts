@@ -124,7 +124,8 @@ describe('Marketplace API error boundary', () => {
     const { logger } = makeContextLogger();
     const install = vi.fn().mockResolvedValue({ installed: [], warnings: [], scope: 'platform' });
     const list = vi.fn().mockResolvedValue([]);
-    const service = { install, list } as unknown as MarketplaceService;
+    const doctor = vi.fn().mockResolvedValue({ ok: true, issues: [] });
+    const service = { install, list, doctor } as unknown as MarketplaceService;
     const internalSecret = 'test-gateway-internal-secret';
     const secured = await createServer({ service, logger, auth: { internalSecret } });
     servers.push(secured);
@@ -145,6 +146,14 @@ describe('Marketplace API error boundary', () => {
     expect(directRead.statusCode).toBe(401);
     expect(directRead.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
     expect(list).not.toHaveBeenCalled();
+
+    const directDiagnostics = await secured.inject({
+      method: 'GET',
+      url: '/api/v1/marketplace/diagnostics?scope=platform',
+    });
+    expect(directDiagnostics.statusCode).toBe(401);
+    expect(directDiagnostics.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
+    expect(doctor).not.toHaveBeenCalled();
 
     const forgedHeaders = await secured.inject({
       method: 'POST',

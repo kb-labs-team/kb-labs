@@ -1094,7 +1094,7 @@ function relativeToRoot(root: string, absPath: string): string {
 
 function isPathInside(parent: string, child: string): boolean {
   const rel = path.relative(path.resolve(parent), path.resolve(child));
-  return !rel.startsWith('..') && !path.isAbsolute(rel);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
 
 async function computeIntegrity(packageRoot: string): Promise<string> {
