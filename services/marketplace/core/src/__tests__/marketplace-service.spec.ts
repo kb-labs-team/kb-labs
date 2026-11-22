@@ -436,6 +436,45 @@ describe('MarketplaceService', () => {
         .toMatchObject({ version: '1.5.0', integrity });
     });
 
+    // case: S-269.12
+    it('updates a platform adapter only when the Marketplace version moves forward', async () => {
+      const packageId = '@kb-labs/update-adapter';
+      const sourcePackage = await createAdapterDir(tmpDir, 'update-adapter', packageId);
+      let version = '1.0.0';
+      const source: PackageSource = {
+        async resolve() {
+          return { id: packageId, version, integrity: computeIntegrity(version), source: 'marketplace', primaryKind: 'adapter' };
+        },
+        async install(pkg, root): Promise<InstalledPackage> {
+          const target = path.join(root, 'node_modules', ...packageId.split('/'));
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await fs.cp(sourcePackage, target, { recursive: true });
+          await fs.writeFile(path.join(target, 'package.json'), JSON.stringify({
+            name: packageId, version: pkg.version, kb: { adapter: { manifest: './dist/adapter-manifest.js' } },
+          }));
+          await fs.writeFile(path.join(target, 'dist', 'adapter-manifest.js'), `export const manifest = ${JSON.stringify({
+            schema: 'kb.adapter/1', manifestVersion: pkg.version, id: packageId, name: packageId, version: pkg.version,
+            type: 'core', implements: 'ITestAdapter', networkRequired: false,
+          })};`);
+          return { id: packageId, version: pkg.version, packageRoot: target, integrity: computeIntegrity(pkg.version) };
+        },
+        async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
+      };
+      const install = vi.spyOn(source, 'install');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'platform' }, [packageId]);
+      version = '1.1.0';
+
+      const result = await service.update({ scope: 'platform' }, [packageId]);
+
+      expect(install).toHaveBeenCalledTimes(2);
+      expect(result.installed).toMatchObject([{ id: packageId, version: '1.1.0', primaryKind: 'adapter', scope: 'platform' }]);
+      expect((await readMarketplaceLock(tmpDir, new DiagnosticCollector()))?.adapters?.[packageId])
+        .toMatchObject({ version: '1.1.0', integrity: computeIntegrity('1.1.0'), source: 'marketplace' });
+    });
+
     it('warns for unknown requested packages and leaves existing pins unchanged', async () => {
       const packageId = '@kb-labs/pinned-plugin';
       const unknownPackageId = '@kb-labs/not-published';

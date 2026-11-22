@@ -354,7 +354,8 @@ describe('Marketplace API error boundary', () => {
   });
 
   // case: S-269.12
-  it('dispatches only managed platform installs to the trusted owner and fails every other graph writer closed', async () => {
+  // case: S-269.12
+  it('dispatches managed platform installs and updates to the owner and fails other graph writers closed', async () => {
     const { logger } = makeContextLogger();
     const internalSecret = 'managed-owner-test-secret';
     const headers = {
@@ -386,9 +387,19 @@ describe('Marketplace API error boundary', () => {
       warnings: [],
       scope: 'platform',
     };
+    const expectedUpdateResult = {
+      installed: [{
+        spec: '@kb-labs/sample-adapter', id: '@kb-labs/sample-adapter', version: '1.3.0',
+        primaryKind: 'adapter', provides: ['adapter'], packageRoot: '/platform/node_modules/@kb-labs/sample-adapter',
+        scope: 'platform', source: 'npm', signatureStatus: 'unsigned',
+      }],
+      warnings: [],
+      scope: 'platform',
+    };
     const dispatchManagedPlatformInstall = vi.fn()
       .mockResolvedValueOnce(expectedInstallResult)
-      .mockResolvedValueOnce(pluginInstallResult);
+      .mockResolvedValueOnce(pluginInstallResult)
+      .mockResolvedValueOnce(expectedUpdateResult);
     const server = await createServer({
       service: { ...directWrites, resolveSyncScope: vi.fn(async (ctx: unknown) => ctx) } as unknown as MarketplaceService,
       logger,
@@ -412,11 +423,19 @@ describe('Marketplace API error boundary', () => {
     expect(pluginInstall.statusCode).toBe(201);
     expect(pluginInstall.json()).toEqual(pluginInstallResult);
 
+    const update = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/update', headers,
+      payload: { packageIds: ['@kb-labs/sample-adapter'], scope: 'platform' },
+    });
+    expect(update.statusCode).toBe(200);
+    expect(update.json()).toEqual(expectedUpdateResult);
+    expect(dispatchManagedPlatformInstall).toHaveBeenLastCalledWith({ operation: 'update', packageIds: ['@kb-labs/sample-adapter'] });
+    expect(directWrites.update).not.toHaveBeenCalled();
+
     const deniedRequests: InjectOptions[] = [
       { method: 'POST', url: '/api/v1/marketplace/packages/uninstall', headers, payload: { packageIds: ['@kb-labs/sample-adapter'], scope: 'platform' } },
       { method: 'POST', url: '/api/v1/marketplace/packages/enable', headers, payload: { packageId: '@kb-labs/sample-adapter', scope: 'platform' } },
       { method: 'POST', url: '/api/v1/marketplace/packages/disable', headers, payload: { packageId: '@kb-labs/sample-adapter', scope: 'platform' } },
-      { method: 'POST', url: '/api/v1/marketplace/packages/update', headers, payload: { packageIds: ['@kb-labs/sample-adapter'], scope: 'platform' } },
       { method: 'POST', url: '/api/v1/marketplace/packages/link', headers, payload: { packageId: '@kb-labs/sample-adapter', path: '/tmp/adapter', scope: 'platform' } },
       { method: 'POST', url: '/api/v1/marketplace/packages/unlink', headers, payload: { packageId: '@kb-labs/sample-adapter', scope: 'platform' } },
       { method: 'POST', url: '/api/v1/marketplace/workspace/sync', headers, payload: { include: ['adapters/*'], scope: 'platform' } },
@@ -427,7 +446,7 @@ describe('Marketplace API error boundary', () => {
       expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_INSTALL_RECEIPT_UNAVAILABLE' } });
     }
     for (const writer of Object.values(directWrites)) expect(writer).not.toHaveBeenCalled();
-    expect(dispatchManagedPlatformInstall).toHaveBeenCalledTimes(2);
+    expect(dispatchManagedPlatformInstall).toHaveBeenCalledTimes(3);
 
     const unavailableInstall = vi.fn();
     const noOwner = await createServer({

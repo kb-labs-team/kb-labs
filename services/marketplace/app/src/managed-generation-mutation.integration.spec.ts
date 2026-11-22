@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 describe("managed Marketplace helper with an installed-shaped candidate", () => {
+  // case: S-269.12
   it("runs the installed helper child to install a real adapter with the receipt-pinned shared cache", async () => {
     const installRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "managed-marketplace-child-")));
     const active = path.join(installRoot, "versions", "1.0.0");
@@ -16,7 +17,7 @@ describe("managed Marketplace helper with an installed-shaped candidate", () => 
     const home = path.join(installRoot, "test-home");
     const packageId = "@kb-labs/integration-adapter";
     const sealedId = "@kb-labs/sealed-fixture";
-    const packageFiles = new Map<string, { archive: Buffer; integrity: string }>();
+    const packageFiles = new Map<string, Map<string, { archive: Buffer; integrity: string }>>();
     let registryUrl = "";
     const server = createServer(async (request, response) => {
       const requestPath = decodeURIComponent(new URL(request.url ?? "/", `http://${request.headers.host}`).pathname.slice(1));
@@ -24,35 +25,45 @@ describe("managed Marketplace helper with an installed-shaped candidate", () => 
       const name = isTarball ? requestPath.slice(0, requestPath.indexOf("/-/")) : requestPath;
       const published = packageFiles.get(name);
       if (!published) { response.writeHead(404).end("not found"); return; }
-      if (isTarball) { response.writeHead(200, { "content-type": "application/octet-stream" }).end(published.archive); return; }
       const fileName = name.split("/").at(-1);
+      if (isTarball) {
+        const version = [...published.keys()].find(value => requestPath.endsWith(`-${value}.tgz`));
+        const archive = version ? published.get(version) : undefined;
+        if (!archive) { response.writeHead(404).end("not found"); return; }
+        response.writeHead(200, { "content-type": "application/octet-stream" }).end(archive.archive);
+        return;
+      }
+      const versions = Object.fromEntries([...published.entries()].map(([version, artifact]) => [version, {
+        name, version, kb: { adapter: { manifest: "./manifest.mjs" } }, dependencies: {},
+        dist: { integrity: artifact.integrity, tarball: `${registryUrl}/${encodeURIComponent(name)}/-/${fileName}-${version}.tgz` },
+      }]));
+      const latest = [...published.keys()].sort((left, right) => left.localeCompare(right, undefined, { numeric: true })).at(-1)!;
       response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
         name,
-        "dist-tags": { latest: "1.0.0" },
-        time: { "1.0.0": new Date().toISOString() },
-        versions: { "1.0.0": {
-          name, version: "1.0.0", kb: { adapter: { manifest: "./manifest.mjs" } }, dependencies: {},
-          dist: { integrity: published.integrity, tarball: `${registryUrl}/${encodeURIComponent(name)}/-/${fileName}-1.0.0.tgz` },
-        } },
+        "dist-tags": { latest },
+        time: Object.fromEntries([...published.keys()].map(version => [version, new Date().toISOString()])),
+        versions,
       }));
     });
 
-    async function publish(name: string): Promise<void> {
-      const packageRoot = path.join(installRoot, "published", name.replaceAll("/", "__"), "package");
+    async function publish(name: string, version: string): Promise<void> {
+      const packageRoot = path.join(installRoot, "published", name.replaceAll("/", "__"), version, "package");
       await fs.mkdir(packageRoot, { recursive: true });
       await fs.writeFile(path.join(packageRoot, "package.json"), JSON.stringify({
-        name, version: "1.0.0", type: "module", kb: { adapter: { manifest: "./manifest.mjs" } },
+        name, version, type: "module", kb: { adapter: { manifest: "./manifest.mjs" } },
       }));
       await fs.writeFile(path.join(packageRoot, "manifest.mjs"), `export const manifest = ${JSON.stringify({
-        schema: "kb.adapter/1", manifestVersion: "1.0.0", id: name, name, version: "1.0.0",
+        schema: "kb.adapter/1", manifestVersion: version, id: name, name, version,
         type: "extension", implements: "IAdapterFixture", networkRequired: false,
       })};`);
       await fs.mkdir(path.join(packageRoot, "dist"), { recursive: true });
       await fs.writeFile(path.join(packageRoot, "dist", "index.js"), "export { manifest } from '../manifest.mjs';\n");
-      const archivePath = path.join(installRoot, "published", `${name.replaceAll("/", "__")}.tgz`);
+      const archivePath = path.join(installRoot, "published", `${name.replaceAll("/", "__")}-${version}.tgz`);
       execFileSync("tar", ["-czf", archivePath, "-C", path.dirname(packageRoot), "package"]);
       const archive = await fs.readFile(archivePath);
-      packageFiles.set(name, { archive, integrity: `sha512-${createHash("sha512").update(archive).digest("base64")}` });
+      const versions = packageFiles.get(name) ?? new Map();
+      versions.set(version, { archive, integrity: `sha512-${createHash("sha512").update(archive).digest("base64")}` });
+      packageFiles.set(name, versions);
     }
 
     try {
@@ -60,8 +71,9 @@ describe("managed Marketplace helper with an installed-shaped candidate", () => 
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("fixture registry did not bind");
       registryUrl = `http://127.0.0.1:${address.port}`;
-      await publish(packageId);
-      await publish(sealedId);
+      await publish(packageId, "1.0.0");
+      await publish(packageId, "1.1.0");
+      await publish(sealedId, "1.0.0");
 
       for (const root of [active, candidate]) {
         await fs.mkdir(path.join(root, ".kb", "v2"), { recursive: true });
@@ -71,7 +83,7 @@ describe("managed Marketplace helper with an installed-shaped candidate", () => 
       await fs.mkdir(path.join(active, ".kb"), { recursive: true });
       await fs.writeFile(path.join(active, ".kb", "kb.config.jsonc"), JSON.stringify({ marketplace: { sources: [{ kind: "npm", url: registryUrl }] } }));
       await fs.mkdir(path.join(cacheRoot, "packages"), { recursive: true });
-      const sealed = packageFiles.get(sealedId)!;
+      const sealed = packageFiles.get(sealedId)!.get("1.0.0")!;
       const sealedDigest = createHash("sha256").update(sealed.archive).digest("hex");
       await fs.writeFile(path.join(cacheRoot, "packages", `${sealedDigest}.tgz`), sealed.archive);
       const receipt = { installationId: "fixture-installation", plan: { artifacts: [{ package: sealedId, sha256: sealedDigest, tarball: "registry/sealed-fixture.tgz", kind: "sdk" }] } };
@@ -105,23 +117,28 @@ describe("managed Marketplace helper with an installed-shaped candidate", () => 
         KB_MANAGED_ARTIFACT_CACHE_ROOT: cacheRoot,
         KB_HOME: home,
       };
-      const child = spawn(process.execPath, [helperPath, "--managed-generation-mutation"], { cwd: candidate, env: helperEnv, stdio: ["pipe", "pipe", "pipe"] });
-      const stdout: Buffer[] = [];
-      const stderr: Buffer[] = [];
-      child.stdout.on("data", chunk => stdout.push(Buffer.from(chunk)));
-      child.stderr.on("data", chunk => stderr.push(Buffer.from(chunk)));
-      const exit = new Promise<void>((resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", code => code === 0 ? resolve() : reject(new Error(`installed Marketplace helper exited ${code}: ${Buffer.concat(stderr).toString("utf8")}`)));
-      });
-      child.stdin.end(JSON.stringify(request));
-      const timeout = setTimeout(() => child.kill("SIGKILL"), 20_000);
-      try { await exit; } finally { clearTimeout(timeout); }
+      async function runHelper(mutation: unknown): Promise<unknown> {
+        const child = spawn(process.execPath, [helperPath, "--managed-generation-mutation"], { cwd: candidate, env: helperEnv, stdio: ["pipe", "pipe", "pipe"] });
+        const stdout: Buffer[] = [];
+        const stderr: Buffer[] = [];
+        child.stdout.on("data", chunk => stdout.push(Buffer.from(chunk)));
+        child.stderr.on("data", chunk => stderr.push(Buffer.from(chunk)));
+        const exit = new Promise<void>((resolve, reject) => {
+          child.once("error", reject);
+          child.once("close", code => code === 0 ? resolve() : reject(new Error(`installed Marketplace helper exited ${code}: ${Buffer.concat(stderr).toString("utf8")}`)));
+        });
+        child.stdin.end(JSON.stringify({ mutation, environment: {} }));
+        const timeout = setTimeout(() => child.kill("SIGKILL"), 20_000);
+        try { await exit; } finally { clearTimeout(timeout); }
+        return JSON.parse(Buffer.concat(stdout).toString("utf8")) as unknown;
+      }
 
-      const result = JSON.parse(Buffer.concat(stdout).toString("utf8")) as { schema: number; operation: string; installed: Array<{ packageId: string; version: string; primaryKind: string }> };
+      const result = await runHelper(request.mutation) as { schema: number; operation: string; installed: Array<{ packageId: string; version: string; primaryKind: string }> };
       expect(result).toMatchObject({ schema: 1, operation: "install", installed: [{ packageId, version: "1.0.0", primaryKind: "adapter" }] });
-      const lock = JSON.parse(await fs.readFile(path.join(candidate, ".kb", "marketplace.lock"), "utf8")) as { adapters: Record<string, { source?: string; enabled?: boolean }> };
-      expect(lock.adapters[packageId]).toMatchObject({ source: "marketplace", enabled: true });
+      const update = await runHelper({ operation: "update", packageIds: [packageId] }) as { schema: number; operation: string; installed: Array<{ packageId: string; version: string; primaryKind: string }> };
+      expect(update).toMatchObject({ schema: 1, operation: "update", installed: [{ packageId, version: "1.1.0", primaryKind: "adapter" }] });
+      const lock = JSON.parse(await fs.readFile(path.join(candidate, ".kb", "marketplace.lock"), "utf8")) as { adapters: Record<string, { version?: string; source?: string; enabled?: boolean }> };
+      expect(lock.adapters[packageId]).toMatchObject({ version: "1.1.0", source: "marketplace", enabled: true });
       expect(await fs.lstat(path.join(candidate, ".kb", "v2", "cache")).catch(error => ({ code: (error as NodeJS.ErrnoException).code }))).toMatchObject({ code: "ENOENT" });
     } finally {
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
