@@ -75,7 +75,7 @@ type LocalGatewayServer = {
 };
 
 async function createLocalServer(options: Omit<CreateServerOptions, 'auth'>): Promise<LocalGatewayServer> {
-  const server = await createServer({ ...options, auth: { internalSecret: LOCAL_INTERNAL_SECRET } });
+  const server = await createServer({ ...options, auth: { internalSecret: LOCAL_INTERNAL_SECRET, projectScopeAllowed: true } });
   return {
     inject: (opts) => server.inject({ ...opts, headers: { ...LOCAL_GATEWAY_HEADERS, ...opts.headers } }),
     close: () => server.close(),
@@ -127,7 +127,7 @@ describe('Marketplace API error boundary', () => {
     const doctor = vi.fn().mockResolvedValue({ ok: true, issues: [] });
     const service = { install, list, doctor } as unknown as MarketplaceService;
     const internalSecret = 'test-gateway-internal-secret';
-    const secured = await createServer({ service, logger, auth: { internalSecret } });
+    const secured = await createServer({ service, logger, auth: { internalSecret, projectScopeAllowed: true } });
     servers.push(secured);
 
     const direct = await secured.inject({
@@ -235,7 +235,7 @@ describe('Marketplace API error boundary', () => {
     expect(install).toHaveBeenCalledTimes(1);
 
     const localInstall = vi.fn().mockResolvedValue({ installed: [], warnings: [], scope: 'platform' });
-    const local = await createServer({ service: { install: localInstall } as unknown as MarketplaceService, logger, auth: { internalSecret } });
+    const local = await createServer({ service: { install: localInstall } as unknown as MarketplaceService, logger, auth: { internalSecret, projectScopeAllowed: true } });
     servers.push(local);
     const localResponse = await local.inject({
       method: 'POST',
@@ -291,12 +291,74 @@ describe('Marketplace API error boundary', () => {
     expect(localInstall).toHaveBeenCalledTimes(1);
   });
 
+  // case: S-269.11
+  it('fails project scope closed without principal ownership and authorizes sync by its effective scope', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-project-owner-'));
+    roots.push(root);
+    const { logger } = makeContextLogger();
+    const internalSecret = 'project-owner-test-secret';
+    const memberHeaders = {
+      'x-internal-secret': internalSecret,
+      'x-kb-auth-type': 'user',
+      'x-kb-auth-user-id': 'tenant-member',
+      'x-kb-auth-namespace-id': 'tenant-a',
+      'x-kb-auth-tier': 'pro',
+      'x-kb-auth-permissions': JSON.stringify([PERMISSIONS.PLUGINS_READ, PERMISSIONS.PLUGINS_WRITE]),
+    };
+    const install = vi.fn();
+    const list = vi.fn();
+    const ownedScopeDenied = await createServer({
+      service: { install, list } as unknown as MarketplaceService,
+      logger,
+      auth: { internalSecret, projectScopeAllowed: false },
+    });
+    servers.push(ownedScopeDenied);
+
+    const projectRead = await ownedScopeDenied.inject({
+      method: 'GET',
+      url: '/api/v1/marketplace/packages?scope=project&projectRoot=' + encodeURIComponent(root),
+      headers: memberHeaders,
+    });
+    expect(projectRead.statusCode).toBe(403);
+    expect(projectRead.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_FORBIDDEN', details: { permission: PERMISSIONS.PLUGINS_READ } } });
+    expect(list).not.toHaveBeenCalled();
+
+    const projectInstall = await ownedScopeDenied.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      headers: memberHeaders,
+      payload: { specs: ['@kb-labs/example'], scope: 'project', projectRoot: root },
+    });
+    expect(projectInstall.statusCode).toBe(403);
+    expect(projectInstall.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_FORBIDDEN', details: { permission: PERMISSIONS.PLUGINS_WRITE } } });
+    expect(install).not.toHaveBeenCalled();
+
+    const sync = vi.fn().mockResolvedValue({ scanned: 0, added: [], updated: [], total: 0 });
+    const resolveSyncScope = vi.fn(async () => ({ scope: 'platform' as const, projectRoot: root }));
+    const syncPlatform = await createServer({
+      service: { sync, resolveSyncScope } as unknown as MarketplaceService,
+      logger,
+      auth: { internalSecret, projectScopeAllowed: true },
+    });
+    servers.push(syncPlatform);
+    const syncResponse = await syncPlatform.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/workspace/sync',
+      headers: memberHeaders,
+      payload: { include: ['plugins/*'], scope: 'project', projectRoot: root },
+    });
+    expect(syncResponse.statusCode).toBe(403);
+    expect(syncResponse.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_FORBIDDEN', details: { permission: PERMISSIONS.PLATFORM_SETTINGS_WRITE } } });
+    expect(resolveSyncScope).toHaveBeenCalledWith({ scope: 'project', projectRoot: root });
+    expect(sync).not.toHaveBeenCalled();
+  });
+
   it('refuses secured startup without the Gateway internal secret', async () => {
     const { logger } = makeContextLogger();
     await expect(createServer({
       service: {} as unknown as MarketplaceService,
       logger,
-      auth: { internalSecret: '' },
+      auth: { internalSecret: '', projectScopeAllowed: false },
     })).rejects.toThrow('Marketplace API requires GATEWAY_INTERNAL_SECRET in every mode');
   });
 

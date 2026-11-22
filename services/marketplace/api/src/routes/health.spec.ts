@@ -46,7 +46,7 @@ describe('marketplace observability surfaces', () => {
   });
 
   it('returns health and versioned observability documents', async () => {
-    const server = await createServer({ service: {} as any, logger, auth: { internalSecret: 'health-test-secret' } });
+    const server = await createServer({ service: {} as any, logger, auth: { internalSecret: 'health-test-secret', projectScopeAllowed: false } });
     servers.push(server);
 
     const healthResponse = await server.inject({ method: 'GET', url: '/health' });
@@ -73,7 +73,7 @@ describe('marketplace observability surfaces', () => {
   });
 
   it('renders canonical metrics as prometheus text', async () => {
-    const server = await createServer({ service: {} as any, logger, auth: { internalSecret: 'health-test-secret' } });
+    const server = await createServer({ service: {} as any, logger, auth: { internalSecret: 'health-test-secret', projectScopeAllowed: false } });
     servers.push(server);
 
     const response = await server.inject({ method: 'GET', url: '/metrics' });
@@ -87,9 +87,10 @@ describe('marketplace observability surfaces', () => {
       list: async () => [{ packageId: '@kb-labs/example', kind: 'plugin' }],
       doctor: async () => ({ ok: true, issues: [] }),
       sync: async () => ({ scanned: 2, added: 1, updated: 0 }),
+      resolveSyncScope: async (ctx: { scope: 'platform' | 'project'; projectRoot?: string }) => ctx,
     } as any;
 
-    const server = await createServer({ service, logger, auth: { internalSecret: 'health-test-secret' } });
+    const server = await createServer({ service, logger, auth: { internalSecret: 'health-test-secret', projectScopeAllowed: false } });
     servers.push(server);
 
     const listResponse = await server.inject({

@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
 import type { IProjectRegistry } from "@kb-labs/core-project-registry";
+import type { AuthContext } from "@kb-labs/gateway-contracts";
 import { createPluginsRoutes } from "../plugins-routes.js";
 import { MarketplaceClientError, type MarketplaceClient } from "../marketplace-client.js";
 
@@ -35,6 +36,11 @@ function stubMarketplace(overrides: Partial<MarketplaceClient> = {}): Marketplac
     ...overrides,
   } as unknown as MarketplaceClient;
 }
+
+const caller: AuthContext = {
+  type: "user", userId: "user-1", namespaceId: "tenant-1", tier: "pro",
+  permissions: ["plugins:read", "plugins:write"],
+};
 
 describe("createPluginsRoutes", () => {
   let kbHome: string;
@@ -61,9 +67,10 @@ describe("createPluginsRoutes", () => {
     await rm(projectDir, { recursive: true, force: true });
   });
 
-  async function setup(marketplace: MarketplaceClient) {
+  async function setup(marketplace: MarketplaceClient, authenticated = true, projectScopeAllowed = true) {
     app = Fastify();
-    await app.register(createPluginsRoutes({ registry, marketplace }));
+    if (authenticated) app.addHook("onRequest", async (request) => { request.authContext = caller; });
+    await app.register(createPluginsRoutes({ registry, marketplace, projectScopeAllowed }));
     await app.ready();
     return app;
   }
@@ -87,7 +94,7 @@ describe("createPluginsRoutes", () => {
       kind: "plugin",
       scope: "project",
       projectRoot: projectDir,
-    });
+    }, caller);
   });
 
   it("GET without projectId returns KB_RUNTIME_INPUT_INVALID", async () => {
@@ -124,6 +131,7 @@ describe("createPluginsRoutes", () => {
     expect(marketplace.setEnabled).toHaveBeenCalledWith(
       { packageId: "@kb-labs/commit", scope: "project", projectRoot: projectDir },
       true,
+      caller,
     );
   });
 
@@ -172,7 +180,7 @@ describe("createPluginsRoutes", () => {
     expect(res.statusCode).toBe(201);
     expect(marketplace.installPackages).toHaveBeenCalledWith({
       specs: ["@kb/demo@1.0.0"], scope: "project", projectRoot: projectDir,
-    });
+    }, caller);
   });
 
   it("POST /plugins/uninstall removes the package pin from the selected project", async () => {
@@ -189,6 +197,24 @@ describe("createPluginsRoutes", () => {
     expect(res.json()).toMatchObject({ ok: true, data: { id: "@kb/demo", removed: true } });
     expect(marketplace.uninstallPackages).toHaveBeenCalledWith({
       packageIds: ["@kb/demo"], scope: "project", projectRoot: projectDir,
-    });
+    }, caller);
+  });
+
+  it("fails closed when the Gateway did not provide an authenticated principal", async () => {
+    const marketplace = stubMarketplace();
+    const instance = await setup(marketplace, false);
+    const res = await instance.inject({ method: "GET", url: `/api/v1/plugins?projectId=${projectId}` });
+    expect(res.statusCode).toBe(401);
+    expect((res.json() as ErrorBody).error.code).toBe("KB_AUTH_REQUIRED");
+    expect(marketplace.listPackages).not.toHaveBeenCalled();
+  });
+
+  it("fails project routes closed before Marketplace access when project ownership is unavailable", async () => {
+    const marketplace = stubMarketplace();
+    const instance = await setup(marketplace, true, false);
+    const res = await instance.inject({ method: "GET", url: `/api/v1/plugins?projectId=${projectId}` });
+    expect(res.statusCode).toBe(403);
+    expect((res.json() as ErrorBody).error.code).toBe("KB_AUTH_FORBIDDEN");
+    expect(marketplace.listPackages).not.toHaveBeenCalled();
   });
 });

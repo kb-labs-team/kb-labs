@@ -60,7 +60,7 @@ describe("Marketplace image default config", () => {
       sources: [expect.objectContaining({ options: { registryUrl: generatedConfig.marketplace.sources[0]?.url } })],
     }));
     expect(mocks.createServer).toHaveBeenCalledWith(expect.objectContaining({
-      auth: { internalSecret: "fixture-internal-secret" },
+      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: false },
     }));
   });
 
@@ -91,5 +91,40 @@ describe("Marketplace image default config", () => {
     } as unknown as Parameters<typeof setup>[0];
     await expect(setup(context)).rejects.toThrow("KB_CONFIG_SECRET_MISSING: GATEWAY_INTERNAL_SECRET");
     expect(mocks.createServer).not.toHaveBeenCalled();
+  });
+
+  // case: S-269.11
+  it("allows project Marketplace scope only for the local single-user topology", async () => {
+    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "kb-marketplace-scope-policy-"));
+    const configPath = path.join(tempRoot, ".kb", "kb.config.json");
+    execFileSync(process.execPath, [producerPath, configPath], { cwd: workspaceRoot });
+    const config = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      gateway: { access: { mode: string } };
+      platform: { deployment: { topology: string } };
+    };
+    config.gateway.access.mode = "local";
+    config.platform.deployment.topology = "local";
+    await fs.writeFile(configPath, JSON.stringify(config));
+    mocks.requireEnvironmentSecret.mockReturnValue("fixture-internal-secret");
+    mocks.createServer.mockResolvedValue({ listen: vi.fn(), close: vi.fn() });
+    mocks.MarketplaceService.mockImplementation(function (options) { return options; });
+    mocks.createExtensionStore.mockReturnValue({});
+
+    const { setup } = await import("../bootstrap.js");
+    const context = {
+      logger: { info: vi.fn() }, port: 5070, host: "127.0.0.1", platformRoot: tempRoot,
+      netOffset: 0, platform: {}, runtime: {},
+    } as unknown as Parameters<typeof setup>[0];
+    await setup(context);
+    expect(mocks.createServer).toHaveBeenLastCalledWith(expect.objectContaining({
+      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: true },
+    }));
+
+    config.platform.deployment.topology = "k8s";
+    await fs.writeFile(configPath, JSON.stringify(config));
+    await setup(context);
+    expect(mocks.createServer).toHaveBeenLastCalledWith(expect.objectContaining({
+      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: false },
+    }));
   });
 });
