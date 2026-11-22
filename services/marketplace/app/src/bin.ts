@@ -7,7 +7,7 @@
 import { bootstrap } from "./bootstrap.js";
 import { runManagedGenerationMutation } from "./managed-generation-mutation.js";
 
-const run = process.argv.includes("--managed-generation-mutation")
+const run = process.argv[2] === "--managed-generation-mutation"
   ? runManagedGenerationMutation()
   : bootstrap(process.cwd());
 

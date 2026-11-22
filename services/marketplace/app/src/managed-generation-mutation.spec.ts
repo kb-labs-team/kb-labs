@@ -5,8 +5,8 @@ describe("managed Marketplace mutation boundary", () => {
   it("accepts only bounded platform mutation data", () => {
     expect(parseManagedGenerationMutation({ operation: "install", specs: ["@kb-labs/commit@1.2.3"], dev: false }))
       .toEqual({ operation: "install", specs: ["@kb-labs/commit@1.2.3"] });
-    expect(parseManagedGenerationMutation({ operation: "disable", packageId: "@kb-labs/commit" }))
-      .toEqual({ operation: "disable", packageId: "@kb-labs/commit" });
+    expect(parseManagedGenerationMutation({ operation: "install", specs: ["@kb-labs/commit@1.2.3"] }))
+      .toEqual({ operation: "install", specs: ["@kb-labs/commit@1.2.3"] });
   });
 
   it("rejects roots, environment, arbitrary scope, handlers and oversized requests", () => {
@@ -15,6 +15,8 @@ describe("managed Marketplace mutation boundary", () => {
       { operation: "install", specs: ["@kb-labs/commit@1.2.3"], scope: "project" },
       { operation: "install", specs: ["@kb-labs/commit@1.2.3"], env: { KB_PLATFORM_ROOT: "/tmp/other" } },
       { operation: "install", specs: ["@kb-labs/commit@1.2.3"], permissions: ["*" ] },
+      { operation: "uninstall", packageIds: ["@kb-labs/commit"] },
+      { operation: "update", packageIds: ["@kb-labs/commit"] },
       { operation: "install", specs: Array.from({ length: 33 }, () => "@kb-labs/commit@1.2.3") },
     ]) expect(() => parseManagedGenerationMutation(request)).toThrow();
   });
