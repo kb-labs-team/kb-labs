@@ -210,6 +210,10 @@ def write_mode_metadata(source: Path, destination: Path, mode: str, result: str,
     value["requestedSelection"] = requested_selection(selected_cases)
     value["requestedArea"] = selected_area or None
     value["requestedAreaUncoveredCases"] = requested_selection(uncovered_area_cases)
+    value["requestedAreaCoverage"] = (
+        "NOT_COVERED" if selected_area and value["requestedAreaUncoveredCases"]
+        else "CLAIMABLE_CASES_SELECTED" if selected_area else None
+    )
     if failure_reason:
         value["failureReason"] = failure_reason
     _write_metadata(destination, value)
