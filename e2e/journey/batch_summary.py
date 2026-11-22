@@ -59,6 +59,15 @@ def requested_selection(value: str) -> list[str]:
     return sorted(selection)
 
 
+def requested_area(value: str) -> str | None:
+    if not value.startswith("@area:"):
+        return None
+    area = value.removeprefix("@area:")
+    if not area or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789-" for char in area):
+        raise ValueError("product area selection is invalid")
+    return area
+
+
 def record_scoreboard_selection(path: Path, selected_cases: str, catalog: Path) -> None:
     value = _read_scoreboard(path.parent)
     release_gate_modes(value)
@@ -187,7 +196,8 @@ def verify_candidate_archive(metadata_path: Path, archive: Path) -> None:
 
 
 def write_mode_metadata(source: Path, destination: Path, mode: str, result: str, elapsed: int,
-                        selected_cases: str = "", failure_reason: str = "") -> None:
+                        selected_cases: str = "", failure_reason: str = "",
+                        selected_area: str = "") -> None:
     if mode not in {"local", "secured"} or result not in {"PASS", "FAIL", "NO_SELECTED_CLAIMS"}:
         raise ValueError("mode metadata has an unsupported mode or result")
     value = json.loads(source.read_text(encoding="utf-8"))
@@ -198,6 +208,7 @@ def write_mode_metadata(source: Path, destination: Path, mode: str, result: str,
     value["mode"] = mode
     value["result"] = result
     value["requestedSelection"] = requested_selection(selected_cases)
+    value["requestedArea"] = selected_area or None
     if failure_reason:
         value["failureReason"] = failure_reason
     _write_metadata(destination, value)
@@ -208,7 +219,8 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path,
     shared_dir = producer / "shared"
     local_dir = local / "local"
     secured_dir = secured / "secured"
-    selected = requested_selection(authoritative_selection)
+    area = requested_area(authoritative_selection)
+    selected = [] if area else requested_selection(authoritative_selection)
     output.mkdir(parents=True, exist_ok=True)
     for mode, source in (("shared", shared_dir), ("local", local_dir), ("secured", secured_dir)):
         if not source.is_dir() or source.resolve() != (output / mode).resolve():
@@ -320,6 +332,15 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path,
         raise ValueError("batch mode metadata has an invalid requestedSelection")
     if any(len(selection) != len(set(selection)) for selection in requested_selections.values()):
         raise ValueError("batch mode metadata requestedSelection contains duplicate IDs")
+    requested_areas = {mode: metadata.get("requestedArea") for mode, metadata in mode_metadata.items()}
+    if area:
+        if any(requested_areas[mode] != area for mode in ("local", "secured")):
+            raise ValueError("mode requestedArea does not match the producer product-area selection")
+        if requested_selections["local"] != requested_selections["secured"]:
+            raise ValueError("local and secured modes resolved different case IDs for the selected product area")
+        selected = requested_selections["local"]
+    elif any(requested_areas.values()):
+        raise ValueError("mode reports a product area but the producer selection does not")
 
     def reject_mode_selection(mode: str, reason: str) -> None:
         metadata = mode_metadata[mode]
@@ -380,6 +401,8 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path,
         if unit_log.is_file() and unit_log.read_text(encoding="utf-8").startswith("SKIPPED:"):
             lines.append("- Shared generic journey unit suite: skipped for this partial selection; full journey batch remains the gating verification.")
         lines.extend(["", "- Modes: local and secured", "- Reports and logs: one directory per mode", ""])
+        if area:
+            lines.extend([f"- Product area: `{area}`", ""])
         for mode in mode_metadata:
             if mode_without_selection[mode]:
                 lines.append(f"- {mode}: no selected claims in this mode")
@@ -469,11 +492,12 @@ def main(argv: list[str]) -> int:
             print(f"journey batch metadata could not be written: {error}; next: rerun e2e/journey/batch.sh prepare",
                   file=sys.stderr)
             return 1
-    if len(argv) in {7, 8, 9} and argv[1] == "mode-metadata":
+    if len(argv) in {7, 8, 9, 10} and argv[1] == "mode-metadata":
         try:
             write_mode_metadata(Path(argv[2]), Path(argv[3]), argv[4], argv[5], int(argv[6]),
                                 argv[7] if len(argv) >= 8 else "",
-                                argv[8] if len(argv) == 9 else "")
+                                argv[8] if len(argv) >= 9 else "",
+                                argv[9] if len(argv) == 10 else "")
             return 0
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
             print(f"journey mode metadata could not be written: {error}; next: rerun e2e/journey/batch.sh mode {argv[4]}",

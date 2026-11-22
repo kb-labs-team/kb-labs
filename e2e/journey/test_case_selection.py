@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import select_from_cases
 from select_from_cases import (read_coverage_result, runners_for_case_selection,
-                               selection_from_coverage, selectors_from_coverage)
+                               case_ids_for_area, selection_from_coverage, selectors_from_coverage)
 from service_steps import Journey
 from service_steps import FlowGraph
 from journey_selection import JourneySelection
@@ -29,6 +29,7 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
         "mode": mode,
         "cases": [{
             "id": "S-042",
+            "area": "marketplace",
             "status": status,
             "release": release,
             "steps": [{"stepId": "S-042.1", "claims": [{"source": source, "kind": kind, "line": line}]}],
@@ -37,6 +38,51 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
 
 
 class CaseJourneySelectionTests(unittest.TestCase):
+    # case: S-262.18
+    def test_product_area_selects_active_qa_cases_by_catalog_area(self):
+        marketplace = {"mode": "local", "cases": [
+            {"id": "S-010", "area": "marketplace", "status": "active"},
+            {"id": "S-268", "area": "marketplace", "status": "active"},
+            {"id": "S-047", "area": "marketplace", "status": "planned"},
+            {"id": "S-120", "area": "studio", "status": "active"},
+        ]}
+        secured = {"mode": "secured", "cases": [
+            {"id": "S-010", "area": "marketplace", "status": "active"},
+            {"id": "S-268", "area": "marketplace", "status": "active"},
+            {"id": "S-047", "area": "marketplace", "status": "planned"},
+            {"id": "S-120", "area": "studio", "status": "active"},
+        ]}
+
+        self.assertEqual(case_ids_for_area([marketplace, secured], "marketplace"), ["S-010", "S-268"])
+        self.assertEqual(case_ids_for_area([marketplace, secured], "studio"), ["S-120"])
+        with self.assertRaisesRegex(ValueError, "unknown or empty product area"):
+            case_ids_for_area([marketplace], "registry")
+        with self.assertRaisesRegex(ValueError, "lowercase QA area slug"):
+            case_ids_for_area([marketplace], "Marketplace")
+        broken = {"mode": "secured", "cases": [
+            {"id": "S-010", "area": "platform-core", "status": "active"},
+        ]}
+        with self.assertRaisesRegex(ValueError, "inconsistent product areas"):
+            case_ids_for_area([marketplace, broken], "marketplace")
+
+    def test_coverage_reader_attaches_areas_from_the_qa_case_catalog(self):
+        def fake_cli(command, **_kwargs):
+            if command[2:5] == ["qa", "cases", "list"]:
+                payload = {"ok": True, "data": {"cases": [
+                    {"id": "S-010", "area": "marketplace"},
+                ]}}
+            else:
+                mode = command[command.index("--mode") + 1]
+                payload = {"ok": True, "data": {"mode": mode, "cases": [
+                    {"id": "S-010", "status": "active", "steps": []},
+                ]}}
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+        with patch.object(select_from_cases, "run_hermetic_cli", side_effect=fake_cli):
+            results = select_from_cases.coverage_results(Path("/workspace"))
+
+        self.assertEqual([item["cases"][0]["area"] for item in results], ["marketplace", "marketplace"])
+
     def test_commit_default_and_registry_lane_step_graphs_are_disjoint(self):
         root = Path(__file__).resolve().parents[2]
         source = "e2e/journey/marketplace_steps.py"

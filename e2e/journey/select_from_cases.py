@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import ast
+import re
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -1011,6 +1012,29 @@ def selectors_from_coverage(results: list[dict]) -> list[str]:
     return sorted(selected)
 
 
+def case_ids_for_area(results: list[dict], area: str) -> list[str]:
+    """Resolve a focused product-area run from the QA catalog metadata."""
+    if not isinstance(area, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", area):
+        raise ValueError(f"invalid product area {area!r}; use a lowercase QA area slug")
+    area_by_id: dict[str, str] = {}
+    for coverage in results:
+        for case in coverage.get("cases", []):
+            case_id = case.get("id")
+            case_area = case.get("area")
+            if case.get("status") != "active":
+                continue
+            if not isinstance(case_id, str) or not isinstance(case_area, str) or not case_area:
+                raise ValueError("QA coverage omitted active case area metadata")
+            previous = area_by_id.setdefault(case_id, case_area)
+            if previous != case_area:
+                raise ValueError(f"QA coverage reports inconsistent product areas for {case_id}")
+    selected = sorted(case_id for case_id, case_area in area_by_id.items() if case_area == area)
+    if not selected:
+        available = ", ".join(sorted(set(area_by_id.values()))) or "none"
+        raise ValueError(f"unknown or empty product area {area!r}; active QA areas: {available}")
+    return selected
+
+
 def selection_from_coverage(results: list[dict], requested: str, *, mode: str | None = None,
                             requested_runners: str | None = None) -> dict:
     """Resolve requested cases/steps against the QA coverage claim registry."""
@@ -1139,6 +1163,9 @@ def main() -> int:
         results = coverage_results()
         print_report_text(json.dumps(runners_for_case_selection(results, sys.argv[3], sys.argv[2])), flush=True)
         return 0
+    if len(sys.argv) == 3 and sys.argv[1] == "--case-ids-for-area":
+        print_report_text(",".join(case_ids_for_area(coverage_results(), sys.argv[2])), flush=True)
+        return 0
     results = coverage_results()
     requested = ",".join(read_requested_cases(os.environ))
     if requested:
@@ -1151,8 +1178,17 @@ def main() -> int:
 
 
 def coverage_results(root: Path | None = None) -> list[dict]:
-    """Read the QA coverage of both modes from the workspace CLI; a failed run names its typed error."""
+    """Read mode coverage and attach area metadata from the same QA case catalog."""
     root = Path.cwd() if root is None else root
+    list_command = ["node", "./cli/bin/dist/bin.js", "qa", "cases", "list", "--json"]
+    with invocation_context(step_id="journey.case-selection"):
+        catalog_result = run_hermetic_cli(list_command, cwd=root, env=os.environ, timeout=120,
+                                          workspace_root=root)
+    catalog = decode_ux_success_result(read_ux_cli_result(catalog_result))
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("cases"), list):
+        raise ValueError("QA case catalog result has no cases array")
+    areas = {item.get("id"): item.get("area") for item in catalog["cases"]
+             if isinstance(item, dict) and isinstance(item.get("id"), str)}
     results = []
     for mode in ("local", "secured"):
         command = ["node", "./cli/bin/dist/bin.js", "qa", "coverage", "show",
@@ -1162,7 +1198,11 @@ def coverage_results(root: Path | None = None) -> list[dict]:
                                       workspace_root=root)
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
-        results.append(read_coverage_result(result))
+        coverage = read_coverage_result(result)
+        for case in coverage.get("cases", []):
+            if isinstance(case, dict) and case.get("id") in areas:
+                case["area"] = areas[case["id"]]
+        results.append(coverage)
     return results
 
 

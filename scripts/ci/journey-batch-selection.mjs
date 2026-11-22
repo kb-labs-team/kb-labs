@@ -15,6 +15,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const CASES_REF = /^batch\/.+\/cases\/(?<encoded>.+)$/;
+const AREA_REF = /^batch\/.+\/areas\/(?<area>.*)$/;
 
 function decodeCases(encoded) {
   return Buffer.from(encoded.replace(/_/g, '/').replace(/-/g, '+'), 'base64').toString('utf8');
@@ -24,7 +25,15 @@ function decodeCases(encoded) {
 export const TRIGGER_SELECTIONS = {
   push: ({ ref }) => {
     const match = CASES_REF.exec(ref);
-    return match ? `cases:${match.groups.encoded}` : 'full';
+    if (match) return `cases:${match.groups.encoded}`;
+    const area = AREA_REF.exec(ref);
+    if (area) {
+      if (!/^[a-z][a-z0-9-]*$/.test(area.groups.area)) {
+        throw new Error(`journey batch ref "${ref}" has an invalid or empty product area; use a lowercase QA area slug`);
+      }
+      return `area:${area.groups.area}`;
+    }
+    return 'full';
   },
   pull_request: () => 'full',
   workflow_dispatch: () => 'full',
@@ -47,12 +56,14 @@ export function resolveSelection(event, ref) {
 export function batchArguments(selection) {
   if (selection === 'full') return [];
   if (selection.startsWith('cases:')) return ['--cases', decodeCases(selection.slice(6))];
+  if (selection.startsWith('area:')) return ['--area', selection.slice(5)];
   throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
 }
 
 export function sharedUnitSuiteMode(selection) {
   if (selection === 'full') return 'run';
   if (selection.startsWith('cases:') && decodeCases(selection.slice(6)).trim() !== '') return 'skip';
+  if (selection.startsWith('area:') && /^[a-z][a-z0-9-]*$/.test(selection.slice(5))) return 'skip';
   throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
 }
 
@@ -61,6 +72,9 @@ export function selectionIds(selection) {
   if (selection.startsWith('cases:')) {
     const ids = decodeCases(selection.slice(6)).trim();
     if (ids) return ids;
+  }
+  if (selection.startsWith('area:') && /^[a-z][a-z0-9-]*$/.test(selection.slice(5))) {
+    return `@area:${selection.slice(5)}`;
   }
   throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
 }

@@ -199,6 +199,11 @@ exit 0
         self._script(self.bin / "batch-python", f'''#!/bin/sh
 case "$1" in
   *select_from_cases.py)
+    if [ "${{2:-}}" = "--case-ids-for-area" ]; then
+      [ "${{3:-}}" = marketplace ] || exit 2
+      printf 'S-268.1,S-268.2\\n'
+      exit 0
+    fi
     mode="$KB_JOURNEY_SELECTION_MODE"
     case "$mode" in local) runners="${{SELECTED_RUNNERS_LOCAL:-[]}}" ;; secured) runners="${{SELECTED_RUNNERS_SECURED:-[]}}" ;; *) exit 2 ;; esac
     SELECTED_RUNNERS="$runners" "{sys.executable}" -c 'import json,os; tokens=[x.strip() for x in os.environ["KB_JOURNEY_CASES"].split(",") if x.strip()]; claims=[x if "." in x else x+".1" for x in tokens]; print(json.dumps({{"selection":tokens,"steps":claims,"prerequisiteSteps":[],"selectedOwningSteps":{{"selected owner":claims}},"selectedClaimOwners":{{"selected owner":claims}},"runners":json.loads(os.environ["SELECTED_RUNNERS"])}}))'
@@ -869,6 +874,55 @@ exec "$REAL_TAR" "$@"
         )
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("cases S-023,S-024", self.calls.read_text().splitlines())
+
+    # case: S-262.18
+    def test_product_area_records_partial_verdict_and_catalog_selection(self):
+        import json
+
+        # Give both mode scoreboards the same requested active-case scope.
+        for fixture in self.scoreboard_fixtures.values():
+            scoreboard = json.loads(fixture.read_text())
+            scoreboard["selection"] = ["S-268.1", "S-268.2"]
+            fixture.write_text(json.dumps(scoreboard), encoding="utf-8")
+
+        producer = self.root / "producer"
+        prepared = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "prepare", str(producer)],
+            cwd=self.root, env=dict(self.env, BATCH_SELECTION="area:marketplace"),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr + prepared.stdout)
+
+        local = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "local",
+             str(producer), str(self.root / "local-artifact"), "--area", "marketplace"],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_LOCAL='["marketplace-registry"]'),
+            text=True, capture_output=True, check=False,
+        )
+        secured = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "mode", "secured",
+             str(producer), str(self.root / "secured-artifact"), "--area", "marketplace"],
+            cwd=self.root, env=dict(self.env, SELECTED_RUNNERS_SECURED='["marketplace-registry"]'),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(local.returncode, 0, local.stderr + local.stdout)
+        self.assertEqual(secured.returncode, 0, secured.stderr + secured.stdout)
+        for mode in ("local", "secured"):
+            metadata = json.loads((self.root / f"{mode}-artifact/{mode}/batch-metadata.json").read_text())
+            self.assertEqual(metadata["requestedArea"], "marketplace")
+            self.assertEqual(metadata["requestedSelection"], ["S-268.1", "S-268.2"])
+
+        summary = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
+             str(self.root / "summary"), str(producer), str(self.root / "local-artifact"),
+             str(self.root / "secured-artifact"), "--selection", "@area:marketplace"],
+            cwd=self.root, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(summary.returncode, 0, summary.stderr)
+        rendered = (self.root / "summary/shared/summary.md").read_text()
+        self.assertIn("- Product area: `marketplace`", rendered)
+        self.assertIn("- Result: PARTIAL", rendered)
+        self.assertNotIn("- Result: PASS", rendered)
 
     # case: S-262.1
     def test_mode_refuses_a_candidate_artifact_from_another_commit(self):
