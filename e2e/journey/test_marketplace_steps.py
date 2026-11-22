@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
+                               marketplace_platform_config_path,
                                configured_marketplace_source_kinds,
                                commit_publish_command,
                                _prepare_registry_commit_publish_package,
@@ -78,6 +79,23 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    # case: S-268.6
+    def test_marketplace_update_config_resolves_through_active_version(self):
+        with tempfile.TemporaryDirectory(prefix="kb-marketplace-config-layout-") as directory:
+            platform = Path(directory) / "platform"
+            active = platform / "versions" / "1.0.0"
+            (active / ".kb").parent.mkdir(parents=True)
+            (platform / "state").mkdir(parents=True)
+            config = platform / "state" / "kb.config.jsonc"
+            config.write_text('{"marketplace":{"sources":[]}}\n', encoding="utf-8")
+            (active / ".kb").symlink_to("../../state", target_is_directory=True)
+            (platform / "current").symlink_to("versions/1.0.0", target_is_directory=True)
+
+            resolved = marketplace_platform_config_path(platform)
+
+            self.assertEqual(resolved.read_text(encoding="utf-8"), config.read_text(encoding="utf-8"))
+            self.assertNotEqual(resolved, platform / ".kb" / "kb.config.jsonc")
+
     # case: S-010.8
     def test_transitive_dependency_install_step_runs_for_local_and_secured_service_owners(self):
         for mode, selector in (("local", "service-local:explore"),
