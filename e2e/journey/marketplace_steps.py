@@ -187,16 +187,6 @@ def _transitive_npm_fixture_dependencies(dependency_id: str, sdk_version: str) -
     }
 
 
-def _register_commit_update_fixture_step(journey: Journey, check: Callable[[], str | None]):
-    """Register the update fixture only when its dependent lifecycle case is selected."""
-    return journey.step(
-        "publish next-major Commit update fixture",
-        "marketplace-fixtures",
-        check,
-        requires=("step:install Commit into the project for the route lifecycle",),
-    )
-
-
 def _output(result: CompletedProcess[str], command: list[str]) -> str:
     if result.returncode != 0:
         detail = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
@@ -1616,7 +1606,8 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
         update_fixture["version"] = publish_commit_update_fixture(
             registry, commit_fixture_source_version(workspace), base_env, runner)
-    _register_commit_update_fixture_step(journey, publish_update_fixture)
+    journey.step("publish next-major Commit update fixture", "marketplace-fixtures", publish_update_fixture,
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def update_commit() -> None:
         command = ["marketplace", "update", "@kb-labs/commit", "--scope", "project", "--json"]
