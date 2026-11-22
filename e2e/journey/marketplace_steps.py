@@ -895,6 +895,37 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
 
     def assert_signature_and_integrity_fail_closed() -> None:
         original_lock = lock_path.read_bytes()
+        workspace = Path(env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+        active_platform = active_platform_root(Path(env["KB_JOURNEY_PLATFORM_ROOT"]))
+        publish_env = dict(env)
+        publish_env["KB_REGISTRY_URL"] = (
+            f"{_installed_gateway_url(env).rstrip('/')}/api/v1/marketplace-registry/api/v1")
+        with tempfile.TemporaryDirectory(prefix="kb-registry-integrity-test-",
+                                         dir=env.get("HOME")) as fixture_directory:
+            fixture_package, test_version = _prepare_registry_commit_publish_package(
+                workspace, Path(fixture_directory), active_platform, publish_env, runner)
+            publication = _json(
+                _publish_workspace_fixture(workspace, str(fixture_package), publish_env, runner),
+                commit_publish_command(fixture_package))
+        if publication.get("version") != test_version:
+            raise RuntimeError("Registry integrity fixture published a different Commit version")
+        resolved = _registry_resolve_exact_commit_version(publish_env, test_version)
+        if (not isinstance(resolved, dict) or resolved.get("id") != package
+                or resolved.get("version") != test_version or not resolved.get("integrity")):
+            raise RuntimeError("Registry did not resolve the uncached integrity test version and its pin")
+        previous_lock = json.loads(original_lock)
+        previous_entry = previous_lock.get("plugins", {}).get(package)
+        previous_version = previous_entry.get("version") if isinstance(previous_entry, dict) else None
+        if (not isinstance(previous_version, str)
+                or _release_version_tuple(test_version) <= _release_version_tuple(previous_version)):
+            raise RuntimeError("Registry integrity test version is not higher than the installed project pin")
+
+        kb_home_value = env.get("KB_HOME", "").strip()
+        kb_home = (Path(kb_home_value).expanduser() if kb_home_value
+                   else Path(env.get("HOME", str(Path.home()))) / ".kb")
+        test_store_entry = kb_home / "store" / "entries" / f"@kb-labs+commit@{test_version}"
+        if test_store_entry.exists():
+            raise RuntimeError("Registry integrity test version is already installed in the extension store")
         try:
             for fault, code in (("signature", "KB_MARKETPLACE_SIGNATURE_INVALID"),
                                 ("integrity", "KB_MARKETPLACE_INTEGRITY_MISMATCH")):
@@ -902,6 +933,8 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
                 _assert_catalogued_marketplace_failure(project, env, runner, package, code)
                 if lock_path.read_bytes() != original_lock:
                     raise RuntimeError(f"{fault} failure changed the Marketplace lock")
+                if test_store_entry.exists():
+                    raise RuntimeError(f"{fault} failure installed the unverified Commit version")
         finally:
             _set_marketplace_proxy_faults(project, env, runner, {})
 
