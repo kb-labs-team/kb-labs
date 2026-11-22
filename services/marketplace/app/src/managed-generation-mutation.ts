@@ -1,4 +1,4 @@
-import { readKbConfig, type MarketplaceSourcesConfig } from "@kb-labs/core-config";
+import { interpolateConfig, readRawKbConfig, type MarketplaceSourcesConfig } from "@kb-labs/core-config";
 import { NoOpLogger } from "@kb-labs/core-platform/noop";
 import { MarketplaceService } from "@kb-labs/marketplace-core";
 import { NpmPackageSource, RegistryPackageSource } from "@kb-labs/marketplace-npm";
@@ -8,6 +8,13 @@ import * as path from "node:path";
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function referencedMarketplaceEnvironment(value: unknown, names = new Set<string>()): string[] {
+  if (typeof value === "string") for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) names.add(match[1]!);
+  else if (Array.isArray(value)) for (const item of value) referencedMarketplaceEnvironment(item, names);
+  else if (record(value)) for (const item of Object.values(value)) referencedMarketplaceEnvironment(item, names);
+  return [...names].sort();
 }
 
 export async function assertManagedCandidateRoots(platformRoot: string, configRoot: string, processWorkingDirectory = process.cwd()): Promise<void> {
@@ -50,9 +57,18 @@ export async function runManagedGenerationMutation(): Promise<void> {
     if (size > 64 * 1024) throw new Error("managed Marketplace request exceeds size limit");
     chunks.push(bytes);
   }
-  const request = parseManagedGenerationMutation(JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown);
-  const config = await readKbConfig(configRoot, { required: true });
-  const marketplace = (config?.data as { marketplace?: { sources?: MarketplaceSourcesConfig } } | undefined)?.marketplace;
+  const envelope = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  if (!record(envelope) || Object.keys(envelope).some(key => key !== "mutation" && key !== "environment") || !record(envelope.environment)) throw new Error("invalid managed Marketplace helper envelope");
+  const request = parseManagedGenerationMutation(envelope.mutation);
+  const rawConfig = await readRawKbConfig(configRoot);
+  const rawData = record(rawConfig?.data) ? rawConfig.data : {};
+  const rawMarketplace = rawData.marketplace;
+  const environmentNames = referencedMarketplaceEnvironment(record(rawMarketplace) ? rawMarketplace.sources : undefined);
+  const providedEnvironment = envelope.environment;
+  if (Object.keys(providedEnvironment).some(name => !environmentNames.includes(name)) || environmentNames.some(name => typeof providedEnvironment[name] !== "string")) {
+    throw new Error("managed Marketplace credentials do not match configured source references");
+  }
+  const marketplace = interpolateConfig(rawMarketplace, true, providedEnvironment as NodeJS.ProcessEnv) as { sources?: MarketplaceSourcesConfig } | undefined;
   const configured = marketplace?.sources;
   if (!configured?.[0]) throw new Error("marketplace.sources is not configured");
   const sources = [
@@ -63,28 +79,27 @@ export async function runManagedGenerationMutation(): Promise<void> {
     platformRoot,
     logger: new NoOpLogger(),
     sources,
-    resolveSelectedAdapterSlot: async packageId => {
-      const current = await readKbConfig(configRoot);
-      const data = record(current?.data) ? current.data : {};
-      const platform = record(data.platform) ? data.platform : {};
-      const adapters = record(platform.adapters) ? platform.adapters : {};
-      for (const [slot, binding] of Object.entries(adapters)) if (binding === packageId || (Array.isArray(binding) && binding.includes(packageId))) return slot;
-      return null;
-    },
+    resolveSelectedAdapterSlot: async () => null,
   });
   const scope = { scope: "platform" as const };
+  const resolvedBySpec = new Map<string, { id: string; version: string }>();
   for (const spec of request.specs) {
     let primaryKind: string | undefined;
+    let identity: { id: string; version: string } | undefined;
     let resolved = false;
     for (const source of sources) {
       const candidate = await source.resolveIdentity(spec);
       if (candidate.status === "not-found-unowned") continue;
       resolved = true;
-      if (candidate.status === "found") primaryKind = candidate.package.primaryKind;
+      if (candidate.status === "found") {
+        primaryKind = candidate.package.primaryKind;
+        identity = { id: candidate.package.id, version: candidate.package.version };
+      }
       break;
     }
-    if (!resolved || primaryKind === undefined) throw new Error("managed adapter package is not present in configured sources");
+    if (!resolved || primaryKind === undefined || !identity) throw new Error("managed adapter package is not present in configured sources");
     if (primaryKind !== "adapter") throw new Error("managed generation install accepts adapter packages only");
+    resolvedBySpec.set(spec, identity);
   }
   const result = await service.install(scope, request.specs, { dev: request.dev });
   if (result.installed.length !== request.specs.length || result.installed.some(item => item.primaryKind !== "adapter" || item.scope !== "platform")) {
@@ -92,11 +107,24 @@ export async function runManagedGenerationMutation(): Promise<void> {
   }
   const installed = [];
   for (const item of result.installed) {
+    if (!item.spec) throw new Error("Marketplace install result omitted its requested package spec");
+    const expected = resolvedBySpec.get(item.spec);
+    if (!expected || expected.id !== item.id || expected.version !== item.version) throw new Error("Marketplace install result does not match the resolved request");
     const resolvedPackageRoot = await fs.realpath(item.packageRoot);
     const resolvedStage = await fs.realpath(platformRoot);
     const relative = path.relative(resolvedStage, resolvedPackageRoot);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("installed adapter package escaped the candidate generation");
-    installed.push({ packageId: item.id, version: item.version, primaryKind: item.primaryKind });
+    installed.push({ requestedSpec: item.spec, packageId: item.id, version: item.version, resolvedVersion: expected.version, primaryKind: item.primaryKind });
   }
   process.stdout.write(JSON.stringify({ schema: 1, operation: "install", installed }) + "\n");
+}
+
+export async function listManagedGenerationEnvRefs(): Promise<void> {
+  const configRoot = process.env.KB_MARKETPLACE_CONFIG_ROOT;
+  if (!process.env.KB_PLATFORM_ROOT || !configRoot) throw new Error("managed Marketplace roots are not configured by the installer");
+  await assertManagedCandidateRoots(process.env.KB_PLATFORM_ROOT, configRoot);
+  const raw = await readRawKbConfig(configRoot);
+  const data = record(raw?.data) ? raw.data : {};
+  const marketplace = record(data.marketplace) ? data.marketplace : {};
+  process.stdout.write(JSON.stringify({ schema: 1, environment: referencedMarketplaceEnvironment(marketplace.sources) }) + "\n");
 }

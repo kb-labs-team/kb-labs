@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kb-labs/clikit/proc"
@@ -39,8 +40,19 @@ func (l Layout) recordManagedStageOwner(stage string, pid int) error {
 		return err
 	}
 	path := l.managedStageOwnerPath(stage)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("managed stage owner record already exists")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-")
 	if err != nil {
+		return err
+	}
+	temporary := file.Name()
+	defer os.Remove(temporary)
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
 		return err
 	}
 	if _, err := file.Write(data); err != nil {
@@ -54,7 +66,35 @@ func (l Layout) recordManagedStageOwner(stage string, pid int) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
+	if err := os.Rename(temporary, path); err != nil {
+		return err
+	}
 	return syncDirectory(filepath.Dir(path))
+}
+
+func (l Layout) removeManagedStageOwnerTemps(stage string) error {
+	prefix := filepath.Base(l.managedStageOwnerPath(stage)) + ".tmp-"
+	entries, err := os.ReadDir(filepath.Dir(stage))
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		path := filepath.Join(filepath.Dir(stage), entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("managed stage owner temporary %q is not a regular file", path)
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // managedStageOwnerLive fails closed: an unreadable or unverifiable owner

@@ -5,11 +5,13 @@
  */
 
 import { bootstrap } from "./bootstrap.js";
-import { runManagedGenerationMutation } from "./managed-generation-mutation.js";
+import { listManagedGenerationEnvRefs, runManagedGenerationMutation } from "./managed-generation-mutation.js";
 
-const run = process.argv[2] === "--managed-generation-mutation"
-  ? runManagedGenerationMutation()
-  : bootstrap(process.cwd());
+const run = process.argv[2] === "--managed-generation-mutation-env-refs"
+  ? listManagedGenerationEnvRefs()
+  : process.argv[2] === "--managed-generation-mutation"
+    ? runManagedGenerationMutation()
+    : bootstrap(process.cwd());
 
 run.catch(() => {
   // runService() already emitted the canonical platform/service failure event.

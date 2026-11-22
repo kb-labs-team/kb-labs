@@ -927,6 +927,9 @@ func (l Layout) AbortManagedGeneration(stage string) error {
 	if err := os.RemoveAll(resolved); err != nil {
 		return err
 	}
+	if err := l.removeManagedStageOwnerTemps(resolved); err != nil {
+		return err
+	}
 	return syncDirectory(versions)
 }
 
@@ -1061,6 +1064,9 @@ func (l Layout) removeAbandonedManagedStages() error {
 		return err
 	}
 	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".owner.json") || strings.Contains(entry.Name(), ".owner.json.tmp-") {
+			continue
+		}
 		if !strings.HasPrefix(entry.Name(), ".stage-managed-") {
 			continue
 		}
@@ -1080,6 +1086,9 @@ func (l Layout) removeAbandonedManagedStages() error {
 			return fmt.Errorf("managed-generation stage %q still has a live Marketplace helper process group", path)
 		}
 		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+		if err := l.removeManagedStageOwnerTemps(path); err != nil {
 			return err
 		}
 	}
