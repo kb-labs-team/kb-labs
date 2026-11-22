@@ -11,14 +11,17 @@ import os
 import re
 import shutil
 import tempfile
+import tarfile
 import time
 from urllib.parse import urlencode, urlsplit, urlunsplit
 import urllib.request
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Callable
 
 from journey_resources import active_platform_root, workspace_resource
 from installed_fixture import layout_value
+from journey_selection import read_journey_selection
 from hermetic_cli import run_hermetic_cli
 from service_steps import Journey
 from invocations import (
@@ -101,9 +104,8 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     publish_env = dict(env)
     publish_env["KB_REGISTRY_URL"] = env.get("KB_REGISTRY_URL", registry_url)
     publish_env["KB_REGISTRY_AUTHOR_HANDLE"] = author_handle
-    selector = env.get("KB_JOURNEY_RUNNER_SELECTOR", "")
     gateway_login = None
-    if selector.endswith(":secured"):
+    if read_journey_selection(env).runner_selector.endswith(":secured"):
         email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
         password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
         if not email or not password:
@@ -541,10 +543,10 @@ def _registry_resolve_exact_commit_version(env: dict[str, str], version: str) ->
     raise RuntimeError("Gateway Registry could not confirm whether the Commit fixture version is available")
 
 
-def _registry_commit_base_versions(workspace: Path, platform_root: Path, env: dict[str, str]) -> list[str]:
+def _registry_commit_base_versions(workspace: Path, active_platform: Path, env: dict[str, str]) -> list[str]:
     source_version = commit_fixture_source_version(workspace)
     versions = [source_version]
-    active_root = active_platform_root(platform_root)
+    active_root = Path(active_platform)
     platform_lock = active_root / layout_value("versionStatePaths.kb_marketplace_lock")
     if platform_lock.is_file():
         try:
@@ -572,9 +574,9 @@ def _registry_commit_base_versions(workspace: Path, platform_root: Path, env: di
     return versions
 
 
-def _next_free_registry_commit_version(workspace: Path, platform_root: Path,
+def _next_free_registry_commit_version(workspace: Path, active_platform: Path,
                                         env: dict[str, str]) -> str:
-    base_versions = _registry_commit_base_versions(workspace, platform_root, env)
+    base_versions = _registry_commit_base_versions(workspace, active_platform, env)
     base = max(base_versions, key=_release_version_tuple)
     major, minor, patch = _release_version_tuple(base)
     for _ in range(100):
@@ -590,8 +592,11 @@ def _next_free_registry_commit_version(workspace: Path, platform_root: Path,
 
 
 def _prepare_registry_commit_publish_package(workspace: Path, fixture_parent: Path,
-                                            platform_root: Path, env: dict[str, str]) -> tuple[Path, str]:
+                                            active_platform: Path, env: dict[str, str],
+                                            runner: CommandRunner = run_command) -> tuple[Path, str]:
     source_root = workspace / "plugins" / "commit"
+    if not source_root.resolve().is_relative_to(workspace.resolve()):
+        raise RuntimeError("active Commit fixture package is outside the journey workspace")
     source_package_path = source_root / "package.json"
     try:
         source_package = json.loads(source_package_path.read_text(encoding="utf-8"))
@@ -601,7 +606,7 @@ def _prepare_registry_commit_publish_package(workspace: Path, fixture_parent: Pa
     source_version = source_package.get("version")
     if package_name != "@kb-labs/commit" or not isinstance(source_version, str):
         raise RuntimeError("active Commit fixture package identity is invalid")
-    fixture_version = _next_free_registry_commit_version(workspace, platform_root, env)
+    fixture_version = _next_free_registry_commit_version(workspace, active_platform, env)
     manifest_field = source_package.get("kb", {}).get("manifest") if isinstance(source_package.get("kb"), dict) else None
     if not isinstance(manifest_field, str):
         raise RuntimeError("active Commit fixture package does not declare its compiled manifest")
@@ -619,13 +624,86 @@ def _prepare_registry_commit_publish_package(workspace: Path, fixture_parent: Pa
 
     fixture_root = fixture_parent / "commit"
     fixture_root.mkdir(parents=True, exist_ok=False)
-    shutil.copy2(source_package_path, fixture_root / "package.json")
-    for name in ("README.md", "LICENSE"):
-        source = source_root / name
-        if source.is_file():
-            shutil.copy2(source, fixture_root / name)
-    shutil.copytree(source_root / "dist", fixture_root / "dist")
-    installed_node_modules = active_platform_root(platform_root) / "node_modules"
+    # Run the same workspace-aware pack step used by release staging before
+    # moving the package outside the workspace. pnpm resolves workspace:*
+    # references only while packing from the real workspace package root.
+    pack_dir = fixture_parent / "workspace-pack"
+    pack_dir.mkdir(parents=True, exist_ok=False)
+    pack = run_with_runner(runner, ["pnpm", "pack", "--pack-destination", str(pack_dir)],
+                           cwd=source_root, env=env, timeout=300)
+    if pack.returncode != 0:
+        raise RuntimeError("pnpm workspace pack failed for the active Commit fixture")
+    packed_name = (pack.stdout or "").strip().splitlines()
+    if not packed_name:
+        raise RuntimeError("pnpm workspace pack returned no Commit tarball path")
+    tarball = Path(packed_name[-1].strip())
+    if not tarball.is_absolute():
+        tarball = pack_dir / tarball
+    try:
+        tarball = tarball.resolve(strict=True)
+    except OSError as error:
+        raise RuntimeError("pnpm workspace pack did not create its Commit tarball") from error
+    if pack_dir.resolve() not in tarball.parents or not tarball.is_file():
+        raise RuntimeError("pnpm workspace pack returned a tarball outside its isolated output directory")
+    try:
+        with tarfile.open(tarball, "r:gz") as archive:
+            for member in archive.getmembers():
+                member_path = PurePosixPath(member.name)
+                if (member_path.is_absolute() or ".." in member_path.parts
+                        or not member_path.parts or member_path.parts[0] != "package"):
+                    raise RuntimeError("pnpm workspace pack returned an unsafe package path")
+                relative = Path(*member_path.parts[1:])
+                if not relative.parts:
+                    continue
+                destination = fixture_root / relative
+                if member.isdir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if member.isfile():
+                    source = archive.extractfile(member)
+                    if source is None:
+                        raise RuntimeError("pnpm workspace pack returned an unreadable Commit file")
+                    with source, destination.open("wb") as output:
+                        shutil.copyfileobj(source, output)
+                    destination.chmod(member.mode & 0o777)
+                    continue
+                raise RuntimeError("pnpm workspace pack returned an unsupported Commit archive entry")
+    except (OSError, tarfile.TarError) as error:
+        raise RuntimeError("pnpm workspace pack returned an invalid Commit tarball") from error
+    finally:
+        tarball.unlink(missing_ok=True)
+    try:
+        packed_package = json.loads((fixture_root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("pnpm workspace pack did not include a valid Commit package manifest") from error
+    if (packed_package.get("name") != package_name or packed_package.get("version") != source_version):
+        raise RuntimeError("pnpm workspace pack changed the active Commit package identity or version")
+    for section in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        dependencies = packed_package.get(section)
+        if isinstance(dependencies, dict) and any(
+                isinstance(spec, str) and spec.startswith("workspace:") for spec in dependencies.values()):
+            raise RuntimeError("pnpm workspace pack left an unresolved workspace dependency in the Commit artifact")
+    packed_package["version"] = fixture_version
+    (fixture_root / "package.json").write_text(
+        json.dumps(packed_package, indent=2) + "\n", encoding="utf-8")
+    packed_manifest_field = packed_package.get("kb", {}).get("manifest")
+    if not isinstance(packed_manifest_field, str):
+        raise RuntimeError("pnpm workspace pack omitted the active Commit compiled manifest path")
+    packed_manifest = Path(packed_manifest_field)
+    if packed_manifest.is_absolute() or ".." in packed_manifest.parts:
+        raise RuntimeError("pnpm workspace pack returned an unsafe Commit manifest path")
+    manifest_js = fixture_root / packed_manifest
+    manifest_json = manifest_js.with_suffix(".json")
+    if not manifest_js.is_file() or not manifest_json.is_file():
+        raise RuntimeError("pnpm workspace pack omitted the active Commit compiled manifest files")
+    try:
+        packed_static_manifest = json.loads(manifest_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("pnpm workspace pack returned an invalid Commit static manifest") from error
+    if packed_static_manifest.get("id") != package_name:
+        raise RuntimeError("pnpm workspace pack changed the active Commit manifest identity")
+    installed_node_modules = Path(active_platform) / "node_modules"
     if not installed_node_modules.is_dir():
         raise RuntimeError("active platform package dependencies are unavailable for the Commit publisher")
     (fixture_root / "node_modules").symlink_to(installed_node_modules, target_is_directory=True)
@@ -681,11 +759,11 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
         base_env["KB_REGISTRY_URL"] = (
             f"{_installed_gateway_url(base_env)}/api/v1/marketplace-registry/api/v1")
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
-        platform_root = active_platform_root(Path(base_env["KB_JOURNEY_PLATFORM_ROOT"]))
+        active_platform = active_platform_root(Path(base_env["KB_JOURNEY_PLATFORM_ROOT"]))
         with tempfile.TemporaryDirectory(
                 prefix="kb-registry-commit-publish-", dir=base_env.get("HOME")) as fixture_directory:
             commit_package, expected_version = _prepare_registry_commit_publish_package(
-                workspace, Path(fixture_directory), platform_root, base_env)
+                workspace, Path(fixture_directory), active_platform, base_env, runner)
             published = _json(_publish_workspace_fixture(workspace, str(commit_package), base_env, runner),
                                commit_publish_command(commit_package))
         version = published.get("version")
@@ -817,6 +895,37 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
 
     def assert_signature_and_integrity_fail_closed() -> None:
         original_lock = lock_path.read_bytes()
+        workspace = Path(env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+        active_platform = active_platform_root(Path(env["KB_JOURNEY_PLATFORM_ROOT"]))
+        publish_env = dict(env)
+        publish_env["KB_REGISTRY_URL"] = (
+            f"{_installed_gateway_url(env).rstrip('/')}/api/v1/marketplace-registry/api/v1")
+        with tempfile.TemporaryDirectory(prefix="kb-registry-integrity-test-",
+                                         dir=env.get("HOME")) as fixture_directory:
+            fixture_package, test_version = _prepare_registry_commit_publish_package(
+                workspace, Path(fixture_directory), active_platform, publish_env, runner)
+            publication = _json(
+                _publish_workspace_fixture(workspace, str(fixture_package), publish_env, runner),
+                commit_publish_command(fixture_package))
+        if publication.get("version") != test_version:
+            raise RuntimeError("Registry integrity fixture published a different Commit version")
+        resolved = _registry_resolve_exact_commit_version(publish_env, test_version)
+        if (not isinstance(resolved, dict) or resolved.get("id") != package
+                or resolved.get("version") != test_version or not resolved.get("integrity")):
+            raise RuntimeError("Registry did not resolve the uncached integrity test version and its pin")
+        previous_lock = json.loads(original_lock)
+        previous_entry = previous_lock.get("plugins", {}).get(package)
+        previous_version = previous_entry.get("version") if isinstance(previous_entry, dict) else None
+        if (not isinstance(previous_version, str)
+                or _release_version_tuple(test_version) <= _release_version_tuple(previous_version)):
+            raise RuntimeError("Registry integrity test version is not higher than the installed project pin")
+
+        kb_home_value = env.get("KB_HOME", "").strip()
+        kb_home = (Path(kb_home_value).expanduser() if kb_home_value
+                   else Path(env.get("HOME", str(Path.home()))) / ".kb")
+        test_store_entry = kb_home / "store" / "entries" / f"@kb-labs+commit@{test_version}"
+        if test_store_entry.exists():
+            raise RuntimeError("Registry integrity test version is already installed in the extension store")
         try:
             for fault, code in (("signature", "KB_MARKETPLACE_SIGNATURE_INVALID"),
                                 ("integrity", "KB_MARKETPLACE_INTEGRITY_MISMATCH")):
@@ -824,6 +933,8 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
                 _assert_catalogued_marketplace_failure(project, env, runner, package, code)
                 if lock_path.read_bytes() != original_lock:
                     raise RuntimeError(f"{fault} failure changed the Marketplace lock")
+                if test_store_entry.exists():
+                    raise RuntimeError(f"{fault} failure installed the unverified Commit version")
         finally:
             _set_marketplace_proxy_faults(project, env, runner, {})
 
