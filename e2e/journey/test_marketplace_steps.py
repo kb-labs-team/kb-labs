@@ -34,6 +34,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                register_transitive_npm_dependency_step,
                                _transitive_npm_fixture_ids,
                                _transitive_npm_fixture_dependencies,
+                               _register_commit_update_fixture_step,
                                run_marketplace_steps, validate_commit_status_response,
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
@@ -178,6 +179,26 @@ class MarketplaceStepTests(unittest.TestCase):
         self.assertEqual(dependencies["dependencies"], {"journey-transitive-dependency-test": "1.0.0"})
         self.assertNotIn("@kb-labs/sdk", dependencies["dependencies"])
         self.assertEqual(dependencies["peerDependencies"], {"@kb-labs/sdk": "2.120.1"})
+
+    # case: S-010.8
+    def test_unselected_commit_update_fixture_does_not_require_a_missing_prerequisite(self):
+        selector = "service-local:explore"
+        selection = JourneySelection(
+            requested=("S-010.8",),
+            claims=frozenset({"S-010.8"}),
+            owning_steps={},
+            prerequisite_steps=frozenset(),
+            prerequisite_flows=frozenset(),
+            capabilities=frozenset({"marketplace"}),
+            runner_selector=selector,
+            requested_runners=selector,
+        )
+        journey = Journey("local", "s0108-unselected-update-fixture", selection=selection)
+
+        result = _register_commit_update_fixture_step(journey, lambda: self.fail("must be skipped"))
+
+        self.assertEqual(result.status, "SKIPPED")
+        self.assertEqual(result.message, "not selected")
 
     # case: S-010.8
     def test_transitive_dependency_install_step_runs_for_local_and_secured_service_owners(self):
